@@ -1,3 +1,10 @@
+/**
+ * Cache key generation, path tokenization, distributed cache initialization,
+ * and LRU registry for components, modules, SSR output, and proxy responses.
+ *
+ * @module cache
+ */
+
 // Cache path tokenization
 export { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "./paths.ts";
 

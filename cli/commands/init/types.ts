@@ -1,6 +1,13 @@
 import type { FeatureName, IntegrationName } from "../../templates/types.ts";
 
-export type InitTemplate = "ai" | "app" | "blog" | "docs" | "minimal";
+export type InitTemplate =
+  | "chat"
+  | "rag"
+  | "multi-agent"
+  | "workflow"
+  | "coding-agent"
+  | "saas"
+  | "minimal";
 
 export type EnvValues = Record<string, string>;
 

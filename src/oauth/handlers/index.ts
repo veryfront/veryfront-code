@@ -1,3 +1,9 @@
+/**
+ * Oauth Handlers
+ *
+ * @module oauth/handlers
+ */
+
 export {
   createOAuthCallbackHandler,
   type OAuthCallbackHandlerOptions,

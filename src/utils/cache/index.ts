@@ -1,3 +1,9 @@
+/**
+ * Utils Cache
+ *
+ * @module utils/cache
+ */
+
 export {
   type CacheAdapter,
   EntryManager as LRUEntryManager,
@@ -18,4 +24,4 @@ export {
   type LRUTrackerInterface,
 } from "./eviction/eviction-manager.ts";
 
-export * from "./keys/index.ts";
+export { getCacheNamespace, setCacheNamespace } from "./keys/index.ts";

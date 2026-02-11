@@ -221,10 +221,17 @@ export class APIRouteHandler {
             config: this.config ?? undefined,
           });
 
-          if (handler) this.routeCache.set(modulePath, handler);
-          return handler;
+          // Only cache handlers that export at least one HTTP method.
+          // Empty objects ({}) from failed imports are truthy but useless —
+          // caching them would prevent retry after the user fixes the import.
+          if (handler && Object.keys(handler).length > 0) {
+            this.routeCache.set(modulePath, handler);
+          }
+          return handler && Object.keys(handler).length > 0 ? handler : null;
         } catch (error) {
-          this.lastErrorMessage = error instanceof Error ? error.message : String(error);
+          const msg = error instanceof Error ? error.message : String(error);
+          this.lastErrorMessage = msg;
+          logger.error(`[API] Failed to load handler for ${modulePath}: ${msg}`);
           return null;
         }
       },

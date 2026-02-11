@@ -1,0 +1,139 @@
+---
+title: "MCP Server"
+sidebarTitle: "MCP Server"
+description: "Expose tools, prompts, and resources over Model Context Protocol."
+---
+
+The Model Context Protocol (MCP) lets AI clients discover and use your tools, prompts, and resources. Veryfront auto-registers everything from your `tools/`, `prompts/`, and `resources/` directories and exposes them through an MCP server.
+
+## Setup
+
+```ts
+import { createMCPServer } from "veryfront/mcp";
+
+const server = createMCPServer({ enabled: true });
+```
+
+That's it. All auto-discovered tools, prompts, and resources are exposed. AI clients (Claude Desktop, Cursor, etc.) can now connect and use them.
+
+## Tools
+
+Tools defined in `tools/` are automatically available via MCP:
+
+```ts
+// tools/search-docs.ts
+import { tool } from "veryfront/tool";
+import { z } from "zod";
+
+export default tool({
+  description: "Search the documentation",
+  inputSchema: z.object({
+    query: z.string().describe("Search query"),
+    limit: z.number().default(10).describe("Max results"),
+  }),
+  execute: async ({ query, limit }) => {
+    const results = await searchIndex(query, limit);
+    return { results };
+  },
+});
+```
+
+An MCP client can discover this tool's schema and call it.
+
+## Prompts
+
+Prompts defined in `prompts/` are exposed as MCP prompt templates:
+
+```ts
+// prompts/code-review.ts
+import { prompt } from "veryfront/prompt";
+
+export default prompt({
+  description: "Review code for quality issues",
+  content: `Review the following code for:
+- Security vulnerabilities
+- Performance issues
+- Code style problems
+
+Code to review:
+{{code}}`,
+});
+```
+
+## Resources
+
+Resources are data sources that MCP clients can read:
+
+```ts
+// resources/docs.ts
+import { resource } from "veryfront/resource";
+
+export default resource({
+  description: "Project documentation",
+  uri: "docs://project",
+  read: async () => {
+    const docs = await loadDocs();
+    return { contents: docs };
+  },
+});
+```
+
+## Manual registration
+
+For tools, prompts, or resources not in the auto-discovered directories:
+
+```ts
+import { registerTool } from "veryfront/mcp";
+import { tool } from "veryfront/tool";
+import { z } from "zod";
+
+registerTool("custom-tool", tool({
+  description: "A custom tool",
+  inputSchema: z.object({ input: z.string() }),
+  execute: async ({ input }) => ({ result: input.toUpperCase() }),
+}));
+```
+
+## Connecting clients
+
+### Claude Desktop
+
+Add to your Claude Desktop config (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "my-app": {
+      "command": "veryfront",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### Cursor
+
+Add to your `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "my-app": {
+      "command": "veryfront",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+## Next
+
+- [Configuration](/code/guides/configuration) — framework configuration options
+- [Tools](/code/guides/tools) — define the tools MCP exposes
+
+## Related
+
+- [`veryfront/mcp`](/code/api/mcp) — MCP server API reference
+- [`veryfront/tool`](/code/api/tool) — tool API reference
+- [`veryfront/prompt`](/code/api/prompt) — prompt API reference
+- [`veryfront/resource`](/code/api/resource) — resource API reference

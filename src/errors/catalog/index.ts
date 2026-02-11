@@ -1,3 +1,9 @@
+/**
+ * Errors Catalog
+ *
+ * @module errors/catalog
+ */
+
 import type { ErrorSlug } from "../error-registry.ts";
 import type { ErrorSolution, PartialErrorCatalog } from "./types.ts";
 

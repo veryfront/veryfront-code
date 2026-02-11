@@ -1,48 +1,40 @@
 /**
- * Veryfront Workflow Module
+ * DAG-based agentic workflows with human-in-the-loop support.
  *
- * Durable, DAG-based agentic workflows with human-in-the-loop support.
+ * @module workflow
  *
- * @example
+ * @example Simple sequential workflow
  * ```typescript
- * import {
- *   workflow,
- *   step,
- *   parallel,
- *   branch,
- *   waitForApproval,
- *   WorkflowClient,
- * } from 'veryfront/workflow';
+ * import { workflow, step } from "veryfront/workflow";
  *
- * // Define a workflow
- * const contentPipeline = workflow({
- *   id: 'content-pipeline',
- *   steps: ({ input }) => [
- *     step('research', { agent: 'researcher' }),
- *     parallel('generate', [
- *       step('write', { agent: 'writer' }),
- *       step('images', { tool: 'imageGenerator' }),
- *     ]),
- *     branch('review', {
- *       condition: () => input.requiresApproval,
- *       then: [waitForApproval('human-review', { timeout: '24h' })],
- *     }),
- *     step('publish', { agent: 'publisher' }),
+ * const pipeline = workflow({
+ *   id: "summarize",
+ *   steps: () => [
+ *     step("fetch", { tool: "webScraper" }),
+ *     step("summarize", { agent: "writer" }),
  *   ],
  * });
+ * ```
  *
- * // Create client and register workflow
- * const client = new WorkflowClient();
- * client.register(contentPipeline);
+ * @example Parallel steps and human-in-the-loop
+ * ```typescript
+ * import { workflow, step, parallel, branch, waitForApproval } from "veryfront/workflow";
  *
- * // Start a workflow
- * const handle = await client.start('content-pipeline', {
- *   topic: 'AI Safety',
- *   requiresApproval: true,
+ * const contentPipeline = workflow({
+ *   id: "content-pipeline",
+ *   steps: ({ input }) => [
+ *     step("research", { agent: "researcher" }),
+ *     parallel("generate", [
+ *       step("write", { agent: "writer" }),
+ *       step("images", { tool: "imageGenerator" }),
+ *     ]),
+ *     branch("review", {
+ *       condition: () => input.requiresApproval,
+ *       then: [waitForApproval("human-review", { timeout: "24h" })],
+ *     }),
+ *     step("publish", { agent: "publisher" }),
+ *   ],
  * });
- *
- * // Wait for result
- * const result = await handle.result();
  * ```
  */
 

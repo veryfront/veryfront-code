@@ -1,3 +1,9 @@
+/**
+ * Modules Import Map
+ *
+ * @module modules/import-map
+ */
+
 export { getDefaultImportMap } from "./default-import-map.ts";
 export { loadImportMap } from "./loader.ts";
 export { mergeImportMaps } from "./merger.ts";

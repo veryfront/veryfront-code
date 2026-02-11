@@ -1,3 +1,9 @@
+/**
+ * Config Schemas
+ *
+ * @module config/schemas
+ */
+
 export {
   findUnknownTopLevelKeys,
   validateVeryfrontConfig,

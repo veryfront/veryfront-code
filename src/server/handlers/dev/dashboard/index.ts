@@ -1,3 +1,9 @@
+/**
+ * Dev - Dashboard
+ *
+ * @module server/handlers/dev/dashboard
+ */
+
 import { BaseHandler } from "../../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerResult } from "../../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";

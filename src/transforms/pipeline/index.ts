@@ -1,3 +1,9 @@
+/**
+ * Transforms Pipeline
+ *
+ * @module transforms/pipeline
+ */
+
 import {
   generateCacheKey,
   getCachedTransformAsync,

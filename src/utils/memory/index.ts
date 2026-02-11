@@ -1,3 +1,9 @@
+/**
+ * Utils Memory
+ *
+ * @module utils/memory
+ */
+
 export {
   type CacheStats,
   checkMemoryPressure,

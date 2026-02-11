@@ -3,9 +3,9 @@ import { z } from 'zod';
 import { getAWSClient } from '../../lib/aws-client';
 
 export const listS3BucketsTool = tool({
-  name: 'list-s3-buckets',
+  id: 'list-s3-buckets',
   description: 'List all S3 buckets in your AWS account. Returns bucket names and creation dates.',
-  input: z.object({}),
+  inputSchema: z.object({}),
   execute: async () => {
     try {
       const client = getAWSClient();

@@ -1,3 +1,50 @@
+/**
+ * Chat UI components and streaming hooks.
+ *
+ * @module chat
+ *
+ * @example Basic chat
+ * ```tsx
+ * import { Chat, useChat } from "veryfront/chat";
+ *
+ * export default function Page() {
+ *   const chat = useChat({ api: "/api/chat" });
+ *   return <Chat {...chat} />;
+ * }
+ * ```
+ *
+ * @example Custom layout
+ * ```tsx
+ * import { ChatMessages, ChatInput, useChat } from "veryfront/chat";
+ *
+ * export default function Page() {
+ *   const chat = useChat({ api: "/api/chat" });
+ *   return (
+ *     <div>
+ *       <ChatMessages messages={chat.messages} />
+ *       <ChatInput value={chat.input} onChange={chat.setInput} onSubmit={chat.submit} />
+ *     </div>
+ *   );
+ * }
+ * ```
+ *
+ * @example Agent card with tool calls
+ * ```tsx
+ * import { AgentCard, useAgent } from "veryfront/chat";
+ *
+ * function AgentUI() {
+ *   const agent = useAgent({ agent: "assistant" });
+ *   return (
+ *     <AgentCard
+ *       status={agent.status}
+ *       messages={agent.messages}
+ *       toolCalls={agent.toolCalls}
+ *     />
+ *   );
+ * }
+ * ```
+ */
+
 // veryfront/chat — Chat UI components + hooks
 //
 // Merges components/ai (UI) and agent/react (hooks) into a single

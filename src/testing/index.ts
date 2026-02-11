@@ -1,3 +1,10 @@
+/**
+ * Cross-runtime test utilities — BDD framework (describe/it), assertions,
+ * test isolation, filesystem/env helpers, and timing utilities for Deno, Node, and Bun.
+ *
+ * @module testing
+ */
+
 // Initialize test environment before any other imports
 import "./init.ts";
 

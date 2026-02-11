@@ -1,3 +1,10 @@
+/**
+ * Security layer — input validation with size limits, CORS configuration,
+ * CSP and security headers, path traversal prevention, and secure filesystem access.
+ *
+ * @module security
+ */
+
 export { BaseHandler } from "./http/base-handler.ts";
 export type { HandlerHelpers } from "./http/base-handler.ts";
 

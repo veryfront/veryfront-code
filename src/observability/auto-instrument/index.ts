@@ -1,10 +1,12 @@
+/**
+ * Observability Auto Instrument
+ *
+ * @module observability/auto-instrument
+ */
+
 export type { AutoInstrumentConfig } from "./types.ts";
 
-export {
-  __resetAutoInstrumentForTests,
-  initAutoInstrumentation,
-  isAutoInstrumentEnabled,
-} from "./orchestrator.ts";
+export { initAutoInstrumentation, isAutoInstrumentEnabled } from "./orchestrator.ts";
 
 export {
   createInstrumentedFetch,

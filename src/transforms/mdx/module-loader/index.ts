@@ -1,3 +1,9 @@
+/**
+ * Mdx - Module Loader
+ *
+ * @module transforms/mdx/module-loader
+ */
+
 // Types (stay in this module)
 export type {
   Adapter,

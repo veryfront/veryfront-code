@@ -324,7 +324,7 @@ async function executeStepAction(
     }
 
     case "create": {
-      await newCommand(projectName, { template: "ai", force: true });
+      await newCommand(projectName, { template: "chat", force: true });
 
       const projectDir = join(cwd(), projectName);
       const actualSlug = (await readConfigFile(projectDir))?.projectSlug;

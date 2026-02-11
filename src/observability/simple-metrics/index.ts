@@ -1,3 +1,9 @@
+/**
+ * Observability Simple Metrics
+ *
+ * @module observability/simple-metrics
+ */
+
 export type {
   MetricsState,
   ObservabilityMetrics,

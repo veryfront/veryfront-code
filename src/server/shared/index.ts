@@ -1,3 +1,9 @@
+/**
+ * Server Shared
+ *
+ * @module server/shared
+ */
+
 export {
   destroyRendererAdapter,
   getRendererForProject,

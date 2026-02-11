@@ -1,3 +1,9 @@
+/**
+ * Routing Slug Mapper
+ *
+ * @module routing/slug-mapper
+ */
+
 export type { PathCandidates, RouteParams } from "./types.ts";
 
 export { extractParams, isDynamicRoute, matchesPattern } from "./dynamic-route-matcher.ts";

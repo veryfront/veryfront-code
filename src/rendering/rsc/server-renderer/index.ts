@@ -1,3 +1,9 @@
+/**
+ * Rsc - Server Renderer
+ *
+ * @module rendering/rsc/server-renderer
+ */
+
 export { RSCRenderer } from "./rsc-renderer.ts";
 
 export {

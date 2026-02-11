@@ -1,3 +1,10 @@
+/**
+ * HTML document generation utilities — shell templates, hydration scripts,
+ * metadata extraction, security escaping, and tag generators for SSR output.
+ *
+ * @module html
+ */
+
 export { getDevStyles } from "./dev-scripts.ts";
 export { isFullHTMLDocument } from "./html-detection.ts";
 export { buildAttributes, escapeHTML, escapeHtml } from "./html-escape.ts";

@@ -1,3 +1,10 @@
+/**
+ * Structured error system with slug-based registry, RFC 9457 HTTP problem
+ * details, error boundaries for HTTP and CLI, and user-friendly formatting.
+ *
+ * @module errors
+ */
+
 export { defineError, VeryfrontError } from "./types.ts";
 export type {
   ErrorCategory,

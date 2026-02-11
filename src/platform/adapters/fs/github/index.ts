@@ -1,3 +1,9 @@
+/**
+ * Fs - Github
+ *
+ * @module platform/adapters/fs/github
+ */
+
 export { GitHubFSAdapter } from "./adapter.ts";
 export { GitHubApiClient } from "./github-api-client.ts";
 export { GitHubStatOperations } from "./stat-operations.ts";

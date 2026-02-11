@@ -14,29 +14,45 @@ describe("new-tui", () => {
   });
 
   it("works with ai template", () => {
-    const result: NewTuiResult = { template: "ai", integrations: [], cancelled: false };
-    assertEquals(result, { template: "ai", integrations: [], cancelled: false });
+    const result: NewTuiResult = { template: "chat", integrations: [], cancelled: false };
+    assertEquals(result, { template: "chat", integrations: [], cancelled: false });
   });
 
   it("works with integrations", () => {
     const result: NewTuiResult = {
-      template: "app",
+      template: "rag",
       integrations: ["gmail", "slack", "github"],
       cancelled: false,
     };
-    assertEquals(result.template, "app");
+    assertEquals(result.template, "rag");
     assertEquals(result.integrations, ["gmail", "slack", "github"]);
     assertEquals(result.cancelled, false);
   });
 
   it("works when cancelled", () => {
-    const result: NewTuiResult = { template: "ai", integrations: [], cancelled: true };
+    const result: NewTuiResult = { template: "chat", integrations: [], cancelled: true };
     assertEquals(result.cancelled, true);
   });
 
   it("supports all template types", () => {
-    const templates: NewTuiResult["template"][] = ["ai", "app", "blog", "docs", "minimal"];
-    assertEquals(templates, ["ai", "app", "blog", "docs", "minimal"]);
+    const templates: NewTuiResult["template"][] = [
+      "chat",
+      "rag",
+      "multi-agent",
+      "workflow",
+      "coding-agent",
+      "saas",
+      "minimal",
+    ];
+    assertEquals(templates, [
+      "chat",
+      "rag",
+      "multi-agent",
+      "workflow",
+      "coding-agent",
+      "saas",
+      "minimal",
+    ]);
   });
 
   it("supports all integration types", () => {

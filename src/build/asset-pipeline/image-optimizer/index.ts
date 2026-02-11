@@ -1,3 +1,9 @@
+/**
+ * Asset Pipeline - Image Optimizer
+ *
+ * @module build/asset-pipeline/image-optimizer
+ */
+
 export type {
   ImageFormat,
   ImageOptimizationOptions,

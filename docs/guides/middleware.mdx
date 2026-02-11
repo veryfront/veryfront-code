@@ -1,0 +1,132 @@
+---
+title: "Middleware"
+sidebarTitle: "Middleware"
+description: "CORS, rate limiting, logging, and custom middleware pipelines."
+---
+
+Middleware intercepts requests before they reach your route handlers. Use the built-in middleware for common needs, or write your own.
+
+## Built-in middleware
+
+### CORS
+
+```ts
+import { cors } from "veryfront/middleware";
+
+const corsMiddleware = cors({
+  origin: "https://example.com",      // or "*" or ["https://a.com", "https://b.com"]
+  methods: ["GET", "POST"],
+  allowHeaders: ["Content-Type", "Authorization"],
+  maxAge: 86400,
+});
+```
+
+### Rate limiting
+
+```ts
+import { rateLimit } from "veryfront/middleware";
+
+const limiter = rateLimit({
+  maxRequests: 100,    // Max requests per window
+  windowMs: 60_000,    // 1 minute window
+});
+```
+
+### Logging
+
+```ts
+import { logger } from "veryfront/middleware";
+
+const log = logger({ format: "combined" }); // "combined" | "common" | "short" | "dev"
+```
+
+### Timeout
+
+```ts
+import { timeout } from "veryfront/middleware";
+
+const timer = timeout({ timeoutMs: 30_000 }); // 30 seconds
+```
+
+## Pipeline composition
+
+Combine middleware into a pipeline:
+
+```ts
+import { MiddlewarePipeline, cors, rateLimit, logger, timeout } from "veryfront/middleware";
+
+const pipeline = new MiddlewarePipeline()
+  .use(cors({ origin: "*" }))
+  .use(rateLimit({ maxRequests: 100, windowMs: 60_000 }))
+  .use(logger({ format: "short" }))
+  .use(timeout({ timeoutMs: 30_000 }));
+```
+
+### Route-specific middleware
+
+Apply middleware only to matching URL patterns:
+
+```ts
+const pipeline = new MiddlewarePipeline()
+  .use(cors({ origin: "*" }))
+  .useFor(/^\/api\//, rateLimit({ maxRequests: 50, windowMs: 60_000 }))
+  .useFor(/^\/api\/chat\//, timeout({ timeoutMs: 120_000 }));
+```
+
+### Execute the pipeline
+
+```ts
+// app/api/users/route.ts
+export async function GET(request: Request) {
+  const result = await pipeline.execute(request);
+  if (result) return result; // Middleware returned a response (e.g., rate limit exceeded)
+
+  const users = await db.users.findMany();
+  return Response.json(users);
+}
+```
+
+### Cleanup callbacks
+
+Register teardown logic that runs after the response is sent:
+
+```ts
+pipeline.onTeardown(async () => {
+  await flushMetrics();
+});
+```
+
+## Custom middleware
+
+A middleware is a function that receives a context object and a `next` function. Access the request via `c.request`:
+
+```ts
+import type { MiddlewareHandler } from "veryfront/middleware";
+
+const auth: MiddlewareHandler = async (c, next) => {
+  const token = c.request.headers.get("authorization");
+  if (!token) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Continue to the next middleware or route handler
+  return next();
+};
+```
+
+Add it to a pipeline:
+
+```ts
+const pipeline = new MiddlewarePipeline()
+  .use(auth)
+  .use(cors({ origin: "*" }));
+```
+
+## Next
+
+- [OAuth](/code/guides/oauth) — add social login to your app
+- [API Routes](/code/guides/api-routes) — the routes that middleware protects
+
+## Related
+
+- [`veryfront/middleware`](/code/api/middleware) — middleware API reference

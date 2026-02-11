@@ -1,3 +1,23 @@
+/**
+ * Client-side routing, navigation, and links.
+ *
+ * @module router
+ *
+ * @example
+ * ```tsx
+ * import { useRouter, Link } from "veryfront/router";
+ *
+ * function Nav() {
+ *   const router = useRouter();
+ *   return (
+ *     <nav>
+ *       <Link href="/about">About</Link>
+ *       <p>Current path: {router.pathname}</p>
+ *     </nav>
+ *   );
+ * }
+ * ```
+ */
 import React from "react";
 
 export interface RouterValue {

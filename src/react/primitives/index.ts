@@ -1,3 +1,9 @@
+/**
+ * React Primitives
+ *
+ * @module react/primitives
+ */
+
 export { ChatContainer, type ChatContainerProps } from "./chat-container.tsx";
 export {
   MessageContent,

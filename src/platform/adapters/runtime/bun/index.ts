@@ -1,3 +1,9 @@
+/**
+ * Runtime - Bun
+ *
+ * @module platform/adapters/runtime/bun
+ */
+
 export { BunAdapter, bunAdapter } from "./adapter.ts";
 export { BunEnvironmentAdapter } from "./environment-adapter.ts";
 export { BunFileSystemAdapter } from "./filesystem-adapter.ts";

@@ -1,0 +1,202 @@
+---
+title: "Memory & Streaming"
+sidebarTitle: "Memory & Streaming"
+description: "Conversation memory strategies and streaming responses."
+---
+
+Agents are stateless by default — each request is independent. Add memory to maintain conversation history, and use streaming to deliver responses in real time.
+
+## Memory types
+
+Configure memory on your agent to persist messages across requests:
+
+### Buffer memory
+
+Keeps the last N messages. Simple and predictable:
+
+```ts
+// agents/assistant.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "assistant",
+  model: "openai/gpt-4o",
+  system: "You are a helpful assistant.",
+  memory: {
+    type: "buffer",
+    maxMessages: 50,
+  },
+});
+```
+
+### Conversation memory
+
+Sliding window based on token count. Drops the oldest messages when the limit is reached:
+
+```ts
+export default agent({
+  model: "openai/gpt-4o",
+  system: "You are a helpful assistant.",
+  memory: {
+    type: "conversation",
+    maxTokens: 4000,
+  },
+});
+```
+
+### Summary memory
+
+Automatically summarizes older messages to fit more context into fewer tokens:
+
+```ts
+export default agent({
+  model: "openai/gpt-4o",
+  system: "You are a research assistant.",
+  memory: {
+    type: "summary",
+  },
+});
+```
+
+When the conversation grows long, the agent compresses older messages into a summary while keeping recent messages intact.
+
+### Redis memory
+
+For production deployments where multiple server instances share state:
+
+```ts
+import { agent, createRedisMemory } from "veryfront/agent";
+import { getEnv } from "veryfront";
+import Redis from "ioredis";
+
+const redis = new Redis(getEnv("REDIS_URL"));
+
+export default agent({
+  model: "openai/gpt-4o",
+  system: "You are a support agent.",
+  memory: createRedisMemory("support", {
+    type: "redis",
+    client: redis,
+    keyPrefix: "chat:memory:",
+    ttl: 86400, // 24 hours
+  }),
+});
+```
+
+## Memory operations
+
+Access memory programmatically in API routes:
+
+```ts
+// app/api/chat/route.ts
+import { getAgent } from "veryfront/agent";
+
+export async function POST(request: Request) {
+  const { messages } = await request.json();
+  const agent = getAgent("assistant");
+  const result = await agent.stream({ messages });
+  return result.toDataStreamResponse();
+}
+
+export async function DELETE() {
+  const agent = getAgent("assistant");
+  await agent.clearMemory();
+  return new Response(null, { status: 204 });
+}
+
+export async function GET() {
+  const agent = getAgent("assistant");
+  const messages = await agent.getMemory();
+  const stats = await agent.getMemoryStats();
+  return Response.json({ messages, stats });
+}
+```
+
+`getMemoryStats()` returns:
+
+```ts
+{
+  totalMessages: 24,
+  estimatedTokens: 3200,
+  type: "buffer"
+}
+```
+
+## Streaming
+
+### Server-side streaming
+
+`agent.stream()` returns an `AgentStreamResult` that converts to a standard `Response`:
+
+```ts
+// app/api/chat/route.ts
+import { getAgent } from "veryfront/agent";
+
+export async function POST(request: Request) {
+  const { messages } = await request.json();
+  const agent = getAgent("assistant");
+  const result = await agent.stream({ messages });
+  return result.toDataStreamResponse();
+}
+```
+
+`toDataStreamResponse()` returns a streaming `Response` with the `text/event-stream` content type, compatible with the `useChat` hook on the client.
+
+### Client-side consumption
+
+The `useChat` hook handles the streaming protocol automatically:
+
+```tsx
+'use client'
+import { useChat } from "veryfront/chat";
+
+export default function ChatPage() {
+  const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
+    api: "/api/chat",
+  });
+
+  return (
+    <div>
+      {messages.map((m) => (
+        <div key={m.id}>{m.parts.map((p) => p.type === "text" ? p.text : null)}</div>
+      ))}
+      <form onSubmit={handleSubmit}>
+        <input value={input} onChange={handleInputChange} disabled={isLoading} />
+      </form>
+    </div>
+  );
+}
+```
+
+### Non-streaming generation
+
+Use `generate()` when you need the complete response at once:
+
+```ts
+const agent = getAgent("assistant");
+const result = await agent.generate({
+  input: "Write a haiku about programming.",
+});
+// result.text — full text response
+// result.usage — { promptTokens, completionTokens, totalTokens }
+```
+
+## Client-managed vs server-managed memory
+
+There are two patterns for conversation history:
+
+**Client-managed** (default with `useChat`): The client sends the full message array on each request. The server is stateless. Good for simple chat UIs.
+
+**Server-managed** (with agent memory): The server persists messages. The client sends only the latest message. Good for long-running conversations and multi-device access.
+
+You can combine both — use client memory for the UI and server memory for context that persists across sessions.
+
+## Next
+
+- [Chat UI](/code/guides/chat-ui) — pre-built components for chat interfaces
+- [Workflows](/code/guides/workflows) — orchestrate multiple agents
+
+## Related
+
+- [`veryfront/agent`](/code/api/agent) — agent API reference
+- [`veryfront/chat`](/code/api/chat) — chat hooks API reference

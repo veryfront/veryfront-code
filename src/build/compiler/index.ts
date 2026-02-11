@@ -1,3 +1,9 @@
+/**
+ * Build Compiler
+ *
+ * @module build/compiler
+ */
+
 export type {
   CompileOptions,
   CompileResult,
@@ -9,5 +15,3 @@ export { compileMDXFile } from "./mdx-compiler/compiler.ts";
 export { compileAllMDX } from "./mdx-compiler/directory-compiler.ts";
 export { watchMDX } from "./mdx-compiler/watcher.ts";
 export { compileMDXToJS } from "./mdx-to-js.ts";
-
-export * from "./mdx-compiler/index.ts";

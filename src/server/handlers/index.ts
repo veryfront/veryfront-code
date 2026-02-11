@@ -1,3 +1,9 @@
+/**
+ * Server Handlers
+ *
+ * @module server/handlers
+ */
+
 // Handler barrel — tightened to selective exports.
 //
 // NOTE: No file imports from this barrel. All consumers use deep paths

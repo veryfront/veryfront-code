@@ -1,3 +1,9 @@
+/**
+ * Observability Metrics
+ *
+ * @module observability/metrics
+ */
+
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { metricsManager } from "./manager.ts";
 

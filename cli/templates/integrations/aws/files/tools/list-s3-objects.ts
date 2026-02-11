@@ -3,9 +3,9 @@ import { z } from 'zod';
 import { getAWSClient } from '../../lib/aws-client';
 
 export const listS3ObjectsTool = tool({
-  name: 'list-s3-objects',
+  id: 'list-s3-objects',
   description: 'List objects in a specific S3 bucket. Optionally filter by prefix and limit the number of results.',
-  input: z.object({
+  inputSchema: z.object({
     bucket: z.string().describe('The name of the S3 bucket to list objects from'),
     prefix: z.string().optional().describe('Optional prefix to filter objects (e.g., "folder/" or "images/")'),
     maxKeys: z.number().min(1).max(1000).optional().describe('Maximum number of objects to return (default: 1000)'),

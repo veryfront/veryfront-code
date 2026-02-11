@@ -367,7 +367,7 @@ describe("cli/mcp/remote-file-tools", () => {
       const result = vfRemoteCreateProject.inputSchema.safeParse({
         name: "My Project",
         slug: "my-project",
-        template: "blog",
+        template: "chat",
         is_public: true,
       });
       assertEquals(result.success, true);

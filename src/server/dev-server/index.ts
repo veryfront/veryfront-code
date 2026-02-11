@@ -1,3 +1,9 @@
+/**
+ * Server Dev Server
+ *
+ * @module server/dev-server
+ */
+
 export { DevServer } from "./server.ts";
 export { OptimizedFileWatcher } from "./file-watcher.ts";
 export type { DevServerOptions, FileWatcherMetrics, RouteDirectory } from "./types.ts";

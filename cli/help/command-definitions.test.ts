@@ -52,7 +52,7 @@ describe("command-definitions", () => {
     it("has template option", () => {
       const templateOpt = init.options.find((o) => o.flag.includes("--template"));
       assertExists(templateOpt);
-      assertEquals(templateOpt.default, "ai");
+      assertEquals(templateOpt.default, "chat");
     });
 
     it("has examples", () => {

@@ -1,3 +1,9 @@
+/**
+ * Agent Debug
+ *
+ * @module agent/debug
+ */
+
 export {
   getRegistryOverview,
   inspectAgent,

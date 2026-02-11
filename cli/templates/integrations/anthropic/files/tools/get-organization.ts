@@ -3,10 +3,10 @@ import { z } from 'zod';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
 export const getOrganization = tool({
-  name: 'get_organization',
+  id: 'get_organization',
   description:
     'Get detailed information about the Anthropic organization including name, settings, default configurations, and billing information.',
-  parameters: z.object({}),
+  inputSchema: z.object({}),
   execute: async () => {
     try {
       const client = getAnthropicAdminClient();

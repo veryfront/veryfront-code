@@ -1,3 +1,9 @@
+/**
+ * Asset Pipeline - Tailwind Processor
+ *
+ * @module build/asset-pipeline/tailwind-processor
+ */
+
 export type {
   LightningCSSOptions,
   TailwindProcessorOptions,

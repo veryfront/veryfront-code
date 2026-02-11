@@ -1,0 +1,115 @@
+---
+title: "Multi-Agent"
+sidebarTitle: "Multi-Agent"
+description: "Agent composition, delegation, and agent-as-tool patterns."
+---
+
+Complex tasks often need multiple specialized agents. Veryfront supports two composition patterns: **agent-as-tool** (one agent delegates to others) and **workflows** (explicit step orchestration).
+
+## Agent-as-tool
+
+Convert an agent into a tool that another agent can call:
+
+```ts
+// agents/researcher.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "researcher",
+  model: "openai/gpt-4o",
+  system: "Research topics thoroughly using web search.",
+  tools: { webSearch: true },
+  maxSteps: 5,
+});
+```
+
+```ts
+// agents/writer.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "writer",
+  model: "openai/gpt-4o",
+  system: "Write clear, well-structured articles.",
+});
+```
+
+```ts
+// agents/orchestrator.ts
+import { agent, getAgentsAsTools } from "veryfront/agent";
+
+export default agent({
+  id: "orchestrator",
+  model: "openai/gpt-4o",
+  system: "You coordinate research and writing. Use the researcher to gather facts, then the writer to produce the article.",
+  tools: getAgentsAsTools({
+    researcher: "Research a topic using web search",
+    writer: "Write an article from research notes",
+  }),
+  maxSteps: 10,
+});
+```
+
+`getAgentsAsTools()` wraps each agent as a tool. The orchestrator decides when to call each agent based on its system prompt. Each sub-agent runs its own tool loop independently.
+
+### Single agent-as-tool
+
+For wrapping a single agent:
+
+```ts
+import { agentAsTool, getAgent } from "veryfront/agent";
+
+const researcher = getAgent("researcher");
+const researchTool = agentAsTool(researcher, "Research a topic using web search");
+```
+
+## Workflow-based composition
+
+For deterministic multi-agent pipelines, use [workflows](/code/guides/workflows):
+
+```ts
+// workflows/article-pipeline.ts
+import { workflow, step, parallel } from "veryfront/workflow";
+
+export default workflow({
+  id: "article-pipeline",
+  steps: [
+    step("research", { agent: "researcher" }),
+    parallel("drafts", [
+      step("draft-1", { agent: "writer", input: "Style: conversational" }),
+      step("draft-2", { agent: "writer", input: "Style: technical" }),
+    ]),
+    step("select", { agent: "editor" }),
+  ],
+});
+```
+
+## When to use which
+
+| Pattern | Use when |
+|---------|----------|
+| **Agent-as-tool** | The orchestrator decides dynamically which agents to call and in what order |
+| **Workflow** | The execution order is known in advance — sequential, parallel, or branching |
+
+Agent-as-tool is more flexible but harder to predict. Workflows are deterministic and easier to debug.
+
+## Agent registry
+
+All agents in `agents/` are registered automatically. Access them programmatically:
+
+```ts
+import { getAgent, getAllAgentIds } from "veryfront/agent";
+
+const ids = getAllAgentIds();    // ["assistant", "researcher", "writer"]
+const agent = getAgent("writer"); // Get a specific agent
+```
+
+## Next
+
+- [Providers](/code/guides/providers) — configure OpenAI, Anthropic, and Google
+- [Middleware](/code/guides/middleware) — add auth and rate limiting to your agents
+
+## Related
+
+- [`veryfront/agent`](/code/api/agent) — agent API reference
+- [`veryfront/workflow`](/code/api/workflow) — workflow API reference

@@ -363,16 +363,30 @@ async function loadModuleFromCode(
 
   // In compiled Deno binaries, external modules loaded from temp files cannot
   // resolve "veryfront" since the source is embedded in the binary's virtual FS.
-  // Write a runtime shim that provides the framework's public API via globalThis bridges.
+  // Write runtime shims: a root shim for `from "veryfront"` and per-subpath shims
+  // for `from "veryfront/xxx"` (e.g., middleware, workflow, tool).
   if (isDeno && isCompiledBinary()) {
     // Ensure agent factory globalThis bridge is registered before loading user code.
-    // This dynamic import is FROM embedded source, so it resolves normally.
     await import("#veryfront/agent/factory.ts");
 
+    // Write root shim for `from "veryfront"` → "./_vf_runtime.mjs"
     await fs.writeTextFile(
       pathHelper.join(tempDir, "_vf_runtime.mjs"),
       VERYFRONT_RUNTIME_SHIM,
     );
+
+    // Discover which veryfront/* subpaths the user code imports, register the
+    // real modules on globalThis, and write per-subpath shim files.
+    const subpaths = extractSubpathsFromCode(transformedCode);
+    if (subpaths.size > 0) {
+      await registerVfModules(subpaths);
+
+      for (const subpath of subpaths) {
+        const shimName = `_vf_${subpath.replace(/\//g, "_")}.mjs`;
+        const shimCode = generateSubpathShim(subpath);
+        await fs.writeTextFile(pathHelper.join(tempDir, shimName), shimCode);
+      }
+    }
   }
 
   await fs.writeTextFile(tempFile, transformedCode);
@@ -561,27 +575,27 @@ async function rewriteExternalImports(
     }
 
     // In compiled binaries, "veryfront" resolves to embedded source that can't be
-    // imported from external temp files. Rewrite to use a local runtime shim.
+    // imported from external temp files. Rewrite to use local runtime shims.
     if (isCompiledBinary()) {
-      // Static imports: from "veryfront"
+      // Static root imports: from "veryfront"
       transformed = transformed.replace(
         /from\s+["']veryfront["']/g,
         'from "./_vf_runtime.mjs"',
       );
-      // Dynamic imports: import("veryfront")
+      // Dynamic root imports: import("veryfront")
       transformed = transformed.replace(
         /import\s*\(\s*["']veryfront["']\s*\)/g,
         'import("./_vf_runtime.mjs")',
       );
-      // Subpath static imports: from "veryfront/agent" etc.
+      // Subpath static imports: from "veryfront/agent" → from "./_vf_agent.mjs"
       transformed = transformed.replace(
         /from\s+["']veryfront\/([^"']+)["']/g,
-        'from "./_vf_runtime.mjs"',
+        (_match, subpath: string) => `from "./_vf_${subpath.replace(/\//g, "_")}.mjs"`,
       );
-      // Subpath dynamic imports: import("veryfront/agent") etc.
+      // Subpath dynamic imports: import("veryfront/agent") → import("./_vf_agent.mjs")
       transformed = transformed.replace(
         /import\s*\(\s*["']veryfront\/([^"']+)["']\s*\)/g,
-        'import("./_vf_runtime.mjs")',
+        (_match, subpath: string) => `import("./_vf_${subpath.replace(/\//g, "_")}.mjs")`,
       );
     }
   }
@@ -589,19 +603,100 @@ async function rewriteExternalImports(
   return transformed;
 }
 
-function extractAPIRouteHandlers(module: unknown): APIRoute {
-  if (!module || typeof module !== "object") return {};
+function extractAPIRouteHandlers(module: unknown): APIRoute | null {
+  if (!module || typeof module !== "object") return null;
 
   const mod = module as Record<string, unknown>;
   const handler: APIRoute = {};
   const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "default"] as const;
+  let found = false;
 
   for (const method of methods) {
     const fn = mod[method];
-    if (typeof fn === "function") handler[method] = fn as APIRoute[typeof method];
+    if (typeof fn === "function") {
+      handler[method] = fn as APIRoute[typeof method];
+      found = true;
+    }
   }
 
-  return handler;
+  return found ? handler : null;
+}
+
+/**
+ * Extract veryfront subpath references from transpiled code.
+ * After rewriteExternalImports, subpath imports look like `./_vf_<name>.mjs`.
+ */
+function extractSubpathsFromCode(code: string): Set<string> {
+  const subpaths = new Set<string>();
+
+  // Match _vf_<subpath>.mjs patterns (but not _vf_runtime.mjs which is the root)
+  const re = /_vf_([a-zA-Z0-9_]+)\.mjs/g;
+  let match;
+  while ((match = re.exec(code)) !== null) {
+    const shimName = match[1] ?? "";
+    if (shimName && shimName !== "runtime") {
+      subpaths.add(shimName.replace(/_/g, "/"));
+    }
+  }
+
+  return subpaths;
+}
+
+/**
+ * Register veryfront modules on globalThis so per-subpath shims can delegate.
+ * Imports are from embedded source (works in compiled binaries).
+ */
+async function registerVfModules(subpaths: Set<string>): Promise<void> {
+  const modules = ((globalThis as Record<string, unknown>).__vfModules ?? {}) as Record<
+    string,
+    Record<string, unknown>
+  >;
+
+  for (const subpath of subpaths) {
+    if (modules[subpath]) continue;
+
+    try {
+      const specifier = `veryfront/${subpath}`;
+      modules[subpath] = await import(specifier) as Record<string, unknown>;
+      logger.debug(`[API] Registered module ${specifier} on globalThis`);
+    } catch (e) {
+      logger.warn(`[API] Failed to register veryfront/${subpath}: ${e}`);
+    }
+  }
+
+  (globalThis as Record<string, unknown>).__vfModules = modules;
+}
+
+/**
+ * Generate an ESM shim for a specific veryfront subpath.
+ * Named exports are discovered from the registered module.
+ */
+function generateSubpathShim(subpath: string): string {
+  const modules = (globalThis as Record<string, unknown>).__vfModules as
+    | Record<string, Record<string, unknown>>
+    | undefined;
+  const mod = modules?.[subpath];
+
+  if (!mod) {
+    return `throw new Error("veryfront/${subpath} runtime not registered in compiled binary context");`;
+  }
+
+  const exportNames = Object.keys(mod).filter((k) => k !== "default" && k !== "__esModule");
+  const lines: string[] = [
+    `// Auto-generated shim for veryfront/${subpath}`,
+    `const _mod = globalThis.__vfModules["${subpath}"];`,
+  ];
+
+  for (const name of exportNames) {
+    // Use bracket notation to handle reserved words or special names
+    lines.push(`export const ${name} = _mod["${name}"];`);
+  }
+
+  if ("default" in mod) {
+    lines.push(`export default _mod["default"];`);
+  }
+
+  return lines.join("\n");
 }
 
 /**

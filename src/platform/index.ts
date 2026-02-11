@@ -1,3 +1,10 @@
+/**
+ * Cross-runtime abstraction layer — adapter detection, process/env/signal
+ * compat, filesystem and KV abstractions for Deno, Node.js, and Bun.
+ *
+ * @module platform
+ */
+
 // Adapters
 export { getAdapter } from "./adapters/detect.ts";
 export { getLocalAdapter, runtime } from "./adapters/registry.ts";

@@ -1,3 +1,27 @@
+/**
+ * CORS, rate limiting, logging, and timeout middleware.
+ *
+ * @module middleware
+ *
+ * @example Single middleware
+ * ```ts
+ * import { cors } from "veryfront/middleware";
+ *
+ * const corsMiddleware = cors({ origin: "https://example.com" });
+ * ```
+ *
+ * @example Pipeline composition
+ * ```ts
+ * import { MiddlewarePipeline, cors, rateLimit, logger, timeout } from "veryfront/middleware";
+ *
+ * const pipeline = new MiddlewarePipeline()
+ *   .use(cors({ origin: "https://example.com" }))
+ *   .use(rateLimit({ maxRequests: 100, windowMs: 60_000 }))
+ *   .use(logger({ format: "combined" }))
+ *   .use(timeout({ timeoutMs: 30_000 }));
+ * ```
+ */
+
 export {
   MiddlewareContext,
   MiddlewarePipeline,

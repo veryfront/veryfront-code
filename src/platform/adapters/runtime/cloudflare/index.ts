@@ -1,3 +1,9 @@
+/**
+ * Runtime - Cloudflare
+ *
+ * @module platform/adapters/runtime/cloudflare
+ */
+
 export { CloudflareAdapter } from "./adapter.ts";
 export { CloudflareEnvironmentAdapter } from "./environment.ts";
 export { CloudflareFileSystemAdapter } from "./filesystem.ts";

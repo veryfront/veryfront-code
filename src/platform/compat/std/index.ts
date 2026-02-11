@@ -1,3 +1,9 @@
+/**
+ * Compat - Std
+ *
+ * @module platform/compat/std
+ */
+
 export * as expect from "./expect.ts";
 export * as fs from "./fs.ts";
 export * as path from "./path.ts";

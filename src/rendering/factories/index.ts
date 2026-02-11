@@ -1,3 +1,9 @@
+/**
+ * Rendering Factories
+ *
+ * @module rendering/factories
+ */
+
 export {
   type ContextBoundServices,
   createComponentRegistry,

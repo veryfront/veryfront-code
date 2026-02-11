@@ -1,3 +1,39 @@
+/**
+ * Configuration, server bootstrap, routing, data fetching, and input validation.
+ *
+ * @module veryfront
+ *
+ * @example Configuration
+ * ```ts
+ * import { defineConfig } from "veryfront";
+ *
+ * export default defineConfig({
+ *   // your project config
+ * });
+ * ```
+ *
+ * @example API routes
+ * ```ts
+ * import { json } from "veryfront";
+ * import type { APIContext, APIResponse } from "veryfront";
+ *
+ * export function GET(ctx: APIContext): APIResponse {
+ *   return json({ message: "Hello" });
+ * }
+ * ```
+ *
+ * @example Data loading
+ * ```ts
+ * import { notFound } from "veryfront";
+ * import type { DataContext } from "veryfront";
+ *
+ * export function getServerData(ctx: DataContext) {
+ *   if (!ctx.params.id) throw notFound();
+ *   return { title: "Page" };
+ * }
+ * ```
+ */
+
 export { defineConfig } from "#veryfront/config";
 export type { VeryfrontConfig } from "#veryfront/config";
 

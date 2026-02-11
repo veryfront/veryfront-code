@@ -1,3 +1,9 @@
+/**
+ * Builtin - Security
+ *
+ * @module middleware/builtin/security
+ */
+
 export type {
   CORSOptions,
   CSPDirectives,

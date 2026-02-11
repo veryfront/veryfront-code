@@ -1,3 +1,10 @@
+/**
+ * Issue tracking and management. Provides schemas, parsing, serialization,
+ * and MCP tools for creating, listing, and updating project issues.
+ *
+ * @module issues
+ */
+
 export type {
   CreateIssueOptions,
   Issue,

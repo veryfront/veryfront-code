@@ -1,3 +1,9 @@
+/**
+ * Workflow Executor
+ *
+ * @module workflow/executor
+ */
+
 export { CheckpointManager } from "./checkpoint-manager.ts";
 export type { CheckpointManagerConfig, ResumeInfo } from "./checkpoint-manager.ts";
 

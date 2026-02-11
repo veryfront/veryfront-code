@@ -3,10 +3,10 @@ import { z } from 'zod';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
 export const getUsage = tool({
-  name: 'get_usage',
+  id: 'get_usage',
   description:
     'Get API usage statistics for a specific date range. Returns token usage and costs broken down by date, workspace, and model. Dates must be in YYYY-MM-DD format.',
-  parameters: z.object({
+  inputSchema: z.object({
     startDate: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')

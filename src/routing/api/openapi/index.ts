@@ -1,3 +1,9 @@
+/**
+ * Api - Openapi
+ *
+ * @module routing/api/openapi
+ */
+
 export { createRoute, z } from "./create-route.ts";
 
 export { extractPathParams, generateOperationId, toOpenAPIPath } from "./path-utils.ts";

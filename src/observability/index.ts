@@ -1,3 +1,10 @@
+/**
+ * OpenTelemetry tracing, metrics collection, auto-instrumentation for
+ * fetch/HTTP/React, OTLP export, and structured error and log buffering.
+ *
+ * @module observability
+ */
+
 export {
   addSpanEvent,
   createChildSpan,

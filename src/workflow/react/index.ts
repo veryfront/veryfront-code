@@ -1,3 +1,9 @@
+/**
+ * Workflow React
+ *
+ * @module workflow/react
+ */
+
 export { useWorkflow } from "./use-workflow.ts";
 export type { UseWorkflowOptions, UseWorkflowResult } from "./use-workflow.ts";
 

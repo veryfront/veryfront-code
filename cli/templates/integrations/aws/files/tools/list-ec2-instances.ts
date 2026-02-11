@@ -3,10 +3,10 @@ import { z } from 'zod';
 import { getAWSClient } from '../../lib/aws-client';
 
 export const listEC2InstancesTool = tool({
-  name: 'list-ec2-instances',
+  id: 'list-ec2-instances',
   description:
     'List all EC2 instances in your AWS account. Returns instance details including ID, type, state, and IP addresses.',
-  input: z.object({
+  inputSchema: z.object({
     region: z
       .string()
       .optional()

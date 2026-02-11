@@ -1,3 +1,9 @@
+/**
+ * Observability Instruments
+ *
+ * @module observability/instruments
+ */
+
 export { initializeInstruments } from "./instruments-factory.ts";
 export type { BuildInstruments } from "./build-instruments.ts";
 export type { CacheInstruments } from "./cache-instruments.ts";

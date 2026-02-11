@@ -18,7 +18,7 @@ describe("interactive-wizard", () => {
     });
 
     it("should return false when template is specified", () => {
-      assertEquals(shouldRunWizard({ template: "ai" }), false);
+      assertEquals(shouldRunWizard({ template: "chat" }), false);
     });
 
     it("should return false when template is minimal", () => {
@@ -31,7 +31,7 @@ describe("interactive-wizard", () => {
 
     it("should return false when both template and integrations specified", () => {
       assertEquals(
-        shouldRunWizard({ template: "ai", integrations: ["github", "slack"] }),
+        shouldRunWizard({ template: "chat", integrations: ["github", "slack"] }),
         false,
       );
     });

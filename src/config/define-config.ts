@@ -33,7 +33,7 @@ export async function validateConfig(config: unknown): Promise<void> {
   const port = dev && typeof dev === "object" ? (dev as Record<string, unknown>).port : undefined;
 
   if (port !== undefined) {
-    const { MIN_PORT, MAX_PORT } = await import("../utils/constants/network.ts");
+    const { MIN_PORT, MAX_PORT } = await import("../utils/constants/index.ts");
 
     if (typeof port !== "number" || port < MIN_PORT || port > MAX_PORT) {
       throw toError(

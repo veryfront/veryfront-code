@@ -1,3 +1,10 @@
+/**
+ * Code transformation pipelines — ESM module rewriting (bare imports, path
+ * aliases, React), MDX compilation with caching, and remark/rehype plugins.
+ *
+ * @module transforms
+ */
+
 // ESM transforms
 export {
   addDepsToEsmShUrls,

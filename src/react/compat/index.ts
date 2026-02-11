@@ -1,3 +1,9 @@
+/**
+ * React Compat
+ *
+ * @module react/compat
+ */
+
 export {
   createReactVersionSwitcher,
   detectReactVersionFromConfig,

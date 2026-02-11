@@ -37,20 +37,22 @@ describe("mcp/tools/catalog-tools", () => {
     });
 
     it("accepts template filter parameter", async () => {
-      const result = await vfListExamples.execute({ template: "ai" });
+      const result = await vfListExamples.execute({ template: "chat" });
       assertEquals(Array.isArray(result), true);
-      if (result.length > 0) {
-        assertExists(result[0].name);
-        assertExists(result[0].template);
+      const first = result[0];
+      if (first) {
+        assertExists(first.name);
+        assertExists(first.template);
       }
     });
 
     it("accepts difficulty filter parameter", async () => {
       const result = await vfListExamples.execute({ difficulty: "beginner" });
       assertEquals(Array.isArray(result), true);
-      if (result.length > 0) {
-        assertExists(result[0].name);
-        assertExists(result[0].difficulty);
+      const first = result[0];
+      if (first) {
+        assertExists(first.name);
+        assertExists(first.difficulty);
       }
     });
   });
@@ -84,7 +86,7 @@ describe("mcp/tools/catalog-tools", () => {
     });
 
     it("returns integrations when executed", async () => {
-      const result = await vfListIntegrations.execute({});
+      const result = await vfListIntegrations.execute({ category: "all" });
       assertEquals(Array.isArray(result), true);
     });
 

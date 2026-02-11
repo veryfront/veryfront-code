@@ -1,3 +1,9 @@
+/**
+ * Rendering Context
+ *
+ * @module rendering/context
+ */
+
 export {
   createCacheKey,
   createRenderContext,

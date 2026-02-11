@@ -1,12 +1,12 @@
 /**
- * Discovery Module
- *
  * Automatic discovery and registration of tools, agents, resources,
  * prompts, and workflows from the project directory.
  *
  * This is a framework-level capability — servers call discoverAll()
  * during startup and on HMR file changes. The CLI provides configuration
  * but does not orchestrate discovery directly.
+ *
+ * @module discovery
  */
 
 // Re-export types

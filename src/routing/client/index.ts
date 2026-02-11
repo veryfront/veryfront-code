@@ -1,3 +1,9 @@
+/**
+ * Routing Client
+ *
+ * @module routing/client
+ */
+
 export {
   applyHeadDirectives,
   executeScripts,

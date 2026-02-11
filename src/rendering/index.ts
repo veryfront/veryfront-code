@@ -1,3 +1,10 @@
+/**
+ * SSR rendering engine — page rendering with VeryfrontRenderer, chunk analysis,
+ * multi-tier cache coordination (API, filesystem, KV, memory, Redis), and layouts.
+ *
+ * @module rendering
+ */
+
 export type { PageDataResponse, RendererOptions, RenderResult } from "./orchestrator/types.ts";
 export { VeryfrontRenderer } from "./orchestrator/ssr.ts";
 

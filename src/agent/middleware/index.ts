@@ -1,3 +1,9 @@
+/**
+ * Agent Middleware
+ *
+ * @module agent/middleware
+ */
+
 export { createMiddlewareChain, MiddlewareChain } from "./chain.ts";
 
 export {

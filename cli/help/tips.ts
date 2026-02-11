@@ -16,11 +16,13 @@ export function getBuildTips(): string {
 
 export function getInitTemplates(): string {
   return `${yellow("Available Templates:")}\n` +
-    `  • ${green("ai")}       - AI agent with chat UI and tool calling (recommended)\n` +
-    `  • ${green("app")}      - Full-stack app with auth & API\n` +
-    `  • ${green("blog")}     - Blog with MDX, tags, and RSS\n` +
-    `  • ${green("docs")}     - Documentation site with search\n` +
-    `  • ${green("minimal")}  - Bare-bones starter\n`;
+    `  • ${green("chat")}          - AI chatbot with tools and streaming\n` +
+    `  • ${green("rag")}           - Chat with your docs (RAG + citations)\n` +
+    `  • ${green("multi-agent")}   - Agents that delegate to each other\n` +
+    `  • ${green("workflow")}      - AI pipeline with approvals\n` +
+    `  • ${green("coding-agent")}  - AI code assistant with file tools\n` +
+    `  • ${green("saas")}          - AI SaaS with auth + per-user memory\n` +
+    `  • ${green("minimal")}       - Blank canvas\n`;
 }
 
 const COMMAND_TIPS: Record<string, () => string> = {

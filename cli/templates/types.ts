@@ -18,11 +18,13 @@ export interface TemplateConfig {
 }
 
 export type TemplateName =
-  | "blog"
-  | "docs"
-  | "app"
+  | "chat"
+  | "rag"
+  | "multi-agent"
+  | "workflow"
+  | "coding-agent"
+  | "saas"
   | "minimal"
-  | "ai"
   | "pages-router"
   | "app-router";
 

@@ -1,3 +1,9 @@
+/**
+ * Adapters - Token
+ *
+ * @module platform/adapters/token
+ */
+
 export {
   MemoryTokenAdapter,
   TOKEN_STORAGE_ERROR,

@@ -24,7 +24,7 @@ export async function runNewTui(projectName: string, _userEmail?: string): Promi
   const template = await select("Template", templateOptions);
 
   if (!template) {
-    return { template: "ai", integrations: [], cancelled: true };
+    return { template: "chat", integrations: [], cancelled: true };
   }
 
   console.log();

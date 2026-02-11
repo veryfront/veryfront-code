@@ -1,3 +1,9 @@
+/**
+ * Compat - Ssr Adapter
+ *
+ * @module react/compat/ssr-adapter
+ */
+
 export type { HTMLWrapOptions, SSROptions, SSRResponseOptions, SSRResult } from "./types.ts";
 export { getProjectReact, getReactDOMServer } from "./server-loader.ts";
 export type { ReactDOMServer } from "./server-loader.ts";

@@ -1,3 +1,9 @@
+/**
+ * Platform Compat
+ *
+ * @module platform/compat
+ */
+
 // Compat: filesystem
 export {
   createFileSystem,

@@ -1,3 +1,9 @@
+/**
+ * Http - Middleware
+ *
+ * @module security/http/middleware
+ */
+
 export type {
   AuthConfig,
   BasicAuthConfig,

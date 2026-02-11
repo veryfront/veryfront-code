@@ -1,3 +1,9 @@
+/**
+ * Build Production Build
+ *
+ * @module build/production-build
+ */
+
 export { type AssetStats, copyStaticAssets, loadClientStyles } from "./asset-generation.ts";
 export {
   generateAppModule,
@@ -19,4 +25,27 @@ export {
   type SSGOptions,
   type SSGStats,
 } from "./static-generation.ts";
-export * from "./build/index.ts";
+export {
+  buildProduction,
+  cleanupCaches,
+  cleanupRenderer,
+  logBuildCompletion,
+} from "./build/index.ts";
+export { type BuildExecutorOptions, type BuildResult, executeBuild } from "./build/index.ts";
+export { type BuildContext, initializeBuildContext, normalizeBuildOptions } from "./build/index.ts";
+export { setupBuildDirectories } from "./build/index.ts";
+export {
+  cleanupCachesUtil,
+  cleanupRendererUtil,
+  logCompletion,
+  performCleanup,
+} from "./build/index.ts";
+export { runCodeSplitting, type SplitResult } from "./build/index.ts";
+export {
+  copyAssets,
+  generateClientScripts,
+  generateManifestAndServiceWorker,
+  generateRedirectsFile,
+  type OutputGeneratorOptions,
+} from "./build/index.ts";
+export { collectAllRoutes, type CollectedRoutes } from "./build/index.ts";

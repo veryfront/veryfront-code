@@ -1,3 +1,10 @@
+/**
+ * Internal utilities — runtime detection, structured logging, constants
+ * (breakpoints, timeouts, HTTP codes), hashing, memoization, and feature flags.
+ *
+ * @module utils
+ */
+
 export {
   type GlobalWithBun,
   type GlobalWithDeno,

@@ -1,3 +1,9 @@
+/**
+ * Agent Streaming
+ *
+ * @module agent/streaming
+ */
+
 export {
   type AgentStreamEvent,
   AgentStreamEventSchema,

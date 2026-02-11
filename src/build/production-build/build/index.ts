@@ -55,4 +55,4 @@ export {
   type OutputGeneratorOptions,
 } from "./output-generator.ts";
 
-export * from "./route-collector.ts";
+export { collectAllRoutes, type CollectedRoutes } from "./route-collector.ts";

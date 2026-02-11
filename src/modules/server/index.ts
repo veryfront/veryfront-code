@@ -1,3 +1,9 @@
+/**
+ * Modules Server
+ *
+ * @module modules/server
+ */
+
 export {
   APIServer,
   type APIServerOptions,

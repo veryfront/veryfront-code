@@ -1,1 +1,7 @@
-export * from "./prompt.schema.ts";
+/**
+ * Prompt Schemas
+ *
+ * @module prompt/schemas
+ */
+
+export { type PromptConfig, PromptConfigSchema } from "./prompt.schema.ts";

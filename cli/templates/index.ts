@@ -39,26 +39,37 @@ export {
   validateFeatures,
 } from "./feature-loader.ts";
 
+const OPENAI_KEY_CONFIG = {
+  name: "OPENAI_API_KEY",
+  description: "Your OpenAI API key",
+  required: true,
+  sensitive: true,
+  placeholder: "sk-...",
+  docsUrl: "https://platform.openai.com/api-keys",
+} as const;
+
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
-  ai: {
-    envVars: [
-      {
-        name: "OPENAI_API_KEY",
-        description: "Your OpenAI API key",
-        required: true,
-        sensitive: true,
-        placeholder: "sk-...",
-        docsUrl: "https://platform.openai.com/api-keys",
-      },
-    ],
-  },
+  chat: { envVars: [OPENAI_KEY_CONFIG] },
+  rag: { envVars: [OPENAI_KEY_CONFIG] },
+  "multi-agent": { envVars: [OPENAI_KEY_CONFIG] },
+  workflow: { envVars: [OPENAI_KEY_CONFIG] },
+  "coding-agent": { envVars: [OPENAI_KEY_CONFIG] },
+  saas: { envVars: [OPENAI_KEY_CONFIG] },
 };
 
-const DIRECTORY_BASED_TEMPLATES: TemplateName[] = ["minimal", "ai", "app", "blog", "docs"];
+const DIRECTORY_BASED_TEMPLATES: TemplateName[] = [
+  "chat",
+  "rag",
+  "multi-agent",
+  "workflow",
+  "coding-agent",
+  "saas",
+  "minimal",
+];
 
 export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | null> {
   if (name === "pages-router" || name === "app-router") {
-    return getTemplate("minimal");
+    return getTemplate("chat");
   }
 
   if (!DIRECTORY_BASED_TEMPLATES.includes(name)) {

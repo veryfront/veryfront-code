@@ -1,3 +1,9 @@
+/**
+ * Transforms Plugins
+ *
+ * @module transforms/plugins
+ */
+
 export { getRehypePlugins, getRemarkPlugins } from "./plugin-loader.ts";
 export { rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
 export { remarkMdxHeadings } from "./remark-headings.ts";

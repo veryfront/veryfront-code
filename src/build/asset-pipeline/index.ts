@@ -1,4 +1,27 @@
-export * from "./css-optimizer/index.ts";
+/**
+ * Build Asset Pipeline
+ *
+ * @module build/asset-pipeline
+ */
+
+export type {
+  BrowserTargets,
+  CriticalCSSResult,
+  CSSBundle,
+  CSSOptimizationOptions,
+  CSSOptimizationStrategy,
+  CSSOptimizerStats,
+} from "./css-optimizer/index.ts";
+export { CSSOptimizerService } from "./css-optimizer/index.ts";
+export { CacheManager, loadCSSManifest } from "./css-optimizer/index.ts";
+export { extractCriticalCSS } from "./css-optimizer/index.ts";
+export {
+  LightningCSSStrategy,
+  MinificationStrategy,
+  PurgeStrategy,
+} from "./css-optimizer/index.ts";
+export { CSSUtils } from "./css-optimizer/index.ts";
+export { CSSOptimizer, optimizeCSS } from "./css-optimizer/index.ts";
 
 import { type CSSOptimizationOptions, CSSOptimizer } from "./css-optimizer/index.ts";
 import { type ImageOptimizationOptions, ImageOptimizer } from "./image-optimizer/index.ts";

@@ -1,3 +1,9 @@
+/**
+ * Css Optimizer - Types
+ *
+ * @module build/asset-pipeline/css-optimizer/types
+ */
+
 export interface LightningCSSTransformOptions {
   filename: string;
   code: Uint8Array;

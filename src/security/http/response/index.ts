@@ -1,3 +1,9 @@
+/**
+ * Http - Response
+ *
+ * @module security/http/response
+ */
+
 export type { CacheStrategy, CORSConfig, ResponseBuilderConfig, SecurityConfig } from "./types.ts";
 export { CACHE_DURATIONS, CONTENT_TYPES } from "./constants.ts";
 export { createResponseBuilder, ResponseBuilder } from "./builder.ts";

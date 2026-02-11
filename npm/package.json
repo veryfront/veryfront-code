@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.7-rc.46",
+  "version": "0.1.7-rc.57",
   "description": "The simplest way to build AI-powered apps",
   "keywords": [
     "react",
@@ -28,15 +28,6 @@
     ".": {
       "import": "./esm/src/index.js"
     },
-    "./cli": {
-      "import": "./esm/cli/main.js"
-    },
-    "./server": {
-      "import": "./esm/src/server/index.js"
-    },
-    "./middleware": {
-      "import": "./esm/src/middleware/index.js"
-    },
     "./head": {
       "import": "./esm/src/react/components/Head.js"
     },
@@ -49,89 +40,35 @@
     "./fonts": {
       "import": "./esm/src/react/fonts/index.js"
     },
-    "./react": {
-      "import": "./esm/src/react/index.js"
+    "./chat": {
+      "import": "./esm/src/chat/index.js"
     },
-    "./react/components": {
-      "import": "./esm/src/react/components/index.js"
+    "./markdown": {
+      "import": "./esm/src/markdown/index.js"
     },
-    "./react/components/ai": {
-      "import": "./esm/src/react/components/ai/index.js"
-    },
-    "./components/ai": {
-      "import": "./esm/src/react/components/ai/index.js"
-    },
-    "./react/primitives": {
-      "import": "./esm/src/react/primitives/index.js"
-    },
-    "./react/context": {
-      "import": "./esm/src/react/context/index.js"
-    },
-    "./react/router": {
-      "import": "./esm/src/react/router/index.js"
-    },
-    "./react/fonts": {
-      "import": "./esm/src/react/fonts/index.js"
-    },
-    "./react/head": {
-      "import": "./esm/src/react/components/Head.js"
-    },
-    "./data": {
-      "import": "./esm/src/data/index.js"
-    },
-    "./config": {
-      "import": "./esm/src/config/index.js"
-    },
-    "./platform": {
-      "import": "./esm/src/platform/index.js"
-    },
-    "./platform/path": {
-      "import": "./esm/src/platform/compat/path/index.js"
-    },
-    "./tool": {
-      "import": "./esm/src/tool/index.js"
-    },
-    "./tool/schema": {
-      "import": "./esm/src/tool/schema/index.js"
-    },
-    "./tool/testing": {
-      "import": "./esm/src/tool/testing/index.js"
-    },
-    "./provider": {
-      "import": "./esm/src/provider/index.js"
-    },
-    "./provider/adapters": {
-      "import": "./esm/src/provider/adapters/index.js"
+    "./mdx": {
+      "import": "./esm/src/mdx/index.js"
     },
     "./agent": {
       "import": "./esm/src/agent/index.js"
     },
-    "./agent/react": {
-      "import": "./esm/src/agent/react/index.js"
-    },
-    "./agent/react/client": {
-      "import": "./esm/src/agent/react/client.js"
-    },
-    "./agent/memory": {
-      "import": "./esm/src/agent/memory/index.js"
-    },
-    "./agent/composition": {
-      "import": "./esm/src/agent/composition/index.js"
-    },
-    "./agent/middleware": {
-      "import": "./esm/src/agent/middleware/index.js"
-    },
-    "./agent/testing": {
-      "import": "./esm/src/agent/testing/index.js"
-    },
-    "./agent/debug": {
-      "import": "./esm/src/agent/debug/index.js"
+    "./tool": {
+      "import": "./esm/src/tool/index.js"
     },
     "./workflow": {
       "import": "./esm/src/workflow/index.js"
     },
-    "./workflow/react": {
-      "import": "./esm/src/workflow/react/index.js"
+    "./workflow/worker": {
+      "import": "./esm/src/workflow/worker/index.js"
+    },
+    "./workflow/claude-code": {
+      "import": "./esm/src/workflow/claude-code/index.js"
+    },
+    "./workflow/claude-code/react": {
+      "import": "./esm/src/workflow/claude-code/react/index.js"
+    },
+    "./workflow/discovery": {
+      "import": "./esm/src/workflow/discovery/index.js"
     },
     "./prompt": {
       "import": "./esm/src/prompt/index.js"
@@ -142,20 +79,17 @@
     "./mcp": {
       "import": "./esm/src/mcp/index.js"
     },
+    "./middleware": {
+      "import": "./esm/src/middleware/index.js"
+    },
     "./oauth": {
       "import": "./esm/src/oauth/index.js"
     },
-    "./oauth/providers": {
-      "import": "./esm/src/oauth/providers/index.js"
+    "./provider": {
+      "import": "./esm/src/provider/index.js"
     },
-    "./oauth/handlers": {
-      "import": "./esm/src/oauth/handlers/index.js"
-    },
-    "./oauth/token-store": {
-      "import": "./esm/src/oauth/token-store/index.js"
-    },
-    "./embeddings": {
-      "import": "./esm/src/embeddings/index.js"
+    "./fs": {
+      "import": "./esm/src/fs/index.js"
     }
   },
   "scripts": {
@@ -173,8 +107,7 @@
     }
   },
   "dependencies": {
-    "@ai-sdk/react": "3.0.35",
-    "@aws-sdk/client-s3": "3.490.0",
+    "@anthropic-ai/claude-agent-sdk": "0.2.37",
     "@babel/generator": "7.26.3",
     "@babel/parser": "7.26.3",
     "@babel/traverse": "7.26.3",
@@ -194,13 +127,11 @@
     "esbuild": "0.20.2",
     "github-slugger": "2.0.0",
     "gray-matter": "4.0.3",
-    "lightningcss": "1.22.0",
     "mdast-util-to-string": "4.0.0",
-    "mime-types": "2.1.35",
     "picocolors": "1.1.1",
     "react": "19.1.1",
     "react-dom": "19.1.1",
-    "redis": "*",
+    "redis": "4.6.13",
     "rehype-highlight": "7.0.2",
     "rehype-slug": "6.0.0",
     "rehype-starry-night": "2.2.0",
@@ -209,7 +140,6 @@
     "remark-gfm": "4.0.1",
     "remark-parse": "11.0.0",
     "remark-rehype": "11.1.1",
-    "sharp": "0.33.0",
     "tailwindcss": "4.1.8",
     "unified": "11.0.5",
     "unist-util-visit": "5.0.0",

@@ -1,3 +1,26 @@
+/**
+ * Access route params, page data, and MDX frontmatter.
+ *
+ * @module context
+ *
+ * @example
+ * ```tsx
+ * import { usePageContext } from "veryfront/context";
+ *
+ * function TableOfContents() {
+ *   const { headings, frontmatter } = usePageContext();
+ *   return (
+ *     <ul>
+ *       {headings.map((h) => (
+ *         <li key={h.id}>
+ *           <a href={`#${h.id}`}>{h.text}</a>
+ *         </li>
+ *       ))}
+ *     </ul>
+ *   );
+ * }
+ * ```
+ */
 import React from "react";
 
 export interface MdxHeading {
