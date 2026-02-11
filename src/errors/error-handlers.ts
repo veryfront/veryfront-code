@@ -57,7 +57,7 @@ export async function retryWithBackoff<T>(
     maxRetries = DEFAULT_RETRY_MAX_ATTEMPTS,
     initialDelay = DEFAULT_RETRY_INITIAL_DELAY_MS,
     maxDelay = DEFAULT_RETRY_MAX_DELAY_MS,
-    logger: log = serverLogger,
+    logger: retryLogger = serverLogger,
   } = options;
 
   let lastError: unknown;
@@ -68,7 +68,7 @@ export async function retryWithBackoff<T>(
       return await fn();
     } catch (error) {
       lastError = error;
-      safeLog(() => logger.warn(`Attempt ${attempt + 1} failed, retrying...`, error));
+      safeLog(() => retryLogger.warn(`Attempt ${attempt + 1} failed, retrying...`, error));
 
       if (attempt >= maxRetries - 1) {
         continue;
