@@ -70,7 +70,11 @@ describe("invalidateModulePaths — disk persistence", () => {
 
       // Load the path cache from disk
       const cache = await getModulePathCache(cacheDir);
-      assertEquals(cache.get(versionedKey), staleMjsPath, "precondition: entry loaded from _index.json");
+      assertEquals(
+        cache.get(versionedKey),
+        staleMjsPath,
+        "precondition: entry loaded from _index.json",
+      );
 
       // Invalidate — simulates a poke with changedPaths: ["components/EmptyState.tsx"]
       invalidateModulePaths(["components/EmptyState.tsx"]);
@@ -135,13 +139,21 @@ describe("invalidateModulePaths — disk persistence", () => {
 
     const cacheDir = await makeTempDir({ prefix: "vf-mdx-no-resurrect-" });
     const normalizedPath = "_vf_modules/components/EmptyState.js";
-    const oldModuleCode = `import { jsx } from "react/jsx-runtime";\nexport default jsx("h1", { children: "Welcome to AI Chatbot" });`;
-    const newModuleCode = `import { jsx } from "react/jsx-runtime";\nexport default jsx("h1", { children: "Welcome to AI Chatbotd" });`;
+    const oldModuleCode =
+      `import { jsx } from "react/jsx-runtime";\nexport default jsx("h1", { children: "Welcome to AI Chatbot" });`;
+    const newModuleCode =
+      `import { jsx } from "react/jsx-runtime";\nexport default jsx("h1", { children: "Welcome to AI Chatbotd" });`;
 
     try {
       // Step 1: Cache the old module code
       const pathCache = await getModulePathCache(cacheDir);
-      const oldCachePath = await cacheModule(normalizedPath, oldModuleCode, cacheDir, pathCache, log);
+      const oldCachePath = await cacheModule(
+        normalizedPath,
+        oldModuleCode,
+        cacheDir,
+        pathCache,
+        log,
+      );
 
       assertEquals(oldCachePath !== null, true, "old module should be cached");
       assertEquals(await exists(oldCachePath!), true, "old .mjs should exist on disk");
@@ -151,7 +163,13 @@ describe("invalidateModulePaths — disk persistence", () => {
       await waitForDiskCleanup();
 
       // Step 3: Cache the NEW module code (simulates re-fetch after source change)
-      const newCachePath = await cacheModule(normalizedPath, newModuleCode, cacheDir, pathCache, log);
+      const newCachePath = await cacheModule(
+        normalizedPath,
+        newModuleCode,
+        cacheDir,
+        pathCache,
+        log,
+      );
 
       assertEquals(newCachePath !== null, true, "new module should be cached");
 
@@ -478,8 +496,10 @@ describe("invalidateModulePaths — edge cases", () => {
 
     const cacheDir = await makeTempDir({ prefix: "vf-mdx-lifecycle-" });
     const normalizedPath = "_vf_modules/components/EmptyState.js";
-    const oldCode = `import { jsx } from "react/jsx-runtime";\nexport default jsx("h1", { children: "Welcome to AI Chatbot" });`;
-    const newCode = `import { jsx } from "react/jsx-runtime";\nexport default jsx("h1", { children: "Welcome to AI Chatbotd" });`;
+    const oldCode =
+      `import { jsx } from "react/jsx-runtime";\nexport default jsx("h1", { children: "Welcome to AI Chatbot" });`;
+    const newCode =
+      `import { jsx } from "react/jsx-runtime";\nexport default jsx("h1", { children: "Welcome to AI Chatbotd" });`;
 
     try {
       // Phase 1: Cache old content
