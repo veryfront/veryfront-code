@@ -43,6 +43,9 @@ veryfront-local
 .npmrc
 deno.lock
 
+# Generated integration data (rebuild with generate-integrations-module.ts)
+src/integrations/_data.ts
+
 # NPM build artifacts (DNT output)
 npm/esm/
 npm/src/

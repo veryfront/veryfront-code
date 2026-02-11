@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.7-rc.57",
+  "version": "0.1.7-rc.61",
   "description": "The simplest way to build AI-powered apps",
   "keywords": [
     "react",
@@ -90,6 +90,9 @@
     },
     "./fs": {
       "import": "./esm/src/fs/index.js"
+    },
+    "./integrations": {
+      "import": "./esm/src/integrations/index.js"
     }
   },
   "scripts": {
