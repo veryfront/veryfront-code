@@ -52,7 +52,9 @@ for await (const entry of Deno.readDir(integrationsDir)) {
       try {
         const svg = await Deno.readTextFile(`${dirPath}/${result.data.icon}`);
         icons.push([result.data.name, svg]);
-      } catch { /* no SVG */ }
+      } catch {
+        errors.push(`${entry.name}: icon "${result.data.icon}" declared but file not found`);
+      }
     }
   } catch { /* no connector.json */ }
 }
@@ -77,7 +79,7 @@ const iconLines = icons
 await Deno.writeTextFile(
   dataPath,
   `// Auto-generated — do not edit
-import type { IntegrationConfig } from "./types.ts";
+import type { IntegrationConfig } from "./schema.ts";
 
 export const connectors: IntegrationConfig[] = [
 ${connectorLines},
