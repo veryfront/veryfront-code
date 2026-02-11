@@ -212,7 +212,7 @@ try {
 
   // Sanity: create a pipeline
   const pipeline = new mw.MiddlewarePipeline();
-  assert(pipeline !== undefined, "MiddlewarePipeline instantiates");
+  assert(pipeline instanceof mw.MiddlewarePipeline, "MiddlewarePipeline instantiates");
   console.log("  OK    middleware — 6 checks");
 } catch (err) {
   failed++;
