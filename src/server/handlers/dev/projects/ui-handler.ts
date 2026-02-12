@@ -2,6 +2,7 @@ import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { transformUiModule } from "../shared/ui-module-transform.ts";
 import { logger as baseLogger } from "#veryfront/utils";
+import devUiManifest from "#veryfront/server/dev-ui/manifest.json" with { type: "json" };
 
 const logger = baseLogger.component("projects");
 
@@ -18,23 +19,44 @@ function getUiDirectory(): string {
   return currentFile.replace(/\/handlers\/dev\/projects\/ui-handler\.ts$/, "/dev-ui/projects");
 }
 
+/**
+ * Read UI module from filesystem (for dev) or embedded manifest (for compiled binary)
+ */
 async function readUiSource(
   uiDir: string,
   relativePath: string,
 ): Promise<{ filePath: string; source: string } | null> {
+  // Try filesystem first (works in development, allows hot reload)
   const tsxPath = `${uiDir}/${relativePath}.tsx`;
   try {
     return { filePath: tsxPath, source: await readTextFile(tsxPath) };
   } catch {
-    // fall through
+    // try .ts from filesystem
   }
 
   const tsPath = `${uiDir}/${relativePath}.ts`;
   try {
     return { filePath: tsPath, source: await readTextFile(tsPath) };
   } catch {
-    return null;
+    // Filesystem failed, try embedded manifest (for compiled binary)
   }
+
+  // Try embedded manifest - paths are relative to dev-ui directory
+  const manifest = devUiManifest as { files: Record<string, string> };
+
+  // Try .tsx from manifest
+  const manifestTsxPath = `projects/${relativePath}.tsx`;
+  if (manifest.files[manifestTsxPath]) {
+    return { filePath: manifestTsxPath, source: manifest.files[manifestTsxPath] };
+  }
+
+  // Try .ts from manifest
+  const manifestTsPath = `projects/${relativePath}.ts`;
+  if (manifest.files[manifestTsPath]) {
+    return { filePath: manifestTsPath, source: manifest.files[manifestTsPath] };
+  }
+
+  return null;
 }
 
 export function handleProjectsUI(req: Request): Promise<Response | null> {
