@@ -1,4 +1,5 @@
 import { brand, dim, muted } from "#cli/ui";
+import { getAgentFace } from "../../ui/dot-matrix.ts";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
 import { cliLogger as logger } from "#cli/utils";
@@ -22,9 +23,12 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
     return { projectName: null, template: "minimal", initGit: false, skipped: true };
   }
 
+  // Show logo
   console.log("");
-  console.log(brand("Welcome to Veryfront!"));
-  console.log("Let's set up your project.");
+  console.log(getAgentFace({ litColor: "\x1b[38;2;252;143;93m" }));
+  console.log("");
+  console.log(`┌  Let's create a ${brand("Veryfront App")} ✨`);
+  console.log("│");
 
   // Step 1: Location prompt
   const locationChoice = await select(
