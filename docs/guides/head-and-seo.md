@@ -1,10 +1,12 @@
 ---
 title: "Head & SEO"
-sidebarTitle: "Head & SEO"
 description: "Declarative metadata, Open Graph, and structured data."
+order: 18
 ---
 
-Use the `Head` component to manage `<title>`, `<meta>`, `<link>`, and other `<head>` elements from any page or component.
+# Head & SEO
+
+Declarative metadata, Open Graph, and structured data.
 
 ## Basic metadata
 
@@ -144,8 +146,12 @@ Content here.
 
 The framework automatically injects `title` and `description` from frontmatter into the `<head>`.
 
+## Next
+
+This is the last guide. Explore the [API Reference](../reference/index.md) for detailed module documentation.
+
 ## Related
 
-- [`veryfront/head`](/code/api/head) — Head component API reference
-- [`veryfront/fonts`](/code/api/fonts) — fonts API reference
-- [`veryfront/context`](/code/api/context) — access frontmatter data
+- [`veryfront/head`](../reference/head.md) — Head component API reference
+- [`veryfront/fonts`](../reference/fonts.md) — fonts API reference
+- [`veryfront/context`](../reference/context.md) — access frontmatter data

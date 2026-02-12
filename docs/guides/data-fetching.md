@@ -1,10 +1,12 @@
 ---
 title: "Data Fetching"
-sidebarTitle: "Data Fetching"
 description: "Server data, static generation, and client-side fetching."
+order: 4
 ---
 
-Veryfront pages can load data on the server, at build time, or on the client. Export named functions from your page file to control when and how data is fetched.
+# Data Fetching
+
+Server data, static generation, and client-side fetching.
 
 ## Server data
 
@@ -105,9 +107,9 @@ export default function Search() {
 
 ## Next
 
-- [API Routes](/code/guides/api-routes) — create the endpoints your pages fetch from
-- [Agents](/code/guides/agents) — load AI-generated data server-side
+- [API Routes](./api-routes.md) — create the endpoints your pages fetch from
+- [Agents](./agents.md) — load AI-generated data server-side
 
 ## Related
 
-- [`veryfront` (root)](/code/api/root) — `getServerData`, `getStaticData`, `redirect`, `notFound`
+- [`veryfront` (root)](../reference/root.md) — `getServerData`, `getStaticData`, `redirect`, `notFound`

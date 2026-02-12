@@ -1,10 +1,12 @@
 ---
 title: "Workflows"
-sidebarTitle: "Workflows"
 description: "DAG-based multi-step workflows with branching and parallelism."
+order: 10
 ---
 
-Workflows orchestrate multi-step processes — run agents in sequence, execute steps in parallel, branch on conditions, and pause for human approval.
+# Workflows
+
+DAG-based multi-step workflows with branching and parallelism.
 
 ## Define a workflow
 
@@ -239,9 +241,9 @@ export default function PipelineDashboard() {
 
 ## Next
 
-- [Multi-Agent](/code/guides/multi-agent) — compose agents in workflows and tools
-- [Providers](/code/guides/providers) — configure the LLM providers that power your agents
+- [Multi-Agent](./multi-agent.md) — compose agents in workflows and tools
+- [Providers](./providers.md) — configure the LLM providers that power your agents
 
 ## Related
 
-- [`veryfront/workflow`](/code/api/workflow) — workflow API reference
+- [`veryfront/workflow`](../reference/workflow.md) — workflow API reference

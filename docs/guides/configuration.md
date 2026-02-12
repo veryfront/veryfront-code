@@ -1,10 +1,12 @@
 ---
 title: "Configuration"
-sidebarTitle: "Configuration"
 description: "`veryfront.config.ts` options, environment variables, and runtime settings."
+order: 16
 ---
 
-Veryfront works with zero configuration. When you need to customize behavior, create a `veryfront.config.ts` at your project root.
+# Configuration
+
+`veryfront.config.ts` options, environment variables, and runtime settings.
 
 ## Config file
 
@@ -144,9 +146,9 @@ The framework reads `veryfront.config.ts` automatically. Your config values are 
 
 ## Next
 
-- [Building & Deploying](/code/guides/deploying) — production builds and deployment
-- [Head & SEO](/code/guides/head-and-seo) — metadata and Open Graph tags
+- [Building & Deploying](./deploying.md) — production builds and deployment
+- [Head & SEO](./head-and-seo.md) — metadata and Open Graph tags
 
 ## Related
 
-- [`veryfront` (root)](/code/api/root) — `defineConfig`, `getConfig`
+- [`veryfront` (root)](../reference/root.md) — `defineConfig`, `getConfig`

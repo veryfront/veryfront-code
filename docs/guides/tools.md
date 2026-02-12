@@ -1,10 +1,12 @@
 ---
 title: "Tools"
-sidebarTitle: "Tools"
 description: "Define tools with Zod schemas that agents can call."
+order: 7
 ---
 
-Tools give agents the ability to take actions — call APIs, query databases, compute results. Define a tool with a Zod schema for its parameters and an `execute` function.
+# Tools
+
+Define tools with Zod schemas that agents can call.
 
 ## Define a tool
 
@@ -128,9 +130,9 @@ export default agent({
 
 ## Next
 
-- [Memory & Streaming](/code/guides/memory-and-streaming) — persist conversations across requests
-- [MCP Server](/code/guides/mcp-server) — expose tools over Model Context Protocol
+- [Memory & Streaming](./memory-and-streaming.md) — persist conversations across requests
+- [MCP Server](./mcp-server.md) — expose tools over Model Context Protocol
 
 ## Related
 
-- [`veryfront/tool`](/code/api/tool) — tool API reference
+- [`veryfront/tool`](../reference/tool.md) — tool API reference

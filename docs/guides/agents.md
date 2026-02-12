@@ -1,10 +1,12 @@
 ---
 title: "Agents"
-sidebarTitle: "Agents"
 description: "Create an AI agent with a system prompt, tools, and memory."
+order: 6
 ---
 
-An agent is an AI model with instructions, tools, and memory. Define one in a file, and the framework handles discovery, registration, and routing.
+# Agents
+
+Create an AI agent with a system prompt, tools, and memory.
 
 ## Define an agent
 
@@ -40,7 +42,7 @@ export default agent({
 });
 ```
 
-`maxSteps` limits how many tool-call iterations the agent can perform per request. See [Tools](/code/guides/tools) for how to define `getWeather`.
+`maxSteps` limits how many tool-call iterations the agent can perform per request. See [Tools](./tools.md) for how to define `getWeather`.
 
 ## Connect to a route
 
@@ -105,9 +107,9 @@ export default agent({
 
 ## Next
 
-- [Tools](/code/guides/tools) — define the tools your agent calls
-- [Memory & Streaming](/code/guides/memory-and-streaming) — add conversation memory
+- [Tools](./tools.md) — define the tools your agent calls
+- [Memory & Streaming](./memory-and-streaming.md) — add conversation memory
 
 ## Related
 
-- [`veryfront/agent`](/code/api/agent) — agent API reference
+- [`veryfront/agent`](../reference/agent.md) — agent API reference

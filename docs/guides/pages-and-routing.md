@@ -1,10 +1,12 @@
 ---
 title: "Pages & Routing"
-sidebarTitle: "Pages & Routing"
 description: "File-based routing, layouts, dynamic routes, and MDX pages."
+order: 3
 ---
 
-Every file named `page.tsx` (or `page.mdx`) inside `app/` becomes a route. The file path determines the URL.
+# Pages & Routing
+
+File-based routing, layouts, dynamic routes, and MDX pages.
 
 ## Basic pages
 
@@ -174,10 +176,10 @@ export default function LoginForm() {
 
 ## Next
 
-- [Data Fetching](/code/guides/data-fetching) — load data on the server or at build time
-- [API Routes](/code/guides/api-routes) — create backend endpoints
+- [Data Fetching](./data-fetching.md) — load data on the server or at build time
+- [API Routes](./api-routes.md) — create backend endpoints
 
 ## Related
 
-- [`veryfront/router`](/code/api/router) — router API reference
-- [`veryfront/context`](/code/api/context) — params, page data, and frontmatter hooks
+- [`veryfront/router`](../reference/router.md) — router API reference
+- [`veryfront/context`](../reference/context.md) — params, page data, and frontmatter hooks

@@ -1,10 +1,12 @@
 ---
 title: "Chat UI"
-sidebarTitle: "Chat UI"
 description: "Pre-built chat components and React hooks for AI interfaces."
+order: 9
 ---
 
-Veryfront ships a `Chat` component and hooks for building chat interfaces. They handle streaming, message state, tool call rendering, and error recovery.
+# Chat UI
+
+Pre-built chat components and React hooks for AI interfaces.
 
 ## Quick setup
 
@@ -194,10 +196,10 @@ Customize the `Chat` component with a theme object:
 
 ## Next
 
-- [Workflows](/code/guides/workflows) — orchestrate multi-step agent tasks
-- [Multi-Agent](/code/guides/multi-agent) — compose agents together
+- [Workflows](./workflows.md) — orchestrate multi-step agent tasks
+- [Multi-Agent](./multi-agent.md) — compose agents together
 
 ## Related
 
-- [`veryfront/chat`](/code/api/chat) — chat API reference
-- [`veryfront/agent`](/code/api/agent) — agent API reference
+- [`veryfront/chat`](../reference/chat.md) — chat API reference
+- [`veryfront/agent`](../reference/agent.md) — agent API reference

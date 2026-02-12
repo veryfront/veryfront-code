@@ -1,10 +1,12 @@
 ---
 title: "Memory & Streaming"
-sidebarTitle: "Memory & Streaming"
 description: "Conversation memory strategies and streaming responses."
+order: 8
 ---
 
-Agents are stateless by default — each request is independent. Add memory to maintain conversation history, and use streaming to deliver responses in real time.
+# Memory & Streaming
+
+Conversation memory strategies and streaming responses.
 
 ## Memory types
 
@@ -193,10 +195,10 @@ You can combine both — use client memory for the UI and server memory for cont
 
 ## Next
 
-- [Chat UI](/code/guides/chat-ui) — pre-built components for chat interfaces
-- [Workflows](/code/guides/workflows) — orchestrate multiple agents
+- [Chat UI](./chat-ui.md) — pre-built components for chat interfaces
+- [Workflows](./workflows.md) — orchestrate multiple agents
 
 ## Related
 
-- [`veryfront/agent`](/code/api/agent) — agent API reference
-- [`veryfront/chat`](/code/api/chat) — chat hooks API reference
+- [`veryfront/agent`](../reference/agent.md) — agent API reference
+- [`veryfront/chat`](../reference/chat.md) — chat hooks API reference

@@ -1,10 +1,12 @@
 ---
 title: "MCP Server"
-sidebarTitle: "MCP Server"
 description: "Expose tools, prompts, and resources over Model Context Protocol."
+order: 15
 ---
 
-The Model Context Protocol (MCP) lets AI clients discover and use your tools, prompts, and resources. Veryfront auto-registers everything from your `tools/`, `prompts/`, and `resources/` directories and exposes them through an MCP server.
+# MCP Server
+
+Expose tools, prompts, and resources over Model Context Protocol.
 
 ## Setup
 
@@ -128,12 +130,12 @@ Add to your `.cursor/mcp.json`:
 
 ## Next
 
-- [Configuration](/code/guides/configuration) — framework configuration options
-- [Tools](/code/guides/tools) — define the tools MCP exposes
+- [Configuration](./configuration.md) — framework configuration options
+- [Tools](./tools.md) — define the tools MCP exposes
 
 ## Related
 
-- [`veryfront/mcp`](/code/api/mcp) — MCP server API reference
-- [`veryfront/tool`](/code/api/tool) — tool API reference
-- [`veryfront/prompt`](/code/api/prompt) — prompt API reference
-- [`veryfront/resource`](/code/api/resource) — resource API reference
+- [`veryfront/mcp`](../reference/mcp.md) — MCP server API reference
+- [`veryfront/tool`](../reference/tool.md) — tool API reference
+- [`veryfront/prompt`](../reference/prompt.md) — prompt API reference
+- [`veryfront/resource`](../reference/resource.md) — resource API reference

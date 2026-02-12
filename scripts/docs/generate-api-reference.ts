@@ -1,9 +1,9 @@
 #!/usr/bin/env -S deno run --allow-read --allow-write --allow-run
 /**
- * Generate Mintlify MDX API reference pages from barrel JSDoc and `deno doc --json`.
+ * Generate Markdown API reference pages from barrel JSDoc and `deno doc --json`.
  *
  * Reads `deno.json` exports, extracts @module/@example JSDoc from each barrel,
- * runs `deno doc --json` for type information, and outputs one `.mdx` file per
+ * runs `deno doc --json` for type information, and outputs one `.md` file per
  * export path.
  *
  * Usage: deno task docs
@@ -21,7 +21,7 @@ const ROOT = Deno.cwd();
 
 const args = parseArgs(Deno.args, {
   string: ["output"],
-  default: { output: "docs/api-reference" },
+  default: { output: "docs/reference" },
 });
 
 const OUTPUT_DIR = args.output.startsWith("/") ? args.output : `${ROOT}/${args.output}`;
@@ -257,6 +257,24 @@ const RELATED_MODULES: Record<string, Array<{ path: string; reason: string }>> =
   "veryfront/context": [
     { path: "router", reason: "Client-side navigation" },
     { path: "head", reason: "Manage document head" },
+  ],
+  "veryfront": [
+    { path: "head", reason: "Declarative `<head>` metadata" },
+    { path: "router", reason: "Client-side routing and navigation" },
+    { path: "context", reason: "Access route params and page data" },
+  ],
+  "veryfront/fonts": [
+    { path: "head", reason: "Manage document head metadata" },
+    { path: "context", reason: "Access page context and frontmatter" },
+  ],
+  "veryfront/fs": [
+    { path: "root", reason: "Core framework configuration and utilities" },
+    { path: "agent", reason: "Agents that may use filesystem for persistence" },
+  ],
+  "veryfront/integrations": [
+    { path: "oauth", reason: "OAuth 2.0 token management for integrations" },
+    { path: "tool", reason: "Define tools that integrations expose" },
+    { path: "mcp", reason: "Expose integration tools via MCP" },
   ],
 };
 
@@ -538,6 +556,7 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     MCPServerConfig: "`createMCPServer()` config",
     MCPStats: "Registry statistics",
     MCPTool: "MCP-exposed tool",
+    IntegrationLoaderConfig: "Configuration for loading integration tools into MCP",
   },
 
   "veryfront/middleware": {
@@ -658,6 +677,36 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     basename: "Get filename of path",
     extname: "Get file extension",
     FileSystem: "Filesystem interface",
+  },
+
+  "veryfront/integrations": {
+    EnvVarSchema: "Validates environment variable configuration metadata",
+    IntegrationConfigSchema: "Validates complete integration connector configuration spec",
+    IntegrationNameSchema: "Validates integration name against allowed enum values",
+    IntegrationPromptSchema: "Validates predefined prompt configuration for integrations",
+    IntegrationToolSchema: "Validates tool definition from connector specification",
+    OAuthConfigSchema: "Validates OAuth/API key authentication configuration",
+    OAuthFieldSchema: "Validates OAuth form field configuration and mapping",
+    clearConnectorCache: "Clear the connector cache (for testing)",
+    createIntegrationTools: "Generate Tool instances from connector specifications",
+    executeEndpoint: "Execute REST or GraphQL endpoints with authentication",
+    fetchConnector: "Fetch connector spec from API with LRU caching",
+    getConnector: "Look up connector config by name from registry",
+    getConnectorNames: "Return readonly array of all connector names",
+    getIcon: "Return SVG icon string for integration by name",
+    listConnectors: "Return readonly array of all connectors",
+    registerIntegrationMCP: "Register integration tools into the MCP tool registry",
+    EnvVarConfig: "Environment variable requirement with metadata",
+    IntegrationConfig: "Complete connector spec: name, auth, tools, prompts",
+    IntegrationConnector: "Runtime connector with tools and endpoint definitions",
+    IntegrationMCPConfig: "Configuration for registering integrations into MCP",
+    IntegrationName: "Union type of valid integration name literals",
+    IntegrationPrompt: "Predefined prompt template for integration use",
+    IntegrationRuntimeConfig: "Per-user settings and tool allowlist for integration",
+    IntegrationTool: "Integration tool with endpoint execution spec",
+    IntegrationToolMeta: "Tool metadata: name, description, write requirements",
+    OAuthConfig: "OAuth/API key authentication type and parameters",
+    OAuthField: "Form field for OAuth configuration with mapping",
   },
 };
 
@@ -1517,25 +1566,28 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
 // 6. Generate MDX content
 // ---------------------------------------------------------------------------
 
-function generateMDX(
+function generateMD(
   entry: ExportEntry,
   jsdoc: BarrelJSDoc,
   exports: CategorizedExports,
   nodes: DocNode[],
+  order: number,
 ): string {
   const lines: string[] = [];
 
   // Frontmatter
   lines.push("---");
   lines.push(`title: "${entry.importPath}"`);
-  lines.push(`sidebarTitle: "${entry.slug === "root" ? "veryfront" : entry.slug}"`);
   if (jsdoc.description) {
     lines.push(`description: "${jsdoc.description.replace(/"/g, '\\"')}"`);
   }
+  lines.push(`order: ${order}`);
   lines.push("---");
   lines.push("");
 
-  // Description
+  // H1 title + description paragraph (visible on GitHub)
+  lines.push(`# ${entry.importPath}`);
+  lines.push("");
   if (jsdoc.description) {
     lines.push(jsdoc.description);
     lines.push("");
@@ -1636,7 +1688,8 @@ function generateMDX(
     lines.push("## Related");
     lines.push("");
     for (const r of related) {
-      lines.push(`- [\`veryfront/${r.path}\`](/code/api/${r.path}) — ${r.reason}`);
+      const displayName = r.path === "root" ? "veryfront" : `veryfront/${r.path}`;
+      lines.push(`- [\`${displayName}\`](./${r.path}.md) — ${r.reason}`);
     }
     lines.push("");
   }
@@ -1648,14 +1701,16 @@ function generateMDX(
 // 7. Generate overview/index page
 // ---------------------------------------------------------------------------
 
-function generateOverviewMDX(entries: Array<{ entry: ExportEntry; jsdoc: BarrelJSDoc }>): string {
+function generateOverviewMD(entries: Array<{ entry: ExportEntry; jsdoc: BarrelJSDoc }>): string {
   const lines: string[] = [];
 
   lines.push("---");
   lines.push('title: "Framework API Reference"');
-  lines.push('sidebarTitle: "Overview"');
   lines.push('description: "Complete API reference for the Veryfront framework."');
+  lines.push("order: 0");
   lines.push("---");
+  lines.push("");
+  lines.push("# Framework API Reference");
   lines.push("");
   lines.push("Complete API reference for the Veryfront framework.");
   lines.push("");
@@ -1672,7 +1727,7 @@ function generateOverviewMDX(entries: Array<{ entry: ExportEntry; jsdoc: BarrelJ
 
   for (const { entry, jsdoc } of entries) {
     const desc = jsdoc.description || "";
-    lines.push(`| [\`${entry.importPath}\`](/code/api/${entry.slug}) | ${desc} |`);
+    lines.push(`| [\`${entry.importPath}\`](./${entry.slug}.md) | ${desc} |`);
   }
 
   lines.push("");
@@ -1692,7 +1747,7 @@ async function main() {
 
   const overviewData: Array<{ entry: ExportEntry; jsdoc: BarrelJSDoc }> = [];
 
-  for (const entry of entries) {
+  for (const [idx, entry] of entries.entries()) {
     const absFilePath = `${ROOT}/${entry.filePath.replace("./", "")}`;
     console.log(`Processing ${entry.importPath} (${entry.filePath})...`);
 
@@ -1712,19 +1767,20 @@ async function main() {
     const nodes = await getDenoDoc(entry.filePath);
     const exports = categorizeNodes(nodes, entry.importPath);
 
-    // Generate MDX
-    const mdx = generateMDX(entry, jsdoc, exports, nodes);
-    const outPath = `${OUTPUT_DIR}/${entry.slug}.mdx`;
-    await Deno.writeTextFile(outPath, mdx);
+    // Generate MD
+    const order = idx + 1;
+    const md = generateMD(entry, jsdoc, exports, nodes, order);
+    const outPath = `${OUTPUT_DIR}/${entry.slug}.md`;
+    await Deno.writeTextFile(outPath, md);
     console.log(`  Wrote ${outPath}`);
   }
 
   // Generate overview page
-  const overviewMDX = generateOverviewMDX(overviewData);
-  const overviewPath = `${OUTPUT_DIR}/index.mdx`;
-  await Deno.writeTextFile(overviewPath, overviewMDX);
+  const overviewMD = generateOverviewMD(overviewData);
+  const overviewPath = `${OUTPUT_DIR}/index.md`;
+  await Deno.writeTextFile(overviewPath, overviewMD);
   console.log(`\nWrote overview: ${overviewPath}`);
-  console.log(`Generated ${entries.length + 1} MDX files in ${OUTPUT_DIR}`);
+  console.log(`Generated ${entries.length + 1} MD files in ${OUTPUT_DIR}`);
 }
 
 main();

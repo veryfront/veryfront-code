@@ -1,10 +1,12 @@
 ---
 title: "OAuth"
-sidebarTitle: "OAuth"
 description: "OAuth 2.0 with 37 pre-configured providers."
+order: 14
 ---
 
-Add OAuth login with two API routes and a pre-configured provider. Veryfront includes configurations for GitHub, Google, Discord, Slack, and 33 other providers.
+# OAuth
+
+OAuth 2.0 with 37 pre-configured providers.
 
 ## Quick setup
 
@@ -117,9 +119,9 @@ export const GET = createOAuthCallbackHandler(myProvider);
 
 ## Next
 
-- [MCP Server](/code/guides/mcp-server) — expose your tools over the Model Context Protocol
-- [Configuration](/code/guides/configuration) — environment variables and secrets
+- [MCP Server](./mcp-server.md) — expose your tools over the Model Context Protocol
+- [Configuration](./configuration.md) — environment variables and secrets
 
 ## Related
 
-- [`veryfront/oauth`](/code/api/oauth) — OAuth API reference
+- [`veryfront/oauth`](../reference/oauth.md) — OAuth API reference

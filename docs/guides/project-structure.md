@@ -1,10 +1,12 @@
 ---
 title: "Project Structure"
-sidebarTitle: "Project Structure"
 description: "File conventions, directory layout, and how auto-discovery works."
+order: 2
 ---
 
-Veryfront uses file-based conventions. Where you put a file determines what it does.
+# Project Structure
+
+File conventions, directory layout, and how auto-discovery works.
 
 ## Directory layout
 
@@ -61,7 +63,7 @@ The `app/` directory contains pages and API routes. The file path maps directly 
 
 Pages use `page.tsx` (or `page.mdx`). API routes use `route.ts`. Layouts use `layout.tsx`.
 
-See [Pages & Routing](/code/guides/pages-and-routing) for the full routing system.
+See [Pages & Routing](./pages-and-routing.md) for the full routing system.
 
 ## Auto-discovered directories
 
@@ -120,5 +122,10 @@ Veryfront is an AI-native framework. Agents, tools, prompts, and workflows are f
 
 ## Next
 
-- [Pages & Routing](/code/guides/pages-and-routing) — file-based routing, layouts, and dynamic routes
-- [Agents](/code/guides/agents) — create your first AI agent
+- [Pages & Routing](./pages-and-routing.md) — file-based routing, layouts, and dynamic routes
+- [Agents](./agents.md) — create your first AI agent
+
+## Related
+
+- [Configuration](./configuration.md) — `veryfront.config.ts` options
+- [`veryfront` (root)](../reference/root.md) — core framework API reference
