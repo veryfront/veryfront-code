@@ -14,6 +14,17 @@ import type {
 import { buildVeryfrontModuleUrl } from "../url-builder.ts";
 import { resolveVeryfrontModuleUrl } from "../../veryfront-module-urls.ts";
 
+/**
+ * SSR-specific module overrides.
+ *
+ * Some modules re-export React hooks alongside heavy server-side code
+ * (executors, backends, DAGs) that fails to transform in the SSR pipeline.
+ * For SSR, redirect to the lightweight React-only submodule.
+ */
+const SSR_MODULE_OVERRIDES: Record<string, string> = {
+  "veryfront/workflow": "/_vf_modules/_veryfront/workflow/react/index.js",
+};
+
 export class VeryfrontStrategy implements ImportRewriteStrategy {
   readonly name = "veryfront";
   readonly priority = 1.5;
@@ -46,10 +57,14 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
 
     // Handle veryfront/* imports
     if (specifier === "veryfront" || specifier.startsWith("veryfront/")) {
+      // SSR overrides: redirect to lightweight submodules that exclude
+      // heavy server-side deps which fail to transform in the SSR pipeline
+      if (ctx.target === "ssr" && specifier in SSR_MODULE_OVERRIDES) {
+        return { specifier: `${SSR_MODULE_OVERRIDES[specifier]}?ssr=true` };
+      }
+
       const mapped = resolveVeryfrontModuleUrl(specifier);
       if (mapped) {
-        // For SSR, append ?ssr=true to signal server-side rendering
-        // This ensures ssrVfModulesPlugin can identify and resolve these imports
         if (ctx.target === "ssr") return { specifier: `${mapped}?ssr=true` };
         return { specifier: mapped };
       }

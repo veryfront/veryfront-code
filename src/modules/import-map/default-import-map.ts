@@ -1,6 +1,14 @@
 import type { ImportMapConfig } from "./types.ts";
 import { getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts";
 
+/**
+ * SSR import map for veryfront/* modules.
+ *
+ * IMPORTANT: When adding a new export to deno.json that contains React
+ * hooks or components, add it here too. Without an entry, the module
+ * won't go through the SSR transform pipeline, causing dual-React
+ * errors or "Module not found" 500s in production.
+ */
 function getVeryfrontSsrImportMap(): Record<string, string> {
   const base = "/_vf_modules/_veryfront";
   const ssr = "?ssr=true";
@@ -14,6 +22,12 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
   const chat = `${base}/chat/index.js${ssr}`;
   const mdx = `${base}/mdx/index.js${ssr}`;
 
+  // Map veryfront/workflow to the React hooks submodule for SSR.
+  // The full workflow/index.ts imports heavy server-side code (executor, backends, DAG)
+  // that fails to transform and produces unresolved relative imports. SSR only needs
+  // the React hooks (useWorkflowStart, useWorkflowList, useWorkflow, useApproval).
+  const workflowReact = `${base}/workflow/react/index.js${ssr}`;
+
   return {
     "veryfront/head": head,
     "veryfront/router": router,
@@ -22,6 +36,7 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
     "veryfront/markdown": markdown,
     "veryfront/chat": chat,
     "veryfront/mdx": mdx,
+    "veryfront/workflow": workflowReact,
     "veryfront/react/head": head,
     "veryfront/react/router": router,
     "veryfront/react/context": context,
