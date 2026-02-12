@@ -71,8 +71,8 @@ function isToolPartWithOutput(part: unknown): part is ToolPartWithOutput {
 
 /**
  * Transform UI messages to agent-compatible format.
- * AI SDK v5 UI bundles tool results in assistant message parts (output field),
- * but the agent runtime expects separate tool role messages.
+ * The chat UI bundles tool results in assistant message parts (output field),
+ * but the agent runtime expects separate tool-role messages.
  */
 function transformUIMessages(messages: ParsedMessage[]): ParsedMessage[] {
   const result: ParsedMessage[] = [];

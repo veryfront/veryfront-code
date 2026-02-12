@@ -35,6 +35,4 @@ export {
   ToolResultPartSchema,
 } from "./agent.schema.ts";
 
-export { type AgentStreamEvent, AgentStreamEventSchema } from "./stream-events.schema.ts";
-
 export { type AgentToolInput, AgentToolInputSchema } from "./tool.schema.ts";

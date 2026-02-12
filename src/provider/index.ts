@@ -1,47 +1,26 @@
 /**
- * Unified LLM interface for Anthropic, Google, and OpenAI.
+ * AI SDK Model Provider Registry
+ *
+ * Maps "provider/model" strings to AI SDK LanguageModel instances.
+ * Auto-initializes providers from environment variables on first use.
  *
  * @module provider
  *
- * @example Initialize providers
+ * @example Register and resolve a model
  * ```ts
- * import { initializeProviders } from "veryfront/provider";
+ * import { registerModelProvider, resolveModel } from "veryfront/provider";
+ * import { createOpenAI } from "@ai-sdk/openai";
  *
- * initializeProviders({
- *   openai: { apiKey: getEnv("OPENAI_API_KEY") },
- * });
- * ```
- *
- * @example Route to model
- * ```ts
- * import { initializeProviders, getProviderFromModel } from "veryfront/provider";
- *
- * initializeProviders({
- *   openai: { apiKey: getEnv("OPENAI_API_KEY") },
- *   anthropic: { apiKey: getEnv("ANTHROPIC_API_KEY") },
- * });
- *
- * const { provider, model } = getProviderFromModel("openai/gpt-4o");
- * const response = await provider.complete({
- *   model,
- *   messages: [{ role: "user", content: "Hello" }],
- * });
+ * registerModelProvider("openai", (id) => createOpenAI({ apiKey })(id));
+ * const model = resolveModel("openai/gpt-4o");
  * ```
  */
 
-export type {
-  AnthropicConfig,
-  CompletionRequest,
-  CompletionResponse,
-  GoogleConfig,
-  OpenAIConfig,
-  Provider,
-  ProviderConfig,
-  ProvidersConfig,
-} from "./types.ts";
-
-export { BaseProvider } from "./base.ts";
-export { AnthropicProvider } from "./anthropic.ts";
-export { GoogleProvider } from "./google.ts";
-export { OpenAIProvider } from "./openai.ts";
-export { getProvider, getProviderFromModel, initializeProviders } from "./factory.ts";
+export {
+  clearModelProviders,
+  getRegisteredModelProviders,
+  hasModelProvider,
+  registerModelProvider,
+  resolveModel,
+} from "./model-registry.ts";
+export type { ModelProviderFactory } from "./model-registry.ts";

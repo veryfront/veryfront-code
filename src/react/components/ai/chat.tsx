@@ -27,3 +27,5 @@ export {
   ToolCallCard,
   ToolStatusBadge,
 } from "./chat/index.tsx";
+
+export { ModelSelector, type ModelOption, type ModelSelectorProps } from "./model-selector.tsx";

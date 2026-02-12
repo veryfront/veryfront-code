@@ -64,12 +64,12 @@ function processEvent(
   const { onMessage, onData, onUpdate, onToolCall } = callbacks;
 
   switch (parsed.type) {
-    case "start":
+    case "message-start":
       handleStart(parsed, state);
       return;
 
-    case "start-step":
-    case "finish-step":
+    case "step-start":
+    case "step-end":
       return;
 
     case "text-start":
@@ -117,7 +117,7 @@ function processEvent(
       handleReasoningEnd(parsed, state, onUpdate, getBuildParts);
       return;
 
-    case "finish":
+    case "message-finish":
       handleFinish(state, onMessage, getBuildParts);
       return;
 

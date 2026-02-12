@@ -2,10 +2,7 @@
  * useChat Hook - Layer 1 (Headless)
  *
  * Complete chat state management with zero UI.
- * Build any interface you want.
- *
- * NOTE: In production, this could leverage Vercel AI SDK's useChat
- * for battle-tested implementation. This is a simplified reference implementation.
+ * Wire-compatible with the AI SDK Data Stream Protocol.
  */
 
 import { useCallback, useRef, useState } from "react";
@@ -24,6 +21,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [data, setData] = useState<unknown>(null);
+  const [model, setModel] = useState<string | undefined>(options.model);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Track pending tool outputs for addToolOutput
@@ -84,6 +82,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
           credentials: options.credentials,
           body: JSON.stringify({
             messages: [...messages, userMessage],
+            ...(model ? { model } : {}),
             ...options.body,
           }),
           signal: abortController.signal,
@@ -212,7 +211,9 @@ export function useChat(options: UseChatOptions): UseChatResult {
     input,
     isLoading,
     error,
+    model,
     setInput,
+    setModel,
     sendMessage,
     reload,
     stop,

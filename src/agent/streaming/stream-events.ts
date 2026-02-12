@@ -1,5 +1,3 @@
-export { type AgentStreamEvent, AgentStreamEventSchema } from "../schemas/index.ts";
-
 export class StreamEventEmitter {
   private encoder = new TextEncoder();
 
@@ -21,7 +19,7 @@ export class StreamEventEmitter {
   }
 
   emitStart(messageId: string): void {
-    this.emit({ type: "start", messageId });
+    this.emit({ type: "message-start", messageId });
   }
 
   emitTextStart(id: string): void {
@@ -66,18 +64,18 @@ export class StreamEventEmitter {
   }
 
   emitFinish(): void {
-    this.emit({ type: "finish" });
+    this.emit({ type: "message-finish" });
   }
 
   emitError(error: string): void {
     this.emit({ type: "error", error });
   }
 
-  emitStartStep(): void {
-    this.emit({ type: "start-step" });
+  emitStepStart(): void {
+    this.emit({ type: "step-start" });
   }
 
-  emitFinishStep(): void {
-    this.emit({ type: "finish-step" });
+  emitStepEnd(): void {
+    this.emit({ type: "step-end" });
   }
 }

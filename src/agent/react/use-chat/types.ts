@@ -87,6 +87,8 @@ export interface UseChatOptions {
   body?: Record<string, unknown>;
   headers?: Record<string, string>;
   credentials?: RequestCredentials;
+  /** Override model at runtime (e.g. "openai/gpt-4o", "anthropic/claude-sonnet-4-5-20250929") */
+  model?: string;
   onResponse?: (response: Response) => void;
   onFinish?: (message: UIMessage) => void;
   onError?: (error: Error) => void;
@@ -98,7 +100,11 @@ export interface UseChatResult {
   input: string;
   isLoading: boolean;
   error: Error | null;
+  /** Current model override (undefined = use agent default) */
+  model: string | undefined;
   setInput: (input: string) => void;
+  /** Change the model for subsequent requests */
+  setModel: (model: string | undefined) => void;
   sendMessage: (message: { text: string }) => Promise<void>;
   reload: () => Promise<void>;
   stop: () => void;
