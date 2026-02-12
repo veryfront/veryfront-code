@@ -6,10 +6,17 @@ Slick `npx create-veryfront` like Qwik's `pnpm create qwik@latest`.
 
 Single command → beautiful prompts → app running in 30 seconds.
 
+```bash
+npm create veryfront
+pnpm create veryfront
+yarn create veryfront
+bun create veryfront
+```
+
 ## Flow
 
 ```
-npx create-veryfront
+pnpm create veryfront
 
 ┌  Create a Veryfront app
 │
