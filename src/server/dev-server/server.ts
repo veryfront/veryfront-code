@@ -56,6 +56,7 @@ export class DevServer {
   private server?: Server;
   private appConfig: VeryfrontConfig | undefined;
   private requestHandler?: RequestHandler;
+  private _handler?: (req: Request) => Promise<Response>;
   readonly ready: Promise<void>;
   private _resolveReady!: () => void;
   private _isReady = false;
@@ -225,6 +226,14 @@ export class DevServer {
       }
       : baseHandler;
 
+    this._handler = handler;
+
+    if (this.options.handlerOnly) {
+      this._isReady = true;
+      this._resolveReady();
+      return;
+    }
+
     this.server = await this.adapter.serve(handler, {
       port: this.options.port,
       hostname: this.options.bindAddress ?? LOCALHOST.IPV4,
@@ -243,6 +252,12 @@ export class DevServer {
     });
 
     this._isReady = true;
+  }
+
+  /** Returns the request handler for use with external HTTP servers. */
+  get handler(): (req: Request) => Promise<Response> {
+    if (!this._handler) throw new Error("DevServer not started. Call start() first.");
+    return this._handler;
   }
 
   private buildDiscoveryConfig(): DiscoveryConfig {

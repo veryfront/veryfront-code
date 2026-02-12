@@ -14,6 +14,7 @@ import type { HMRServer } from "./hmr-server.ts";
 import { createResponseBuilder } from "#veryfront/security/index.ts";
 import { resetApiHandler } from "../handlers/request/api/pages-api-handler.ts";
 import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts";
+import { clearRendererCaches } from "#veryfront/rendering/renderer.ts";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 
@@ -177,6 +178,9 @@ export class RequestHandler {
 
     clearConfigCache();
     clearLayoutDiscoveryCache();
+    clearRendererCaches().catch((error) => {
+      logger.debug("clearRendererCaches failed", error);
+    });
   }
 
   private handleServerError(error: unknown): Response {

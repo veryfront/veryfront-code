@@ -85,12 +85,15 @@ export class HMRHandler extends BaseHandler {
     const queryEnv = url.searchParams.get("x-environment");
     const isPreviewMode = ctx.requestContext?.mode === "preview" || queryEnv === "preview";
     const isLocal = !!ctx.isLocalProject;
+    const host = req.headers.get("host") ?? "";
+    const isLocalhost = host.startsWith("localhost") || host.startsWith("127.0.0.1");
 
-    if (!isPreviewMode && !isLocal) {
+    if (!isPreviewMode && !isLocal && !isLocalhost) {
       logger.debug("Skipping - not preview or local dev", {
         mode: ctx.requestContext?.mode,
         queryEnv,
         isLocalProject: ctx.isLocalProject,
+        host,
       });
       return Promise.resolve(this.continue());
     }
