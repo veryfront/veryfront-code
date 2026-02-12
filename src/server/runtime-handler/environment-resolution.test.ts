@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 
 describe("environment-resolution", () => {
-  it("returns 404 undeployed page in proxy production when releaseId is missing for remote project", () => {
+  it("returns 404 when release not found in proxy production for remote project", () => {
     const result = resolveEnvironment({
       proxyEnv: "production",
       reqCtxMode: "production",
