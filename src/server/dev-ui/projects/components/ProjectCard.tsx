@@ -46,7 +46,7 @@ export function ProjectCard({
       className="block bg-vf-card rounded-xl p-5 border border-vf-border hover:border-[#ccc] transition-colors"
     >
       <h3 className="text-lg font-semibold text-vf-text leading-tight">{name}</h3>
-      <p className="text-sm text-[#1a1a1a]/50 mt-1.5">{slug}</p>
+      <p className="text-sm text-[#1a1a1a]/50 mt-1">{slug}</p>
       {description && <p className="text-sm text-vf-muted mt-2 line-clamp-2">{description}</p>}
       {relativeTime && <p className="text-xs text-[#999] mt-2">Updated {relativeTime}</p>}
     </a>
