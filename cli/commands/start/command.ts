@@ -156,13 +156,15 @@ export async function startCommand(options: StartOptions): Promise<void> {
   if (discovered.defaultProject) {
     logger.info(`Serving project "${discovered.defaultProject}"`);
   } else if (totalProjects > 0) {
-    const dirs = [...new Set(
-      [...discovered.projects.values(), ...discovered.examples.values()]
-        .map((p) => {
-          const rel = p.replace(cwd() + "/", "");
-          return rel.split("/").slice(0, -1).join("/");
-        }),
-    )].join(", ");
+    const dirs = [
+      ...new Set(
+        [...discovered.projects.values(), ...discovered.examples.values()]
+          .map((p) => {
+            const rel = p.replace(cwd() + "/", "");
+            return rel.split("/").slice(0, -1).join("/");
+          }),
+      ),
+    ].join(", ");
     logger.info(`Found ${totalProjects} project(s) in ${dirs}`);
   } else {
     logger.info(
