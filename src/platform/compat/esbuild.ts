@@ -91,7 +91,6 @@ async function extractEsbuildBinary(): Promise<string> {
   const binary = await Deno.readFile(vfsPath);
   await Deno.writeFile(targetPath, binary, { mode: 0o755 });
 
-  console.log(`[esbuild] Extracted binary from VFS to ${targetPath}`);
   return targetPath;
 }
 
@@ -113,8 +112,6 @@ async function ensureEsbuildBinary(): Promise<void> {
       const binaryPath = await extractEsbuildBinary();
       setEnv("ESBUILD_BINARY_PATH", binaryPath);
       nodeProcess.env.ESBUILD_BINARY_PATH = binaryPath;
-
-      console.log(`[esbuild] Set ESBUILD_BINARY_PATH=${binaryPath}`);
     } catch (error) {
       console.warn(`[esbuild] Binary extraction failed:`, error);
     } finally {

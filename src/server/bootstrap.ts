@@ -74,13 +74,13 @@ function logEnvConfig(): void {
   const apiTokenSource = getEnvSource("VERYFRONT_API_TOKEN");
 
   if (apiBaseUrlSource.source === "env-file") {
-    bootstrapLog.info(`VERYFRONT_API_BASE_URL loaded from ${apiBaseUrlSource.file}`);
+    bootstrapLog.debug(`VERYFRONT_API_BASE_URL loaded from ${apiBaseUrlSource.file}`);
   }
   if (apiTokenSource.source === "env-file") {
-    bootstrapLog.info(`VERYFRONT_API_TOKEN loaded from ${apiTokenSource.file}`);
+    bootstrapLog.debug(`VERYFRONT_API_TOKEN loaded from ${apiTokenSource.file}`);
   }
 
-  bootstrapLog.info("API base URL", {
+  bootstrapLog.debug("API base URL", {
     apiBaseUrl: envConfig.apiBaseUrl,
     apiBaseUrlSource,
     apiTokenPresent: Boolean(envConfig.apiToken),

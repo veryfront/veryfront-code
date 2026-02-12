@@ -243,7 +243,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     clearTimeout(timeout);
 
     const httpFetchDuration = Math.round(performance.now() - httpFetchStartTime);
-    contentMetricsLog.info("HTTP_MODULE_FETCH", {
+    contentMetricsLog.debug("HTTP_MODULE_FETCH", {
       url: normalizedUrl.substring(0, 120),
       host: urlObj.host,
       duration_ms: httpFetchDuration,

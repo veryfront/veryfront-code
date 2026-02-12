@@ -67,7 +67,6 @@ if (!Deno.env.get("ESBUILD_BINARY_PATH") && isDenoCompiled) {
     } else {
       Deno.env.set("ESBUILD_BINARY_PATH", binaryPath);
       process.env.ESBUILD_BINARY_PATH = binaryPath;
-      console.log(`[esbuild] Set ESBUILD_BINARY_PATH=${binaryPath}`);
     }
   } catch (error) {
     console.warn(`[esbuild] Binary extraction failed:`, error);

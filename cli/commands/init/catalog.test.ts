@@ -20,13 +20,13 @@ describe("catalog", () => {
       assertEquals(TEMPLATES.length, 7);
       const ids = TEMPLATES.map((t) => t.id);
       assertEquals(ids, [
+        "minimal",
         "chat",
         "rag",
-        "multi-agent",
         "workflow",
+        "multi-agent",
         "coding-agent",
         "saas",
-        "minimal",
       ]);
     });
 

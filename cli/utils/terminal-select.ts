@@ -3,7 +3,7 @@
  * Supports both Deno and Node.js runtimes
  */
 
-import { cyan, dim, green } from "#cli/ui";
+import { brand, muted } from "#cli/ui";
 import { writeStdout } from "veryfront/platform";
 import { isDeno } from "veryfront/platform";
 import { getStdinReader, setRawMode } from "veryfront/platform";
@@ -37,8 +37,8 @@ export async function select(
   let selectedIndex = defaultIndex;
 
   console.log("");
-  console.log(cyan("?") + " " + question);
-  console.log(dim("  Use arrow keys to navigate, Enter to select"));
+  console.log(brand("?") + " " + question);
+  console.log(muted("  Use arrow keys to navigate, Enter to select"));
   console.log("");
 
   function renderOptions(): void {
@@ -47,9 +47,9 @@ export async function select(
       if (!opt) continue;
 
       const isSelected = i === selectedIndex;
-      const prefix = isSelected ? green("❯") : " ";
-      const label = isSelected ? green(opt.label) : opt.label;
-      const desc = opt.description ? dim(` - ${opt.description}`) : "";
+      const prefix = isSelected ? brand("❯") : " ";
+      const label = isSelected ? brand(opt.label) : opt.label;
+      const desc = opt.description ? muted(` - ${opt.description}`) : "";
       console.log(`  ${prefix} ${label}${desc}`);
     }
   }
@@ -83,7 +83,7 @@ export async function select(
 
     clearOptions(options.length);
     const selected = options[selectedIndex];
-    if (selected) console.log(`  ${green("✓")} ${selected.label}`);
+    if (selected) console.log(`  ${brand("✓")} ${selected.label}`);
 
     return result;
   } finally {
@@ -103,8 +103,8 @@ export async function multiSelect(
   const selected = new Set(preselected);
 
   console.log("");
-  console.log(cyan("?") + " " + question);
-  console.log(dim("  Use arrow keys, Space to toggle, Enter to confirm"));
+  console.log(brand("?") + " " + question);
+  console.log(muted("  Use arrow keys, Space to toggle, Enter to confirm"));
   console.log("");
 
   function renderOptions(): void {
@@ -113,10 +113,10 @@ export async function multiSelect(
       if (!opt) continue;
 
       const isCursor = i === cursorIndex;
-      const cursor = isCursor ? green("❯") : " ";
-      const checkbox = selected.has(opt.value) ? green("◉") : "○";
-      const label = isCursor ? green(opt.label) : opt.label;
-      const desc = opt.description ? dim(` - ${opt.description}`) : "";
+      const cursor = isCursor ? brand("❯") : " ";
+      const checkbox = selected.has(opt.value) ? brand("◉") : "○";
+      const label = isCursor ? brand(opt.label) : opt.label;
+      const desc = opt.description ? muted(` - ${opt.description}`) : "";
       console.log(`  ${cursor} ${checkbox} ${label}${desc}`);
     }
   }
@@ -162,11 +162,101 @@ export async function multiSelect(
 
     clearOptions(options.length);
     for (const opt of options) {
-      if (selected.has(opt.value)) console.log(`  ${green("✓")} ${opt.label}`);
+      if (selected.has(opt.value)) console.log(`  ${brand("✓")} ${opt.label}`);
     }
-    if (selected.size === 0) console.log(dim("  No items selected"));
+    if (selected.size === 0) console.log(muted("  No items selected"));
 
     return Array.from(selected);
+  } finally {
+    writeStdout(SHOW_CURSOR);
+  }
+}
+
+/**
+ * Text input with cursor editing
+ */
+export async function textInput(
+  question: string,
+  defaultValue = "",
+): Promise<string | null> {
+  let value = defaultValue;
+  let cursorPos = value.length;
+
+  console.log("");
+  console.log(brand("?") + " " + question);
+  console.log(muted("  Type your answer, Enter to submit, Esc to cancel"));
+  console.log("");
+
+  function renderInput(): void {
+    const beforeCursor = value.slice(0, cursorPos);
+    const cursorChar = value[cursorPos] ?? " ";
+    const afterCursor = value.slice(cursorPos + 1);
+    const cursor = `\x1b[7m${cursorChar}\x1b[27m`; // inverse video
+    console.log(`  ${brand(">")} ${beforeCursor}${cursor}${afterCursor}`);
+  }
+
+  writeStdout(HIDE_CURSOR);
+  renderInput();
+
+  try {
+    const result = await readKeypress((key) => {
+      // Handle escape
+      if (key === "escape") return null;
+
+      // Handle enter
+      if (key === "enter") return value;
+
+      // Handle backspace
+      if (key === "backspace") {
+        if (cursorPos > 0) {
+          value = value.slice(0, cursorPos - 1) + value.slice(cursorPos);
+          cursorPos--;
+          clearOptions(1);
+          renderInput();
+        }
+        return undefined;
+      }
+
+      // Handle left/right arrow
+      if (key === "left") {
+        if (cursorPos > 0) {
+          cursorPos--;
+          clearOptions(1);
+          renderInput();
+        }
+        return undefined;
+      }
+
+      if (key === "right") {
+        if (cursorPos < value.length) {
+          cursorPos++;
+          clearOptions(1);
+          renderInput();
+        }
+        return undefined;
+      }
+
+      // Handle character input
+      if (key.startsWith("char:")) {
+        const char = key.slice(5);
+        value = value.slice(0, cursorPos) + char + value.slice(cursorPos);
+        cursorPos++;
+        clearOptions(1);
+        renderInput();
+        return undefined;
+      }
+
+      return undefined;
+    });
+
+    clearOptions(1);
+    if (result !== null) {
+      console.log(`  ${brand("✓")} ${result}`);
+    } else {
+      console.log(muted("  Cancelled"));
+    }
+
+    return result;
   } finally {
     writeStdout(SHOW_CURSOR);
   }
@@ -267,9 +357,15 @@ function parseKeySequence(buf: Uint8Array): string {
       return "space";
     case 0x03:
       return "ctrl-c";
-    case 0x71:
-      return "q";
-    default:
-      return "unknown";
+    case 0x7f: // DEL (backspace on most terminals)
+    case 0x08: // BS
+      return "backspace";
   }
+
+  // Printable ASCII characters
+  if (buf[0] && buf[0] >= 0x20 && buf[0] <= 0x7e) {
+    return `char:${String.fromCharCode(buf[0])}`;
+  }
+
+  return "unknown";
 }

@@ -31,7 +31,7 @@ export async function initializeBundleManifest(
   const enabled = manifestConfig?.enabled ?? mode === "production";
 
   if (!enabled) {
-    logger.info("Bundle manifest disabled");
+    logger.debug("Bundle manifest disabled");
     setBundleManifestStore(new InMemoryBundleManifestStore());
     return;
   }
@@ -39,7 +39,7 @@ export async function initializeBundleManifest(
   const storeType = manifestConfig?.type ?? adapter?.env.get("VERYFRONT_BUNDLE_MANIFEST_TYPE") ??
     "memory";
 
-  logger.info("Initializing bundle manifest", { type: storeType, mode });
+  logger.debug("Initializing bundle manifest", { type: storeType, mode });
 
   try {
     const store = await createStore(storeType, config.cache, adapter);
@@ -47,7 +47,7 @@ export async function initializeBundleManifest(
 
     try {
       const stats = await store.getStats();
-      logger.info("Store statistics", stats);
+      logger.debug("Store statistics", stats);
     } catch (error) {
       logger.debug("Failed to get stats", { error });
     }
@@ -84,7 +84,7 @@ async function createStore(
       return new InMemoryBundleManifestStore();
     }
 
-    logger.info("Redis store initialized");
+    logger.debug("Redis store initialized");
     return store;
   }
 
@@ -99,11 +99,11 @@ async function createStore(
       return new InMemoryBundleManifestStore();
     }
 
-    logger.info("KV store initialized");
+    logger.debug("KV store initialized");
     return store;
   }
 
-  logger.info("In-memory store initialized");
+  logger.debug("In-memory store initialized");
   return new InMemoryBundleManifestStore();
 }
 
@@ -122,7 +122,7 @@ export async function warmupBundleManifest(
   store: BundleManifestStore,
   keys: string[],
 ): Promise<void> {
-  logger.info("Warming up cache", { keys: keys.length });
+  logger.debug("Warming up cache", { keys: keys.length });
 
   let loaded = 0;
   let failed = 0;
@@ -140,5 +140,5 @@ export async function warmupBundleManifest(
     }
   }
 
-  logger.info("Cache warmup complete", { loaded, failed });
+  logger.debug("Cache warmup complete", { loaded, failed });
 }

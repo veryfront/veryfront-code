@@ -4,7 +4,7 @@
 
 import { z } from "zod";
 import { isAbsolute, join } from "veryfront/platform/path";
-import { cwd } from "veryfront/platform";
+import { cwd, setEnv } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
 import { devCommand } from "./index.ts";
@@ -16,12 +16,14 @@ const DevArgsSchema = z.object({
   port: z.number().default(DEFAULT_DEV_SERVER_PORT),
   project: z.string().optional(),
   hmr: z.boolean().default(true),
+  debug: z.boolean().default(false),
 });
 
 export const parseDevArgs = createArgParser(DevArgsSchema, {
   port: { keys: ["port", "p"], type: "number" },
   project: { keys: ["project"], type: "string" },
   hmr: { keys: ["hmr"], type: "boolean" },
+  debug: { keys: ["debug", "d"], type: "boolean" },
 });
 
 async function resolveProjectDir(projectArg: string | undefined): Promise<string> {
@@ -49,6 +51,11 @@ async function resolveProjectDir(projectArg: string | undefined): Promise<string
 export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   const opts = parseArgsOrThrow(parseDevArgs, "dev", args);
   const projectDir = await resolveProjectDir(opts.project);
+
+  // Enable verbose logging when --debug flag is passed
+  if (opts.debug) {
+    setEnv("LOG_LEVEL", "DEBUG");
+  }
 
   // Clear stale ESM caches to prevent module resolution issues from previous runs
   await clearAllLocalCaches();

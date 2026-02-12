@@ -139,13 +139,16 @@ export function serializeError(error: unknown): SerializedError | undefined {
 
 /**
  * Format context and error as indented key=value pairs.
+ * Filters out undefined values for cleaner output.
  */
 export function formatContextText(
   context: Record<string, unknown>,
   error: SerializedError | undefined,
   enableColor: boolean,
 ): string {
-  const entries = Object.entries(context).map(([key, value]) => `${key}=${formatValue(value)}`);
+  const entries = Object.entries(context)
+    .filter(([_, value]) => value !== undefined)
+    .map(([key, value]) => `${key}=${formatValue(value)}`);
   if (error) entries.push(`err=${formatErrorText(error)}`);
   if (entries.length === 0) return "";
 

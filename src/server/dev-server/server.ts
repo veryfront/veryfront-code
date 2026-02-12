@@ -187,7 +187,7 @@ export class DevServer {
       await Promise.all([this.componentRegistry.discover(), routeDiscovery.discoverRoutes()]);
     }
 
-    const defaultProjectSlug = this.resolveDefaultProjectSlug(isProxyMode);
+    const defaultProjectSlug = await this.resolveDefaultProjectSlug(isProxyMode);
     const localProjects = this.buildLocalProjects(defaultProjectSlug);
 
     const requestHandler = new RequestHandler(
@@ -291,7 +291,7 @@ export class DevServer {
     }
   }
 
-  private resolveDefaultProjectSlug(isProxyMode: boolean): string | undefined {
+  private async resolveDefaultProjectSlug(isProxyMode: boolean): Promise<string | undefined> {
     const explicitSlug = normalizeSlug(this.options.defaultProjectSlug);
     if (explicitSlug) return explicitSlug;
 
@@ -303,7 +303,58 @@ export class DevServer {
 
     if (isProxyMode) return undefined;
 
+    // Check if this is a multi-project directory (has projects/ but no direct project files)
+    if (await this.isMultiProjectDirectory()) {
+      return undefined;
+    }
+
     return deriveProjectSlug(this.options.projectDir);
+  }
+
+  private async isMultiProjectDirectory(): Promise<boolean> {
+    const projectDir = this.options.projectDir;
+    const fs = this.adapter.fs;
+
+    // First check: no direct project files (app/, pages/, or config)
+    const [hasApp, hasPages, hasConfigTs, hasConfigJs, hasConfigMjs] = await Promise.all([
+      fs.exists(`${projectDir}/app`),
+      fs.exists(`${projectDir}/pages`),
+      fs.exists(`${projectDir}/veryfront.config.ts`),
+      fs.exists(`${projectDir}/veryfront.config.js`),
+      fs.exists(`${projectDir}/veryfront.config.mjs`),
+    ]);
+
+    // If we have direct project files, this is a single project
+    if (hasApp || hasPages || hasConfigTs || hasConfigJs || hasConfigMjs) return false;
+
+    // Second check: has at least one standard project directory with subdirectories
+    const standardDirs = ["data/projects", "projects", "examples"];
+    for (const dir of standardDirs) {
+      const fullPath = `${projectDir}/${dir}`;
+      if (await this.hasProjectSubdirectories(fullPath)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private async hasProjectSubdirectories(dirPath: string): Promise<boolean> {
+    try {
+      const fs = this.adapter.fs;
+      const stat = await fs.stat(dirPath);
+      if (!stat.isDirectory) return false;
+
+      // Check if directory has at least one subdirectory (potential project)
+      for await (const entry of fs.readDir(dirPath)) {
+        if (entry.isDirectory && !entry.name.startsWith(".")) {
+          return true;
+        }
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   private buildLocalProjects(

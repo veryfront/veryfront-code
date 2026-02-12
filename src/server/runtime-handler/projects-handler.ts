@@ -115,7 +115,6 @@ async function handleLocalProjectsDiscovery(): Promise<Response> {
     name: slug,
     slug,
     path,
-    updated_at: new Date().toISOString(),
   }));
 
   return new Response(JSON.stringify({ data: localProjects }), {

@@ -3,6 +3,10 @@
 The full-stack React framework for AI applications. Agents, tools, workflows — one framework, zero config.
 
 ```bash
+# Interactive wizard
+pnpm create veryfront
+
+# Or with project name
 npx veryfront init my-app
 cd my-app
 veryfront dev

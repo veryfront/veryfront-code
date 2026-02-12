@@ -9,12 +9,8 @@ import { shouldRunWizard } from "./interactive-wizard.ts";
 
 describe("interactive-wizard", () => {
   describe("shouldRunWizard", () => {
-    it("should return true when no template or integrations specified", () => {
+    it("should return true when no template or name specified", () => {
       assertEquals(shouldRunWizard({}), true);
-    });
-
-    it("should return true when only empty integrations array specified", () => {
-      assertEquals(shouldRunWizard({ integrations: [] }), true);
     });
 
     it("should return false when template is specified", () => {
@@ -25,28 +21,21 @@ describe("interactive-wizard", () => {
       assertEquals(shouldRunWizard({ template: "minimal" }), false);
     });
 
-    it("should return false when integrations are specified", () => {
-      assertEquals(shouldRunWizard({ integrations: ["github"] }), false);
+    it("should return false when name is specified", () => {
+      assertEquals(shouldRunWizard({ name: "my-project" }), false);
     });
 
-    it("should return false when both template and integrations specified", () => {
+    it("should return false when both template and name specified", () => {
       assertEquals(
-        shouldRunWizard({ template: "chat", integrations: ["github", "slack"] }),
+        shouldRunWizard({ template: "chat", name: "my-project" }),
         false,
       );
     });
 
-    it("should return true when template is undefined and integrations is empty", () => {
+    it("should return true when template and name are undefined", () => {
       assertEquals(
-        shouldRunWizard({ template: undefined, integrations: [] }),
+        shouldRunWizard({ template: undefined, name: undefined }),
         true,
-      );
-    });
-
-    it("should return false when template is undefined but integrations exist", () => {
-      assertEquals(
-        shouldRunWizard({ template: undefined, integrations: ["slack"] }),
-        false,
       );
     });
   });

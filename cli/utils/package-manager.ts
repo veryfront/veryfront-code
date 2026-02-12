@@ -6,10 +6,32 @@
 
 import { join } from "veryfront/platform/path";
 import { cliLogger as logger } from "#cli/utils";
-import { createFileSystem } from "veryfront/platform";
+import { createFileSystem, getEnv } from "veryfront/platform";
 import { getOsType, runCommand } from "veryfront/platform";
 
 export type PackageManager = "npm" | "yarn" | "pnpm" | "bun";
+
+/**
+ * Detect package manager from npm_config_user_agent environment variable
+ * This is set when running via `pnpm create`, `npm create`, etc.
+ *
+ * Format examples:
+ * - pnpm/8.15.1 npm/? node/v20.11.0 darwin arm64
+ * - npm/10.2.4 node/v20.11.0 darwin arm64
+ * - yarn/1.22.21 npm/? node/v20.11.0 darwin arm64
+ * - bun/1.0.0 node/v20.11.0 darwin arm64
+ */
+export function detectFromUserAgent(): PackageManager | undefined {
+  const userAgent = getEnv("npm_config_user_agent");
+  if (!userAgent) return undefined;
+
+  if (userAgent.startsWith("pnpm/")) return "pnpm";
+  if (userAgent.startsWith("yarn/")) return "yarn";
+  if (userAgent.startsWith("bun/")) return "bun";
+  if (userAgent.startsWith("npm/")) return "npm";
+
+  return undefined;
+}
 
 function isWindows(): boolean {
   return getOsType() === "windows";
@@ -51,19 +73,27 @@ async function detectFromDir(
 }
 
 /**
- * Detect the package manager to use based on lockfiles or user preference
+ * Detect the package manager to use based on various signals
  *
  * Priority:
  * 1. Explicit preference (if provided)
- * 2. Existing lockfile in project directory
- * 3. Parent directory lockfile (for monorepos)
- * 4. Default to npm
+ * 2. npm_config_user_agent env var (set when running via create-*)
+ * 3. Existing lockfile in project directory
+ * 4. Parent directory lockfile (for monorepos)
+ * 5. Default to npm
  */
 export async function detectPackageManager(
   projectDir: string,
   preference?: PackageManager,
 ): Promise<PackageManager> {
   if (preference) return preference;
+
+  // Check user agent first (when running via pnpm create, npm create, etc.)
+  const fromUserAgent = detectFromUserAgent();
+  if (fromUserAgent) {
+    logger.debug(`Detected ${fromUserAgent} from npm_config_user_agent`);
+    return fromUserAgent;
+  }
 
   const detected = await detectFromDir(projectDir);
   if (detected) {
@@ -94,6 +124,37 @@ const INSTALL_COMMANDS: Record<PackageManager, string> = {
  */
 export function getInstallCommand(pm: PackageManager): string {
   return INSTALL_COMMANDS[pm];
+}
+
+/**
+ * Get the run script command for a package manager
+ * e.g., "pnpm dev" vs "npm run dev"
+ */
+export function getRunCommand(pm: PackageManager, script: string): string {
+  // bun and pnpm can run scripts directly without "run"
+  if (pm === "bun" || pm === "pnpm") return `${pm} ${script}`;
+  // yarn can also run scripts directly for common ones like "dev"
+  if (pm === "yarn") return `yarn ${script}`;
+  // npm requires "run"
+  return `npm run ${script}`;
+}
+
+/**
+ * Get the dlx/npx command for a package manager
+ * Used for running one-off packages
+ */
+export function getDlxCommand(pm: PackageManager): string {
+  switch (pm) {
+    case "pnpm":
+      return "pnpm dlx";
+    case "yarn":
+      return "yarn dlx";
+    case "bun":
+      return "bunx";
+    case "npm":
+    default:
+      return "npx";
+  }
 }
 
 /**

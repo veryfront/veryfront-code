@@ -1,20 +1,17 @@
-import { cyan, dim, green } from "#cli/ui";
+import { brand, dim, muted } from "#cli/ui";
+import { getAgentFace } from "../../ui/dot-matrix.ts";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
-import { cliLogger as logger } from "#cli/utils";
-import { multiSelect, select } from "../../utils/terminal-select.ts";
-import {
-  getIntegrationSelectOptionsWithHeaders,
-  getTemplateSelectOptions,
-  TEMPLATES,
-} from "./catalog.ts";
-import type { IntegrationName } from "../../templates/types.ts";
+import { select, textInput } from "../../utils/terminal-select.ts";
+import { getTemplateSelectOptions, TEMPLATES } from "./catalog.ts";
 import type { InitTemplate } from "./types.ts";
 
 export interface WizardResult {
+  projectName: string | null; // null = use current directory
   template: InitTemplate;
-  integrations: IntegrationName[];
+  initGit: boolean;
   skipped: boolean;
+  cancelled: boolean;
 }
 
 function canRunWizard(): boolean {
@@ -23,58 +20,123 @@ function canRunWizard(): boolean {
 
 export async function runInteractiveWizard(): Promise<WizardResult> {
   if (!canRunWizard()) {
-    return { template: "minimal", integrations: [], skipped: true };
+    return {
+      projectName: null,
+      template: "minimal",
+      initGit: false,
+      skipped: true,
+      cancelled: false,
+    };
   }
 
+  // Show logo
   console.log("");
-  console.log(green("Welcome to Veryfront!"));
-  console.log("Let's set up your project.");
+  console.log(getAgentFace({ litColor: "\x1b[38;2;252;143;93m" }));
+  console.log("");
+  console.log(`┌  ${brand("Veryfront")}`);
+  console.log(`│  Let's set up your project.`);
+  console.log("│");
 
+  // Step 1: Location prompt
+  const locationChoice = await select(
+    "Where should we create your project?",
+    [
+      { value: "current", label: "Current folder", description: "Use this directory" },
+      { value: "new", label: "New folder", description: "Create a new directory" },
+    ],
+    0,
+  );
+
+  if (locationChoice === null) {
+    console.log(muted("\n  Cancelled.\n"));
+    return {
+      projectName: null,
+      template: "minimal",
+      initGit: false,
+      skipped: false,
+      cancelled: true,
+    };
+  }
+
+  let projectName: string | null = null;
+  if (locationChoice === "new") {
+    const name = await textInput("Project name", "my-app");
+    if (name === null) {
+      console.log(muted("\n  Cancelled.\n"));
+      return {
+        projectName: null,
+        template: "minimal",
+        initGit: false,
+        skipped: false,
+        cancelled: true,
+      };
+    }
+    if (name) {
+      projectName = name;
+    }
+  }
+
+  // Step 2: Template selection
   const templateChoice = await select(
     "What would you like to build?",
     getTemplateSelectOptions(),
     0,
   );
-  const template = templateChoice as InitTemplate | undefined;
 
-  if (!template) {
-    logger.warn("No template selected, using minimal");
-    return { template: "minimal", integrations: [], skipped: false };
+  if (templateChoice === null) {
+    console.log(muted("\n  Cancelled.\n"));
+    return {
+      projectName: null,
+      template: "minimal",
+      initGit: false,
+      skipped: false,
+      cancelled: true,
+    };
   }
 
-  if (template !== "chat") {
-    const templateLabel = TEMPLATES.find((t) => t.id === template)?.label ?? template;
-    console.log("");
-    console.log(green("Got it!") + ` Creating a ${templateLabel} project.`);
-    return { template, integrations: [], skipped: false };
-  }
+  const template = templateChoice as InitTemplate;
 
-  console.log("");
-  console.log(dim("Use arrow keys to navigate, space to select, enter to confirm"));
-  console.log(dim("Popular choices: Gmail, Slack, GitHub, Calendar, Notion"));
-  console.log("");
-
-  const integrationOptions = getIntegrationSelectOptionsWithHeaders().filter((c) => !c.isHeader);
-  const selected = await multiSelect(
-    "Which services should your agent connect to?",
-    integrationOptions,
+  // Step 3: Git init prompt
+  const gitChoice = await select(
+    "Initialize a git repository?",
+    [
+      { value: "yes", label: "Yes", description: "Initialize git and create first commit" },
+      { value: "no", label: "No", description: "Skip git initialization" },
+    ],
+    0,
   );
-  const integrations = selected as IntegrationName[];
 
-  console.log("");
-  console.log(green("Perfect!") + " Here's what we'll create:");
-  console.log("");
-  console.log(`  ${cyan("Template:")} AI Agent`);
-  if (integrations.length > 0) {
-    console.log(`  ${cyan("Integrations:")} ${integrations.join(", ")}`);
-  } else {
-    console.log(dim("  No integrations selected (you can add them later)"));
+  if (gitChoice === null) {
+    console.log(muted("\n  Cancelled.\n"));
+    return {
+      projectName: null,
+      template: "minimal",
+      initGit: false,
+      skipped: false,
+      cancelled: true,
+    };
   }
+
+  const initGit = gitChoice === "yes";
+
+  // Summary
+  const templateLabel = TEMPLATES.find((t) => t.id === template)?.label ?? template;
+  console.log("");
+  console.log(brand("Perfect!") + " Here's what we'll create:");
+  console.log("");
+  if (projectName) {
+    console.log(`  ${brand("Location:")} ./${projectName}/`);
+  } else {
+    console.log(`  ${brand("Location:")} ./  ${dim("(current folder)")}`);
+  }
+  console.log(`  ${brand("Template:")} ${templateLabel}`);
+  console.log(`  ${brand("Git:")} ${initGit ? "Yes" : "No"}`);
   console.log("");
 
-  return { template: "chat", integrations, skipped: false };
+  return { projectName, template, initGit, skipped: false, cancelled: false };
 }
 
-export function shouldRunWizard(options: { template?: string; integrations?: string[] }): boolean {
-  return !options.template && (options.integrations?.length ?? 0) === 0;
+export function shouldRunWizard(options: { template?: string; name?: string }): boolean {
+  // Run wizard if no template and no name specified via CLI
+  return !options.template && !options.name;
 }
