@@ -26,6 +26,9 @@ import {
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { bootstrapProd } from "./bootstrap.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
+import { clientSockets } from "./handlers/preview/hmr-client-manager.ts";
+import { RateLimiter, setupWebSocketHandlers } from "#veryfront/modules/server/index.ts";
+import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "#veryfront/utils";
 
 export { DevServer, startDevServer, startProductionServer };
 export type {
@@ -99,9 +102,15 @@ export interface VeryfrontServer {
 export type VeryfrontHandler = ((req: Request) => Promise<Response>) & {
   /**
    * Attach WebSocket upgrade handling to a Node.js HTTP server.
-   * Required for HMR live reload when using an external server like Hono.
+   * Required for HMR live reload when using an external server like Hono, Express, etc.
    */
   upgrade: (server: unknown) => void;
+  /**
+   * Connect an external WebSocket to the HMR live reload system.
+   * Use this for runtimes that manage WebSocket upgrades natively (e.g. Bun/Elysia)
+   * instead of `handler.upgrade(server)`.
+   */
+  connectHMR: (ws: WebSocket) => void;
 };
 
 /**
@@ -122,6 +131,23 @@ export type VeryfrontHandler = ((req: Request) => Promise<Response>) & {
  * handler.upgrade(server)
  * ```
  */
+// Ensure responses use the native global Response class.
+// The DNT (Deno-to-Node) build replaces all `Response` and `globalThis` references
+// with an undici polyfill, which breaks `instanceof Response` checks in frameworks
+// like h3. We use Function constructor to access the real global scope directly.
+// eslint-disable-next-line no-new-func
+const _nativeGlobal = new Function("return this")() as typeof globalThis;
+const _NativeResponse: typeof Response = _nativeGlobal.Response;
+
+function toNativeResponse(res: Response): Response {
+  if (res instanceof _NativeResponse) return res;
+  return new _NativeResponse(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
+}
+
 export async function createHandler(
   options: { projectDir?: string; mode?: "development" | "production"; port?: number } = {},
 ): Promise<VeryfrontHandler> {
@@ -130,8 +156,9 @@ export async function createHandler(
   if (options.mode === "production") {
     const adapter = await runtime.get();
     const bootstrap = await bootstrapProd(projectDir, adapter);
-    const handler = createVeryfrontHandler(projectDir, bootstrap.adapter, { projectDir });
-    return Object.assign(handler, { upgrade: () => {} });
+    const internalHandler = createVeryfrontHandler(projectDir, bootstrap.adapter, { projectDir });
+    const handler = async (req: Request) => toNativeResponse(await internalHandler(req));
+    return Object.assign(handler, { upgrade: () => {}, connectHMR: () => {} });
   }
 
   // Development mode (default) — includes file watching, HMR, cache invalidation
@@ -145,7 +172,8 @@ export async function createHandler(
   });
   await devServer.start();
 
-  const fetch = devServer.handler;
+  const internalFetch = devServer.handler;
+  const fetch = async (req: Request) => toNativeResponse(await internalFetch(req));
 
   const upgrade = (server: unknown) => {
     const httpServer = server as import("node:http").Server;
@@ -183,7 +211,18 @@ export async function createHandler(
     });
   };
 
-  return Object.assign(fetch, { upgrade });
+  const hmrRateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
+
+  const connectHMR = (ws: WebSocket) => {
+    setupWebSocketHandlers(ws, {
+      clients: clientSockets,
+      rateLimiter: hmrRateLimiter,
+      maxMessageSize: HMR_MAX_MESSAGE_SIZE_BYTES,
+      reactRefresh: true,
+    });
+  };
+
+  return Object.assign(fetch, { upgrade, connectHMR });
 }
 
 /**

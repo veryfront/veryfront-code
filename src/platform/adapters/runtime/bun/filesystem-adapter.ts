@@ -12,6 +12,7 @@ import {
   createFileWatcher,
   createWatcherIterator,
   enqueueWatchEvent,
+  setupNodeFsWatcher,
 } from "../shared/shared-watcher.ts";
 import { makeNodeTempDir } from "../shared/temp-dir.ts";
 import type { BunFSWatcher, BunWatchEvent } from "./types.ts";
@@ -111,41 +112,57 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
       }
     }
 
-    function setupWatcher(path: string): void {
-      try {
-        if (typeof Bun === "undefined" || !Bun.watch) {
-          throw toError(
-            createError({
-              type: "not_supported",
-              message: "Bun.watch is not available in this environment",
-              feature: "Bun.watch",
-            }),
+    function setupBunWatcher(path: string): void {
+      const watcher = Bun.watch(path, {
+        recursive,
+        onChange: (event: BunWatchEvent) => {
+          if (closed || signal?.aborted) return;
+
+          enqueueWatchEvent(
+            { kind: mapBunEventKind(event.type), paths: [event.path] },
+            eventQueue,
+            () => resolver,
+            (r) => {
+              resolver = r;
+            },
           );
-        }
+        },
+      });
 
-        const watcher = Bun.watch(path, {
-          recursive,
-          onChange: (event: BunWatchEvent) => {
-            if (closed || signal?.aborted) return;
-
-            enqueueWatchEvent(
-              { kind: mapBunEventKind(event.type), paths: [event.path] },
-              eventQueue,
-              () => resolver,
-              (r) => {
-                resolver = r;
-              },
-            );
-          },
-        });
-
-        watchers.push(watcher);
-      } catch (error) {
-        serverLogger.error(`Failed to watch ${path}:`, error);
-      }
+      watchers.push(watcher);
     }
 
-    for (const path of pathArray) setupWatcher(path);
+    const setResolver = (r: ((value: IteratorResult<FileChangeEvent>) => void) | null): void => {
+      resolver = r;
+    };
+
+    if (typeof Bun !== "undefined" && Bun.watch) {
+      for (const path of pathArray) {
+        try {
+          setupBunWatcher(path);
+        } catch (error) {
+          serverLogger.error(`Failed to watch ${path}:`, error);
+        }
+      }
+    } else {
+      // Fall back to Node.js fs.watch (Bun supports Node APIs)
+      serverLogger.debug("Bun.watch not available, falling back to Node.js fs.watch");
+      for (const path of pathArray) {
+        setupNodeFsWatcher(path, {
+          recursive,
+          closed: () => closed,
+          signal,
+          eventQueue,
+          getResolver: () => resolver,
+          setResolver,
+          watchers: watchers as Array<import("node:fs").FSWatcher>,
+          onError: (error, watchPath) =>
+            serverLogger.error(`File watcher error for ${watchPath}:`, error),
+        }).catch((error) => {
+          serverLogger.error(`Failed to setup file watcher for ${path}:`, error);
+        });
+      }
+    }
 
     const iterator = createWatcherIterator(
       eventQueue,
