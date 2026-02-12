@@ -2,7 +2,8 @@
  * useChat Hook - Layer 1 (Headless)
  *
  * Complete chat state management with zero UI.
- * Wire-compatible with the AI SDK Data Stream Protocol.
+ * Consumes the veryfront streaming protocol
+ * (message-start/message-finish + step-start/step-end).
  */
 
 import { useCallback, useRef, useState } from "react";
@@ -13,7 +14,7 @@ import type { ToolOutput, UIMessage, UseChatOptions, UseChatResult } from "./typ
 import { generateClientId } from "./utils.ts";
 
 /**
- * useChat hook for managing chat state - AI SDK v5 compatible
+ * useChat hook for managing chat state with veryfront stream events.
  */
 export function useChat(options: UseChatOptions): UseChatResult {
   const [messages, setMessages] = useState<UIMessage[]>(options.initialMessages ?? []);
@@ -28,7 +29,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
   const pendingToolOutputsRef = useRef<Map<string, ToolOutput>>(new Map());
 
   /**
-   * Add tool output - AI SDK v5 compatible
+   * Add tool output to pending tool-call parts.
    * Call from onToolCall to provide results (don't await)
    */
   const addToolOutput = useCallback((output: ToolOutput) => {
@@ -55,7 +56,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
   }, []);
 
   /**
-   * Send a message - AI SDK v5 compatible
+   * Send a message and stream assistant updates.
    */
   const sendMessage = useCallback(
     async (message: { text: string }) => {

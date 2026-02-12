@@ -28,4 +28,4 @@ export {
   ToolStatusBadge,
 } from "./chat/index.tsx";
 
-export { ModelSelector, type ModelOption, type ModelSelectorProps } from "./model-selector.tsx";
+export { type ModelOption, ModelSelector, type ModelSelectorProps } from "./model-selector.tsx";

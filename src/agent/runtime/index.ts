@@ -113,7 +113,7 @@ export class AgentRuntime {
 
   /**
    * Stream a response
-   * Returns a ReadableStream compatible with Vercel AI SDK Data Stream Protocol
+   * Returns a ReadableStream in the veryfront stream event format.
    */
   async stream(
     messages: Message[],
@@ -335,7 +335,8 @@ export class AgentRuntime {
 
   /**
    * Execute agent loop with streaming
-   * Uses Vercel AI SDK UI Message Stream Protocol v5 format
+   * Emits veryfront stream events (message-start/message-finish + step-start/step-end)
+   * while consuming AI SDK `streamText()` parts internally.
    */
   private async executeAgentLoopStreaming(
     systemPrompt: string,

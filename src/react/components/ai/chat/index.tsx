@@ -11,7 +11,7 @@ import type { DynamicToolUIPart, ToolUIPart, UIMessage } from "#veryfront/agent/
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "../theme.ts";
 import { Markdown } from "../markdown.tsx";
 import { MessageSquareIcon, RefreshCwIcon } from "../icons/index.ts";
-import { ModelSelector, type ModelOption } from "../model-selector.tsx";
+import { type ModelOption, ModelSelector } from "../model-selector.tsx";
 
 export { Loader, Shimmer } from "./components/animations.tsx";
 export { ReasoningCard } from "./components/reasoning.tsx";

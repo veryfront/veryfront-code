@@ -13,7 +13,15 @@ export {
   mergeThemes,
 } from "./theme.ts";
 
-export { Chat, ChatComponents, ChatFooter, ChatHeader, ChatInput, ChatMessages, ModelSelector } from "./chat.tsx";
+export {
+  Chat,
+  ChatComponents,
+  ChatFooter,
+  ChatHeader,
+  ChatInput,
+  ChatMessages,
+  ModelSelector,
+} from "./chat.tsx";
 export type { ChatProps, ModelOption, ModelSelectorProps } from "./chat.tsx";
 
 export { AgentCard } from "./agent-card.tsx";

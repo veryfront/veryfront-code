@@ -65,7 +65,11 @@ export {
   ChatMessages,
   ModelSelector,
 } from "#veryfront/react/components/ai/chat.tsx";
-export type { ChatProps, ModelOption, ModelSelectorProps } from "#veryfront/react/components/ai/chat.tsx";
+export type {
+  ChatProps,
+  ModelOption,
+  ModelSelectorProps,
+} from "#veryfront/react/components/ai/chat.tsx";
 
 export { Message, StreamingMessage } from "#veryfront/react/components/ai/message.tsx";
 export type {

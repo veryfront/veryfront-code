@@ -5,7 +5,8 @@
  * Thin abstraction that delegates to AI SDK provider packages
  * while maintaining control over the API surface.
  *
- * Auto-initializes providers from environment variables on first use.
+ * Project-scoped: each project gets its own provider namespace.
+ * Auto-initialized providers from env vars are shared across all projects.
  *
  * @module
  */
@@ -21,14 +22,17 @@ import {
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { ProjectScopedRegistryManager } from "../ai/registry-manager.ts";
 
 export type ModelProviderFactory = (modelId: string) => LanguageModel;
 
-const modelProviders = new Map<string, ModelProviderFactory>();
+const manager = new ProjectScopedRegistryManager<ModelProviderFactory>(
+  "model-provider",
+);
 let autoInitialized = false;
 
 /**
- * Register an AI SDK model provider factory.
+ * Register an AI SDK model provider factory for the current project.
  *
  * @example
  * ```ts
@@ -36,12 +40,16 @@ let autoInitialized = false;
  * registerModelProvider("openai", (id) => createOpenAI({ apiKey })(id));
  * ```
  */
-export function registerModelProvider(name: string, factory: ModelProviderFactory): void {
-  modelProviders.set(name, factory);
+export function registerModelProvider(
+  name: string,
+  factory: ModelProviderFactory,
+): void {
+  manager.register(name, factory);
 }
 
 /**
  * Auto-initialize model providers from environment variables.
+ * Registered as shared (available to all projects).
  * Called lazily on first access.
  */
 function autoInitializeFromEnv(): void {
@@ -49,38 +57,58 @@ function autoInitializeFromEnv(): void {
   autoInitialized = true;
 
   const openaiConfig = getOpenAIEnvConfig();
-  if (openaiConfig.apiKey && !modelProviders.has("openai")) {
+  if (openaiConfig.apiKey && !manager.has("openai")) {
     try {
-      const openai = createOpenAI({ apiKey: openaiConfig.apiKey, baseURL: openaiConfig.baseURL });
-      modelProviders.set("openai", (id) => openai(id));
-      agentLogger.debug("Auto-initialized OpenAI model provider from environment");
+      const openai = createOpenAI({
+        apiKey: openaiConfig.apiKey,
+        baseURL: openaiConfig.baseURL,
+      });
+      manager.registerShared("openai", (id) => openai(id));
+      agentLogger.debug(
+        "Auto-initialized OpenAI model provider from environment",
+      );
     } catch (error) {
-      agentLogger.warn("Failed to initialize OpenAI model provider:", error);
+      agentLogger.warn(
+        "Failed to initialize OpenAI model provider:",
+        error,
+      );
     }
   }
 
   const anthropicConfig = getAnthropicEnvConfig();
-  if (anthropicConfig.apiKey && !modelProviders.has("anthropic")) {
+  if (anthropicConfig.apiKey && !manager.has("anthropic")) {
     try {
       const anthropic = createAnthropic({
         apiKey: anthropicConfig.apiKey,
         baseURL: anthropicConfig.baseURL,
       });
-      modelProviders.set("anthropic", (id) => anthropic(id));
-      agentLogger.debug("Auto-initialized Anthropic model provider from environment");
+      manager.registerShared("anthropic", (id) => anthropic(id));
+      agentLogger.debug(
+        "Auto-initialized Anthropic model provider from environment",
+      );
     } catch (error) {
-      agentLogger.warn("Failed to initialize Anthropic model provider:", error);
+      agentLogger.warn(
+        "Failed to initialize Anthropic model provider:",
+        error,
+      );
     }
   }
 
   const googleConfig = getGoogleGenAIEnvConfig();
-  if (googleConfig.apiKey && !modelProviders.has("google")) {
+  if (googleConfig.apiKey && !manager.has("google")) {
     try {
-      const google = createGoogleGenerativeAI({ apiKey: googleConfig.apiKey });
-      modelProviders.set("google", (id) => google(id));
-      agentLogger.debug("Auto-initialized Google model provider from environment");
+      const google = createGoogleGenerativeAI({
+        apiKey: googleConfig.apiKey,
+      });
+      manager.registerShared("google", (id) => google(id));
+      agentLogger.debug(
+        "Auto-initialized Google model provider from environment",
+      );
     } catch (error) {
-      agentLogger.warn("Failed to initialize Google model provider:", error);
+      agentLogger.warn(
+        "Failed to initialize Google model provider:",
+        error,
+      );
     }
   }
 }
@@ -122,14 +150,13 @@ export function resolveModel(modelString: string): LanguageModel {
     );
   }
 
-  const factory = modelProviders.get(providerName);
+  const factory = manager.get(providerName);
   if (!factory) {
     const available = getRegisteredModelProviders().join(", ") || "none";
     throw toError(
       createError({
         type: "agent",
-        message:
-          `Model provider "${providerName}" not registered. Available: ${available}`,
+        message: `Model provider "${providerName}" not registered. Available: ${available}`,
       }),
     );
   }
@@ -138,25 +165,25 @@ export function resolveModel(modelString: string): LanguageModel {
 }
 
 /**
- * Check if a model provider is registered.
+ * Check if a model provider is registered (project-scoped or shared).
  */
 export function hasModelProvider(name: string): boolean {
   autoInitializeFromEnv();
-  return modelProviders.has(name);
+  return manager.has(name);
 }
 
 /**
- * Get list of registered model provider names.
+ * Get list of registered model provider names (project-scoped + shared).
  */
 export function getRegisteredModelProviders(): string[] {
   autoInitializeFromEnv();
-  return [...modelProviders.keys()];
+  return manager.getAllIds();
 }
 
 /**
  * Clear all registered model providers (for testing).
  */
 export function clearModelProviders(): void {
-  modelProviders.clear();
+  manager.clearAll();
   autoInitialized = false;
 }

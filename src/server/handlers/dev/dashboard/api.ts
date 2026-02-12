@@ -3,7 +3,10 @@ import { executeTool, toolRegistry } from "#veryfront/tool";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
-import { getRegisteredModelProviders, hasModelProvider } from "#veryfront/provider/model-registry.ts";
+import {
+  getRegisteredModelProviders,
+  hasModelProvider,
+} from "#veryfront/provider/model-registry.ts";
 import { WorkflowClient } from "#veryfront/workflow";
 import { workflowRegistry } from "#veryfront/workflow/registry.ts";
 import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
