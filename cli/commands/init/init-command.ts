@@ -4,7 +4,6 @@
  *******************************/
 
 import { cliLogger as logger } from "#cli/utils";
-import { FILE_NOT_FOUND } from "veryfront/errors";
 import { brand, dim } from "#cli/ui";
 import { createSpinner } from "../../ui/progress.ts";
 import { box } from "../../ui/box.ts";
@@ -218,7 +217,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
   );
 
   if (projectName && (await fs.exists(projectDir))) {
-    throw FILE_NOT_FOUND.create({ detail: `Directory ${projectName} already exists` });
+    logger.error(
+      `Directory "${projectName}" already exists. Choose a different name or delete the existing directory.`,
+    );
+    return;
   }
 
   const { getTemplate, getTemplateConfig } = await import("../../templates/index.ts");

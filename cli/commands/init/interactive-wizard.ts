@@ -1,4 +1,4 @@
-import { brand, muted } from "#cli/ui";
+import { brand, dim, muted } from "#cli/ui";
 import { getAgentFace } from "../../ui/dot-matrix.ts";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
