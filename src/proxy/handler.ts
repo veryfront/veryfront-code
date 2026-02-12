@@ -119,7 +119,12 @@ export interface ProxyContext {
   host: string;
   parsedDomain: ParsedDomain;
   isLocalProject: boolean;
-  error?: { status: number; message: string; redirectUrl?: string };
+  error?: {
+    status: number;
+    message: string;
+    slug?: string;
+    redirectUrl?: string;
+  };
 }
 
 export interface ProxyLogger {
@@ -219,6 +224,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     message: string,
     token?: string,
     redirectUrl?: string,
+    slug?: string,
   ): ProxyContext {
     return {
       token,
@@ -230,7 +236,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       host: base.host,
       parsedDomain: base.parsedDomain,
       isLocalProject: false,
-      error: { status, message, redirectUrl },
+      error: { status, message, redirectUrl, slug },
     };
   }
 
@@ -440,7 +446,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     }
 
     if (scope === "production" && projectSlug && !releaseId && !isLocalProject) {
-      logger?.error("Missing releaseId in production", undefined, {
+      logger?.warn("No active release found", {
         projectSlug,
         projectId,
         host,
@@ -448,9 +454,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       });
       return makeErrorContext(
         { scope, host, parsedDomain },
-        502,
-        `Missing releaseId for production project: ${projectSlug}`,
+        404,
+        "No active release found",
         token,
+        undefined,
+        "release-not-found",
       );
     }
 

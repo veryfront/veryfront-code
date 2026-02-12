@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 
 describe("environment-resolution", () => {
-  it("returns 502 in proxy production when releaseId is missing for remote project", () => {
+  it("returns 404 when release not found in proxy production for remote project", () => {
     const result = resolveEnvironment({
       proxyEnv: "production",
       reqCtxMode: "production",
@@ -18,7 +18,11 @@ describe("environment-resolution", () => {
       defaultEnvironment: undefined,
     });
 
-    assertEquals(result.errorResponse?.status, 502);
+    assertEquals(result.errorResponse?.status, 404);
+    assertEquals(
+      result.errorResponse?.headers.get("Content-Type"),
+      "text/html; charset=utf-8",
+    );
     assertEquals(result.resolvedEnvironment, "production");
   });
 
