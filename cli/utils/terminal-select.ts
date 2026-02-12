@@ -3,7 +3,7 @@
  * Supports both Deno and Node.js runtimes
  */
 
-import { brand, dim, muted } from "#cli/ui";
+import { brand, muted } from "#cli/ui";
 import { writeStdout } from "veryfront/platform";
 import { isDeno } from "veryfront/platform";
 import { getStdinReader, setRawMode } from "veryfront/platform";

@@ -1,8 +1,7 @@
-import { brand, dim, muted } from "#cli/ui";
+import { brand, muted } from "#cli/ui";
 import { getAgentFace } from "../../ui/dot-matrix.ts";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
-import { cliLogger as logger } from "#cli/utils";
 import { select, textInput } from "../../utils/terminal-select.ts";
 import { getTemplateSelectOptions, TEMPLATES } from "./catalog.ts";
 import type { InitTemplate } from "./types.ts";
@@ -12,6 +11,7 @@ export interface WizardResult {
   template: InitTemplate;
   initGit: boolean;
   skipped: boolean;
+  cancelled: boolean;
 }
 
 function canRunWizard(): boolean {
@@ -20,14 +20,21 @@ function canRunWizard(): boolean {
 
 export async function runInteractiveWizard(): Promise<WizardResult> {
   if (!canRunWizard()) {
-    return { projectName: null, template: "minimal", initGit: false, skipped: true };
+    return {
+      projectName: null,
+      template: "minimal",
+      initGit: false,
+      skipped: true,
+      cancelled: false,
+    };
   }
 
   // Show logo
   console.log("");
   console.log(getAgentFace({ litColor: "\x1b[38;2;252;143;93m" }));
   console.log("");
-  console.log(`┌  Let's create a ${brand("Veryfront App")} ✨`);
+  console.log(`┌  ${brand("Veryfront")}`);
+  console.log(`│  Let's set up your project.`);
   console.log("│");
 
   // Step 1: Location prompt
@@ -40,12 +47,31 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
     0,
   );
 
+  if (locationChoice === null) {
+    console.log(muted("\n  Cancelled.\n"));
+    return {
+      projectName: null,
+      template: "minimal",
+      initGit: false,
+      skipped: false,
+      cancelled: true,
+    };
+  }
+
   let projectName: string | null = null;
   if (locationChoice === "new") {
     const name = await textInput("Project name", "my-app");
-    if (!name) {
-      logger.warn("No project name provided, using current directory");
-    } else {
+    if (name === null) {
+      console.log(muted("\n  Cancelled.\n"));
+      return {
+        projectName: null,
+        template: "minimal",
+        initGit: false,
+        skipped: false,
+        cancelled: true,
+      };
+    }
+    if (name) {
       projectName = name;
     }
   }
@@ -56,11 +82,19 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
     getTemplateSelectOptions(),
     0,
   );
-  const template = (templateChoice as InitTemplate) ?? "minimal";
 
-  if (!templateChoice) {
-    logger.warn("No template selected, using minimal");
+  if (templateChoice === null) {
+    console.log(muted("\n  Cancelled.\n"));
+    return {
+      projectName: null,
+      template: "minimal",
+      initGit: false,
+      skipped: false,
+      cancelled: true,
+    };
   }
+
+  const template = templateChoice as InitTemplate;
 
   // Step 3: Git init prompt
   const gitChoice = await select(
@@ -71,6 +105,18 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
     ],
     0,
   );
+
+  if (gitChoice === null) {
+    console.log(muted("\n  Cancelled.\n"));
+    return {
+      projectName: null,
+      template: "minimal",
+      initGit: false,
+      skipped: false,
+      cancelled: true,
+    };
+  }
+
   const initGit = gitChoice === "yes";
 
   // Summary
@@ -87,7 +133,7 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
   console.log(`  ${brand("Git:")} ${initGit ? "Yes" : "No"}`);
   console.log("");
 
-  return { projectName, template, initGit, skipped: false };
+  return { projectName, template, initGit, skipped: false, cancelled: false };
 }
 
 export function shouldRunWizard(options: { template?: string; name?: string }): boolean {

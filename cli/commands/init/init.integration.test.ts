@@ -11,13 +11,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import {
-  exists,
-  makeTempDir,
-  readTextFile,
-  remove,
-  stat,
-} from "#veryfront/testing/deno-compat.ts";
+import { exists, makeTempDir, readTextFile, remove, stat } from "#veryfront/testing/deno-compat.ts";
 import { runCommand } from "#veryfront/compat/process.ts";
 
 const TEST_DIR = await makeTempDir({ prefix: "veryfront-init-test-" });

@@ -176,7 +176,7 @@ function dedupeEnvVars(envVars: EnvVarConfig[]): EnvVarConfig[] {
  */
 export async function initCommand(options: InitOptions): Promise<void> {
   const { name, features = [], quiet = false } = options;
-  let { integrations = [] } = options;
+  const { integrations = [] } = options;
 
   function log(msg: string): void {
     if (!quiet) logger.info(msg);
@@ -188,6 +188,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   if (shouldRunWizard(options)) {
     const wizardResult = await runInteractiveWizard();
+    if (wizardResult.cancelled) {
+      return;
+    }
     template = wizardResult.template;
     if (wizardResult.projectName) {
       projectName = wizardResult.projectName;
@@ -378,7 +381,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
   if (!options.skipInstall) {
     const pm = await detectPackageManager(projectDir);
     const installSpinner = quiet ? null : createSpinner(`Installing dependencies with ${pm}...`);
-    const installSuccess = await installDependencies(projectDir, { silent: true, packageManager: pm });
+    const installSuccess = await installDependencies(projectDir, {
+      silent: true,
+      packageManager: pm,
+    });
 
     if (installSuccess) {
       installSpinner?.success("Dependencies installed");
