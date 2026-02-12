@@ -55,25 +55,38 @@ npx create-veryfront
 
 ## Architecture
 
-**Thin wrapper with veryfront as dependency:**
+**Thin wrapper calling `veryfront init`:**
 
 ```
 packages/create-veryfront/
   package.json   # bin + depends on "veryfront"
-  index.js       # imports and calls veryfront create directly
+  index.js       # imports and calls veryfront init
 ```
 
 ```javascript
 // index.js
-import { createCommand } from 'veryfront/cli';
-createCommand(process.argv.slice(2));
+import { initCommand } from 'veryfront/cli';
+initCommand(process.argv.slice(2));
 ```
 
-All logic lives in `cli/commands/create/`. Single codebase.
-
-**Why not `npx veryfront create`?** Using npx forces npm execution, breaking
+**Why not `npx veryfront init`?** Using npx forces npm execution, breaking
 package manager detection for pnpm/yarn/bun users. By depending on veryfront
 directly, the user's chosen package manager installs everything correctly.
+
+## Current State
+
+`veryfront init` already exists with:
+- Interactive wizard (template selection)
+- Creates project files from template
+- Installs dependencies
+- Shows next steps
+
+## What Needs Enhancement
+
+1. **Better visual output** - Progress spinners, success box (like Qwik)
+2. **Git init** - Currently not done
+3. **Project name prompt** - Currently requires `--name` or runs in cwd
+4. **Banner** - Simple branding at start
 
 ## Auth & Deploy
 
@@ -154,25 +167,23 @@ The `veryfront` binary handles everything. Users just run `pnpm dev`.
 
 ## Tasks
 
-1. Create `cli/commands/create/` command
-   - Banner (ASCII or simple)
-   - Project name prompt + validation
-   - Template select
-   - Deps install prompt
-   - Git init prompt
-   - Progress spinners
-   - Success box with next steps
+1. **Enhance `cli/commands/init/`**
+   - Add banner (simple, not massive ASCII)
+   - Add project name prompt if not provided
+   - Add git init option
+   - Improve output with progress spinners
+   - Add success box with next steps
 
-2. Create `packages/create-veryfront/`
+2. **Create `packages/create-veryfront/`**
    - package.json with bin + veryfront dependency
-   - index.js imports and calls veryfront directly
+   - index.js imports and calls `initCommand` directly
 
-3. Wire up
-   - Add `create` to router.ts
-   - Publish to npm
+3. **Publish**
+   - Publish `create-veryfront` to npm
 
 ## Decisions
 
 - **Banner**: Keep it simple, not massive ASCII art
 - **Defaults**: `chat` template, yes to deps, yes to git
 - **Auth**: Zero auth until deploy
+- **Reuse**: Enhance existing `init` command, don't create new one
