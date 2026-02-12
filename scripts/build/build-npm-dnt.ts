@@ -125,6 +125,8 @@ await build({
 		// ws is dynamically imported for Node.js WebSocket upgrade (HMR dev server)
 		// dnt can't detect dynamic imports, so we add it explicitly
 		dependencies: {
+			"@types/react": "^19.0.0",
+			"@types/react-dom": "^19.0.0",
 			"ws": "^8.18.0",
 		},
 		keywords: [
@@ -233,13 +235,28 @@ if (existsSync(nativeBinary)) {
 		// Copy README (optional)
 		await copyFileIfExists("./README.md", "./npm/README.md");
 
+		// Copy base tsconfig for user projects to extend
+		await Deno.writeTextFile("./npm/tsconfig.json", JSON.stringify({
+			compilerOptions: {
+				target: "ES2022",
+				module: "ESNext",
+				moduleResolution: "Bundler",
+				jsx: "react-jsx",
+				strict: true,
+				skipLibCheck: true,
+				esModuleInterop: true,
+				noEmit: true,
+			},
+		}, null, 2));
+
 		// Update package.json with bin entry, postinstall, and type
 		const pkgPath = "./npm/package.json";
 		const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
 		pkg.type = "module"; // Required for ESM imports without warnings
 		pkg.bin = { veryfront: "bin/veryfront.js" };
-		pkg.files = ["esm", "script", "src", "bin", "scripts", "LICENSE", "README.md"];
+		pkg.files = ["esm", "script", "src", "bin", "scripts", "tsconfig.json", "LICENSE", "README.md"];
 		pkg.scripts = { postinstall: "node scripts/postinstall.js" };
+		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
 	},
 });
