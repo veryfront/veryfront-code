@@ -55,15 +55,25 @@ npx create-veryfront
 
 ## Architecture
 
-**Thin wrapper approach:**
+**Thin wrapper with veryfront as dependency:**
 
 ```
 packages/create-veryfront/
-  package.json   # bin → npx veryfront create
-  index.js       # 5 lines: spawns veryfront create
+  package.json   # bin + depends on "veryfront"
+  index.js       # imports and calls veryfront create directly
 ```
 
-All logic in `cli/commands/create/`. Single codebase.
+```javascript
+// index.js
+import { createCommand } from 'veryfront/cli';
+createCommand(process.argv.slice(2));
+```
+
+All logic lives in `cli/commands/create/`. Single codebase.
+
+**Why not `npx veryfront create`?** Using npx forces npm execution, breaking
+package manager detection for pnpm/yarn/bun users. By depending on veryfront
+directly, the user's chosen package manager installs everything correctly.
 
 ## Auth & Deploy
 
@@ -122,8 +132,8 @@ bun create veryfront   → bun install
    - Success box with next steps
 
 2. Create `packages/create-veryfront/`
-   - package.json with bin
-   - index.js spawns `npx veryfront create`
+   - package.json with bin + veryfront dependency
+   - index.js imports and calls veryfront directly
 
 3. Wire up
    - Add `create` to router.ts
