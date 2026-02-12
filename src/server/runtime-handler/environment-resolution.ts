@@ -8,6 +8,7 @@
  */
 
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import { ErrorPages } from "../utils/error-html.ts";
 import type { ProxyEnvironment } from "./proxy-environment.ts";
 
 const baseLogger = getBaseLogger("SERVER");
@@ -74,7 +75,7 @@ export function resolveEnvironment(
     !opts.isLocalProject &&
     !isWebSocketOrHMR
   ) {
-    logger.error("Missing releaseId in proxy mode (production)", {
+    logger.warn("Project not yet deployed (proxy mode)", {
       projectSlug: opts.projectSlug,
       projectId: opts.projectId,
       environmentName: opts.environmentName,
@@ -86,14 +87,10 @@ export function resolveEnvironment(
     return {
       resolvedEnvironment,
       releaseId,
-      errorResponse: new Response(
-        JSON.stringify({
-          error: "Missing releaseId for production request in proxy mode",
-          projectSlug: opts.projectSlug,
-          environment: resolvedEnvironment,
-        }),
-        { status: 502, headers: { "Content-Type": "application/json" } },
-      ),
+      errorResponse: new Response(ErrorPages.notFound(), {
+        status: 404,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      }),
     };
   }
 

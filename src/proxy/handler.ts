@@ -440,7 +440,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     }
 
     if (scope === "production" && projectSlug && !releaseId && !isLocalProject) {
-      logger?.error("Missing releaseId in production", undefined, {
+      logger?.warn("Project not yet deployed", {
         projectSlug,
         projectId,
         host,
@@ -448,8 +448,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       });
       return makeErrorContext(
         { scope, host, parsedDomain },
-        502,
-        `Missing releaseId for production project: ${projectSlug}`,
+        404,
+        `not_deployed`,
         token,
       );
     }

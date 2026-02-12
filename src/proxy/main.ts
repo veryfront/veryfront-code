@@ -32,6 +32,7 @@ import {
   withSpan,
 } from "./tracing.ts";
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
+import { ErrorPages } from "../server/utils/error-html.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
@@ -284,6 +285,13 @@ function forwardToServer(req: Request): Promise<Response> {
               return new Response(null, {
                 status: 302,
                 headers: { Location: ctx.error.redirectUrl },
+              });
+            }
+
+            if (ctx.error.message === "not_deployed") {
+              return new Response(ErrorPages.notFound(), {
+                status: 404,
+                headers: { "Content-Type": "text/html; charset=utf-8" },
               });
             }
 
