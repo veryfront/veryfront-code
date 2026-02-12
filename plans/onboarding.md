@@ -211,9 +211,13 @@ The `veryfront` binary handles everything. Users just run `pnpm dev`.
    - Add git init after scaffolding
    - Add progress output with spinners
    - Add success box with next steps
-   - Next steps should reflect location choice:
-     - Current folder: just `pnpm dev`
-     - New folder: `cd my-app` then `pnpm dev`
+   - Next steps should reflect:
+     - **Location**: current folder vs new folder (`cd my-app`)
+     - **Package manager**: show correct command based on `npm_config_user_agent`
+       - pnpm → `pnpm dev`
+       - npm → `npm run dev`
+       - yarn → `yarn dev`
+       - bun → `bun dev`
 
 4. **`create-veryfront` package** (already exists)
    - Separate repo: github.com/veryfront/create-veryfront
@@ -228,7 +232,6 @@ The `veryfront` binary handles everything. Users just run `pnpm dev`.
 
 6. **Update `cli/README.md`**
    - Add `npx create-veryfront` quick start
-   - Link to create-veryfront repo
 
 7. **Create `docs/getting-started.md`** (if needed)
    - Quick start with create-veryfront
