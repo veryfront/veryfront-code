@@ -2,20 +2,20 @@
 /**
  * Guide Validator
  *
- * Checks that all guide MDX files in docs/guides/ have:
- * 1. Valid frontmatter (title, sidebarTitle, description)
- * 2. Valid internal cross-references (/code/guides/* links map to real files)
- * 3. Valid API reference links (/code/api/* links map to real MDX files)
+ * Checks that all guide .md files in docs/guides/ have:
+ * 1. Valid frontmatter (title, description, order)
+ * 2. Valid internal cross-references (relative .md links map to real files)
+ * 3. Valid API reference links (relative ../reference/*.md links map to real files)
  * 4. Balanced code blocks (every ``` has a closing ```)
  * 5. Required sections (## Next or ## Related at the end)
- * 6. All guides listed in index.mdx exist as files
+ * 6. All guides listed in index.md exist as files
  *
  * Usage: deno run --allow-read scripts/docs/validate-guides.ts
  */
 
 const ROOT = Deno.cwd();
 const GUIDES_DIR = `${ROOT}/docs/guides`;
-const API_REF_DIR = `${ROOT}/docs/api-reference`;
+const REF_DIR = `${ROOT}/docs/reference`;
 
 interface Issue {
   file: string;
@@ -33,30 +33,30 @@ function addWarning(file: string, message: string) {
   warnings.push({ file, message });
 }
 
-// Map from URL path slug to expected filename
+// Map from slug to expected filename
 const GUIDE_SLUG_TO_FILE: Record<string, string> = {};
-const API_SLUG_TO_FILE: Record<string, string> = {};
+const REF_SLUG_TO_FILE: Record<string, string> = {};
 
-// Collect all guide MDX files
+// Collect all guide .md files
 const guideFiles: string[] = [];
 for (const entry of Deno.readDirSync(GUIDES_DIR)) {
-  if (entry.isFile && entry.name.endsWith(".mdx")) {
+  if (entry.isFile && entry.name.endsWith(".md")) {
     guideFiles.push(entry.name);
-    const slug = entry.name.replace(".mdx", "");
+    const slug = entry.name.replace(".md", "");
     GUIDE_SLUG_TO_FILE[slug] = entry.name;
   }
 }
 
-// Collect all API reference MDX files
+// Collect all reference .md files
 try {
-  for (const entry of Deno.readDirSync(API_REF_DIR)) {
-    if (entry.isFile && entry.name.endsWith(".mdx")) {
-      const slug = entry.name.replace(".mdx", "");
-      API_SLUG_TO_FILE[slug] = entry.name;
+  for (const entry of Deno.readDirSync(REF_DIR)) {
+    if (entry.isFile && entry.name.endsWith(".md")) {
+      const slug = entry.name.replace(".md", "");
+      REF_SLUG_TO_FILE[slug] = entry.name;
     }
   }
 } catch {
-  addWarning("api-reference", "Could not read docs/api-reference/ directory");
+  addWarning("reference", "Could not read docs/reference/ directory");
 }
 
 // 1. Validate each guide file
@@ -83,7 +83,7 @@ for (const filename of guideFiles) {
     .filter((l) => l.includes(":"))
     .map((l) => l.split(":")[0].trim());
 
-  for (const required of ["title", "sidebarTitle", "description"]) {
+  for (const required of ["title", "description", "order"]) {
     if (!fmKeys.includes(required)) {
       addIssue(shortName, `Missing frontmatter field: ${required}`);
     }
@@ -97,27 +97,32 @@ for (const filename of guideFiles) {
     addIssue(shortName, `Unbalanced code blocks (${codeBlockMatches.length} \`\`\` markers — should be even)`);
   }
 
-  // --- Internal guide links ---
-  const guideLinkRe = /\(\/code\/guides\/([a-z0-9-]+)\)/g;
+  // --- Internal guide links (relative) ---
+  const guideLinkRe = /\(\.\/([a-z0-9-]+)\.md\)/g;
   let match: RegExpExecArray | null;
   while ((match = guideLinkRe.exec(content))) {
     const slug = match[1];
     if (!GUIDE_SLUG_TO_FILE[slug]) {
-      addIssue(shortName, `Broken guide link: /code/guides/${slug} (no matching file)`);
+      addIssue(shortName, `Broken guide link: ./${slug}.md (no matching file)`);
     }
   }
 
-  // --- API reference links ---
-  const apiLinkRe = /\(\/code\/api\/([a-z0-9-]+)\)/g;
-  while ((match = apiLinkRe.exec(content))) {
+  // --- API reference links (relative) ---
+  const refLinkRe = /\(\.\.\/reference\/([a-z0-9-]+)\.md\)/g;
+  while ((match = refLinkRe.exec(content))) {
     const slug = match[1];
-    if (!API_SLUG_TO_FILE[slug] && slug !== "api") {
-      addWarning(shortName, `API reference link: /code/api/${slug} (no matching MDX file — may be valid if it's a directory route)`);
+    if (!REF_SLUG_TO_FILE[slug]) {
+      addWarning(shortName, `Reference link: ../reference/${slug}.md (no matching file)`);
     }
   }
 
-  // --- Required closing sections (skip index.mdx) ---
-  if (filename !== "index.mdx") {
+  // --- Check for stale absolute links ---
+  if (/\/code\/(guides|api)\//.test(content)) {
+    addIssue(shortName, "Contains stale absolute links (/code/guides/ or /code/api/) — should use relative paths");
+  }
+
+  // --- Required closing sections (skip index.md) ---
+  if (filename !== "index.md") {
     const hasNext = body.includes("## Next");
     const hasRelated = body.includes("## Related");
     if (!hasNext && !hasRelated) {
@@ -126,29 +131,29 @@ for (const filename of guideFiles) {
   }
 }
 
-// 2. Validate index.mdx lists all guide files
-const indexPath = `${GUIDES_DIR}/index.mdx`;
+// 2. Validate index.md lists all guide files
+const indexPath = `${GUIDES_DIR}/index.md`;
 try {
   const indexContent = Deno.readTextFileSync(indexPath);
   for (const filename of guideFiles) {
-    if (filename === "index.mdx") continue;
-    const slug = filename.replace(".mdx", "");
-    if (!indexContent.includes(`/code/guides/${slug}`)) {
-      addWarning(`guides/index.mdx`, `Guide "${slug}" not listed in index`);
+    if (filename === "index.md") continue;
+    const slug = filename.replace(".md", "");
+    if (!indexContent.includes(`./${slug}.md`)) {
+      addWarning(`guides/index.md`, `Guide "${slug}" not listed in index`);
     }
   }
 
   // Check index links point to real files
-  const indexLinkRe = /\(\/code\/guides\/([a-z0-9-]+)\)/g;
+  const indexLinkRe = /\(\.\/([a-z0-9-]+)\.md\)/g;
   let m: RegExpExecArray | null;
   while ((m = indexLinkRe.exec(indexContent))) {
     const slug = m[1];
     if (!GUIDE_SLUG_TO_FILE[slug]) {
-      addIssue("guides/index.mdx", `Index links to /code/guides/${slug} but no file exists`);
+      addIssue("guides/index.md", `Index links to ./${slug}.md but no file exists`);
     }
   }
 } catch {
-  addIssue("guides/index.mdx", "Could not read index.mdx");
+  addIssue("guides/index.md", "Could not read index.md");
 }
 
 // 3. Check imports in code examples reference real modules

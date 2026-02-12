@@ -1,7 +1,7 @@
 ---
 title: "Building & Deploying"
-sidebarTitle: "Deploying"
 description: "Production builds, static export, and deployment targets."
+order: 17
 ---
 
 ## Build
@@ -90,9 +90,9 @@ CMD ["deno", "task", "start"]
 
 ## Next
 
-- [Head & SEO](/code/guides/head-and-seo) — optimize for search engines
-- [Configuration](/code/guides/configuration) — all configuration options
+- [Head & SEO](./head-and-seo.md) — optimize for search engines
+- [Configuration](./configuration.md) — all configuration options
 
 ## Related
 
-- [`veryfront` (root)](/code/api/root) — `defineConfig`, build options
+- [`veryfront` (root)](../reference/root.md) — `defineConfig`, build options

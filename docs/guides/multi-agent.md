@@ -1,7 +1,7 @@
 ---
 title: "Multi-Agent"
-sidebarTitle: "Multi-Agent"
 description: "Agent composition, delegation, and agent-as-tool patterns."
+order: 11
 ---
 
 Complex tasks often need multiple specialized agents. Veryfront supports two composition patterns: **agent-as-tool** (one agent delegates to others) and **workflows** (explicit step orchestration).
@@ -65,7 +65,7 @@ const researchTool = agentAsTool(researcher, "Research a topic using web search"
 
 ## Workflow-based composition
 
-For deterministic multi-agent pipelines, use [workflows](/code/guides/workflows):
+For deterministic multi-agent pipelines, use [workflows](./workflows.md):
 
 ```ts
 // workflows/article-pipeline.ts
@@ -106,10 +106,10 @@ const agent = getAgent("writer"); // Get a specific agent
 
 ## Next
 
-- [Providers](/code/guides/providers) — configure OpenAI, Anthropic, and Google
-- [Middleware](/code/guides/middleware) — add auth and rate limiting to your agents
+- [Providers](./providers.md) — configure OpenAI, Anthropic, and Google
+- [Middleware](./middleware.md) — add auth and rate limiting to your agents
 
 ## Related
 
-- [`veryfront/agent`](/code/api/agent) — agent API reference
-- [`veryfront/workflow`](/code/api/workflow) — workflow API reference
+- [`veryfront/agent`](../reference/agent.md) — agent API reference
+- [`veryfront/workflow`](../reference/workflow.md) — workflow API reference

@@ -1,9 +1,9 @@
 #!/usr/bin/env -S deno run --allow-read --allow-write --allow-run
 /**
- * Generate Mintlify MDX API reference pages from barrel JSDoc and `deno doc --json`.
+ * Generate Markdown API reference pages from barrel JSDoc and `deno doc --json`.
  *
  * Reads `deno.json` exports, extracts @module/@example JSDoc from each barrel,
- * runs `deno doc --json` for type information, and outputs one `.mdx` file per
+ * runs `deno doc --json` for type information, and outputs one `.md` file per
  * export path.
  *
  * Usage: deno task docs
@@ -21,7 +21,7 @@ const ROOT = Deno.cwd();
 
 const args = parseArgs(Deno.args, {
   string: ["output"],
-  default: { output: "docs/api-reference" },
+  default: { output: "docs/reference" },
 });
 
 const OUTPUT_DIR = args.output.startsWith("/") ? args.output : `${ROOT}/${args.output}`;
@@ -1517,21 +1517,22 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
 // 6. Generate MDX content
 // ---------------------------------------------------------------------------
 
-function generateMDX(
+function generateMD(
   entry: ExportEntry,
   jsdoc: BarrelJSDoc,
   exports: CategorizedExports,
   nodes: DocNode[],
+  order: number,
 ): string {
   const lines: string[] = [];
 
   // Frontmatter
   lines.push("---");
   lines.push(`title: "${entry.importPath}"`);
-  lines.push(`sidebarTitle: "${entry.slug === "root" ? "veryfront" : entry.slug}"`);
   if (jsdoc.description) {
     lines.push(`description: "${jsdoc.description.replace(/"/g, '\\"')}"`);
   }
+  lines.push(`order: ${order}`);
   lines.push("---");
   lines.push("");
 
@@ -1636,7 +1637,7 @@ function generateMDX(
     lines.push("## Related");
     lines.push("");
     for (const r of related) {
-      lines.push(`- [\`veryfront/${r.path}\`](/code/api/${r.path}) — ${r.reason}`);
+      lines.push(`- [\`veryfront/${r.path}\`](./${r.path}.md) — ${r.reason}`);
     }
     lines.push("");
   }
@@ -1648,13 +1649,13 @@ function generateMDX(
 // 7. Generate overview/index page
 // ---------------------------------------------------------------------------
 
-function generateOverviewMDX(entries: Array<{ entry: ExportEntry; jsdoc: BarrelJSDoc }>): string {
+function generateOverviewMD(entries: Array<{ entry: ExportEntry; jsdoc: BarrelJSDoc }>): string {
   const lines: string[] = [];
 
   lines.push("---");
   lines.push('title: "Framework API Reference"');
-  lines.push('sidebarTitle: "Overview"');
   lines.push('description: "Complete API reference for the Veryfront framework."');
+  lines.push("order: 0");
   lines.push("---");
   lines.push("");
   lines.push("Complete API reference for the Veryfront framework.");
@@ -1672,7 +1673,7 @@ function generateOverviewMDX(entries: Array<{ entry: ExportEntry; jsdoc: BarrelJ
 
   for (const { entry, jsdoc } of entries) {
     const desc = jsdoc.description || "";
-    lines.push(`| [\`${entry.importPath}\`](/code/api/${entry.slug}) | ${desc} |`);
+    lines.push(`| [\`${entry.importPath}\`](./${entry.slug}.md) | ${desc} |`);
   }
 
   lines.push("");
@@ -1692,7 +1693,7 @@ async function main() {
 
   const overviewData: Array<{ entry: ExportEntry; jsdoc: BarrelJSDoc }> = [];
 
-  for (const entry of entries) {
+  for (const [idx, entry] of entries.entries()) {
     const absFilePath = `${ROOT}/${entry.filePath.replace("./", "")}`;
     console.log(`Processing ${entry.importPath} (${entry.filePath})...`);
 
@@ -1712,19 +1713,20 @@ async function main() {
     const nodes = await getDenoDoc(entry.filePath);
     const exports = categorizeNodes(nodes, entry.importPath);
 
-    // Generate MDX
-    const mdx = generateMDX(entry, jsdoc, exports, nodes);
-    const outPath = `${OUTPUT_DIR}/${entry.slug}.mdx`;
-    await Deno.writeTextFile(outPath, mdx);
+    // Generate MD
+    const order = idx + 1;
+    const md = generateMD(entry, jsdoc, exports, nodes, order);
+    const outPath = `${OUTPUT_DIR}/${entry.slug}.md`;
+    await Deno.writeTextFile(outPath, md);
     console.log(`  Wrote ${outPath}`);
   }
 
   // Generate overview page
-  const overviewMDX = generateOverviewMDX(overviewData);
-  const overviewPath = `${OUTPUT_DIR}/index.mdx`;
-  await Deno.writeTextFile(overviewPath, overviewMDX);
+  const overviewMD = generateOverviewMD(overviewData);
+  const overviewPath = `${OUTPUT_DIR}/index.md`;
+  await Deno.writeTextFile(overviewPath, overviewMD);
   console.log(`\nWrote overview: ${overviewPath}`);
-  console.log(`Generated ${entries.length + 1} MDX files in ${OUTPUT_DIR}`);
+  console.log(`Generated ${entries.length + 1} MD files in ${OUTPUT_DIR}`);
 }
 
 main();

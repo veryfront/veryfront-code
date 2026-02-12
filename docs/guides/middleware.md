@@ -1,7 +1,7 @@
 ---
 title: "Middleware"
-sidebarTitle: "Middleware"
 description: "CORS, rate limiting, logging, and custom middleware pipelines."
+order: 13
 ---
 
 Middleware intercepts requests before they reach your route handlers. Use the built-in middleware for common needs, or write your own.
@@ -124,9 +124,9 @@ const pipeline = new MiddlewarePipeline()
 
 ## Next
 
-- [OAuth](/code/guides/oauth) — add social login to your app
-- [API Routes](/code/guides/api-routes) — the routes that middleware protects
+- [OAuth](./oauth.md) — add social login to your app
+- [API Routes](./api-routes.md) — the routes that middleware protects
 
 ## Related
 
-- [`veryfront/middleware`](/code/api/middleware) — middleware API reference
+- [`veryfront/middleware`](../reference/middleware.md) — middleware API reference

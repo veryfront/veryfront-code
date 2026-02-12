@@ -1,7 +1,7 @@
 ---
 title: "Quickstart"
-sidebarTitle: "Quickstart"
 description: "Create and run a Veryfront project in under 2 minutes."
+order: 1
 ---
 
 ## Install
@@ -83,5 +83,5 @@ Deploys to Veryfront Cloud. Your site is live at `https://<slug>.veryfront.com`.
 
 ## Next
 
-- [Project Structure](/code/guides/project-structure) — understand the full directory layout
+- [Project Structure](./project-structure.md) — understand the full directory layout
 - [API Reference](/code/api) — complete API documentation

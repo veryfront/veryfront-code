@@ -1,7 +1,7 @@
 ---
 title: "Providers"
-sidebarTitle: "Providers"
 description: "Unified LLM interface for OpenAI, Anthropic, and Google."
+order: 12
 ---
 
 Providers are the bridge between your agents and LLM APIs. Veryfront has a unified interface — switch models by changing a string, not rewriting code.
@@ -120,9 +120,9 @@ The framework auto-detects API keys from standard environment variables if you d
 
 ## Next
 
-- [Middleware](/code/guides/middleware) — add CORS, rate limiting, and logging
-- [Agents](/code/guides/agents) — agents use providers for AI models
+- [Middleware](./middleware.md) — add CORS, rate limiting, and logging
+- [Agents](./agents.md) — agents use providers for AI models
 
 ## Related
 
-- [`veryfront/provider`](/code/api/provider) — provider API reference
+- [`veryfront/provider`](../reference/provider.md) — provider API reference

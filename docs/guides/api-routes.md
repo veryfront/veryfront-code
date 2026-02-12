@@ -1,7 +1,7 @@
 ---
 title: "API Routes"
-sidebarTitle: "API Routes"
 description: "HTTP handlers, request parsing, and streaming responses."
+order: 5
 ---
 
 Files named `route.ts` inside `app/api/` become API endpoints. Export functions named after HTTP methods.
@@ -144,14 +144,14 @@ export async function POST(request: Request) {
 }
 ```
 
-Messages use the AI SDK v5 format: `{ id, role, parts: [{ type: "text", text }] }`. This pairs with `useChat({ api: "/api/chat" })` on the client, which handles the format automatically. See the [Chat UI](/code/guides/chat-ui) guide.
+Messages use the AI SDK v5 format: `{ id, role, parts: [{ type: "text", text }] }`. This pairs with `useChat({ api: "/api/chat" })` on the client, which handles the format automatically. See the [Chat UI](./chat-ui.md) guide.
 
 ## Next
 
-- [Agents](/code/guides/agents) — the agent behind the `/api/chat` endpoint
-- [Middleware](/code/guides/middleware) — add CORS, rate limiting, and auth checks
+- [Agents](./agents.md) — the agent behind the `/api/chat` endpoint
+- [Middleware](./middleware.md) — add CORS, rate limiting, and auth checks
 
 ## Related
 
-- [`veryfront/agent`](/code/api/agent) — agent API reference
-- [`veryfront/middleware`](/code/api/middleware) — middleware API reference
+- [`veryfront/agent`](../reference/agent.md) — agent API reference
+- [`veryfront/middleware`](../reference/middleware.md) — middleware API reference
