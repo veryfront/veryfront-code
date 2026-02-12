@@ -5,7 +5,7 @@
 
 import { cliLogger as logger } from "#cli/utils";
 import { FILE_NOT_FOUND } from "veryfront/errors";
-import { brand, cyan, dim, green } from "#cli/ui";
+import { brand, dim } from "#cli/ui";
 import { createSpinner } from "../../ui/progress.ts";
 import { box } from "../../ui/box.ts";
 import { ensureDir } from "#std/fs.ts";
@@ -406,9 +406,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
   }
 
   const successContent = [
-    `${green("✓")} Project created successfully!`,
+    `${brand("✓")} Project created successfully!`,
     "",
-    cyan("Next steps:"),
+    brand("Next steps:"),
     ...nextSteps.map((step) => `  ${step}`),
   ];
 

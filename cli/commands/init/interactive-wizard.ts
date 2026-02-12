@@ -1,4 +1,4 @@
-import { cyan, dim, green } from "#cli/ui";
+import { brand, dim, muted } from "#cli/ui";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
 import { cliLogger as logger } from "#cli/utils";
@@ -23,7 +23,7 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
   }
 
   console.log("");
-  console.log(green("Welcome to Veryfront!"));
+  console.log(brand("Welcome to Veryfront!"));
   console.log("Let's set up your project.");
 
   // Step 1: Location prompt
@@ -72,15 +72,15 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
   // Summary
   const templateLabel = TEMPLATES.find((t) => t.id === template)?.label ?? template;
   console.log("");
-  console.log(green("Perfect!") + " Here's what we'll create:");
+  console.log(brand("Perfect!") + " Here's what we'll create:");
   console.log("");
   if (projectName) {
-    console.log(`  ${cyan("Location:")} ./${projectName}/`);
+    console.log(`  ${brand("Location:")} ./${projectName}/`);
   } else {
-    console.log(`  ${cyan("Location:")} ./  ${dim("(current folder)")}`);
+    console.log(`  ${brand("Location:")} ./  ${dim("(current folder)")}`);
   }
-  console.log(`  ${cyan("Template:")} ${templateLabel}`);
-  console.log(`  ${cyan("Git:")} ${initGit ? "Yes" : "No"}`);
+  console.log(`  ${brand("Template:")} ${templateLabel}`);
+  console.log(`  ${brand("Git:")} ${initGit ? "Yes" : "No"}`);
   console.log("");
 
   return { projectName, template, initGit, skipped: false };

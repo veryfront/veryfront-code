@@ -3,7 +3,7 @@
  * Supports both Deno and Node.js runtimes
  */
 
-import { cyan, dim, green } from "#cli/ui";
+import { brand, dim, muted } from "#cli/ui";
 import { writeStdout } from "veryfront/platform";
 import { isDeno } from "veryfront/platform";
 import { getStdinReader, setRawMode } from "veryfront/platform";
@@ -37,8 +37,8 @@ export async function select(
   let selectedIndex = defaultIndex;
 
   console.log("");
-  console.log(cyan("?") + " " + question);
-  console.log(dim("  Use arrow keys to navigate, Enter to select"));
+  console.log(brand("?") + " " + question);
+  console.log(muted("  Use arrow keys to navigate, Enter to select"));
   console.log("");
 
   function renderOptions(): void {
@@ -47,9 +47,9 @@ export async function select(
       if (!opt) continue;
 
       const isSelected = i === selectedIndex;
-      const prefix = isSelected ? green("❯") : " ";
-      const label = isSelected ? green(opt.label) : opt.label;
-      const desc = opt.description ? dim(` - ${opt.description}`) : "";
+      const prefix = isSelected ? brand("❯") : " ";
+      const label = isSelected ? brand(opt.label) : opt.label;
+      const desc = opt.description ? muted(` - ${opt.description}`) : "";
       console.log(`  ${prefix} ${label}${desc}`);
     }
   }
@@ -83,7 +83,7 @@ export async function select(
 
     clearOptions(options.length);
     const selected = options[selectedIndex];
-    if (selected) console.log(`  ${green("✓")} ${selected.label}`);
+    if (selected) console.log(`  ${brand("✓")} ${selected.label}`);
 
     return result;
   } finally {
@@ -103,8 +103,8 @@ export async function multiSelect(
   const selected = new Set(preselected);
 
   console.log("");
-  console.log(cyan("?") + " " + question);
-  console.log(dim("  Use arrow keys, Space to toggle, Enter to confirm"));
+  console.log(brand("?") + " " + question);
+  console.log(muted("  Use arrow keys, Space to toggle, Enter to confirm"));
   console.log("");
 
   function renderOptions(): void {
@@ -113,10 +113,10 @@ export async function multiSelect(
       if (!opt) continue;
 
       const isCursor = i === cursorIndex;
-      const cursor = isCursor ? green("❯") : " ";
-      const checkbox = selected.has(opt.value) ? green("◉") : "○";
-      const label = isCursor ? green(opt.label) : opt.label;
-      const desc = opt.description ? dim(` - ${opt.description}`) : "";
+      const cursor = isCursor ? brand("❯") : " ";
+      const checkbox = selected.has(opt.value) ? brand("◉") : "○";
+      const label = isCursor ? brand(opt.label) : opt.label;
+      const desc = opt.description ? muted(` - ${opt.description}`) : "";
       console.log(`  ${cursor} ${checkbox} ${label}${desc}`);
     }
   }
@@ -162,9 +162,9 @@ export async function multiSelect(
 
     clearOptions(options.length);
     for (const opt of options) {
-      if (selected.has(opt.value)) console.log(`  ${green("✓")} ${opt.label}`);
+      if (selected.has(opt.value)) console.log(`  ${brand("✓")} ${opt.label}`);
     }
-    if (selected.size === 0) console.log(dim("  No items selected"));
+    if (selected.size === 0) console.log(muted("  No items selected"));
 
     return Array.from(selected);
   } finally {
@@ -183,8 +183,8 @@ export async function textInput(
   let cursorPos = value.length;
 
   console.log("");
-  console.log(cyan("?") + " " + question);
-  console.log(dim("  Type your answer, Enter to submit, Esc to cancel"));
+  console.log(brand("?") + " " + question);
+  console.log(muted("  Type your answer, Enter to submit, Esc to cancel"));
   console.log("");
 
   function renderInput(): void {
@@ -192,7 +192,7 @@ export async function textInput(
     const cursorChar = value[cursorPos] ?? " ";
     const afterCursor = value.slice(cursorPos + 1);
     const cursor = `\x1b[7m${cursorChar}\x1b[27m`; // inverse video
-    console.log(`  ${green(">")} ${beforeCursor}${cursor}${afterCursor}`);
+    console.log(`  ${brand(">")} ${beforeCursor}${cursor}${afterCursor}`);
   }
 
   writeStdout(HIDE_CURSOR);
@@ -251,9 +251,9 @@ export async function textInput(
 
     clearOptions(1);
     if (result !== null) {
-      console.log(`  ${green("✓")} ${result}`);
+      console.log(`  ${brand("✓")} ${result}`);
     } else {
-      console.log(dim("  Cancelled"));
+      console.log(muted("  Cancelled"));
     }
 
     return result;
