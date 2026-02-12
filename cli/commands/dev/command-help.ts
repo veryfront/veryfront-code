@@ -18,11 +18,16 @@ export const devHelp: CommandHelp = {
       flag: "--open",
       description: "Open browser automatically",
     },
+    {
+      flag: "-d, --debug",
+      description: "Enable verbose debug logging",
+    },
   ],
   examples: [
     "veryfront dev",
     "veryfront dev --port 8080",
     "veryfront dev --open",
     "veryfront dev --no-hmr",
+    "veryfront dev --debug",
   ],
 };
