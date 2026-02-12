@@ -141,10 +141,13 @@ const _NativeResponse: typeof Response = _nativeGlobal.Response;
 
 function toNativeResponse(res: Response): Response {
   if (res instanceof _NativeResponse) return res;
-  return new _NativeResponse(res.body, {
-    status: res.status,
-    statusText: res.statusText,
-    headers: res.headers,
+  // TS narrows to `never` after the instanceof check because it can't see the
+  // runtime class divergence between DNT's polyfill Response and native Response.
+  const src = res as unknown as Response;
+  return new _NativeResponse(src.body, {
+    status: src.status,
+    statusText: src.statusText,
+    headers: src.headers,
   });
 }
 

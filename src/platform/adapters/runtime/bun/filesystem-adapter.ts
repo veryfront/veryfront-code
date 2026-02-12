@@ -1,4 +1,4 @@
-import { createError, FILE_NOT_FOUND, toError } from "#veryfront/errors";
+import { FILE_NOT_FOUND } from "#veryfront/errors";
 import type {
   DirEntry,
   FileChangeEvent,
@@ -136,7 +136,7 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
       resolver = r;
     };
 
-    if (typeof Bun !== "undefined" && Bun.watch) {
+    if (typeof Bun !== "undefined" && typeof Bun.watch === "function") {
       for (const path of pathArray) {
         try {
           setupBunWatcher(path);
