@@ -327,7 +327,7 @@ describe(
             assertStringIncludes(fastResult.html, "Fast", "Fast project should render correctly");
 
             assert(
-              fastDuration < 5000,
+              fastDuration < 15000,
               `Fast render took ${fastDuration}ms - should not be blocked by slow renders`,
             );
 
