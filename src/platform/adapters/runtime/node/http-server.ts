@@ -50,6 +50,14 @@ export function registerWebSocketUpgrade(requestId: string): Promise<WSWebSocket
   });
 }
 
+export function resolveWebSocketUpgrade(requestId: string, ws: WSWebSocket): boolean {
+  const pending = pendingWebSocketUpgrades.get(requestId);
+  if (!pending) return false;
+  pendingWebSocketUpgrades.delete(requestId);
+  pending.resolve(ws);
+  return true;
+}
+
 export async function createNodeServer(
   handler: (request: Request) => Promise<Response> | Response,
   options: ServeOptions = {},
@@ -115,6 +123,27 @@ export async function createNodeServer(
 
       const requestId = createRequestId(request);
 
+      // On Node.js, 'upgrade' events bypass the normal 'request' handler entirely.
+      // Construct a synthetic Request and run it through the handler pipeline so that
+      // handlers like HMRHandler can call upgradeWebSocket(), which registers a
+      // pending entry in pendingWebSocketUpgrades before the transport-level upgrade.
+      const url = new URL(request.url ?? "/", `http://${request.headers.host ?? hostname}`);
+      const headersRecord: Record<string, string> = {};
+      for (const [key, value] of Object.entries(request.headers)) {
+        if (typeof value === "string") headersRecord[key] = value;
+        else if (Array.isArray(value)) headersRecord[key] = value[0] ?? "";
+      }
+
+      const syntheticRequest = new Request(url.toString(), {
+        method: request.method ?? "GET",
+        headers: headersRecord,
+      });
+
+      await handler(syntheticRequest);
+
+      // Complete the actual WebSocket upgrade at the transport level.
+      // If a handler called upgradeWebSocket(), a pending promise exists
+      // in pendingWebSocketUpgrades and will be resolved here.
       (
         wsServer as unknown as {
           handleUpgrade: (
@@ -125,11 +154,7 @@ export async function createNodeServer(
           ) => void;
         }
       ).handleUpgrade(request, socket, head, (ws: WSWebSocket) => {
-        const pending = pendingWebSocketUpgrades.get(requestId);
-        if (pending) {
-          pendingWebSocketUpgrades.delete(requestId);
-          pending.resolve(ws);
-        }
+        resolveWebSocketUpgrade(requestId, ws);
 
         (wsServer as unknown as { emit: (event: string, ws: WSWebSocket, req: unknown) => void })
           .emit(

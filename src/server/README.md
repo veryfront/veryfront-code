@@ -6,10 +6,10 @@ The Server module provides development and production server implementations wit
 
 ```typescript
 // Using import map alias (recommended)
-import { createVeryfrontHandler, startDevServer, startProductionServer } from "#server";
+import { createHandler, startDevServer, startProductionServer } from "#server";
 
 // Using barrel file
-import { createVeryfrontHandler, startDevServer, startProductionServer } from "./server/index.ts";
+import { createHandler, startDevServer, startProductionServer } from "./server/index.ts";
 ```
 
 ## Public API Overview
@@ -19,7 +19,7 @@ The Server module exports:
 - **`startDevServer()`** - Creates a development server with HMR and file watching
 - **`DevServer`** - Development server class
 - **`startProductionServer()`** - Starts a production server
-- **`createVeryfrontHandler()`** - Creates a runtime-agnostic request handler for any runtime
+- **`createHandler()`** - Creates a runtime-agnostic request handler for any runtime
 
 ## File Structure
 
@@ -105,7 +105,7 @@ console.log("Production server running on http://0.0.0.0:8000");
 ### Runtime Handler (for custom runtimes)
 
 ```ts
-import { createVeryfrontHandler } from "#server";
+import { createHandler } from "#server";
 import { getConfig } from "#config";
 import { getAdapter } from "#adapters";
 import { cwd } from "../../platform/compat/process.ts"; // Assuming cwd is available from compat
@@ -113,7 +113,7 @@ import { cwd } from "../../platform/compat/process.ts"; // Assuming cwd is avail
 const adapter = await getAdapter();
 const config = await getConfig(cwd(), adapter);
 
-const handler = await createVeryfrontHandler({
+const handler = await createHandler({
   projectDir: cwd(),
   config,
   adapter,

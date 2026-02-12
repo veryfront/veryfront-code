@@ -34,11 +34,15 @@ export class NodeServerAdapter implements ServerAdapter {
       ...(protocol ? { "Sec-WebSocket-Protocol": protocol } : {}),
     };
 
-    const response = new Response(null, {
+    // Node.js (undici) doesn't allow status 101 in Response constructor.
+    // Create a minimal signal object — only checked for status === 101 upstream.
+    const response = {
       status: 101,
       statusText: "Switching Protocols",
-      headers,
-    });
+      headers: new Headers(headers),
+      body: null,
+      ok: false,
+    } as unknown as Response;
 
     return { socket: socket as unknown as WebSocket, response };
   }

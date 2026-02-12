@@ -39,8 +39,8 @@ export type { VeryfrontConfig } from "#veryfront/config";
 
 export { getEnv } from "#veryfront/platform";
 
-export { createVeryfrontHandler, startVeryfrontServer } from "#veryfront/server";
-export type { StartVeryfrontServerOptions, VeryfrontServerHandle } from "#veryfront/server";
+export { createHandler, startServer, toNodeHandler } from "#veryfront/server";
+export type { StartServerOptions, VeryfrontHandler, VeryfrontServer } from "#veryfront/server";
 
 export {
   badRequest,

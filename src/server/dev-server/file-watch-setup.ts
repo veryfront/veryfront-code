@@ -7,6 +7,8 @@ import { OptimizedFileWatcher } from "./file-watcher.ts";
 import type { RouteDiscovery } from "./route-discovery.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
 import type { DevServer } from "./server.ts";
+import { invalidateModulePaths } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
+import { broadcastUpdate } from "../handlers/preview/hmr-message-router.ts";
 
 const hmrLog = logger.component("hmr");
 const fileWatchSetupLog = logger.component("file-watch-setup");
@@ -150,13 +152,23 @@ export class FileWatchSetup {
     await handleErrorWithFallback(() => this.routeDiscovery.discoverRoutes(), undefined, logger);
     this.invalidateHandler();
 
+    // Invalidate on-disk ESM cache for changed files immediately,
+    // before the browser reloads, so the next SSR render picks up fresh content.
+    const relativePaths = paths.map((p) => p.replace(this.projectDir + "/", ""));
+    invalidateModulePaths(relativePaths);
+
     const display = paths.map((p) => p.replace(this.projectDir, ".")).join(", ");
     logger.debug(logMessage, { files: display });
 
     this.hmrServer.sendUpdate({ type: "reload", timestamp: Date.now() });
 
-    // Also trigger ReloadNotifier for /_ws WebSocket clients (preview HMR)
-    // This enables HMR for proxy mode where browsers connect via /_ws
+    // Immediately broadcast to /_ws WebSocket clients (local dev HMR).
+    // ReloadNotifier.triggerReload below is debounced 300ms which is too slow —
+    // the browser reloads before caches are invalidated. Send directly instead.
+    const relativePaths2 = paths.map((p) => p.replace(this.projectDir + "/", ""));
+    broadcastUpdate(relativePaths2);
+
+    // Also trigger ReloadNotifier for proxy mode and cache invalidation
     ReloadNotifier.triggerReload(paths);
   }
 

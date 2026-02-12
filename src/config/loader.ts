@@ -113,6 +113,7 @@ function createFreshDefaults(): Partial<VeryfrontConfig> {
       port: DEFAULT_PORT,
       host: "localhost",
       open: false,
+      hmr: true,
     },
     resolve: {
       importMap: getDefaultImportMapForConfig(),

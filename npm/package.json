@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.7-rc.61",
+  "version": "0.1.7-rc.63",
   "description": "The simplest way to build AI-powered apps",
   "keywords": [
     "react",
@@ -102,9 +102,6 @@
     "node": ">=18.0.0"
   },
   "peerDependenciesMeta": {
-    "ws": {
-      "optional": true
-    },
     "better-sqlite3": {
       "optional": true
     }
@@ -147,6 +144,7 @@
     "unified": "11.0.5",
     "unist-util-visit": "5.0.0",
     "vfile": "6.0.1",
+    "ws": "^8.18.0",
     "zod": "3.25.76",
     "@deno/shim-deno": "~0.18.0",
     "@deno/shim-crypto": "~0.3.1",
@@ -154,7 +152,6 @@
     "undici": "^6.0.0"
   },
   "peerDependencies": {
-    "ws": ">=8.0.0",
     "better-sqlite3": ">=9.0.0"
   },
   "devDependencies": {

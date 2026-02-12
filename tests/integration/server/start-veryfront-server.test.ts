@@ -1,5 +1,5 @@
 /**
- * Smoke tests for the unified startVeryfrontServer entry point.
+ * Smoke tests for the unified startServer entry point.
  *
  * Verifies that both development and production mode dispatch correctly
  * and that the VeryfrontServerHandle lifecycle (ready/stop) works.
@@ -10,13 +10,13 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { join } from "#veryfront/compat/path";
 import { writeTextFile } from "#veryfront/testing/deno-compat";
 
-import { startVeryfrontServer } from "../../../src/server/index.ts";
+import { startServer } from "../../../src/server/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { restoreLogs } from "../../_helpers/log-guard.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
 describe(
-  "startVeryfrontServer",
+  "startServer",
   { sanitizeResources: false, sanitizeOps: false },
   () => {
     afterAll(async () => {
@@ -34,7 +34,7 @@ describe(
         const port = await context.allocatePort();
         const controller = new AbortController();
 
-        const server = await startVeryfrontServer({
+        const server = await startServer({
           mode: "production",
           projectDir: context.projectDir,
           port,
@@ -70,7 +70,7 @@ describe(
         );
 
         const port = await context.allocatePort();
-        const server = await startVeryfrontServer({
+        const server = await startServer({
           mode: "development",
           projectDir: context.projectDir,
           port,
@@ -101,7 +101,7 @@ describe(
         const port = await context.allocatePort();
 
         await assertRejects(async () => {
-          const server = await startVeryfrontServer({
+          const server = await startServer({
             mode: "development",
             projectDir: context.projectDir,
             port,
@@ -127,7 +127,7 @@ describe(
         const port = await context.allocatePort();
         const controller = new AbortController();
 
-        const server = await startVeryfrontServer({
+        const server = await startServer({
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",

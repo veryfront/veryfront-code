@@ -268,8 +268,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
   "veryfront": {
     defineConfig: "Define project configuration",
     getEnv: "Read environment variable (typed)",
-    createVeryfrontHandler: "Create HTTP request handler",
-    startVeryfrontServer: "Start server (dev or production)",
+    createHandler: "Create HTTP request handler",
+    startServer: "Start server (dev or production)",
     json: "JSON response helper",
     badRequest: "400 Bad Request response",
     unauthorized: "401 Unauthorized response",

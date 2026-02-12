@@ -1,6 +1,8 @@
 export interface DevServerOptions {
   port: number;
   projectDir: string;
+  /** When true, skip starting the built-in HTTP server (for use with external servers like Hono). */
+  handlerOnly?: boolean;
   /** 0.0.0.0 = all interfaces, 127.0.0.1 = localhost only */
   bindAddress?: string;
   hmrPort?: number;
