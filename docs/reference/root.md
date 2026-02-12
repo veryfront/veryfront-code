@@ -4,8 +4,6 @@ description: "Configuration, server bootstrap, routing, data fetching, and input
 order: 1
 ---
 
-Configuration, server bootstrap, routing, data fetching, and input validation.
-
 ## Import
 
 ```ts
@@ -106,3 +104,9 @@ export function getServerData(ctx: DataContext) {
 | `ValidatedHandlerFunction` | Handler with validated inputs |
 | `VeryfrontConfig` | Project configuration shape |
 | `VeryfrontServerHandle` | Server handle (for shutdown) |
+
+## Related
+
+- [`veryfront/head`](./head.md) — Declarative `<head>` metadata
+- [`veryfront/router`](./router.md) — Client-side routing and navigation
+- [`veryfront/context`](./context.md) — Access route params and page data

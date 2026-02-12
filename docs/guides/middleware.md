@@ -16,7 +16,7 @@ import { cors } from "veryfront/middleware";
 const corsMiddleware = cors({
   origin: "https://example.com",      // or "*" or ["https://a.com", "https://b.com"]
   methods: ["GET", "POST"],
-  allowHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization"],
   maxAge: 86400,
 });
 ```

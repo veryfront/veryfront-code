@@ -4,8 +4,6 @@ description: "Unified LLM interface for Anthropic, Google, and OpenAI."
 order: 17
 ---
 
-Unified LLM interface for Anthropic, Google, and OpenAI.
-
 ## Import
 
 ```ts

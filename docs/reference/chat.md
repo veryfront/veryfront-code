@@ -4,8 +4,6 @@ description: "Chat UI components and streaming hooks."
 order: 6
 ---
 
-Chat UI components and streaming hooks.
-
 ## Import
 
 ```ts

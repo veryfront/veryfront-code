@@ -4,8 +4,6 @@ description: "Declarative `<head>` metadata management."
 order: 2
 ---
 
-Declarative `<head>` metadata management.
-
 ## Import
 
 ```ts

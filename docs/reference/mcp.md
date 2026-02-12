@@ -4,8 +4,6 @@ description: "MCP server exposing tools, prompts, and resources."
 order: 14
 ---
 
-MCP server exposing tools, prompts, and resources.
-
 ## Import
 
 ```ts
@@ -70,7 +68,7 @@ Create MCP server
 
 | Name | Description |
 |------|-------------|
-| `IntegrationLoaderConfig` |  |
+| `IntegrationLoaderConfig` | Configuration for loading integration tools into MCP |
 | `MCPServerConfig` | `createMCPServer()` config |
 | `MCPStats` | Registry statistics |
 | `MCPTool` | Generic MCP tool definition |

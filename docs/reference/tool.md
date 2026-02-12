@@ -4,8 +4,6 @@ description: "Define tools with Zod schemas for agents and MCP."
 order: 10
 ---
 
-Define tools with Zod schemas for agents and MCP.
-
 ## Import
 
 ```ts

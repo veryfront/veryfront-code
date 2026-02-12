@@ -1,6 +1,6 @@
 ---
 title: "Providers"
-description: "Unified LLM interface for OpenAI, Anthropic, and Google."
+description: "Unified LLM interface for Anthropic, Google, and OpenAI."
 order: 12
 ---
 

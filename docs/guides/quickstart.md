@@ -84,4 +84,10 @@ Deploys to Veryfront Cloud. Your site is live at `https://<slug>.veryfront.com`.
 ## Next
 
 - [Project Structure](./project-structure.md) — understand the full directory layout
-- [API Reference](/code/api) — complete API documentation
+- [API Reference](../reference/index.md) — complete API documentation
+
+## Related
+
+- [Pages & Routing](./pages-and-routing.md) — file-based routing and layouts
+- [Agents](./agents.md) — create your first AI agent
+- [API Routes](./api-routes.md) — backend HTTP handlers

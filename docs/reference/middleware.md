@@ -4,8 +4,6 @@ description: "CORS, rate limiting, logging, and timeout middleware."
 order: 15
 ---
 
-CORS, rate limiting, logging, and timeout middleware.
-
 ## Import
 
 ```ts

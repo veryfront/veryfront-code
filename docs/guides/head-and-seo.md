@@ -144,6 +144,10 @@ Content here.
 
 The framework automatically injects `title` and `description` from frontmatter into the `<head>`.
 
+## Next
+
+This is the last guide. Explore the [API Reference](../reference/index.md) for detailed module documentation.
+
 ## Related
 
 - [`veryfront/head`](../reference/head.md) — Head component API reference

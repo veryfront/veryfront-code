@@ -4,8 +4,6 @@ description: "Load Google Fonts as a React component."
 order: 5
 ---
 
-Load Google Fonts as a React component.
-
 ## Import
 
 ```ts
@@ -39,3 +37,8 @@ import { GoogleFonts } from "veryfront/fonts";
 |------|-------------|
 | `Font` | Font config (name, weights, variable) |
 | `GoogleFontsProps` | `<GoogleFonts>` props |
+
+## Related
+
+- [`veryfront/head`](./head.md) — Manage document head metadata
+- [`veryfront/context`](./context.md) — Access page context and frontmatter

@@ -4,8 +4,6 @@ description: "Filesystem operations and path utilities."
 order: 18
 ---
 
-Filesystem operations and path utilities.
-
 ## Import
 
 ```ts
@@ -65,3 +63,8 @@ const dir = dirname(filePath); // "src/pages"
 | Name | Description |
 |------|-------------|
 | `FileSystem` | Filesystem interface |
+
+## Related
+
+- [`veryfront`](./root.md) — Core framework configuration and utilities
+- [`veryfront/agent`](./agent.md) — Agents that may use filesystem for persistence

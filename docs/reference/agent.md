@@ -4,8 +4,6 @@ description: "AI agents with memory, tools, and multi-agent composition."
 order: 9
 ---
 
-AI agents with memory, tools, and multi-agent composition.
-
 ## Import
 
 ```ts

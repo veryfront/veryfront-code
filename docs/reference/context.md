@@ -4,8 +4,6 @@ description: "Access route params, page data, and MDX frontmatter."
 order: 4
 ---
 
-Access route params, page data, and MDX frontmatter.
-
 ## Import
 
 ```ts

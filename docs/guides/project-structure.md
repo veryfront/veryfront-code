@@ -122,3 +122,8 @@ Veryfront is an AI-native framework. Agents, tools, prompts, and workflows are f
 
 - [Pages & Routing](./pages-and-routing.md) — file-based routing, layouts, and dynamic routes
 - [Agents](./agents.md) — create your first AI agent
+
+## Related
+
+- [Configuration](./configuration.md) — `veryfront.config.ts` options
+- [`veryfront` (root)](../reference/root.md) — core framework API reference

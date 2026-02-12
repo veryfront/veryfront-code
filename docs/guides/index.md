@@ -40,6 +40,7 @@ Learn Veryfront from the ground up. Each guide builds on the previous, so readin
 | [Middleware](./middleware.md) | CORS, rate limiting, logging, and custom middleware pipelines. |
 | [OAuth](./oauth.md) | OAuth 2.0 with 37 pre-configured providers. |
 | [MCP Server](./mcp-server.md) | Expose tools, prompts, and resources over Model Context Protocol. |
+| [Integrations](../integrations.md) | Config-driven integration tools with OAuth, token management, and API execution for 37+ services. |
 
 ## Production
 

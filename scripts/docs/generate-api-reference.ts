@@ -538,6 +538,7 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     MCPServerConfig: "`createMCPServer()` config",
     MCPStats: "Registry statistics",
     MCPTool: "MCP-exposed tool",
+    IntegrationLoaderConfig: "Configuration for loading integration tools into MCP",
   },
 
   "veryfront/middleware": {
@@ -658,6 +659,36 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     basename: "Get filename of path",
     extname: "Get file extension",
     FileSystem: "Filesystem interface",
+  },
+
+  "veryfront/integrations": {
+    EnvVarSchema: "Validates environment variable configuration metadata",
+    IntegrationConfigSchema: "Validates complete integration connector configuration spec",
+    IntegrationNameSchema: "Validates integration name against allowed enum values",
+    IntegrationPromptSchema: "Validates predefined prompt configuration for integrations",
+    IntegrationToolSchema: "Validates tool definition from connector specification",
+    OAuthConfigSchema: "Validates OAuth/API key authentication configuration",
+    OAuthFieldSchema: "Validates OAuth form field configuration and mapping",
+    clearConnectorCache: "Clear the connector cache (for testing)",
+    createIntegrationTools: "Generate Tool instances from connector specifications",
+    executeEndpoint: "Execute REST or GraphQL endpoints with authentication",
+    fetchConnector: "Fetch connector spec from API with LRU caching",
+    getConnector: "Look up connector config by name from registry",
+    getConnectorNames: "Return readonly array of all connector names",
+    getIcon: "Return SVG icon string for integration by name",
+    listConnectors: "Return readonly array of all connectors",
+    registerIntegrationMCP: "Register integration tools into the MCP tool registry",
+    EnvVarConfig: "Environment variable requirement with metadata",
+    IntegrationConfig: "Complete connector spec: name, auth, tools, prompts",
+    IntegrationConnector: "Runtime connector with tools and endpoint definitions",
+    IntegrationMCPConfig: "Configuration for registering integrations into MCP",
+    IntegrationName: "Union type of valid integration name literals",
+    IntegrationPrompt: "Predefined prompt template for integration use",
+    IntegrationRuntimeConfig: "Per-user settings and tool allowlist for integration",
+    IntegrationTool: "Integration tool with endpoint execution spec",
+    IntegrationToolMeta: "Tool metadata: name, description, write requirements",
+    OAuthConfig: "OAuth/API key authentication type and parameters",
+    OAuthField: "Form field for OAuth configuration with mapping",
   },
 };
 
@@ -1536,12 +1567,6 @@ function generateMD(
   lines.push("---");
   lines.push("");
 
-  // Description
-  if (jsdoc.description) {
-    lines.push(jsdoc.description);
-    lines.push("");
-  }
-
   // Import snippet — use curated priority list
   const priorityNames = IMPORT_PRIORITY[entry.importPath] ?? [];
   const allExportNames = new Set([
@@ -1657,8 +1682,6 @@ function generateOverviewMD(entries: Array<{ entry: ExportEntry; jsdoc: BarrelJS
   lines.push('description: "Complete API reference for the Veryfront framework."');
   lines.push("order: 0");
   lines.push("---");
-  lines.push("");
-  lines.push("Complete API reference for the Veryfront framework.");
   lines.push("");
   lines.push("## Install");
   lines.push("");

@@ -4,8 +4,6 @@ description: "Markdown rendering with syntax highlighting and diagrams."
 order: 7
 ---
 
-Markdown rendering with syntax highlighting and diagrams.
-
 ## Import
 
 ```ts

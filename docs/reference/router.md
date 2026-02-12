@@ -4,8 +4,6 @@ description: "Client-side routing, navigation, and links."
 order: 3
 ---
 
-Client-side routing, navigation, and links.
-
 ## Import
 
 ```ts

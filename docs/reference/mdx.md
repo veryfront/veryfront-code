@@ -4,8 +4,6 @@ description: "Component overrides for `.mdx` page rendering."
 order: 8
 ---
 
-Component overrides for `.mdx` page rendering.
-
 ## Import
 
 ```ts
