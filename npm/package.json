@@ -93,7 +93,8 @@
     },
     "./integrations": {
       "import": "./esm/src/integrations/index.js"
-    }
+    },
+    "./tsconfig.json": "./tsconfig.json"
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.js"
@@ -144,12 +145,14 @@
     "unified": "11.0.5",
     "unist-util-visit": "5.0.0",
     "vfile": "6.0.1",
-    "ws": "^8.18.0",
     "zod": "3.25.76",
     "@deno/shim-deno": "~0.18.0",
     "@deno/shim-crypto": "~0.3.1",
     "@deno/shim-timers": "~0.1.0",
-    "undici": "^6.0.0"
+    "undici": "^6.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "ws": "^8.18.0"
   },
   "peerDependencies": {
     "better-sqlite3": ">=9.0.0"
@@ -171,6 +174,7 @@
     "src",
     "bin",
     "scripts",
+    "tsconfig.json",
     "LICENSE",
     "README.md"
   ]
