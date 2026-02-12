@@ -62,7 +62,7 @@ export async function discoverNestedLayouts(
   const cached = layoutDiscoveryCache.get(key);
   if (cached) {
     cached.accessedAt = Date.now();
-    discoveryLog.info("Layout cache HIT", {
+    discoveryLog.debug("Layout cache HIT", {
       pageFilePath,
       rootDir,
       layoutCount: cached.layouts.length,
@@ -71,7 +71,7 @@ export async function discoverNestedLayouts(
     return cached.layouts;
   }
 
-  discoveryLog.info("Layout cache MISS, discovering layouts", {
+  discoveryLog.debug("Layout cache MISS, discovering layouts", {
     pageFilePath,
     rootDir,
     projectDir,
@@ -79,7 +79,7 @@ export async function discoverNestedLayouts(
 
   const layouts = await discoverNestedLayoutsImpl(pageFilePath, rootDir, adapter);
 
-  discoveryLog.info("Found layouts", {
+  discoveryLog.debug("Found layouts", {
     pageFilePath,
     layoutCount: layouts.length,
     layoutPaths: layouts.map((l) => l.path),

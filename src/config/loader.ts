@@ -44,14 +44,14 @@ function getDefaultFsConfig(): VeryfrontConfig["fs"] {
   const isProxyMode = proxyModeEnv === "1";
   const apiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
 
-  logger.info("getDefaultFsConfig called", {
+  logger.debug("getDefaultFsConfig called", {
     proxyModeEnv,
     isProxyMode,
     apiBaseUrl: apiBaseUrl ? apiBaseUrl.slice(0, 30) : "(not set)",
   });
 
   if (isProxyMode && apiBaseUrl) {
-    logger.info("Using veryfront-api filesystem (proxy mode)");
+    logger.debug("Using veryfront-api filesystem (proxy mode)");
     return {
       type: "veryfront-api",
       veryfront: {
@@ -63,7 +63,7 @@ function getDefaultFsConfig(): VeryfrontConfig["fs"] {
     };
   }
 
-  logger.info("Using local filesystem (no proxy mode)");
+  logger.debug("Using local filesystem (no proxy mode)");
   return { type: "local" };
 }
 
@@ -311,10 +311,10 @@ function loadConfigFromVirtualFS(
   return withSpan(
     SpanNames.CONFIG_LOAD_PROJECT,
     async () => {
-      logger.info("Loading config from virtual filesystem (API)", { configPath });
+      logger.debug("Loading config from virtual filesystem (API)", { configPath });
       const content = await adapter.fs.readFile(configPath);
       const source = typeof content === "string" ? content : new TextDecoder().decode(content);
-      logger.info("Got config source from API", {
+      logger.debug("Got config source from API", {
         configPath,
         sourceLength: source.length,
         sourcePreview: source.slice(0, 200),
@@ -326,7 +326,7 @@ function loadConfigFromVirtualFS(
         (tempFile) => `file://${tempFile}?v=${Date.now()}`,
       );
 
-      logger.info("Loaded config from virtual filesystem", {
+      logger.debug("Loaded config from virtual filesystem", {
         configPath,
         hasApp: !!(userConfig as Record<string, unknown>)?.app,
         hasLayout: !!(userConfig as Record<string, unknown>)?.layout,
@@ -346,7 +346,7 @@ async function loadAndMergeConfig(
   adapter: RuntimeAdapter,
 ): Promise<VeryfrontConfig> {
   const isVirtualFS = isVirtualFilesystem(adapter.fs);
-  logger.info("loadAndMergeConfig called", {
+  logger.debug("loadAndMergeConfig called", {
     configPath,
     cacheKey,
     isVirtualFS,
@@ -355,14 +355,14 @@ async function loadAndMergeConfig(
   });
 
   if (isVirtualFS) {
-    logger.info("Using virtual filesystem (API) for config", { configPath });
+    logger.debug("Using virtual filesystem (API) for config", { configPath });
     return loadConfigFromVirtualFS(configPath, cacheKey, adapter);
   }
 
   // Bun and compiled Deno binaries can't dynamically import TypeScript files directly.
   // We need to read the source, write to a temp file, and import from there.
   if (isBun || isDenoCompiled) {
-    logger.info("Using temp file import for Bun/compiled Deno", {
+    logger.debug("Using temp file import for Bun/compiled Deno", {
       configPath,
       isBun,
       isDenoCompiled,
@@ -375,7 +375,7 @@ async function loadAndMergeConfig(
       configPath,
       (tempFile) => `file://${tempFile}`,
     );
-    logger.info("Successfully loaded config via temp file", {
+    logger.debug("Successfully loaded config via temp file", {
       configPath,
       hasApp: !!(userConfig as Record<string, unknown>)?.app,
       hasRouter: !!(userConfig as Record<string, unknown>)?.router,
@@ -428,7 +428,7 @@ export function getConfig(
 
       const cached = configCacheByProject.get(effectiveCacheKey);
       if (cached?.revision === cacheRevision) {
-        logger.info("Cache HIT - using cached config", {
+        logger.debug("Cache HIT - using cached config", {
           cacheKey: effectiveCacheKey,
           isVirtualFS,
           hasApp: !!cached.config.app,
@@ -451,12 +451,12 @@ export function getConfig(
       for (const configFile of configFiles) {
         const configPath = join(configBaseDir, configFile);
         const exists = await adapter.fs.exists(configPath);
-        logger.info("Checking config file", { configPath, exists, isVirtualFS });
+        logger.debug("Checking config file", { configPath, exists, isVirtualFS });
         if (!exists) continue;
 
         try {
           const merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
-          logger.info("Successfully loaded config", {
+          logger.debug("Successfully loaded config", {
             configFile,
             hasApp: !!merged.app,
             hasLayout: !!(merged as Record<string, unknown>).layout,

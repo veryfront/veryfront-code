@@ -28,14 +28,14 @@ export class ResilientCache implements TokenCache {
     const elapsed = Date.now() - openedAt;
     if (elapsed < CIRCUIT_OPEN_DURATION_MS) return false;
 
-    logger.info("[ResilientCache] Circuit half-open, trying primary again");
+    logger.debug("[ResilientCache] Circuit half-open, trying primary again");
     return true;
   }
 
   private recordSuccess(): void {
     if (!this.usingFallback) return;
 
-    logger.info("[ResilientCache] Primary recovered, switching back from fallback");
+    logger.debug("[ResilientCache] Primary recovered, switching back from fallback");
     this.usingFallback = false;
     this.failureCount = 0;
     this.circuitOpenedAt = null;

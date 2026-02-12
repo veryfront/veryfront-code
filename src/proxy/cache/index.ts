@@ -58,7 +58,7 @@ export async function createCacheFromEnv(): Promise<TokenCache> {
 
       // Wrap Redis with resilient fallback to memory cache
       // This ensures the proxy continues to function when Redis is unavailable
-      logger.info("[Cache] Using Redis with memory fallback (ResilientCache)");
+      logger.debug("[Cache] Using Redis with memory fallback (ResilientCache)");
       return new ResilientCache(redisCache, new MemoryCache());
     },
     { "cache.type": cacheType },

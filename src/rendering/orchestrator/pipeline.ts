@@ -323,7 +323,7 @@ export class RenderPipeline {
       timing.cacheCheck = Math.round(performance.now() - cacheCheckStart);
 
       if (cacheResult?.cachedResult) {
-        renderPipelineLog.info("Cache HIT", { slug, projectSlug, timing });
+        renderPipelineLog.debug("Cache HIT", { slug, projectSlug, timing });
         return cacheResult.cachedResult;
       }
     }
