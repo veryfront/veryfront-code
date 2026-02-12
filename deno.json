@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.7-rc.61",
+  "version": "0.1.7-rc.62",
   "nodeModulesDir": "auto",
   "exclude": [
     "npm/",
@@ -379,6 +379,9 @@
   },
   "allowScripts": {
     "allow": [],
-    "deny": ["npm:esbuild@0.20.2", "npm:protobufjs@7.5.4"]
+    "deny": [
+      "npm:esbuild@0.20.2",
+      "npm:protobufjs@7.5.4"
+    ]
   }
 }
