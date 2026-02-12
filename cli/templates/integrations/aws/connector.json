@@ -1,6 +1,7 @@
 {
   "name": "aws",
   "displayName": "Amazon Web Services",
+  "icon": "aws.svg",
   "description": "Integration with AWS services including S3, EC2, and Lambda",
   "version": "1.0.0",
   "auth": {
