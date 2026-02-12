@@ -217,10 +217,13 @@ export async function initCommand(options: InitOptions): Promise<void> {
   );
 
   if (projectName && (await fs.exists(projectDir))) {
-    logger.error(
-      `Directory "${projectName}" already exists. Choose a different name or delete the existing directory.`,
+    throw toError(
+      createError({
+        type: "config",
+        message:
+          `Directory "${projectName}" already exists. Choose a different name or delete the existing directory.`,
+      }),
     );
-    return;
   }
 
   const { getTemplate, getTemplateConfig } = await import("../../templates/index.ts");
