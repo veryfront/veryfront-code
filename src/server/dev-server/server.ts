@@ -313,21 +313,41 @@ export class DevServer {
 
   private isMultiProjectDirectory(): boolean {
     const projectDir = this.options.projectDir;
+
+    // First check: no direct project files (app/, pages/, or config)
+    const hasApp = this.existsSync(`${projectDir}/app`);
+    const hasPages = this.existsSync(`${projectDir}/pages`);
+    const hasConfig = this.existsSync(`${projectDir}/veryfront.config.ts`) ||
+      this.existsSync(`${projectDir}/veryfront.config.js`) ||
+      this.existsSync(`${projectDir}/veryfront.config.mjs`);
+
+    // If we have direct project files, this is a single project
+    if (hasApp || hasPages || hasConfig) return false;
+
+    // Second check: has at least one standard project directory with subdirectories
+    const standardDirs = ["data/projects", "projects", "examples"];
+    for (const dir of standardDirs) {
+      const fullPath = `${projectDir}/${dir}`;
+      if (this.hasProjectSubdirectories(fullPath)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private hasProjectSubdirectories(dirPath: string): boolean {
     try {
-      // Check for projects folder
-      const projectsDir = `${projectDir}/projects`;
-      const hasProjectsDir = Deno.statSync(projectsDir).isDirectory;
-      if (!hasProjectsDir) return false;
+      const stat = Deno.statSync(dirPath);
+      if (!stat.isDirectory) return false;
 
-      // Check that there's no direct project (no app/, pages/, or config file)
-      const hasApp = this.existsSync(`${projectDir}/app`);
-      const hasPages = this.existsSync(`${projectDir}/pages`);
-      const hasConfig = this.existsSync(`${projectDir}/veryfront.config.ts`) ||
-        this.existsSync(`${projectDir}/veryfront.config.js`) ||
-        this.existsSync(`${projectDir}/veryfront.config.mjs`);
-
-      // Multi-project mode: has projects/ folder but no direct project
-      return !hasApp && !hasPages && !hasConfig;
+      // Check if directory has at least one subdirectory (potential project)
+      for (const entry of Deno.readDirSync(dirPath)) {
+        if (entry.isDirectory && !entry.name.startsWith(".")) {
+          return true;
+        }
+      }
+      return false;
     } catch {
       return false;
     }
