@@ -113,12 +113,44 @@ npx create-veryfront my-app -t rag      # specific template
 
 ## Package Manager Detection
 
+Detect via `npm_config_user_agent` env var (set by all package managers):
+
+```javascript
+// Returns: npm | pnpm | yarn | bun
+function detectPackageManager() {
+  const ua = process.env.npm_config_user_agent;
+  if (!ua) return 'npm'; // fallback
+  if (ua.startsWith('pnpm')) return 'pnpm';
+  if (ua.startsWith('yarn')) return 'yarn';
+  if (ua.startsWith('bun'))  return 'bun';
+  return 'npm';
+}
+```
+
 ```bash
 npm create veryfront   → npm install
 pnpm create veryfront  → pnpm install
 yarn create veryfront  → yarn install
 bun create veryfront   → bun install
 ```
+
+## Runtime
+
+Veryfront CLI is compiled Deno - users don't need Deno installed.
+
+For user projects, we support Node/Bun runtimes via package.json scripts:
+
+```json
+{
+  "scripts": {
+    "dev": "veryfront dev",
+    "build": "veryfront build",
+    "deploy": "veryfront deploy"
+  }
+}
+```
+
+The `veryfront` binary handles everything. Users just run `pnpm dev`.
 
 ## Tasks
 
