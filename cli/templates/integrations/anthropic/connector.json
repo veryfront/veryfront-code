@@ -1,6 +1,7 @@
 {
   "name": "anthropic",
   "displayName": "Anthropic",
+  "icon": "anthropic.svg",
   "description": "Integrate with Anthropic Admin API to manage workspaces, monitor usage, and access organization data",
   "auth": {
     "type": "api-key",
