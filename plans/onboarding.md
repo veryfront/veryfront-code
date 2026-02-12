@@ -43,10 +43,10 @@ npx create-veryfront
 │                                         │
 │  Next steps:                            │
 │    cd my-ai-app                         │
-│    veryfront dev                        │
+│    pnpm dev                             │
 │                                         │
 │  Deploy:                                │
-│    veryfront deploy                     │
+│    npx veryfront deploy                 │
 │                                         │
 ├─────────────────────────────────────────╯
 │
@@ -65,19 +65,22 @@ packages/create-veryfront/
 
 All logic in `cli/commands/create/`. Single codebase.
 
-## Auth
+## Auth & Deploy
 
 **No auth for local creation.**
 
-Auth only when deploying:
+Auth + project creation happens on first deploy:
 
 ```
-$ veryfront deploy
+$ npx veryfront deploy
   No account found. Sign in with Google/GitHub/Microsoft?
   Opening browser...
-  ✓ Signed in
-  ✓ Deployed
+  ✓ Signed in as matt@example.com
+  ✓ Created project my-ai-app-x7k2m9
+  ✓ Deployed to https://my-ai-app-x7k2m9.veryfront.com
 ```
+
+The slug is generated at local creation time (e.g., `my-ai-app-x7k2m9`).
 
 ## CLI
 
