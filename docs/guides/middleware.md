@@ -4,7 +4,9 @@ description: "CORS, rate limiting, logging, and custom middleware pipelines."
 order: 13
 ---
 
-Middleware intercepts requests before they reach your route handlers. Use the built-in middleware for common needs, or write your own.
+# Middleware
+
+CORS, rate limiting, logging, and custom middleware pipelines.
 
 ## Built-in middleware
 

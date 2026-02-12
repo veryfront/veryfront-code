@@ -4,7 +4,9 @@ description: "Unified LLM interface for Anthropic, Google, and OpenAI."
 order: 12
 ---
 
-Providers are the bridge between your agents and LLM APIs. Veryfront has a unified interface — switch models by changing a string, not rewriting code.
+# Providers
+
+Unified LLM interface for Anthropic, Google, and OpenAI.
 
 ## Setup
 

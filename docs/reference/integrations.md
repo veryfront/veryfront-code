@@ -4,6 +4,10 @@ description: "Integration metadata and SVG icons for all connectors."
 order: 19
 ---
 
+# veryfront/integrations
+
+Integration metadata and SVG icons for all connectors.
+
 ## Import
 
 ```ts

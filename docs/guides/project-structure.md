@@ -4,7 +4,9 @@ description: "File conventions, directory layout, and how auto-discovery works."
 order: 2
 ---
 
-Veryfront uses file-based conventions. Where you put a file determines what it does.
+# Project Structure
+
+File conventions, directory layout, and how auto-discovery works.
 
 ## Directory layout
 

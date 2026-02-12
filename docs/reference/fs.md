@@ -4,6 +4,10 @@ description: "Filesystem operations and path utilities."
 order: 18
 ---
 
+# veryfront/fs
+
+Filesystem operations and path utilities.
+
 ## Import
 
 ```ts

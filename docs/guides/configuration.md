@@ -4,7 +4,9 @@ description: "`veryfront.config.ts` options, environment variables, and runtime 
 order: 16
 ---
 
-Veryfront works with zero configuration. When you need to customize behavior, create a `veryfront.config.ts` at your project root.
+# Configuration
+
+`veryfront.config.ts` options, environment variables, and runtime settings.
 
 ## Config file
 

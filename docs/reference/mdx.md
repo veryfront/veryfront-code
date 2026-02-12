@@ -4,6 +4,10 @@ description: "Component overrides for `.mdx` page rendering."
 order: 8
 ---
 
+# veryfront/mdx
+
+Component overrides for `.mdx` page rendering.
+
 ## Import
 
 ```ts

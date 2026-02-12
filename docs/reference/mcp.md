@@ -4,6 +4,10 @@ description: "MCP server exposing tools, prompts, and resources."
 order: 14
 ---
 
+# veryfront/mcp
+
+MCP server exposing tools, prompts, and resources.
+
 ## Import
 
 ```ts

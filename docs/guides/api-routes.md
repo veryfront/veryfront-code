@@ -4,7 +4,9 @@ description: "HTTP handlers, request parsing, and streaming responses."
 order: 5
 ---
 
-Files named `route.ts` inside `app/api/` become API endpoints. Export functions named after HTTP methods.
+# API Routes
+
+HTTP handlers, request parsing, and streaming responses.
 
 ## Basic route
 

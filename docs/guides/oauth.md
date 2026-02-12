@@ -4,7 +4,9 @@ description: "OAuth 2.0 with 37 pre-configured providers."
 order: 14
 ---
 
-Add OAuth login with two API routes and a pre-configured provider. Veryfront includes configurations for GitHub, Google, Discord, Slack, and 33 other providers.
+# OAuth
+
+OAuth 2.0 with 37 pre-configured providers.
 
 ## Quick setup
 

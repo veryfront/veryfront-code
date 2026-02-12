@@ -4,7 +4,9 @@ description: "Create an AI agent with a system prompt, tools, and memory."
 order: 6
 ---
 
-An agent is an AI model with instructions, tools, and memory. Define one in a file, and the framework handles discovery, registration, and routing.
+# Agents
+
+Create an AI agent with a system prompt, tools, and memory.
 
 ## Define an agent
 

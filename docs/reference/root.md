@@ -4,6 +4,10 @@ description: "Configuration, server bootstrap, routing, data fetching, and input
 order: 1
 ---
 
+# veryfront
+
+Configuration, server bootstrap, routing, data fetching, and input validation.
+
 ## Import
 
 ```ts

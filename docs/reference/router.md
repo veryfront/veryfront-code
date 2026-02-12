@@ -4,6 +4,10 @@ description: "Client-side routing, navigation, and links."
 order: 3
 ---
 
+# veryfront/router
+
+Client-side routing, navigation, and links.
+
 ## Import
 
 ```ts

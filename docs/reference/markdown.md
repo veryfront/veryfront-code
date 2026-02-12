@@ -4,6 +4,10 @@ description: "Markdown rendering with syntax highlighting and diagrams."
 order: 7
 ---
 
+# veryfront/markdown
+
+Markdown rendering with syntax highlighting and diagrams.
+
 ## Import
 
 ```ts

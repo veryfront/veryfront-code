@@ -4,6 +4,10 @@ description: "Complete API reference for the Veryfront framework."
 order: 0
 ---
 
+# Framework API Reference
+
+Complete API reference for the Veryfront framework.
+
 ## Install
 
 ```bash

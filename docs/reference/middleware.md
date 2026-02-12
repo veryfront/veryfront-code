@@ -4,6 +4,10 @@ description: "CORS, rate limiting, logging, and timeout middleware."
 order: 15
 ---
 
+# veryfront/middleware
+
+CORS, rate limiting, logging, and timeout middleware.
+
 ## Import
 
 ```ts

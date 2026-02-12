@@ -4,6 +4,10 @@ description: "AI agents with memory, tools, and multi-agent composition."
 order: 9
 ---
 
+# veryfront/agent
+
+AI agents with memory, tools, and multi-agent composition.
+
 ## Import
 
 ```ts

@@ -4,6 +4,10 @@ description: "Declarative `<head>` metadata management."
 order: 2
 ---
 
+# veryfront/head
+
+Declarative `<head>` metadata management.
+
 ## Import
 
 ```ts

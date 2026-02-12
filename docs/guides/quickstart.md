@@ -4,6 +4,10 @@ description: "Create and run a Veryfront project in under 2 minutes."
 order: 1
 ---
 
+# Quickstart
+
+Create and run a Veryfront project in under 2 minutes.
+
 ## Install
 
 ```bash

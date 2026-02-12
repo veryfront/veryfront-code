@@ -4,7 +4,9 @@ description: "Agent composition, delegation, and agent-as-tool patterns."
 order: 11
 ---
 
-Complex tasks often need multiple specialized agents. Veryfront supports two composition patterns: **agent-as-tool** (one agent delegates to others) and **workflows** (explicit step orchestration).
+# Multi-Agent
+
+Agent composition, delegation, and agent-as-tool patterns.
 
 ## Agent-as-tool
 

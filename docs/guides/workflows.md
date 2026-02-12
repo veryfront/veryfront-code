@@ -4,7 +4,9 @@ description: "DAG-based multi-step workflows with branching and parallelism."
 order: 10
 ---
 
-Workflows orchestrate multi-step processes — run agents in sequence, execute steps in parallel, branch on conditions, and pause for human approval.
+# Workflows
+
+DAG-based multi-step workflows with branching and parallelism.
 
 ## Define a workflow
 

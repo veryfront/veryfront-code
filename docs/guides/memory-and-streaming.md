@@ -4,7 +4,9 @@ description: "Conversation memory strategies and streaming responses."
 order: 8
 ---
 
-Agents are stateless by default — each request is independent. Add memory to maintain conversation history, and use streaming to deliver responses in real time.
+# Memory & Streaming
+
+Conversation memory strategies and streaming responses.
 
 ## Memory types
 

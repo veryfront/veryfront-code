@@ -4,7 +4,9 @@ description: "Declarative metadata, Open Graph, and structured data."
 order: 18
 ---
 
-Use the `Head` component to manage `<title>`, `<meta>`, `<link>`, and other `<head>` elements from any page or component.
+# Head & SEO
+
+Declarative metadata, Open Graph, and structured data.
 
 ## Basic metadata
 

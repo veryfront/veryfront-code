@@ -4,7 +4,9 @@ description: "File-based routing, layouts, dynamic routes, and MDX pages."
 order: 3
 ---
 
-Every file named `page.tsx` (or `page.mdx`) inside `app/` becomes a route. The file path determines the URL.
+# Pages & Routing
+
+File-based routing, layouts, dynamic routes, and MDX pages.
 
 ## Basic pages
 

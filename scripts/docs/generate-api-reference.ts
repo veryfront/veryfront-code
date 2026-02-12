@@ -1585,6 +1585,14 @@ function generateMD(
   lines.push("---");
   lines.push("");
 
+  // H1 title + description paragraph (visible on GitHub)
+  lines.push(`# ${entry.importPath}`);
+  lines.push("");
+  if (jsdoc.description) {
+    lines.push(jsdoc.description);
+    lines.push("");
+  }
+
   // Import snippet — use curated priority list
   const priorityNames = IMPORT_PRIORITY[entry.importPath] ?? [];
   const allExportNames = new Set([
@@ -1701,6 +1709,10 @@ function generateOverviewMD(entries: Array<{ entry: ExportEntry; jsdoc: BarrelJS
   lines.push('description: "Complete API reference for the Veryfront framework."');
   lines.push("order: 0");
   lines.push("---");
+  lines.push("");
+  lines.push("# Framework API Reference");
+  lines.push("");
+  lines.push("Complete API reference for the Veryfront framework.");
   lines.push("");
   lines.push("## Install");
   lines.push("");

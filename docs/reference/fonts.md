@@ -4,6 +4,10 @@ description: "Load Google Fonts as a React component."
 order: 5
 ---
 
+# veryfront/fonts
+
+Load Google Fonts as a React component.
+
 ## Import
 
 ```ts

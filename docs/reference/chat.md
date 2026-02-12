@@ -4,6 +4,10 @@ description: "Chat UI components and streaming hooks."
 order: 6
 ---
 
+# veryfront/chat
+
+Chat UI components and streaming hooks.
+
 ## Import
 
 ```ts

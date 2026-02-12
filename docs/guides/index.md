@@ -4,7 +4,9 @@ description: "Learn Veryfront from the ground up — pages, routing, AI agents, 
 order: 0
 ---
 
-Learn Veryfront from the ground up. Each guide builds on the previous, so reading in order is recommended.
+# Guides
+
+Learn Veryfront from the ground up — pages, routing, AI agents, and production deployment.
 
 ## Getting Started
 

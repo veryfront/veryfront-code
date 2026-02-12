@@ -4,6 +4,10 @@ description: "Access route params, page data, and MDX frontmatter."
 order: 4
 ---
 
+# veryfront/context
+
+Access route params, page data, and MDX frontmatter.
+
 ## Import
 
 ```ts

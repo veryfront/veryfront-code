@@ -4,7 +4,9 @@ description: "Expose tools, prompts, and resources over Model Context Protocol."
 order: 15
 ---
 
-The Model Context Protocol (MCP) lets AI clients discover and use your tools, prompts, and resources. Veryfront auto-registers everything from your `tools/`, `prompts/`, and `resources/` directories and exposes them through an MCP server.
+# MCP Server
+
+Expose tools, prompts, and resources over Model Context Protocol.
 
 ## Setup
 

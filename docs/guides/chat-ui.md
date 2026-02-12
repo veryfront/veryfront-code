@@ -4,7 +4,9 @@ description: "Pre-built chat components and React hooks for AI interfaces."
 order: 9
 ---
 
-Veryfront ships a `Chat` component and hooks for building chat interfaces. They handle streaming, message state, tool call rendering, and error recovery.
+# Chat UI
+
+Pre-built chat components and React hooks for AI interfaces.
 
 ## Quick setup
 

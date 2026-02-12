@@ -4,7 +4,9 @@ description: "Define tools with Zod schemas that agents can call."
 order: 7
 ---
 
-Tools give agents the ability to take actions — call APIs, query databases, compute results. Define a tool with a Zod schema for its parameters and an `execute` function.
+# Tools
+
+Define tools with Zod schemas that agents can call.
 
 ## Define a tool
 
