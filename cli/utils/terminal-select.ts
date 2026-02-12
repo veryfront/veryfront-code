@@ -172,6 +172,96 @@ export async function multiSelect(
   }
 }
 
+/**
+ * Text input with cursor editing
+ */
+export async function textInput(
+  question: string,
+  defaultValue = "",
+): Promise<string | null> {
+  let value = defaultValue;
+  let cursorPos = value.length;
+
+  console.log("");
+  console.log(cyan("?") + " " + question);
+  console.log(dim("  Type your answer, Enter to submit, Esc to cancel"));
+  console.log("");
+
+  function renderInput(): void {
+    const beforeCursor = value.slice(0, cursorPos);
+    const cursorChar = value[cursorPos] ?? " ";
+    const afterCursor = value.slice(cursorPos + 1);
+    const cursor = `\x1b[7m${cursorChar}\x1b[27m`; // inverse video
+    console.log(`  ${green(">")} ${beforeCursor}${cursor}${afterCursor}`);
+  }
+
+  writeStdout(HIDE_CURSOR);
+  renderInput();
+
+  try {
+    const result = await readKeypress((key) => {
+      // Handle escape
+      if (key === "escape") return null;
+
+      // Handle enter
+      if (key === "enter") return value;
+
+      // Handle backspace
+      if (key === "backspace") {
+        if (cursorPos > 0) {
+          value = value.slice(0, cursorPos - 1) + value.slice(cursorPos);
+          cursorPos--;
+          clearOptions(1);
+          renderInput();
+        }
+        return undefined;
+      }
+
+      // Handle left/right arrow
+      if (key === "left") {
+        if (cursorPos > 0) {
+          cursorPos--;
+          clearOptions(1);
+          renderInput();
+        }
+        return undefined;
+      }
+
+      if (key === "right") {
+        if (cursorPos < value.length) {
+          cursorPos++;
+          clearOptions(1);
+          renderInput();
+        }
+        return undefined;
+      }
+
+      // Handle character input
+      if (key.startsWith("char:")) {
+        const char = key.slice(5);
+        value = value.slice(0, cursorPos) + char + value.slice(cursorPos);
+        cursorPos++;
+        clearOptions(1);
+        renderInput();
+        return undefined;
+      }
+
+      return undefined;
+    });
+
+    clearOptions(1);
+    if (result !== null) {
+      console.log(`  ${green("✓")} ${result}`);
+    } else {
+      console.log(dim("  Cancelled"));
+    }
+
+    return result;
+  } finally {
+    writeStdout(SHOW_CURSOR);
+  }
+}
+
 type KeyHandler<T> = (key: string) => T | undefined;
 
 /**
@@ -267,9 +357,15 @@ function parseKeySequence(buf: Uint8Array): string {
       return "space";
     case 0x03:
       return "ctrl-c";
-    case 0x71:
-      return "q";
-    default:
-      return "unknown";
+    case 0x7f: // DEL (backspace on most terminals)
+    case 0x08: // BS
+      return "backspace";
   }
+
+  // Printable ASCII characters
+  if (buf[0] && buf[0] >= 0x20 && buf[0] <= 0x7e) {
+    return `char:${String.fromCharCode(buf[0])}`;
+  }
+
+  return "unknown";
 }

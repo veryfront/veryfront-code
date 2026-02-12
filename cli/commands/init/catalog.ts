@@ -18,17 +18,17 @@ export interface TemplateOption {
 }
 
 export const TEMPLATES: readonly TemplateOption[] = [
+  { id: "minimal", label: "Minimal", description: "Blank canvas, no extras" },
   { id: "chat", label: "AI Chatbot", description: "Agent + chat UI + streaming" },
   { id: "rag", label: "Chat with Your Docs", description: "RAG with source citations" },
+  { id: "workflow", label: "AI Workflow Pipeline", description: "Steps + approvals + parallelism" },
   {
     id: "multi-agent",
     label: "Multi-Agent System",
     description: "Agents that delegate to each other",
   },
-  { id: "workflow", label: "AI Workflow Pipeline", description: "Steps + approvals + parallelism" },
   { id: "coding-agent", label: "Coding Agent", description: "AI code assistant with file tools" },
   { id: "saas", label: "AI SaaS", description: "Auth + chat + per-user memory" },
-  { id: "minimal", label: "Minimal", description: "Blank canvas, no extras" },
 ] as const;
 
 /** Get templates as SelectOption[] for terminal-select */

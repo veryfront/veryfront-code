@@ -52,7 +52,8 @@ describe("command-definitions", () => {
     it("has template option", () => {
       const templateOpt = init.options.find((o) => o.flag.includes("--template"));
       assertExists(templateOpt);
-      assertEquals(templateOpt.default, "chat");
+      // init command uses interactive wizard - no default, user must choose
+      assertEquals(templateOpt.default, undefined);
     });
 
     it("has examples", () => {

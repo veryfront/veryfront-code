@@ -8,7 +8,7 @@ export const newHelp: CommandHelp = {
     {
       flag: "-t, --template <name>",
       description:
-        "Project template (chat | rag | multi-agent | workflow | coding-agent | saas | minimal)",
+        "Project template (minimal | chat | rag | workflow | multi-agent | coding-agent | saas)",
       default: "chat",
     },
     {

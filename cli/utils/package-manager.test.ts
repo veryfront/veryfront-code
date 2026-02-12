@@ -1,7 +1,13 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
-import { detectPackageManager, getInstallCommand } from "./package-manager.ts";
+import {
+  detectFromUserAgent,
+  detectPackageManager,
+  getDlxCommand,
+  getInstallCommand,
+  getRunCommand,
+} from "./package-manager.ts";
 
 async function withTempDir(fn: (tempDir: string) => Promise<void>): Promise<void> {
   const tempDir = await makeTempDir({ prefix: "pm-test-" });
@@ -75,6 +81,50 @@ describe("cli/utils/package-manager", () => {
         const result = await detectPackageManager(tempDir);
         assertEquals(result, "bun");
       });
+    });
+  });
+
+  describe("getRunCommand", () => {
+    it("should return 'npm run dev' for npm", () => {
+      assertEquals(getRunCommand("npm", "dev"), "npm run dev");
+    });
+
+    it("should return 'yarn dev' for yarn", () => {
+      assertEquals(getRunCommand("yarn", "dev"), "yarn dev");
+    });
+
+    it("should return 'pnpm dev' for pnpm", () => {
+      assertEquals(getRunCommand("pnpm", "dev"), "pnpm dev");
+    });
+
+    it("should return 'bun dev' for bun", () => {
+      assertEquals(getRunCommand("bun", "dev"), "bun dev");
+    });
+  });
+
+  describe("getDlxCommand", () => {
+    it("should return 'npx' for npm", () => {
+      assertEquals(getDlxCommand("npm"), "npx");
+    });
+
+    it("should return 'yarn dlx' for yarn", () => {
+      assertEquals(getDlxCommand("yarn"), "yarn dlx");
+    });
+
+    it("should return 'pnpm dlx' for pnpm", () => {
+      assertEquals(getDlxCommand("pnpm"), "pnpm dlx");
+    });
+
+    it("should return 'bunx' for bun", () => {
+      assertEquals(getDlxCommand("bun"), "bunx");
+    });
+  });
+
+  describe("detectFromUserAgent", () => {
+    // Note: This test checks the function logic, but can't easily test env var
+    // since the env var is read at function call time
+    it("should be a function", () => {
+      assertEquals(typeof detectFromUserAgent, "function");
     });
   });
 });

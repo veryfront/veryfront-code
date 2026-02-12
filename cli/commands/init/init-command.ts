@@ -5,7 +5,9 @@
 
 import { cliLogger as logger } from "#cli/utils";
 import { FILE_NOT_FOUND } from "veryfront/errors";
-import { cyan } from "#cli/ui";
+import { brand, cyan, dim, green } from "#cli/ui";
+import { createSpinner } from "../../ui/progress.ts";
+import { box } from "../../ui/box.ts";
 import { ensureDir } from "#std/fs.ts";
 import { join } from "veryfront/platform/path";
 import { createPackageJson } from "./config-generator.ts";
@@ -16,6 +18,7 @@ import { createFileSystem } from "veryfront/platform";
 import {
   detectPackageManager,
   getInstallCommand,
+  getRunCommand,
   installDependencies,
 } from "../../utils/package-manager.ts";
 import { generateGitignoreContent, promptForEnvVars } from "../../utils/env-prompt.ts";
@@ -180,15 +183,21 @@ export async function initCommand(options: InitOptions): Promise<void> {
   }
 
   let template: InitTemplate;
+  let projectName = name;
+  let initGit = false;
+
   if (shouldRunWizard(options)) {
     const wizardResult = await runInteractiveWizard();
     template = wizardResult.template;
-    if (wizardResult.integrations.length) integrations = wizardResult.integrations;
+    if (wizardResult.projectName) {
+      projectName = wizardResult.projectName;
+    }
+    initGit = wizardResult.initGit;
   } else {
-    template = options.template ?? "chat";
+    template = options.template ?? "minimal";
   }
 
-  const projectDir = name ? join(cwd(), name) : cwd();
+  const projectDir = projectName ? join(cwd(), projectName) : cwd();
   const fs = createFileSystem();
 
   validateOrThrow("features", features, validateFeatures);
@@ -201,12 +210,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   log(
     `Creating new Veryfront project${
-      name ? ` in ${name}` : ""
+      projectName ? ` in ${projectName}` : ""
     } with template: ${template}${featuresStr}${integrationsStr}`,
   );
 
-  if (name && (await fs.exists(projectDir))) {
-    throw FILE_NOT_FOUND.create({ detail: `Directory ${name} already exists` });
+  if (projectName && (await fs.exists(projectDir))) {
+    throw FILE_NOT_FOUND.create({ detail: `Directory ${projectName} already exists` });
   }
 
   const { getTemplate, getTemplateConfig } = await import("../../templates/index.ts");
@@ -296,86 +305,134 @@ export async function initCommand(options: InitOptions): Promise<void> {
     featureTips.push("Connect services at /api/auth/<service>");
   }
 
-  if (name) await ensureDir(projectDir);
+  if (projectName) await ensureDir(projectDir);
 
-  for (const file of templateFiles as TemplateFile[]) {
-    if (file.path === ".env" || file.path === ".env.example") continue;
-
-    const filePath = join(projectDir, file.path);
-    const fileDir = join(projectDir, ...file.path.split("/").slice(0, -1));
-
-    if (fileDir !== projectDir) await ensureDir(fileDir);
-
-    await fs.writeTextFile(filePath, file.content);
-    logger.debug(`Created file: ${file.path}`);
-  }
-
-  // Skip in quiet/TUI mode since local dev uses CDN and package.json can cause hydration issues
-  if (!options.quiet) {
-    await createPackageJson(projectDir, name);
-  }
-
-  if (allEnvVars.length) {
-    const envResult = await promptForEnvVars(dedupeEnvVars(allEnvVars), {
-      skipPrompt: options.skipEnvPrompt,
-      prefilledValues: options.env,
-    });
-
-    await fs.writeTextFile(join(projectDir, ".env"), envResult.envContent);
-    logger.debug("Created file: .env");
-
-    await fs.writeTextFile(join(projectDir, ".env.example"), envResult.envExampleContent);
-    logger.debug("Created file: .env.example");
-  }
-
-  const gitignorePath = join(projectDir, ".gitignore");
-  let existingGitignore: string | undefined;
+  // Create project files with progress spinner
+  const filesSpinner = quiet ? null : createSpinner("Creating project files...");
   try {
-    existingGitignore = await fs.readTextFile(gitignorePath);
-  } catch {
-    existingGitignore = undefined;
+    for (const file of templateFiles as TemplateFile[]) {
+      if (file.path === ".env" || file.path === ".env.example") continue;
+
+      const filePath = join(projectDir, file.path);
+      const fileDir = join(projectDir, ...file.path.split("/").slice(0, -1));
+
+      if (fileDir !== projectDir) await ensureDir(fileDir);
+
+      await fs.writeTextFile(filePath, file.content);
+      logger.debug(`Created file: ${file.path}`);
+    }
+
+    // Skip in quiet/TUI mode since local dev uses CDN and package.json can cause hydration issues
+    if (!options.quiet) {
+      await createPackageJson(projectDir, projectName);
+    }
+
+    if (allEnvVars.length) {
+      const envResult = await promptForEnvVars(dedupeEnvVars(allEnvVars), {
+        skipPrompt: options.skipEnvPrompt,
+        prefilledValues: options.env,
+      });
+
+      await fs.writeTextFile(join(projectDir, ".env"), envResult.envContent);
+      logger.debug("Created file: .env");
+
+      await fs.writeTextFile(join(projectDir, ".env.example"), envResult.envExampleContent);
+      logger.debug("Created file: .env.example");
+    }
+
+    const gitignorePath = join(projectDir, ".gitignore");
+    let existingGitignore: string | undefined;
+    try {
+      existingGitignore = await fs.readTextFile(gitignorePath);
+    } catch {
+      existingGitignore = undefined;
+    }
+
+    await fs.writeTextFile(gitignorePath, generateGitignoreContent(existingGitignore));
+    logger.debug("Updated file: .gitignore");
+
+    filesSpinner?.success("Project files created");
+  } catch (err) {
+    filesSpinner?.error("Failed to create project files");
+    throw err;
   }
 
-  await fs.writeTextFile(gitignorePath, generateGitignoreContent(existingGitignore));
-  logger.debug("Updated file: .gitignore");
+  // Initialize git if requested
+  if (initGit) {
+    const gitSpinner = quiet ? null : createSpinner("Initializing git repository...");
+    try {
+      const { initializeGitRepo } = await import("../../utils/git.ts");
+      const success = await initializeGitRepo(projectDir, projectName ?? "veryfront project");
+      if (success) {
+        gitSpinner?.success("Git repository initialized");
+      } else {
+        gitSpinner?.error("Git initialization failed");
+      }
+    } catch {
+      gitSpinner?.error("Git initialization failed");
+    }
+  }
 
   (options as InitOptions & { _featureTips?: string[] })._featureTips = featureTips;
 
-  log(`Created Veryfront project${name ? ` at ${name}` : ""}`);
-
   if (!options.skipInstall) {
-    log("");
-    const installSuccess = await installDependencies(projectDir);
+    const pm = await detectPackageManager(projectDir);
+    const installSpinner = quiet ? null : createSpinner(`Installing dependencies with ${pm}...`);
+    const installSuccess = await installDependencies(projectDir, { silent: true, packageManager: pm });
 
-    if (!installSuccess) {
-      const pm = await detectPackageManager(projectDir);
+    if (installSuccess) {
+      installSpinner?.success("Dependencies installed");
+    } else {
+      installSpinner?.error("Dependency installation failed");
       if (!quiet) {
-        logger.warn(`Dependency installation failed. Run '${getInstallCommand(pm)}' manually.`);
+        logger.warn(`Run '${getInstallCommand(pm)}' manually to install dependencies.`);
       }
     }
   }
 
-  log(`\n${cyan("Next steps:")}`);
-  if (name) log(`  cd ${name}`);
+  // Build success box with next steps
+  const pm = await detectPackageManager(projectDir);
+  const devCommand = getRunCommand(pm, "dev");
 
+  const nextSteps: string[] = [];
+  if (projectName) {
+    nextSteps.push(`${dim("1.")} cd ${brand(projectName)}`);
+  }
   if (options.skipInstall) {
-    const pm = await detectPackageManager(projectDir);
-    log(`  ${getInstallCommand(pm)}`);
+    nextSteps.push(`${dim(projectName ? "2." : "1.")} ${brand(getInstallCommand(pm))}`);
+    nextSteps.push(`${dim(projectName ? "3." : "2.")} ${brand(devCommand)}`);
+  } else {
+    nextSteps.push(`${dim(projectName ? "2." : "1.")} ${brand(devCommand)}`);
   }
 
-  log(`  veryfront dev`);
+  const successContent = [
+    `${green("✓")} Project created successfully!`,
+    "",
+    cyan("Next steps:"),
+    ...nextSteps.map((step) => `  ${step}`),
+  ];
 
   if (template !== "minimal") {
-    log(`\n${cyan("Tips:")}`);
-    log(`  - Add your OPENAI_API_KEY to .env`);
-    log(`  - Add tools in tools/ (auto-discovered)`);
-    log(`  - Add agents in agents/ (auto-discovered)`);
-    log(`  - Run veryfront dev to start building`);
+    successContent.push(
+      "",
+      dim("Tips:"),
+      dim("  • Add your OPENAI_API_KEY to .env"),
+      dim("  • Add tools in tools/ (auto-discovered)"),
+      dim("  • Add agents in agents/ (auto-discovered)"),
+    );
   }
 
   const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
   if (displayFeatureTips?.length) {
-    log(`\n${cyan("Feature tips:")}`);
-    for (const tip of displayFeatureTips) log(`  - ${tip}`);
+    successContent.push("", dim("Feature tips:"));
+    for (const tip of displayFeatureTips) {
+      successContent.push(dim(`  • ${tip}`));
+    }
+  }
+
+  if (!quiet) {
+    console.log("");
+    console.log(box(successContent.join("\n"), { style: "rounded", padding: 1 }));
+    console.log("");
   }
 }
