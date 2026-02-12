@@ -16,7 +16,22 @@ const JS_HEADERS = {
 
 function getUiDirectory(): string {
   const currentFile = new URL(import.meta.url).pathname;
-  return currentFile.replace(/\/handlers\/dev\/projects\/ui-handler\.ts$/, "/dev-ui/projects");
+  return currentFile.replace(/\/handlers\/dev\/projects\/ui-handler\.ts$/, "/dev-ui");
+}
+
+/**
+ * Resolve the actual file path for a relative path.
+ * - "index" → "projects/index" (projects UI files)
+ * - "shared/mount-react-app" → "shared/mount-react-app" (shared files)
+ * - "components/Foo" → "projects/components/Foo" (projects UI components)
+ */
+function resolveFilePath(relativePath: string): string {
+  // shared/ files are at dev-ui/shared/, not dev-ui/projects/shared/
+  if (relativePath.startsWith("shared/")) {
+    return relativePath;
+  }
+  // Everything else is under dev-ui/projects/
+  return `projects/${relativePath}`;
 }
 
 /**
@@ -26,32 +41,34 @@ async function readUiSource(
   uiDir: string,
   relativePath: string,
 ): Promise<{ filePath: string; source: string } | null> {
+  const resolvedPath = resolveFilePath(relativePath);
+
   // Try filesystem first (works in development, allows hot reload)
-  const tsxPath = `${uiDir}/${relativePath}.tsx`;
+  const tsxPath = `${uiDir}/${resolvedPath}.tsx`;
   try {
     return { filePath: tsxPath, source: await readTextFile(tsxPath) };
   } catch {
     // try .ts from filesystem
   }
 
-  const tsPath = `${uiDir}/${relativePath}.ts`;
+  const tsPath = `${uiDir}/${resolvedPath}.ts`;
   try {
     return { filePath: tsPath, source: await readTextFile(tsPath) };
   } catch {
     // Filesystem failed, try embedded manifest (for compiled binary)
   }
 
-  // Try embedded manifest - paths are relative to dev-ui directory
+  // Try embedded manifest - paths match the resolved path
   const manifest = devUiManifest as { files: Record<string, string> };
 
   // Try .tsx from manifest
-  const manifestTsxPath = `projects/${relativePath}.tsx`;
+  const manifestTsxPath = `${resolvedPath}.tsx`;
   if (manifest.files[manifestTsxPath]) {
     return { filePath: manifestTsxPath, source: manifest.files[manifestTsxPath] };
   }
 
   // Try .ts from manifest
-  const manifestTsPath = `projects/${relativePath}.ts`;
+  const manifestTsPath = `${resolvedPath}.ts`;
   if (manifest.files[manifestTsPath]) {
     return { filePath: manifestTsPath, source: manifest.files[manifestTsPath] };
   }

@@ -303,7 +303,43 @@ export class DevServer {
 
     if (isProxyMode) return undefined;
 
+    // Check if this is a multi-project directory (has projects/ but no direct project files)
+    if (this.isMultiProjectDirectory()) {
+      return undefined;
+    }
+
     return deriveProjectSlug(this.options.projectDir);
+  }
+
+  private isMultiProjectDirectory(): boolean {
+    const projectDir = this.options.projectDir;
+    try {
+      // Check for projects folder
+      const projectsDir = `${projectDir}/projects`;
+      const hasProjectsDir = Deno.statSync(projectsDir).isDirectory;
+      if (!hasProjectsDir) return false;
+
+      // Check that there's no direct project (no app/, pages/, or config file)
+      const hasApp = this.existsSync(`${projectDir}/app`);
+      const hasPages = this.existsSync(`${projectDir}/pages`);
+      const hasConfig = this.existsSync(`${projectDir}/veryfront.config.ts`) ||
+        this.existsSync(`${projectDir}/veryfront.config.js`) ||
+        this.existsSync(`${projectDir}/veryfront.config.mjs`);
+
+      // Multi-project mode: has projects/ folder but no direct project
+      return !hasApp && !hasPages && !hasConfig;
+    } catch {
+      return false;
+    }
+  }
+
+  private existsSync(path: string): boolean {
+    try {
+      Deno.statSync(path);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private buildLocalProjects(
