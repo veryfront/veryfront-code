@@ -258,6 +258,24 @@ const RELATED_MODULES: Record<string, Array<{ path: string; reason: string }>> =
     { path: "router", reason: "Client-side navigation" },
     { path: "head", reason: "Manage document head" },
   ],
+  "veryfront": [
+    { path: "head", reason: "Declarative `<head>` metadata" },
+    { path: "router", reason: "Client-side routing and navigation" },
+    { path: "context", reason: "Access route params and page data" },
+  ],
+  "veryfront/fonts": [
+    { path: "head", reason: "Manage document head metadata" },
+    { path: "context", reason: "Access page context and frontmatter" },
+  ],
+  "veryfront/fs": [
+    { path: "root", reason: "Core framework configuration and utilities" },
+    { path: "agent", reason: "Agents that may use filesystem for persistence" },
+  ],
+  "veryfront/integrations": [
+    { path: "oauth", reason: "OAuth 2.0 token management for integrations" },
+    { path: "tool", reason: "Define tools that integrations expose" },
+    { path: "mcp", reason: "Expose integration tools via MCP" },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -1662,7 +1680,8 @@ function generateMD(
     lines.push("## Related");
     lines.push("");
     for (const r of related) {
-      lines.push(`- [\`veryfront/${r.path}\`](./${r.path}.md) — ${r.reason}`);
+      const displayName = r.path === "root" ? "veryfront" : `veryfront/${r.path}`;
+      lines.push(`- [\`${displayName}\`](./${r.path}.md) — ${r.reason}`);
     }
     lines.push("");
   }
