@@ -195,6 +195,8 @@ The `veryfront` binary handles everything. Users just run `pnpm dev`.
 
 ## Tasks
 
+### Code Changes
+
 1. **Update `cli/commands/init/catalog.ts`**
    - Reorder templates: minimal first
 
@@ -215,6 +217,23 @@ The `veryfront` binary handles everything. Users just run `pnpm dev`.
 
 4. **`create-veryfront` package** (already exists)
    - Separate repo: github.com/veryfront/create-veryfront
+
+### Documentation
+
+5. **Update `cli/commands/init/command-help.ts`**
+   - Update template order (minimal first)
+   - Remove integrations flag docs
+   - Add --no-git flag
+   - Update examples to reflect new flow
+
+6. **Update `cli/README.md`**
+   - Add `npx create-veryfront` quick start
+   - Link to create-veryfront repo
+
+7. **Create `docs/getting-started.md`** (if needed)
+   - Quick start with create-veryfront
+   - Template descriptions
+   - Next steps after creation
 
 ## Decisions
 
