@@ -25,10 +25,6 @@ npx create-veryfront
 │  ○ AI SaaS           Auth + chat + per-user memory
 │  ○ Minimal           Blank canvas
 │
-◇  Add integrations? (space to select)
-│  ◻ Gmail   ◻ Slack   ◻ Notion   ◻ GitHub
-│  ◻ Calendar ◻ Drive  ◻ Jira     ◻ Linear
-│
 ◇  Install dependencies?
 │  Yes (pnpm)
 │
@@ -47,7 +43,6 @@ npx create-veryfront
 │                                         │
 │  Next steps:                            │
 │    cd my-ai-app                         │
-│    echo "OPENAI_API_KEY=sk-..." >> .env │
 │    veryfront dev                        │
 │                                         │
 │  Deploy:                                │
@@ -90,7 +85,6 @@ $ veryfront deploy
 npx create-veryfront [name] [options]
 
 -t, --template <name>     chat, rag, multi-agent, workflow, coding-agent, saas, minimal
--i, --integrations <list> gmail,slack,github
 --no-install              Skip deps
 --no-git                  Skip git init
 -y, --yes                 Accept all defaults
@@ -99,9 +93,9 @@ npx create-veryfront [name] [options]
 Examples:
 
 ```bash
-npx create-veryfront                           # interactive
-npx create-veryfront my-app -y                 # quick, defaults
-npx create-veryfront my-app -t rag -i github   # specific
+npx create-veryfront                    # interactive
+npx create-veryfront my-app -y          # quick, defaults
+npx create-veryfront my-app -t rag      # specific template
 ```
 
 ## Package Manager Detection
@@ -119,7 +113,6 @@ bun create veryfront   → bun install
    - Banner (ASCII or simple)
    - Project name prompt + validation
    - Template select
-   - Integration multi-select (popular 8)
    - Deps install prompt
    - Git init prompt
    - Progress spinners
@@ -136,6 +129,5 @@ bun create veryfront   → bun install
 ## Decisions
 
 - **Banner**: Keep it simple, not massive ASCII art
-- **Integrations**: Show popular 8, not all 50+
-- **Defaults**: `chat` template, no integrations, yes to deps, yes to git
+- **Defaults**: `chat` template, yes to deps, yes to git
 - **Auth**: Zero auth until deploy
