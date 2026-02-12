@@ -55,23 +55,37 @@ npx create-veryfront
 
 ## Architecture
 
-**Thin wrapper calling `veryfront init`:**
+**Decoupled entry point - no dependencies:**
 
 ```
 packages/create-veryfront/
-  package.json   # bin + depends on "veryfront"
-  index.js       # imports and calls veryfront init
+  package.json   # just the bin, zero dependencies
+  index.js       # ~20 lines: detect pm, spawn veryfront init
 ```
 
 ```javascript
-// index.js
-import { initCommand } from 'veryfront/cli';
-initCommand(process.argv.slice(2));
+#!/usr/bin/env node
+import { spawn } from 'child_process';
+
+// Detect package manager from npm_config_user_agent
+const ua = process.env.npm_config_user_agent || '';
+const pm = ua.startsWith('pnpm') ? 'pnpm'
+         : ua.startsWith('yarn') ? 'yarn'
+         : ua.startsWith('bun')  ? 'bun'
+         : 'npx';
+
+// Map to exec command
+const exec = { pnpm: 'pnpm', yarn: 'yarn', bun: 'bunx', npx: 'npx' }[pm];
+
+// Spawn veryfront init with user's package manager
+spawn(exec, ['veryfront', 'init', ...process.argv.slice(2)], { stdio: 'inherit' });
 ```
 
-**Why not `npx veryfront init`?** Using npx forces npm execution, breaking
-package manager detection for pnpm/yarn/bun users. By depending on veryfront
-directly, the user's chosen package manager installs everything correctly.
+**Why this approach?**
+- Zero dependencies = instant install
+- Respects user's package manager choice
+- All logic stays in `cli/commands/init/` - single codebase
+- `create-veryfront` is just a routing layer
 
 ## Current State
 
@@ -175,8 +189,9 @@ The `veryfront` binary handles everything. Users just run `pnpm dev`.
    - Add success box with next steps
 
 2. **Create `packages/create-veryfront/`**
-   - package.json with bin + veryfront dependency
-   - index.js imports and calls `initCommand` directly
+   - package.json with bin, zero dependencies
+   - index.js: detect package manager, spawn `veryfront init`
+   - ~20 lines total
 
 3. **Publish**
    - Publish `create-veryfront` to npm
