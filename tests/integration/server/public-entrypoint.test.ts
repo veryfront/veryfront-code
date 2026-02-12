@@ -9,26 +9,26 @@ describe("Server Public Entrypoints", { sanitizeResources: false, sanitizeOps: f
     const rootApi = await import("veryfront");
     const serverApi = await import("veryfront/server");
 
-    assertEquals(typeof rootApi.startVeryfrontServer, "function");
-    assertEquals(typeof rootApi.createVeryfrontHandler, "function");
+    assertEquals(typeof rootApi.startServer, "function");
+    assertEquals(typeof rootApi.createHandler, "function");
 
-    assertEquals(typeof serverApi.startVeryfrontServer, "function");
+    assertEquals(typeof serverApi.startServer, "function");
     assertEquals(typeof serverApi.startDevServer, "function");
     assertEquals(typeof serverApi.startProductionServer, "function");
-    assertEquals(typeof serverApi.createVeryfrontHandler, "function");
+    assertEquals(typeof serverApi.createHandler, "function");
   });
 
-  it("starts and serves a page via root package startVeryfrontServer", async () => {
-    const { startVeryfrontServer } = await import("veryfront");
+  it("starts and serves a page via root package startServer", async () => {
+    const { startServer } = await import("veryfront");
 
     await withTestContext("public-root-server-entrypoint", async (context) => {
       await writeTextFile(
         join(context.projectDir, "pages", "index.mdx"),
-        "# Public Entrypoint\n\nServed via startVeryfrontServer.",
+        "# Public Entrypoint\n\nServed via startServer.",
       );
 
       const port = await context.allocatePort();
-      const server = await startVeryfrontServer({
+      const server = await startServer({
         mode: "development",
         projectDir: context.projectDir,
         port,

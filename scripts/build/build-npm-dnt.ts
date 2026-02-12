@@ -122,6 +122,11 @@ await build({
 		engines: {
 			node: ">=18.0.0",
 		},
+		// ws is dynamically imported for Node.js WebSocket upgrade (HMR dev server)
+		// dnt can't detect dynamic imports, so we add it explicitly
+		dependencies: {
+			"ws": "^8.18.0",
+		},
 		keywords: [
 			"react",
 			"framework",
@@ -135,11 +140,9 @@ await build({
 		],
 		// Optional peer dependencies for platform-specific features
 		peerDependencies: {
-			"ws": ">=8.0.0",
 			"better-sqlite3": ">=9.0.0",
 		},
 		peerDependenciesMeta: {
-			"ws": { optional: true },
 			"better-sqlite3": { optional: true },
 		},
 		devDependencies: {

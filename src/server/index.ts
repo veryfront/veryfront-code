@@ -38,7 +38,6 @@ export type {
 };
 export { ReloadNotifier } from "./reload-notifier.ts";
 export type { BuildOptions, BuildStats } from "./build-types.ts";
-export { createVeryfrontHandler } from "./runtime-handler/index.ts";
 
 /** Shared options for both development and production server modes. */
 interface BaseServerOptions {
@@ -174,11 +173,11 @@ export async function createHandler(
           "#veryfront/platform/adapters/runtime/node/http-server.ts"
         );
 
-        wsServer.handleUpgrade(request, socket, head, (ws) => {
+        wsServer.handleUpgrade(request, socket, head, (ws: import("ws").WebSocket) => {
           resolveWebSocketUpgrade(requestId, ws);
           wsServer!.emit("connection", ws, request);
         });
-      } catch (error) {
+      } catch (_error) {
         socket.destroy();
       }
     });
@@ -212,7 +211,11 @@ export function toNodeHandler(
       }
       const method = req.method ?? "GET";
       const body = method === "GET" || method === "HEAD" ? null : req;
-      const init: RequestInit & { duplex?: string } = { method, headers, body: body as BodyInit | null };
+      const init: RequestInit & { duplex?: string } = {
+        method,
+        headers,
+        body: body as BodyInit | null,
+      };
       if (body) init.duplex = "half";
 
       const response = await handler(new Request(url.toString(), init));
@@ -278,8 +281,11 @@ export async function startServer(
     hmrPort: ("hmrPort" in options ? options.hmrPort : undefined) ?? port + 1,
     moduleServerPort: "moduleServerPort" in options ? options.moduleServerPort : undefined,
     enableHMR: ("enableHMR" in options ? options.enableHMR : undefined) ?? true,
-    enableFastRefresh: ("enableFastRefresh" in options ? options.enableFastRefresh : undefined) ?? true,
-    fileWatcherDebounceMs: "fileWatcherDebounceMs" in options ? options.fileWatcherDebounceMs : undefined,
+    enableFastRefresh: ("enableFastRefresh" in options ? options.enableFastRefresh : undefined) ??
+      true,
+    fileWatcherDebounceMs: "fileWatcherDebounceMs" in options
+      ? options.fileWatcherDebounceMs
+      : undefined,
     signal: options.signal,
     requestInterceptor: options.requestInterceptor,
     defaultProjectSlug: options.defaultProjectSlug,

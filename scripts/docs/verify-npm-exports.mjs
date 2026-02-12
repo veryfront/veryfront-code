@@ -30,7 +30,7 @@ const topLevelExports = Object.keys(exports).filter((p) => {
 
 // Key named exports per module that MUST exist (subset — the most important ones)
 const REQUIRED_EXPORTS = {
-  ".": ["defineConfig", "json", "notFound", "redirect", "getEnv", "createValidatedHandler", "startVeryfrontServer"],
+  ".": ["defineConfig", "json", "notFound", "redirect", "getEnv", "createValidatedHandler", "startServer", "createHandler"],
   "./head": ["Head"],
   "./router": ["Link", "useRouter", "RouterProvider"],
   "./context": ["usePageContext", "PageContextProvider"],
