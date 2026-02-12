@@ -278,7 +278,8 @@ function forwardToServer(req: Request): Promise<Response> {
         async () => {
           if (ctx.error) {
             const ms = Math.round(performance.now() - startTime);
-            proxyLogger.error(`${ctx.error.status} ${req.method} ${url.pathname}`, { ms });
+            const logLevel = ctx.error.status < 500 ? "warn" : "error";
+            proxyLogger[logLevel](`${ctx.error.status} ${req.method} ${url.pathname}`, { ms });
             endSpan(spanInfo?.span, ctx.error.status);
 
             if (ctx.error.redirectUrl) {
@@ -288,7 +289,7 @@ function forwardToServer(req: Request): Promise<Response> {
               });
             }
 
-            if (ctx.error.message === "not_deployed") {
+            if (ctx.error.code === "not_deployed") {
               return new Response(ErrorPages.notFound(), {
                 status: 404,
                 headers: { "Content-Type": "text/html; charset=utf-8" },

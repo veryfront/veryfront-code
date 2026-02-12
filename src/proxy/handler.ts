@@ -119,7 +119,12 @@ export interface ProxyContext {
   host: string;
   parsedDomain: ParsedDomain;
   isLocalProject: boolean;
-  error?: { status: number; message: string; redirectUrl?: string };
+  error?: {
+    status: number;
+    message: string;
+    code?: "not_deployed";
+    redirectUrl?: string;
+  };
 }
 
 export interface ProxyLogger {
@@ -219,6 +224,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     message: string,
     token?: string,
     redirectUrl?: string,
+    code?: "not_deployed",
   ): ProxyContext {
     return {
       token,
@@ -230,7 +236,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       host: base.host,
       parsedDomain: base.parsedDomain,
       isLocalProject: false,
-      error: { status, message, redirectUrl },
+      error: { status, message, redirectUrl, code },
     };
   }
 
@@ -449,8 +455,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       return makeErrorContext(
         { scope, host, parsedDomain },
         404,
-        `not_deployed`,
+        "Project not yet deployed",
         token,
+        undefined,
+        "not_deployed",
       );
     }
 
