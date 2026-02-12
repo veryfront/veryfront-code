@@ -11,47 +11,59 @@ Single command → beautiful prompts → app running in 30 seconds.
 ```
 npx create-veryfront
 
-┌  Let's create a Veryfront app
+┌  Create a Veryfront app
 │
-◇  Project name
-│  my-ai-app
+◇  Where to create?
+│  ● Current folder (.)
+│  ○ New folder
+│      → Project name: my-app
 │
 ◇  Template
-│  ● AI Chatbot        Agent + chat UI + streaming
-│  ○ Chat with Docs    RAG with source citations
-│  ○ Multi-Agent       Agents that delegate to each other
-│  ○ AI Workflow       Steps + approvals + parallelism
-│  ○ Coding Agent      AI code assistant with file tools
-│  ○ AI SaaS           Auth + chat + per-user memory
-│  ○ Minimal           Blank canvas
-│
-◇  Install dependencies?
-│  Yes (pnpm)
+│  ● Minimal            Blank canvas
+│  ○ AI Chatbot         Agent + chat UI + streaming
+│  ○ Chat with Docs     RAG with source citations
+│  ○ Multi-Agent        Agents that delegate
+│  ○ AI Workflow        Steps + approvals + parallelism
+│  ○ Coding Agent       AI code assistant
+│  ○ AI SaaS            Auth + chat + per-user memory
 │
 ◇  Initialize git?
 │  Yes
 │
-●  Creating my-ai-app...
+◇  Install dependencies?
+│  Yes (pnpm)
 │
-◇  ✓ Scaffolded 24 files
-◇  ✓ Installed dependencies
-◇  ✓ Initialized git
+●  Creating project...
+│  ✓ Scaffolded files
+│  ✓ Initialized git
+│  ✓ Installed dependencies
 │
 ├─────────────────────────────────────────╮
 │                                         │
-│  ✓ Created my-ai-app                    │
+│  ✓ Created my-app                       │
 │                                         │
 │  Next steps:                            │
-│    cd my-ai-app                         │
+│    cd my-app                            │
 │    pnpm dev                             │
-│                                         │
-│  Deploy:                                │
-│    npx veryfront deploy                 │
 │                                         │
 ├─────────────────────────────────────────╯
 │
 └  Happy building!
 ```
+
+## Design
+
+Use existing TUI styling from `cli/ui/colors.ts`:
+
+- **Brand orange**: `rgb(252, 143, 93)` - active items, prompts
+- **Dim orange**: `rgb(180, 100, 65)` - completed items
+- **Success green**: `rgb(34, 197, 94)` - checkmarks
+- **Dim gray**: muted text, descriptions
+
+Progress indicators:
+- `●` brand orange = active
+- `○` dim = pending
+- `✓` green = done
 
 ## Architecture
 
@@ -97,10 +109,11 @@ spawn(exec, ['veryfront', 'init', ...process.argv.slice(2)], { stdio: 'inherit' 
 
 ## What Needs Enhancement
 
-1. **Better visual output** - Progress spinners, success box (like Qwik)
-2. **Git init** - Currently not done
-3. **Project name prompt** - Currently requires `--name` or runs in cwd
-4. **Banner** - Simple branding at start
+1. **Location prompt** - Current folder vs new folder (then name prompt)
+2. **Template order** - Minimal first, then progressively complex
+3. **Git init** - Add option + implementation
+4. **Progress output** - Spinners with brand colors
+5. **Success box** - Clear next steps based on location choice
 
 ## Auth & Deploy
 
@@ -124,18 +137,19 @@ The slug is generated at local creation time (e.g., `my-ai-app-x7k2m9`).
 ```bash
 npx create-veryfront [name] [options]
 
--t, --template <name>     chat, rag, multi-agent, workflow, coding-agent, saas, minimal
---no-install              Skip deps
---no-git                  Skip git init
--y, --yes                 Accept all defaults
+-t, --template <name>     minimal, chat, rag, multi-agent, workflow, coding-agent, saas
+--no-install              Skip dependency installation
+--no-git                  Skip git initialization
+-y, --yes                 Accept all defaults (minimal template, current folder)
 ```
 
 Examples:
 
 ```bash
 npx create-veryfront                    # interactive
-npx create-veryfront my-app -y          # quick, defaults
-npx create-veryfront my-app -t rag      # specific template
+npx create-veryfront my-app             # new folder, interactive template
+npx create-veryfront my-app -y          # quick: new folder, minimal, deps, git
+npx create-veryfront -t chat            # current folder, chat template
 ```
 
 ## Package Manager Detection
@@ -181,24 +195,30 @@ The `veryfront` binary handles everything. Users just run `pnpm dev`.
 
 ## Tasks
 
-1. **Enhance `cli/commands/init/`**
-   - Add banner (simple, not massive ASCII)
-   - Add project name prompt if not provided
-   - Add git init option
-   - Improve output with progress spinners
+1. **Update `cli/commands/init/catalog.ts`**
+   - Reorder templates: minimal first
+
+2. **Update `cli/commands/init/interactive-wizard.ts`**
+   - Add location prompt (current folder / new folder)
+   - Add project name prompt if new folder
+   - Add git init prompt
+   - Remove integrations prompt (keep simple)
+   - Use brand colors for prompts
+
+3. **Update `cli/commands/init/init-command.ts`**
+   - Add git init after scaffolding
+   - Add progress output with spinners
    - Add success box with next steps
+   - Next steps should reflect location choice:
+     - Current folder: just `pnpm dev`
+     - New folder: `cd my-app` then `pnpm dev`
 
-2. **Create `packages/create-veryfront/`**
-   - package.json with bin, zero dependencies
-   - index.js: detect package manager, spawn `veryfront init`
-   - ~20 lines total
-
-3. **Publish**
-   - Publish `create-veryfront` to npm
+4. **`create-veryfront` package** (already exists)
+   - Separate repo: github.com/veryfront/create-veryfront
 
 ## Decisions
 
-- **Banner**: Keep it simple, not massive ASCII art
-- **Defaults**: `chat` template, yes to deps, yes to git
+- **Template order**: Minimal first (simple → complex)
+- **Defaults**: minimal template, yes to deps, yes to git
+- **No integrations**: Keep onboarding simple
 - **Auth**: Zero auth until deploy
-- **Reuse**: Enhance existing `init` command, don't create new one
