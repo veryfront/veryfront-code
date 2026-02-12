@@ -149,10 +149,8 @@ export async function resolveProject(
 
   // Initial resolution from headers/config/context
   // Use || for slug (empty string should fall through to defaults)
-  // Don't use defaultProjectSlug for plain veryfront domains (no subdomain) - these should show projects UI
-  const isPlainVeryfrontDomain = parsedDomain.isVeryfrontDomain && !parsedDomain.slug;
   let projectSlug = opts.reqCtx.slug || opts.wsSlugOverride || configuredSlug ||
-    (isPlainVeryfrontDomain ? undefined : opts.defaultProjectSlug);
+    opts.defaultProjectSlug;
   let projectId: string | undefined = headers.projectId ?? opts.defaultProjectId;
   let releaseId: string | undefined = headers.releaseId;
   let environmentName: string | undefined;
