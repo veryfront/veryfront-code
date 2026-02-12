@@ -47,6 +47,19 @@ export function showCommandHelp(command: string): void {
     console.log();
   }
 
+  const notes = cmd.notes ?? [];
+  if (notes.length) {
+    console.log(`  ${formatSectionHeader("Notes")}`);
+    for (const note of notes) {
+      if (note.length === 0) {
+        console.log();
+        continue;
+      }
+      console.log(`    ${note}`);
+    }
+    console.log();
+  }
+
   const tips = getCommandTips(command);
   if (tips) {
     console.log(tips);

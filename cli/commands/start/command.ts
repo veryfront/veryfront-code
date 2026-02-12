@@ -151,6 +151,27 @@ export async function startCommand(options: StartOptions): Promise<void> {
   const { createApp, showStartup } = await import("../../app/index.ts");
   const discovered = await discoverProjects(projectPath);
 
+  // Log discovered projects for discoverability
+  const totalProjects = discovered.projects.size + discovered.examples.size;
+  if (discovered.defaultProject) {
+    logger.info(`Serving project "${discovered.defaultProject}"`);
+  } else if (totalProjects > 0) {
+    const dirs = [
+      ...new Set(
+        [...discovered.projects.values(), ...discovered.examples.values()]
+          .map((p) => {
+            const rel = p.replace(cwd() + "/", "");
+            return rel.split("/").slice(0, -1).join("/");
+          }),
+      ),
+    ].join(", ");
+    logger.info(`Found ${totalProjects} project(s) in ${dirs}`);
+  } else {
+    logger.info(
+      "No projects found. Create one with `veryfront init my-app` or place projects in ./projects/",
+    );
+  }
+
   const app = createApp({
     port,
     mcpPort,

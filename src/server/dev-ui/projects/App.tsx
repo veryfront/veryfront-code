@@ -124,7 +124,7 @@ export function App(): React.JSX.Element {
         ? "Try a different search term"
         : "Create a project to get started";
 
-      return <EmptyState title={title} description={description} />;
+      return <EmptyState title={title} description={description} showWorkspaceGuide={!search} />;
     }
 
     return (

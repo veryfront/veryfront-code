@@ -2,9 +2,25 @@
  * Tests for command help display
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { showCommandHelp } from "./command-help.ts";
+
+function captureConsoleLog(run: () => void): string {
+  const output: string[] = [];
+  const originalLog = console.log;
+
+  try {
+    console.log = (msg?: unknown, ...rest: unknown[]) => {
+      output.push(String(msg), ...rest.map(String));
+    };
+    run();
+  } finally {
+    console.log = originalLog;
+  }
+
+  return output.join("\n");
+}
 
 describe("command-help", () => {
   describe("showCommandHelp", () => {
@@ -12,8 +28,11 @@ describe("command-help", () => {
       assertEquals(typeof showCommandHelp, "function");
     });
 
-    // Note: showCommandHelp calls console.log directly
-    // Full output testing would require mocking console.log
-    // The function behavior is verified through integration testing
+    it("renders notes when available", () => {
+      const output = captureConsoleLog(() => showCommandHelp("start"));
+      assertStringIncludes(output, "Notes:");
+      assertStringIncludes(output, "Single project");
+      assertStringIncludes(output, "Workspace");
+    });
   });
 });
