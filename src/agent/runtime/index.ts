@@ -195,7 +195,7 @@ export class AgentRuntime {
 
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
-            "model.id": this.config.model,
+            "model.id": modelString || this.config.model,
             "messages.count": currentMessages.length,
           });
           return generateText({
@@ -405,7 +405,7 @@ export class AgentRuntime {
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
 
-      if (state.finishReason !== "tool_calls" || !state.toolCalls.size) {
+      if (state.finishReason !== "tool-calls" || !state.toolCalls.size) {
         sendSSE(controller, encoder, { type: "step-end" });
         break;
       }

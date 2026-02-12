@@ -44,8 +44,11 @@ describe("AgentRuntime streaming with AI SDK", () => {
               { type: "text-end" as const, id: "text-1" },
               {
                 type: "finish" as const,
-                finishReason: { type: "stop" as const },
-                usage: { inputTokens: 5, outputTokens: 3 },
+                finishReason: { unified: "stop" as const, raw: "stop" },
+                usage: {
+                  inputTokens: { total: 5, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+                  outputTokens: { total: 3, text: undefined, reasoning: undefined },
+                },
               },
             ],
           }),

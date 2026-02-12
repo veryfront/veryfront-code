@@ -150,7 +150,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
         abortControllerRef.current = null;
       }
     },
-    [messages, options],
+    [messages, model, options],
   );
 
   /**
