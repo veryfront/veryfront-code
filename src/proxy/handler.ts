@@ -122,7 +122,7 @@ export interface ProxyContext {
   error?: {
     status: number;
     message: string;
-    code?: "not_deployed";
+    slug?: string;
     redirectUrl?: string;
   };
 }
@@ -224,7 +224,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     message: string,
     token?: string,
     redirectUrl?: string,
-    code?: "not_deployed",
+    slug?: string,
   ): ProxyContext {
     return {
       token,
@@ -236,7 +236,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       host: base.host,
       parsedDomain: base.parsedDomain,
       isLocalProject: false,
-      error: { status, message, redirectUrl, code },
+      error: { status, message, redirectUrl, slug },
     };
   }
 
@@ -446,7 +446,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     }
 
     if (scope === "production" && projectSlug && !releaseId && !isLocalProject) {
-      logger?.warn("Project not yet deployed", {
+      logger?.warn("No active release found", {
         projectSlug,
         projectId,
         host,
@@ -455,10 +455,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       return makeErrorContext(
         { scope, host, parsedDomain },
         404,
-        "Project not yet deployed",
+        "No active release found",
         token,
         undefined,
-        "not_deployed",
+        "release-not-found",
       );
     }
 

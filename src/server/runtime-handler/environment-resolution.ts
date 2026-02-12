@@ -75,7 +75,7 @@ export function resolveEnvironment(
     !opts.isLocalProject &&
     !isWebSocketOrHMR
   ) {
-    logger.warn("Project not yet deployed (proxy mode)", {
+    logger.warn("No active release found (proxy mode)", {
       projectSlug: opts.projectSlug,
       projectId: opts.projectId,
       environmentName: opts.environmentName,

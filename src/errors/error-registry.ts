@@ -397,6 +397,15 @@ export const CACHE_INVARIANT_VIOLATION = defineError({
   suggestion: "Clear the cache and rebuild",
 });
 
+/** Production domain resolved but no active release found */
+export const RELEASE_NOT_FOUND = defineError({
+  slug: "release-not-found",
+  category: "SERVER",
+  status: 404,
+  title: "No active release found",
+  suggestion: "Deploy the project to create a release for this environment",
+});
+
 /** Both primary and fallback operations failed (replaces FallbackExecutionError) */
 export const FALLBACK_EXHAUSTED = defineError({
   slug: "fallback-exhausted",
@@ -725,6 +734,7 @@ export const ERROR_REGISTRY = {
   "api-client-error": API_CLIENT_ERROR,
   "token-storage-error": TOKEN_STORAGE_ERROR,
   "cache-invariant-violation": CACHE_INVARIANT_VIOLATION,
+  "release-not-found": RELEASE_NOT_FOUND,
   "fallback-exhausted": FALLBACK_EXHAUSTED,
 
   // BOUNDARY

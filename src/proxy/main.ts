@@ -289,7 +289,7 @@ function forwardToServer(req: Request): Promise<Response> {
               });
             }
 
-            if (ctx.error.code === "not_deployed") {
+            if (ctx.error.slug === "release-not-found") {
               return new Response(ErrorPages.notFound(), {
                 status: 404,
                 headers: { "Content-Type": "text/html; charset=utf-8" },
