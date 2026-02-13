@@ -84,8 +84,9 @@ There are three separate contexts that inject CSS, and they overlap:
 - Only used for layoutless MDX/pages (no `layout.tsx`)
 
 **4. Theme variables** (`theme-variables.ts`):
-- CSS custom properties for theming (`:root` vars) — needed
+- CSS custom properties for theming (`:root` vars)
 - `.vf-tailwind` base styles (margin reset, line-height, `font-family: Inter ... !important`)
+- NOTE: `generateThemeVariables()` is exported but **never called** outside of tests — this is dead code. The Inter `!important` font override does NOT make it into production.
 
 ### The `.prose` class flow
 
@@ -126,7 +127,9 @@ All CLI templates have `layout.tsx` -> `.prose` never applies to them.
 
 6. **MDX templates have no prose styling**: Template MDX files render as unstyled HTML inside layouts, bypassing the `.prose` wrapper entirely.
 
-7. **Aggressive font override**: `.vf-tailwind` sets `font-family: Inter ... !important` on the root div and all descendants, overriding anything the user sets in their Tailwind config.
+7. **Dead code**: `generateThemeVariables()` in `theme-variables.ts` is exported but never called — the Inter `!important` override and `:root` CSS vars never make it into any page.
+
+8. **Redundant wrapper divs**: Production HTML has two nested wrapper divs (`#root > #veryfront-content`). `#root` only holds `class="vf-tailwind"` (just `width: 100%`) and data attributes. `#veryfront-content` is the actual React hydration target. These could be collapsed into a single div.
 
 ## Proposal
 
@@ -168,24 +171,32 @@ Keep:
 - Error overlay styles
 - View transition styles
 
-### 5. Review `.vf-tailwind` base styles
+### 5. Remove `.vf-tailwind` and collapse wrapper divs
 
-**File**: `src/html/styles-builder/theme-variables.ts`
-
-The `.vf-tailwind` class on `#root` sets:
-```css
-.vf-tailwind,
-.vf-tailwind * {
-  margin: 0;
-  line-height: 1.5;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif, ... !important;
-}
+**Current production HTML**:
+```html
+<div id="root" class="vf-tailwind" data-veryfront-slug="" data-veryfront-mode="production">
+  <div id="veryfront-content" data-slug="" data-layout="default" data-ssr-hash="...">
+    [content]
+  </div>
+</div>
 ```
 
-This overlaps with Tailwind preflight and the `!important` font-family prevents users from customizing fonts via Tailwind config. Consider:
-- Moving Inter to Tailwind theme config as the default font
-- Dropping the `!important`
-- Removing the wildcard `*` selector (heavy, redundant with preflight)
+- `#root` only contributes `vf-tailwind` class (just `width: 100%`) and data attributes
+- `#veryfront-content` is the actual React hydration target
+- `theme-variables.ts` exports `generateThemeVariables()` but it's **never called** — dead code
+- `.vf-tailwind { width: 100% }` in production-styles.ts is the only CSS for it
+
+Collapse to a single div. Move data attributes onto `#veryfront-content` (or rename it to `#root`). Remove `.vf-tailwind` class and its CSS entirely.
+
+**Files**:
+- `src/html/utils.ts` — `buildRootAttributes()` and `buildContentAttributes()`
+- `src/html/html-shell-generator.ts` — the two `<div>` wrappers
+- `src/html/styles-builder/theme-variables.ts` — delete (dead code)
+- `src/html/hydration-script-builder/templates/renderer.ts` — update `getElementById`
+- `src/html/hydration-script-builder/templates/router.ts` — update `getElementById`
+- `src/html/hydration-script-builder/templates/spa-renderer.ts` — update `getElementById`
+- `src/studio/element-selector-injector.ts` — update selector matching
 
 ### 6. Remove `PROSE_MAX_WIDTH` constant
 
@@ -231,8 +242,12 @@ The theme persistence script (`localStorage.setItem('theme', ...)`) injected whe
 | `src/html/index.ts` | Remove `getProductionStyles` export |
 | `src/html/html-shell-generator.ts` | Remove `getProductionStyles` import/call, remove `modeStyles` for prod path |
 | `src/html/styles-builder/dev-styles.ts` | Remove bounce animation classes |
-| `src/html/styles-builder/theme-variables.ts` | Review `.vf-tailwind` — possibly simplify or remove |
-| `src/html/utils.ts` | Review `vf-tailwind` class on root div |
+| `src/html/styles-builder/theme-variables.ts` | Delete (dead code — never called) |
+| `src/html/utils.ts` | Collapse `buildRootAttributes` + `buildContentAttributes` into one |
+| `src/html/hydration-script-builder/templates/renderer.ts` | Update `getElementById` target |
+| `src/html/hydration-script-builder/templates/router.ts` | Update `getElementById` target |
+| `src/html/hydration-script-builder/templates/spa-renderer.ts` | Update `getElementById` target |
+| `src/studio/element-selector-injector.ts` | Update selector matching |
 | `src/server/build-app-route-renderer.ts` | Remove duplicate inline CSS, remove auto-wrapped prose div |
 | `src/utils/constants/html.ts` | Remove `PROSE_MAX_WIDTH` |
 | `cli/templates/files/minimal/app/about/page.mdx` | Use `prose dark:prose-invert` wrapper |
@@ -242,7 +257,7 @@ The theme persistence script (`localStorage.setItem('theme', ...)`) injected whe
 
 ## Open questions
 
-1. **`.vf-tailwind` base styles**: Should `font-family: Inter ... !important` move to Tailwind theme config instead? Can we drop the `.vf-tailwind` class entirely?
+1. **Collapsing wrapper divs**: Any downstream consumers relying on the `#root` / `#veryfront-content` nesting? Studio element selector injector already checks for both — needs updating.
 
 2. **Layoutless MDX fallback**: If we remove the prose wrapper, what's the fallback for pages without `layout.tsx`? Just render raw content? Or require a layout?
 
