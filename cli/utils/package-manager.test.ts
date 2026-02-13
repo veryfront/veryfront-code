@@ -51,6 +51,8 @@ describe("cli/utils/package-manager", () => {
     function restoreUserAgent() {
       if (savedUserAgent !== undefined) {
         Deno.env.set("npm_config_user_agent", savedUserAgent);
+      } else {
+        Deno.env.delete("npm_config_user_agent");
       }
     }
 
