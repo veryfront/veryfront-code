@@ -114,6 +114,10 @@ async function runCommand(cmd: string[], cwd?: string) {
 }
 
 function getNewVersion(currentVersion: string, type: string): string {
+	if (/^\d+\.\d+\.\d+$/.test(type)) {
+		return type;
+	}
+
 	const parts = currentVersion.split(".").map(Number);
 	if (parts.length !== 3 || parts.some(isNaN)) {
 		throw new Error(`Invalid current version format: ${currentVersion}`);
