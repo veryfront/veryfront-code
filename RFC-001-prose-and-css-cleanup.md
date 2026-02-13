@@ -249,3 +249,12 @@ The theme persistence script (`localStorage.setItem('theme', ...)`) injected whe
 3. **Typography plugin loading**: The plugin is loaded via esm.sh in the plugin-loader. Confirm this works reliably and doesn't add latency to builds.
 
 4. **Production inline scripts**: The ~500-line inline SPA router/hydration script is a separate concern but worth noting — could it be an external file instead of inline? (Out of scope for this RFC.)
+
+## Follow-up: Minify production HTML and inline scripts
+
+Tailwind CSS output is already minified (`getProjectCSS` passes `minify: true`), but the HTML shell and inline scripts are not. The production output currently includes:
+
+- Unminified inline JS (~500 lines of SPA router, component loader, hydration logic) with comments, debug conditionals, and full whitespace
+- Unminified HTML shell with extra whitespace and newlines
+
+Consider minifying inline `<script>` blocks and collapsing HTML whitespace for production builds. This would reduce page weight and improve initial parse time. Could use a lightweight JS minifier (e.g. `esbuild.transform` with `minify: true`) at build time for the inline scripts.
