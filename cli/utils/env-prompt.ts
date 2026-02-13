@@ -8,7 +8,7 @@ import { cyan, dim, green, yellow } from "#cli/ui";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import type { EnvVarConfig } from "../templates/index.ts";
-import { promptUser } from "./index.ts";
+import { promptPassword, promptUser } from "./index.ts";
 
 export interface EnvPromptOptions {
   /** Whether to run in interactive mode (prompt for values) */
@@ -132,13 +132,14 @@ export async function promptForEnvVars(
 async function promptForSingleEnvVar(envVar: EnvVarConfig): Promise<string> {
   const requiredIndicator = envVar.required ? yellow("*") : "";
   const docsHint = envVar.docsUrl ? dim(` (${envVar.docsUrl})`) : "";
+  const sensitiveIcon = envVar.sensitive ? " 🔑" : "";
 
   try {
-    const value = await promptUser(
-      `  ${
-        cyan(envVar.name)
-      }${requiredIndicator}: ${envVar.description}${docsHint}\n  Enter value (press Enter to skip): `,
-    );
+    const prompt = `  ${
+      cyan(envVar.name)
+    }${requiredIndicator}: ${envVar.description}${docsHint}\n  Enter value${sensitiveIcon} (press Enter to skip): `;
+
+    const value = envVar.sensitive ? promptPassword(prompt) : await promptUser(prompt);
 
     const trimmedValue = value.trim();
 

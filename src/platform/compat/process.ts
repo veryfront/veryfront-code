@@ -498,6 +498,31 @@ export function promptSync(message?: string): string | null {
   return globalThis.prompt(message ?? "") ?? null;
 }
 
+/**
+ * Read a single byte from stdin synchronously.
+ * Requires raw mode to be enabled for character-by-character reading.
+ * Returns null on EOF or if stdin is not available.
+ */
+export function readStdinByteSync(): number | null {
+  const buf = new Uint8Array(1);
+
+  if (IS_DENO) {
+    const n = Deno.stdin.readSync(buf);
+    return n ? buf[0]! : null;
+  }
+
+  if (IS_BUN) {
+    // Bun: read one byte from the file descriptor directly
+    // deno-lint-ignore no-explicit-any
+    const Bun = (globalThis as any).Bun;
+    const chunk = Bun?.stdin?.read?.(1);
+    if (chunk && chunk.length > 0) return chunk[0];
+    return null;
+  }
+
+  return null;
+}
+
 // ============================================================================
 // Command Execution
 // ============================================================================
