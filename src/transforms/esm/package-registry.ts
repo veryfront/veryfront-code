@@ -6,6 +6,7 @@
  */
 
 import { rendererLogger } from "#veryfront/utils";
+import type { VeryfrontConfig } from "#veryfront/config";
 import {
   buildReactUrl,
   CSSTYPE_VERSION,
@@ -94,4 +95,70 @@ export function getReactImportMap(version?: string): Record<string, string> {
  */
 export function getDenoNpmReactMap(version?: string): Record<string, string> {
   return getReactUrls(version);
+}
+
+/**
+ * Strip semver range prefixes (^, ~, >=, >, <=, <, =) from a version string.
+ */
+export function stripSemverRange(version: string): string {
+  return version.replace(/^[~^>=<]+/, "");
+}
+
+/**
+ * Compatibility no-op. Kept for tests and older call sites.
+ */
+export function clearReactVersionCache(): void {
+  // Intentionally empty: resolveProjectReactVersion reads package.json per call
+  // to avoid stale version values in long-lived processes.
+}
+
+/**
+ * Resolve React version for a project with consistent priority:
+ * 1. Config override: config.client.cdn.versions.react
+ * 2. package.json detection (via cross-runtime filesystem)
+ * 3. DEFAULT_REACT_VERSION fallback
+ *
+ * This is the single source of truth for React version resolution.
+ * Both HTML import map generation and module server transforms should use this.
+ */
+export async function resolveProjectReactVersion(options: {
+  projectDir?: string | null;
+  config?: VeryfrontConfig | null;
+}): Promise<string> {
+  const { projectDir, config } = options;
+
+  // 1. Config override takes highest priority
+  const versionsConfig = config?.client?.cdn?.versions;
+  if (versionsConfig && versionsConfig !== "auto") {
+    const configVersion = versionsConfig.react;
+    if (configVersion) {
+      const normalized = normalizeReactVersion(stripSemverRange(configVersion));
+      return normalized;
+    }
+  }
+
+  // 2. Detect from package.json
+  if (projectDir) {
+    try {
+      const { createFileSystem } = await import("../../platform/compat/fs.ts");
+      const fs = createFileSystem();
+      const content = await fs.readTextFile(`${projectDir}/package.json`);
+      const pkg = JSON.parse(content) as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      const rawVersion = deps.react;
+      if (rawVersion) {
+        const stripped = stripSemverRange(rawVersion);
+        return normalizeReactVersion(stripped);
+      }
+    } catch {
+      // package.json not found or unreadable - fall through to default
+    }
+  }
+
+  // 3. Fallback to default
+  return DEFAULT_REACT_VERSION;
 }

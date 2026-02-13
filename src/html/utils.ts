@@ -1,7 +1,12 @@
 import { escapeHTML } from "./html-escape.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
-import { esmShReact } from "#veryfront/transforms/esm/package-registry.ts";
+import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import {
+  DEFAULT_REACT_VERSION,
+  esmShReact,
+  resolveProjectReactVersion,
+  stripSemverRange,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 function joinAttributes(attrs: Array<string | false | undefined | null | "">): string {
   return attrs.filter(Boolean).join(" ");
@@ -28,7 +33,7 @@ interface DetectedVersions {
 }
 
 const DEFAULT_VERSIONS: DetectedVersions = {
-  react: REACT_DEFAULT_VERSION,
+  react: DEFAULT_REACT_VERSION,
   veryfront: VERYFRONT_VERSION,
 };
 
@@ -44,9 +49,12 @@ export async function detectVersions(projectDir: string): Promise<DetectedVersio
 
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
 
+    // Use shared resolver for React version (ensures consistency with module server)
+    const reactVersion = await resolveProjectReactVersion({ projectDir });
+
     return {
-      react: deps.react?.replace(/[\^~]/, "") ?? DEFAULT_VERSIONS.react,
-      veryfront: deps.veryfront?.replace(/[\^~]/, "") ?? DEFAULT_VERSIONS.veryfront,
+      react: reactVersion,
+      veryfront: deps.veryfront ? stripSemverRange(deps.veryfront) : DEFAULT_VERSIONS.veryfront,
     };
   } catch {
     return DEFAULT_VERSIONS;
@@ -220,18 +228,34 @@ async function resolveVersions(
   projectDir: string,
   config?: VeryfrontConfig,
 ): Promise<DetectedVersions> {
-  const versionsConfig = config?.client?.cdn?.versions;
+  // Use shared resolver for React (handles config override + package.json + fallback)
+  const reactVersion = await resolveProjectReactVersion({ projectDir, config });
 
-  if (!versionsConfig || versionsConfig === "auto") {
-    return detectVersions(projectDir);
+  // Resolve veryfront version separately (config override or detection)
+  const versionsConfig = config?.client?.cdn?.versions;
+  let veryfrontVersion = DEFAULT_VERSIONS.veryfront;
+
+  if (versionsConfig && versionsConfig !== "auto" && versionsConfig.veryfront) {
+    veryfrontVersion = versionsConfig.veryfront;
+  } else {
+    try {
+      const { createFileSystem } = await import("../platform/compat/fs.ts");
+      const fs = createFileSystem();
+      const content = await fs.readTextFile(`${projectDir}/package.json`);
+      const pkg = JSON.parse(content) as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      if (deps.veryfront) {
+        veryfrontVersion = stripSemverRange(deps.veryfront);
+      }
+    } catch {
+      // Fall through to default
+    }
   }
 
-  const detected = await detectVersions(projectDir);
-
-  return {
-    react: versionsConfig.react || detected.react,
-    veryfront: versionsConfig.veryfront || detected.veryfront,
-  };
+  return { react: reactVersion, veryfront: veryfrontVersion };
 }
 
 export interface BuildImportMapOptions {

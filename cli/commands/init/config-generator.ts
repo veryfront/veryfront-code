@@ -2,6 +2,9 @@ import { cliLogger as logger, VERSION } from "#cli/utils";
 import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 
+// Keep init scaffold aligned with current framework default React major/minor.
+const DEFAULT_INIT_REACT_VERSION = "19.1.1";
+
 export async function createPackageJson(
   projectDir: string,
   projectName?: string,
@@ -21,8 +24,8 @@ export async function createPackageJson(
       onlyBuiltDependencies: ["esbuild", "veryfront"],
     },
     dependencies: {
-      react: "^19.0.0",
-      "react-dom": "^19.0.0",
+      react: `^${DEFAULT_INIT_REACT_VERSION}`,
+      "react-dom": `^${DEFAULT_INIT_REACT_VERSION}`,
       veryfront: `^${VERSION}`,
       zod: "^3.24.0",
     },
