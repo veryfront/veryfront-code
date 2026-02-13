@@ -70,15 +70,12 @@ export class DiskCacheBackend implements CacheBackend {
     const filePath = this.filePath(key);
     const tmpPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
     const content = JSON.stringify(envelope);
-    const { writeFile, rename } = await fsPromises;
+    const { writeFile, rename, unlink } = await fsPromises;
     try {
       await writeFile(tmpPath, content, "utf-8");
       await rename(tmpPath, filePath);
     } catch (error) {
-      try {
-        const { unlink } = await fsPromises;
-        await unlink(tmpPath);
-      } catch { /* ignore cleanup failure */ }
+      await unlink(tmpPath).catch(() => {});
       throw error;
     }
   }

@@ -108,18 +108,7 @@ export function createDistributedCacheAccessor(
   let backend: CacheBackend | null | undefined;
   let lastFailureTime = 0;
 
-  const singleflight = new (class {
-    private promise: Promise<CacheBackend | null> | null = null;
-
-    do(fn: () => Promise<CacheBackend | null>): Promise<CacheBackend | null> {
-      if (!this.promise) {
-        this.promise = fn().finally(() => {
-          this.promise = null;
-        });
-      }
-      return this.promise;
-    }
-  })();
+  let inflight: Promise<CacheBackend | null> | null = null;
 
   return () => {
     if (backend !== undefined) {
@@ -134,27 +123,33 @@ export function createDistributedCacheAccessor(
       if (backend !== undefined) return Promise.resolve(backend);
     }
 
-    return singleflight.do(async () => {
-      try {
-        const b = await factory();
-        if (!isDistributedBackend(b)) {
-          backend = null;
+    if (!inflight) {
+      inflight = (async () => {
+        try {
+          const b = await factory();
+          if (!isDistributedBackend(b)) {
+            backend = null;
+            lastFailureTime = 0;
+            logger.debug(`[${name}] No distributed cache available (memory only)`);
+            return null;
+          }
+
+          backend = b;
           lastFailureTime = 0;
-          logger.debug(`[${name}] No distributed cache available (memory only)`);
+          logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
+          return b;
+        } catch (error) {
+          logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
+          backend = null;
+          lastFailureTime = Date.now();
           return null;
         }
+      })().finally(() => {
+        inflight = null;
+      });
+    }
 
-        backend = b;
-        lastFailureTime = 0;
-        logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
-        return b;
-      } catch (error) {
-        logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
-        backend = null;
-        lastFailureTime = Date.now();
-        return null;
-      }
-    });
+    return inflight;
   };
 }
 

@@ -37,14 +37,14 @@ export class RendererRouter {
   private serverPort: number;
   private lastSuccessfulRefresh = 0;
   private _ready: Promise<void>;
-  private useStaticPods: boolean;
 
   constructor(
     private headlessService: string,
     private fallbackUrl: string,
     refreshMs?: number,
   ) {
-    const parsed = parseInt(getEnv("VERYFRONT_SERVER_PORT") || String(DEFAULT_SERVER_PORT));
+    const portEnv = getEnv("VERYFRONT_SERVER_PORT");
+    const parsed = portEnv ? parseInt(portEnv) : NaN;
     this.serverPort = Number.isNaN(parsed) ? DEFAULT_SERVER_PORT : parsed;
 
     // Support static pod IPs via env var for local testing (bypasses DNS)
@@ -52,13 +52,11 @@ export class RendererRouter {
     if (staticPodIps) {
       this.pods = staticPodIps.split(",").map((ip) => ip.trim()).filter(Boolean).sort();
       this.lastSuccessfulRefresh = Date.now();
-      this.useStaticPods = true;
       this._ready = Promise.resolve();
       proxyLogger.debug("[RendererRouter] Using static pod IPs", { pods: this.pods.length });
       return;
     }
 
-    this.useStaticPods = false;
     this._ready = this.refreshPods();
     const interval = refreshMs ?? DEFAULT_REFRESH_MS;
     this.refreshTimer = setInterval(() => this.refreshPods(), interval);

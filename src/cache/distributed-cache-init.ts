@@ -62,10 +62,12 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
         projectCSSCache: wasSuccessful(results[3]),
       };
 
-      const enabled = Number(status.transformCache) +
-        Number(status.ssrModuleCache) +
-        Number(status.fileCache) +
-        Number(status.projectCSSCache);
+      const enabled = [
+        status.transformCache,
+        status.ssrModuleCache,
+        status.fileCache,
+        status.projectCSSCache,
+      ].filter(Boolean).length;
 
       if (enabled === 0) {
         logger.warn("No caches enabled despite backend being available", {
