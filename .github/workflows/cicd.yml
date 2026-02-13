@@ -325,7 +325,16 @@ jobs:
           if [[ "$VERSION" == *"-rc"* ]] || [[ "$VERSION" == *"-alpha"* ]] || [[ "$VERSION" == *"-beta"* ]]; then
             cd npm && npm publish --access public --tag rc
           else
-            cd npm && npm publish --access public
+            cd npm && npm publish --access public || {
+              # If publish fails because version already exists (published by prerelease job),
+              # just promote the existing rc-tagged version to latest
+              if npm view "veryfront@${VERSION}" version 2>/dev/null; then
+                echo "Version ${VERSION} already published, promoting to latest..."
+                npm dist-tag add "veryfront@${VERSION}" latest
+              else
+                exit 1
+              fi
+            }
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
