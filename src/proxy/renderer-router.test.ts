@@ -155,4 +155,20 @@ Deno.test({ name: "RendererRouter", sanitizeOps: false, sanitizeResources: false
     assertNotEquals(url, fallback);
     router.close();
   });
+
+  await t.step("uses static pod IPs from env var", async () => {
+    Deno.env.set("VERYFRONT_SERVER_POD_IPS", "10.0.1.1,10.0.1.2,10.0.1.3");
+    try {
+      const router = new RendererRouter("unused-service", fallback, 999999);
+      assertEquals(router.podCount, 3);
+      const url = router.resolve("my-project");
+      assertNotEquals(url, fallback);
+      assertEquals(url.startsWith("http://10.0.1."), true);
+      // Should be immediately ready (no DNS)
+      await router.ready();
+      router.close();
+    } finally {
+      Deno.env.delete("VERYFRONT_SERVER_POD_IPS");
+    }
+  });
 });

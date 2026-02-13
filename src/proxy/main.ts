@@ -73,9 +73,10 @@ function resolveProxyBinding(): { hostname: string; port: number } {
 const PRODUCTION_SERVER_URL = getEnv("VERYFRONT_SERVER_URL") || "http://localhost:3001";
 
 const headlessService = getEnv("VERYFRONT_SERVER_HEADLESS_SERVICE");
-const rendererRouter = headlessService
+const staticPodIps = getEnv("VERYFRONT_SERVER_POD_IPS");
+const rendererRouter = (headlessService || staticPodIps)
   ? new RendererRouter(
-    headlessService,
+    headlessService || "static-pods",
     PRODUCTION_SERVER_URL,
     parseInt(getEnv("VERYFRONT_SERVER_POD_REFRESH_MS") || "15000"),
   )
