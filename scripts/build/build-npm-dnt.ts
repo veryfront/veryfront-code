@@ -228,6 +228,7 @@ if (existsSync(nativeBinary)) {
   runJsFallback().catch(err => { console.error(err); process.exit(1); });
 }
 `);
+		await Deno.chmod("./npm/bin/veryfront.js", 0o755);
 
 		// Copy LICENSE (generate default if missing)
 		await copyFileOrGenerate("./LICENSE", "./npm/LICENSE", generateMitLicense);
