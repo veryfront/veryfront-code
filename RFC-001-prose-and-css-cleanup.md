@@ -180,23 +180,52 @@ Keep:
     [content]
   </div>
 </div>
+<div id="veryfront-portals"></div>
 ```
 
-- `#root` only contributes `vf-tailwind` class (just `width: 100%`) and data attributes
-- `#veryfront-content` is the actual React hydration target
-- `theme-variables.ts` exports `generateThemeVariables()` but it's **never called** — dead code
-- `.vf-tailwind { width: 100% }` in production-styles.ts is the only CSS for it
+**Why two divs exist**: No hard technical reason. `#root` is an outer framework wrapper (`vf-tailwind` class + metadata), `#veryfront-content` is the React hydration target. They evolved separately but serve no purpose that couldn't be handled by a single div. The data attributes on `#root` are set server-side and never change client-side. `suppressHydrationWarning` is already on `<body>`.
 
-Collapse to a single div. Move data attributes onto `#veryfront-content` (or rename it to `#root`). Remove `.vf-tailwind` class and its CSS entirely.
+**What `#root` contributes**:
+- `class="vf-tailwind"` — just `width: 100%` (redundant, body is already full-width)
+- `data-veryfront-slug=""` — project slug
+- `data-veryfront-mode="production"` — mode identifier
+- Conditionally omits `vf-tailwind` class when `noLayout` is true
 
-**Files**:
-- `src/html/utils.ts` — `buildRootAttributes()` and `buildContentAttributes()`
-- `src/html/html-shell-generator.ts` — the two `<div>` wrappers
-- `src/html/styles-builder/theme-variables.ts` — delete (dead code)
-- `src/html/hydration-script-builder/templates/renderer.ts` — update `getElementById`
-- `src/html/hydration-script-builder/templates/router.ts` — update `getElementById`
-- `src/html/hydration-script-builder/templates/spa-renderer.ts` — update `getElementById`
-- `src/studio/element-selector-injector.ts` — update selector matching
+**What `#veryfront-content` contributes**:
+- React hydration target (`hydrateRoot(container, tree)`)
+- `data-slug=""` — duplicates the slug from `#root`
+- `data-layout="default|none"` — layout mode
+- `data-ssr-hash="..."` — SSR content hash
+
+**Proposed**: Collapse to a single `<div id="root">`:
+
+```html
+<div id="root" data-veryfront-slug="" data-veryfront-mode="production" data-layout="default" data-ssr-hash="...">
+  [content]
+</div>
+<div id="veryfront-portals"></div>
+```
+
+- Remove `#veryfront-content` entirely
+- Move `data-layout` and `data-ssr-hash` onto `#root`
+- Drop `class="vf-tailwind"` and its CSS
+- Drop duplicate `data-slug` (already have `data-veryfront-slug`)
+- Update all `getElementById('veryfront-content')` calls to `getElementById('root')`
+
+**What references these IDs** (all need updating):
+
+| File | Reference | Change |
+|------|-----------|--------|
+| `src/html/utils.ts` | `buildRootAttributes()` + `buildContentAttributes()` | Merge into single function |
+| `src/html/html-shell-generator.ts` | Generates both `<div>` wrappers | Single `<div id="root">` |
+| `src/html/hydration-script-builder/templates/renderer.ts` | `getElementById('veryfront-content')` | Change to `'root'` |
+| `src/html/hydration-script-builder/templates/router.ts` | `getElementById('veryfront-content')` | Change to `'root'` |
+| `src/html/hydration-script-builder/templates/spa-renderer.ts` | `getElementById('veryfront-content')` | Change to `'root'` |
+| `src/studio/element-selector-injector.ts` | Regex matching both IDs | Simplify to just `id="root"` |
+| `src/server/build-app-route-renderer.ts` | `<div id="root" class="vf-tailwind">` | Drop `vf-tailwind` |
+| `src/html/styles-builder/theme-variables.ts` | `.vf-tailwind` CSS + `generateThemeVariables()` | Delete file (dead code — never called) |
+
+**Risk**: Low. The only consumer of `#veryfront-content` is internal framework code (hydration scripts, studio injector). No user code references it. The `#root` ID is already the conventional React mount target.
 
 ### 6. Remove `PROSE_MAX_WIDTH` constant
 
@@ -243,11 +272,12 @@ The theme persistence script (`localStorage.setItem('theme', ...)`) injected whe
 | `src/html/html-shell-generator.ts` | Remove `getProductionStyles` import/call, remove `modeStyles` for prod path |
 | `src/html/styles-builder/dev-styles.ts` | Remove bounce animation classes |
 | `src/html/styles-builder/theme-variables.ts` | Delete (dead code — never called) |
-| `src/html/utils.ts` | Collapse `buildRootAttributes` + `buildContentAttributes` into one |
-| `src/html/hydration-script-builder/templates/renderer.ts` | Update `getElementById` target |
-| `src/html/hydration-script-builder/templates/router.ts` | Update `getElementById` target |
-| `src/html/hydration-script-builder/templates/spa-renderer.ts` | Update `getElementById` target |
-| `src/studio/element-selector-injector.ts` | Update selector matching |
+| `src/html/utils.ts` | Merge `buildRootAttributes` + `buildContentAttributes` into single function |
+| `src/html/html-shell-generator.ts` | Collapse two wrapper divs into single `<div id="root">` |
+| `src/html/hydration-script-builder/templates/renderer.ts` | `getElementById('veryfront-content')` → `getElementById('root')` |
+| `src/html/hydration-script-builder/templates/router.ts` | `getElementById('veryfront-content')` → `getElementById('root')` |
+| `src/html/hydration-script-builder/templates/spa-renderer.ts` | `getElementById('veryfront-content')` → `getElementById('root')` |
+| `src/studio/element-selector-injector.ts` | Simplify regex to just match `id="root"` |
 | `src/server/build-app-route-renderer.ts` | Remove duplicate inline CSS, remove auto-wrapped prose div |
 | `src/utils/constants/html.ts` | Remove `PROSE_MAX_WIDTH` |
 | `cli/templates/files/minimal/app/about/page.mdx` | Use `prose dark:prose-invert` wrapper |
@@ -257,7 +287,7 @@ The theme persistence script (`localStorage.setItem('theme', ...)`) injected whe
 
 ## Open questions
 
-1. **Collapsing wrapper divs**: Any downstream consumers relying on the `#root` / `#veryfront-content` nesting? Studio element selector injector already checks for both — needs updating.
+1. ~~**Collapsing wrapper divs**~~: Confirmed safe — no hard technical reason for two divs, all consumers are internal framework code.
 
 2. **Layoutless MDX fallback**: If we remove the prose wrapper, what's the fallback for pages without `layout.tsx`? Just render raw content? Or require a layout?
 
