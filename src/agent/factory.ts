@@ -133,8 +133,24 @@ export function agent(config: AgentConfig): Agent {
             context?: Record<string, unknown>;
             model?: string;
           } = await request.json();
+
+          // Validate model override against allowlist when configured
+          const modelOverride = body.model;
+          if (modelOverride && config.allowedModels?.length) {
+            if (!config.allowedModels.includes(modelOverride)) {
+              return new Response(
+                JSON.stringify({
+                  error: `Model "${modelOverride}" is not allowed. Allowed models: ${
+                    config.allowedModels.join(", ")
+                  }`,
+                }),
+                { status: 403, headers: { "Content-Type": "application/json" } },
+              );
+            }
+          }
+
           const messages = body.messages ?? [];
-          const stream = await runtime.stream(messages, body.context, undefined, body.model);
+          const stream = await runtime.stream(messages, body.context, undefined, modelOverride);
 
           return new Response(stream, { headers: STREAMING_HEADERS });
         },

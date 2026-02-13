@@ -56,6 +56,8 @@ export interface AgentConfig {
     vision?: boolean;
     audio?: boolean;
   };
+  /** Restrict runtime model overrides to these "provider/model" strings. */
+  allowedModels?: ModelString[];
 }
 
 // Import for use in AgentMiddleware

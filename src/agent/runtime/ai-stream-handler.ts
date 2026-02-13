@@ -10,7 +10,7 @@
 
 import type { StreamTextResult, ToolSet } from "ai";
 import { sendSSE } from "./sse-utils.ts";
-import { isDynamicTool, parseToolArgs } from "./tool-helpers.ts";
+import { isDynamicTool } from "./tool-helpers.ts";
 import { serverLogger } from "#veryfront/utils";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
@@ -118,19 +118,24 @@ export function processStream(
         case "tool-call": {
           // tool-call fires when the full tool call is available
           const toolId = part.toolCallId;
+          const inputStr = JSON.stringify(part.input);
           state.toolCalls.set(toolId, {
             id: toolId,
             name: part.toolName,
-            arguments: JSON.stringify(part.input),
+            arguments: inputStr,
           });
 
           const dynamic = isDynamicTool(part.toolName);
-          const { args } = parseToolArgs(JSON.stringify(part.input));
+          // part.input is already a parsed object — pass directly to avoid double serialization
+          const inputObj =
+            (part.input && typeof part.input === "object" && !Array.isArray(part.input))
+              ? part.input as Record<string, unknown>
+              : {};
           sendSSE(controller, encoder, {
             type: "tool-input-available",
             toolCallId: toolId,
             toolName: part.toolName,
-            input: args,
+            input: inputObj,
             ...(dynamic ? { dynamic: true } : {}),
           });
           break;
@@ -153,6 +158,10 @@ export function processStream(
 
         case "error": {
           logger.warn("AI SDK stream error:", part.error);
+          sendSSE(controller, encoder, {
+            type: "error",
+            error: part.error instanceof Error ? part.error.message : String(part.error),
+          });
           break;
         }
 
