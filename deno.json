@@ -36,7 +36,8 @@
     "./oauth": "./src/oauth/index.ts",
     "./provider": "./src/provider/index.ts",
     "./fs": "./src/fs/index.ts",
-    "./integrations": "./src/integrations/index.ts"
+    "./integrations": "./src/integrations/index.ts",
+    "./cli": "./cli/main.ts"
   },
   "imports": {
     "veryfront/head": "./src/react/components/Head.tsx",

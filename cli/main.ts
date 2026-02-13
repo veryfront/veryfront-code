@@ -1,3 +1,14 @@
+/**
+ * Veryfront CLI entry point.
+ *
+ * @module cli
+ *
+ * @example
+ * ```sh
+ * npx veryfront dev
+ * ```
+ */
+
 // CRITICAL: Extract esbuild binary and set env var BEFORE any imports
 // This must happen synchronously at the very start to ensure esbuild sees the correct path
 await import("veryfront/platform/esbuild-init");
