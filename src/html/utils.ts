@@ -7,19 +7,16 @@ function joinAttributes(attrs: Array<string | false | undefined | null | "">): s
   return attrs.filter(Boolean).join(" ");
 }
 
-export function buildRootAttributes(slug: string, mode: string, noLayout: boolean): string {
+export function buildRootAttributes(
+  slug: string,
+  mode: string,
+  noLayout: boolean,
+  ssrHash?: string,
+): string {
   return joinAttributes([
     'id="root"',
-    !noLayout && 'class="vf-tailwind"',
     `data-veryfront-slug="${escapeHTML(slug || "")}"`,
     `data-veryfront-mode="${escapeHTML(mode || "production")}"`,
-  ]);
-}
-
-export function buildContentAttributes(slug: string, noLayout: boolean, ssrHash?: string): string {
-  return joinAttributes([
-    'id="veryfront-content"',
-    `data-slug="${slug || ""}"`,
     `data-layout="${noLayout ? "none" : "default"}"`,
     ssrHash && `data-ssr-hash="${escapeHTML(ssrHash)}"`,
   ]);

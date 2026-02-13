@@ -50,10 +50,10 @@ export function injectElementSelectors(
   let counter = 0;
   let inIgnoredElement = 0;
 
-  // Find the content div (id="veryfront-content" or id="root")
+  // Find the content div (id="root")
   // Only inject selectors within the content area
   const contentStartMatch = html.match(
-    /<div[^>]*id="(?:veryfront-content|root)"[^>]*>/i,
+    /<div[^>]*id="root"[^>]*>/i,
   );
   const contentStart = contentStartMatch ? html.indexOf(contentStartMatch[0]) : 0;
 

@@ -13,6 +13,7 @@ import {
   formatCSSError,
   generateTailwindCSS,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cache.ts";
 import { serverLogger } from "#veryfront/utils";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
 
@@ -39,7 +40,7 @@ export class StylesCSSHandler extends BaseHandler {
           logger.error("Failed to load stylesheet", {
             error: error instanceof Error ? error.message : String(error),
           });
-          rawCss = `@import "tailwindcss";`;
+          rawCss = DEFAULT_STYLESHEET;
         }
 
         let candidates: Set<string>;
@@ -135,8 +136,7 @@ body::before {
       return await ctx.adapter.fs.readFile(globalsPath);
     } catch {
       logger.debug("No stylesheet found, using default");
-      return `@import "tailwindcss";
-@custom-variant dark (&:is(.dark, [data-theme="dark"]) *, &:is(.dark, [data-theme="dark"]));`;
+      return DEFAULT_STYLESHEET;
     }
   }
 }

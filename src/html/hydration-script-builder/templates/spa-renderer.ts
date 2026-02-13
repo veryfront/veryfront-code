@@ -33,7 +33,7 @@ export const getSpaRendererScript = (): string => `
 
         const { ClientApp } = await import(MODULE_SERVER_URL + '/_veryfront/client/spa/ClientApp.js');
 
-        const container = document.getElementById('veryfront-content');
+        const container = document.getElementById('root');
         if (!container) {
           logError('Content container not found');
           return;

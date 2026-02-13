@@ -3,7 +3,6 @@ export {
   BREAKPOINT_MD,
   BREAKPOINT_SM,
   BREAKPOINT_XL,
-  PROSE_MAX_WIDTH,
   Z_INDEX_DEV_INDICATOR,
   Z_INDEX_ERROR_OVERLAY,
 } from "#veryfront/utils";

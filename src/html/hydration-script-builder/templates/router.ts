@@ -459,7 +459,7 @@ export const getRouterScript = () => `
       tree = React.createElement(PageContextProvider, { pageContext, children: tree });
       tree = React.createElement(RouterProvider, { router, children: tree });
 
-      const container = document.getElementById('veryfront-content');
+      const container = document.getElementById('root');
 
       if (!hydrationCompleted && !hydrationFailed) {
         log('Waiting for hydration to complete before SPA render...');

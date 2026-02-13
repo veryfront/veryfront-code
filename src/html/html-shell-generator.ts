@@ -16,19 +16,9 @@ import {
 } from "./hydration-script-builder/index.ts";
 import { getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
-import {
-  extractCandidates,
-  getDevStyles,
-  getProductionStyles,
-  getProjectCSS,
-} from "./styles-builder/index.ts";
+import { extractCandidates, getDevStyles, getProjectCSS } from "./styles-builder/index.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
-import {
-  buildContentAttributes,
-  buildImportMapJson,
-  buildRootAttributes,
-  shouldDisableLayout,
-} from "./utils.ts";
+import { buildImportMapJson, buildRootAttributes, shouldDisableLayout } from "./utils.ts";
 
 function pathToModuleUrl(path: string, studioEmbed?: boolean): string {
   if (!path) return "";
@@ -164,9 +154,8 @@ async function generateHTMLShellPartsImpl(
     meta.slug || "",
     options.mode || "production",
     noLayout,
+    meta.ssrHash,
   );
-
-  const contentAttributes = buildContentAttributes(meta.slug || "", noLayout, meta.ssrHash);
 
   const importMapJson = await buildImportMapJson({
     projectDir: options.projectDir,
@@ -196,7 +185,7 @@ async function generateHTMLShellPartsImpl(
     })
     : getProdScripts(meta.slug || "", params, props, nonce);
 
-  const modeStyles = useDevScripts ? getDevStyles(nonce) : getProductionStyles(nonce);
+  const modeStyles = useDevScripts ? getDevStyles(nonce) : "";
 
   const modulePreloadHints = generateModulePreloadHints(options);
 
@@ -307,8 +296,7 @@ async function generateHTMLShellPartsImpl(
   ${modeStyles}
 </head>
 <body${bodyClass ? ` class="${bodyClass}"` : ""} suppressHydrationWarning>
-  <div ${rootAttributes}>
-    <div ${contentAttributes}>`;
+  <div ${rootAttributes}>`;
 
   const relativePagePath = getRelativePagePath(options.pagePath, options.projectDir);
   const studioScripts = options.studioEmbed
@@ -344,7 +332,6 @@ mermaid.run();
     : "";
 
   const end = `</div>
-  </div>
   <div id="veryfront-portals"></div>
 
   <!-- Hydration metadata for component tree reconstruction -->

@@ -232,7 +232,6 @@ describe("html-generation/html-shell-generator", () => {
         createOptions(),
       );
 
-      assert(!result.includes('class="vf-tailwind"'));
       assertStringIncludes(result, 'data-layout="none"');
     });
 
@@ -243,7 +242,6 @@ describe("html-generation/html-shell-generator", () => {
         createOptions(),
       );
 
-      assertStringIncludes(result, 'class="vf-tailwind"');
       assertStringIncludes(result, 'data-layout="default"');
     });
 

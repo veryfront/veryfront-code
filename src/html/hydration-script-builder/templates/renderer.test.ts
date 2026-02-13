@@ -107,8 +107,8 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(getRendererScript(), "__veryfrontHydrationFailed");
     });
 
-    it("should look for veryfront-content container", () => {
-      assertIncludes(getRendererScript(), "getElementById('veryfront-content')");
+    it("should look for root container", () => {
+      assertIncludes(getRendererScript(), "getElementById('root')");
     });
 
     it("should support re-rendering via __reactRoot", () => {

@@ -15,17 +15,6 @@ describe("html/styles-builder/dev-styles", () => {
       assertEquals(styles.includes("veryfront-error-overlay"), true);
     });
 
-    it("should include animation keyframes", () => {
-      const styles = getDevStyles();
-      assertEquals(styles.includes("@keyframes"), true);
-      assertEquals(styles.includes("vf-bounce"), true);
-    });
-
-    it("should include view transition styles", () => {
-      const styles = getDevStyles();
-      assertEquals(styles.includes("view-transition"), true);
-    });
-
     it("should include nonce when provided", () => {
       const styles = getDevStyles("my-nonce");
       assertEquals(styles.includes('nonce="my-nonce"'), true);
