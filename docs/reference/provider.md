@@ -1,62 +1,82 @@
 ---
 title: "veryfront/provider"
-description: "Unified LLM interface for Anthropic, Google, and OpenAI."
+description: "AI SDK model provider registry with auto-initialization from environment variables."
 order: 17
 ---
 
 # veryfront/provider
 
-Unified LLM interface for Anthropic, Google, and OpenAI.
+AI SDK model provider registry. Maps "provider/model" strings to AI SDK LanguageModel instances.
 
 ## Import
 
 ```ts
 import {
-  initializeProviders,
-  getProvider,
-  getProviderFromModel,
-  OpenAIProvider,
-  AnthropicProvider,
-  BaseProvider,
+  registerModelProvider,
+  resolveModel,
+  hasModelProvider,
+  getRegisteredModelProviders,
 } from "veryfront/provider";
 ```
 
 ## Examples
 
-### Initialize providers
+### Auto-initialized (zero config)
 
 ```ts
-import { initializeProviders } from "veryfront/provider";
+// Set OPENAI_API_KEY in .env — no code needed
+import { agent } from "veryfront/agent";
 
-initializeProviders({
-  openai: { apiKey: getEnv("OPENAI_API_KEY") },
+export default agent({
+  model: "openai/gpt-4o",
+  system: "You are helpful.",
 });
 ```
 
-### Route to model
+### Register a custom provider
 
 ```ts
-import { initializeProviders, getProviderFromModel } from "veryfront/provider";
+import { registerModelProvider } from "veryfront/provider";
+import { createOpenAI } from "@ai-sdk/openai";
 
-initializeProviders({
-  openai: { apiKey: getEnv("OPENAI_API_KEY") },
-  anthropic: { apiKey: getEnv("ANTHROPIC_API_KEY") },
-});
+registerModelProvider("ollama", (id) =>
+  createOpenAI({ apiKey: "ollama", baseURL: "http://localhost:11434/v1" })(id)
+);
+```
 
-const { provider, model } = getProviderFromModel("openai/gpt-4o");
-const response = await provider.complete({
-  model,
-  messages: [{ role: "user", content: "Hello" }],
-});
+### Resolve a model directly
+
+```ts
+import { resolveModel } from "veryfront/provider";
+
+const model = resolveModel("openai/gpt-4o");
 ```
 
 ## API
 
-### `initializeProviders(config)`
+### `registerModelProvider(name, factory)`
 
-Set up providers with API keys
+Register a model provider factory for the current project.
 
 **Returns:** `void`
+
+### `resolveModel(modelString)`
+
+Resolve a "provider/model" string to an AI SDK LanguageModel instance.
+
+**Returns:** `LanguageModel`
+
+### `hasModelProvider(name)`
+
+Check if a model provider is registered (project-scoped or shared).
+
+**Returns:** `boolean`
+
+### `getRegisteredModelProviders()`
+
+Get list of registered model provider names.
+
+**Returns:** `string[]`
 
 ## Exports
 
@@ -64,31 +84,17 @@ Set up providers with API keys
 
 | Name | Description |
 |------|-------------|
-| `getProvider` | Get provider by name |
-| `getProviderFromModel` | Resolve `provider/model` string |
-| `initializeProviders` | Set up providers with API keys |
-
-### Classes
-
-| Name | Description |
-|------|-------------|
-| `AnthropicProvider` | Anthropic implementation |
-| `BaseProvider` | Abstract provider base class |
-| `GoogleProvider` | Google AI implementation |
-| `OpenAIProvider` | OpenAI implementation |
+| `registerModelProvider` | Register a model provider factory |
+| `resolveModel` | Resolve "provider/model" to LanguageModel |
+| `hasModelProvider` | Check if provider is registered |
+| `getRegisteredModelProviders` | List registered provider names |
+| `clearModelProviders` | Clear all providers (for testing) |
 
 ### Types
 
 | Name | Description |
 |------|-------------|
-| `AnthropicConfig` | Anthropic config |
-| `CompletionRequest` | Normalized completion request |
-| `CompletionResponse` | Normalized completion response |
-| `GoogleConfig` | Google AI config |
-| `OpenAIConfig` | OpenAI config |
-| `Provider` | Provider interface |
-| `ProviderConfig` | Single provider config |
-| `ProvidersConfig` | All providers config map |
+| `ModelProviderFactory` | `(modelId: string) => LanguageModel` |
 
 ## Related
 

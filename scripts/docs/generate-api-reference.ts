@@ -193,7 +193,7 @@ const IMPORT_PRIORITY: Record<string, string[]> = {
     "createOAuthInitHandler", "createOAuthCallbackHandler", "githubConfig", "MemoryTokenStore",
   ],
   "veryfront/provider": [
-    "initializeProviders", "getProvider", "getProviderFromModel", "OpenAIProvider",
+    "registerModelProvider", "resolveModel", "hasModelProvider", "getRegisteredModelProviders",
   ],
   "veryfront/fs": ["readTextFile", "writeTextFile", "join", "resolve", "exists", "mkdir"],
 };
@@ -645,21 +645,12 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
   },
 
   "veryfront/provider": {
-    initializeProviders: "Set up providers with API keys",
-    getProvider: "Get provider by name",
-    getProviderFromModel: "Resolve `provider/model` string",
-    BaseProvider: "Abstract provider base class",
-    OpenAIProvider: "OpenAI implementation",
-    AnthropicProvider: "Anthropic implementation",
-    GoogleProvider: "Google AI implementation",
-    Provider: "Provider interface",
-    ProviderConfig: "Single provider config",
-    ProvidersConfig: "All providers config map",
-    CompletionRequest: "Normalized completion request",
-    CompletionResponse: "Normalized completion response",
-    OpenAIConfig: "OpenAI config",
-    AnthropicConfig: "Anthropic config",
-    GoogleConfig: "Google AI config",
+    registerModelProvider: "Register a model provider factory",
+    resolveModel: "Resolve \"provider/model\" to LanguageModel",
+    hasModelProvider: "Check if provider is registered",
+    getRegisteredModelProviders: "List registered provider names",
+    clearModelProviders: "Clear all providers (for testing)",
+    ModelProviderFactory: "(modelId: string) => LanguageModel",
   },
 
   "veryfront/fs": {
@@ -1029,8 +1020,7 @@ const API_DOCS: Record<string, APIDocs> = {
     expandTypes: ["CorsOptions", "RateLimitOptions", "LoggerOptions", "TimeoutOptions"],
   },
   "veryfront/provider": {
-    functions: { initializeProviders: { configType: "ProvidersConfig" } },
-    expandTypes: ["ProviderConfig", "CompletionRequest", "CompletionResponse"],
+    functions: { registerModelProvider: {} },
   },
   "veryfront/mcp": {
     functions: { createMCPServer: { configType: "MCPServerConfig" } },
@@ -1269,30 +1259,6 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
   TimeoutOptions: {
     timeout: "Request timeout (ms)",
     message: "Timeout error message",
-  },
-  ProvidersConfig: {
-    openai: "OpenAI provider config",
-    anthropic: "Anthropic provider config",
-    google: "Google AI provider config",
-  },
-  ProviderConfig: {
-    apiKey: "API key for the provider",
-    baseUrl: "Custom API base URL",
-    defaultModel: "Default model to use",
-  },
-  CompletionRequest: {
-    model: "Model identifier",
-    messages: "Input messages",
-    tools: "Available tools",
-    maxTokens: "Max tokens to generate",
-    temperature: "Sampling temperature",
-    stream: "Enable streaming",
-  },
-  CompletionResponse: {
-    text: "Generated text",
-    toolCalls: "Tool calls made by the model",
-    usage: "Token usage statistics",
-    finishReason: "Why generation stopped",
   },
   MCPServerConfig: {
     name: "Server name",

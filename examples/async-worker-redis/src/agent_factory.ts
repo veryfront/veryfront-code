@@ -14,22 +14,11 @@ function getEnv(key: string): string | undefined {
 }
 
 import { agent } from "veryfront/agent";
-import { initializeProviders } from "veryfront/provider";
 import { tool } from "veryfront/tool";
 import { z } from "zod";
 
-// Try to initialize real providers
-const OPENAI_KEY = getEnv("OPENAI_API_KEY");
-const ANTHROPIC_KEY = getEnv("ANTHROPIC_API_KEY");
-
-let hasProviders = false;
-if (OPENAI_KEY || ANTHROPIC_KEY) {
-  initializeProviders({
-    openai: OPENAI_KEY ? { apiKey: OPENAI_KEY } : undefined,
-    anthropic: ANTHROPIC_KEY ? { apiKey: ANTHROPIC_KEY } : undefined,
-  });
-  hasProviders = true;
-}
+// Check if providers are available via env vars
+const hasProviders = !!(getEnv("OPENAI_API_KEY") || getEnv("ANTHROPIC_API_KEY"));
 
 /**
  * Safe math expression evaluator.

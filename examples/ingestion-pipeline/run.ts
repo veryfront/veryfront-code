@@ -32,21 +32,10 @@ import { S3BlobStorage } from "veryfront/workflow/blob";
 import ingestionWorkflow from "./ai/workflows/ingestion.ts";
 import processorAgent from "./ai/agents/processor.ts";
 import indexerAgent from "./ai/agents/indexer.ts";
-import { initializeProviders } from "veryfront/provider";
-
 async function main() {
   console.log("🚀 Starting Ingestion Pipeline Example...");
 
-  // 1. Setup AI Providers
-  // In a real app, this would be auto-configured from env vars.
-  // Here we explicitly initialize it to ensure it uses the provided key.
-  initializeProviders({
-    openai: {
-      apiKey: getEnv("OPENAI_API_KEY") || "sk-no-key-provided",
-    },
-  });
-
-  // 2. Setup MinIO Blob Storage
+  // 1. Setup MinIO Blob Storage
   const blobStorage = new S3BlobStorage({
     region: "us-east-1",
     bucket: "ingest-bucket",

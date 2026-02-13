@@ -1,124 +1,90 @@
 ---
 title: "Providers"
-description: "Unified LLM interface for Anthropic, Google, and OpenAI."
+description: "AI SDK model provider registry with auto-initialization from environment variables."
 order: 12
 ---
 
 # Providers
 
-Unified LLM interface for Anthropic, Google, and OpenAI.
+AI SDK model provider registry. Maps "provider/model" strings to AI SDK LanguageModel instances.
 
-## Setup
+## Environment variables (recommended)
 
-Initialize providers with API keys, typically in your app's entry point or a shared module:
-
-```ts
-import { initializeProviders } from "veryfront/provider";
-import { getEnv } from "veryfront";
-
-initializeProviders({
-  openai: { apiKey: getEnv("OPENAI_API_KEY") },
-  anthropic: { apiKey: getEnv("ANTHROPIC_API_KEY") },
-  google: { apiKey: getEnv("GOOGLE_API_KEY") },
-});
-```
-
-Only configure the providers you use.
-
-## Model strings
-
-Agents reference models as `"provider/model"`:
-
-```ts
-import { agent } from "veryfront/agent";
-
-export default agent({
-  model: "openai/gpt-4o",       // OpenAI
-  // model: "anthropic/claude-sonnet-4-5-20250929", // Anthropic
-  // model: "google/gemini-pro",  // Google
-  system: "You are a helpful assistant.",
-});
-```
-
-The framework resolves the provider from the model string, routes the request to the right API, and normalizes the response.
-
-## Direct provider access
-
-For cases outside the agent system:
-
-```ts
-import { getProviderFromModel } from "veryfront/provider";
-
-const { provider, model } = getProviderFromModel("openai/gpt-4o");
-
-const response = await provider.complete({
-  model,
-  messages: [{ role: "user", content: "Hello" }],
-});
-```
-
-Or get a provider by name:
-
-```ts
-import { getProvider } from "veryfront/provider";
-
-const openai = getProvider("openai");
-const response = await openai.complete({
-  model: "gpt-4o",
-  messages: [{ role: "user", content: "Hello" }],
-});
-```
-
-## Custom base URLs
-
-Point a provider to a compatible API (Azure OpenAI, local models, proxies):
-
-```ts
-initializeProviders({
-  openai: {
-    apiKey: getEnv("AZURE_OPENAI_KEY"),
-    baseUrl: "https://my-deployment.openai.azure.com/v1",
-  },
-});
-```
-
-## Provider configuration
-
-### OpenAI
-
-```ts
-{
-  apiKey: string;
-  baseUrl?: string;  // Custom API endpoint
-}
-```
-
-### Anthropic
-
-```ts
-{
-  apiKey: string;
-  baseUrl?: string;
-}
-```
-
-### Google
-
-```ts
-{
-  apiKey: string;
-}
-```
-
-## Environment variables
-
-The framework auto-detects API keys from standard environment variables if you don't call `initializeProviders()`:
+Providers are auto-initialized from standard environment variables on first use:
 
 | Variable | Provider |
 |----------|----------|
 | `OPENAI_API_KEY` | OpenAI |
 | `ANTHROPIC_API_KEY` | Anthropic |
 | `GOOGLE_API_KEY` | Google |
+| `OPENAI_BASE_URL` | Custom OpenAI-compatible endpoint |
+
+No setup code is needed — just set env vars and use `agent()`:
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  model: "openai/gpt-4o",       // OpenAI
+  // model: "anthropic/claude-sonnet-4-20250514", // Anthropic
+  // model: "google/gemini-2.0-flash",  // Google
+  system: "You are a helpful assistant.",
+});
+```
+
+## Model strings
+
+Agents reference models as `"provider/model"`. The framework splits on the first `/`, so nested model IDs work:
+
+```ts
+// Standard
+agent({ model: "openai/gpt-4o" })
+
+// Nested model ID (e.g. OpenRouter)
+agent({ model: "openai/meta-llama/llama-3.1-405b" })
+```
+
+## OpenAI-compatible services
+
+Override the base URL to route through OpenRouter, Azure OpenAI, Ollama, or any OpenAI-compatible API:
+
+```bash
+OPENAI_API_KEY=sk-or-v1-...
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
+```
+
+Both `apiKey` and `baseURL` are resolved per-request, so each project in a multi-tenant setup can have its own configuration.
+
+## Custom provider registration
+
+For providers not covered by env vars, use `registerModelProvider()`:
+
+```ts
+import { registerModelProvider } from "veryfront/provider";
+import { createOpenAI } from "@ai-sdk/openai";
+
+registerModelProvider("ollama", (id) =>
+  createOpenAI({
+    apiKey: "ollama",
+    baseURL: "http://localhost:11434/v1",
+  })(id)
+);
+
+// Then use it
+agent({ model: "ollama/llama3.2" });
+```
+
+The factory receives the model ID and must return an AI SDK `LanguageModel` instance.
+
+## Direct model resolution
+
+For cases outside the agent system:
+
+```ts
+import { resolveModel } from "veryfront/provider";
+
+const model = resolveModel("openai/gpt-4o");
+```
 
 ## Next
 
