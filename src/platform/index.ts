@@ -28,6 +28,7 @@ export {
   onGlobalError,
   onSignal,
   promptSync,
+  readStdinByteSync,
   runCommand,
   setEnv,
   writeStdout,

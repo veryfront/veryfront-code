@@ -1,5 +1,14 @@
 import denoConfig from "../../deno.json" with { type: "json" };
-import { exit, getEnv, isStdoutTTY, onSignal, promptSync } from "veryfront/platform";
+import {
+  exit,
+  getEnv,
+  isStdoutTTY,
+  onSignal,
+  promptSync,
+  readStdinByteSync,
+  writeStdout,
+} from "veryfront/platform";
+import { setRawMode } from "veryfront/platform";
 import { DEFAULT_DEV_PORT } from "../shared/constants.ts";
 import {
   bold,
@@ -135,6 +144,56 @@ export function isQuiet(): boolean {
 export function promptUser(message: string): Promise<string> {
   const input = promptSync(message);
   return Promise.resolve(input?.trim() ?? "");
+}
+
+const CTRL_C = 0x03;
+const BACKSPACE = 0x7f;
+const ENTER_CR = 0x0d;
+const ENTER_LF = 0x0a;
+
+/**
+ * Prompts for a value with hidden input (shows * for each character).
+ * Uses synchronous byte-by-byte reading to avoid conflicts with globalThis.prompt.
+ */
+export function promptPassword(message: string): string {
+  writeStdout(message);
+  setRawMode(true);
+
+  const chars: string[] = [];
+
+  try {
+    while (true) {
+      const byte = readStdinByteSync();
+      if (byte === null) break;
+
+      if (byte === CTRL_C) {
+        writeStdout("\n");
+        exit(130);
+      }
+
+      if (byte === ENTER_CR || byte === ENTER_LF) {
+        writeStdout("\n");
+        break;
+      }
+
+      if (byte === BACKSPACE) {
+        if (chars.length > 0) {
+          chars.pop();
+          writeStdout("\b \b");
+        }
+        continue;
+      }
+
+      if (byte >= 0x20 && byte < 0x7f) {
+        chars.push(String.fromCharCode(byte));
+        writeStdout("*");
+      }
+    }
+  } finally {
+    setRawMode(false);
+  }
+
+  return chars.join("");
 }
 
 export async function confirmPrompt(

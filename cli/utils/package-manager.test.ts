@@ -35,52 +35,135 @@ describe("cli/utils/package-manager", () => {
     it("should return 'bun install' for bun", () => {
       assertEquals(getInstallCommand("bun"), "bun install");
     });
+
+    it("should return 'deno install' for deno", () => {
+      assertEquals(getInstallCommand("deno"), "deno install");
+    });
   });
 
   describe("detectPackageManager", () => {
+    // Clear npm_config_user_agent so lockfile detection tests aren't
+    // short-circuited when running under `deno task`.
+    const savedUserAgent = Deno.env.get("npm_config_user_agent");
+    function clearUserAgent() {
+      Deno.env.delete("npm_config_user_agent");
+    }
+    function restoreUserAgent() {
+      if (savedUserAgent !== undefined) {
+        Deno.env.set("npm_config_user_agent", savedUserAgent);
+      } else {
+        Deno.env.delete("npm_config_user_agent");
+      }
+    }
+
     it("should return preference when provided", async () => {
       const result = await detectPackageManager("/tmp/nonexistent", "pnpm");
       assertEquals(result, "pnpm");
     });
 
     it("should return npm as default when no lockfile found", async () => {
-      await withTempDir(async (tempDir) => {
-        const result = await detectPackageManager(tempDir);
-        assertEquals(result, "npm");
-      });
+      clearUserAgent();
+      try {
+        await withTempDir(async (tempDir) => {
+          const result = await detectPackageManager(tempDir);
+          assertEquals(result, "npm");
+        });
+      } finally {
+        restoreUserAgent();
+      }
     });
 
     it("should detect pnpm from pnpm-lock.yaml", async () => {
-      await withTempDir(async (tempDir) => {
-        await Deno.writeTextFile(`${tempDir}/pnpm-lock.yaml`, "lockfileVersion: 5.4");
-        const result = await detectPackageManager(tempDir);
-        assertEquals(result, "pnpm");
-      });
+      clearUserAgent();
+      try {
+        await withTempDir(async (tempDir) => {
+          await Deno.writeTextFile(`${tempDir}/pnpm-lock.yaml`, "lockfileVersion: 5.4");
+          const result = await detectPackageManager(tempDir);
+          assertEquals(result, "pnpm");
+        });
+      } finally {
+        restoreUserAgent();
+      }
     });
 
     it("should detect yarn from yarn.lock", async () => {
-      await withTempDir(async (tempDir) => {
-        await Deno.writeTextFile(`${tempDir}/yarn.lock`, "# yarn lockfile v1");
-        const result = await detectPackageManager(tempDir);
-        assertEquals(result, "yarn");
-      });
+      clearUserAgent();
+      try {
+        await withTempDir(async (tempDir) => {
+          await Deno.writeTextFile(`${tempDir}/yarn.lock`, "# yarn lockfile v1");
+          const result = await detectPackageManager(tempDir);
+          assertEquals(result, "yarn");
+        });
+      } finally {
+        restoreUserAgent();
+      }
     });
 
     it("should detect npm from package-lock.json", async () => {
-      await withTempDir(async (tempDir) => {
-        await Deno.writeTextFile(`${tempDir}/package-lock.json`, "{}");
-        const result = await detectPackageManager(tempDir);
-        assertEquals(result, "npm");
-      });
+      clearUserAgent();
+      try {
+        await withTempDir(async (tempDir) => {
+          await Deno.writeTextFile(`${tempDir}/package-lock.json`, "{}");
+          const result = await detectPackageManager(tempDir);
+          assertEquals(result, "npm");
+        });
+      } finally {
+        restoreUserAgent();
+      }
+    });
+
+    it("should detect deno from deno.lock", async () => {
+      clearUserAgent();
+      try {
+        await withTempDir(async (tempDir) => {
+          await Deno.writeTextFile(`${tempDir}/deno.lock`, "{}");
+          const result = await detectPackageManager(tempDir);
+          assertEquals(result, "deno");
+        });
+      } finally {
+        restoreUserAgent();
+      }
+    });
+
+    it("should prioritize deno over npm lockfile", async () => {
+      clearUserAgent();
+      try {
+        await withTempDir(async (tempDir) => {
+          await Deno.writeTextFile(`${tempDir}/deno.lock`, "{}");
+          await Deno.writeTextFile(`${tempDir}/package-lock.json`, "{}");
+          const result = await detectPackageManager(tempDir);
+          assertEquals(result, "deno");
+        });
+      } finally {
+        restoreUserAgent();
+      }
     });
 
     it("should prioritize bun over other lockfiles", async () => {
-      await withTempDir(async (tempDir) => {
-        await Deno.writeTextFile(`${tempDir}/bun.lockb`, "");
-        await Deno.writeTextFile(`${tempDir}/package-lock.json`, "{}");
-        const result = await detectPackageManager(tempDir);
-        assertEquals(result, "bun");
-      });
+      clearUserAgent();
+      try {
+        await withTempDir(async (tempDir) => {
+          await Deno.writeTextFile(`${tempDir}/bun.lockb`, "");
+          await Deno.writeTextFile(`${tempDir}/package-lock.json`, "{}");
+          const result = await detectPackageManager(tempDir);
+          assertEquals(result, "bun");
+        });
+      } finally {
+        restoreUserAgent();
+      }
+    });
+
+    it("should detect deno from user agent", async () => {
+      clearUserAgent();
+      try {
+        Deno.env.set("npm_config_user_agent", "deno/2.6.0 npm/? deno/2.6.0 macos aarch64");
+        await withTempDir(async (tempDir) => {
+          const result = await detectPackageManager(tempDir);
+          assertEquals(result, "deno");
+        });
+      } finally {
+        restoreUserAgent();
+      }
     });
   });
 
@@ -100,6 +183,10 @@ describe("cli/utils/package-manager", () => {
     it("should return 'bun dev' for bun", () => {
       assertEquals(getRunCommand("bun", "dev"), "bun dev");
     });
+
+    it("should return 'deno task dev' for deno", () => {
+      assertEquals(getRunCommand("deno", "dev"), "deno task dev");
+    });
   });
 
   describe("getDlxCommand", () => {
@@ -117,6 +204,10 @@ describe("cli/utils/package-manager", () => {
 
     it("should return 'bunx' for bun", () => {
       assertEquals(getDlxCommand("bun"), "bunx");
+    });
+
+    it("should return 'dx' for deno", () => {
+      assertEquals(getDlxCommand("deno"), "dx");
     });
   });
 
