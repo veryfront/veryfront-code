@@ -6,7 +6,9 @@
  * while maintaining control over the API surface.
  *
  * Project-scoped: each project gets its own provider namespace.
- * Auto-initialized providers from env vars are shared across all projects.
+ * Auto-initialized providers from env vars are shared across all projects
+ * but resolve credentials lazily per-request via AsyncLocalStorage so each
+ * project uses its own API keys.
  *
  * @module
  */
@@ -21,7 +23,6 @@ import {
   getGoogleGenAIEnvConfig,
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { ProjectScopedRegistryManager } from "../ai/registry-manager.ts";
 
 export type ModelProviderFactory = (modelId: string) => LanguageModel;
@@ -49,67 +50,73 @@ export function registerModelProvider(
 
 /**
  * Auto-initialize model providers from environment variables.
- * Registered as shared (available to all projects).
- * Called lazily on first access.
+ *
+ * Factories are registered as shared (available to all projects) but read
+ * env vars lazily at call time via getEnv() / AsyncLocalStorage so each
+ * request resolves the **current project's** API key — not whichever key
+ * happened to be active when the factory was first created.
+ *
+ * Called once; subsequent calls are no-ops.
  */
 function autoInitializeFromEnv(): void {
   if (autoInitialized) return;
   autoInitialized = true;
 
-  const openaiConfig = getOpenAIEnvConfig();
-  if (openaiConfig.apiKey && !manager.has("openai")) {
-    try {
-      const openai = createOpenAI({
-        apiKey: openaiConfig.apiKey,
-        baseURL: openaiConfig.baseURL,
-      });
-      manager.registerShared("openai", (id) => openai(id));
-      agentLogger.debug(
-        "Auto-initialized OpenAI model provider from environment",
+  // Register lazy factories that resolve credentials per-request.
+  // createOpenAI/createAnthropic/createGoogleGenerativeAI are lightweight
+  // constructors (no network calls), so instantiating per-resolution is fine.
+
+  if (!manager.has("openai")) {
+    manager.registerShared("openai", (id) => {
+      const config = getOpenAIEnvConfig();
+      if (!config.apiKey) {
+        throw toError(
+          createError({
+            type: "config",
+            message:
+              "OPENAI_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
+          }),
+        );
+      }
+      return createOpenAI({ apiKey: config.apiKey, baseURL: config.baseURL })(
+        id,
       );
-    } catch (error) {
-      agentLogger.warn(
-        "Failed to initialize OpenAI model provider:",
-        error,
-      );
-    }
+    });
   }
 
-  const anthropicConfig = getAnthropicEnvConfig();
-  if (anthropicConfig.apiKey && !manager.has("anthropic")) {
-    try {
-      const anthropic = createAnthropic({
-        apiKey: anthropicConfig.apiKey,
-        baseURL: anthropicConfig.baseURL,
-      });
-      manager.registerShared("anthropic", (id) => anthropic(id));
-      agentLogger.debug(
-        "Auto-initialized Anthropic model provider from environment",
-      );
-    } catch (error) {
-      agentLogger.warn(
-        "Failed to initialize Anthropic model provider:",
-        error,
-      );
-    }
+  if (!manager.has("anthropic")) {
+    manager.registerShared("anthropic", (id) => {
+      const config = getAnthropicEnvConfig();
+      if (!config.apiKey) {
+        throw toError(
+          createError({
+            type: "config",
+            message:
+              "ANTHROPIC_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
+          }),
+        );
+      }
+      return createAnthropic({
+        apiKey: config.apiKey,
+        baseURL: config.baseURL,
+      })(id);
+    });
   }
 
-  const googleConfig = getGoogleGenAIEnvConfig();
-  if (googleConfig.apiKey && !manager.has("google")) {
-    try {
-      const google = createGoogleGenerativeAI({
-        apiKey: googleConfig.apiKey,
-      });
-      manager.registerShared("google", (id) => google(id));
-      agentLogger.debug(
-        "Auto-initialized Google model provider from environment",
-      );
-    } catch (error) {
-      agentLogger.warn(
-        "Failed to initialize Google model provider:",
-        error,
-      );
-    }
+  if (!manager.has("google")) {
+    manager.registerShared("google", (id) => {
+      const config = getGoogleGenAIEnvConfig();
+      if (!config.apiKey) {
+        throw toError(
+          createError({
+            type: "config",
+            message:
+              "GOOGLE_API_KEY (or GOOGLE_GENERATIVE_AI_API_KEY) not set. Set the environment variable or register a custom provider with registerModelProvider().",
+          }),
+        );
+      }
+      return createGoogleGenerativeAI({ apiKey: config.apiKey })(id);
+    });
   }
 }
 
