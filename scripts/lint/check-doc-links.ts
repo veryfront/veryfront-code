@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run -A
+#!/usr/bin/env -S deno run --allow-read --allow-net --allow-env
 import { walk } from "@std/fs";
 import { existsSync } from "@std/fs";
 

@@ -545,12 +545,12 @@ Commands:
   apply      Apply simplifications to files
 
 Workflow:
-  1. deno run -A scripts/batch-simplify/batch-simplify.ts estimate
-  2. deno run -A scripts/batch-simplify/batch-simplify.ts prepare
-  3. deno run -A scripts/batch-simplify/batch-simplify.ts submit
-  4. deno run -A scripts/batch-simplify/batch-simplify.ts status  (repeat until done)
-  5. deno run -A scripts/batch-simplify/batch-simplify.ts download
-  6. deno run -A scripts/batch-simplify/batch-simplify.ts apply
+  1. deno task batch estimate
+  2. deno task batch prepare
+  3. deno task batch submit
+  4. deno task batch status  (repeat until done)
+  5. deno task batch download
+  6. deno task batch apply
 
 Environment:
   OPENAI_API_KEY - Required for submit/status/download/errors

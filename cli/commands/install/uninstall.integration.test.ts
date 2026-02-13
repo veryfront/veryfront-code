@@ -21,7 +21,20 @@ describe("uninstall command integration", () => {
     target: string,
   ): Promise<{ code: number; output: string }> {
     const result = await runCommand("deno", {
-      args: ["run", "--allow-all", cliPath, command, "--target", target],
+      args: [
+        "run",
+        "--allow-read",
+        "--allow-write",
+        "--allow-net",
+        "--allow-env",
+        "--allow-run",
+        "--allow-ffi",
+        "--allow-sys",
+        cliPath,
+        command,
+        "--target",
+        target,
+      ],
       cwd: tempDir,
       capture: true,
     });

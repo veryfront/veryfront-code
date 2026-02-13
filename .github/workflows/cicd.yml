@@ -176,15 +176,15 @@ jobs:
         with:
           deno-version: lts
 
-      - run: deno run -A scripts/build/generate-templates-manifest.ts
-      - run: deno run -A scripts/build/prepare-framework-sources.ts
+      - run: deno run --allow-read --allow-write --allow-env scripts/build/generate-templates-manifest.ts
+      - run: deno run --allow-read --allow-write --allow-env scripts/build/prepare-framework-sources.ts
 
       - name: Compile binary
         shell: bash
         run: |
           # React is fetched at runtime through the module server (SSR transform pipeline)
           # Include Tailwind CSS v4 plugins (versions must match PINNED_PLUGIN_VERSIONS in tailwind-compiler.ts)
-          deno compile --allow-all --unstable-net \
+          deno compile --allow-read --allow-write --allow-net --allow-env --allow-run --allow-ffi --allow-sys --unstable-net \
             --include src/platform/polyfills \
             --include src/proxy/main.ts \
             --include dist/framework-src \

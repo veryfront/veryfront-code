@@ -5,10 +5,10 @@
  * which is critical for loading Tailwind plugins dynamically at runtime.
  *
  * To run:
- *   deno test --allow-all tests/integration/dynamic-esm-import.test.ts
+ *   deno test --allow-read --allow-write --allow-net --allow-env --allow-run --allow-ffi --allow-sys tests/integration/dynamic-esm-import.test.ts
  *
  * To test in compiled binary:
- *   deno compile --allow-all --unstable-net -o /tmp/test-dynamic-esm tests/integration/dynamic-esm-import.test.ts
+ *   deno compile --allow-read --allow-write --allow-net --allow-env --allow-run --allow-ffi --allow-sys --unstable-net -o /tmp/test-dynamic-esm tests/integration/dynamic-esm-import.test.ts
  *   /tmp/test-dynamic-esm
  */
 

@@ -25,8 +25,8 @@ console.log(`   Version: ${version}\n`);
 
 // Generate manifests before building
 console.log("📝 Generating manifests...");
-execSync("deno run -A scripts/build/generate-templates-manifest.ts", { stdio: "inherit" });
-execSync("deno run -A scripts/build/generate-dev-ui-manifest.ts", { stdio: "inherit" });
+execSync("deno run --allow-read --allow-write --allow-env scripts/build/generate-templates-manifest.ts", { stdio: "inherit" });
+execSync("deno run --allow-read --allow-write --allow-env scripts/build/generate-dev-ui-manifest.ts", { stdio: "inherit" });
 console.log("");
 
 const targets = [
@@ -66,7 +66,7 @@ for (const { name, target, output } of targets) {
   try {
     console.log(`📦 Building ${name}...`);
     execSync(
-      `deno compile --allow-all --unstable-net --target ${target} --output ${outputPath} cli/main.ts`,
+      `deno compile --allow-read --allow-write --allow-net --allow-env --allow-run --allow-ffi --allow-sys --unstable-net --target ${target} --output ${outputPath} cli/main.ts`,
       { stdio: "inherit" },
     );
 

@@ -28,7 +28,13 @@ describe("install command integration", () => {
     const result = await runCommand("deno", {
       args: [
         "run",
-        "--allow-all",
+        "--allow-read",
+        "--allow-write",
+        "--allow-net",
+        "--allow-env",
+        "--allow-run",
+        "--allow-ffi",
+        "--allow-sys",
         cliPath,
         "install",
         "--target",

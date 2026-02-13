@@ -4,7 +4,7 @@
  * Tests the race condition fix by simulating concurrent requests
  * for components with deep dependency trees.
  *
- * Run with: deno test --allow-all src/modules/react-loader/ssr-module-loader.stress.test.ts
+ * Run with: deno test --allow-read --allow-write --allow-net --allow-env --allow-run --allow-ffi --allow-sys src/modules/react-loader/ssr-module-loader.stress.test.ts
  */
 
 import { assertEquals } from "#veryfront/testing/assert.ts";

@@ -35,14 +35,14 @@ deno task test:e2e
 ### Specific Feature Tests
 
 ```bash
-deno test --allow-all tests/e2e/features/layouts.test.ts
-deno test --allow-all tests/e2e/features/routing.test.ts
+deno test --allow-read --allow-write --allow-net --allow-env --allow-run --allow-ffi --allow-sys tests/e2e/features/layouts.test.ts
+deno test --allow-read --allow-write --allow-net --allow-env --allow-run --allow-ffi --allow-sys tests/e2e/features/routing.test.ts
 ```
 
 ### Regression Tests Only
 
 ```bash
-deno test --allow-all tests/e2e/regressions/
+deno test --allow-read --allow-write --allow-net --allow-env --allow-run --allow-ffi --allow-sys tests/e2e/regressions/
 ```
 
 ### Force Fresh Binary Compilation

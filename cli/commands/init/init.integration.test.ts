@@ -29,7 +29,19 @@ function runInitCommand(
   options?: { cwd?: string; env?: Record<string, string> },
 ): Promise<{ code: number; stdout?: string; stderr?: string }> {
   return runCommand("deno", {
-    args: ["run", "--allow-all", getCliPath(), "init", ...args],
+    args: [
+      "run",
+      "--allow-read",
+      "--allow-write",
+      "--allow-net",
+      "--allow-env",
+      "--allow-run",
+      "--allow-ffi",
+      "--allow-sys",
+      getCliPath(),
+      "init",
+      ...args,
+    ],
     cwd: options?.cwd ?? TEST_DIR,
     capture: true,
     env: options?.env,

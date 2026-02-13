@@ -8,6 +8,16 @@
 import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
 
+const SERVER_PERMISSIONS = [
+  "--allow-read",
+  "--allow-write",
+  "--allow-net",
+  "--allow-env",
+  "--allow-run",
+  "--allow-ffi",
+  "--allow-sys",
+] as const;
+
 interface SplitModeOptions {
   productionServerPort: number;
   proxyPort: number;
@@ -104,7 +114,9 @@ export async function runSplitMode(options: SplitModeOptions): Promise<void> {
   };
 
   // Determine command
-  const veryfront = useBinary ? [binaryPath] : ["deno", "run", "--allow-all", "cli/main.ts"];
+  const veryfront = useBinary
+    ? [binaryPath]
+    : ["deno", "run", ...SERVER_PERMISSIONS, "cli/main.ts"];
 
   // Start production server
   const productionServerProcess = startProcess(

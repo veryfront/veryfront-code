@@ -3,7 +3,7 @@
  * Validates every connector against the Zod schema at build time.
  *
  * Usage:
- *   deno run -A scripts/build/generate-integrations-module.ts
+ *   deno run --allow-read --allow-write --allow-env scripts/build/generate-integrations-module.ts
  */
 
 import { IntegrationConfigSchema } from "../../src/integrations/schema.ts";

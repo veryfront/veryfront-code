@@ -5,7 +5,7 @@
  * needing to read from the filesystem at runtime.
  *
  * Usage:
- *   deno run -A scripts/generate-dev-ui-manifest.ts
+ *   deno run --allow-read --allow-write --allow-env scripts/generate-dev-ui-manifest.ts
  */
 
 import { walk } from "jsr:@std/fs/walk";

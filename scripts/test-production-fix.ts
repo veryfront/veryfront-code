@@ -1,10 +1,10 @@
-#!/usr/bin/env -S deno run --allow-all
+#!/usr/bin/env -S deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys
 /**
  * Test production fixes locally against production API
  *
  * Usage:
- *   deno run --allow-all scripts/test-production-fix.ts <project-slug>
- *   deno run --allow-all scripts/test-production-fix.ts <project-slug> --compiled
+ *   deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys scripts/test-production-fix.ts <project-slug>
+ *   deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys scripts/test-production-fix.ts <project-slug> --compiled
  *
  * This script:
  * 1. Starts the renderer (source or compiled)
@@ -16,7 +16,7 @@
 const PROJECT_SLUG = Deno.args[0];
 if (!PROJECT_SLUG) {
   console.error("Error: project slug is required");
-  console.error("Usage: deno run --allow-all scripts/test-production-fix.ts <project-slug> [--compiled]");
+  console.error("Usage: deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys scripts/test-production-fix.ts <project-slug> [--compiled]");
   Deno.exit(1);
 }
 const USE_COMPILED = Deno.args.includes("--compiled");
@@ -41,7 +41,7 @@ if (USE_COMPILED) {
     await Deno.stat("./veryfront-local");
   } catch {
     console.log("❌ Binary not found. Compile first:");
-    console.log("   deno compile --allow-all --unstable-net --output ./veryfront-local cli/main.ts");
+    console.log("   deno compile --allow-read --allow-write --allow-net --allow-env --allow-run --allow-ffi --allow-sys --unstable-net --output ./veryfront-local cli/main.ts");
     Deno.exit(1);
   }
 
@@ -56,7 +56,7 @@ if (USE_COMPILED) {
 } else {
   console.log("🚀 Starting source server (cli/main.ts dev)...");
   const command = new Deno.Command("deno", {
-    args: ["run", "--allow-all", "--unstable-net", "cli/main.ts", "dev", "-p", String(PORT)],
+    args: ["run", "--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run", "--allow-ffi", "--allow-sys", "--unstable-net", "cli/main.ts", "dev", "-p", String(PORT)],
     env,
     stdout: "piped",
     stderr: "piped",

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno test --allow-all
+#!/usr/bin/env -S deno test --allow-read --allow-write --allow-net --allow-env --allow-run --allow-ffi --allow-sys
 /**
  * VFS Proxy Mode E2E Tests - Compiled Binary
  *
@@ -6,7 +6,7 @@
  * PROXY_MODE=1 is set, and resolves project slugs from Host headers.
  *
  * Run:
- *   deno test --allow-all tests/integration/vfs-proxy-mode-e2e.test.ts
+ *   deno test --allow-read --allow-write --allow-net --allow-env --allow-run --allow-ffi --allow-sys tests/integration/vfs-proxy-mode-e2e.test.ts
  */
 
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
@@ -57,14 +57,15 @@ async function ensureBinaryCompiled(): Promise<void> {
   if (binaryExists) await Deno.remove(BINARY_PATH);
 
   const prep = await new Deno.Command(denoPath, {
-    args: ["run", "--allow-all", "scripts/build/prepare-framework-sources.ts"],
+    args: ["run", "--allow-read", "--allow-write", "--allow-env", "scripts/build/prepare-framework-sources.ts"],
     stdout: "inherit", stderr: "inherit",
   }).output();
   if (!prep.success) throw new Error("Failed to prepare framework sources");
 
   const compile = await new Deno.Command(denoPath, {
     args: [
-      "compile", "--allow-all",
+      "compile",
+      "--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run", "--allow-ffi", "--allow-sys",
       "--include", "src/platform/polyfills",
       "--include", "src/proxy/main.ts",
       "--include", "dist/framework-src",

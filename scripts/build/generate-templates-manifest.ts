@@ -5,7 +5,7 @@
  * deno compile trying to analyze them as TypeScript modules.
  *
  * Usage:
- *   deno run -A scripts/generate-templates-manifest.ts
+ *   deno run --allow-read --allow-write --allow-env scripts/generate-templates-manifest.ts
  */
 
 import { walk } from "jsr:@std/fs/walk";

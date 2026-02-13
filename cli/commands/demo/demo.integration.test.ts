@@ -8,7 +8,19 @@ denoOnlyDescribe("demo command integration", () => {
   async function runDemo(args: string[] = []): Promise<{ code: number; output: string }> {
     const cliPath = new URL("../../main.ts", import.meta.url).pathname;
     const command = new Deno.Command("deno", {
-      args: ["run", "--allow-all", cliPath, "demo", ...args],
+      args: [
+        "run",
+        "--allow-read",
+        "--allow-write",
+        "--allow-net",
+        "--allow-env",
+        "--allow-run",
+        "--allow-ffi",
+        "--allow-sys",
+        cliPath,
+        "demo",
+        ...args,
+      ],
       stdout: "piped",
       stderr: "piped",
       stdin: "null",
