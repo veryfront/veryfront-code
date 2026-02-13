@@ -7,6 +7,7 @@
  * Each workflow runs in a separate Deno subprocess with its own environment.
  */
 
+import { WORKFLOW_JOB_PERMISSIONS } from "#veryfront/security/deno-permissions.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import type { JobConfig, JobExecutor, JobInfo, JobStatus } from "./types.ts";
 
@@ -81,7 +82,7 @@ export class ProcessJobExecutor implements JobExecutor {
   constructor(config: ProcessJobExecutorConfig) {
     this.config = {
       command: "deno",
-      args: ["run", "--allow-all"],
+      args: ["run", ...WORKFLOW_JOB_PERMISSIONS],
       debug: false,
       ...config,
     };

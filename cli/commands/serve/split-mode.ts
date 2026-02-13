@@ -7,6 +7,7 @@
 
 import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
+import { SERVER_PERMISSIONS } from "#veryfront/security/deno-permissions.ts";
 
 interface SplitModeOptions {
   productionServerPort: number;
@@ -104,7 +105,9 @@ export async function runSplitMode(options: SplitModeOptions): Promise<void> {
   };
 
   // Determine command
-  const veryfront = useBinary ? [binaryPath] : ["deno", "run", "--allow-all", "cli/main.ts"];
+  const veryfront = useBinary
+    ? [binaryPath]
+    : ["deno", "run", ...SERVER_PERMISSIONS, "cli/main.ts"];
 
   // Start production server
   const productionServerProcess = startProcess(
