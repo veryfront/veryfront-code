@@ -79,7 +79,7 @@ There are three separate contexts that inject CSS, and they overlap:
 
 **3. App route renderer fallback** (`build-app-route-renderer.ts`):
 - Its own duplicate copy of ALL the same CSS (body reset, .prose, .container, utilities)
-- Loading spinner styles (`.loading-container`, `.loading-spinner`)
+- Loading spinner styles (`.loading-container`, `.loading-spinner`) — dead CSS, no HTML uses these classes
 - Wraps content in: `<div class="container mx-auto px-4 py-8 prose max-w-4xl">`
 - Only used for layoutless MDX/pages (no `layout.tsx`)
 
@@ -158,9 +158,8 @@ Delete the file. Remove `getProductionStyles` from exports and the `modeStyles` 
 
 This file has its own duplicate inline CSS block (lines 108-223) and wraps content in a magic `.prose` div.
 
-- Remove the duplicate inline CSS (body reset, .prose, .container, utilities)
+- Remove the duplicate inline CSS (body reset, .prose, .container, utilities, loading spinner — all dead or redundant)
 - Remove the auto-wrapped `<div class="container mx-auto px-4 py-8 prose max-w-4xl">`
-- Keep loading spinner styles if still used
 - If a user wants prose styling on layoutless pages, they add `className="prose"` themselves
 
 ### 4. Clean up `dev-styles.ts`
