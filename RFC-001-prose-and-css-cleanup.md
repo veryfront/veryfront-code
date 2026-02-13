@@ -166,9 +166,10 @@ This file has its own duplicate inline CSS block (lines 108-223) and wraps conte
 
 Remove unused `.animate-bounce-delay-200`, `.animate-bounce-delay-400`, and `@keyframes vf-bounce`.
 
+Remove view transition styles (`@view-transition`, `::view-transition-old/new`). These auto-inject opinionated page transition animations with no opt-in/out. Users can add view transitions themselves if they want them.
+
 Keep:
 - Error overlay styles
-- View transition styles
 
 ### 5. Remove `.vf-tailwind` and collapse wrapper divs
 
