@@ -8,6 +8,9 @@ import {
   invalidateProjectCSS,
 } from "./tailwind-compiler.ts";
 
+// Simple stylesheet without plugins — avoids loading @tailwindcss/typography from esm.sh in tests
+const TEST_STYLESHEET = `@import "tailwindcss";`;
+
 describe("styles-builder/project-css-cache", () => {
   it("populates hash-level cache on fresh generation so other pods can serve CSS", async () => {
     const originalFetch = globalThis.fetch;
@@ -35,7 +38,9 @@ describe("styles-builder/project-css-cache", () => {
       invalidateProjectCSS(projectSlug);
 
       const candidates = new Set(["text-green-500"]);
-      const result = await getProjectCSS(projectSlug, undefined, candidates, { minify: false });
+      const result = await getProjectCSS(projectSlug, TEST_STYLESHEET, candidates, {
+        minify: false,
+      });
       assertEquals(result.fromCache, false);
 
       // After fresh generation, the hash-level local cache must contain the CSS.
@@ -70,7 +75,7 @@ describe("styles-builder/project-css-cache", () => {
     }) as typeof fetch;
 
     const projectSlug = `cache-test-${crypto.randomUUID()}`;
-    const stylesheet = undefined;
+    const stylesheet = TEST_STYLESHEET;
     const options = { minify: false };
 
     try {

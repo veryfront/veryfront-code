@@ -1,11 +1,6 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import {
-  buildContentAttributes,
-  buildImportMapJson,
-  buildRootAttributes,
-  shouldDisableLayout,
-} from "./utils.ts";
+import { buildImportMapJson, buildRootAttributes, shouldDisableLayout } from "./utils.ts";
 import { getDefaultImportMap } from "#veryfront/modules/import-map/default-import-map.ts";
 
 describe("html-generation/utils", () => {
@@ -14,18 +9,30 @@ describe("html-generation/utils", () => {
       const result = buildRootAttributes("test-slug", "development", false);
 
       assertStringIncludes(result, 'id="root"');
-      assertStringIncludes(result, 'class="vf-tailwind"');
       assertStringIncludes(result, 'data-veryfront-slug="test-slug"');
       assertStringIncludes(result, 'data-veryfront-mode="development"');
+      assertStringIncludes(result, 'data-layout="default"');
     });
 
     it("should build root attributes without layout", () => {
       const result = buildRootAttributes("test-slug", "production", true);
 
       assertStringIncludes(result, 'id="root"');
-      assert(!result.includes('class="vf-tailwind"'));
       assertStringIncludes(result, 'data-veryfront-slug="test-slug"');
       assertStringIncludes(result, 'data-veryfront-mode="production"');
+      assertStringIncludes(result, 'data-layout="none"');
+    });
+
+    it("should include SSR hash when provided", () => {
+      const result = buildRootAttributes("test-slug", "production", false, "abc123");
+
+      assertStringIncludes(result, 'data-ssr-hash="abc123"');
+    });
+
+    it("should not include SSR hash when not provided", () => {
+      const result = buildRootAttributes("test-slug", "production", false);
+
+      assert(!result.includes("data-ssr-hash"));
     });
 
     it("should escape HTML in attributes", () => {
@@ -39,39 +46,6 @@ describe("html-generation/utils", () => {
       const result = buildRootAttributes("", "development", false);
 
       assertStringIncludes(result, 'data-veryfront-slug=""');
-    });
-  });
-
-  describe("buildContentAttributes", () => {
-    it("should build content attributes with layout", () => {
-      const result = buildContentAttributes("test-slug", false, "abc123");
-
-      assertStringIncludes(result, 'id="veryfront-content"');
-      assertStringIncludes(result, 'data-slug="test-slug"');
-      assertStringIncludes(result, 'data-layout="default"');
-      assertStringIncludes(result, 'data-ssr-hash="abc123"');
-    });
-
-    it("should build content attributes without layout", () => {
-      const result = buildContentAttributes("test-slug", true);
-
-      assertStringIncludes(result, 'id="veryfront-content"');
-      assertStringIncludes(result, 'data-slug="test-slug"');
-      assertStringIncludes(result, 'data-layout="none"');
-      assert(!result.includes("data-ssr-hash"));
-    });
-
-    it("should handle missing SSR hash", () => {
-      const result = buildContentAttributes("test-slug", false);
-
-      assert(!result.includes("data-ssr-hash"));
-    });
-
-    it("should not include prose class by default", () => {
-      const result = buildContentAttributes("test-slug", false);
-
-      // No default prose class - projects opt-in via their own CSS
-      assert(!result.includes('class="prose'));
     });
   });
 

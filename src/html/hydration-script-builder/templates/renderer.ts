@@ -97,7 +97,7 @@ export const getRendererScript = () => `
         tree = React.createElement(PageContextProvider, { pageContext, children: tree });
         tree = React.createElement(RouterProvider, { router, children: tree });
 
-        const container = document.getElementById('veryfront-content');
+        const container = document.getElementById('root');
         if (!container) return;
 
         if (container.__reactRoot) {

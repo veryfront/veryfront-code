@@ -19,7 +19,6 @@ export {
 export { processMetadata } from "./metadata-builder.ts";
 export type { ProcessedMetadata } from "./metadata-builder.ts";
 export { extractHTMLMetadata } from "./metadata-extraction.ts";
-export { generateThemeVariables, getProductionStyles } from "./styles-builder/index.ts";
 export {
   generateLinkTags,
   generateMetaTags,
@@ -33,9 +32,4 @@ export type {
   ImportMapConfig,
   MDXFrontmatter,
 } from "./types.ts";
-export {
-  buildContentAttributes,
-  buildImportMapJson,
-  buildRootAttributes,
-  shouldDisableLayout,
-} from "./utils.ts";
+export { buildImportMapJson, buildRootAttributes, shouldDisableLayout } from "./utils.ts";

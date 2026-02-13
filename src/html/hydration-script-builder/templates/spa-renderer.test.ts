@@ -55,8 +55,8 @@ describe("hydration-script-builder/templates/spa-renderer", () => {
       assertIncludes(getSpaRendererScript(), "_veryfront/client/spa/ClientApp.js");
     });
 
-    it("should look for veryfront-content container", () => {
-      assertIncludes(getSpaRendererScript(), "getElementById('veryfront-content')");
+    it("should look for root container", () => {
+      assertIncludes(getSpaRendererScript(), "getElementById('root')");
     });
 
     it("should handle hydration when container has content", () => {

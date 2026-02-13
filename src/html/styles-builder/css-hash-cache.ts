@@ -51,6 +51,7 @@ export interface CSSInputsCacheEntry {
 // ============================================================================
 
 export const DEFAULT_STYLESHEET = `@import "tailwindcss";
+@plugin "@tailwindcss/typography";
 @custom-variant dark (&:is(.dark, [data-theme="dark"]) *, &:is(.dark, [data-theme="dark"]));`;
 
 // CSS cache TTL: 24 hours (API maximum) for content-addressed immutable resources.
