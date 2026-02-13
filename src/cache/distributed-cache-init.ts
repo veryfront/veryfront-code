@@ -6,12 +6,12 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { initializeProjectCSSCache } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { isRedisConfigured } from "#veryfront/utils/redis-client.ts";
-import { isApiCacheAvailable } from "./backend.ts";
+import { isApiCacheAvailable, isDiskCacheConfigured } from "./backend.ts";
 
 const logger = baseLogger.component("distributed-cache");
 
 export interface DistributedCacheStatus {
-  backend: "api" | "redis" | "memory";
+  backend: "api" | "redis" | "disk" | "memory";
   transformCache: boolean;
   ssrModuleCache: boolean;
   fileCache: boolean;
@@ -21,6 +21,7 @@ export interface DistributedCacheStatus {
 function determineBackend(): DistributedCacheStatus["backend"] {
   if (isApiCacheAvailable()) return "api";
   if (isRedisConfigured()) return "redis";
+  if (isDiskCacheConfigured()) return "disk";
   return "memory";
 }
 

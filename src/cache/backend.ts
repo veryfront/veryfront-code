@@ -21,6 +21,7 @@ export {
   createDistributedCodeCacheAccessor,
   createTokenizingGateway,
   isApiCacheAvailable,
+  isDiskCacheConfigured,
   isDistributedBackend,
   MemoryCacheBackend,
   RedisCacheBackend,

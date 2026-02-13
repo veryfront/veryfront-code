@@ -21,6 +21,7 @@ export {
   createDistributedCacheAccessor,
   createDistributedCodeCacheAccessor,
   isApiCacheAvailable,
+  isDiskCacheConfigured,
   isDistributedBackend,
 } from "./factory.ts";
 

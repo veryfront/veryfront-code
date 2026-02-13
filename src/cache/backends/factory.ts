@@ -96,7 +96,7 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
 }
 
 export function isDistributedBackend(backend: CacheBackend): boolean {
-  return backend.type !== "memory" && backend.type !== "disk";
+  return backend.type !== "memory";
 }
 
 const DISTRIBUTED_CACHE_RETRY_MS = 30_000;
