@@ -1020,7 +1020,13 @@ const API_DOCS: Record<string, APIDocs> = {
     expandTypes: ["CorsOptions", "RateLimitOptions", "LoggerOptions", "TimeoutOptions"],
   },
   "veryfront/provider": {
-    functions: { registerModelProvider: {} },
+    functions: {
+      registerModelProvider: {},
+      resolveModel: {},
+      hasModelProvider: {},
+      getRegisteredModelProviders: {},
+      clearModelProviders: {},
+    },
   },
   "veryfront/mcp": {
     functions: { createMCPServer: { configType: "MCPServerConfig" } },
