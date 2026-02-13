@@ -557,6 +557,9 @@ async function shutdown(): Promise<void> {
 onSignal("SIGINT", shutdown);
 onSignal("SIGTERM", shutdown);
 
+// Wait for sticky-session router to resolve initial pod list
+await rendererRouter?.ready();
+
 // Initialize tracing and start server
 await initializeOTLPWithApis();
 

@@ -28,26 +28,41 @@ export function jumpHash(keyStr: string, numBuckets: number): number {
   return Number(b);
 }
 
+const MAX_STALENESS_MS = 5 * 60 * 1000; // 5 minutes
+
 export class RendererRouter {
   private pods: string[] = [];
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private refreshing = false;
   private serverPort: number;
+  private lastSuccessfulRefresh = 0;
+  private _ready: Promise<void>;
 
   constructor(
     private headlessService: string,
     private fallbackUrl: string,
     refreshMs?: number,
   ) {
-    this.serverPort = parseInt(getEnv("VERYFRONT_SERVER_PORT") || String(DEFAULT_SERVER_PORT));
-    this.refreshPods();
+    const parsed = parseInt(getEnv("VERYFRONT_SERVER_PORT") || String(DEFAULT_SERVER_PORT));
+    this.serverPort = Number.isNaN(parsed) ? DEFAULT_SERVER_PORT : parsed;
+    this._ready = this.refreshPods();
     const interval = refreshMs ?? DEFAULT_REFRESH_MS;
     this.refreshTimer = setInterval(() => this.refreshPods(), interval);
     unrefTimer(this.refreshTimer);
   }
 
+  ready(): Promise<void> {
+    return this._ready;
+  }
+
   resolve(projectSlug: string | undefined): string {
     if (!projectSlug || this.pods.length === 0) return this.fallbackUrl;
+    if (
+      this.lastSuccessfulRefresh > 0 && Date.now() - this.lastSuccessfulRefresh > MAX_STALENESS_MS
+    ) {
+      proxyLogger.debug("[RendererRouter] Pod list stale, falling back to ClusterIP");
+      return this.fallbackUrl;
+    }
     const idx = jumpHash(projectSlug, this.pods.length);
     return `http://${this.pods[idx]}:${this.serverPort}`;
   }
@@ -66,6 +81,12 @@ export class RendererRouter {
   /** Test helper: inject pod IPs without DNS resolution */
   _setPods(ips: string[]): void {
     this.pods = ips.sort();
+    this.lastSuccessfulRefresh = Date.now();
+  }
+
+  /** Test helper: override last successful refresh timestamp */
+  _setLastRefresh(timestamp: number): void {
+    this.lastSuccessfulRefresh = timestamp;
   }
 
   private async refreshPods(): Promise<void> {
@@ -74,6 +95,7 @@ export class RendererRouter {
     try {
       const ips = await resolve4(this.headlessService);
       this.pods = ips.sort();
+      this.lastSuccessfulRefresh = Date.now();
       proxyLogger.debug("[RendererRouter] DNS refresh", {
         service: this.headlessService,
         pods: this.pods.length,

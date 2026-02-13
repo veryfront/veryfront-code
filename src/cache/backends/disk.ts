@@ -4,6 +4,7 @@ import { logger } from "#veryfront/utils";
 import type { CacheBackend } from "../types.ts";
 
 const CACHE_SUBDIR = "veryfront-files";
+const fsPromises = import("node:fs/promises");
 
 interface DiskCacheEnvelope {
   key: string;
@@ -39,15 +40,16 @@ export class DiskCacheBackend implements CacheBackend {
   }
 
   private async ensureDir(): Promise<void> {
-    const { mkdir } = await import("node:fs/promises");
+    const { mkdir } = await fsPromises;
     await mkdir(this.dir, { recursive: true });
   }
 
   async get(key: string): Promise<string | null> {
     try {
-      const { readFile } = await import("node:fs/promises");
+      const { readFile } = await fsPromises;
       const raw = await readFile(this.filePath(key), "utf-8");
       const envelope: DiskCacheEnvelope = JSON.parse(raw);
+      if (envelope.key !== key) return null;
       if (envelope.expiresAt != null && Date.now() > envelope.expiresAt) {
         this.del(key).catch(() => {});
         return null;
@@ -68,13 +70,13 @@ export class DiskCacheBackend implements CacheBackend {
     const filePath = this.filePath(key);
     const tmpPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
     const content = JSON.stringify(envelope);
-    const { writeFile, rename } = await import("node:fs/promises");
+    const { writeFile, rename } = await fsPromises;
     try {
       await writeFile(tmpPath, content, "utf-8");
       await rename(tmpPath, filePath);
     } catch (error) {
       try {
-        const { unlink } = await import("node:fs/promises");
+        const { unlink } = await fsPromises;
         await unlink(tmpPath);
       } catch { /* ignore cleanup failure */ }
       throw error;
@@ -83,7 +85,7 @@ export class DiskCacheBackend implements CacheBackend {
 
   async del(key: string): Promise<void> {
     try {
-      const { unlink } = await import("node:fs/promises");
+      const { unlink } = await fsPromises;
       await unlink(this.filePath(key));
     } catch { /* File may not exist */ }
   }
@@ -100,7 +102,7 @@ export class DiskCacheBackend implements CacheBackend {
     }
     let deleted = 0;
     try {
-      const { readdir, readFile, unlink } = await import("node:fs/promises");
+      const { readdir, readFile, unlink } = await fsPromises;
       const files = await readdir(this.dir);
       for (const file of files) {
         if (!file.endsWith(".json")) continue;

@@ -130,4 +130,29 @@ Deno.test({ name: "RendererRouter", sanitizeOps: false, sanitizeResources: false
     const url = router.resolve("some-project");
     assertEquals(url.startsWith("http://10.0.0.1:"), true);
   });
+
+  await t.step("ready() resolves (first refresh completes)", async () => {
+    const router = new RendererRouter("dummy-service", fallback, 999999);
+    // ready() should resolve without throwing even if DNS fails
+    await router.ready();
+    router.close();
+  });
+
+  await t.step("falls back when pod list is stale", () => {
+    const router = new RendererRouter("dummy-service", fallback, 999999);
+    router._setPods(["10.0.0.1", "10.0.0.2"]);
+    // Set last refresh to 6 minutes ago (exceeds 5-minute staleness threshold)
+    router._setLastRefresh(Date.now() - 6 * 60 * 1000);
+    assertEquals(router.resolve("my-project"), fallback);
+    router.close();
+  });
+
+  await t.step("routes normally when pod list is fresh", () => {
+    const router = new RendererRouter("dummy-service", fallback, 999999);
+    router._setPods(["10.0.0.1", "10.0.0.2"]);
+    // _setPods sets lastSuccessfulRefresh to now, so it should be fresh
+    const url = router.resolve("my-project");
+    assertNotEquals(url, fallback);
+    router.close();
+  });
 });

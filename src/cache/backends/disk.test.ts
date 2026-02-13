@@ -1,12 +1,38 @@
 import { assertEquals } from "@std/assert";
 import { join } from "#veryfront/compat/path/index.ts";
 import { DiskCacheBackend } from "./disk.ts";
+import {
+  runCacheInvariantTests,
+  testConcurrentAccess,
+  testKeyCollisionResistance,
+} from "../testing/invariants.ts";
 
 const TEST_DIR = join(Deno.makeTempDirSync(), "disk-cache-test");
 
 function makeBackend(): DiskCacheBackend {
   return new DiskCacheBackend(TEST_DIR);
 }
+
+/** Adapter: wraps DiskCacheBackend for the MinimalCache invariant test interface */
+function makeMinimalCache() {
+  const backend = makeBackend();
+  return {
+    get: (key: string) => backend.get(key),
+    set: (key: string, value: string, ttl?: number) => backend.set(key, value, ttl),
+    delete: (key: string) => backend.del(key),
+  };
+}
+
+Deno.test("DiskCacheBackend invariants", async (t) => {
+  const opts = {
+    createCache: makeMinimalCache,
+    createValue: () => `value-${Date.now()}-${Math.random()}`,
+    name: "disk",
+  };
+  await runCacheInvariantTests(t, opts);
+  await testKeyCollisionResistance(t, opts);
+  await testConcurrentAccess(t, opts);
+});
 
 Deno.test("DiskCacheBackend", async (t) => {
   await t.step("get returns null for missing key", async () => {
@@ -75,7 +101,8 @@ Deno.test("DiskCacheBackend", async (t) => {
   });
 
   await t.step("delByPattern removes matching keys", async () => {
-    const backend = makeBackend();
+    const isolatedDir = join(Deno.makeTempDirSync(), "delbypattern-test");
+    const backend = new DiskCacheBackend(isolatedDir);
     await backend.set("user:1:name", "alice");
     await backend.set("user:2:name", "bob");
     await backend.set("other:key", "value");
@@ -92,6 +119,16 @@ Deno.test("DiskCacheBackend", async (t) => {
     assertEquals(await backend.get("overwrite"), "v1");
     await backend.set("overwrite", "v2");
     assertEquals(await backend.get("overwrite"), "v2");
+  });
+
+  await t.step("concurrent writes to same key are safe", async () => {
+    const backend = makeBackend();
+    await Promise.all([
+      backend.set("race", "value-a"),
+      backend.set("race", "value-b"),
+    ]);
+    const result = await backend.get("race");
+    assertEquals(result === "value-a" || result === "value-b", true);
   });
 
   await t.step("concurrent writes to different keys", async () => {
@@ -111,6 +148,21 @@ Deno.test("DiskCacheBackend", async (t) => {
     const largeValue = "x".repeat(100_000);
     await backend.set("large", largeValue);
     assertEquals(await backend.get("large"), largeValue);
+  });
+
+  await t.step("delByPattern with no matching keys returns 0", async () => {
+    const backend = makeBackend();
+    await backend.set("keep:this", "value");
+    const deleted = await backend.delByPattern("nomatch:*");
+    assertEquals(deleted, 0);
+    assertEquals(await backend.get("keep:this"), "value");
+  });
+
+  await t.step("delByPattern on empty directory returns 0", async () => {
+    const emptyDir = join(Deno.makeTempDirSync(), "empty-cache");
+    const backend = new DiskCacheBackend(emptyDir);
+    const deleted = await backend.delByPattern("*");
+    assertEquals(deleted, 0);
   });
 
   await t.step("type property is 'disk'", () => {
