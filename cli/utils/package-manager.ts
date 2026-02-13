@@ -9,7 +9,7 @@ import { cliLogger as logger } from "#cli/utils";
 import { createFileSystem, getEnv } from "veryfront/platform";
 import { getOsType, runCommand } from "veryfront/platform";
 
-export type PackageManager = "npm" | "yarn" | "pnpm" | "bun";
+export type PackageManager = "npm" | "yarn" | "pnpm" | "bun" | "deno";
 
 /**
  * Detect package manager from npm_config_user_agent environment variable
@@ -20,6 +20,7 @@ export type PackageManager = "npm" | "yarn" | "pnpm" | "bun";
  * - npm/10.2.4 node/v20.11.0 darwin arm64
  * - yarn/1.22.21 npm/? node/v20.11.0 darwin arm64
  * - bun/1.0.0 node/v20.11.0 darwin arm64
+ * - deno/2.0.4 npm/? deno/2.0.4 macos aarch64
  */
 export function detectFromUserAgent(): PackageManager | undefined {
   const userAgent = getEnv("npm_config_user_agent");
@@ -28,6 +29,7 @@ export function detectFromUserAgent(): PackageManager | undefined {
   if (userAgent.startsWith("pnpm/")) return "pnpm";
   if (userAgent.startsWith("yarn/")) return "yarn";
   if (userAgent.startsWith("bun/")) return "bun";
+  if (userAgent.startsWith("deno/")) return "deno";
   if (userAgent.startsWith("npm/")) return "npm";
 
   return undefined;
@@ -55,6 +57,7 @@ async function executeCommand(
 
 const LOCKFILES: Array<{ file: string; pm: PackageManager }> = [
   { file: "bun.lockb", pm: "bun" },
+  { file: "deno.lock", pm: "deno" },
   { file: "pnpm-lock.yaml", pm: "pnpm" },
   { file: "yarn.lock", pm: "yarn" },
   { file: "package-lock.json", pm: "npm" },
@@ -113,6 +116,7 @@ export async function detectPackageManager(
 }
 
 const INSTALL_COMMANDS: Record<PackageManager, string> = {
+  deno: "deno install",
   bun: "bun install",
   pnpm: "pnpm install",
   yarn: "yarn",
@@ -131,6 +135,8 @@ export function getInstallCommand(pm: PackageManager): string {
  * e.g., "pnpm dev" vs "npm run dev"
  */
 export function getRunCommand(pm: PackageManager, script: string): string {
+  // deno uses "deno task" for package.json scripts
+  if (pm === "deno") return `deno task ${script}`;
   // bun and pnpm can run scripts directly without "run"
   if (pm === "bun" || pm === "pnpm") return `${pm} ${script}`;
   // yarn can also run scripts directly for common ones like "dev"
@@ -145,6 +151,8 @@ export function getRunCommand(pm: PackageManager, script: string): string {
  */
 export function getDlxCommand(pm: PackageManager): string {
   switch (pm) {
+    case "deno":
+      return "dx";
     case "pnpm":
       return "pnpm dlx";
     case "yarn":
