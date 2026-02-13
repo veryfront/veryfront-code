@@ -8,7 +8,7 @@
  * - Shims for Deno APIs
  *
  * Usage:
- *   deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys scripts/build-npm-dnt.ts
+ *   deno run -A scripts/build-npm-dnt.ts
  */
 
 import { build, emptyDir } from "jsr:@deno/dnt";
@@ -21,7 +21,7 @@ console.log(`\n📦 Building Veryfront v${version} for npm using dnt...\n`);
 // Generate templates manifest before build
 console.log("📝 Generating templates manifest...");
 const genManifest = new Deno.Command("deno", {
-	args: ["run", "--allow-read", "--allow-write", "--allow-env", "scripts/build/generate-templates-manifest.ts"],
+	args: ["run", "-A", "scripts/build/generate-templates-manifest.ts"],
 	stdout: "inherit",
 	stderr: "inherit",
 });

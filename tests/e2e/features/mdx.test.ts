@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno test --allow-read --allow-write --allow-net --allow-env --allow-run --allow-ffi --allow-sys
+#!/usr/bin/env -S deno test --allow-all
 /**
  * Feature Tests: MDX Pages
  *

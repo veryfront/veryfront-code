@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno test --allow-read --allow-write --allow-net --allow-env --allow-run --allow-ffi --allow-sys
+#!/usr/bin/env -S deno test --allow-all
 /**
  * Compiled Binary E2E Tests - Kitchen Sink
  *
@@ -105,7 +105,7 @@ async function ensureBinaryCompiled(): Promise<void> {
   // Prepare framework sources for embedding in binary
   console.log("📦 Preparing framework sources...");
   const prepareResult = await new Deno.Command("deno", {
-    args: ["run", "--allow-read", "--allow-write", "--allow-env", "scripts/build/prepare-framework-sources.ts"],
+    args: ["run", "--allow-all", "scripts/build/prepare-framework-sources.ts"],
     stdout: "inherit",
     stderr: "inherit",
   }).output();
@@ -116,13 +116,7 @@ async function ensureBinaryCompiled(): Promise<void> {
   const result = await new Deno.Command("deno", {
     args: [
       "compile",
-      "--allow-read",
-      "--allow-write",
-      "--allow-net",
-      "--allow-env",
-      "--allow-run",
-      "--allow-ffi",
-      "--allow-sys",
+      "--allow-all",
       "--include",
       "src/platform/polyfills",
       "--include",

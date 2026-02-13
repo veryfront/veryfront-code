@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys
+#!/usr/bin/env -S deno run --allow-all
 
 /**
  * Veryfront Setup Script

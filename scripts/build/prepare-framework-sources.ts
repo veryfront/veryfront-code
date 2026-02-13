@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-read --allow-write --allow-env
+#!/usr/bin/env -S deno run --allow-all
 /**
  * Prepare Framework Sources for Binary Compilation
  *
@@ -11,7 +11,7 @@
  * and caches the results - exactly like it does for source files in dev mode.
  *
  * Usage:
- *   deno run --allow-read --allow-write --allow-env scripts/prepare-framework-sources.ts
+ *   deno run --allow-all scripts/prepare-framework-sources.ts
  *
  * This is run automatically before `deno compile` in production builds.
  */

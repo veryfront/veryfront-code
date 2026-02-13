@@ -37,20 +37,7 @@ function runNewCommand(
   options?: { env?: Record<string, string> },
 ): Promise<{ code: number; stdout?: string; stderr?: string }> {
   return runCommand("deno", {
-    args: [
-      "run",
-      "--allow-read",
-      "--allow-write",
-      "--allow-net",
-      "--allow-env",
-      "--allow-run",
-      "--allow-ffi",
-      "--allow-sys",
-      getCliPath(),
-      "new",
-      projectName,
-      ...args,
-    ],
+    args: ["run", "--allow-all", getCliPath(), "new", projectName, ...args],
     cwd: TEST_DIR,
     capture: true,
     env: options?.env,
@@ -124,13 +111,7 @@ describe("new command integration", () => {
       const result = await runCommand("deno", {
         args: [
           "run",
-          "--allow-read",
-          "--allow-write",
-          "--allow-net",
-          "--allow-env",
-          "--allow-run",
-          "--allow-ffi",
-          "--allow-sys",
+          "--allow-all",
           getCliPath(),
           "new",
           "Invalid Name With Spaces",
