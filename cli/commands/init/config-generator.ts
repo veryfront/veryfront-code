@@ -17,6 +17,9 @@ export async function createPackageJson(
       build: "veryfront build",
       preview: "veryfront preview",
     },
+    pnpm: {
+      onlyBuiltDependencies: ["esbuild", "veryfront"],
+    },
     dependencies: {
       react: "^19.0.0",
       "react-dom": "^19.0.0",
