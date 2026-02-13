@@ -50,7 +50,9 @@ function getRequestContextFn(): (() => MultiProjectRequestContextType | null) | 
   if (_getCurrentRequestContext !== undefined) return _getCurrentRequestContext;
 
   try {
-    const mod = globalThis.__vf_multi_project_adapter;
+    const mod = (globalThis as Record<string, unknown>).__vf_multi_project_adapter as
+      | { getCurrentRequestContext?: () => MultiProjectRequestContextType | null }
+      | undefined;
     _getCurrentRequestContext = mod?.getCurrentRequestContext ?? null;
   } catch {
     _getCurrentRequestContext = null;

@@ -56,6 +56,8 @@ export interface AgentConfig {
     vision?: boolean;
     audio?: boolean;
   };
+  /** Restrict runtime model overrides to these "provider/model" strings. */
+  allowedModels?: ModelString[];
 }
 
 // Import for use in AgentMiddleware
@@ -107,12 +109,14 @@ export interface Agent {
   generate(input: {
     input: string | Message[];
     context?: Record<string, unknown>;
+    model?: ModelString;
   }): Promise<AgentResponse>;
 
   stream(input: {
     input?: string;
     messages?: Message[];
     context?: Record<string, unknown>;
+    model?: ModelString;
     onToolCall?: (toolCall: ToolCall) => void;
     onChunk?: (chunk: string) => void;
   }): Promise<AgentStreamResult>;

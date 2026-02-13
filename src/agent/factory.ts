@@ -94,7 +94,7 @@ export function agent(config: AgentConfig): Agent {
     generate(input): Promise<AgentResponse> {
       return withSpan(
         "agent.factory.generate",
-        () => runtime.generate(input.input, input.context),
+        () => runtime.generate(input.input, input.context, input.model),
         { "agent.id": id },
       );
     },
@@ -116,7 +116,7 @@ export function agent(config: AgentConfig): Agent {
           const stream = await runtime.stream(inputMessages, input.context, {
             onToolCall: input.onToolCall,
             onChunk: input.onChunk,
-          });
+          }, input.model);
 
           return createAgentStreamResult(stream);
         },
@@ -128,10 +128,29 @@ export function agent(config: AgentConfig): Agent {
       return withSpan(
         "agent.factory.respond",
         async () => {
-          const body: { messages?: Message[]; context?: Record<string, unknown> } = await request
-            .json();
+          const body: {
+            messages?: Message[];
+            context?: Record<string, unknown>;
+            model?: string;
+          } = await request.json();
+
+          // Validate model override against allowlist when configured
+          const modelOverride = body.model;
+          if (modelOverride && config.allowedModels?.length) {
+            if (!config.allowedModels.includes(modelOverride)) {
+              return new Response(
+                JSON.stringify({
+                  error: `Model "${modelOverride}" is not allowed. Allowed models: ${
+                    config.allowedModels.join(", ")
+                  }`,
+                }),
+                { status: 403, headers: { "Content-Type": "application/json" } },
+              );
+            }
+          }
+
           const messages = body.messages ?? [];
-          const stream = await runtime.stream(messages, body.context);
+          const stream = await runtime.stream(messages, body.context, undefined, modelOverride);
 
           return new Response(stream, { headers: STREAMING_HEADERS });
         },

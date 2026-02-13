@@ -4,8 +4,4 @@
  * @module agent/streaming
  */
 
-export {
-  type AgentStreamEvent,
-  AgentStreamEventSchema,
-  StreamEventEmitter,
-} from "./stream-events.ts";
+export { StreamEventEmitter } from "./stream-events.ts";

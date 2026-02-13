@@ -11,6 +11,7 @@ import type { DynamicToolUIPart, ToolUIPart, UIMessage } from "#veryfront/agent/
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "../theme.ts";
 import { Markdown } from "../markdown.tsx";
 import { MessageSquareIcon, RefreshCwIcon } from "../icons/index.ts";
+import { type ModelOption, ModelSelector } from "../model-selector.tsx";
 
 export { Loader, Shimmer } from "./components/animations.tsx";
 export { ReasoningCard } from "./components/reasoning.tsx";
@@ -79,6 +80,12 @@ export interface ChatProps {
   };
   showScrollButton?: boolean;
   showMessageActions?: boolean;
+  /** Available models for runtime switching */
+  models?: ModelOption[];
+  /** Currently selected model */
+  model?: string;
+  /** Called when user changes model */
+  onModelChange?: (model: string) => void;
 }
 
 export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
@@ -108,6 +115,9 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     emptyState,
     showScrollButton = false,
     showMessageActions = true,
+    models,
+    model,
+    onModelChange,
   },
   ref,
 ): React.ReactElement {
@@ -250,23 +260,35 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
       </MessageList>
 
       {error && (
-        <div className="mx-4 mb-2 px-4 py-3 bg-red-50 dark:bg-red-900/20 rounded-2xl text-red-600 dark:text-red-400 text-sm flex items-center justify-between gap-3">
-          <span>{error.message}</span>
-          {reload && (
-            <button
-              type="button"
-              onClick={reload}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/40 hover:bg-red-200 dark:hover:bg-red-900/60 rounded-lg transition-colors"
-            >
-              <RefreshCwIcon className="size-3.5" />
-              Retry
-            </button>
-          )}
+        <div className="max-w-2xl mx-auto px-4 pb-2">
+          <div className="px-4 py-3 bg-red-50 dark:bg-red-900/20 rounded-[20px] text-red-600 dark:text-red-400 text-sm flex items-center justify-between gap-3">
+            <span>{error.message}</span>
+            {reload && (
+              <button
+                type="button"
+                onClick={reload}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/40 hover:bg-red-200 dark:hover:bg-red-900/60 rounded-full transition-colors"
+              >
+                <RefreshCwIcon className="size-3" />
+                Retry
+              </button>
+            )}
+          </div>
         </div>
       )}
 
       <div className="flex-shrink-0 bg-white dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800">
         <form onSubmit={submitHandler} className="max-w-2xl mx-auto px-4 py-3">
+          {models && models.length > 0 && onModelChange && (
+            <div className="mb-2">
+              <ModelSelector
+                models={models}
+                value={model}
+                onChange={onModelChange}
+                disabled={isLoading}
+              />
+            </div>
+          )}
           <div className="flex gap-2 items-center">
             <InputBox
               value={voice.isListening ? voice.transcript || input : input}

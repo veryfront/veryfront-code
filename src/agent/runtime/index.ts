@@ -21,8 +21,7 @@ import {
   type MessagePart,
   type ToolCall,
 } from "../types.ts";
-import type { Provider } from "#veryfront/provider";
-import { getProviderFromModel } from "#veryfront/provider";
+import { resolveModel } from "#veryfront/provider";
 import { executeTool } from "#veryfront/tool";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
@@ -33,16 +32,19 @@ import {
   setSpanAttributes,
   withSpan,
 } from "#veryfront/observability/tracing/index.ts";
-import { convertMessageToProvider } from "./message-converter.ts";
+import { convertToModelMessages } from "./model-message-converter.ts";
+import { convertToolsToAISDK } from "./model-tool-converter.ts";
+import { createStreamState, processStream } from "./ai-stream-handler.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
+import { generateText, streamText } from "ai";
 
 // Re-export from submodules
 export { generateMessageId, sendSSE } from "./sse-utils.ts";
 export { getAvailableTools, isDynamicTool, parseToolArgs } from "./tool-helpers.ts";
 export type { ParsedToolArgs, ToolConfigEntry } from "./tool-helpers.ts";
 export { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
-export { createStreamState, handleStreamEvent, processStreamData } from "./stream-handler.ts";
-export type { StreamCallbacks, StreamingToolCall, StreamState } from "./stream-handler.ts";
+export { createStreamState, processStream } from "./ai-stream-handler.ts";
+export type { AIStreamCallbacks, AIStreamState, StreamingToolCall } from "./ai-stream-handler.ts";
 export {
   DEFAULT_MAX_STEPS,
   DEFAULT_MAX_TOKENS,
@@ -54,7 +56,6 @@ import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE } from "./constants.ts";
 import { generateMessageId, sendSSE } from "./sse-utils.ts";
 import { getAvailableTools, isDynamicTool, parseToolArgs } from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
-import { createStreamState, processStreamData } from "./stream-handler.ts";
 
 const logger = serverLogger.component("agent");
 
@@ -78,11 +79,14 @@ export class AgentRuntime {
   async generate(
     input: string | Message[],
     context?: Record<string, unknown>,
+    modelOverride?: string,
   ): Promise<AgentResponse> {
+    const modelString = modelOverride || this.config.model;
+
     return withSpan("agent.generate", async (span) => {
       setSpanAttributes(span, {
         "agent.id": this.id,
-        "agent.model": this.config.model,
+        "agent.model": modelString,
       });
 
       const inputMessages = normalizeInput(input);
@@ -90,11 +94,10 @@ export class AgentRuntime {
 
       const messages = await this.memory.getMessages();
       const systemPrompt = await this.resolveSystemPrompt();
-      const { provider, model } = getProviderFromModel(this.config.model);
 
       const agentContext: AgentContext = {
         agentId: this.id,
-        model: this.config.model,
+        model: modelString,
         input: inputMessages,
         data: context,
         platform: detectPlatform(),
@@ -103,14 +106,14 @@ export class AgentRuntime {
       const chain = new MiddlewareChain(this.config.middleware);
       return chain.execute(
         agentContext,
-        () => this.executeAgentLoop(provider, model, systemPrompt, messages),
+        () => this.executeAgentLoop(systemPrompt, messages, modelString),
       );
     });
   }
 
   /**
    * Stream a response
-   * Returns a ReadableStream compatible with Vercel AI SDK Data Stream Protocol
+   * Returns a ReadableStream in the veryfront stream event format.
    */
   async stream(
     messages: Message[],
@@ -119,12 +122,14 @@ export class AgentRuntime {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
     },
+    modelOverride?: string,
   ): Promise<ReadableStream<Uint8Array>> {
+    const modelString = modelOverride || this.config.model;
+
     for (const msg of messages) await this.memory.add(msg);
 
     const memoryMessages = await this.memory.getMessages();
     const systemPrompt = await this.resolveSystemPrompt();
-    const { provider, model } = getProviderFromModel(this.config.model);
 
     const encoder = new TextEncoder();
     const toolContext = { agentId: this.id, ...context };
@@ -136,12 +141,10 @@ export class AgentRuntime {
           this.status = "streaming";
 
           const messageId = generateMessageId();
-          sendSSE(controller, encoder, { type: "start", messageId });
+          sendSSE(controller, encoder, { type: "message-start", messageId });
           sendSSE(controller, encoder, { type: "text-start", id: textPartId });
 
           await this.executeAgentLoopStreaming(
-            provider,
-            model,
             systemPrompt,
             memoryMessages,
             controller,
@@ -149,10 +152,11 @@ export class AgentRuntime {
             callbacks,
             textPartId,
             toolContext,
+            modelString,
           );
 
           sendSSE(controller, encoder, { type: "text-end", id: textPartId });
-          sendSSE(controller, encoder, { type: "finish" });
+          sendSSE(controller, encoder, { type: "message-finish" });
           controller.close();
         } catch (error) {
           this.status = "error";
@@ -170,14 +174,14 @@ export class AgentRuntime {
    * Execute agent loop (with tool calling)
    */
   private async executeAgentLoop(
-    provider: Provider,
-    model: string,
     systemPrompt: string,
     messages: Message[],
+    modelString?: string,
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
       const maxSteps = this.computeMaxSteps(maxAgentSteps);
+      const languageModel = resolveModel(modelString || this.config.model);
 
       const toolCalls: ToolCall[] = [];
       const currentMessages = [...messages];
@@ -189,29 +193,41 @@ export class AgentRuntime {
 
         const tools = getAvailableTools(this.config.tools);
 
-        const response = await withSpan("agent.provider_complete", async (span) => {
-          setSpanAttributes(span, { model, "messages.count": currentMessages.length });
-          return provider.complete({
-            model,
+        const response = await withSpan("agent.generate_text", async (span) => {
+          setSpanAttributes(span, {
+            "model.id": modelString || this.config.model,
+            "messages.count": currentMessages.length,
+          });
+          return generateText({
+            model: languageModel,
             system: systemPrompt,
-            messages: currentMessages.map(convertMessageToProvider),
-            tools: tools.length ? tools : undefined,
-            maxTokens: this.config.memory?.maxTokens ?? DEFAULT_MAX_TOKENS,
+            messages: convertToModelMessages(currentMessages),
+            tools: convertToolsToAISDK(tools),
+            maxOutputTokens: this.config.memory?.maxTokens ?? DEFAULT_MAX_TOKENS,
             temperature: DEFAULT_TEMPERATURE,
           });
         });
 
-        accumulateUsage(totalUsage, response.usage);
+        // Accumulate usage
+        if (response.usage) {
+          const input = response.usage.inputTokens ?? 0;
+          const output = response.usage.outputTokens ?? 0;
+          accumulateUsage(totalUsage, {
+            promptTokens: input,
+            completionTokens: output,
+            totalTokens: input + output,
+          });
+        }
 
         const assistantParts: MessagePart[] = [];
         if (response.text) assistantParts.push({ type: "text", text: response.text });
 
         for (const tc of response.toolCalls ?? []) {
           assistantParts.push({
-            type: `tool-${tc.name}`,
-            toolCallId: tc.id,
-            toolName: tc.name,
-            args: tc.arguments,
+            type: `tool-${tc.toolName}`,
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            args: tc.input as Record<string, unknown>,
           });
         }
 
@@ -241,33 +257,33 @@ export class AgentRuntime {
 
         for (const tc of response.toolCalls) {
           const toolCall: ToolCall = {
-            id: tc.id,
-            name: tc.name,
-            args: tc.arguments,
+            id: tc.toolCallId,
+            name: tc.toolName,
+            args: tc.input as Record<string, unknown>,
             status: "pending",
           };
 
           await withSpan("agent.tool_execute", async (toolSpan) => {
-            setSpanAttributes(toolSpan, { "tool.name": tc.name, "tool.id": tc.id });
+            setSpanAttributes(toolSpan, { "tool.name": tc.toolName, "tool.id": tc.toolCallId });
 
             try {
               toolCall.status = "executing";
               const startTime = Date.now();
 
-              const result = await executeTool(tc.name, tc.arguments, { agentId: this.id });
+              const result = await executeTool(tc.toolName, toolCall.args, { agentId: this.id });
 
               toolCall.status = "completed";
               toolCall.result = result;
               toolCall.executionTime = Date.now() - startTime;
 
               const toolResultMessage: Message = {
-                id: `tool_${tc.id}`,
+                id: `tool_${tc.toolCallId}`,
                 role: "tool",
                 parts: [
                   {
                     type: "tool-result",
-                    toolCallId: tc.id,
-                    toolName: tc.name,
+                    toolCallId: tc.toolCallId,
+                    toolName: tc.toolName,
                     result,
                   },
                 ],
@@ -281,13 +297,13 @@ export class AgentRuntime {
               setSpanAttributes(toolSpan, { error: true, "error.message": toolCall.error });
 
               const errorMessage: Message = {
-                id: `tool_error_${tc.id}`,
+                id: `tool_error_${tc.toolCallId}`,
                 role: "tool",
                 parts: [
                   {
                     type: "tool-result",
-                    toolCallId: tc.id,
-                    toolName: tc.name,
+                    toolCallId: tc.toolCallId,
+                    toolName: tc.toolName,
                     result: { error: toolCall.error },
                   },
                 ],
@@ -319,11 +335,10 @@ export class AgentRuntime {
 
   /**
    * Execute agent loop with streaming
-   * Uses Vercel AI SDK UI Message Stream Protocol v5 format
+   * Emits veryfront stream events (message-start/message-finish + step-start/step-end)
+   * while consuming AI SDK `streamText()` parts internally.
    */
   private async executeAgentLoopStreaming(
-    provider: Provider,
-    model: string,
     systemPrompt: string,
     messages: Message[],
     controller: ReadableStreamDefaultController,
@@ -334,29 +349,31 @@ export class AgentRuntime {
     },
     textPartId?: string,
     toolContext?: Record<string, unknown>,
+    modelString?: string,
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
     const maxSteps = this.computeMaxSteps(maxAgentSteps);
+    const languageModel = resolveModel(modelString || this.config.model);
 
     const toolCalls: ToolCall[] = [];
     const currentMessages = [...messages];
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     for (let step = 0; step < maxSteps; step++) {
-      sendSSE(controller, encoder, { type: "start-step" });
+      sendSSE(controller, encoder, { type: "step-start" });
 
       const tools = getAvailableTools(this.config.tools);
-      const stream = await provider.stream({
-        model,
+      const result = streamText({
+        model: languageModel,
         system: systemPrompt,
-        messages: currentMessages.map(convertMessageToProvider),
-        tools: tools.length ? tools : undefined,
-        maxTokens: this.config.memory?.maxTokens ?? DEFAULT_MAX_TOKENS,
+        messages: convertToModelMessages(currentMessages),
+        tools: convertToolsToAISDK(tools),
+        maxOutputTokens: this.config.memory?.maxTokens ?? DEFAULT_MAX_TOKENS,
         temperature: DEFAULT_TEMPERATURE,
       });
 
       const state = createStreamState();
-      await processStreamData(stream, state, controller, encoder, textPartId, {
+      await processStream(result, state, controller, encoder, textPartId, {
         onChunk: callbacks?.onChunk,
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
       });
@@ -389,8 +406,8 @@ export class AgentRuntime {
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
 
-      if (state.finishReason !== "tool_calls" || !state.toolCalls.size) {
-        sendSSE(controller, encoder, { type: "finish-step" });
+      if (state.finishReason !== "tool-calls" || !state.toolCalls.size) {
+        sendSSE(controller, encoder, { type: "step-end" });
         break;
       }
 
@@ -477,7 +494,7 @@ export class AgentRuntime {
         }
       }
 
-      sendSSE(controller, encoder, { type: "finish-step" });
+      sendSSE(controller, encoder, { type: "step-end" });
       this.status = "thinking";
     }
 

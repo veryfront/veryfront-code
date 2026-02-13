@@ -10,7 +10,9 @@ export default function RootLayout({
       <Head>
         <title>AI Chat</title>
       </Head>
-      {children}
+      <div className="flex flex-col h-screen bg-white dark:bg-neutral-900">
+        {children}
+      </div>
     </>
   );
 }

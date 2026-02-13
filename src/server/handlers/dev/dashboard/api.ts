@@ -3,7 +3,10 @@ import { executeTool, toolRegistry } from "#veryfront/tool";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
-import { providerRegistry } from "#veryfront/provider/factory.ts";
+import {
+  getRegisteredModelProviders,
+  hasModelProvider,
+} from "#veryfront/provider/model-registry.ts";
 import { WorkflowClient } from "#veryfront/workflow";
 import { workflowRegistry } from "#veryfront/workflow/registry.ts";
 import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
@@ -436,9 +439,9 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
 }
 
 function handleGetInfrastructure(): Response {
-  const providers = providerRegistry.getAvailableProviders().map((name) => ({
+  const providers = getRegisteredModelProviders().map((name) => ({
     name,
-    configured: providerRegistry.hasProvider(name),
+    configured: hasModelProvider(name),
   }));
 
   const allProviders = ["openai", "anthropic", "google"].map((name) => ({

@@ -16,7 +16,7 @@ describe("input-utils", () => {
       const part = message.parts[0];
       assertExists(part);
       assertEquals(part.type, "text");
-      assertEquals(part.text, "hello");
+      assertEquals((part as { text: string }).text, "hello");
     });
 
     it("preserves existing message array with ids", () => {

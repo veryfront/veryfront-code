@@ -16,7 +16,7 @@ import { agentRegistry } from "../../../src/agent/composition/composition.ts";
 import { runWithCacheKeyContext } from "../../../src/cache/cache-key-builder.ts";
 import { promptRegistry } from "../../../src/prompt/registry.ts";
 import type { Prompt } from "../../../src/prompt/types.ts";
-import { providerRegistry } from "../../../src/provider/factory.ts";
+import { clearModelProviders } from "../../../src/provider/model-registry.ts";
 import { resourceRegistry } from "../../../src/resource/registry.ts";
 import type { Resource } from "../../../src/resource/types.ts";
 import { toolRegistry } from "../../../src/tool/registry.ts";
@@ -69,7 +69,7 @@ function clearAllRegistries(): void {
   agentRegistry.clearAll();
   workflowRegistry.clearAll();
   resourceRegistry.clearAll();
-  providerRegistry.clearAll();
+  clearModelProviders();
 }
 
 describe("002.5 AI Registry Isolation", () => {
