@@ -225,9 +225,14 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Read version
+      - name: Compute RC version
         id: version
-        run: echo "version=$(jq -r '.version' deno.json)" >> $GITHUB_OUTPUT
+        run: |
+          BASE=$(jq -r '.version' deno.json)
+          RC_VERSION="${BASE}-rc.${{ github.run_number }}"
+          echo "base=${BASE}" >> $GITHUB_OUTPUT
+          echo "version=${RC_VERSION}" >> $GITHUB_OUTPUT
+          echo "Publishing ${RC_VERSION}"
 
       - name: Build and publish
         env:
@@ -235,7 +240,9 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           deno task build:npm
-          cd npm && npm publish --access public --tag rc
+          cd npm
+          jq --arg v "$VERSION" '.version = $v' package.json > package.json.tmp && mv package.json.tmp package.json
+          npm publish --access public --tag rc
 
       - uses: actions/download-artifact@v4
         with:
@@ -254,12 +261,12 @@ jobs:
           echo "Available binaries: $BINARIES"
 
           # Delete previous rc release if it exists (from earlier merge)
-          gh release delete "v${VERSION}-rc" --repo veryfront/veryfront --yes --cleanup-tag 2>/dev/null || true
+          gh release delete "v${VERSION}" --repo veryfront/veryfront --yes --cleanup-tag 2>/dev/null || true
 
           # Public repo pre-release
-          gh release create "v${VERSION}-rc" \
+          gh release create "v${VERSION}" \
             --repo veryfront/veryfront \
-            --title "v${VERSION}-rc" \
+            --title "v${VERSION}" \
             --prerelease \
             --notes '```bash
           npx veryfront@rc
@@ -317,21 +324,7 @@ jobs:
       - name: Build and publish
         run: |
           deno task build:npm
-          VERSION=$(jq -r '.version' deno.json)
-          if [[ "$VERSION" == *"-rc"* ]] || [[ "$VERSION" == *"-alpha"* ]] || [[ "$VERSION" == *"-beta"* ]]; then
-            cd npm && npm publish --access public --tag rc
-          else
-            cd npm && npm publish --access public || {
-              # If publish fails because version already exists (published by prerelease job),
-              # just promote the existing rc-tagged version to latest
-              if npm view "veryfront@${VERSION}" version 2>/dev/null; then
-                echo "Version ${VERSION} already published, promoting to latest..."
-                npm dist-tag add "veryfront@${VERSION}" latest
-              else
-                exit 1
-              fi
-            }
-          fi
+          cd npm && npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -351,8 +344,10 @@ jobs:
           done
           echo "Available binaries: $BINARIES"
 
-          # Clean up rc pre-release (created by the prerelease job on main push)
-          gh release delete "v${VERSION}-rc" --repo veryfront/veryfront --yes --cleanup-tag 2>/dev/null || true
+          # Clean up rc pre-releases (created by the prerelease job on main pushes)
+          gh release list --repo veryfront/veryfront --json tagName -q ".[].tagName" \
+            | grep "^v${VERSION}-rc\." \
+            | xargs -I{} gh release delete {} --repo veryfront/veryfront --yes --cleanup-tag 2>/dev/null || true
 
           # Public repo release with binaries and install scripts
           gh release create "v${VERSION}" \
