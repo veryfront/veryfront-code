@@ -7,7 +7,6 @@
 
 import { agent } from 'veryfront/agent';
 import { discoverAll } from 'veryfront/mcp';
-import { initializeProviders } from 'veryfront/provider';
 import type { Agent } from 'veryfront/agent';
 
 // System prompt for the code assistant
@@ -73,14 +72,6 @@ You: "Let me search for that in the codebase..."
 - Provide context and explanations, not just raw data
 - Ask follow-up questions when needed
 - **CRITICAL**: Always end with a complete thought, never just tool output`;
-
-// Initialize providers - works in both Node.js and Deno
-initializeProviders({
-  openai: {
-    apiKey: (typeof process !== 'undefined' ? process.env.OPENAI_API_KEY : '') ||
-            (typeof Deno !== 'undefined' ? Deno.env.get('OPENAI_API_KEY') : '') || '',
-  },
-});
 
 // Auto-discover tools and resources on module load
 // Use cwd() to get the actual project directory (not the temp bundle directory)

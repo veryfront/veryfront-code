@@ -11,7 +11,6 @@
 
 import { agent, agentAsTool, createWorkflow, registerAgent } from 'veryfront/agent';
 import { tool } from 'veryfront/tool';
-import { initializeProviders } from 'veryfront/provider';
 import { z } from 'zod';
 
 // Helpers for Cross-Platform Compatibility (Deno/Node)
@@ -30,13 +29,6 @@ function getEnv(key: string): string | undefined {
 }
 
 console.log('=== Phase 3: Agent Enhancements ===\n');
-
-// Initialize providers
-initializeProviders({
-  openai: {
-    apiKey: getEnv('OPENAI_API_KEY') || 'sk-test',
-  },
-});
 
 // ============================================================================
 // 1. Memory Strategies

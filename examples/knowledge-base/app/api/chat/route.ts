@@ -24,17 +24,10 @@ if (typeof Deno === 'undefined') {
 }
 
 import { agent } from "veryfront/agent";
-import { initializeProviders } from "veryfront/provider";
 import { tool } from "veryfront/tool";
 import { z } from "zod";
 
-// Initialize providers
 const OPENAI_API_KEY = getEnv("OPENAI_API_KEY");
-if (OPENAI_API_KEY) {
-  initializeProviders({
-    openai: { apiKey: OPENAI_API_KEY },
-  });
-}
 
 // Load Knowledge Base (in-memory for demo)
 // In production, use a real Vector DB (Pinecone, Weaviate, pgvector, etc.)

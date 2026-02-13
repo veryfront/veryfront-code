@@ -6,7 +6,6 @@
 
 // Core
 import { agent, createWorkflow, agentAsTool } from 'veryfront/agent';
-import { initializeProviders } from 'veryfront/provider';
 import { detectPlatform, getPlatformCapabilities } from 'veryfront/platform';
 
 // Discovery & MCP
@@ -61,15 +60,6 @@ console.log(`Platform: ${capabilities.displayName}`);
 console.log(`MCP Server Support: ${capabilities.canRunMCPServer}`);
 console.log(`Max Agent Steps: ${capabilities.maxAgentSteps}`);
 console.log('');
-
-// Initialize providers
-initializeProviders({
-  openai: {
-    apiKey: getEnv('OPENAI_API_KEY') || 'sk-test',
-  },
-});
-
-console.log('Providers initialized ✓\n');
 
 // ============================================================================
 // Phase 2: MCP Integration - Auto-Discovery

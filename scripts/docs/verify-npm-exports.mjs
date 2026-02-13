@@ -46,7 +46,7 @@ const REQUIRED_EXPORTS = {
   "./mcp": ["createMCPServer", "registerTool", "registerPrompt", "registerResource"],
   "./middleware": ["cors", "rateLimit", "logger", "timeout", "MiddlewarePipeline"],
   "./oauth": ["createOAuthInitHandler", "createOAuthCallbackHandler", "githubConfig", "slackConfig", "MemoryTokenStore"],
-  "./provider": ["initializeProviders", "getProvider", "getProviderFromModel", "OpenAIProvider", "AnthropicProvider"],
+  "./provider": ["registerModelProvider", "resolveModel", "hasModelProvider", "getRegisteredModelProviders"],
   "./fs": ["readTextFile", "writeTextFile", "join", "resolve", "exists", "mkdir"],
 };
 

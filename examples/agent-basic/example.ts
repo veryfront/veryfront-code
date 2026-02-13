@@ -12,9 +12,6 @@
 // Platform
 import { detectPlatform, getPlatformCapabilities, getPlatformWarnings } from 'veryfront';
 
-// Providers
-import { initializeProviders } from 'veryfront/provider';
-
 // Agent & Tool factories
 import { agent } from 'veryfront/agent';
 import { tool, registerTool } from 'veryfront/tool';
@@ -78,24 +75,7 @@ if (warnings.length > 0) {
 }
 
 // ============================================================================
-// 2. Initialize Providers
-// ============================================================================
-
-console.log('\n=== Provider Initialization ===');
-
-initializeProviders({
-  openai: {
-    apiKey: getEnv('OPENAI_API_KEY') || 'sk-test',
-  },
-  anthropic: {
-    apiKey: getEnv('ANTHROPIC_API_KEY') || 'sk-ant-test',
-  },
-});
-
-console.log('Providers initialized');
-
-// ============================================================================
-// 3. Create Tools
+// 2. Create Tools
 // ============================================================================
 
 console.log('\n=== Tool Creation ===');

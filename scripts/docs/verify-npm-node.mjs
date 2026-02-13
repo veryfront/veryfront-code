@@ -173,11 +173,11 @@ try {
 console.log("veryfront/provider:");
 try {
   const prov = await imp("./provider");
-  assertType(prov.initializeProviders, "function", "initializeProviders is function");
-  assertType(prov.getProvider, "function", "getProvider is function");
-  assertType(prov.getProviderFromModel, "function", "getProviderFromModel is function");
-  assert(prov.OpenAIProvider !== undefined, "OpenAIProvider exists");
-  assert(prov.AnthropicProvider !== undefined, "AnthropicProvider exists");
+  assertType(prov.registerModelProvider, "function", "registerModelProvider is function");
+  assertType(prov.resolveModel, "function", "resolveModel is function");
+  assertType(prov.hasModelProvider, "function", "hasModelProvider is function");
+  assertType(prov.getRegisteredModelProviders, "function", "getRegisteredModelProviders is function");
+  assertType(prov.clearModelProviders, "function", "clearModelProviders is function");
   console.log("  OK    provider — 5 checks");
 } catch (err) {
   failed++;

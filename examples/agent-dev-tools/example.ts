@@ -10,8 +10,6 @@
 
 import { agent } from 'veryfront/agent';
 import { tool, registerTool } from 'veryfront/tool';
-import { initializeProviders } from 'veryfront/provider';
-
 import {
   testAgent,
   printTestResults,
@@ -40,13 +38,6 @@ function getEnv(key: string): string | undefined {
 }
 
 console.log('=== Phase 7: Developer Tools ===\n');
-
-// Initialize providers
-initializeProviders({
-  openai: {
-    apiKey: getEnv('OPENAI_API_KEY') || 'sk-test',
-  },
-});
 
 // ============================================================================
 // 1. Create and Test a Tool

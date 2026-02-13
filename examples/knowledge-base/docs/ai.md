@@ -30,5 +30,16 @@ const myTool = tool({
 
 ## Providers
 
-We support OpenAI and Anthropic out of the box.
-Providers handle the API communication and streaming.
+OpenAI, Anthropic, and Google are auto-initialized from environment variables
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`).
+
+For custom providers, use `registerModelProvider()`:
+
+```typescript
+import { registerModelProvider } from "veryfront/provider";
+import { createOpenAI } from "@ai-sdk/openai";
+
+registerModelProvider("ollama", (id) =>
+  createOpenAI({ apiKey: "ollama", baseURL: "http://localhost:11434/v1" })(id)
+);
+```
