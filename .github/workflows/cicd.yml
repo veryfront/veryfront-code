@@ -241,7 +241,7 @@ jobs:
         with:
           path: binaries
 
-      - name: Create GitHub releases
+      - name: Create GitHub pre-release
         env:
           VERSION: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ secrets.GH_PAT_VERYFRONT }}
@@ -253,23 +253,19 @@ jobs:
           done
           echo "Available binaries: $BINARIES"
 
-          # Public repo release
-          gh release create "v${VERSION}" \
+          # Delete previous rc release if it exists (from earlier merge)
+          gh release delete "v${VERSION}-rc" --repo veryfront/veryfront --yes --cleanup-tag 2>/dev/null || true
+
+          # Public repo pre-release
+          gh release create "v${VERSION}-rc" \
             --repo veryfront/veryfront \
-            --title "v${VERSION}" \
+            --title "v${VERSION}-rc" \
+            --prerelease \
             --notes '```bash
-          npx veryfront@'"${VERSION}"'
+          npx veryfront@rc
           ```' \
             $BINARIES \
             scripts/install.sh
-
-      - name: Create source repo release
-        run: |
-          gh release create "v${{ steps.version.outputs.version }}" \
-            --title "v${{ steps.version.outputs.version }}" \
-            --notes 'Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${{ steps.version.outputs.version }}'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@v3
@@ -354,6 +350,9 @@ jobs:
             [ -f "$f" ] && BINARIES="$BINARIES $f"
           done
           echo "Available binaries: $BINARIES"
+
+          # Clean up rc pre-release (created by the prerelease job on main push)
+          gh release delete "v${VERSION}-rc" --repo veryfront/veryfront --yes --cleanup-tag 2>/dev/null || true
 
           # Public repo release with binaries and install scripts
           gh release create "v${VERSION}" \
