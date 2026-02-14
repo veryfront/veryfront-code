@@ -49,6 +49,7 @@ export function generateCsrfToken(options?: CsrfTokenOptions): {
 }
 
 const encoder = new TextEncoder();
+const ASSET_PATH_RE = /\.[a-z0-9]+$/i;
 
 /** Constant-time string comparison to prevent timing attacks */
 function timingSafeEqual(a: string, b: string): boolean {
@@ -99,6 +100,16 @@ export function applyCsrfCookie(
 
   const method = req.method.toUpperCase();
   if (method !== "GET" && method !== "HEAD") return;
+
+  const { pathname } = new URL(req.url);
+  if (pathname.startsWith("/_veryfront/")) return;
+  if (pathname === "/_ws") return;
+  if (ASSET_PATH_RE.test(pathname)) return;
+
+  const accept = (req.headers.get("accept") ?? "").toLowerCase();
+  if (accept && !accept.includes("text/html") && !accept.includes("application/xhtml+xml")) {
+    return;
+  }
 
   const config = typeof csrfConfig === "boolean" ? {} : csrfConfig;
   const cookieName = config.cookieName ?? "vf_csrf";

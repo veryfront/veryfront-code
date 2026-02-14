@@ -1,5 +1,5 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { CsrfHandler } from "./csrf-handler.ts";
 import { generateCsrfToken } from "../../csrf/helpers.ts";
 import type { HandlerContext } from "#veryfront/types";

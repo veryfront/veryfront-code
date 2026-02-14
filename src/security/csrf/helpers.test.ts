@@ -109,6 +109,18 @@ describe("security/csrf/helpers", () => {
   });
 
   describe("applyCsrfCookie", () => {
+    it("should set cookie on HTML document request", () => {
+      const req = new Request("http://localhost/", {
+        headers: { accept: "text/html,application/xhtml+xml" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, true);
+
+      const setCookie = headers.get("set-cookie");
+      assertNotEquals(setCookie, null);
+      assertEquals(setCookie!.includes("vf_csrf="), true);
+    });
+
     it("should set cookie on GET when absent", () => {
       const req = new Request("http://localhost/");
       const headers = new Headers();
@@ -163,6 +175,36 @@ describe("security/csrf/helpers", () => {
 
     it("should skip on POST requests", () => {
       const req = new Request("http://localhost/submit", { method: "POST" });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, true);
+
+      assertEquals(headers.get("set-cookie"), null);
+    });
+
+    it("should skip non-HTML accept headers", () => {
+      const req = new Request("http://localhost/api/data", {
+        headers: { accept: "application/json" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, true);
+
+      assertEquals(headers.get("set-cookie"), null);
+    });
+
+    it("should skip internal /_veryfront paths", () => {
+      const req = new Request("http://localhost/_veryfront/chunks/app.js", {
+        headers: { accept: "text/html" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, true);
+
+      assertEquals(headers.get("set-cookie"), null);
+    });
+
+    it("should skip asset paths with file extensions", () => {
+      const req = new Request("http://localhost/static/app.js", {
+        headers: { accept: "text/html" },
+      });
       const headers = new Headers();
       applyCsrfCookie(req, headers, true);
 
