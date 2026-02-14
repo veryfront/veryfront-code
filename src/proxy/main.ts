@@ -72,13 +72,13 @@ function resolveProxyBinding(): { hostname: string; port: number } {
 
 const PRODUCTION_SERVER_URL = getEnv("VERYFRONT_SERVER_URL") || "http://localhost:3001";
 
-const headlessService = getEnv("VERYFRONT_SERVER_HEADLESS_SERVICE");
-const staticPodIps = getEnv("VERYFRONT_SERVER_POD_IPS");
-const rendererRouter = (headlessService || staticPodIps)
+const discoveryHost = getEnv("VERYFRONT_SERVER_DISCOVERY_HOST");
+const staticTargets = getEnv("VERYFRONT_SERVER_TARGETS");
+const rendererRouter = (discoveryHost || staticTargets)
   ? new RendererRouter(
-    headlessService || "static-pods",
+    discoveryHost || "static-targets",
     PRODUCTION_SERVER_URL,
-    parseInt(getEnv("VERYFRONT_SERVER_POD_REFRESH_MS") || "15000") || 15000,
+    parseInt(getEnv("VERYFRONT_SERVER_DISCOVERY_INTERVAL_MS") || "15000") || 15000,
   )
   : null;
 const { hostname: HOST, port: PORT } = resolveProxyBinding();
@@ -558,7 +558,7 @@ async function shutdown(): Promise<void> {
 onSignal("SIGINT", shutdown);
 onSignal("SIGTERM", shutdown);
 
-// Wait for sticky-session router to resolve initial pod list
+// Wait for sticky-session router to resolve initial target list
 await rendererRouter?.ready();
 
 // Initialize tracing and start server

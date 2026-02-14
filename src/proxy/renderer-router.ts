@@ -31,7 +31,7 @@ export function jumpHash(keyStr: string, numBuckets: number): number {
 const MAX_STALENESS_MS = 5 * 60 * 1000; // 5 minutes
 
 export class RendererRouter {
-  private pods: string[] = [];
+  private targets: string[] = [];
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private refreshing = false;
   private serverPort: number;
@@ -39,7 +39,7 @@ export class RendererRouter {
   private _ready: Promise<void>;
 
   constructor(
-    private headlessService: string,
+    private discoveryHost: string,
     private fallbackUrl: string,
     refreshMs?: number,
   ) {
@@ -47,19 +47,19 @@ export class RendererRouter {
     const parsed = portEnv ? parseInt(portEnv) : NaN;
     this.serverPort = Number.isNaN(parsed) ? DEFAULT_SERVER_PORT : parsed;
 
-    // Support static pod IPs via env var for local testing (bypasses DNS)
-    const staticPodIps = getEnv("VERYFRONT_SERVER_POD_IPS");
-    if (staticPodIps) {
-      this.pods = staticPodIps.split(",").map((ip) => ip.trim()).filter(Boolean).sort();
+    // Support static server targets via env var (bypasses DNS discovery)
+    const staticTargets = getEnv("VERYFRONT_SERVER_TARGETS");
+    if (staticTargets) {
+      this.targets = staticTargets.split(",").map((ip) => ip.trim()).filter(Boolean).sort();
       this.lastSuccessfulRefresh = Date.now();
       this._ready = Promise.resolve();
-      proxyLogger.debug("[RendererRouter] Using static pod IPs", { pods: this.pods.length });
+      proxyLogger.debug("[RendererRouter] Using static targets", { targets: this.targets.length });
       return;
     }
 
-    this._ready = this.refreshPods();
+    this._ready = this.refreshTargets();
     const interval = refreshMs ?? DEFAULT_REFRESH_MS;
-    this.refreshTimer = setInterval(() => this.refreshPods(), interval);
+    this.refreshTimer = setInterval(() => this.refreshTargets(), interval);
     unrefTimer(this.refreshTimer);
   }
 
@@ -68,15 +68,15 @@ export class RendererRouter {
   }
 
   resolve(projectSlug: string | undefined): string {
-    if (!projectSlug || this.pods.length === 0) return this.fallbackUrl;
+    if (!projectSlug || this.targets.length === 0) return this.fallbackUrl;
     if (
       this.lastSuccessfulRefresh > 0 && Date.now() - this.lastSuccessfulRefresh > MAX_STALENESS_MS
     ) {
-      proxyLogger.debug("[RendererRouter] Pod list stale, falling back to ClusterIP");
+      proxyLogger.debug("[RendererRouter] Target list stale, falling back to default");
       return this.fallbackUrl;
     }
-    const idx = jumpHash(projectSlug, this.pods.length);
-    return `http://${this.pods[idx]}:${this.serverPort}`;
+    const idx = jumpHash(projectSlug, this.targets.length);
+    return `http://${this.targets[idx]}:${this.serverPort}`;
   }
 
   close(): void {
@@ -86,13 +86,13 @@ export class RendererRouter {
     }
   }
 
-  get podCount(): number {
-    return this.pods.length;
+  get targetCount(): number {
+    return this.targets.length;
   }
 
-  /** Test helper: inject pod IPs without DNS resolution */
-  _setPods(ips: string[]): void {
-    this.pods = ips.sort();
+  /** Test helper: inject server IPs without DNS resolution */
+  _setTargets(ips: string[]): void {
+    this.targets = ips.sort();
     this.lastSuccessfulRefresh = Date.now();
   }
 
@@ -101,22 +101,22 @@ export class RendererRouter {
     this.lastSuccessfulRefresh = timestamp;
   }
 
-  private async refreshPods(): Promise<void> {
+  private async refreshTargets(): Promise<void> {
     if (this.refreshing) return;
     this.refreshing = true;
     try {
-      const ips = await resolve4(this.headlessService);
-      this.pods = ips.sort();
+      const ips = await resolve4(this.discoveryHost);
+      this.targets = ips.sort();
       this.lastSuccessfulRefresh = Date.now();
       proxyLogger.debug("[RendererRouter] DNS refresh", {
-        service: this.headlessService,
-        pods: this.pods.length,
+        host: this.discoveryHost,
+        targets: this.targets.length,
       });
     } catch (error) {
-      proxyLogger.debug("[RendererRouter] DNS resolution failed, keeping existing pods", {
-        service: this.headlessService,
+      proxyLogger.debug("[RendererRouter] DNS resolution failed, keeping existing targets", {
+        host: this.discoveryHost,
         error: error instanceof Error ? error.message : String(error),
-        existingPods: this.pods.length,
+        existingTargets: this.targets.length,
       });
     } finally {
       this.refreshing = false;
