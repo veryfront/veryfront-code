@@ -81,7 +81,7 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
         const diskDir = getEnv("VF_DISK_CACHE_DIR") || undefined;
         logger.debug("Using disk backend");
         span?.setAttribute("cache.backend.type", "disk");
-        return new DiskCacheBackend(diskDir);
+        return new DiskCacheBackend(diskDir, keyPrefix || undefined);
       }
 
       logger.debug("Using memory backend");

@@ -31,8 +31,9 @@ export class DiskCacheBackend implements CacheBackend {
   private dir: string;
   private regexCache = new Map<string, RegExp>();
 
-  constructor(baseDir?: string) {
-    this.dir = join(baseDir ?? getCacheBaseDir(), CACHE_SUBDIR);
+  constructor(baseDir?: string, keyPrefix?: string) {
+    const base = join(baseDir ?? getCacheBaseDir(), CACHE_SUBDIR);
+    this.dir = keyPrefix ? join(base, keyPrefix) : base;
   }
 
   private filePath(key: string): string {

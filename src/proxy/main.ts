@@ -78,7 +78,7 @@ const rendererRouter = (headlessService || staticPodIps)
   ? new RendererRouter(
     headlessService || "static-pods",
     PRODUCTION_SERVER_URL,
-    parseInt(getEnv("VERYFRONT_SERVER_POD_REFRESH_MS") || "15000"),
+    parseInt(getEnv("VERYFRONT_SERVER_POD_REFRESH_MS") || "15000") || 15000,
   )
   : null;
 const { hostname: HOST, port: PORT } = resolveProxyBinding();
@@ -334,15 +334,15 @@ function forwardToServer(req: Request): Promise<Response> {
 
           injectContext(newHeaders);
 
-          const baseUrl = rendererRouter?.resolve(ctx.projectSlug) ?? PRODUCTION_SERVER_URL;
-          const serverUrl = new URL(url.pathname + url.search, baseUrl);
-
           // Only retry idempotent methods (GET, HEAD, OPTIONS)
           const isIdempotent = ["GET", "HEAD", "OPTIONS"].includes(req.method);
           const maxRetries = isIdempotent ? VERYFRONT_SERVER_RETRY_COUNT : 0;
           let lastError: Error | null = null;
 
           for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            // Re-resolve on each attempt so retries can pick a different pod
+            const baseUrl = rendererRouter?.resolve(ctx.projectSlug) ?? PRODUCTION_SERVER_URL;
+            const serverUrl = new URL(url.pathname + url.search, baseUrl);
             // Delay before retry (not on first attempt)
             if (attempt > 0) {
               proxyLogger.info(
