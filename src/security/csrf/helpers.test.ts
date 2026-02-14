@@ -1,15 +1,16 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { applyCsrfCookie, generateCsrfToken, validateCsrf } from "./helpers.ts";
 
 describe("security/csrf/helpers", () => {
   describe("generateCsrfToken", () => {
-    it("should generate a token and Set-Cookie with HttpOnly by default", () => {
+    it("should generate a token and Set-Cookie with HttpOnly and Secure by default", () => {
       const result = generateCsrfToken();
       assertEquals(typeof result.token, "string");
       assertEquals(result.token.length > 0, true);
       assertEquals(result.setCookie.includes("vf_csrf="), true);
       assertEquals(result.setCookie.includes("HttpOnly"), true);
+      assertEquals(result.setCookie.includes("Secure"), true);
       assertEquals(result.setCookie.includes("SameSite=Lax"), true);
       assertEquals(result.setCookie.includes("Path=/"), true);
     });
@@ -18,6 +19,11 @@ describe("security/csrf/helpers", () => {
       const result = generateCsrfToken({ httpOnly: false });
       assertEquals(result.setCookie.includes("HttpOnly"), false);
       assertEquals(result.setCookie.includes("SameSite=Lax"), true);
+    });
+
+    it("should omit Secure when secure is false", () => {
+      const result = generateCsrfToken({ secure: false });
+      assertEquals(result.setCookie.includes("Secure"), false);
     });
 
     it("should use custom cookie name", () => {
@@ -33,13 +39,13 @@ describe("security/csrf/helpers", () => {
     it("should generate unique tokens", () => {
       const a = generateCsrfToken();
       const b = generateCsrfToken();
-      assertEquals(a.token !== b.token, true);
+      assertNotEquals(a.token, b.token);
     });
   });
 
   describe("validateCsrf", () => {
     it("should return true when cookie and header match", () => {
-      const { token } = generateCsrfToken();
+      const { token } = generateCsrfToken({ secure: false });
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: {
@@ -51,7 +57,7 @@ describe("security/csrf/helpers", () => {
     });
 
     it("should return false when header is missing", () => {
-      const { token } = generateCsrfToken();
+      const { token } = generateCsrfToken({ secure: false });
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: { cookie: `vf_csrf=${token}` },
@@ -79,7 +85,7 @@ describe("security/csrf/helpers", () => {
     });
 
     it("should use custom cookie and header names", () => {
-      const { token } = generateCsrfToken({ cookieName: "my_csrf" });
+      const { token } = generateCsrfToken({ cookieName: "my_csrf", secure: false });
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: {
@@ -109,9 +115,32 @@ describe("security/csrf/helpers", () => {
       applyCsrfCookie(req, headers, true);
 
       const setCookie = headers.get("set-cookie");
-      assertEquals(setCookie !== null, true);
+      assertNotEquals(setCookie, null);
       assertEquals(setCookie!.includes("vf_csrf="), true);
       assertEquals(setCookie!.includes("HttpOnly"), false); // double-submit needs JS access
+      assertEquals(setCookie!.includes("Secure"), false); // http:// request
+    });
+
+    it("should set Secure flag on HTTPS requests", () => {
+      const req = new Request("https://example.com/");
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, true);
+
+      const setCookie = headers.get("set-cookie");
+      assertNotEquals(setCookie, null);
+      assertEquals(setCookie!.includes("Secure"), true);
+    });
+
+    it("should set Secure flag when x-forwarded-proto is https", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-forwarded-proto": "https" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, true);
+
+      const setCookie = headers.get("set-cookie");
+      assertNotEquals(setCookie, null);
+      assertEquals(setCookie!.includes("Secure"), true);
     });
 
     it("should set cookie on HEAD when absent", () => {
@@ -119,7 +148,7 @@ describe("security/csrf/helpers", () => {
       const headers = new Headers();
       applyCsrfCookie(req, headers, true);
 
-      assertEquals(headers.get("set-cookie") !== null, true);
+      assertNotEquals(headers.get("set-cookie"), null);
     });
 
     it("should skip when cookie already present in request", () => {
@@ -162,7 +191,7 @@ describe("security/csrf/helpers", () => {
       applyCsrfCookie(req, headers, { cookieName: "my_csrf" });
 
       const setCookie = headers.get("set-cookie");
-      assertEquals(setCookie !== null, true);
+      assertNotEquals(setCookie, null);
       assertEquals(setCookie!.includes("my_csrf="), true);
     });
 
@@ -183,7 +212,7 @@ describe("security/csrf/helpers", () => {
       applyCsrfCookie(req, headers, true);
 
       const setCookie = headers.get("set-cookie");
-      assertEquals(setCookie !== null, true);
+      assertNotEquals(setCookie, null);
       assertEquals(setCookie!.includes("vf_csrf="), true);
     });
   });

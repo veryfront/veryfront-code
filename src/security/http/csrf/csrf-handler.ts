@@ -18,6 +18,15 @@ import type {
 
 const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+/** Internal /_veryfront/ prefixes that are safe to exempt from CSRF (dev assets, static JS). */
+const CSRF_EXEMPT_PREFIXES = [
+  "/_veryfront/modules/",
+  "/_veryfront/lib/",
+  "/_veryfront/chunks/",
+  "/_veryfront/preview-hmr",
+  "/_veryfront/studio-bridge",
+];
+
 export class CsrfHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "CsrfHandler",
@@ -25,29 +34,32 @@ export class CsrfHandler extends BaseHandler {
     patterns: [], // All requests
   };
 
-  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const csrfConfig = ctx.securityConfig?.csrf;
 
     // Not configured or explicitly disabled
-    if (!csrfConfig) return Promise.resolve(this.continue());
+    if (!csrfConfig) return this.continue();
 
     const method = req.method.toUpperCase();
 
-    // OPTIONS never needs CSRF
-    if (method === "OPTIONS") return Promise.resolve(this.continue());
+    // Safe methods never need CSRF
+    if (!STATE_CHANGING_METHODS.has(method)) return this.continue();
 
-    // Internal paths are exempt
     const { pathname } = new URL(req.url);
-    if (pathname.startsWith("/_veryfront/")) return Promise.resolve(this.continue());
 
-    // Only validate state-changing methods
-    if (!STATE_CHANGING_METHODS.has(method)) return Promise.resolve(this.continue());
+    // Only exempt internal asset/dev paths, NOT action endpoints
+    if (CSRF_EXEMPT_PREFIXES.some((p) => pathname.startsWith(p))) {
+      return this.continue();
+    }
+
+    // Internal log endpoint is safe to exempt (fire-and-forget client telemetry)
+    if (pathname === "/_veryfront/log") return this.continue();
 
     // Check exclude paths
     if (typeof csrfConfig === "object" && csrfConfig.excludePaths?.length) {
       for (const excludePath of csrfConfig.excludePaths) {
         if (pathname === excludePath || pathname.startsWith(excludePath + "/")) {
-          return Promise.resolve(this.continue());
+          return this.continue();
         }
       }
     }
@@ -57,13 +69,11 @@ export class CsrfHandler extends BaseHandler {
       : undefined;
 
     if (!validateCsrf(req, options)) {
-      return Promise.resolve(
-        this.respond(
-          new Response("Forbidden – invalid or missing CSRF token", { status: 403 }),
-        ),
+      return this.respond(
+        new Response("Forbidden – invalid or missing CSRF token", { status: 403 }),
       );
     }
 
-    return Promise.resolve(this.continue());
+    return this.continue();
   }
 }

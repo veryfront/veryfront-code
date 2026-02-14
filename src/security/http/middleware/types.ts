@@ -24,17 +24,12 @@ export interface AuthConfig {
   bearer?: BearerAuthConfig;
 }
 
-export interface CsrfConfig {
-  cookieName?: string;
-  headerName?: string;
-  excludePaths?: string[];
-  ttlSec?: number;
-}
+export type { CsrfConfig } from "../../csrf/helpers.ts";
 
 export interface SecurityConfig {
   auth?: AuthConfig;
   cors?: boolean | CORSConfig;
-  csrf?: boolean | CsrfConfig;
+  csrf?: boolean | import("../../csrf/helpers.ts").CsrfConfig;
   csp?: CSPDirectives;
   coop?: "same-origin" | "same-origin-allow-popups" | "unsafe-none";
   corp?: "same-origin" | "same-site" | "cross-origin";

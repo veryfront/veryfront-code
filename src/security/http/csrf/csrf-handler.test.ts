@@ -1,5 +1,5 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { CsrfHandler } from "./csrf-handler.ts";
 import { generateCsrfToken } from "../../csrf/helpers.ts";
 import type { HandlerContext } from "#veryfront/types";
@@ -63,11 +63,26 @@ describe("security/http/csrf/csrf-handler", () => {
       assertEquals(result.continue, true);
     });
 
-    it("should pass /_veryfront/ paths", async () => {
+    it("should exempt /_veryfront/log", async () => {
+      const ctx = createCtx(true);
+      const req = new Request("http://localhost/_veryfront/log", { method: "POST" });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.continue, true);
+    });
+
+    it("should exempt /_veryfront/modules/ asset paths", async () => {
+      const ctx = createCtx(true);
+      const req = new Request("http://localhost/_veryfront/modules/client.js", { method: "POST" });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.continue, true);
+    });
+
+    it("should NOT exempt /_veryfront/rsc/action (Server Actions need CSRF)", async () => {
       const ctx = createCtx(true);
       const req = new Request("http://localhost/_veryfront/rsc/action", { method: "POST" });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 403);
     });
 
     it("should reject POST without CSRF token", async () => {
@@ -101,7 +116,7 @@ describe("security/http/csrf/csrf-handler", () => {
 
     it("should pass POST with valid CSRF token", async () => {
       const ctx = createCtx(true);
-      const { token } = generateCsrfToken();
+      const { token } = generateCsrfToken({ secure: false });
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: {
@@ -115,7 +130,7 @@ describe("security/http/csrf/csrf-handler", () => {
 
     it("should reject POST with mismatched CSRF token", async () => {
       const ctx = createCtx(true);
-      const { token } = generateCsrfToken();
+      const { token } = generateCsrfToken({ secure: false });
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: {
@@ -131,7 +146,7 @@ describe("security/http/csrf/csrf-handler", () => {
   describe("custom configuration", () => {
     it("should use custom cookieName and headerName", async () => {
       const ctx = createCtx({ cookieName: "my_csrf", headerName: "x-my-csrf" });
-      const { token } = generateCsrfToken({ cookieName: "my_csrf" });
+      const { token } = generateCsrfToken({ cookieName: "my_csrf", secure: false });
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: {
@@ -145,7 +160,7 @@ describe("security/http/csrf/csrf-handler", () => {
 
     it("should reject when using default names with custom config", async () => {
       const ctx = createCtx({ cookieName: "my_csrf", headerName: "x-my-csrf" });
-      const { token } = generateCsrfToken();
+      const { token } = generateCsrfToken({ secure: false });
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: {

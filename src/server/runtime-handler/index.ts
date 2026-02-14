@@ -161,12 +161,9 @@ export function createVeryfrontHandler(
     (opts.config ? Promise.resolve(opts.config) : getConfig(projectDir, adapter))
       .then((c) => {
         config = c;
-        if (
-          c?.security?.csrf === undefined &&
-          !(globalThis as Record<string, unknown>).__vfTestEnv
-        ) {
-          logger.warn(
-            "CSRF protection is not configured. Add `security: { csrf: true }` to veryfront.config.ts to enable. Set `security: { csrf: false }` to suppress this warning.",
+        if (c?.security?.csrf === undefined) {
+          logger.debug(
+            "CSRF protection is not configured. Add `security: { csrf: true }` to veryfront.config.ts to enable.",
           );
         }
         return c;
