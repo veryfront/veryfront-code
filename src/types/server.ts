@@ -39,6 +39,14 @@ export interface SecurityConfig {
       exposedHeaders?: string[];
       maxAge?: number;
     };
+  csrf?:
+    | boolean
+    | {
+      cookieName?: string;
+      headerName?: string;
+      excludePaths?: string[];
+      ttlSec?: number;
+    };
   csp?: Partial<Record<string, string | string[]>>;
   headers?: Record<string, string>;
   [key: string]: unknown;

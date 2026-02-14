@@ -70,7 +70,7 @@ export class StaticHandler extends BaseHandler {
 
           return this.createResponseBuilder(ctx)
             .withCORS(req, ctx.securityConfig?.cors)
-            .withSecurity(ctx.securityConfig ?? undefined)
+            .withSecurity(ctx.securityConfig ?? undefined, req)
             .withCache("no-cache")
             .withContentType(
               "text/plain; charset=utf-8",
@@ -82,14 +82,14 @@ export class StaticHandler extends BaseHandler {
         if (hasMatchingEtag(req, result.etag)) {
           return this.createResponseBuilder(ctx)
             .withCORS(req, ctx.securityConfig?.cors)
-            .withSecurity(ctx.securityConfig ?? undefined)
+            .withSecurity(ctx.securityConfig ?? undefined, req)
             .notModified(result.etag);
         }
 
         const body: BodyInit | null = isHead ? null : result.data.slice();
         const response = this.createResponseBuilder(ctx)
           .withCORS(req, ctx.securityConfig?.cors)
-          .withSecurity(ctx.securityConfig ?? undefined)
+          .withSecurity(ctx.securityConfig ?? undefined, req)
           .withCache(result.cacheStrategy)
           .withETag(result.etag)
           .withContentType(result.contentType, body, HTTP_OK);

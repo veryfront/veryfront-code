@@ -56,7 +56,7 @@ export async function handleAppRouter(
       config: ctx.securityConfig?.cors,
     });
 
-    applySecurityHeaders(headers, ctx);
+    applySecurityHeaders(headers, ctx, req);
 
     if (headShim) return new Response(null, { status: res.status, headers });
 

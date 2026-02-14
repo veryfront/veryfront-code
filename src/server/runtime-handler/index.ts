@@ -27,6 +27,7 @@ import { createRequestContext } from "../context/request-context.ts";
 
 // Handler imports
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
+import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
 import { CorsHandler } from "../handlers/response/cors.ts";
 import { HealthHandler } from "../handlers/monitoring/health.handler.ts";
 import { MetricsHandler } from "../handlers/monitoring/metrics.handler.ts";
@@ -160,6 +161,14 @@ export function createVeryfrontHandler(
     (opts.config ? Promise.resolve(opts.config) : getConfig(projectDir, adapter))
       .then((c) => {
         config = c;
+        if (
+          c?.security?.csrf === undefined &&
+          !(globalThis as Record<string, unknown>).__vfTestEnv
+        ) {
+          logger.warn(
+            "CSRF protection is not configured. Add `security: { csrf: true }` to veryfront.config.ts to enable. Set `security: { csrf: false }` to suppress this warning.",
+          );
+        }
         return c;
       })
       .catch((error) => {
@@ -178,6 +187,7 @@ export function createVeryfrontHandler(
 
   registry.registerAll([
     new AuthHandler(),
+    new CsrfHandler(),
     new HMRHandler(),
     new CorsHandler(),
     new HealthHandler(),

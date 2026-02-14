@@ -1,40 +1,11 @@
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
-import { SERVER_ACTION_DEFAULT_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { parseCookiesFromHeaders } from "#veryfront/utils/cookie-utils.ts";
 
 export const base64url = base64urlEncodeBytes;
 export const parseCookies = parseCookiesFromHeaders;
 
-/** Generate a CSRF token and return value + Set-Cookie header string */
-export function generateCsrfToken(options?: { cookieName?: string; ttlSec?: number }): {
-  token: string;
-  setCookie: string;
-} {
-  const cookieName = options?.cookieName ?? "vf_csrf";
-  const maxAge = options?.ttlSec ?? SERVER_ACTION_DEFAULT_TTL_SEC;
-
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-
-  const token = base64url(bytes);
-  const setCookie = `${cookieName}=${token}; Path=/; Max-Age=${maxAge}; SameSite=Lax; HttpOnly`;
-
-  return { token, setCookie };
-}
-
-/** Validate CSRF token by comparing header and cookie */
-export function validateCsrf(
-  req: Request,
-  options?: { cookieName?: string; headerName?: string },
-): boolean {
-  const cookieName = options?.cookieName ?? "vf_csrf";
-  const headerName = options?.headerName ?? "x-csrf-token";
-
-  const cookieToken = parseCookies(req.headers)[cookieName];
-  if (!cookieToken) return false;
-
-  return cookieToken === (req.headers.get(headerName) ?? "");
-}
+// Re-export CSRF helpers from canonical location for backward compatibility
+export { generateCsrfToken, validateCsrf } from "#veryfront/security/csrf/helpers.ts";
 
 /** Extract a JWT payload from a cookie (no signature verification) */
 export function getSessionFromJwt(

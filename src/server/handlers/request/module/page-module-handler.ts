@@ -42,7 +42,7 @@ export function handlePageModule(
         const etag = computeEtag(code);
         const builder = createResponseBuilder(ctx)
           .withCORS(req, ctx.securityConfig?.cors)
-          .withSecurity(ctx.securityConfig ?? undefined);
+          .withSecurity(ctx.securityConfig ?? undefined, req);
 
         if (hasMatchingEtag(req, etag)) {
           return respond(builder.notModified(etag));

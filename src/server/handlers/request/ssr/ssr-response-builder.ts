@@ -33,7 +33,7 @@ export async function buildSSRResponse(
   if (result.isStreaming && result.stream) {
     const response = builder
       .withCORS(req, ctx.securityConfig?.cors)
-      .withSecurity(ctx.securityConfig ?? undefined)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
       .withClientHints()
       .withCache("no-cache")
       .withContentType(getContentType(".html"), result.stream, result.status);
@@ -48,7 +48,7 @@ export async function buildSSRResponse(
   if (!isDev && result.etag && hasMatchingEtag(req, result.etag)) {
     return builder
       .withCORS(req, ctx.securityConfig?.cors)
-      .withSecurity(ctx.securityConfig ?? undefined)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache(result.cacheStrategy)
       .notModified(result.etag);
   }
@@ -59,7 +59,7 @@ export async function buildSSRResponse(
 
   let response = builder
     .withCORS(req, ctx.securityConfig?.cors)
-    .withSecurity(ctx.securityConfig ?? undefined)
+    .withSecurity(ctx.securityConfig ?? undefined, req)
     .withCache(result.cacheStrategy);
 
   if (!result.isStreaming) response = response.withClientHints();

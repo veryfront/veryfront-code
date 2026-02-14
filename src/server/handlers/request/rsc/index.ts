@@ -62,7 +62,7 @@ export class RSCHandler extends BaseHandler {
           headers,
           config: ctx.securityConfig?.cors,
         });
-        applySecurityHeaders(headers, ctx);
+        applySecurityHeaders(headers, ctx, req);
 
         return this.respond(
           new Response(res.body, {

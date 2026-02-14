@@ -13,6 +13,14 @@ export interface HSTSConfig {
 
 export interface SecurityConfig {
   cors?: boolean | import("../cors/index.ts").CORSConfig;
+  csrf?:
+    | boolean
+    | {
+      cookieName?: string;
+      headerName?: string;
+      excludePaths?: string[];
+      ttlSec?: number;
+    };
   csp?: Partial<Record<string, string | string[]>>;
   coop?: "same-origin" | "same-origin-allow-popups" | "unsafe-none";
   corp?: "same-origin" | "same-site" | "cross-origin";

@@ -161,6 +161,15 @@ export const veryfrontConfigSchema = z
         csp: z.record(z.array(z.string())).optional(),
         remoteHosts: z.array(z.string().url()).optional(),
         cors: corsSchema.optional(),
+        csrf: z.union([
+          z.boolean(),
+          z.object({
+            cookieName: z.string().optional(),
+            headerName: z.string().optional(),
+            excludePaths: z.array(z.string()).optional(),
+            ttlSec: z.number().int().positive().optional(),
+          }).strict(),
+        ]).optional(),
         coop: z.enum(["same-origin", "same-origin-allow-popups", "unsafe-none"]).optional(),
         corp: z.enum(["same-origin", "same-site", "cross-origin"]).optional(),
         coep: z.enum(["require-corp", "unsafe-none"]).optional(),

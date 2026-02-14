@@ -45,7 +45,7 @@ export class HealthHandler extends BaseHandler {
     const pathname = new URL(req.url).pathname;
     const builder = this.createResponseBuilder(ctx)
       .withCORS(req, ctx.securityConfig?.cors)
-      .withSecurity(ctx.securityConfig ?? undefined);
+      .withSecurity(ctx.securityConfig ?? undefined, req);
 
     if (pathname === "/healthz") {
       return this.respond(

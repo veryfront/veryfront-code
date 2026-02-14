@@ -65,7 +65,7 @@ export async function tryNotFoundFallback(
 
     return builder
       .withCORS(req, ctx.securityConfig?.cors)
-      .withSecurity(ctx.securityConfig ?? undefined)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache("no-cache")
       .html(html, 404);
   } catch {

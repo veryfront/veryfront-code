@@ -38,6 +38,10 @@ export {
 } from "./http/handlers-index.ts";
 export type { CORSConfig, CSPDirectives, SecurityConfig } from "./http/handlers-index.ts";
 
+export { CsrfHandler } from "./http/csrf/index.ts";
+export { applyCsrfCookie, generateCsrfToken, validateCsrf } from "./csrf/index.ts";
+export type { CsrfConfig, CsrfTokenOptions } from "./csrf/index.ts";
+
 export { isValidSecurityConfig } from "./http/middleware/index.ts";
 
 export {

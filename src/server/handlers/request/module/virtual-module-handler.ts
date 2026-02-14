@@ -30,7 +30,7 @@ export function handleVirtualModule(
 
         const response = createResponseBuilder(ctx)
           .withCORS(req, ctx.securityConfig?.cors)
-          .withSecurity(ctx.securityConfig ?? undefined)
+          .withSecurity(ctx.securityConfig ?? undefined, req)
           .withHeaders(vmResponse.headers)
           .build(vmResponse.body, vmResponse.status);
 

@@ -24,9 +24,17 @@ export interface AuthConfig {
   bearer?: BearerAuthConfig;
 }
 
+export interface CsrfConfig {
+  cookieName?: string;
+  headerName?: string;
+  excludePaths?: string[];
+  ttlSec?: number;
+}
+
 export interface SecurityConfig {
   auth?: AuthConfig;
   cors?: boolean | CORSConfig;
+  csrf?: boolean | CsrfConfig;
   csp?: CSPDirectives;
   coop?: "same-origin" | "same-origin-allow-popups" | "unsafe-none";
   corp?: "same-origin" | "same-site" | "cross-origin";
