@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "nodeModulesDir": "auto",
   "exclude": [
     "npm/",
@@ -89,6 +89,7 @@
     "veryfront/build": "./src/build/index.ts",
     "veryfront/rendering": "./src/rendering/index.ts",
     "veryfront/cache": "./src/cache/index.ts",
+    "veryfront/security": "./src/security/index.ts",
     "veryfront/errors": "./src/errors/index.ts",
     "veryfront/issues": "./src/issues/index.ts",
     "veryfront/discovery": "./src/discovery/index.ts",

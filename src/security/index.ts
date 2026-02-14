@@ -91,3 +91,9 @@ export {
   wrapAdapterWithSecurity,
 } from "./secure-fs.ts";
 export type { SecureFsConfig, SecurityContext, SecurityEvent } from "./secure-fs.ts";
+
+export {
+  BUILD_HELPER_PERMISSIONS,
+  SERVER_PERMISSIONS,
+  WORKFLOW_JOB_PERMISSIONS,
+} from "./deno-permissions.ts";

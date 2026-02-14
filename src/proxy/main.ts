@@ -33,6 +33,7 @@ import {
 } from "./tracing.ts";
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { ErrorPages } from "../server/utils/error-html.ts";
+import { RendererRouter } from "./renderer-router.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
@@ -70,6 +71,16 @@ function resolveProxyBinding(): { hostname: string; port: number } {
 }
 
 const PRODUCTION_SERVER_URL = getEnv("VERYFRONT_SERVER_URL") || "http://localhost:3001";
+
+const discoveryHost = getEnv("VERYFRONT_SERVER_DISCOVERY_HOST");
+const staticTargets = getEnv("VERYFRONT_SERVER_TARGETS");
+const rendererRouter = (discoveryHost || staticTargets)
+  ? new RendererRouter(
+    discoveryHost || "static-targets",
+    PRODUCTION_SERVER_URL,
+    parseInt(getEnv("VERYFRONT_SERVER_DISCOVERY_INTERVAL_MS") || "15000") || 15000,
+  )
+  : null;
 const { hostname: HOST, port: PORT } = resolveProxyBinding();
 const WS_CONNECT_TIMEOUT_MS = 30000;
 // Timeout for forwarding requests to production server (SSR can take time on cold start)
@@ -323,14 +334,15 @@ function forwardToServer(req: Request): Promise<Response> {
 
           injectContext(newHeaders);
 
-          const serverUrl = new URL(url.pathname + url.search, PRODUCTION_SERVER_URL);
-
           // Only retry idempotent methods (GET, HEAD, OPTIONS)
           const isIdempotent = ["GET", "HEAD", "OPTIONS"].includes(req.method);
           const maxRetries = isIdempotent ? VERYFRONT_SERVER_RETRY_COUNT : 0;
           let lastError: Error | null = null;
 
           for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            // Re-resolve on each attempt so retries can pick a different pod
+            const baseUrl = rendererRouter?.resolve(ctx.projectSlug) ?? PRODUCTION_SERVER_URL;
+            const serverUrl = new URL(url.pathname + url.search, baseUrl);
             // Delay before retry (not on first attempt)
             if (attempt > 0) {
               proxyLogger.info(
@@ -536,6 +548,7 @@ function router(req: Request): Promise<Response> {
 // Graceful shutdown
 async function shutdown(): Promise<void> {
   proxyLogger.info("Shutting down");
+  rendererRouter?.close();
   await proxyHandler.close();
   await shutdownOTLP();
   proxyLogger.info("Closed connections");
@@ -544,6 +557,9 @@ async function shutdown(): Promise<void> {
 
 onSignal("SIGINT", shutdown);
 onSignal("SIGTERM", shutdown);
+
+// Wait for sticky-session router to resolve initial target list
+await rendererRouter?.ready();
 
 // Initialize tracing and start server
 await initializeOTLPWithApis();

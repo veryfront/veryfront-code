@@ -7,7 +7,7 @@
 
 import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
-import { SERVER_PERMISSIONS } from "#veryfront/security/deno-permissions.ts";
+import { SERVER_PERMISSIONS } from "veryfront/security";
 
 interface SplitModeOptions {
   productionServerPort: number;

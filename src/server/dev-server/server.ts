@@ -21,6 +21,8 @@ import {
   setSSRServerPort,
 } from "#veryfront/rendering/ssr-globals.ts";
 import { setEnv } from "#veryfront/platform/compat/process.ts";
+import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
+import { isDiskCacheConfigured } from "#veryfront/cache/backend.ts";
 import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
 
@@ -131,6 +133,13 @@ export class DevServer {
     enableSSRClientOnlyFetching();
 
     await this.logRSCStatus();
+
+    // Initialize disk cache in dev mode when explicitly configured
+    if (isDiskCacheConfigured()) {
+      initializeDistributedCaches().catch((error) => {
+        logger.debug("[DevServer] Cache initialization failed, using memory fallback", { error });
+      });
+    }
 
     // Auto-discover AI primitives (tools, agents, workflows, prompts, resources)
     await this.runAIDiscovery();

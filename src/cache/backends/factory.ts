@@ -12,6 +12,7 @@ import {
 import { MemoryCacheBackend } from "./memory.ts";
 import { isRedisConfigured, RedisCacheBackend } from "./redis.ts";
 import { ApiCacheBackend } from "./api.ts";
+import { DiskCacheBackend } from "./disk.ts";
 import { getEnvValue } from "./helpers.ts";
 
 const logger = baseLogger.component("cache-backend");
@@ -22,7 +23,7 @@ export type { CodeCacheGateway, TokenizingCacheGateway };
 export interface CacheBackendConfig {
   keyPrefix?: string;
   memoryMaxEntries?: number;
-  preferredBackend?: "api" | "redis" | "memory";
+  preferredBackend?: "api" | "redis" | "disk" | "memory";
   apiBaseUrl?: string;
   circuitBreakerName?: string;
 }
@@ -37,6 +38,10 @@ export function isApiCacheAvailable(): boolean {
     !!(apiUrl && !apiUrl.includes("localhost") && !apiUrl.includes("lvh.me"));
 
   return isProduction && !!apiUrl;
+}
+
+export function isDiskCacheConfigured(): boolean {
+  return getEnv("VF_CACHE_BACKEND") === "disk" || !!getEnv("VF_DISK_CACHE_DIR");
 }
 
 export function createCacheBackend(config: CacheBackendConfig = {}): Promise<CacheBackend> {
@@ -70,6 +75,15 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
         }
       }
 
+      const shouldUseDisk = preferredBackend === "disk" ||
+        (!preferredBackend && isDiskCacheConfigured());
+      if (shouldUseDisk) {
+        const diskDir = getEnv("VF_DISK_CACHE_DIR") || undefined;
+        logger.debug("Using disk backend");
+        span?.setAttribute("cache.backend.type", "disk");
+        return new DiskCacheBackend(diskDir, keyPrefix || undefined);
+      }
+
       logger.debug("Using memory backend");
       span?.setAttribute("cache.backend.type", "memory");
       return new MemoryCacheBackend(memoryMaxEntries);
@@ -94,18 +108,7 @@ export function createDistributedCacheAccessor(
   let backend: CacheBackend | null | undefined;
   let lastFailureTime = 0;
 
-  const singleflight = new (class {
-    private promise: Promise<CacheBackend | null> | null = null;
-
-    do(fn: () => Promise<CacheBackend | null>): Promise<CacheBackend | null> {
-      if (!this.promise) {
-        this.promise = fn().finally(() => {
-          this.promise = null;
-        });
-      }
-      return this.promise;
-    }
-  })();
+  let inflight: Promise<CacheBackend | null> | null = null;
 
   return () => {
     if (backend !== undefined) {
@@ -120,27 +123,33 @@ export function createDistributedCacheAccessor(
       if (backend !== undefined) return Promise.resolve(backend);
     }
 
-    return singleflight.do(async () => {
-      try {
-        const b = await factory();
-        if (!isDistributedBackend(b)) {
-          backend = null;
+    if (!inflight) {
+      inflight = (async () => {
+        try {
+          const b = await factory();
+          if (!isDistributedBackend(b)) {
+            backend = null;
+            lastFailureTime = 0;
+            logger.debug(`[${name}] No distributed cache available (memory only)`);
+            return null;
+          }
+
+          backend = b;
           lastFailureTime = 0;
-          logger.debug(`[${name}] No distributed cache available (memory only)`);
+          logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
+          return b;
+        } catch (error) {
+          logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
+          backend = null;
+          lastFailureTime = Date.now();
           return null;
         }
+      })().finally(() => {
+        inflight = null;
+      });
+    }
 
-        backend = b;
-        lastFailureTime = 0;
-        logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
-        return b;
-      } catch (error) {
-        logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
-        backend = null;
-        lastFailureTime = Date.now();
-        return null;
-      }
-    });
+    return inflight;
   };
 }
 
