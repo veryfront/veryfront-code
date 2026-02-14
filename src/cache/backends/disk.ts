@@ -91,7 +91,8 @@ export class DiskCacheBackend implements CacheBackend {
   async delByPattern(pattern: string): Promise<number> {
     let regex = this.regexCache.get(pattern);
     if (!regex) {
-      regex = new RegExp(`^${pattern.replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
+      const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+      regex = new RegExp(`^${escaped.replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
       if (this.regexCache.size >= 100) {
         const firstKey = this.regexCache.keys().next().value as string | undefined;
         if (firstKey) this.regexCache.delete(firstKey);

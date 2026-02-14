@@ -289,7 +289,8 @@ export class MockCacheBackend implements CacheBackend {
       timestamp: Date.now(),
     };
 
-    const regex = new RegExp(`^${pattern.replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
+    const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`^${escaped.replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
     let deleted = 0;
 
     for (const key of this.store.keys()) {
