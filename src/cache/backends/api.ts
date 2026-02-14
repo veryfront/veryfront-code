@@ -15,7 +15,9 @@ type CacheRequestContext = {
 };
 
 function getCurrentRequestContext(): CacheRequestContext | null {
-  const mod = globalThis.__vf_multi_project_adapter;
+  const mod = (globalThis as Record<string, unknown>).__vf_multi_project_adapter as
+    | { getCurrentRequestContext?: () => unknown }
+    | undefined;
   return (mod?.getCurrentRequestContext?.() as CacheRequestContext | undefined) ?? null;
 }
 
