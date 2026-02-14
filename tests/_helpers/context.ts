@@ -23,6 +23,7 @@
 
 import { join } from "#veryfront/compat/path";
 import {
+  isAlreadyExistsError,
   isNotFoundError,
   makeTempDir,
   mkdir,
@@ -84,6 +85,7 @@ safeSetEnv("VF_DISABLE_LRU_INTERVAL", "1");
 class PortAllocator {
   private static instance: PortAllocator;
   private usedPorts = new Set<number>();
+  private readonly lockRootDir = join(".cache", "_veryfront_test_port_locks");
 
   static getInstance(): PortAllocator {
     PortAllocator.instance ??= new PortAllocator();
@@ -91,20 +93,41 @@ class PortAllocator {
   }
 
   async allocate(): Promise<number> {
+    await mkdir(this.lockRootDir, { recursive: true });
+
     // OS-assigned port 0 is very unlikely to collide within one process,
-    // but retry if it does.
-    for (let attempt = 0; attempt < 10; attempt++) {
+    // but retry if it does. Additionally, acquire a cross-process lock so
+    // parallel workers cannot reserve the same port in the TOCTOU window.
+    for (let attempt = 0; attempt < 20; attempt++) {
       const port = await getFreePort();
-      if (!this.usedPorts.has(port)) {
-        this.usedPorts.add(port);
-        return port;
+      if (this.usedPorts.has(port)) continue;
+
+      const lockPath = this.getLockPath(port);
+      try {
+        await mkdir(lockPath);
+      } catch (error) {
+        if (isAlreadyExistsError(error)) continue;
+        throw error;
       }
+
+      this.usedPorts.add(port);
+      return port;
     }
-    throw new Error("Failed to allocate unique port after 10 attempts");
+    throw new Error("Failed to allocate unique locked port after 20 attempts");
   }
 
-  release(port: number): void {
+  async release(port: number): Promise<void> {
     this.usedPorts.delete(port);
+
+    try {
+      await remove(this.getLockPath(port), { recursive: true });
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  }
+
+  private getLockPath(port: number): string {
+    return join(this.lockRootDir, String(port));
   }
 }
 
@@ -366,7 +389,13 @@ export class TestContext {
     }
 
     const portAllocator = PortAllocator.getInstance();
-    for (const port of this.allocatedPorts) portAllocator.release(port);
+    for (const port of this.allocatedPorts) {
+      try {
+        await portAllocator.release(port);
+      } catch (error) {
+        errors.push(error as Error);
+      }
+    }
 
     for (const [key, originalValue] of this.originalEnv) {
       if (originalValue === undefined) deleteEnv(key);
