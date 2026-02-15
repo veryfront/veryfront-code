@@ -471,7 +471,7 @@ export function getConfig(
         }
       }
 
-      logger.warn("No config file found, using defaults", {
+      logger.debug("No config file found, using defaults", {
         effectiveCacheKey,
         projectDir,
         isVirtualFS,
