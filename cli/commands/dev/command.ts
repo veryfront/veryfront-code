@@ -201,7 +201,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       console.log();
       console.log(
         banner({
-          title: "Veryfront Code",
+          title: "Veryfront",
           subtitle: "is running",
           info: {
             url: serverUrl,

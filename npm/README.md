@@ -1,6 +1,6 @@
-# Veryfront Code
+# Veryfront
 
-The full-stack React framework for AI applications. Agents, tools, workflows — one framework, zero config.
+The full-stack React framework for agentic AI apps.
 
 ```bash
 # Interactive wizard
@@ -188,7 +188,7 @@ The dev server includes an interactive TUI with project management.
 ╭──────────────────────────────────────────────────────────╮
 │                                                          │
 │  ○ ○ ○ ○ ○ ○ ○                                           │
-│  ○ ● ● ● ○ ○ ○   Veryfront Code is now running           │
+│  ○ ● ● ● ○ ○ ○   Veryfront is now running           │
 │  ○ ● ● ● ○ ○ ○                                           │
 │  ○ ● ● ○ ● ● ○   Url http://veryfront.me:8080            │
 │  ○ ○ ○ ● ● ● ○   Mcp http://veryfront.me:9999/mcp        │
@@ -310,4 +310,4 @@ Add to `~/.gemini/settings.json`:
 
 ## License
 
-MIT
+Apache-2.0

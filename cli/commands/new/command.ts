@@ -216,7 +216,7 @@ export async function newCommand(
   }
 
   // TTY mode: Full TUI with dev server (no auth required to start)
-  const tui = createTui({ title: "Veryfront Code", showLogs: true });
+  const tui = createTui({ title: "Veryfront", showLogs: true });
   const restore = interceptConsole(tui);
 
   const localUrl = `http://${name}.veryfront.me:${port}`;

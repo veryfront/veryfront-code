@@ -36,12 +36,12 @@ export function renderStartup(state: StartupState): string {
 
   if (state.ready) {
     // Running state - always reserve space for both URL lines to prevent jumps
-    textLines.push(`${brand("Veryfront Code")} ${dim("is now running")}`, "");
+    textLines.push(`${brand("Veryfront")} ${dim("is now running")}`, "");
     textLines.push(state.serverUrl ? `${dim("Url")} ${brand(state.serverUrl)}` : "");
     textLines.push(state.mcpUrl ? `${dim("Mcp")} ${brand(state.mcpUrl)}` : "");
   } else {
     // Loading state - match ready state layout
-    textLines.push(`${brand("Veryfront Code")} ${dim("starting...")}`, "");
+    textLines.push(`${brand("Veryfront")} ${dim("starting...")}`, "");
 
     for (const step of state.steps) {
       if (step.status === "done") {
