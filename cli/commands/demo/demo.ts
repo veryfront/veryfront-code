@@ -27,12 +27,13 @@ import { readToken, saveToken, validateToken } from "../../auth/index.ts";
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
 import { getCallbackUrl, startCallbackServer } from "../../auth/callback-server.ts";
 import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "#cli/shared/constants";
-import { newCommand } from "../new/index.ts";
+import { initCommand } from "../init/index.ts";
+import { writeProjectSlug } from "#cli/shared/config";
+import { randomSuffix } from "#cli/shared/slug";
 import { deployCommand } from "../deploy/index.ts";
 import { pushCommand } from "../push/index.ts";
 import { devCommand } from "../dev/index.ts";
-import { reserveProjectSlug } from "../new/reserve-slug.ts";
-import { readConfigFile } from "#cli/shared/config";
+import { reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { DEMO_STEPS, type DemoStep } from "./steps.ts";
 
 // ANSI escape codes
@@ -324,13 +325,19 @@ async function executeStepAction(
     }
 
     case "create": {
-      await newCommand(projectName, { template: "chat", force: true });
+      await initCommand({
+        name: projectName,
+        template: "chat",
+        quiet: true,
+        skipInstall: true,
+        skipEnvPrompt: true,
+        force: true,
+      });
 
       const projectDir = join(cwd(), projectName);
-      const actualSlug = (await readConfigFile(projectDir))?.projectSlug;
-      if (!actualSlug) return;
-
-      actualProjectSlug = actualSlug;
+      const slug = `${projectName}-${randomSuffix()}`;
+      await writeProjectSlug(projectDir, slug);
+      actualProjectSlug = slug;
 
       const token = await readToken();
       if (!token) return;
@@ -339,7 +346,11 @@ async function executeStepAction(
       console.log(`  ${dim("Registering project...")}`);
 
       try {
-        await reserveProjectSlug(actualSlug, token);
+        const reserveResult = await reserveProjectSlug(slug, token);
+        if (reserveResult.slug !== slug) {
+          await writeProjectSlug(projectDir, reserveResult.slug);
+          actualProjectSlug = reserveResult.slug;
+        }
         console.log(`  ${success("✓")} Project registered`);
 
         console.log(`  ${dim("Pushing code...")}`);

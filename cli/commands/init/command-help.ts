@@ -15,6 +15,14 @@ export const initHelp: CommandHelp = {
       description: "Service integrations for chat template (gmail,slack,github,calendar)",
     },
     {
+      flag: "--deploy",
+      description: "Deploy to cloud after scaffolding (requires auth)",
+    },
+    {
+      flag: "-f, --force",
+      description: "Overwrite existing directory",
+    },
+    {
       flag: "-c, --config <file>",
       description: "JSON config file for programmatic scaffolding",
     },
@@ -33,11 +41,13 @@ export const initHelp: CommandHelp = {
     "veryfront init my-app --template chat",
     "veryfront init my-rag --template rag",
     "veryfront init my-pipeline --template workflow",
-    "veryfront init --config project.json       # From config file",
+    "veryfront init my-app --deploy              # Create and deploy",
+    "veryfront init --config project.json        # From config file",
   ],
   notes: [
     "Run without arguments for interactive wizard",
     "Interactive mode prompts for: location, template, and git initialization",
+    "Use --deploy to create, push, and deploy in one step",
     "Config file supports: name, template, integrations, skipInstall, skipEnvPrompt, env",
   ],
 };

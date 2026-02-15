@@ -4,7 +4,7 @@
  *******************************/
 
 import { cliLogger as logger } from "#cli/utils";
-import { brand, dim } from "#cli/ui";
+import { brand, dim, green } from "#cli/ui";
 import { createSpinner } from "../../ui/progress.ts";
 import { box } from "../../ui/box.ts";
 import { ensureDir } from "#std/fs.ts";
@@ -216,12 +216,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
     } with template: ${template}${featuresStr}${integrationsStr}`,
   );
 
-  if (projectName && (await fs.exists(projectDir))) {
+  if (projectName && (await fs.exists(projectDir)) && !options.force) {
     throw toError(
       createError({
         type: "config",
         message:
-          `Directory "${projectName}" already exists. Choose a different name or delete the existing directory.`,
+          `Directory "${projectName}" already exists. Choose a different name or use --force to overwrite.`,
       }),
     );
   }
@@ -401,6 +401,56 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }
   }
 
+  // Deploy to cloud if --deploy flag is set
+  let deployedSlug: string | undefined;
+  if (options.deploy) {
+    const { chdir } = await import("veryfront/platform");
+    const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
+    const { randomSuffix } = await import("#cli/shared/slug");
+    const { reserveProjectSlug } = await import("#cli/shared/reserve-slug");
+    const { writeProjectSlug } = await import("#cli/shared/config");
+    const { pushCommand } = await import("../push/index.ts");
+    const { deployCommand } = await import("../deploy/index.ts");
+
+    const authResult = await ensureAuthenticated();
+    if (authResult) {
+      const token = await readToken();
+      if (token) {
+        const slug = `${projectName ?? "my-app"}-${randomSuffix()}`;
+
+        log(`\n  Deploying as ${brand(slug)}...`);
+
+        await writeProjectSlug(projectDir, slug);
+        const reserveResult = await reserveProjectSlug(slug, token);
+        deployedSlug = reserveResult.slug;
+
+        if (reserveResult.slug !== slug) {
+          await writeProjectSlug(projectDir, reserveResult.slug);
+        }
+
+        chdir(projectDir);
+
+        await pushCommand({
+          projectDir,
+          branch: "main",
+          force: true,
+          dryRun: false,
+          quiet: true,
+        });
+
+        await deployCommand({
+          branch: "main",
+          env: "production",
+          force: true,
+          dryRun: false,
+          quiet: true,
+        });
+
+        log(`  ${green("✓")} Deployed to ${brand(`https://${deployedSlug}.veryfront.com`)}`);
+      }
+    }
+  }
+
   // Build success box with next steps
   const pm = await detectPackageManager(projectDir);
   const devCommand = getRunCommand(pm, "dev");
@@ -422,6 +472,13 @@ export async function initCommand(options: InitOptions): Promise<void> {
     brand("Next steps:"),
     ...nextSteps.map((step) => `  ${step}`),
   ];
+
+  if (deployedSlug) {
+    successContent.push(
+      "",
+      `${brand("Live:")} https://${deployedSlug}.veryfront.com`,
+    );
+  }
 
   if (template !== "minimal") {
     successContent.push(

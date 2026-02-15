@@ -105,6 +105,8 @@
     "#cli/shared/types": "./cli/shared/types.ts",
     "#cli/shared/constants": "./cli/shared/constants.ts",
     "#cli/shared/config": "./cli/shared/config.ts",
+    "#cli/shared/slug": "./cli/shared/slug.ts",
+    "#cli/shared/reserve-slug": "./cli/shared/reserve-slug.ts",
     "#cli/shared/server-startup": "./cli/shared/server-startup.ts",
     "#cli/ui": "./cli/ui/index.ts",
     "#cli/ui/box": "./cli/ui/box.ts",

@@ -49,17 +49,32 @@ export async function readConfigFile(projectDir: string): Promise<VeryfrontConfi
     }
   }
 
-  const rcPath = join(projectDir, ".veryfrontrc");
+  const configJsonPath = join(projectDir, "veryfront.json");
 
   try {
-    if (!(await fs.exists(rcPath))) return null;
-    const content = await fs.readTextFile(rcPath);
+    if (!(await fs.exists(configJsonPath))) return null;
+    const content = await fs.readTextFile(configJsonPath);
     const parsed = VeryfrontConfigSchema.safeParse(JSON.parse(content));
     return parsed.success ? parsed.data : null;
   } catch (error) {
-    cliLogger.debug(`Failed to read .veryfrontrc:`, error);
+    cliLogger.debug(`Failed to read veryfront.json:`, error);
     return null;
   }
+}
+
+export async function writeProjectSlug(projectDir: string, slug: string): Promise<void> {
+  const fs = createFileSystem();
+  const configJsonPath = join(projectDir, "veryfront.json");
+
+  let existing: VeryfrontConfig = {};
+  try {
+    const content = await fs.readTextFile(configJsonPath);
+    const parsed = VeryfrontConfigSchema.safeParse(JSON.parse(content));
+    if (parsed.success) existing = parsed.data;
+  } catch { /* file doesn't exist yet */ }
+
+  existing.projectSlug = slug;
+  await fs.writeTextFile(configJsonPath, JSON.stringify(existing, null, 2) + "\n");
 }
 
 function slugify(value: string): string {

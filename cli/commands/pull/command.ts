@@ -414,7 +414,7 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
         const token = getApiTokenEnv() ?? configFile?.apiToken;
         if (!token) {
           throw new Error(
-            "VERYFRONT_API_TOKEN environment variable or apiToken in .veryfrontrc is required when using --projects",
+            "VERYFRONT_API_TOKEN environment variable or apiToken in veryfront.json is required when using --projects",
           );
         }
 

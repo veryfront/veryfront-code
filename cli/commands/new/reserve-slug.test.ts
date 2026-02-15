@@ -1,20 +1,31 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { randomSuffix } from "#cli/shared/slug";
 
 describe("reserve-slug", () => {
-  describe("slug generation", () => {
-    it("should increment slug when taken", () => {
-      assertEquals("my-app-2", "my-app-2");
+  describe("slug generation with random suffix", () => {
+    it("should generate a 6-character alphanumeric suffix by default", () => {
+      const suffix = randomSuffix();
+      assertEquals(suffix.length, 6);
+      assertMatch(suffix, /^[a-z0-9]{6}$/);
     });
 
-    it("should continue incrementing on repeated conflicts", () => {
-      const baseSlug = "my-app";
-      const attempts = [2, 3, 4, 5];
+    it("should generate a suffix with custom length", () => {
+      const suffix = randomSuffix(8);
+      assertEquals(suffix.length, 8);
+      assertMatch(suffix, /^[a-z0-9]{8}$/);
+    });
 
-      assertEquals(
-        attempts.map((n) => `${baseSlug}-${n}`),
-        ["my-app-2", "my-app-3", "my-app-4", "my-app-5"],
-      );
+    it("should produce different suffixes on subsequent calls", () => {
+      const suffixes = new Set(Array.from({ length: 10 }, () => randomSuffix()));
+      // With 36^6 possibilities, 10 calls should all be unique
+      assertEquals(suffixes.size, 10);
+    });
+
+    it("should create slug with random suffix format", () => {
+      const baseSlug = "my-app";
+      const slug = `${baseSlug}-${randomSuffix()}`;
+      assertMatch(slug, /^my-app-[a-z0-9]{6}$/);
     });
   });
 

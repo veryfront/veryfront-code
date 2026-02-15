@@ -46,10 +46,10 @@ export const pullHelp: CommandHelp = {
     "veryfront pull --force",
   ],
   notes: [
-    "Requires VERYFRONT_API_TOKEN env var or .veryfrontrc config",
+    "Requires VERYFRONT_API_TOKEN env var or veryfront.json config",
     "Project slug is inferred from package.json name or directory",
     "With --projects, each project is pulled into a subdirectory named after the slug",
-    'Projects list can also be specified in .veryfrontrc: { "projects": ["slug1", "slug2"] }',
+    'Projects list can also be specified in veryfront.json: { "projects": ["slug1", "slug2"] }',
     "Priority order: --env > --release > --branch > main",
   ],
 };

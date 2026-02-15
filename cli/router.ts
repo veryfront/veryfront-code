@@ -20,7 +20,6 @@ import { handleIssuesCommand } from "./commands/issues/index.ts";
 import { handleLockCommand } from "./commands/lock/handler.ts";
 import { handleMCPCommand } from "./commands/mcp/handler.ts";
 import { handleMergeCommand } from "./commands/merge/handler.ts";
-import { handleNewCommand } from "./commands/new/index.ts";
 import { handlePullCommand } from "./commands/pull/index.ts";
 import { handlePushCommand } from "./commands/push/index.ts";
 import { handleRoutesCommand } from "./commands/routes/handler.ts";
@@ -59,7 +58,6 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "merge": handleMergeCommand,
   "deploy": handleDeployCommand,
   "up": handleUpCommand,
-  "new": handleNewCommand,
   "login": async (args) => {
     await login(parseLoginMethod(args));
   },

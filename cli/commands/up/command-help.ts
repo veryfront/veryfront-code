@@ -19,6 +19,6 @@ export const upHelp: CommandHelp = {
     "This is the default command when running 'veryfront' without arguments",
     "Automatically handles: authentication, project creation, push, and deploy",
     "Opens browser for login if not authenticated",
-    "Creates a new project if code exists but no .veryfrontrc",
+    "Creates a new project if code exists but no veryfront.json",
   ],
 };

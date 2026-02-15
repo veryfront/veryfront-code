@@ -3,19 +3,24 @@
 The full-stack React framework for agentic AI apps.
 
 ```bash
-curl -fsSL https://veryfront.com/install.sh | sh
-veryfront init my-app && cd my-app && veryfront dev
+npm create veryfront
 ```
 
 <details>
-<summary>npm, pnpm, yarn, bun, deno, brew</summary>
+<summary>pnpm, yarn, bun, deno, curl, brew</summary>
 
 ```bash
-npm create veryfront
 pnpm create veryfront
 yarn create veryfront
 bun create veryfront
 deno init --npm veryfront
+```
+
+Binary install (recommended for the CLI/TUI):
+
+```bash
+curl -fsSL https://veryfront.com/install.sh | sh
+# or
 brew install veryfront/tap/veryfront
 ```
 
@@ -57,6 +62,20 @@ export default agent({
   system: "You are a helpful assistant.",
   tools: true,       // auto-attach all discovered tools
   maxSteps: 10,
+});
+```
+
+## Define Prompt
+
+Versioned, swappable system prompts with variable interpolation.
+
+```ts
+// prompts/assistant.ts
+import { prompt } from "veryfront/prompt";
+
+export default prompt({
+  description: "General-purpose assistant",
+  content: "You are a helpful assistant for {{company}}.",
 });
 ```
 
@@ -169,18 +188,19 @@ const orchestrator = agent({
 
 ## Features
 
-| | |
+| Feature | |
 |---|---|
-| **Agents** | Model, system prompt, memory, tools, streaming |
-| **Tools** | Zod-validated, auto-discovered, type-safe |
-| **Workflows** | DAG orchestration with branching, loops, human approval |
-| **Chat UI** | `<Chat />` component + `useChat` hook |
+| **Agents** | Model, system prompt, tools, memory, streaming |
+| **Tools** | Zod-validated, auto-discovered |
+| **Prompts** | Versioned, variable interpolation, MCP-exposed |
+| **Workflows** | DAG orchestration, branching, parallelism, human approval |
 | **Multi-agent** | Agent-as-tool composition and delegation |
-| **Providers** | Unified interface for OpenAI, Anthropic, Google |
-| **MCP Server** | Expose tools and prompts over Model Context Protocol |
-| **OAuth** | 37 pre-configured providers (Google, GitHub, etc.) |
+| **Chat UI** | `<Chat />` component, `useChat` hook |
+| **Providers** | OpenAI, Anthropic, Google via unified interface |
+| **MCP** | Expose tools and prompts over Model Context Protocol |
+| **OAuth** | 37 pre-configured providers |
 | **Routing** | File-based with layouts, SSR, RSC |
-| **Middleware** | CORS, rate limiting, logging, custom pipelines |
+| **Middleware** | CORS, rate limiting, auth, custom pipelines |
 | **MDX** | Markdown pages with React components |
 | **Deploy** | `veryfront deploy` to managed cloud |
 
@@ -200,14 +220,15 @@ npx veryfront init my-app
 | **saas** | AI SaaS with auth, per-user chat, memory |
 | **minimal** | Blank canvas |
 
-## Build & Deploy
+## Deploy
 
 ```bash
-veryfront build
-veryfront deploy
+veryfront push                # Upload to a branch
+veryfront merge my-branch     # Merge into main
+veryfront deploy              # Release to production
 ```
 
-Your app is live at `https://<slug>.veryfront.com`.
+Preview at `https://<project_slug>--<branch_slug>.preview.veryfront.com`, production at `https://<project_slug>.veryfront.com`.
 
 ---
 

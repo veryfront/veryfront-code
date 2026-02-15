@@ -24,7 +24,6 @@ import { pushHelp } from "../commands/push/command-help.ts";
 import { mergeHelp } from "../commands/merge/command-help.ts";
 import { deployHelp } from "../commands/deploy/command-help.ts";
 import { upHelp } from "../commands/up/command-help.ts";
-import { newHelp } from "../commands/new/command-help.ts";
 import { loginHelp } from "../commands/login/command-help.ts";
 import { logoutHelp } from "../commands/logout/command-help.ts";
 import { whoamiHelp } from "../commands/whoami/command-help.ts";
@@ -55,7 +54,6 @@ export const COMMANDS: CommandRegistry = {
   merge: mergeHelp,
   deploy: deployHelp,
   up: upHelp,
-  new: newHelp,
   login: loginHelp,
   logout: logoutHelp,
   whoami: whoamiHelp,
