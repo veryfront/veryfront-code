@@ -140,12 +140,6 @@ const allowedWarnings: string[] = [
   "Render failed unexpectedly",
   "Test error",
 
-  // Runtime handler catch-all (fires when inner errors propagate to timeout-manager)
-  "Unhandled error in request handler",
-
-  // Local project discovery (expected when standard directories don't exist in test env)
-  "Failed to validate local project directory",
-  "Failed to validate x-project-path override",
 
   // Bundle manifest errors (expected when manifest is missing)
   "[bundle-manifest]",

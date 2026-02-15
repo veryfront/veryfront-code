@@ -36,9 +36,23 @@ export const localProjectCache = new LRUCache<string, string>({
 // Register cache for monitoring
 registerLRUCache("local-project-cache", localProjectCache);
 
+function isNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message;
+  return msg.includes("ENOENT") || msg.includes("No such file") || msg.includes("not found") ||
+    msg.includes("No request context available") ||
+    (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
 async function isValidLocalProjectPath(path: string, adapter: RuntimeAdapter): Promise<boolean> {
-  const stat = await adapter.fs.stat(path);
-  if (!stat?.isDirectory) return false;
+  try {
+    const stat = await adapter.fs.stat(path);
+    if (!stat?.isDirectory) return false;
+  } catch (error) {
+    // Directory doesn't exist — not a valid project path (expected for most lookups)
+    if (isNotFoundError(error)) return false;
+    throw error; // Unexpected errors (permissions, I/O) propagate to caller
+  }
 
   const [hasApp, hasPages, hasComponents] = await Promise.all([
     adapter.fs.stat(`${path}/app`).then((s) => s?.isDirectory).catch(() => false),
