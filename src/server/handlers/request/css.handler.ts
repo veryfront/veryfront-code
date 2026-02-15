@@ -9,6 +9,8 @@ import {
   extractCacheKeyContext,
   runWithCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 /** Pattern to match hashed CSS URLs: /_vf/css/[8-char-hash].css */
 const CSS_URL_PATTERN = /^\/_vf\/css\/([a-z0-9-]{1,16})\.css$/;
@@ -38,7 +40,27 @@ export class CSSHandler extends BaseHandler {
     if (!cssHash) return this.continue();
 
     const cacheCtx = extractCacheKeyContext(ctx);
-    const css = await runWithCacheKeyContext(cacheCtx, () => getCSSWithJITFallback(cssHash));
+
+    // CSS requests are lightweight paths that skip proxy header validation,
+    // so the multi-project adapter's AsyncLocalStorage is empty. Without it,
+    // the distributed API cache backend can't authenticate and silently returns
+    // null — causing cross-pod cache misses. Wrap the lookup in request context
+    // so the API backend can resolve the token and project.
+    const effectiveToken = ctx.proxyToken || getEnv("VERYFRONT_API_TOKEN") || "";
+    const lookup = () => runWithCacheKeyContext(cacheCtx, () => getCSSWithJITFallback(cssHash));
+
+    const css = ctx.projectSlug
+      ? await runWithRequestContext(
+        {
+          projectSlug: ctx.projectSlug,
+          token: effectiveToken,
+          projectId: ctx.projectId,
+          productionMode: ctx.resolvedEnvironment === "production",
+          releaseId: ctx.releaseId,
+        },
+        lookup,
+      )
+      : await lookup();
 
     if (!css) {
       this.logInfo(
