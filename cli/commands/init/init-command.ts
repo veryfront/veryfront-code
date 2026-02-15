@@ -413,40 +413,47 @@ export async function initCommand(options: InitOptions): Promise<void> {
     const { deployCommand } = await import("../deploy/index.ts");
 
     const authResult = await ensureAuthenticated();
-    if (authResult) {
+    if (!authResult) {
+      log(`\n  Authentication required for --deploy. Run ${brand("veryfront push")} to deploy later.`);
+    } else {
       const token = await readToken();
-      if (token) {
+      if (!token) {
+        log(`\n  Could not read auth token. Run ${brand("veryfront push")} to deploy later.`);
+      } else {
         const slug = `${projectName ?? "my-app"}-${randomSuffix()}`;
 
         log(`\n  Deploying as ${brand(slug)}...`);
 
-        await writeProjectSlug(projectDir, slug);
-        const reserveResult = await reserveProjectSlug(slug, token);
-        deployedSlug = reserveResult.slug;
+        try {
+          const reserveResult = await reserveProjectSlug(slug, token);
+          deployedSlug = reserveResult.slug;
 
-        if (reserveResult.slug !== slug) {
-          await writeProjectSlug(projectDir, reserveResult.slug);
+          await writeProjectSlug(projectDir, deployedSlug);
+
+          chdir(projectDir);
+
+          await pushCommand({
+            projectDir,
+            branch: "main",
+            force: true,
+            dryRun: false,
+            quiet: true,
+          });
+
+          await deployCommand({
+            branch: "main",
+            env: "production",
+            force: true,
+            dryRun: false,
+            quiet: true,
+          });
+
+          log(`  ${green("✓")} Deployed to ${brand(`https://${deployedSlug}.veryfront.com`)}`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          log(`\n  Deploy failed: ${message}`);
+          log(`  Your project was created locally. Run ${brand("veryfront push")} to deploy later.`);
         }
-
-        chdir(projectDir);
-
-        await pushCommand({
-          projectDir,
-          branch: "main",
-          force: true,
-          dryRun: false,
-          quiet: true,
-        });
-
-        await deployCommand({
-          branch: "main",
-          env: "production",
-          force: true,
-          dryRun: false,
-          quiet: true,
-        });
-
-        log(`  ${green("✓")} Deployed to ${brand(`https://${deployedSlug}.veryfront.com`)}`);
       }
     }
   }
