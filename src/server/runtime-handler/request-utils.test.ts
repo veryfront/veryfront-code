@@ -5,6 +5,7 @@ import {
   isInternalHost,
   isLightweightPath,
   isMonitoringPath,
+  isWebSocketPath,
   LIGHTWEIGHT_PATH_PREFIXES,
   MONITORING_PATHS,
   TIMEOUT_SENTINEL,
@@ -110,6 +111,18 @@ describe("request-utils", () => {
       assertEquals(isLightweightPath("/"), false);
       assertEquals(isLightweightPath("/about"), false);
       assertEquals(isLightweightPath("/api/users"), false);
+    });
+  });
+
+  describe("isWebSocketPath", () => {
+    it("returns true for /_ws", () => {
+      assertEquals(isWebSocketPath("/_ws"), true);
+    });
+
+    it("returns false for other paths", () => {
+      assertEquals(isWebSocketPath("/"), false);
+      assertEquals(isWebSocketPath("/_ws/sub"), false);
+      assertEquals(isWebSocketPath("/_wss"), false);
     });
   });
 });

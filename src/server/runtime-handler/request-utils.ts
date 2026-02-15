@@ -69,3 +69,8 @@ export const LIGHTWEIGHT_PATH_PREFIXES = [
 export function isLightweightPath(pathname: string): boolean {
   return LIGHTWEIGHT_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
+
+/** Check if path is the WebSocket endpoint (long-lived, handled by HMR handler) */
+export function isWebSocketPath(pathname: string): boolean {
+  return pathname === "/_ws";
+}
