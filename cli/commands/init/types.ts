@@ -21,4 +21,8 @@ export interface InitOptions {
   env?: EnvValues;
   /** Suppress output messages */
   quiet?: boolean;
+  /** Deploy to cloud after scaffolding */
+  deploy?: boolean;
+  /** Overwrite existing directory */
+  force?: boolean;
 }

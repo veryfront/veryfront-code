@@ -24,7 +24,7 @@ export const mergeHelp: CommandHelp = {
     "veryfront merge feature-header --dry-run",
   ],
   notes: [
-    "Requires VERYFRONT_API_TOKEN env var or .veryfrontrc config",
+    "Requires VERYFRONT_API_TOKEN env var or veryfront.json config",
     "Use --dry-run to preview which files would be merged",
     "Conflicts are reported but must be resolved in Studio",
   ],

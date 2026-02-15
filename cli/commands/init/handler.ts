@@ -22,6 +22,8 @@ export async function handleInitCommand(args: ParsedArgs): Promise<void> {
   let skipInstall = Boolean(args["skip-install"]);
   let skipEnvPrompt = Boolean(args["skip-env-prompt"]);
   let env: Record<string, string> | undefined;
+  const deploy = Boolean(args.deploy);
+  const force = Boolean(args.force || args.f);
 
   // Load config file if provided
   const configPath = args.config || args.c;
@@ -71,5 +73,7 @@ export async function handleInitCommand(args: ParsedArgs): Promise<void> {
     skipEnvPrompt,
     integrations,
     env,
+    deploy,
+    force,
   });
 }

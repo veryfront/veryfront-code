@@ -17,8 +17,9 @@ import {
   createApiClient,
   resolveConfigWithAuth,
   type ResolvedConfig,
+  writeProjectSlug,
 } from "#cli/shared/config";
-import { reserveProjectSlug } from "../new/reserve-slug.ts";
+import { reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { confirmPrompt, logError, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { createNoopSpinner, createSpinner } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -122,7 +123,7 @@ async function scanLocalFiles(
 
 export function generateBranchName(): string {
   const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
-  return `cli/push-${timestamp}`;
+  return `push-${timestamp}`;
 }
 
 export function createBranch(
@@ -272,7 +273,12 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         // Project doesn't exist yet - create it on first push
         if (message.includes("404") || message.includes("not found")) {
           spinner.update("Creating project...");
-          await reserveProjectSlug(config.projectSlug, config.apiToken);
+          const reserveResult = await reserveProjectSlug(config.projectSlug, config.apiToken);
+          if (reserveResult.slug !== config.projectSlug) {
+            await writeProjectSlug(projectDir, reserveResult.slug);
+            logInfo(`Project slug: ${reserveResult.slug}`);
+          }
+          config = { ...config, projectSlug: reserveResult.slug };
           // Now try to get files again (should be empty for new project)
           try {
             remoteFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
@@ -380,8 +386,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         } else {
           logSuccess(`Pushed to branch "${branchName}": ${successParts.join(", ")}.`);
           cliLogger.info("");
-          logInfo("To merge your changes, open Studio and merge the branch:");
-          cliLogger.info(`  https://veryfront.com/projects/${config.projectSlug}/branches`);
+          logInfo(`Preview: https://${config.projectSlug}--${branchName}.preview.veryfront.com`);
+          logInfo(`Merge:   https://veryfront.com/projects/${config.projectSlug}/branches`);
         }
       }
 

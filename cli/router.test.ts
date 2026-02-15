@@ -54,7 +54,6 @@ describe("cli/command-definitions integrity", () => {
       "merge",
       "deploy",
       "up",
-      "new",
       "login",
       "logout",
       "whoami",

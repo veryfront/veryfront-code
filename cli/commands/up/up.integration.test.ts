@@ -81,9 +81,9 @@ describe("Up Command Integration", { sanitizeOps: false, sanitizeResources: fals
       assertEquals(hasCode, true);
     });
 
-    it("should detect existing project (.veryfrontrc)", async () => {
+    it("should detect existing project (veryfront.json)", async () => {
       const config = { projectSlug: "my-app" };
-      const configPath = join(testDir, ".veryfrontrc");
+      const configPath = join(testDir, "veryfront.json");
 
       await writeTextFile(configPath, JSON.stringify(config));
 
@@ -128,7 +128,7 @@ describe("Up Command Integration", { sanitizeOps: false, sanitizeResources: fals
   describe("Config file handling", () => {
     it("should save config file correctly", async () => {
       const config = { projectSlug: "test-project" };
-      const configPath = join(testDir, ".veryfrontrc");
+      const configPath = join(testDir, "veryfront.json");
 
       await writeTextFile(configPath, JSON.stringify(config, null, 2) + "\n");
 
@@ -140,7 +140,7 @@ describe("Up Command Integration", { sanitizeOps: false, sanitizeResources: fals
 
     it("should read config file correctly", async () => {
       const config = { projectSlug: "existing-project" };
-      const configPath = join(testDir, ".veryfrontrc");
+      const configPath = join(testDir, "veryfront.json");
 
       await writeTextFile(configPath, JSON.stringify(config));
 

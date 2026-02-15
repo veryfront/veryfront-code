@@ -90,7 +90,10 @@ async function createProject(
 
 async function saveConfig(projectDir: string, config: VeryfrontConfig): Promise<void> {
   const fs = createFileSystem();
-  await fs.writeTextFile(join(projectDir, ".veryfrontrc"), `${JSON.stringify(config, null, 2)}\n`);
+  await fs.writeTextFile(
+    join(projectDir, "veryfront.json"),
+    `${JSON.stringify(config, null, 2)}\n`,
+  );
 }
 
 export async function upCommand(

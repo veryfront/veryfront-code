@@ -303,7 +303,7 @@ async function detectVeryfrontProject(projectPath: string): Promise<LocalProject
   const configExists = await fileExists(join(projectPath, "veryfront.config.ts")) ||
     await fileExists(join(projectPath, "veryfront.config.js"));
 
-  if (!configExists && !await fileExists(join(projectPath, ".veryfrontrc"))) return null;
+  if (!configExists && !await fileExists(join(projectPath, "veryfront.json"))) return null;
 
   let name = projectPath.split("/").pop() || "unknown";
   try {

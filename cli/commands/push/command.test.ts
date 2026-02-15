@@ -34,21 +34,21 @@ function createMockClient(overrides: MockClientOverrides = {}): ApiClient {
 }
 
 describe("generateBranchName", () => {
-  it("should generate a branch name with cli/push- prefix", () => {
+  it("should generate a branch name with push- prefix", () => {
     const name = generateBranchName();
-    assertMatch(name, /^cli\/push-/);
+    assertMatch(name, /^push-/);
   });
 
   it("should generate a branch name with timestamp", () => {
     const name = generateBranchName();
-    assertMatch(name, /^cli\/push-\d{8}T\d{6}$/);
+    assertMatch(name, /^push-\d{8}T\d{6}$/);
   });
 
   it("should generate unique names on successive calls", () => {
     const name1 = generateBranchName();
     const name2 = generateBranchName();
-    assertMatch(name1, /^cli\/push-\d{8}T\d{6}$/);
-    assertMatch(name2, /^cli\/push-\d{8}T\d{6}$/);
+    assertMatch(name1, /^push-\d{8}T\d{6}$/);
+    assertMatch(name2, /^push-\d{8}T\d{6}$/);
   });
 });
 

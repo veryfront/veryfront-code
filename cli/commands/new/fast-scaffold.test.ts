@@ -39,7 +39,7 @@ describe("fast-scaffold", () => {
   });
 
   describe("file generation", () => {
-    it("should create .veryfrontrc with correct structure", () => {
+    it("should create veryfront.json with correct structure", () => {
       const slug = "test-project";
       const content = `${JSON.stringify({ projectSlug: slug }, null, 2)}\n`;
 

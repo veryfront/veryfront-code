@@ -4,7 +4,7 @@
  *******************************/
 
 import { cliLogger as logger } from "#cli/utils";
-import { brand, dim } from "#cli/ui";
+import { brand, dim, green } from "#cli/ui";
 import { createSpinner } from "../../ui/progress.ts";
 import { box } from "../../ui/box.ts";
 import { ensureDir } from "#std/fs.ts";
@@ -216,12 +216,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
     } with template: ${template}${featuresStr}${integrationsStr}`,
   );
 
-  if (projectName && (await fs.exists(projectDir))) {
+  if (projectName && (await fs.exists(projectDir)) && !options.force) {
     throw toError(
       createError({
         type: "config",
         message:
-          `Directory "${projectName}" already exists. Choose a different name or delete the existing directory.`,
+          `Directory "${projectName}" already exists. Choose a different name or use --force to overwrite.`,
       }),
     );
   }
@@ -401,49 +401,128 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }
   }
 
+  // Deploy to cloud if --deploy flag is set
+  let deployedSlug: string | undefined;
+  if (options.deploy) {
+    const { chdir } = await import("veryfront/platform");
+    const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
+    const { randomSuffix } = await import("#cli/shared/slug");
+    const { reserveProjectSlug } = await import("#cli/shared/reserve-slug");
+    const { writeProjectSlug } = await import("#cli/shared/config");
+    const { pushCommand } = await import("../push/index.ts");
+    const { deployCommand } = await import("../deploy/index.ts");
+
+    const authResult = await ensureAuthenticated();
+    if (!authResult) {
+      log(
+        `\n  Authentication required for --deploy. Run ${brand("veryfront push")} to deploy later.`,
+      );
+    } else {
+      const token = await readToken();
+      if (!token) {
+        log(`\n  Could not read auth token. Run ${brand("veryfront push")} to deploy later.`);
+      } else {
+        const slug = `${projectName ?? "my-app"}-${randomSuffix()}`;
+
+        log(`\n  Deploying as ${brand(slug)}...`);
+
+        try {
+          const reserveResult = await reserveProjectSlug(slug, token);
+          deployedSlug = reserveResult.slug;
+
+          await writeProjectSlug(projectDir, deployedSlug);
+
+          chdir(projectDir);
+
+          await pushCommand({
+            projectDir,
+            branch: "main",
+            force: true,
+            dryRun: false,
+            quiet: true,
+          });
+
+          await deployCommand({
+            branch: "main",
+            env: "production",
+            force: true,
+            dryRun: false,
+            quiet: true,
+          });
+
+          log(`  ${green("✓")} Deployed to ${brand(`https://${deployedSlug}.veryfront.com`)}`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          log(`\n  Deploy failed: ${message}`);
+          log(
+            `  Your project was created locally. Run ${brand("veryfront push")} to deploy later.`,
+          );
+        }
+      }
+    }
+  }
+
   // Build success box with next steps
   const pm = await detectPackageManager(projectDir);
   const devCommand = getRunCommand(pm, "dev");
 
-  const nextSteps: string[] = [];
+  const localSteps: string[] = [];
   if (projectName) {
-    nextSteps.push(`${dim("1.")} cd ${brand(projectName)}`);
+    localSteps.push(`cd ${projectName}`);
   }
   if (options.skipInstall) {
-    nextSteps.push(`${dim(projectName ? "2." : "1.")} ${brand(getInstallCommand(pm))}`);
-    nextSteps.push(`${dim(projectName ? "3." : "2.")} ${brand(devCommand)}`);
-  } else {
-    nextSteps.push(`${dim(projectName ? "2." : "1.")} ${brand(devCommand)}`);
+    localSteps.push(getInstallCommand(pm));
   }
+  localSteps.push(devCommand);
 
+  const displayName = projectName ?? "Project";
   const successContent = [
-    `${brand("✓")} Project created successfully!`,
+    `${green("✓")} ${displayName} ready!`,
     "",
-    brand("Next steps:"),
-    ...nextSteps.map((step) => `  ${step}`),
+    ...localSteps,
   ];
 
-  if (template !== "minimal") {
+  if (deployedSlug) {
     successContent.push(
       "",
-      dim("Tips:"),
-      dim("  • Add your OPENAI_API_KEY to .env"),
-      dim("  • Add tools in tools/ (auto-discovered)"),
-      dim("  • Add agents in agents/ (auto-discovered)"),
+      `${green("Live:")} https://${deployedSlug}.veryfront.com`,
     );
   }
 
-  const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
-  if (displayFeatureTips?.length) {
-    successContent.push("", dim("Feature tips:"));
-    for (const tip of displayFeatureTips) {
-      successContent.push(dim(`  • ${tip}`));
-    }
+  if (!deployedSlug) {
+    successContent.push(
+      "",
+      `${brand("veryfront push")}   ${dim("→ share a preview")}`,
+      `${brand("veryfront deploy")} ${dim("→ go live")}`,
+    );
   }
 
   if (!quiet) {
     console.log("");
     console.log(box(successContent.join("\n"), { style: "rounded", padding: 1 }));
+
+    const tips: string[] = [];
+    if (template !== "minimal") {
+      tips.push(
+        `${dim("Add OPENAI_API_KEY to .env")}`,
+        `${dim("Add tools in tools/, agents in agents/ (auto-discovered)")}`,
+      );
+    }
+
+    const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
+    if (displayFeatureTips?.length) {
+      for (const tip of displayFeatureTips) {
+        tips.push(dim(tip));
+      }
+    }
+
+    if (tips.length) {
+      console.log("");
+      for (const tip of tips) {
+        console.log(`  ${tip}`);
+      }
+    }
+
     console.log("");
   }
 }

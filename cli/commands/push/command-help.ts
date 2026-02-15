@@ -30,7 +30,7 @@ export const pushHelp: CommandHelp = {
     "veryfront push --dry-run",
   ],
   notes: [
-    "Requires VERYFRONT_API_TOKEN env var or .veryfrontrc config",
+    "Requires VERYFRONT_API_TOKEN env var or veryfront.json config",
     "Creates a new branch for each push - merge in Studio",
     "Use --branch=main to push directly without creating a branch",
     "Uploads all files using their relative paths",

@@ -1,20 +1,34 @@
 # Veryfront
 
-The full-stack React framework for agentic AI apps.
+The full-stack React framework for agentic AI apps. Works with Node.js, Deno, and Bun.
 
 ```bash
-# Interactive wizard
-pnpm create veryfront
-
-# Or with project name
-npx veryfront init my-app
-cd my-app
-veryfront dev
+npm create veryfront
 ```
+
+<details>
+<summary>pnpm, yarn, bun, deno</summary>
+
+```bash
+pnpm create veryfront
+yarn create veryfront
+bun create veryfront
+deno init --npm veryfront
+```
+
+Binary install (recommended for the CLI/TUI):
+
+```bash
+curl -fsSL https://veryfront.com/install.sh | sh
+# or
+brew install veryfront/tap/veryfront
+```
+
+</details>
 
 ## What You Get
 
-Define agents, tools, and workflows as files. They're auto-discovered — no registration, no wiring.
+Agents, tools, and workflows are files. Auto-discovered, no registration needed.
 
 ```
 my-app/
@@ -34,7 +48,9 @@ my-app/
         route.ts      # Streaming chat endpoint
 ```
 
-## Define an Agent
+## Define Agent
+
+Agents have a model, system prompt, and optional tools and memory.
 
 ```ts
 // agents/assistant.ts
@@ -49,7 +65,9 @@ export default agent({
 });
 ```
 
-## Define a Tool
+## Define Tool
+
+Tools are Zod-validated functions an agent can call.
 
 ```ts
 // tools/search.ts
@@ -69,7 +87,33 @@ export default tool({
 });
 ```
 
-## Stream to the Frontend
+## Define Prompt
+
+Versioned system prompts with `{{variable}}` support.
+
+```ts
+// prompts/assistant.ts
+import { prompt } from "veryfront/prompt";
+
+export default prompt({
+  description: "General-purpose assistant",
+  content: "You are a helpful assistant for {{company}}.",
+});
+```
+
+## Expose Chat Endpoint
+
+One-line API route via `createChatHandler`, or use `getAgent` for full control.
+
+```ts
+// app/api/chat/route.ts
+import { createChatHandler } from "veryfront/agent";
+
+export const POST = createChatHandler("assistant");
+```
+
+<details>
+<summary>Manual handler with getAgent</summary>
 
 ```ts
 // app/api/chat/route.ts
@@ -83,11 +127,15 @@ export async function POST(req: Request) {
 }
 ```
 
-## Chat UI in One Line
+</details>
+
+## Add Chat UI
+
+Pre-built `<Chat />` component with streaming and tool call rendering.
 
 ```tsx
 // app/page.tsx
-'use client'
+"use client"
 import { Chat, useChat } from "veryfront/chat";
 
 export default function Page() {
@@ -96,9 +144,9 @@ export default function Page() {
 }
 ```
 
-## Workflows
+## Define Workflow
 
-DAG-based multi-step workflows with branching, parallelism, and human-in-the-loop.
+Multi-step DAG pipelines with branching, parallelism, and human-in-the-loop.
 
 ```ts
 // workflows/content-pipeline.ts
@@ -118,9 +166,9 @@ export default workflow({
 });
 ```
 
-## Multi-Agent Composition
+## Compose Agents
 
-Use agents as tools for other agents.
+For advanced setups, agents can delegate to other agents as tools.
 
 ```ts
 import { agent, registerAgent, getAgentsAsTools } from "veryfront/agent";
@@ -138,57 +186,47 @@ const orchestrator = agent({
 });
 ```
 
-## Features
-
-| | |
-|---|---|
-| **Agents** | Define AI agents with memory, tools, and streaming |
-| **Tools** | Zod-validated, auto-discovered, type-safe |
-| **Workflows** | DAG orchestration with branching, loops, and human approval |
-| **Chat UI** | `<Chat />` component + `useChat` hook, ready to go |
-| **Multi-agent** | Agent-as-tool composition and delegation |
-| **Providers** | Unified interface for OpenAI, Anthropic, Google |
-| **MCP Server** | Expose your tools and prompts over Model Context Protocol |
-| **OAuth** | 37 pre-configured providers (Google, GitHub, etc.) |
-| **Routing** | File-based routing with layouts, SSR, and RSC |
-| **Middleware** | CORS, rate limiting, logging, custom pipelines |
-| **MDX** | Markdown pages with React components |
-| **Deploy** | `veryfront deploy` to managed cloud |
-
 ## Templates
 
 ```bash
 npx veryfront init my-app
 ```
 
-- **chat** — AI chatbot with agent, tools, and streaming UI
-- **rag** — Chat with your docs using retrieval-augmented generation
-- **multi-agent** — Agents that delegate to each other as tools
-- **workflow** — Multi-step AI pipeline with approvals and parallelism
-- **coding-agent** — AI code assistant with file read/write/edit tools
-- **saas** — AI SaaS with auth, per-user chat, and memory
-- **minimal** — Blank canvas, no extras
+| Template | Description |
+|----------|-------------|
+| **chat** | AI chatbot with agent, tools, streaming UI |
+| **rag** | Chat with your docs via retrieval-augmented generation |
+| **multi-agent** | Agents that delegate to each other as tools |
+| **workflow** | Multi-step AI pipeline with approvals and parallelism |
+| **coding-agent** | AI code assistant with file read/write/edit tools |
+| **saas** | AI SaaS with auth, per-user chat, memory |
+| **minimal** | Blank canvas |
 
-## Build & Deploy
+## Deploy
+
+Push, merge, and ship from the command line.
 
 ```bash
-veryfront build
-veryfront deploy
+veryfront push                # Upload to a branch
+veryfront merge my-branch     # Merge into main
+veryfront deploy              # Release to production
 ```
 
-Your app is live at `https://<slug>.veryfront.com`.
-
----
+Preview at `https://<slug>--<branch>.preview.veryfront.com`, production at `https://<slug>.veryfront.com`.
 
 ## Terminal UI
 
-The dev server includes an interactive TUI with project management.
+Browse projects, view logs, and open in browser or IDE.
+
+```bash
+veryfront
+```
 
 ```
 ╭──────────────────────────────────────────────────────────╮
 │                                                          │
 │  ○ ○ ○ ○ ○ ○ ○                                           │
-│  ○ ● ● ● ○ ○ ○   Veryfront is now running           │
+│  ○ ● ● ● ○ ○ ○   Veryfront is now running                │
 │  ○ ● ● ● ○ ○ ○                                           │
 │  ○ ● ● ○ ● ● ○   Url http://veryfront.me:8080            │
 │  ○ ○ ○ ● ● ● ○   Mcp http://veryfront.me:9999/mcp        │
@@ -216,7 +254,7 @@ The dev server includes an interactive TUI with project management.
 
 ## Connect Your Coding Agent
 
-Veryfront exposes an MCP server that gives AI coding agents access to live dev server state — errors, logs, and HMR triggers.
+Give your coding agent access to live errors, logs, and HMR.
 
 <details>
 <summary>Claude Code</summary>

@@ -13,7 +13,6 @@ export { mergeCommand } from "./merge/index.ts";
 export { deployCommand } from "./deploy/index.ts";
 export { upCommand } from "./up/index.ts";
 export type { UpOptions } from "./up/index.ts";
-export { newCommand } from "./new/index.ts";
 export { initCommand } from "./init/index.ts";
 export { startCommand } from "./start/index.ts";
 export { serveCommand } from "./serve/index.ts";
