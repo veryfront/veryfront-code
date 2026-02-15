@@ -86,7 +86,12 @@ import { localProjectCache } from "./local-project-discovery.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext, buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
-import { HTTP_GATEWAY_TIMEOUT, isLightweightPath, isMonitoringPath } from "./request-utils.ts";
+import {
+  HTTP_GATEWAY_TIMEOUT,
+  isLightweightPath,
+  isMonitoringPath,
+  isWebSocketPath,
+} from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 import {
   EnvironmentVariableCache,
@@ -309,7 +314,7 @@ export function createVeryfrontHandler(
         // Early validation: in proxy mode, required context headers must be present.
         // Without these, the server cannot authenticate or resolve the project, and
         // proceeding would cause cryptic 500s deep in the rendering pipeline.
-        if (isProxyMode && !isLightweightPath(url.pathname)) {
+        if (isProxyMode && !isLightweightPath(url.pathname) && !isWebSocketPath(url.pathname)) {
           const token = req.headers.get("x-token");
           if (!headers.projectSlug) {
             logger.error("Missing required x-project-slug header in proxy mode", {

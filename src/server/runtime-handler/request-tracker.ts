@@ -7,6 +7,7 @@
 
 import { serverLogger } from "#veryfront/utils";
 import { unrefTimer } from "#veryfront/compat/process.ts";
+import { isWebSocketPath } from "./request-utils.ts";
 
 const logger = serverLogger.component("request-tracker");
 
@@ -90,31 +91,34 @@ class RequestTracker {
       releaseId,
     };
 
-    tracked.slowTimer = setTimeout(() => {
-      const elapsedMs = Math.round(performance.now() - startTime);
-      logger.warn("Slow request detected", {
-        requestId,
-        projectSlug,
-        path,
-        method,
-        elapsedMs,
-        inFlightCount: this.inFlight.size,
-      });
-
+    // WebSocket connections are long-lived by design — don't flag them as stuck.
+    if (!isWebSocketPath(path)) {
       tracked.slowTimer = setTimeout(() => {
-        const verySlowElapsedMs = Math.round(performance.now() - startTime);
-        logger.error("Very slow request - likely stuck", {
+        const elapsedMs = Math.round(performance.now() - startTime);
+        logger.warn("Slow request detected", {
           requestId,
           projectSlug,
           path,
           method,
-          elapsedMs: verySlowElapsedMs,
+          elapsedMs,
           inFlightCount: this.inFlight.size,
         });
-      }, VERY_SLOW_REQUEST_THRESHOLD_MS - SLOW_REQUEST_THRESHOLD_MS);
+
+        tracked.slowTimer = setTimeout(() => {
+          const verySlowElapsedMs = Math.round(performance.now() - startTime);
+          logger.error("Very slow request - likely stuck", {
+            requestId,
+            projectSlug,
+            path,
+            method,
+            elapsedMs: verySlowElapsedMs,
+            inFlightCount: this.inFlight.size,
+          });
+        }, VERY_SLOW_REQUEST_THRESHOLD_MS - SLOW_REQUEST_THRESHOLD_MS);
+        if (tracked.slowTimer) unrefTimer(tracked.slowTimer);
+      }, SLOW_REQUEST_THRESHOLD_MS);
       if (tracked.slowTimer) unrefTimer(tracked.slowTimer);
-    }, SLOW_REQUEST_THRESHOLD_MS);
-    if (tracked.slowTimer) unrefTimer(tracked.slowTimer);
+    }
 
     this.inFlight.set(requestId, tracked);
 
