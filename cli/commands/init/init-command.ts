@@ -414,7 +414,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
     const authResult = await ensureAuthenticated();
     if (!authResult) {
-      log(`\n  Authentication required for --deploy. Run ${brand("veryfront push")} to deploy later.`);
+      log(
+        `\n  Authentication required for --deploy. Run ${brand("veryfront push")} to deploy later.`,
+      );
     } else {
       const token = await readToken();
       if (!token) {
@@ -452,7 +454,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           log(`\n  Deploy failed: ${message}`);
-          log(`  Your project was created locally. Run ${brand("veryfront push")} to deploy later.`);
+          log(
+            `  Your project was created locally. Run ${brand("veryfront push")} to deploy later.`,
+          );
         }
       }
     }
@@ -462,52 +466,63 @@ export async function initCommand(options: InitOptions): Promise<void> {
   const pm = await detectPackageManager(projectDir);
   const devCommand = getRunCommand(pm, "dev");
 
-  const nextSteps: string[] = [];
+  const localSteps: string[] = [];
   if (projectName) {
-    nextSteps.push(`${dim("1.")} cd ${brand(projectName)}`);
+    localSteps.push(`cd ${projectName}`);
   }
   if (options.skipInstall) {
-    nextSteps.push(`${dim(projectName ? "2." : "1.")} ${brand(getInstallCommand(pm))}`);
-    nextSteps.push(`${dim(projectName ? "3." : "2.")} ${brand(devCommand)}`);
-  } else {
-    nextSteps.push(`${dim(projectName ? "2." : "1.")} ${brand(devCommand)}`);
+    localSteps.push(getInstallCommand(pm));
   }
+  localSteps.push(devCommand);
 
+  const displayName = projectName ?? "Project";
   const successContent = [
-    `${brand("✓")} Project created successfully!`,
+    `${green("✓")} ${displayName} ready!`,
     "",
-    brand("Next steps:"),
-    ...nextSteps.map((step) => `  ${step}`),
+    ...localSteps,
   ];
 
   if (deployedSlug) {
     successContent.push(
       "",
-      `${brand("Live:")} https://${deployedSlug}.veryfront.com`,
+      `${green("Live:")} https://${deployedSlug}.veryfront.com`,
     );
   }
 
-  if (template !== "minimal") {
+  if (!deployedSlug) {
     successContent.push(
       "",
-      dim("Tips:"),
-      dim("  • Add your OPENAI_API_KEY to .env"),
-      dim("  • Add tools in tools/ (auto-discovered)"),
-      dim("  • Add agents in agents/ (auto-discovered)"),
+      `${brand("veryfront push")}   ${dim("→ share a preview")}`,
+      `${brand("veryfront deploy")} ${dim("→ go live")}`,
     );
-  }
-
-  const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
-  if (displayFeatureTips?.length) {
-    successContent.push("", dim("Feature tips:"));
-    for (const tip of displayFeatureTips) {
-      successContent.push(dim(`  • ${tip}`));
-    }
   }
 
   if (!quiet) {
     console.log("");
     console.log(box(successContent.join("\n"), { style: "rounded", padding: 1 }));
+
+    const tips: string[] = [];
+    if (template !== "minimal") {
+      tips.push(
+        `${dim("Add OPENAI_API_KEY to .env")}`,
+        `${dim("Add tools in tools/, agents in agents/ (auto-discovered)")}`,
+      );
+    }
+
+    const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
+    if (displayFeatureTips?.length) {
+      for (const tip of displayFeatureTips) {
+        tips.push(dim(tip));
+      }
+    }
+
+    if (tips.length) {
+      console.log("");
+      for (const tip of tips) {
+        console.log(`  ${tip}`);
+      }
+    }
+
     console.log("");
   }
 }

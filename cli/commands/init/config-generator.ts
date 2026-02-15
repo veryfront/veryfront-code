@@ -11,8 +11,9 @@ export async function createPackageJson(
 ): Promise<void> {
   const fs = createFileSystem();
 
+  const dirName = projectDir.split(/[/\\]/).pop();
   const packageJson = {
-    name: projectName ?? "veryfront-project",
+    name: projectName ?? dirName ?? "veryfront-project",
     version: "0.1.0",
     type: "module",
     scripts: {

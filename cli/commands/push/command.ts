@@ -123,7 +123,7 @@ async function scanLocalFiles(
 
 export function generateBranchName(): string {
   const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
-  return `cli/push-${timestamp}`;
+  return `push-${timestamp}`;
 }
 
 export function createBranch(

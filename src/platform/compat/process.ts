@@ -593,6 +593,7 @@ export async function runCommand(
       args,
       cwd: cmdCwd,
       env: cmdEnv,
+      stdin: inherit ? "inherit" : "null",
       stdout: stdioMode,
       stderr: stdioMode,
     });

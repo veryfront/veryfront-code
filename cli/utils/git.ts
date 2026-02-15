@@ -38,9 +38,9 @@ export async function initializeGitRepo(
       return false;
     }
 
-    // Create initial commit
+    // Create initial commit (--no-gpg-sign avoids hanging when GPG signing is configured)
     const commitResult = await runCommand("git", {
-      args: ["commit", "-m", `Initial commit: ${projectName}`],
+      args: ["commit", "-m", `Initial commit: ${projectName}`, "--no-gpg-sign"],
       cwd: projectDir,
       capture: true,
     });
