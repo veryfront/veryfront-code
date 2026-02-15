@@ -60,7 +60,7 @@ async function generateManifest(): Promise<TemplateManifest> {
 		const templatePath = `${templatesDir}/${templateName}`;
 		const files: Record<string, string> = {};
 
-		for await (const file of walk(templatePath, { includeDirs: false, skip: [/[\/\\](?:\.cache|node_modules)[\/\\]?/] })) {
+		for await (const file of walk(templatePath, { includeDirs: false, skip: [/[\/\\](?:\.cache|node_modules)[\/\\]?/, /CLAUDE\.md$/] })) {
 			const relativePath = relative(templatePath, file.path);
 			const mappedPath = mapFileName(relativePath);
 			const content = await Deno.readTextFile(file.path);
@@ -86,7 +86,7 @@ async function generateManifest(): Promise<TemplateManifest> {
 
 		const files: Record<string, string> = {};
 
-		for await (const file of walk(integrationPath, { includeDirs: false, skip: [/[\/\\](?:\.cache|node_modules)[\/\\]?/] })) {
+		for await (const file of walk(integrationPath, { includeDirs: false, skip: [/[\/\\](?:\.cache|node_modules)[\/\\]?/, /CLAUDE\.md$/] })) {
 			const relativePath = relative(integrationPath, file.path);
 			const mappedPath = mapFileName(relativePath);
 			const content = await Deno.readTextFile(file.path);
