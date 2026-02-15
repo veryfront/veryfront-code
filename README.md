@@ -226,7 +226,7 @@ veryfront
 ╭──────────────────────────────────────────────────────────╮
 │                                                          │
 │  ○ ○ ○ ○ ○ ○ ○                                           │
-│  ○ ● ● ● ○ ○ ○   Veryfront is now running               │
+│  ○ ● ● ● ○ ○ ○   Veryfront is now running                │
 │  ○ ● ● ● ○ ○ ○                                           │
 │  ○ ● ● ○ ● ● ○   Url http://veryfront.me:8080            │
 │  ○ ○ ○ ● ● ● ○   Mcp http://veryfront.me:9999/mcp        │
