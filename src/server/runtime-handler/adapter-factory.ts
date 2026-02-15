@@ -75,10 +75,13 @@ export async function resolveAdapter(
   let effectiveAdapter = opts.adapter;
   let effectiveConfig = opts.config;
 
-  // Check if this is a local project
+  // Check if this is a local project.
+  // In proxy mode, skip local discovery unless there's an explicit header path override —
+  // the standard directories (data/projects/, projects/, examples/) don't exist in k8s.
   const trustedHeaderProjectPath = opts.isProxyMode ? opts.headerProjectPath : undefined;
-  const localProjectPath = opts.projectSlug
-    ? await findLocalProjectPath(opts.projectSlug, opts.adapter, trustedHeaderProjectPath)
+  const shouldCheckLocalPath = opts.projectSlug && (!opts.isProxyMode || trustedHeaderProjectPath);
+  const localProjectPath = shouldCheckLocalPath
+    ? await findLocalProjectPath(opts.projectSlug!, opts.adapter, trustedHeaderProjectPath)
     : undefined;
 
   const isLocalProject = !!localProjectPath;
