@@ -1,6 +1,6 @@
 # Veryfront
 
-The full-stack React framework for agentic AI apps.
+The full-stack React framework for agentic AI apps. Works with Node.js, Deno, and Bun.
 
 ```bash
 npm create veryfront
@@ -65,20 +65,6 @@ export default agent({
 });
 ```
 
-## Define Prompt
-
-Versioned, swappable system prompts with variable interpolation.
-
-```ts
-// prompts/assistant.ts
-import { prompt } from "veryfront/prompt";
-
-export default prompt({
-  description: "General-purpose assistant",
-  content: "You are a helpful assistant for {{company}}.",
-});
-```
-
 ## Define Tool
 
 Tools are Zod-validated functions an agent can call.
@@ -101,9 +87,23 @@ export default tool({
 });
 ```
 
+## Define Prompt
+
+Versioned system prompts with `{{variable}}` support.
+
+```ts
+// prompts/assistant.ts
+import { prompt } from "veryfront/prompt";
+
+export default prompt({
+  description: "General-purpose assistant",
+  content: "You are a helpful assistant for {{company}}.",
+});
+```
+
 ## Expose Chat Endpoint
 
-One-line API route via `createChatHandler`, or use `getAgent` directly.
+One-line API route via `createChatHandler`, or use `getAgent` for full control.
 
 ```ts
 // app/api/chat/route.ts
@@ -135,7 +135,7 @@ Pre-built `<Chat />` component with streaming and tool call rendering.
 
 ```tsx
 // app/page.tsx
-'use client'
+"use client"
 import { Chat, useChat } from "veryfront/chat";
 
 export default function Page() {
@@ -168,7 +168,7 @@ export default workflow({
 
 ## Compose Agents
 
-Agents can be used as tools by other agents.
+For advanced setups, agents can delegate to other agents as tools.
 
 ```ts
 import { agent, registerAgent, getAgentsAsTools } from "veryfront/agent";
@@ -185,24 +185,6 @@ const orchestrator = agent({
   tools: getAgentsAsTools(["researcher", "writer"]),
 });
 ```
-
-## Features
-
-| Feature | |
-|---|---|
-| **Agents** | Model, system prompt, tools, memory, streaming |
-| **Tools** | Zod-validated, auto-discovered |
-| **Prompts** | Versioned, variable interpolation, MCP-exposed |
-| **Workflows** | DAG orchestration, branching, parallelism, human approval |
-| **Multi-agent** | Agent-as-tool composition and delegation |
-| **Chat UI** | `<Chat />` component, `useChat` hook |
-| **Providers** | OpenAI, Anthropic, Google via unified interface |
-| **MCP** | Expose tools and prompts over Model Context Protocol |
-| **OAuth** | 37 pre-configured providers |
-| **Routing** | File-based with layouts, SSR, RSC |
-| **Middleware** | CORS, rate limiting, auth, custom pipelines |
-| **MDX** | Markdown pages with React components |
-| **Deploy** | `veryfront deploy` to managed cloud |
 
 ## Templates
 
@@ -222,25 +204,29 @@ npx veryfront init my-app
 
 ## Deploy
 
+Push, merge, and ship from the command line.
+
 ```bash
 veryfront push                # Upload to a branch
 veryfront merge my-branch     # Merge into main
 veryfront deploy              # Release to production
 ```
 
-Preview at `https://<project_slug>--<branch_slug>.preview.veryfront.com`, production at `https://<project_slug>.veryfront.com`.
-
----
+Preview at `https://<slug>--<branch>.preview.veryfront.com`, production at `https://<slug>.veryfront.com`.
 
 ## Terminal UI
 
-Interactive TUI with project management and live reload.
+Browse projects, view logs, and open in browser or IDE.
+
+```bash
+veryfront
+```
 
 ```
 ╭──────────────────────────────────────────────────────────╮
 │                                                          │
 │  ○ ○ ○ ○ ○ ○ ○                                           │
-│  ○ ● ● ● ○ ○ ○   Veryfront is now running                │
+│  ○ ● ● ● ○ ○ ○   Veryfront is now running               │
 │  ○ ● ● ● ○ ○ ○                                           │
 │  ○ ● ● ○ ● ● ○   Url http://veryfront.me:8080            │
 │  ○ ○ ○ ● ● ● ○   Mcp http://veryfront.me:9999/mcp        │
@@ -268,7 +254,7 @@ Interactive TUI with project management and live reload.
 
 ## Connect Your Coding Agent
 
-MCP server gives AI coding agents access to live dev server state.
+Give your coding agent access to live errors, logs, and HMR.
 
 <details>
 <summary>Claude Code</summary>
