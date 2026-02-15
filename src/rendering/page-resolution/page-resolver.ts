@@ -183,7 +183,7 @@ export class PageResolver {
         );
       }
     } catch (error) {
-      logger.debug("Failed to read App Router directory", {
+      logger.warn("Failed to read App Router directory", {
         dir: currentDir,
         error: error instanceof Error ? error.message : String(error),
       });

@@ -81,6 +81,10 @@ export abstract class BaseHandler implements Handler {
     serverLogger.debug(`[${this.metadata.name}] ${message}`, extra ?? undefined);
   }
 
+  protected logWarn(message: string, extra?: Record<string, unknown>, _ctx?: HandlerContext): void {
+    serverLogger.warn(`[${this.metadata.name}] ${message}`, extra ?? undefined);
+  }
+
   protected logInfo(message: string, extra?: Record<string, unknown>, _ctx?: HandlerContext): void {
     serverLogger.info(`[${this.metadata.name}] ${message}`, extra ?? undefined);
   }

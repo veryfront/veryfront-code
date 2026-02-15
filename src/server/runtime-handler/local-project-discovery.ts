@@ -97,8 +97,12 @@ export async function findLocalProjectPath(
       localProjectCache.set(slug, absolutePath);
       logger.debug("Discovered local project", { slug, path: absolutePath });
       return absolutePath;
-    } catch {
-      // Directory doesn't exist, continue
+    } catch (error) {
+      logger.warn("Failed to validate local project directory", {
+        slug,
+        path: projectPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

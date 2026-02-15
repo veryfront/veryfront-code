@@ -100,7 +100,13 @@ async function walkAppSSG(
       const st = await adapter.fs.stat(filePath);
       if (!st.isFile) continue;
 
-      const src = (await adapter.fs.readFile(filePath).catch(() => "")) ?? "";
+      const src = (await adapter.fs.readFile(filePath).catch((error) => {
+        logger.warn("Failed to read route file for SSG analysis", {
+          filePath,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return "";
+      })) ?? "";
       if (isForceDynamic(src)) break;
 
       const path = `/${segs.join("/")}`;

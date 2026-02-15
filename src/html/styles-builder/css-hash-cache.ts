@@ -380,7 +380,10 @@ export async function persistRegeneratedCSSEntry(
   try {
     const cache = await getCssCache();
     await cache.set(hash, JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
-  } catch {
-    // Ignore cache write failure - we still return regenerated CSS.
+  } catch (error) {
+    logger.error("CSS cache write failed", {
+      hash: hash.slice(-20),
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }

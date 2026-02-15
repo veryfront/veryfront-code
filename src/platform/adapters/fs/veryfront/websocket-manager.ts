@@ -352,11 +352,13 @@ export class WebSocketManager {
     });
 
     void (async () => {
+      let succeeded = false;
       try {
         const results = await Promise.all(
           Array.from(deletionPrefixes).map((prefix) => this.deps.cache.deleteByPrefixAsync(prefix)),
         );
         const totalDeleted = results.reduce((sum, count) => sum + count, 0);
+        succeeded = true;
 
         logger.info("PUBLISH POKE - persistent cache cleared", {
           projectSlug: this.deps.projectSlug,
@@ -365,17 +367,30 @@ export class WebSocketManager {
           totalDeleted,
         });
       } catch (error) {
-        logger.warn("PUBLISH POKE - failed to clear persistent cache", {
+        logger.error("PUBLISH POKE - failed to clear persistent cache (stale data may be served)", {
           projectSlug: this.deps.projectSlug,
           releaseId,
           environmentName,
           error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
         });
       } finally {
-        for (const prefix of pendingPrefixes) removePendingInvalidation(prefix);
+        if (succeeded) {
+          for (const prefix of pendingPrefixes) removePendingInvalidation(prefix);
+        } else {
+          // Keep pending invalidations active so reads bypass stale cache
+          logger.error(
+            "PUBLISH POKE - keeping pending invalidations active due to deletion failure",
+            {
+              projectSlug: this.deps.projectSlug,
+              pendingPrefixes: Array.from(pendingPrefixes),
+            },
+          );
+        }
 
-        logger.debug("PUBLISH POKE - cache invalidation complete", {
+        logger.info("PUBLISH POKE - cache invalidation complete", {
           projectSlug: this.deps.projectSlug,
+          succeeded,
           pendingInvalidations: getPendingInvalidationsCount(),
         });
       }
@@ -677,8 +692,10 @@ export class WebSocketManager {
 
       try {
         this.ws?.close();
-      } catch {
-        // Ignore close errors
+      } catch (error) {
+        logger.error("WebSocket close failed during heartbeat timeout", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
 
       this.cleanupTimers();

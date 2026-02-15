@@ -96,7 +96,11 @@ async function validateFrameworkBundles(
       if (!(await exists(path))) {
         missing.push(path);
       }
-    } catch {
+    } catch (error) {
+      rendererLogger.error("Framework bundle validation error", {
+        path,
+        error: error instanceof Error ? error.message : String(error),
+      });
       missing.push(path);
     }
   }

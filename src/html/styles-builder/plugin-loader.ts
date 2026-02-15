@@ -117,7 +117,12 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
   try {
     return await import(`file://${tempPath}`);
   } finally {
-    await Deno.remove(tempPath).catch(() => {});
+    await Deno.remove(tempPath).catch((error) => {
+      logger.error("Failed to clean up temp plugin file", {
+        path: tempPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 }
 

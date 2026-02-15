@@ -148,7 +148,9 @@ export function startProductionServer(
             });
           }
         } catch (error) {
-          serverLog.debug("AI discovery skipped:", error);
+          serverLog.error("AI discovery failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       }
 

@@ -506,7 +506,11 @@ export class RenderPipeline {
 
         if (shouldCache && !options?.skipCachePersist) {
           this.config.cacheCoordinator.persistResult(result, slug, cacheKey).catch((error) => {
-            renderPipelineLog.warn("Cache persist failed", { slug, error: String(error) });
+            renderPipelineLog.error("Cache persist failed", {
+              slug,
+              error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            });
           });
         }
 
@@ -582,8 +586,12 @@ export class RenderPipeline {
             headings?: Array<{ id: string; text: string; level: number }>;
           }).headings || [];
         }
-      } catch {
-        // Frontmatter/headings extraction failed, use empty defaults
+      } catch (error) {
+        renderPipelineLog.error("Frontmatter/headings extraction failed", {
+          slug,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
       }
     }
 
