@@ -5,6 +5,7 @@
 import { applyCORSHeaders, applyCORSHeadersSync } from "../cors/index.ts";
 import { buildCacheControl } from "./cache-handler.ts";
 import { applySecurityHeaders } from "./security-handler.ts";
+import { applyCsrfCookie } from "../../csrf/helpers.ts";
 import type { CacheStrategy, CORSConfig, SecurityConfig } from "./types.ts";
 
 export interface FluentMethodsContext {
@@ -41,10 +42,11 @@ export function withCORSAsync<T extends FluentMethodsContext>(this: T, req: Requ
   }).then((): T => this);
 }
 
-/** Apply security headers (CSP, COOP, CORP, COEP) */
+/** Apply security headers (CSP, COOP, CORP, COEP) and optionally set CSRF cookie */
 export function withSecurity<T extends FluentMethodsContext>(
   this: T,
   config?: SecurityConfig,
+  req?: Request,
 ): T {
   applySecurityHeaders(
     this.headers,
@@ -55,6 +57,10 @@ export function withSecurity<T extends FluentMethodsContext>(
     this.adapter,
     this.isVeryfrontDomain,
   );
+  if (req) {
+    const secConfig = config ?? this.securityConfig;
+    applyCsrfCookie(req, this.headers, secConfig?.csrf);
+  }
   return this;
 }
 

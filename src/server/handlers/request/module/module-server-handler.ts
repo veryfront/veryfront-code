@@ -38,7 +38,7 @@ export function handleModuleServer(
 
         const response = createResponseBuilder(ctx)
           .withCORS(req, ctx.securityConfig?.cors)
-          .withSecurity(ctx.securityConfig ?? undefined)
+          .withSecurity(ctx.securityConfig ?? undefined, req)
           .withHeaders(moduleResponse.headers)
           .build(moduleResponse.body, moduleResponse.status);
 

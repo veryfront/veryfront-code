@@ -47,7 +47,7 @@ export function handlePageDataEndpoint(
 
         return respond(
           builder
-            .withSecurity(ctx.securityConfig ?? undefined)
+            .withSecurity(ctx.securityConfig ?? undefined, req)
             .withCache({ maxAge: 60, public: true })
             .withETag(etag)
             .json(pageData, 200),

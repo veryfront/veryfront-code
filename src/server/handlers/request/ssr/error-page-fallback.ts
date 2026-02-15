@@ -253,7 +253,7 @@ async function renderErrorPage(
 
     return builder
       .withCORS(req, ctx.securityConfig?.cors)
-      .withSecurity(ctx.securityConfig ?? undefined)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache("no-cache")
       .html(html, statusCode);
   } catch (renderError) {
@@ -276,7 +276,7 @@ async function renderErrorPage(
 
     return builder
       .withCORS(req, ctx.securityConfig?.cors)
-      .withSecurity(ctx.securityConfig ?? undefined)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache("no-cache")
       .html(fallbackHtml, statusCode);
   }

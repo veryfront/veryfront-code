@@ -17,6 +17,13 @@ export function isValidSecurityConfig(config: unknown): config is SecurityConfig
     return false;
   }
 
+  const csrf = cfg.csrf;
+  if (
+    csrf !== undefined && typeof csrf !== "boolean" && (csrf == null || typeof csrf !== "object")
+  ) {
+    return false;
+  }
+
   if (cfg.coop !== undefined && typeof cfg.coop !== "string") return false;
   if (cfg.corp !== undefined && typeof cfg.corp !== "string") return false;
   if (cfg.coep !== undefined && typeof cfg.coep !== "string") return false;

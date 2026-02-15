@@ -13,7 +13,7 @@ interface ResponseBuilderInstance {
   headers: Headers;
   status: number;
   withCORS(req: Request, corsConfig?: boolean | CORSConfig): ResponseBuilderInstance;
-  withSecurity(config?: SecurityConfig): ResponseBuilderInstance;
+  withSecurity(config?: SecurityConfig, req?: Request): ResponseBuilderInstance;
   withCache(strategy: CacheStrategy): ResponseBuilderInstance;
   withETag(etag: string): ResponseBuilderInstance;
   withAllow(methods: string | string[]): ResponseBuilderInstance;
@@ -54,7 +54,7 @@ function createBuilder(
   builder.withCORS(req, config?.corsConfig);
 
   if (config?.securityConfig !== undefined) {
-    builder.withSecurity(config.securityConfig ?? undefined);
+    builder.withSecurity(config.securityConfig ?? undefined, req);
   }
 
   if (config?.cache) builder.withCache(config.cache);

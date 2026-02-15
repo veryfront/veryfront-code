@@ -71,7 +71,7 @@ export class LibModulesHandler extends BaseHandler {
 
       if (hasMatchingEtag(req, etag)) {
         return this.respond(
-          builder.withSecurity(ctx.securityConfig ?? undefined).notModified(etag),
+          builder.withSecurity(ctx.securityConfig ?? undefined, req).notModified(etag),
         );
       }
 
@@ -86,7 +86,7 @@ export class LibModulesHandler extends BaseHandler {
 
       return this.respond(
         builder
-          .withSecurity(ctx.securityConfig ?? undefined)
+          .withSecurity(ctx.securityConfig ?? undefined, req)
           .withCache(isDev ? "no-cache" : "immutable")
           .withETag(etag)
           .withContentType("application/javascript; charset=utf-8", body, HTTP_OK),

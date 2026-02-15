@@ -43,7 +43,7 @@ export class DevFileHandler extends BaseHandler {
       const code = await bundleDevFile(absPath, ctx);
       const response = this.createResponseBuilder(ctx)
         .withCORS(req, ctx.securityConfig?.cors)
-        .withSecurity(ctx.securityConfig ?? undefined)
+        .withSecurity(ctx.securityConfig ?? undefined, req)
         .withCache("no-cache")
         .javascript(code);
 

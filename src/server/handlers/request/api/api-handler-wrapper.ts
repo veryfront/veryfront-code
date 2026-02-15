@@ -214,7 +214,7 @@ export class ApiHandlerWrapper extends BaseHandler {
           const builder = this.createResponseBuilder(ctx);
           const finalRes = builder
             .withCORS(req, ctx.securityConfig?.cors)
-            .withSecurity(ctx.securityConfig ?? undefined)
+            .withSecurity(ctx.securityConfig ?? undefined, req)
             .withHeaders(apiRes.headers)
             .build(apiRes.body, apiRes.status);
 

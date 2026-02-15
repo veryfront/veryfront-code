@@ -67,7 +67,7 @@ export class SnippetHandler extends BaseHandler {
         return this.respond(
           builder
             .withCORS(req, ctx.securityConfig?.cors)
-            .withSecurity(ctx.securityConfig ?? undefined)
+            .withSecurity(ctx.securityConfig ?? undefined, req)
             .withHeaders(
               isDev
                 ? {

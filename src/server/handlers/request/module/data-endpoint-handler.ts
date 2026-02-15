@@ -38,7 +38,7 @@ export function handleDataEndpoint(
 
         return respond(
           builder
-            .withSecurity(ctx.securityConfig ?? undefined)
+            .withSecurity(ctx.securityConfig ?? undefined, req)
             .withCache("no-cache")
             .withETag(etag)
             .json(data, 200),
