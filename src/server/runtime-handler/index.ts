@@ -306,6 +306,42 @@ export function createVeryfrontHandler(
       startIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation);
 
       try {
+        // Early validation: in proxy mode, required context headers must be present.
+        // Without these, the server cannot authenticate or resolve the project, and
+        // proceeding would cause cryptic 500s deep in the rendering pipeline.
+        if (isProxyMode && !isLightweightPath(url.pathname)) {
+          const token = req.headers.get("x-token");
+          if (!headers.projectSlug) {
+            logger.error("Missing required x-project-slug header in proxy mode", {
+              pathname: url.pathname,
+              domain,
+              host: req.headers.get("host"),
+              forwardedHost: req.headers.get("x-forwarded-host"),
+            });
+            return new Response(
+              JSON.stringify({
+                error: "Missing project context",
+                detail: "x-project-slug header is required in proxy mode",
+              }),
+              { status: 502, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          if (!token) {
+            logger.error("Missing required x-token header in proxy mode", {
+              pathname: url.pathname,
+              domain,
+              projectSlug: headers.projectSlug,
+            });
+            return new Response(
+              JSON.stringify({
+                error: "Missing authentication context",
+                detail: "x-token header is required in proxy mode",
+              }),
+              { status: 502, headers: { "Content-Type": "application/json" } },
+            );
+          }
+        }
+
         await readyPromise;
 
         await timeAsync("security:load", async () => {

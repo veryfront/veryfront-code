@@ -9,6 +9,7 @@ import {
   buildFileListCacheKey,
   buildStatCacheKeyPrefix,
 } from "./cache-keys.ts";
+import { withRetryOnTransient } from "./retry.ts";
 import { STAT_OPERATION_EXTENSION_PRIORITY as EXTENSION_PRIORITY } from "./extension-priority.ts";
 import {
   collectParentDirectories,
@@ -306,13 +307,17 @@ export class StatOperations extends VeryfrontOperationsBase {
       cacheKey,
     });
 
-    const files = isPublished
-      ? await this.client.listPublishedFiles(
-        undefined,
-        ctx?.releaseId ?? undefined,
-        ctx?.environmentName ?? undefined,
-      )
-      : await this.client.listAllFiles();
+    const files = await withRetryOnTransient(
+      () =>
+        isPublished
+          ? this.client.listPublishedFiles(
+            undefined,
+            ctx?.releaseId ?? undefined,
+            ctx?.environmentName ?? undefined,
+          )
+          : this.client.listAllFiles(),
+      "getAllFilesRaw (stat)",
+    );
 
     this.cache.set(cacheKey, files);
     return files;

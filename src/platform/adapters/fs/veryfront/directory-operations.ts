@@ -8,6 +8,7 @@ import {
   buildFileListCacheKey,
 } from "./cache-keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { withRetryOnTransient } from "./retry.ts";
 
 const logger = baseLogger.component("directory-operations");
 
@@ -207,13 +208,17 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
         cacheKey,
       });
 
-      const files = isPublished
-        ? await this.client.listPublishedFiles(
-          undefined,
-          ctx?.releaseId ?? undefined,
-          ctx?.environmentName ?? undefined,
-        )
-        : await this.client.listAllFiles();
+      const files = await withRetryOnTransient(
+        () =>
+          isPublished
+            ? this.client.listPublishedFiles(
+              undefined,
+              ctx?.releaseId ?? undefined,
+              ctx?.environmentName ?? undefined,
+            )
+            : this.client.listAllFiles(),
+        "getAllFilesRaw (dir)",
+      );
 
       this.cache.set(cacheKey, files);
       return files;

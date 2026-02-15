@@ -62,6 +62,12 @@ export async function withRequestTimeout(
     }
 
     const error = e instanceof Error ? e : new Error(String(e));
+    logger.error("Unhandled error in request handler", {
+      path: pathname,
+      method,
+      error: error.message,
+      stack: error.stack,
+    });
     return {
       response: new Response(ErrorPages.serverError(), {
         status: 500,
