@@ -1,4 +1,4 @@
-# Veryfront Code
+# Veryfront
 
 ## Module Overview
 

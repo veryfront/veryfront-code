@@ -2,7 +2,7 @@
  * Dot Matrix Display for CLI
  *
  * Renders a 7x7 dot matrix with animation support.
- * Used for the Veryfront Code logo in CLI experiences.
+ * Used for the Veryfront logo in CLI experiences.
  ******************/
 
 export const AGENT_FACE: number[][] = [

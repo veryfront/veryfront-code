@@ -102,7 +102,7 @@ function renderBanner(state: AppState): string {
   const textLines: string[] = [];
 
   textLines.push("");
-  textLines.push(`${brand("Veryfront Code")} ${dim("is now running")}`);
+  textLines.push(`${brand("Veryfront")} ${dim("is now running")}`);
   textLines.push("");
 
   // Server URL and MCP URL - always reserve both lines to prevent jumps
@@ -182,7 +182,7 @@ export function renderDashboardBoxed(state: AppState): string {
 
   return box(content, {
     style: "rounded",
-    title: "Veryfront Code",
+    title: "Veryfront",
     titleColor: "\x1b[38;2;252;143;93m",
     width: termWidth,
     paddingX: 1,
