@@ -110,7 +110,7 @@ export function applyCsrfCookie(
   if (ASSET_PATH_RE.test(pathname)) return;
 
   const accept = (req.headers.get("accept") ?? "").toLowerCase();
-  if (accept && !accept.includes("text/html") && !accept.includes("application/xhtml+xml")) {
+  if (!accept || (!accept.includes("text/html") && !accept.includes("application/xhtml+xml"))) {
     return;
   }
 

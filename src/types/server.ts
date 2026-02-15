@@ -32,7 +32,7 @@ export interface SecurityConfig {
   cors?:
     | boolean
     | {
-      origin?: string | string[] | ((origin: string) => boolean);
+      origin?: string | string[] | ((origin: string) => boolean | string);
       credentials?: boolean;
       methods?: string[];
       allowedHeaders?: string[];
@@ -41,6 +41,11 @@ export interface SecurityConfig {
     };
   csrf?: boolean | import("../security/csrf/helpers.ts").CsrfConfig;
   csp?: Partial<Record<string, string | string[]>>;
+  coop?: "same-origin" | "same-origin-allow-popups" | "unsafe-none";
+  corp?: "same-origin" | "same-site" | "cross-origin";
+  coep?: "require-corp" | "unsafe-none";
+  hsts?: { maxAge: number; includeSubDomains?: boolean; preload?: boolean };
+  remoteHosts?: string[];
   headers?: Record<string, string>;
   [key: string]: unknown;
 }

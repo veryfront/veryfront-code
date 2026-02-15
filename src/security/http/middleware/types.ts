@@ -26,15 +26,4 @@ export interface AuthConfig {
 
 export type { CsrfConfig } from "../../csrf/helpers.ts";
 
-export interface SecurityConfig {
-  auth?: AuthConfig;
-  cors?: boolean | CORSConfig;
-  csrf?: boolean | import("../../csrf/helpers.ts").CsrfConfig;
-  csp?: CSPDirectives;
-  coop?: "same-origin" | "same-origin-allow-popups" | "unsafe-none";
-  corp?: "same-origin" | "same-site" | "cross-origin";
-  coep?: "require-corp" | "unsafe-none";
-  remoteHosts?: string[];
-  headers?: Record<string, string>;
-  [key: string]: unknown;
-}
+export type { SecurityConfig } from "#veryfront/types";

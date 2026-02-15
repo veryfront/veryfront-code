@@ -161,6 +161,17 @@ export const veryfrontConfigSchema = z
         csp: z.record(z.array(z.string())).optional(),
         remoteHosts: z.array(z.string().url()).optional(),
         cors: corsSchema.optional(),
+        /**
+         * CSRF protection using the double-submit cookie pattern.
+         * Set `true` for defaults, or pass an object to customize.
+         *
+         * When enabled, POST/PUT/PATCH/DELETE requests must include
+         * an `x-csrf-token` header matching the `vf_csrf` cookie.
+         * The cookie is set automatically on HTML document responses.
+         *
+         * Server Actions (`/_veryfront/rsc/action`) are CSRF-protected;
+         * client code must forward the cookie value as the header.
+         */
         csrf: z.union([
           z.boolean(),
           z.object({

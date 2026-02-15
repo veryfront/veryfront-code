@@ -96,6 +96,17 @@ describe("security/csrf/helpers", () => {
       assertEquals(validateCsrf(req, { cookieName: "my_csrf", headerName: "x-my-csrf" }), true);
     });
 
+    it("should return false when header token is empty string", () => {
+      const req = new Request("http://localhost/submit", {
+        method: "POST",
+        headers: {
+          cookie: "vf_csrf=some-token",
+          "x-csrf-token": "",
+        },
+      });
+      assertEquals(validateCsrf(req), false);
+    });
+
     it("should return false on malformed cookie instead of throwing", () => {
       const req = new Request("http://localhost/submit", {
         method: "POST",
@@ -121,8 +132,10 @@ describe("security/csrf/helpers", () => {
       assertEquals(setCookie!.includes("vf_csrf="), true);
     });
 
-    it("should set cookie on GET when absent", () => {
-      const req = new Request("http://localhost/");
+    it("should set cookie on GET with text/html accept", () => {
+      const req = new Request("http://localhost/", {
+        headers: { accept: "text/html" },
+      });
       const headers = new Headers();
       applyCsrfCookie(req, headers, true);
 
@@ -134,7 +147,9 @@ describe("security/csrf/helpers", () => {
     });
 
     it("should set Secure flag on HTTPS requests", () => {
-      const req = new Request("https://example.com/");
+      const req = new Request("https://example.com/", {
+        headers: { accept: "text/html" },
+      });
       const headers = new Headers();
       applyCsrfCookie(req, headers, true);
 
@@ -145,7 +160,7 @@ describe("security/csrf/helpers", () => {
 
     it("should set Secure flag when x-forwarded-proto is https", () => {
       const req = new Request("http://localhost/", {
-        headers: { "x-forwarded-proto": "https" },
+        headers: { "x-forwarded-proto": "https", accept: "text/html" },
       });
       const headers = new Headers();
       applyCsrfCookie(req, headers, true);
@@ -156,7 +171,10 @@ describe("security/csrf/helpers", () => {
     });
 
     it("should set cookie on HEAD when absent", () => {
-      const req = new Request("http://localhost/", { method: "HEAD" });
+      const req = new Request("http://localhost/", {
+        method: "HEAD",
+        headers: { accept: "text/html" },
+      });
       const headers = new Headers();
       applyCsrfCookie(req, headers, true);
 
@@ -184,6 +202,24 @@ describe("security/csrf/helpers", () => {
     it("should skip non-HTML accept headers", () => {
       const req = new Request("http://localhost/api/data", {
         headers: { accept: "application/json" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, true);
+
+      assertEquals(headers.get("set-cookie"), null);
+    });
+
+    it("should skip requests without Accept header (CLI/API clients)", () => {
+      const req = new Request("http://localhost/");
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, true);
+
+      assertEquals(headers.get("set-cookie"), null);
+    });
+
+    it("should skip accept: */* (non-browser clients)", () => {
+      const req = new Request("http://localhost/", {
+        headers: { accept: "*/*" },
       });
       const headers = new Headers();
       applyCsrfCookie(req, headers, true);
@@ -228,7 +264,9 @@ describe("security/csrf/helpers", () => {
     });
 
     it("should use custom cookie name from config object", () => {
-      const req = new Request("http://localhost/");
+      const req = new Request("http://localhost/", {
+        headers: { accept: "text/html" },
+      });
       const headers = new Headers();
       applyCsrfCookie(req, headers, { cookieName: "my_csrf" });
 
@@ -238,7 +276,9 @@ describe("security/csrf/helpers", () => {
     });
 
     it("should use custom ttlSec from config object", () => {
-      const req = new Request("http://localhost/");
+      const req = new Request("http://localhost/", {
+        headers: { accept: "text/html" },
+      });
       const headers = new Headers();
       applyCsrfCookie(req, headers, { ttlSec: 600 });
 
@@ -248,7 +288,7 @@ describe("security/csrf/helpers", () => {
 
     it("should issue fresh token on malformed cookie instead of throwing", () => {
       const req = new Request("http://localhost/", {
-        headers: { cookie: "vf_csrf=%ZZbadvalue" },
+        headers: { cookie: "vf_csrf=%ZZbadvalue", accept: "text/html" },
       });
       const headers = new Headers();
       applyCsrfCookie(req, headers, true);

@@ -4,6 +4,28 @@
  * Reads config from `ctx.securityConfig?.csrf`. When enabled, POST/PUT/PATCH/DELETE
  * requests must include a valid CSRF token (cookie + header match).
  *
+ * ## Server Actions integration
+ *
+ * When `security.csrf` is enabled, Server Action POSTs to `/_veryfront/rsc/action`
+ * are **not** exempt and require a valid CSRF token. Client-side code that calls
+ * Server Actions must:
+ *
+ * 1. Read the `vf_csrf` cookie (set automatically on HTML responses)
+ * 2. Include it as the `x-csrf-token` request header on every POST
+ *
+ * Example (client-side fetch wrapper):
+ * ```ts
+ * function getCookie(name: string): string | undefined {
+ *   return document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`))?.[1];
+ * }
+ *
+ * const res = await fetch("/_veryfront/rsc/action", {
+ *   method: "POST",
+ *   headers: { "x-csrf-token": getCookie("vf_csrf") ?? "" },
+ *   body: actionPayload,
+ * });
+ * ```
+ *
  * @module security/http/csrf/csrf-handler
  */
 
