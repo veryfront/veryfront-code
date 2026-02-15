@@ -70,6 +70,14 @@ describe("security/http/csrf/csrf-handler", () => {
       assertEquals(result.continue, true);
     });
 
+    it("should NOT exempt /_veryfront/log/subpath", async () => {
+      const ctx = createCtx(true);
+      const req = new Request("http://localhost/_veryfront/log/evil", { method: "POST" });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 403);
+    });
+
     it("should exempt /_veryfront/modules/ asset paths", async () => {
       const ctx = createCtx(true);
       const req = new Request("http://localhost/_veryfront/modules/client.js", { method: "POST" });

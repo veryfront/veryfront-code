@@ -8,8 +8,10 @@
  */
 
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
-import { SERVER_ACTION_DEFAULT_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { parseCookiesFromHeaders } from "#veryfront/utils/cookie-utils.ts";
+
+/** Default CSRF token TTL: 24 hours (longer than session action TTL to avoid stale-form 403s). */
+const CSRF_DEFAULT_TTL_SEC = 86_400;
 
 export interface CsrfConfig {
   cookieName?: string;
@@ -33,7 +35,7 @@ export function generateCsrfToken(options?: CsrfTokenOptions): {
   setCookie: string;
 } {
   const cookieName = options?.cookieName ?? "vf_csrf";
-  const maxAge = options?.ttlSec ?? SERVER_ACTION_DEFAULT_TTL_SEC;
+  const maxAge = options?.ttlSec ?? CSRF_DEFAULT_TTL_SEC;
   const httpOnly = options?.httpOnly ?? true;
   const secure = options?.secure ?? true;
 
@@ -49,17 +51,18 @@ export function generateCsrfToken(options?: CsrfTokenOptions): {
 }
 
 const encoder = new TextEncoder();
-const ASSET_PATH_RE = /\.[a-z0-9]+$/i;
+const ASSET_PATH_RE = /\.(?!html?$)[a-z0-9]+$/i;
 
 /** Constant-time string comparison to prevent timing attacks */
 function timingSafeEqual(a: string, b: string): boolean {
   const aBytes = encoder.encode(a);
   const bBytes = encoder.encode(b);
-  if (aBytes.length !== bBytes.length) return false;
-  // Use bitwise OR to accumulate differences without short-circuiting
-  let result = 0;
-  for (let i = 0; i < aBytes.length; i++) {
-    result |= aBytes[i]! ^ bBytes[i]!;
+  const len = Math.max(aBytes.length, bBytes.length);
+  // Use bitwise OR to accumulate differences without short-circuiting.
+  // Pad the shorter side with 0xFF to guarantee a mismatch without leaking length via timing.
+  let result = aBytes.length !== bBytes.length ? 1 : 0;
+  for (let i = 0; i < len; i++) {
+    result |= (aBytes[i] ?? 0xff) ^ (bBytes[i] ?? 0xff);
   }
   return result === 0;
 }

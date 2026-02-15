@@ -162,7 +162,7 @@ export function createVeryfrontHandler(
       .then((c) => {
         config = c;
         if (c?.security?.csrf === undefined) {
-          logger.debug(
+          logger.info(
             "CSRF protection is not configured. Add `security: { csrf: true }` to veryfront.config.ts to enable.",
           );
         }
