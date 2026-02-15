@@ -111,7 +111,7 @@ async function install() {
     console.log('✅ Veryfront CLI installed successfully!');
     console.log('\n🚀 Get started:');
     console.log('   npx veryfront --help');
-    console.log('   npx veryfront create my-app');
+    console.log('   npx veryfront init my-app');
 
   } catch (error) {
     // Graceful fallback - bundled JS CLI will be used instead
