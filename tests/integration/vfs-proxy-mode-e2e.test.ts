@@ -272,6 +272,7 @@ describe("VFS Proxy Mode - Compiled Binary", { sanitizeOps: false, sanitizeResou
             "x-release-id": releaseId,
             "x-environment": "production",
             "x-project-slug": "flow-ops",
+            "x-token": "test-token",
           },
         });
         await response.text();

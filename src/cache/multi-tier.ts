@@ -166,7 +166,10 @@ export class MultiTierCache<T = string> {
 
         const setOps = tiers.map((tier) =>
           tier.set(key, value, ttl).catch((error) => {
-            logger.debug(`[${this.config.name}] Set error in ${tier.name}`, { key, error });
+            logger.error(`[${this.config.name}] Set error in ${tier.name}`, {
+              key: key.slice(-60),
+              error: error instanceof Error ? error.message : String(error),
+            });
           })
         );
 
@@ -189,7 +192,7 @@ export class MultiTierCache<T = string> {
     await Promise.all(
       tiers.map((tier) =>
         tier.delete?.(key).catch((error) => {
-          logger.debug(`[${this.config.name}] Delete error in ${tier.name}`, { key, error });
+          logger.error(`[${this.config.name}] Delete error in ${tier.name}`, { key, error });
         })
       ),
     );
@@ -244,7 +247,7 @@ export class MultiTierCache<T = string> {
           }
         }
       } catch (error) {
-        logger.debug(`[${this.config.name}] L3 getBatch error`, {
+        logger.error(`[${this.config.name}] L3 getBatch error`, {
           keyCount: remainingKeys.length,
           error,
         });
@@ -305,7 +308,10 @@ export class MultiTierCache<T = string> {
       logger.debug(`[${this.config.name}] ${tierName.toUpperCase()} hit`, { key });
       return value;
     } catch (error) {
-      logger.debug(`[${this.config.name}] ${tierName.toUpperCase()} get error`, { key, error });
+      logger.error(`[${this.config.name}] ${tierName.toUpperCase()} get error`, {
+        key: key.slice(-60),
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }
@@ -333,7 +339,7 @@ export class MultiTierCache<T = string> {
 
       return keys.filter((k) => !results.has(k) || results.get(k) === null);
     } catch (error) {
-      logger.debug(`[${this.config.name}] ${tierName.toUpperCase()} getBatch error`, {
+      logger.error(`[${this.config.name}] ${tierName.toUpperCase()} getBatch error`, {
         keyCount: keys.length,
         error,
       });
@@ -360,7 +366,7 @@ export class MultiTierCache<T = string> {
     if (tiers.includes("l1") && this.config.l1) {
       backfillOps.push(
         this.config.l1.set(key, value, ttl).catch((error) => {
-          logger.debug(`[${this.config.name}] L1 backfill error`, { key, error });
+          logger.error(`[${this.config.name}] L1 backfill error`, { key, error });
         }),
       );
     }
@@ -368,7 +374,7 @@ export class MultiTierCache<T = string> {
     if (tiers.includes("l2") && this.config.l2) {
       backfillOps.push(
         this.config.l2.set(key, value, ttl).catch((error) => {
-          logger.debug(`[${this.config.name}] L2 backfill error`, { key, error });
+          logger.error(`[${this.config.name}] L2 backfill error`, { key, error });
         }),
       );
     }

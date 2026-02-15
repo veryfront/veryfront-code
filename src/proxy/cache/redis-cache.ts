@@ -1,7 +1,9 @@
 import { createClient, type RedisClientType } from "redis";
 import type { CacheStats, RedisCacheOptions, TokenCache, TokenCacheEntry } from "./types.ts";
 import { withSpan } from "../tracing.ts";
+import { proxyLogger } from "../logger.ts";
 
+const logger = proxyLogger.child({ module: "redis-cache" });
 const DEFAULT_PREFIX = "vf:token:";
 const DEFAULT_CONNECT_TIMEOUT = 5000;
 const DEFAULT_SCAN_COUNT = 100;
@@ -50,7 +52,9 @@ export class RedisCache implements TokenCache {
           this.hits++;
           return entry;
         } catch (error) {
-          console.error("[RedisCache] Get error:", error);
+          logger.error("[RedisCache] Get error", {
+            error: error instanceof Error ? error.message : String(error),
+          });
           this.connected = false;
           this.misses++;
           throw error;
@@ -71,7 +75,9 @@ export class RedisCache implements TokenCache {
           const ttlSeconds = Math.max(1, Math.floor(ttlMs / 1000));
           await client.setEx(this.key(key), ttlSeconds, JSON.stringify(entry));
         } catch (error) {
-          console.error("[RedisCache] Set error:", error);
+          logger.error("[RedisCache] Set error", {
+            error: error instanceof Error ? error.message : String(error),
+          });
           this.connected = false;
           throw error;
         }
@@ -88,7 +94,9 @@ export class RedisCache implements TokenCache {
           await this.ensureConnected();
           await this.client!.del(this.key(key));
         } catch (error) {
-          console.error("[RedisCache] Delete error:", error);
+          logger.error("[RedisCache] Delete error", {
+            error: error instanceof Error ? error.message : String(error),
+          });
           this.connected = false;
           throw error;
         }
@@ -121,13 +129,15 @@ export class RedisCache implements TokenCache {
         } while (cursor !== 0);
 
         if (totalDeleted > 0) {
-          console.log(`[RedisCache] Cleared ${totalDeleted} keys`);
+          logger.info(`[RedisCache] Cleared ${totalDeleted} keys`);
         }
 
         this.hits = 0;
         this.misses = 0;
       } catch (error) {
-        console.error("[RedisCache] Clear error:", error);
+        logger.error("[RedisCache] Clear error", {
+          error: error instanceof Error ? error.message : String(error),
+        });
         this.connected = false;
         throw error;
       }
@@ -142,7 +152,9 @@ export class RedisCache implements TokenCache {
           await this.ensureConnected();
           return (await this.client!.exists(this.key(key))) === 1;
         } catch (error) {
-          console.error("[RedisCache] Has error:", error);
+          logger.error("[RedisCache] Has error", {
+            error: error instanceof Error ? error.message : String(error),
+          });
           this.connected = false;
           throw error;
         }
@@ -160,7 +172,9 @@ export class RedisCache implements TokenCache {
         size = await this.client!.dbSize();
       } catch (error) {
         this.connected = false;
-        console.warn("[RedisCache] Stats error:", error);
+        logger.error("[RedisCache] Stats error", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
 
       return { hits: this.hits, misses: this.misses, size, type: "redis" as const };
@@ -203,14 +217,16 @@ export class RedisCache implements TokenCache {
       });
 
       client.on("error", (err) => {
-        console.error("[RedisCache] Client error:", err);
+        logger.error("[RedisCache] Client error", {
+          error: err instanceof Error ? err.message : String(err),
+        });
         this.connected = false;
       });
 
       this.client = client as RedisClientType;
       await client.connect();
       this.connected = true;
-      console.log("[RedisCache] Connected");
+      logger.info("[RedisCache] Connected");
     });
   }
 }

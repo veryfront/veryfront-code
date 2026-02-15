@@ -56,7 +56,15 @@ export class DiskCacheBackend implements CacheBackend {
         return null;
       }
       return envelope.value;
-    } catch {
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code !== "ENOENT") {
+        logger.error("[DiskCache] Read error", {
+          key: key.slice(-60),
+          error: error instanceof Error ? error.message : String(error),
+          code,
+        });
+      }
       return null;
     }
   }
@@ -85,7 +93,16 @@ export class DiskCacheBackend implements CacheBackend {
     try {
       const { unlink } = await fsPromises;
       await unlink(this.filePath(key));
-    } catch { /* File may not exist */ }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code !== "ENOENT") {
+        logger.error("[DiskCache] Delete error", {
+          key: key.slice(-60),
+          error: error instanceof Error ? error.message : String(error),
+          code,
+        });
+      }
+    }
   }
 
   async delByPattern(pattern: string): Promise<number> {
@@ -113,10 +130,18 @@ export class DiskCacheBackend implements CacheBackend {
             await unlink(filePath);
             deleted++;
           }
-        } catch { /* Skip unreadable files */ }
+        } catch (error) {
+          logger.error("[DiskCache] Skip unreadable cache file", {
+            file,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
-    } catch {
-      logger.debug("[DiskCache] delByPattern: directory not accessible");
+    } catch (error) {
+      logger.error("[DiskCache] delByPattern: directory not accessible", {
+        pattern,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
     return deleted;
   }

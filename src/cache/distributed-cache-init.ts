@@ -47,12 +47,28 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
     async (): Promise<DistributedCacheStatus> => {
       logger.info("Initializing caches...", { backend });
 
+      const cacheNames = [
+        "transformCache",
+        "ssrModuleCache",
+        "fileCache",
+        "projectCSSCache",
+      ] as const;
       const results = await Promise.allSettled([
         initializeTransformCache(),
         initializeSSRDistributedCache(),
         initializeFileCacheBackend(),
         initializeProjectCSSCache(),
       ]);
+
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        if (result && result.status === "rejected") {
+          logger.error(`Cache initialization failed: ${cacheNames[i]}`, {
+            backend,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          });
+        }
+      }
 
       const status: DistributedCacheStatus = {
         backend,

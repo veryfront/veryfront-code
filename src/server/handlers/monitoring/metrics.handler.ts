@@ -36,7 +36,7 @@ export class MetricsHandler extends BaseHandler {
 
       return Promise.resolve(this.respond(response));
     } catch (e) {
-      this.logDebug("metrics failed", { error: this.getErrorMessage(e) }, ctx);
+      this.logWarn("metrics failed", { error: this.getErrorMessage(e) }, ctx);
 
       const response = ResponseBuilder.error(
         HTTP_INTERNAL_SERVER_ERROR,
@@ -49,10 +49,13 @@ export class MetricsHandler extends BaseHandler {
     }
   }
 
-  private safeCall<T>(fn: () => T): T | undefined {
+  private safeCall<T>(fn: () => T, name?: string): T | undefined {
     try {
       return fn();
-    } catch {
+    } catch (error) {
+      this.logWarn(`metrics ${name ?? "call"} failed`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return undefined;
     }
   }

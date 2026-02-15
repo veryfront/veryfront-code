@@ -107,8 +107,11 @@ export class ApiCacheBackend implements CacheBackend {
             let responseBody = "";
             try {
               responseBody = await response.text();
-            } catch {
-              // ignore body read errors
+            } catch (bodyError) {
+              logger.error("Failed to read API error response body", {
+                status: response.status,
+                error: bodyError instanceof Error ? bodyError.message : String(bodyError),
+              });
             }
             throw new Error(`HTTP ${response.status}: ${responseBody.slice(0, 500)}`);
           }

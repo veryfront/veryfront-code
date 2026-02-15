@@ -124,7 +124,9 @@ export async function resolveAdapter(
       });
     }
   } else if (opts.isProxyMode && opts.projectSlug && opts.proxyToken) {
-    // Load config via proxy mode with project context
+    // Load config via proxy mode with project context.
+    // Unlike local projects, proxy mode config loading failures are propagated
+    // because proceeding without config causes silent 404s for valid projects.
     try {
       effectiveConfig = await timeAsync("config:load-proxy-project", () => {
         if (isExtendedFSAdapter(effectiveAdapter.fs) && effectiveAdapter.fs.runWithContext) {
@@ -158,10 +160,19 @@ export async function resolveAdapter(
         router: effectiveConfig?.router,
       });
     } catch (error) {
-      logger.warn("Failed to load proxy config, using defaults", {
+      // Log at error level — this is a real failure that will affect rendering.
+      // Config loading failure in proxy mode means the project's routes, layouts,
+      // and settings won't be available, leading to 404s for valid pages.
+      logger.error("Failed to load project config in proxy mode", {
         projectSlug: opts.projectSlug,
+        projectId: opts.projectId,
+        releaseId: opts.releaseId,
+        proxyEnv: opts.proxyEnv,
         error: getErrorMessage(error),
       });
+      // Re-throw so the caller (runtime-handler) can return a proper error response
+      // instead of silently proceeding with broken defaults.
+      throw error;
     }
   }
 

@@ -9,9 +9,12 @@
 
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
+import { serverLogger } from "#veryfront/utils";
 import type { HandlerContext } from "../handlers/types.ts";
 import { localProjectCache, standardProjectDirs } from "./local-project-discovery.ts";
 import type { ParsedDomain } from "../utils/domain-parser.ts";
+
+const logger = serverLogger.component("projects-handler");
 
 /**
  * Check if the request should be handled by the projects discovery UI.
@@ -101,12 +104,18 @@ async function handleLocalProjectsDiscovery(): Promise<Response> {
           if (hasApp || hasPages || hasComponents) {
             localProjectCache.set(entry.name, projectPath);
           }
-        } catch {
-          // Skip entries that can't be stat'd
+        } catch (error) {
+          logger.warn("Failed to stat project directory entry", {
+            path: projectPath,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       }
-    } catch {
-      // Directory doesn't exist, skip
+    } catch (error) {
+      logger.warn("Failed to scan project directory", {
+        dir,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

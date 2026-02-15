@@ -142,11 +142,16 @@ export class SSRHandler extends BaseHandler {
 
       return this.handleWithContext(req, ctx, slug, requestId, url);
     } catch (error) {
-      this.logDebug(
-        "Unexpected error in context setup",
-        { error: this.getErrorMessage(error) },
-        ctx,
-      );
+      logger.error("Context setup failed — request will fall through to 404", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        projectSlug: ctx.projectSlug,
+        projectId: ctx.projectId,
+        releaseId: ctx.releaseId,
+        hasToken: !!ctx.proxyToken,
+        isLocalProject: ctx.isLocalProject,
+        slug,
+      });
       return Promise.resolve(this.continue());
     }
   }

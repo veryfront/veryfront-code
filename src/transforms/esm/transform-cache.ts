@@ -181,7 +181,10 @@ export async function getCachedTransformAsync(
         return entry;
       }
     } catch (error) {
-      logger.debug("Backend get failed", { key, error });
+      logger.error("Transform cache backend get failed", {
+        key: key.slice(-60),
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -217,7 +220,10 @@ export async function setCachedTransformAsync(
       await gateway.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds));
       return;
     } catch (error) {
-      logger.debug("Backend set failed", { key, error });
+      logger.error("Transform cache backend set failed", {
+        key: key.slice(-60),
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -444,14 +450,20 @@ export async function prewarmProjectTransforms(
         prewarmed++;
       }
     } catch (error) {
-      logger.debug("Prewarm failed for path", { projectId, filePath, error });
+      logger.error("Prewarm failed for path", {
+        projectId,
+        filePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
-  logger.debug("Prewarm complete", {
+  const logFn = prewarmed < filePaths.length ? logger.warn : logger.info;
+  logFn.call(logger, "Prewarm complete", {
     projectId,
     prewarmed,
     total: filePaths.length,
+    incomplete: prewarmed < filePaths.length,
   });
 
   return prewarmed;
