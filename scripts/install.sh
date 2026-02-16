@@ -165,12 +165,12 @@ main() {
   printf "${ORANGE}Installing Veryfront v%s...${NC}" "$VERSION"
   download "$DOWNLOAD_URL" "$BINARY_PATH" &
   PID=$!
-  SPINNER="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+  SPINNER='|/-\'
   i=0
   while kill -0 $PID 2>/dev/null; do
-    i=$(( (i + 1) % 10 ))
-    printf "\r${ORANGE}Installing Veryfront v%s...${NC} %s" "$VERSION" "$(echo "$SPINNER" | cut -c$((i+1)))"
-    sleep 0.1
+    i=$(( (i + 1) % 4 ))
+    printf "\r${ORANGE}Installing Veryfront v%s...${NC} %s" "$VERSION" "$(echo "$SPINNER" | cut -c$((i + 1)))"
+    sleep 1
   done
 
   wait $PID
