@@ -4,7 +4,7 @@
  *******************************/
 
 import { cliLogger as logger } from "#cli/utils";
-import { brand, dim, green } from "#cli/ui";
+import { brand, dim, green, red } from "#cli/ui";
 import { createSpinner } from "../../ui/progress.ts";
 import { box } from "../../ui/box.ts";
 import { ensureDir } from "#std/fs.ts";
@@ -184,6 +184,18 @@ export async function initCommand(options: InitOptions): Promise<void> {
   let template: InitTemplate;
   let projectName = name;
   let initGit = false;
+
+  // Check if directory already exists before entering the wizard
+  if (name && !options.force) {
+    const fs = createFileSystem();
+    const targetDir = join(cwd(), name);
+    if (await fs.exists(targetDir)) {
+      console.error(
+        red(`Directory "${name}" already exists. Choose a different name or use --force to overwrite.`),
+      );
+      return;
+    }
+  }
 
   if (shouldRunWizard(options)) {
     const wizardResult = await runInteractiveWizard(name);
