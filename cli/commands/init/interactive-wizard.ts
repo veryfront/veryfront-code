@@ -81,9 +81,7 @@ export async function runInteractiveWizard(existingName?: string): Promise<Wizar
           cancelled: true,
         };
       }
-      if (name) {
-        projectName = name;
-      }
+      projectName = name || "my-app";
     }
   }
 
