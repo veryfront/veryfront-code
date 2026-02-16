@@ -21,10 +21,11 @@ const result = streamText({
   maxOutputTokens: 30,
 });
 
-process.stdout.write("   → ");
+let output = "   → ";
 for await (const chunk of result.textStream) {
-  process.stdout.write(chunk);
+  output += chunk;
 }
-console.log("\n\n3. Done! Chat works with zero configuration.");
+console.log(output);
+console.log("\n3. Done! Chat works with zero configuration.");
 
 Deno.exit(0);

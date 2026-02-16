@@ -303,10 +303,14 @@ export function useChat(options: UseChatOptions): UseChatResult {
       browserInferenceRejectRef.current?.(new Error("Generation stopped by user"));
       browserInferenceRejectRef.current = null;
 
-      const { stopBrowserInference } = await import(
-        "./browser-inference/browser-engine.ts"
-      );
-      stopBrowserInference();
+      try {
+        const { stopBrowserInference } = await import(
+          "./browser-inference/browser-engine.ts"
+        );
+        stopBrowserInference();
+      } catch {
+        // Worker module may already be terminated or unavailable
+      }
       browserInferenceActiveRef.current = false;
       setBrowserStatus("ready");
     }

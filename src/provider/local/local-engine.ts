@@ -14,6 +14,7 @@
 import { serverLogger } from "#veryfront/utils";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { type ModelInfo, resolveLocalModel } from "./model-catalog.ts";
+import { isLocalAIDisabled } from "./env.ts";
 
 const logger = serverLogger.component("local-llm");
 
@@ -53,11 +54,7 @@ let transformersModule: TransformersModule | null = null;
 async function getTransformers(): Promise<TransformersModule> {
   if (transformersModule) return transformersModule;
 
-  // Allow tests to force-disable local AI inference
-  // deno-lint-ignore no-explicit-any
-  const env = (globalThis as any).Deno?.env?.get?.("VERYFRONT_DISABLE_LOCAL_AI") ??
-    (typeof process !== "undefined" ? process.env?.VERYFRONT_DISABLE_LOCAL_AI : undefined);
-  if (env === "1") {
+  if (isLocalAIDisabled()) {
     throw toError(
       createError({
         type: "no_ai_available",

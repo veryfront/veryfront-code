@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getAgent } from "./composition/index.ts";
 import type { Message } from "./types.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
+import { DEFAULT_LOCAL_MODEL } from "../provider/local/model-catalog.ts";
 
 // ---------------------------------------------------------------------------
 // Zod schemas for validating AI SDK v5 chat UI messages
@@ -162,7 +163,14 @@ export function createChatHandler(
   // deno-lint-ignore no-explicit-any
   return async function POST(requestOrCtx: any): Promise<Response> {
     const request = extractRequest(requestOrCtx);
-    const agent = getAgent(agentId);
+    // Resolve agent outside try so it's available in the catch block for
+    // extracting the system prompt in the 503 fallback response.
+    let agent: ReturnType<typeof getAgent> | undefined;
+    try {
+      agent = getAgent(agentId);
+    } catch {
+      return Response.json({ error: "Agent not found" }, { status: 404 });
+    }
 
     try {
       const body = await request.json();
@@ -214,7 +222,7 @@ export function createChatHandler(
           {
             code: "NO_AI_AVAILABLE",
             fallback: "browser",
-            model: "smollm2-135m",
+            model: DEFAULT_LOCAL_MODEL,
             systemPrompt,
           },
           { status: 503 },

@@ -27,6 +27,7 @@ import { ProjectScopedRegistryManager } from "../ai/registry-manager.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEFAULT_LOCAL_MODEL } from "./local/model-catalog.ts";
 import { createLocalModel } from "./local/ai-sdk-adapter.ts";
+import { isLocalAIDisabled } from "./local/env.ts";
 
 const localLogger = serverLogger.component("local-llm");
 
@@ -191,10 +192,7 @@ export function resolveModel(modelString: string): LanguageModel {
     const errorData = fromError(error);
     if (errorData?.type === "config" && providerName !== "local" && manager.has("local")) {
       // Check if local AI is explicitly disabled (e.g., for testing)
-      // deno-lint-ignore no-explicit-any
-      const disableLocal = (globalThis as any).Deno?.env?.get?.("VERYFRONT_DISABLE_LOCAL_AI") ??
-        (typeof process !== "undefined" ? process.env?.VERYFRONT_DISABLE_LOCAL_AI : undefined);
-      if (disableLocal === "1") {
+      if (isLocalAIDisabled()) {
         throw toError(
           createError({
             type: "no_ai_available",

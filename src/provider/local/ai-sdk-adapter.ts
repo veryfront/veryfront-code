@@ -14,6 +14,7 @@ import type { ChatMessage, GenerateOptions } from "./local-engine.ts";
 import { DEFAULT_LOCAL_MODEL } from "./model-catalog.ts";
 import { serverLogger } from "#veryfront/utils";
 import { createError, fromError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { isLocalAIDisabled } from "./env.ts";
 
 const logger = serverLogger.component("local-llm");
 
@@ -115,9 +116,10 @@ export function createLocalModel(modelId?: string): LanguageModel {
     }) {
       // Eagerly check if local AI is disabled — must throw before creating the
       // ReadableStream, otherwise the 200 response headers are already committed.
-      // deno-lint-ignore no-explicit-any
-      const disableEnv = (globalThis as any).Deno?.env?.get?.("VERYFRONT_DISABLE_LOCAL_AI");
-      if (disableEnv === "1") {
+      // Note: getTransformers() in local-engine.ts also checks this, but we need
+      // the check here too because doStream creates a ReadableStream wrapper and
+      // errors inside it would be swallowed as in-band stream errors.
+      if (isLocalAIDisabled()) {
         throw toError(
           createError({
             type: "no_ai_available",

@@ -66,11 +66,16 @@ const logger = serverLogger.component("agent");
 function isLocalInferenceModel(model: LanguageModel, requestedModel: string): boolean {
   if (requestedModel.startsWith("local/")) return true;
 
-  const provider = (model as { provider?: unknown }).provider;
-  if (provider === "local") return true;
+  // LanguageModel is a union that includes string, so we need to narrow first
+  if (typeof model === "string") return model.startsWith("local/");
 
-  const modelId = (model as { modelId?: unknown }).modelId;
-  return typeof modelId === "string" && modelId.startsWith("local/");
+  if ("provider" in model && model.provider === "local") return true;
+
+  if ("modelId" in model && typeof model.modelId === "string" && model.modelId.startsWith("local/")) {
+    return true;
+  }
+
+  return false;
 }
 
 export class AgentRuntime {
