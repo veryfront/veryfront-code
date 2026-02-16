@@ -154,18 +154,32 @@ function renderSection(title: string, isActive = true): string {
  * Render the help bar at the bottom
  */
 function renderHelpBar(state: AppState): string {
+  const hasItems = state.projects.items.length > 0 || state.examples.items.length > 0 ||
+    (!!state.remote.user && state.remote.projects.length > 0);
+
   if (!state.showHelp) {
     const userInfo = state.remote.user ? `  ${dim("-")}  ${brand(state.remote.user.email)}` : "";
+    if (!hasItems) {
+      return `  ${dim("n")} ${dim("new project")}  ${dim("a")} ${dim("login")}  ${dim("? more")}  ${
+        dim("q quit")
+      }${userInfo}`;
+    }
     return `  ${dim("↑↓ select  enter open  ? more  q quit")}${userInfo}`;
   }
 
   const lines: string[] = [];
-  lines.push(`  ${dim("o")} open  ${dim("s")} studio  ${dim("i")} ide`);
+
+  if (hasItems) {
+    lines.push(`  ${dim("o")} open  ${dim("s")} studio  ${dim("i")} ide`);
+  }
 
   if (!state.remote.user) {
     lines.push(`  ${dim("n")} new  ${dim("a")} login`);
   } else {
-    lines.push(`  ${dim("n")} new  ${dim("p")} pull  ${dim("u")} push  ${dim("x")} logout`);
+    const parts = [`  ${dim("n")} new`];
+    if (hasItems) parts.push(`${dim("p")} pull  ${dim("u")} push`);
+    parts.push(`${dim("x")} logout`);
+    lines.push(parts.join("  "));
   }
 
   lines.push(`  ${dim("? hide  q quit")}`);
@@ -193,6 +207,12 @@ export function renderDashboardBoxed(state: AppState): string {
 /**
  * Render empty state when no projects found
  */
-export function renderEmptyState(): string {
-  return `\n  ${dim("No projects.")} ${brand("n")} ${dim("to create")}\n`;
+export function renderEmptyState(state: AppState): string {
+  const lines: string[] = [];
+
+  lines.push(renderBanner(state), "");
+  lines.push(`  ${dim("No projects.")} ${brand("n")} ${dim("to create")}`, "");
+  lines.push(renderHelpBar(state));
+
+  return lines.join("\n");
 }
