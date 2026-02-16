@@ -85,7 +85,9 @@ export class ServerResolver {
 
   private async fetchServer(environmentId: string): Promise<DedicatedServer | null> {
     try {
-      const url = `${this.apiInternalUrl}/internal/environment-server?environmentId=${encodeURIComponent(environmentId)}`;
+      const url = `${this.apiInternalUrl}/internal/environment-server?environmentId=${
+        encodeURIComponent(environmentId)
+      }`;
       const headers: Record<string, string> = { Accept: "application/json" };
 
       if (this.apiUser && this.apiPass) {

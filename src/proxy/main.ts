@@ -352,9 +352,9 @@ function forwardToServer(req: Request): Promise<Response> {
 
           for (let attempt = 0; attempt <= maxRetries; attempt++) {
             // Dedicated server takes priority; otherwise use shared pool with renderer router
-            const baseUrl = dedicatedServerUrl
-              ?? rendererRouter?.resolve(ctx.projectSlug)
-              ?? PRODUCTION_SERVER_URL;
+            const baseUrl = dedicatedServerUrl ??
+              rendererRouter?.resolve(ctx.projectSlug) ??
+              PRODUCTION_SERVER_URL;
             const serverUrl = new URL(url.pathname + url.search, baseUrl);
             // Delay before retry (not on first attempt)
             if (attempt > 0) {
