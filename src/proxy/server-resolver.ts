@@ -25,6 +25,13 @@ interface CacheEntry {
   expiresAt: number;
 }
 
+/** Thrown when the API call fails (network error, non-OK status, parse error). */
+class ServerResolverError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+  }
+}
+
 export class ServerResolver {
   private cache = new Map<string, CacheEntry>();
   private pending = new Map<string, Promise<DedicatedServer | null>>();
@@ -65,11 +72,21 @@ export class ServerResolver {
 
     try {
       const server = await promise;
+      // Only cache successful API responses (server found OR explicit "no server").
+      // Transient errors (network failures, non-OK status) are NOT cached so the
+      // next request retries the API instead of suppressing dedicated routing.
       this.cache.set(environmentId, {
         server,
         expiresAt: Date.now() + this.cacheTtlMs,
       });
       return server ? `http://${server.hostname}` : null;
+    } catch (error) {
+      // API error — don't cache, fall back to shared pool for this request
+      logger.warn("[ServerResolver] Transient error, skipping cache", {
+        environmentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
     } finally {
       this.pending.delete(environmentId);
     }
@@ -83,43 +100,44 @@ export class ServerResolver {
     this.cache.clear();
   }
 
+  /**
+   * Fetch dedicated server from API.
+   * Returns DedicatedServer | null on success (null = no dedicated server assigned).
+   * Throws ServerResolverError on transient failures (network, non-OK status).
+   */
   private async fetchServer(environmentId: string): Promise<DedicatedServer | null> {
-    try {
-      const url = `${this.apiInternalUrl}/internal/environment-server?environmentId=${
-        encodeURIComponent(environmentId)
-      }`;
-      const headers: Record<string, string> = { Accept: "application/json" };
+    const url = `${this.apiInternalUrl}/internal/environment-server?environmentId=${
+      encodeURIComponent(environmentId)
+    }`;
+    const headers: Record<string, string> = { Accept: "application/json" };
 
-      if (this.apiUser && this.apiPass) {
-        headers.Authorization = `Basic ${btoa(`${this.apiUser}:${this.apiPass}`)}`;
-      }
-
-      const response = await fetch(url, { headers, signal: AbortSignal.timeout(5_000) });
-
-      if (!response.ok) {
-        await response.body?.cancel();
-        logger.warn("[ServerResolver] API returned non-OK status", {
-          status: response.status,
-          environmentId,
-        });
-        return null;
-      }
-
-      const data = (await response.json()) as { server: DedicatedServer | null };
-      if (data.server) {
-        logger.debug("[ServerResolver] Resolved dedicated server", {
-          environmentId,
-          hostname: data.server.hostname,
-        });
-      }
-      return data.server;
-    } catch (error) {
-      logger.warn("[ServerResolver] Failed to resolve server, falling back to shared pool", {
-        error: error instanceof Error ? error.message : String(error),
-        environmentId,
-      });
-      return null;
+    if (this.apiUser && this.apiPass) {
+      headers.Authorization = `Basic ${btoa(`${this.apiUser}:${this.apiPass}`)}`;
     }
+
+    let response: Response;
+    try {
+      response = await fetch(url, { headers, signal: AbortSignal.timeout(5_000) });
+    } catch (error) {
+      throw new ServerResolverError(
+        `Failed to reach API: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new ServerResolverError(`API returned ${response.status} for ${environmentId}`);
+    }
+
+    const data = (await response.json()) as { server: DedicatedServer | null };
+    if (data.server) {
+      logger.debug("[ServerResolver] Resolved dedicated server", {
+        environmentId,
+        hostname: data.server.hostname,
+      });
+    }
+    return data.server;
   }
 
   private cleanup(): void {

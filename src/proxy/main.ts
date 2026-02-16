@@ -15,6 +15,9 @@
  * - LOCAL_PROJECTS: JSON map of slug → filesystem path (for dev)
  * - CACHE_TYPE: "memory" (default) or "redis"
  * - REDIS_URL: Redis connection URL (required if CACHE_TYPE=redis)
+ * - VERYFRONT_API_INTERNAL_URL: API URL for internal endpoints (falls back to VERYFRONT_PROXY_API_BASE_URL)
+ * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
+ * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
  */
 
 import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
@@ -346,12 +349,14 @@ function forwardToServer(req: Request): Promise<Response> {
           const isIdempotent = ["GET", "HEAD", "OPTIONS"].includes(req.method);
           const maxRetries = isIdempotent ? VERYFRONT_SERVER_RETRY_COUNT : 0;
           let lastError: Error | null = null;
-
-          // Check if this environment has a dedicated server
-          const dedicatedServerUrl = await serverResolver.resolve(ctx.environmentId);
+          // After a retryable connection error to a dedicated server, fall back to shared pool
+          let skipDedicated = false;
 
           for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            // Dedicated server takes priority; otherwise use shared pool with renderer router
+            // Resolve dedicated server per attempt so retries can fall back to shared pool
+            const dedicatedServerUrl = skipDedicated
+              ? null
+              : await serverResolver.resolve(ctx.environmentId);
             const baseUrl = dedicatedServerUrl ??
               rendererRouter?.resolve(ctx.projectSlug) ??
               PRODUCTION_SERVER_URL;
@@ -436,10 +441,26 @@ function forwardToServer(req: Request): Promise<Response> {
 
               // Check if this is a retryable error and we have retries left
               if (isRetryableConnectionError(error) && attempt < maxRetries) {
-                proxyLogger.warn(`[Retry] Retryable connection error on attempt ${attempt + 1}`, {
-                  pathname: url.pathname,
-                  error: error instanceof Error ? error.message : String(error),
-                });
+                // If we were targeting a dedicated server, fall back to shared pool on retry
+                if (dedicatedServerUrl) {
+                  skipDedicated = true;
+                  proxyLogger.warn(
+                    `[Retry] Dedicated server unreachable, falling back to shared pool`,
+                    {
+                      pathname: url.pathname,
+                      dedicatedServerUrl,
+                      error: error instanceof Error ? error.message : String(error),
+                    },
+                  );
+                } else {
+                  proxyLogger.warn(
+                    `[Retry] Retryable connection error on attempt ${attempt + 1}`,
+                    {
+                      pathname: url.pathname,
+                      error: error instanceof Error ? error.message : String(error),
+                    },
+                  );
+                }
                 continue; // Try again
               }
 

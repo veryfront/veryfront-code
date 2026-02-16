@@ -1,14 +1,17 @@
 import { assertEquals } from "@std/assert";
 import { ServerResolver } from "./server-resolver.ts";
 
-// Minimal HTTP server for testing
+// Minimal HTTP server for testing — bind to 127.0.0.1 to avoid IPv6 flakiness
 function createMockApi(
   handler: (req: Request) => Response | Promise<Response>,
 ): { url: string; close: () => Promise<void> } {
-  const server = Deno.serve({ port: 0, onListen: () => {} }, handler);
+  const server = Deno.serve(
+    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+    handler,
+  );
   const addr = server.addr as Deno.NetAddr;
   return {
-    url: `http://localhost:${addr.port}`,
+    url: `http://${addr.hostname}:${addr.port}`,
     close: () => server.shutdown(),
   };
 }
@@ -141,6 +144,41 @@ Deno.test("ServerResolver", async (t) => {
       assertEquals(r2, null);
       assertEquals(r3, null);
       assertEquals(callCount, 1, "should deduplicate to single API call");
+    } finally {
+      resolver.close();
+      await api.close();
+    }
+  });
+
+  await t.step("does not cache transient API errors (retries on next request)", async () => {
+    let callCount = 0;
+    const api = createMockApi(() => {
+      callCount++;
+      if (callCount === 1) {
+        return new Response("Service Unavailable", { status: 503 });
+      }
+      return Response.json({
+        server: {
+          id: "srv-1",
+          short_id: "9999999999",
+          hostname: "veryfront-server-9999999999.ns.svc.cluster.local",
+          status: "running",
+        },
+      });
+    });
+    const resolver = new ServerResolver(api.url, "", "", 30_000);
+    try {
+      // First call: API returns 503 → should return null (fallback) but NOT cache
+      const r1 = await resolver.resolve("env-transient");
+      assertEquals(r1, null);
+
+      // Second call: API now healthy → should hit API again (not use cached null)
+      const r2 = await resolver.resolve("env-transient");
+      assertEquals(
+        r2,
+        "http://veryfront-server-9999999999.ns.svc.cluster.local",
+      );
+      assertEquals(callCount, 2, "should call API twice (error was not cached)");
     } finally {
       resolver.close();
       await api.close();
