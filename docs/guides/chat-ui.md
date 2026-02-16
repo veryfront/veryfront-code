@@ -25,17 +25,12 @@ export default function ChatPage() {
 
 ```ts
 // app/api/chat/route.ts
-import { getAgent } from "veryfront/agent";
+import { createChatHandler } from "veryfront/agent";
 
-export async function POST(request: Request) {
-  const { messages } = await request.json();
-  const agent = getAgent("assistant");
-  const result = await agent.stream({ messages });
-  return result.toDataStreamResponse();
-}
+export const POST = createChatHandler("assistant");
 ```
 
-The `Chat` component renders a full chat interface with input, message list, loading indicators, and scroll management.
+`createChatHandler` handles request validation, message transformation, and automatic browser fallback when no AI provider is available. The `Chat` component renders a full chat interface with input, message list, loading indicators, and scroll management.
 
 ## useChat hook
 
