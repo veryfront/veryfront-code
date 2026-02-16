@@ -205,7 +205,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
       return;
     }
     template = wizardResult.template;
-    projectName = wizardResult.projectName ?? undefined;
+    if (wizardResult.projectName) {
+      projectName = wizardResult.projectName;
+    }
     initGit = wizardResult.initGit;
   } else {
     template = options.template ?? "minimal";
