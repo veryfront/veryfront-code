@@ -481,16 +481,34 @@ jobs:
             BRANCH="update-veryfront-v${VERSION}"
             git checkout -b "${BRANCH}"
             git commit -m "Update veryfront to v${VERSION}"
-            git push -u origin "${BRANCH}"
+            git push -u origin "${BRANCH}" || git push -u origin "${BRANCH}" --force-with-lease
 
-            GH_TOKEN="${GITHUB_PAT}" gh pr create \
+            PR_NUMBER=$(GH_TOKEN="${GITHUB_PAT}" gh pr list \
               --repo veryfront/homebrew-tap \
               --base main \
               --head "${BRANCH}" \
-              --title "Update veryfront to v${VERSION}" \
-              --body "Automated update from CI — veryfront v${VERSION}" \
-              --fill
+              --state open \
+              --json number \
+              --jq '.[0].number')
 
-            GH_TOKEN="${GITHUB_PAT}" gh pr merge "${BRANCH}" \
+            if [ -z "${PR_NUMBER}" ] || [ "${PR_NUMBER}" = "null" ]; then
+              GH_TOKEN="${GITHUB_PAT}" gh pr create \
+                --repo veryfront/homebrew-tap \
+                --base main \
+                --head "${BRANCH}" \
+                --title "Update veryfront to v${VERSION}" \
+                --body "Automated update from CI — veryfront v${VERSION}" \
+                --fill
+
+              PR_NUMBER=$(GH_TOKEN="${GITHUB_PAT}" gh pr list \
+                --repo veryfront/homebrew-tap \
+                --base main \
+                --head "${BRANCH}" \
+                --state open \
+                --json number \
+                --jq '.[0].number')
+            fi
+
+            GH_TOKEN="${GITHUB_PAT}" gh pr merge "${PR_NUMBER}" \
               --repo veryfront/homebrew-tap \
               --merge --auto
