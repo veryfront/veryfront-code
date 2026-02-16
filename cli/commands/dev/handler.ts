@@ -60,9 +60,13 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   // Clear stale ESM caches to prevent module resolution issues from previous runs
   await clearAllLocalCaches();
 
-  await devCommand({
+  const { done } = await devCommand({
     port: opts.port,
     projectDir,
     hmr: opts.hmr,
   });
+
+  // Block until the dev server shuts down.
+  // Without this, main.ts reaches exitProcess(0) and terminates immediately.
+  await done;
 }

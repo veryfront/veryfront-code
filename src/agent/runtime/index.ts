@@ -36,7 +36,7 @@ import { convertToModelMessages } from "./model-message-converter.ts";
 import { convertToolsToAISDK } from "./model-tool-converter.ts";
 import { createStreamState, processStream } from "./ai-stream-handler.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
-import { generateText, streamText } from "ai";
+import { generateText, type LanguageModel, streamText } from "ai";
 
 // Re-export from submodules
 export { generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -58,6 +58,20 @@ import { getAvailableTools, isDynamicTool, parseToolArgs } from "./tool-helpers.
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 
 const logger = serverLogger.component("agent");
+
+/**
+ * Detect whether the resolved model is local inference.
+ * Handles both explicit "local/*" requests and cloud->local auto-fallback.
+ */
+function isLocalInferenceModel(model: LanguageModel, requestedModel: string): boolean {
+  if (requestedModel.startsWith("local/")) return true;
+
+  const provider = (model as { provider?: unknown }).provider;
+  if (provider === "local") return true;
+
+  const modelId = (model as { modelId?: unknown }).modelId;
+  return typeof modelId === "string" && modelId.startsWith("local/");
+}
 
 export class AgentRuntime {
   private id: string;
@@ -125,6 +139,7 @@ export class AgentRuntime {
     modelOverride?: string,
   ): Promise<ReadableStream<Uint8Array>> {
     const modelString = modelOverride || this.config.model;
+    const requestedModel = modelString || this.config.model;
 
     for (const msg of messages) await this.memory.add(msg);
 
@@ -135,6 +150,11 @@ export class AgentRuntime {
     const toolContext = { agentId: this.id, ...context };
     const textPartId = generateId("text");
 
+    // Resolve model BEFORE creating the ReadableStream — if this throws
+    // (e.g., no_ai_available), the error propagates to the caller who can
+    // return a proper error response (503) instead of a 200 with an error event.
+    const languageModel = resolveModel(requestedModel);
+
     return new ReadableStream<Uint8Array>({
       start: async (controller) => {
         try {
@@ -142,6 +162,14 @@ export class AgentRuntime {
 
           const messageId = generateMessageId();
           sendSSE(controller, encoder, { type: "message-start", messageId });
+          sendSSE(controller, encoder, {
+            type: "data",
+            data: {
+              inferenceMode: isLocalInferenceModel(languageModel, requestedModel)
+                ? "server-local"
+                : "cloud",
+            },
+          });
           sendSSE(controller, encoder, { type: "text-start", id: textPartId });
 
           await this.executeAgentLoopStreaming(
@@ -153,6 +181,7 @@ export class AgentRuntime {
             textPartId,
             toolContext,
             modelString,
+            languageModel,
           );
 
           sendSSE(controller, encoder, { type: "text-end", id: textPartId });
@@ -181,17 +210,21 @@ export class AgentRuntime {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
       const maxSteps = this.computeMaxSteps(maxAgentSteps);
-      const languageModel = resolveModel(modelString || this.config.model);
+      const requestedModel = modelString || this.config.model;
+      const languageModel = resolveModel(requestedModel);
 
       const toolCalls: ToolCall[] = [];
       const currentMessages = [...messages];
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
+      // Local models can't reliably do function calling — skip tools gracefully.
+      const isLocal = isLocalInferenceModel(languageModel, requestedModel);
+
       for (let step = 0; step < maxSteps; step++) {
         this.status = "thinking";
         addSpanEvent(loopSpan, "step_start", { step });
 
-        const tools = getAvailableTools(this.config.tools);
+        const tools = isLocal ? [] : getAvailableTools(this.config.tools);
 
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
@@ -350,19 +383,24 @@ export class AgentRuntime {
     textPartId?: string,
     toolContext?: Record<string, unknown>,
     modelString?: string,
+    resolvedModel?: LanguageModel,
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
     const maxSteps = this.computeMaxSteps(maxAgentSteps);
-    const languageModel = resolveModel(modelString || this.config.model);
+    const requestedModel = modelString || this.config.model;
+    const languageModel = resolvedModel ?? resolveModel(requestedModel);
 
     const toolCalls: ToolCall[] = [];
     const currentMessages = [...messages];
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
+    // Local models can't reliably do function calling — skip tools gracefully.
+    const isLocalStreaming = isLocalInferenceModel(languageModel, requestedModel);
+
     for (let step = 0; step < maxSteps; step++) {
       sendSSE(controller, encoder, { type: "step-start" });
 
-      const tools = getAvailableTools(this.config.tools);
+      const tools = isLocalStreaming ? [] : getAvailableTools(this.config.tools);
       const result = streamText({
         model: languageModel,
         system: systemPrompt,

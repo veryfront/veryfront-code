@@ -195,6 +195,21 @@ describe("useChat streaming handler (veryfront protocol)", () => {
     assertEquals(result.dataEvents[1], [1, 2, 3]);
   });
 
+  it("handles inferenceMode data event from server", async () => {
+    const result = await processStream([
+      { type: "message-start", messageId: "msg-mode" },
+      { type: "data", data: { inferenceMode: "server-local" } },
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "Local response" },
+      { type: "text-end", id: "text-1" },
+      { type: "message-finish" },
+    ]);
+
+    assertEquals(result.dataEvents.length, 1);
+    assertEquals(result.dataEvents[0], { inferenceMode: "server-local" });
+    assertEquals(getTextContent(result.messages[0]!), "Local response");
+  });
+
   it("uses parts array as primary content structure", async () => {
     const result = await processStream([
       { type: "message-start", messageId: "msg-parts" },

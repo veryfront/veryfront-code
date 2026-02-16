@@ -122,12 +122,15 @@ await build({
 		engines: {
 			node: ">=18.0.0",
 		},
-		// ws is dynamically imported for Node.js WebSocket upgrade (HMR dev server)
-		// dnt can't detect dynamic imports, so we add it explicitly
+		// dnt can't detect dynamic imports, so we add them explicitly
 		dependencies: {
 			"@types/react": "^19.0.0",
 			"@types/react-dom": "^19.0.0",
 			"ws": "^8.18.0",
+		},
+		// Native binary deps that should not block install if they fail
+		optionalDependencies: {
+			"@huggingface/transformers": "^3.4.2",
 		},
 		keywords: [
 			"react",

@@ -112,6 +112,7 @@ export async function startServer(
 
     const process = new Deno.Command(BINARY_PATH, {
       args: ["dev", "-p", String(port), "--project", projectDir],
+      cwd: projectDir,
       env: {
         ...Deno.env.toObject(),
         NODE_ENV: nodeEnv,

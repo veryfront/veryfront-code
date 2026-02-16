@@ -1,5 +1,17 @@
 export type StreamState = "streaming" | "done";
 
+/** Where inference is happening */
+export type InferenceMode = "cloud" | "server-local" | "browser";
+
+/** Browser-side model loading and inference status */
+export type BrowserInferenceStatus =
+  | "idle"
+  | "loading-runtime"
+  | "downloading-model"
+  | "ready"
+  | "generating"
+  | "error";
+
 export interface TextUIPart {
   type: "text";
   text: string;
@@ -89,6 +101,10 @@ export interface UseChatOptions {
   credentials?: RequestCredentials;
   /** Override model at runtime (e.g. "openai/gpt-4o", "anthropic/claude-sonnet-4-5-20250929") */
   model?: string;
+  /** System prompt for browser-side inference (server uses agent config) */
+  systemPrompt?: string;
+  /** Enable/disable browser fallback when server can't provide AI. Default: true */
+  browserFallback?: boolean;
   onResponse?: (response: Response) => void;
   onFinish?: (message: UIMessage) => void;
   onError?: (error: Error) => void;
@@ -102,6 +118,10 @@ export interface UseChatResult {
   error: Error | null;
   /** Current model override (undefined = use agent default) */
   model: string | undefined;
+  /** Where inference is currently happening */
+  inferenceMode: InferenceMode;
+  /** Browser-side model loading/inference status (null when not using browser fallback) */
+  browserStatus: BrowserInferenceStatus | null;
   setInput: (input: string) => void;
   /** Change the model for subsequent requests */
   setModel: (model: string | undefined) => void;

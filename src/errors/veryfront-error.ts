@@ -75,7 +75,8 @@ export type VeryfrontErrorData =
   | { type: "file"; message: string; context?: FileContext }
   | { type: "network"; message: string; context?: NetworkContext }
   | { type: "permission"; message: string; context?: FileContext }
-  | { type: "not_supported"; message: string; feature?: string };
+  | { type: "not_supported"; message: string; feature?: string }
+  | { type: "no_ai_available"; message: string };
 
 export function createError(error: VeryfrontErrorData): VeryfrontErrorData {
   return error;

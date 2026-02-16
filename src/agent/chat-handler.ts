@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getAgent } from "./composition/index.ts";
 import type { Message } from "./types.ts";
+import { fromError } from "#veryfront/errors/veryfront-error.ts";
 
 // ---------------------------------------------------------------------------
 // Zod schemas for validating AI SDK v5 chat UI messages
@@ -129,10 +130,24 @@ export interface ChatHandlerOptions {
 }
 
 /**
+ * Extract the raw Request from either a raw Request or a Pages Router APIContext.
+ * Pages Router handlers receive `(ctx)` where `ctx.request` is the Request.
+ * App Router handlers receive `(request, context)` where `request` IS the Request.
+ */
+function extractRequest(requestOrCtx: unknown): Request {
+  if (requestOrCtx instanceof Request) return requestOrCtx;
+  // Pages Router APIContext — has a .request property
+  const ctx = requestOrCtx as { request?: Request };
+  if (ctx.request instanceof Request) return ctx.request;
+  throw new Error("Invalid handler argument: expected Request or APIContext");
+}
+
+/**
  * Create a POST handler for a chat API route.
  *
- * Encapsulates request validation, message transformation, agent streaming,
- * and error handling so that template routes stay one-liners.
+ * Works with both App Router and Pages Router:
+ * - App Router: `app/api/chat/route.ts` — handler receives `(request, context)`
+ * - Pages Router: `pages/api/chat.ts` — handler receives `(ctx)`
  *
  * @example
  * ```ts
@@ -144,12 +159,15 @@ export function createChatHandler(
   agentId: string,
   options?: ChatHandlerOptions,
 ) {
-  return async function POST(request: Request): Promise<Response> {
+  // deno-lint-ignore no-explicit-any
+  return async function POST(requestOrCtx: any): Promise<Response> {
+    const request = extractRequest(requestOrCtx);
+    const agent = getAgent(agentId);
+
     try {
       const body = await request.json();
       const { messages: rawMessages } = chatRequestSchema.parse(body);
 
-      const agent = getAgent(agentId);
       if (!agent) {
         return Response.json({ error: "Agent not found" }, { status: 404 });
       }
@@ -173,6 +191,33 @@ export function createChatHandler(
         return Response.json(
           { error: "Invalid request", details: error.errors },
           { status: 400 },
+        );
+      }
+
+      // Detect structured "no_ai_available" errors from local engine
+      const vfError = fromError(error);
+      if (vfError?.type === "no_ai_available") {
+        // Resolve the agent's system prompt so the browser can use it for inference
+        const systemConfig = agent?.config?.system;
+        let systemPrompt = "You are a helpful AI assistant.";
+        if (typeof systemConfig === "string") {
+          systemPrompt = systemConfig;
+        } else if (typeof systemConfig === "function") {
+          try {
+            systemPrompt = await systemConfig();
+          } catch {
+            // Fall back to default
+          }
+        }
+
+        return Response.json(
+          {
+            code: "NO_AI_AVAILABLE",
+            fallback: "browser",
+            model: "smollm2-135m",
+            systemPrompt,
+          },
+          { status: 503 },
         );
       }
 

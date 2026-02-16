@@ -252,7 +252,8 @@
     "@babel/parser": "npm:@babel/parser@7.26.3",
     "@babel/traverse": "npm:@babel/traverse@7.26.3",
     "@babel/generator": "npm:@babel/generator@7.26.3",
-    "@babel/types": "npm:@babel/types@7.26.3"
+    "@babel/types": "npm:@babel/types@7.26.3",
+    "@huggingface/transformers": "npm:@huggingface/transformers@3.4.2"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
@@ -383,7 +384,10 @@
     "proseWrap": "preserve"
   },
   "allowScripts": {
-    "allow": [],
+    "allow": [
+      "npm:sharp@0.33.5",
+      "npm:onnxruntime-node@1.20.1"
+    ],
     "deny": [
       "npm:esbuild@0.20.2",
       "npm:protobufjs@7.5.4"
