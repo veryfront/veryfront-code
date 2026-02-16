@@ -10,12 +10,11 @@ describe("build/production-build/asset-generation", () => {
       assertEquals(styles.length > 0, true);
     });
 
-    it("should return the CLIENT_STYLES template", () => {
+    it("should contain error container styles only", () => {
       const styles = loadClientStyles();
-      assertEquals(styles.includes("body {"), true);
-      assertEquals(styles.includes(".loading-container"), true);
       assertEquals(styles.includes(".error-container"), true);
-      assertEquals(styles.includes(".prose"), true);
+      assertEquals(styles.includes(".prose"), false);
+      assertEquals(styles.includes(".loading-container"), false);
     });
 
     it("should be consistent across calls", () => {

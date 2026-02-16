@@ -11,21 +11,19 @@ describe("build/production-build/templates", () => {
 
     it("should contain expected styles", () => {
       const expectedSubstrings = [
-        "body {",
-        "margin: 0",
-        ".loading-container",
-        ".loading-spinner",
         ".error-container",
-        ".prose",
-        ".prose h1",
-        ".prose code",
-        ".prose pre",
-        "@keyframes spin",
       ];
 
       for (const substring of expectedSubstrings) {
         assertEquals(CLIENT_STYLES.includes(substring), true);
       }
+    });
+
+    it("should not contain styles redundant with Tailwind", () => {
+      assertEquals(CLIENT_STYLES.includes(".prose"), false);
+      assertEquals(CLIENT_STYLES.includes(".loading-container"), false);
+      assertEquals(CLIENT_STYLES.includes(".loading-spinner"), false);
+      assertEquals(CLIENT_STYLES.includes("@keyframes spin"), false);
     });
   });
 
