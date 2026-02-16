@@ -389,10 +389,13 @@ jobs:
             | xargs -I{} gh release delete {} --repo veryfront/veryfront --yes --cleanup-tag 2>/dev/null || true
 
           # Public repo release with binaries and install scripts
-          gh release create "v${VERSION}" \
-            --repo veryfront/veryfront \
-            --title "v${VERSION}" \
-            --notes '## Install
+          if gh release view "v${VERSION}" --repo veryfront/veryfront &>/dev/null; then
+            echo "::notice::Release v${VERSION} already exists on veryfront/veryfront — skipping"
+          else
+            gh release create "v${VERSION}" \
+              --repo veryfront/veryfront \
+              --title "v${VERSION}" \
+              --notes '## Install
 
           ```bash
           # macOS/Linux
@@ -401,18 +404,24 @@ jobs:
           # npm
           npm install -g veryfront
           ```' \
-            $BINARIES \
-            scripts/install.sh \
-            scripts/install.ps1
+              $BINARIES \
+              scripts/install.sh \
+              scripts/install.ps1
+          fi
 
       - name: Create source repo release
-        run: |
-          gh release create "v${{ steps.version.outputs.version }}" \
-            --title "v${{ steps.version.outputs.version }}" \
-            --generate-notes \
-            --notes 'Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${{ steps.version.outputs.version }}'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "v${VERSION}" &>/dev/null; then
+            echo "::notice::Release v${VERSION} already exists on source repo — skipping"
+          else
+            gh release create "v${VERSION}" \
+              --title "v${VERSION}" \
+              --generate-notes \
+              --notes "Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${VERSION}"
+          fi
 
       - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@v3
