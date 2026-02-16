@@ -64,6 +64,22 @@ When a user asks "What's the weather in Tokyo?", the agent:
 | `execute` | `(params) => Promise<unknown>` | Function that runs when the tool is called |
 | `id` | `string` | Override the auto-generated ID |
 
+## Writing good descriptions
+
+The `description` field is what the model reads to decide when to call your tool. Be specific, and use `.describe()` on Zod fields to help the model understand what to pass:
+
+```ts
+export default tool({
+  description: "Search the product catalog by name, category, or price range",
+  inputSchema: z.object({
+    query: z.string().min(1).describe("Search term"),
+    category: z.string().optional().describe("Filter by category"),
+    maxPrice: z.number().optional().describe("Maximum price in USD"),
+  }),
+  execute: async ({ query, category, maxPrice }) => { /* ... */ },
+});
+```
+
 ## Returning errors
 
 Throw from `execute` to signal an error. The agent sees the error message and can retry or respond accordingly:
@@ -82,19 +98,27 @@ export default tool({
 
 ## Tools with context
 
-Tools can access the request context when executed during an API route:
+The `execute` function receives an optional second argument with runtime context:
 
 ```ts
 export default tool({
-  description: "Get the current user's profile",
-  inputSchema: z.object({}),
-  execute: async (_, { context }) => {
-    const userId = context?.userId;
-    if (!userId) throw new Error("Not authenticated");
-    return await db.users.findById(userId);
+  description: "List repos for the current user",
+  inputSchema: z.object({
+    sort: z.enum(["created", "updated"]).default("updated"),
+  }),
+  execute: async ({ sort }, context) => {
+    const userId = context?.endUserId ?? "anonymous";
+    return await fetchRepos(userId, { sort });
   },
 });
 ```
+
+| Context field | Type | Description |
+|---------------|------|-------------|
+| `agentId` | `string` | ID of the agent that called the tool |
+| `projectId` | `string` | Current project identifier |
+| `endUserId` | `string` | End-user identity for per-user token resolution |
+| `blobStorage` | `BlobStorage` | Blob storage access (if configured in workflow) |
 
 Pass context from the API route:
 
@@ -102,7 +126,7 @@ Pass context from the API route:
 // app/api/chat/route.ts
 const result = await agent.stream({
   messages,
-  context: { userId: "user-123" },
+  context: { endUserId: "user-123" },
 });
 ```
 
