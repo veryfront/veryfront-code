@@ -467,7 +467,7 @@ jobs:
             FORMULA="${FORMULA//SHA256_LINUX_ARM64_PLACEHOLDER/${SHAS[veryfront-linux-arm64]}}"
             FORMULA="${FORMULA//SHA256_LINUX_X64_PLACEHOLDER/${SHAS[veryfront-linux-x64]}}"
 
-            # Push to tap repo (fresh clone each retry to avoid conflicts)
+            # Create PR against tap repo (branch protection requires PRs)
             rm -rf tap
             git clone "https://x-access-token:${GITHUB_PAT}@github.com/veryfront/homebrew-tap.git" tap
             mkdir -p tap/Formula
@@ -477,5 +477,20 @@ jobs:
             git config user.email "actions@github.com"
             git add Formula/veryfront.rb
             git diff --cached --quiet && echo "No changes to commit" && exit 0
+
+            BRANCH="update-veryfront-v${VERSION}"
+            git checkout -b "${BRANCH}"
             git commit -m "Update veryfront to v${VERSION}"
-            git push
+            git push -u origin "${BRANCH}"
+
+            GH_TOKEN="${GITHUB_PAT}" gh pr create \
+              --repo veryfront/homebrew-tap \
+              --base main \
+              --head "${BRANCH}" \
+              --title "Update veryfront to v${VERSION}" \
+              --body "Automated update from CI — veryfront v${VERSION}" \
+              --fill
+
+            GH_TOKEN="${GITHUB_PAT}" gh pr merge "${BRANCH}" \
+              --repo veryfront/homebrew-tap \
+              --merge --auto
