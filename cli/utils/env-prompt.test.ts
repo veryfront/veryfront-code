@@ -24,6 +24,8 @@ describe("env-prompt", () => {
       assertStringIncludes(result, "# Dependencies");
       assertStringIncludes(result, "# Environment files");
       assertStringIncludes(result, "# Build output");
+      assertStringIncludes(result, "# Local AI model cache");
+      assertStringIncludes(result, ".cache/");
       assertStringIncludes(result, "# IDE");
     });
 

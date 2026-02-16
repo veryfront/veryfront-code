@@ -25,17 +25,12 @@ export default function ChatPage() {
 
 ```ts
 // app/api/chat/route.ts
-import { getAgent } from "veryfront/agent";
+import { createChatHandler } from "veryfront/agent";
 
-export async function POST(request: Request) {
-  const { messages } = await request.json();
-  const agent = getAgent("assistant");
-  const result = await agent.stream({ messages });
-  return result.toDataStreamResponse();
-}
+export const POST = createChatHandler("assistant");
 ```
 
-The `Chat` component renders a full chat interface with input, message list, loading indicators, and scroll management.
+`createChatHandler` handles request validation, message transformation, and automatic browser fallback when no AI provider is available. The `Chat` component renders a full chat interface with input, message list, loading indicators, and scroll management.
 
 ## useChat hook
 
@@ -91,6 +86,9 @@ export default function CustomChat() {
 | `initialMessages` | `UIMessage[]` | Pre-populate the conversation |
 | `body` | `Record<string, unknown>` | Extra data sent with each request |
 | `headers` | `Record<string, string>` | Custom request headers |
+| `model` | `string` | Override model at runtime |
+| `systemPrompt` | `string` | System prompt for browser-side inference |
+| `browserFallback` | `boolean` | Enable browser fallback when server can't provide AI (default: `true`) |
 | `onFinish` | `(message) => void` | Called when the assistant finishes responding |
 | `onError` | `(error) => void` | Called on stream errors |
 | `onToolCall` | `(toolCall) => void` | Called when the agent calls a tool |
@@ -175,6 +173,47 @@ export default function Autocomplete() {
     </div>
   );
 }
+```
+
+## Inference mode
+
+`useChat` automatically detects where inference is running and exposes `inferenceMode` for your UI to adapt. When no API key is configured, the framework falls back through cloud → server-local → browser inference automatically.
+
+```tsx
+'use client'
+import { Chat, useChat } from "veryfront/chat";
+
+export default function ChatPage() {
+  const chat = useChat({ api: "/api/chat" });
+
+  return (
+    <Chat {...chat} inferenceMode={chat.inferenceMode} browserStatus={chat.browserStatus} />
+  );
+}
+```
+
+The `Chat` component renders `InferenceBadge` and `UpgradeCTA` automatically when `inferenceMode` and `browserStatus` are passed as props.
+
+| `inferenceMode` | Description |
+|-----------------|-------------|
+| `"cloud"` | Using a cloud provider (OpenAI, Anthropic, Google) |
+| `"server-local"` | Running SmolLM2 locally via ONNX Runtime |
+| `"browser"` | Running SmolLM2 in a browser Web Worker |
+
+| `browserStatus` | Description |
+|-----------------|-------------|
+| `null` | Not using browser fallback |
+| `"idle"` | Browser fallback detected, not yet started |
+| `"loading-runtime"` | Loading transformers.js from CDN |
+| `"downloading-model"` | Downloading model weights |
+| `"ready"` | Model loaded, ready to generate |
+| `"generating"` | Actively generating a response |
+| `"error"` | Browser inference failed |
+
+To disable browser fallback:
+
+```tsx
+const chat = useChat({ api: "/api/chat", browserFallback: false });
 ```
 
 ## Theming

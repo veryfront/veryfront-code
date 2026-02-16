@@ -32,6 +32,36 @@ export default agent({
 });
 ```
 
+## Zero-config local AI
+
+Chat works **out of the box with no API keys**. When no cloud provider key is set, the framework automatically falls back through a three-tier inference chain:
+
+```
+Cloud provider (API key set)
+    ↓ fallback (no key)
+Server-local (SmolLM2-135M via ONNX Runtime)
+    ↓ fallback (ONNX unavailable, e.g. compiled binary)
+Browser Worker (transformers.js from CDN)
+```
+
+- **Server-local** — runs SmolLM2-135M with `@huggingface/transformers` and ONNX Runtime. The model is downloaded and cached on first use (~100MB).
+- **Browser fallback** — when the server can't load ONNX (e.g. compiled binaries), the chat handler returns a `503` with `NO_AI_AVAILABLE`. The `useChat` hook detects this and loads the same model in a Web Worker via CDN.
+
+The fallback is transparent — `useChat` exposes `inferenceMode` (`"cloud"`, `"server-local"`, or `"browser"`) so your UI can adapt.
+
+To explicitly use a local model:
+
+```ts
+agent({ model: "local/smollm2-135m" })
+// Also available: "local/smollm2-360m", "local/smollm2-1.7b"
+```
+
+To disable server-side local AI (e.g. in tests):
+
+```bash
+VERYFRONT_DISABLE_LOCAL_AI=1
+```
+
 ## Model strings
 
 Agents reference models as `"provider/model"`. The framework splits on the first `/`, so nested model IDs work:

@@ -107,6 +107,12 @@ Set environment variables in `.env` files or your deployment platform:
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `GOOGLE_API_KEY` | Google AI API key |
 
+### Local AI
+
+| Variable | Description |
+|----------|-------------|
+| `VERYFRONT_DISABLE_LOCAL_AI` | Set to `1` to disable server-side local model fallback (browser fallback may still run unless `browserFallback: false` is set in `useChat`) |
+
 ### Framework
 
 | Variable | Description |

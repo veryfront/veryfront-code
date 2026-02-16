@@ -226,6 +226,13 @@ export class AgentRuntime {
 
       // Local models can't reliably do function calling — skip tools gracefully.
       const isLocal = isLocalInferenceModel(languageModel, requestedModel);
+      if (isLocal && this.config.tools) {
+        logger.warn(
+          `Agent "${this.id}" has tools configured but is using local model "${requestedModel}". ` +
+            "Local models don't support tool calling — tools will be skipped. " +
+            "Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
+        );
+      }
 
       for (let step = 0; step < maxSteps; step++) {
         this.status = "thinking";
@@ -403,6 +410,13 @@ export class AgentRuntime {
 
     // Local models can't reliably do function calling — skip tools gracefully.
     const isLocalStreaming = isLocalInferenceModel(languageModel, requestedModel);
+    if (isLocalStreaming && this.config.tools) {
+      logger.warn(
+        `Agent "${this.id}" has tools configured but is using local model "${requestedModel}". ` +
+          "Local models don't support tool calling — tools will be skipped. " +
+          "Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
+      );
+    }
 
     for (let step = 0; step < maxSteps; step++) {
       sendSSE(controller, encoder, { type: "step-start" });

@@ -52,6 +52,18 @@ import { resolveModel } from "veryfront/provider";
 const model = resolveModel("openai/gpt-4o");
 ```
 
+### Use a local model
+
+```ts
+import { resolveModel } from "veryfront/provider";
+
+// Explicit local model
+const model = resolveModel("local/smollm2-135m");
+
+// Auto-fallback: if OPENAI_API_KEY is not set, this returns a local model
+const model = resolveModel("openai/gpt-4o");
+```
+
 ## API
 
 ### `registerModelProvider(name, factory)`
@@ -62,9 +74,11 @@ Register a model provider factory for the current project.
 
 ### `resolveModel(modelString)`
 
-Resolve a "provider/model" string to an AI SDK LanguageModel instance.
+Resolve a "provider/model" string to an AI SDK LanguageModel instance. When a cloud provider fails due to a missing API key, automatically falls back to the local model.
 
 **Returns:** `LanguageModel`
+
+**Throws:** `VeryfrontError[no_ai_available]` when both cloud and local providers are unavailable (e.g. `VERYFRONT_DISABLE_LOCAL_AI=1`).
 
 ### `hasModelProvider(name)`
 
