@@ -71,7 +71,9 @@ function isLocalInferenceModel(model: LanguageModel, requestedModel: string): bo
 
   if ("provider" in model && model.provider === "local") return true;
 
-  if ("modelId" in model && typeof model.modelId === "string" && model.modelId.startsWith("local/")) {
+  if (
+    "modelId" in model && typeof model.modelId === "string" && model.modelId.startsWith("local/")
+  ) {
     return true;
   }
 
