@@ -4,7 +4,7 @@
  *******************************/
 
 import { cliLogger as logger } from "#cli/utils";
-import { brand, dim, green } from "#cli/ui";
+import { brand, dim, green, red } from "#cli/ui";
 import { createSpinner } from "../../ui/progress.ts";
 import { box } from "../../ui/box.ts";
 import { ensureDir } from "#std/fs.ts";
@@ -35,7 +35,11 @@ import {
   loadIntegrations,
   validateIntegrations,
 } from "../../templates/integration-loader.ts";
-import { runInteractiveWizard, shouldRunWizard } from "./interactive-wizard.ts";
+import {
+  runInteractiveWizard,
+  shouldRunWizard,
+  validateProjectName,
+} from "./interactive-wizard.ts";
 
 /**
  * Icon mapping for integrations based on category/name
@@ -185,8 +189,31 @@ export async function initCommand(options: InitOptions): Promise<void> {
   let projectName = name;
   let initGit = false;
 
+  // Validate project name before doing anything else
+  if (name) {
+    const nameError = validateProjectName(name);
+    if (nameError) {
+      console.error(red(nameError));
+      return;
+    }
+  }
+
+  // Check if directory already exists before entering the wizard
+  if (name && !options.force) {
+    const fs = createFileSystem();
+    const targetDir = join(cwd(), name);
+    if (await fs.exists(targetDir)) {
+      console.error(
+        red(
+          `Directory "${name}" already exists. Choose a different name or use --force to overwrite.`,
+        ),
+      );
+      return;
+    }
+  }
+
   if (shouldRunWizard(options)) {
-    const wizardResult = await runInteractiveWizard();
+    const wizardResult = await runInteractiveWizard(name);
     if (wizardResult.cancelled) {
       return;
     }

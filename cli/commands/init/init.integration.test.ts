@@ -169,6 +169,45 @@ describe("init command integration", () => {
     });
   });
 
+  describe("existing directory", () => {
+    it("should show error when directory already exists", async () => {
+      const dirName = `exists-${randomSuffix()}`;
+      const dirPath = join(TEST_DIR, dirName);
+      await Deno.mkdir(dirPath);
+
+      try {
+        const result = await runInitCommand([dirName, "-t", "minimal", "--skip-install"]);
+        const output = (result.stdout ?? "") + (result.stderr ?? "");
+
+        assertEquals(output.includes("already exists"), true);
+        assertEquals(output.includes("Stack trace"), false);
+      } finally {
+        await remove(dirPath, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("should allow --force to overwrite existing directory", async () => {
+      const dirName = `force-${randomSuffix()}`;
+      const dirPath = join(TEST_DIR, dirName);
+      await Deno.mkdir(dirPath);
+
+      try {
+        const result = await runInitCommand([
+          dirName,
+          "-t",
+          "minimal",
+          "--skip-install",
+          "--force",
+        ]);
+
+        assertEquals(result.code, 0);
+        assertEquals(await exists(join(dirPath, "app")), true);
+      } finally {
+        await remove(dirPath, { recursive: true }).catch(() => {});
+      }
+    });
+  });
+
   describe("output messages", () => {
     it("should show success message", async () => {
       const result = await runInitCommand([projectName, "-t", "minimal", "--skip-install"]);
