@@ -7,7 +7,13 @@ import {
   SubmitButton,
 } from "../../../primitives/index.ts";
 import { useVoiceInput } from "#veryfront/agent/react";
-import type { DynamicToolUIPart, ToolUIPart, UIMessage } from "#veryfront/agent/react";
+import type {
+  BrowserInferenceStatus,
+  DynamicToolUIPart,
+  InferenceMode,
+  ToolUIPart,
+  UIMessage,
+} from "#veryfront/agent/react";
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "../theme.ts";
 import { Markdown } from "../markdown.tsx";
 import { MessageSquareIcon, RefreshCwIcon } from "../icons/index.ts";
@@ -27,6 +33,8 @@ export {
 } from "./components/empty-state.tsx";
 export { MessageActions, type MessageActionsProps } from "./components/message-actions.tsx";
 export { ToolCallCard, ToolStatusBadge } from "./components/tool-ui.tsx";
+export { InferenceBadge, type InferenceBadgeProps } from "./components/inference-badge.tsx";
+export { UpgradeCTA, type UpgradeCTAProps } from "./components/upgrade-cta.tsx";
 
 export {
   getTextContent,
@@ -48,6 +56,8 @@ import {
 import { MessageActions } from "./components/message-actions.tsx";
 import { ReasoningCard } from "./components/reasoning.tsx";
 import { ToolCallCard } from "./components/tool-ui.tsx";
+import { InferenceBadge } from "./components/inference-badge.tsx";
+import { UpgradeCTA } from "./components/upgrade-cta.tsx";
 import { getTextContent, groupPartsInOrder } from "./utils/message-parts.ts";
 
 export interface ChatProps {
@@ -86,6 +96,10 @@ export interface ChatProps {
   model?: string;
   /** Called when user changes model */
   onModelChange?: (model: string) => void;
+  /** Where inference is currently happening */
+  inferenceMode?: InferenceMode;
+  /** Browser-side model loading/inference status */
+  browserStatus?: BrowserInferenceStatus | null;
 }
 
 export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
@@ -118,6 +132,8 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     models,
     model,
     onModelChange,
+    inferenceMode,
+    browserStatus,
   },
   ref,
 ): React.ReactElement {
@@ -171,6 +187,9 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
                     ))}
                   </Suggestions>
                 </div>
+              )}
+              {inferenceMode && inferenceMode !== "cloud" && (
+                <UpgradeCTA inferenceMode={inferenceMode} />
               )}
               <div className="flex-1" />
             </div>
@@ -239,11 +258,24 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
               {isLoading && (
                 <div className="flex justify-start">
                   <div className="bg-neutral-100 dark:bg-neutral-800 rounded-[20px] rounded-bl-[4px] px-4 py-3">
-                    <div className="flex gap-1.5 items-center">
-                      <span className={cn(theme.loading)} />
-                      <span className={cn(theme.loading)} style={{ animationDelay: "0.15s" }} />
-                      <span className={cn(theme.loading)} style={{ animationDelay: "0.3s" }} />
-                    </div>
+                    {browserStatus === "downloading-model" || browserStatus === "loading-runtime"
+                      ? (
+                        <div className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+                          <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
+                          <span>
+                            {browserStatus === "downloading-model"
+                              ? "Downloading model..."
+                              : "Loading AI..."}
+                          </span>
+                        </div>
+                      )
+                      : (
+                        <div className="flex gap-1.5 items-center">
+                          <span className={cn(theme.loading)} />
+                          <span className={cn(theme.loading)} style={{ animationDelay: "0.15s" }} />
+                          <span className={cn(theme.loading)} style={{ animationDelay: "0.3s" }} />
+                        </div>
+                      )}
                   </div>
                 </div>
               )}
@@ -278,6 +310,11 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
       )}
 
       <div className="flex-shrink-0 bg-white dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800">
+        {inferenceMode && inferenceMode !== "cloud" && (
+          <div className="max-w-2xl mx-auto">
+            <InferenceBadge inferenceMode={inferenceMode} browserStatus={browserStatus} />
+          </div>
+        )}
         <form onSubmit={submitHandler} className="max-w-2xl mx-auto px-4 py-3">
           {models && models.length > 0 && onModelChange && (
             <div className="mb-2">

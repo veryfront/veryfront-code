@@ -7,7 +7,9 @@
 
 export { useChat } from "./use-chat.ts";
 export type {
+  BrowserInferenceStatus,
   DynamicToolUIPart,
+  InferenceMode,
   OnToolCallArg,
   ReasoningUIPart,
   TextUIPart,

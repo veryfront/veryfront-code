@@ -96,7 +96,9 @@ export type { AgentTheme, ChatTheme } from "#veryfront/react/components/ai/theme
 
 export { useChat } from "#veryfront/agent/react/use-chat/index.ts";
 export type {
+  BrowserInferenceStatus,
   DynamicToolUIPart,
+  InferenceMode,
   OnToolCallArg,
   ReasoningUIPart,
   TextUIPart,

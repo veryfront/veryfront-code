@@ -14,7 +14,7 @@
  */
 
 import type { LanguageModel } from "ai";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, fromError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -24,6 +24,12 @@ import {
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
 import { ProjectScopedRegistryManager } from "../ai/registry-manager.ts";
+import { serverLogger } from "#veryfront/utils";
+import { DEFAULT_LOCAL_MODEL } from "./local/model-catalog.ts";
+import { createLocalModel } from "./local/ai-sdk-adapter.ts";
+import { isLocalAIDisabled } from "./local/env.ts";
+
+const localLogger = serverLogger.component("local-llm");
 
 export type ModelProviderFactory = (modelId: string) => LanguageModel;
 
@@ -118,6 +124,16 @@ function autoInitializeFromEnv(): void {
       return createGoogleGenerativeAI({ apiKey: config.apiKey })(id);
     });
   }
+
+  // Register the local provider (always available, no API key needed).
+  // createLocalModel is a lightweight synchronous constructor — the actual
+  // @huggingface/transformers import and model loading happen lazily on
+  // the first doGenerate/doStream call, so this doesn't add startup overhead.
+  if (!manager.has("local")) {
+    manager.registerShared("local", (id) => {
+      return createLocalModel(id);
+    });
+  }
 }
 
 /**
@@ -168,7 +184,31 @@ export function resolveModel(modelString: string): LanguageModel {
     );
   }
 
-  return factory(modelId);
+  try {
+    return factory(modelId);
+  } catch (error) {
+    // Auto-fallback: when a cloud provider fails due to missing API key,
+    // transparently switch to the local model so chat works out of the box.
+    const errorData = fromError(error);
+    if (errorData?.type === "config" && providerName !== "local" && manager.has("local")) {
+      // Check if local AI is explicitly disabled (e.g., for testing)
+      if (isLocalAIDisabled()) {
+        throw toError(
+          createError({
+            type: "no_ai_available",
+            message: "Local AI disabled via VERYFRONT_DISABLE_LOCAL_AI environment variable.",
+          }),
+        );
+      }
+
+      localLogger.info(
+        `⚡ "${providerName}" unavailable (missing API key). Falling back to local model.`,
+      );
+      const localFactory = manager.get("local")!;
+      return localFactory(DEFAULT_LOCAL_MODEL);
+    }
+    throw error;
+  }
 }
 
 /**

@@ -66,5 +66,7 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
     hmr: opts.hmr,
   });
 
+  // Block until the dev server shuts down.
+  // Without this, main.ts reaches exitProcess(0) and terminates immediately.
   await done;
 }

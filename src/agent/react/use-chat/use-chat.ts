@@ -4,13 +4,26 @@
  * Complete chat state management with zero UI.
  * Consumes the veryfront streaming protocol
  * (message-start/message-finish + step-start/step-end).
+ *
+ * Supports three inference modes:
+ * - cloud: API key present, normal server-side inference
+ * - server-local: No API key, server runs local model via ONNX
+ * - browser: Server can't run ONNX (compiled binary), falls back to browser Worker
  */
 
 import { useCallback, useRef, useState } from "react";
 import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 import { handleStreamingResponse } from "./streaming/index.ts";
-import type { ToolOutput, UIMessage, UseChatOptions, UseChatResult } from "./types.ts";
+import type {
+  BrowserInferenceStatus,
+  InferenceMode,
+  ToolOutput,
+  UIMessage,
+  UIMessagePart,
+  UseChatOptions,
+  UseChatResult,
+} from "./types.ts";
 import { generateClientId } from "./utils.ts";
 
 /**
@@ -23,7 +36,16 @@ export function useChat(options: UseChatOptions): UseChatResult {
   const [error, setError] = useState<Error | null>(null);
   const [data, setData] = useState<unknown>(null);
   const [model, setModel] = useState<string | undefined>(options.model);
+  const [inferenceMode, setInferenceMode] = useState<InferenceMode>("cloud");
+  const [browserStatus, setBrowserStatus] = useState<BrowserInferenceStatus | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const browserInferenceActiveRef = useRef(false);
+  const browserInferenceRejectRef = useRef<((reason: Error) => void) | null>(null);
+
+  // System prompt for browser fallback (from 503 response or options)
+  const systemPromptRef = useRef<string>(
+    options.systemPrompt ?? "You are a helpful AI assistant.",
+  );
 
   // Track pending tool outputs for addToolOutput
   const pendingToolOutputsRef = useRef<Map<string, ToolOutput>>(new Map());
@@ -56,6 +78,64 @@ export function useChat(options: UseChatOptions): UseChatResult {
   }, []);
 
   /**
+   * Run inference in the browser via Web Worker.
+   * Lazily imports the browser-inference module to avoid bundling it
+   * when server-side inference works fine.
+   */
+  const doBrowserInference = useCallback(
+    async (allMessages: UIMessage[]) => {
+      browserInferenceActiveRef.current = true;
+
+      try {
+        const { runBrowserInference } = await import(
+          "./browser-inference/browser-engine.ts"
+        );
+
+        await new Promise<void>((resolve, reject) => {
+          browserInferenceRejectRef.current = reject;
+          let hasAddedMessage = false;
+
+          runBrowserInference(allMessages, systemPromptRef.current, {
+            onUpdate: (parts: UIMessagePart[], messageId: string) => {
+              if (!hasAddedMessage) {
+                hasAddedMessage = true;
+                setMessages((prev) => [
+                  ...prev,
+                  { id: messageId, role: "assistant", parts },
+                ]);
+                return;
+              }
+              setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, parts } : m)));
+            },
+            onMessage: (assistantMessage: UIMessage) => {
+              setMessages((prev) => {
+                if (!hasAddedMessage) return [...prev, assistantMessage];
+                return prev.map((m) => m.id === assistantMessage.id ? assistantMessage : m);
+              });
+              options.onFinish?.(assistantMessage);
+              browserInferenceRejectRef.current = null;
+              resolve();
+            },
+            onStatusChange: (status: BrowserInferenceStatus) => {
+              setBrowserStatus(status);
+            },
+            onDownloadProgress: () => {
+              // Progress is tracked via onStatusChange("downloading-model")
+            },
+            onError: (err: Error) => {
+              browserInferenceRejectRef.current = null;
+              reject(err);
+            },
+          });
+        });
+      } finally {
+        browserInferenceActiveRef.current = false;
+      }
+    },
+    [options],
+  );
+
+  /**
    * Send a message and stream assistant updates.
    */
   const sendMessage = useCallback(
@@ -70,10 +150,18 @@ export function useChat(options: UseChatOptions): UseChatResult {
       setIsLoading(true);
       setError(null);
 
-      const abortController = new AbortController();
-      abortControllerRef.current = abortController;
-
       try {
+        const allMessages = [...messages, userMessage];
+
+        // If already in browser mode, skip fetch entirely
+        if (inferenceMode === "browser") {
+          await doBrowserInference(allMessages);
+          return;
+        }
+
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+
         const response = await fetch(options.api, {
           method: "POST",
           headers: {
@@ -82,12 +170,30 @@ export function useChat(options: UseChatOptions): UseChatResult {
           },
           credentials: options.credentials,
           body: JSON.stringify({
-            messages: [...messages, userMessage],
+            messages: allMessages,
             ...(model ? { model } : {}),
             ...options.body,
           }),
           signal: abortController.signal,
         });
+
+        // Handle 503 — server can't provide AI, fall back to browser
+        if (response.status === 503 && (options.browserFallback ?? true)) {
+          try {
+            const body = await response.json();
+            if (body.code === "NO_AI_AVAILABLE") {
+              if (body.systemPrompt) {
+                systemPromptRef.current = body.systemPrompt;
+              }
+              setInferenceMode("browser");
+              setBrowserStatus("idle");
+              await doBrowserInference(allMessages);
+              return;
+            }
+          } catch {
+            // If parsing fails, fall through to normal error handling
+          }
+        }
 
         if (!response.ok) {
           throw toError(
@@ -114,7 +220,20 @@ export function useChat(options: UseChatOptions): UseChatResult {
             });
             options.onFinish?.(assistantMessage);
           },
-          onData: setData,
+          onData: (eventData) => {
+            setData(eventData);
+            // Detect inference mode from server metadata
+            if (
+              eventData &&
+              typeof eventData === "object" &&
+              "inferenceMode" in eventData
+            ) {
+              const mode = (eventData as { inferenceMode: string }).inferenceMode;
+              if (mode === "server-local" || mode === "cloud") {
+                setInferenceMode(mode);
+              }
+            }
+          },
           onUpdate: (parts, messageId) => {
             const id = messageId ?? streamingMessageId;
 
@@ -151,7 +270,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
         abortControllerRef.current = null;
       }
     },
-    [messages, model, options],
+    [messages, model, options, inferenceMode, doBrowserInference],
   );
 
   /**
@@ -174,9 +293,28 @@ export function useChat(options: UseChatOptions): UseChatResult {
   /**
    * Stop generation
    */
-  const stop = useCallback(() => {
+  const stop = useCallback(async () => {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
+
+    // Also stop browser inference Worker if active
+    if (browserInferenceActiveRef.current) {
+      // Settle the pending doBrowserInference promise before terminating the Worker
+      browserInferenceRejectRef.current?.(new Error("Generation stopped by user"));
+      browserInferenceRejectRef.current = null;
+
+      try {
+        const { stopBrowserInference } = await import(
+          "./browser-inference/browser-engine.ts"
+        );
+        stopBrowserInference();
+      } catch {
+        // Worker module may already be terminated or unavailable
+      }
+      browserInferenceActiveRef.current = false;
+      setBrowserStatus("ready");
+    }
+
     setIsLoading(false);
   }, []);
 
@@ -213,6 +351,8 @@ export function useChat(options: UseChatOptions): UseChatResult {
     isLoading,
     error,
     model,
+    inferenceMode,
+    browserStatus,
     setInput,
     setModel,
     sendMessage,
