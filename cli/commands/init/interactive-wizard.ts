@@ -2,7 +2,7 @@ import { brand, dim, muted } from "#cli/ui";
 import { getAgentFace } from "../../ui/dot-matrix.ts";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
-import { select, textInput } from "../../utils/terminal-select.ts";
+import { select } from "../../utils/terminal-select.ts";
 import { getTemplateSelectOptions, TEMPLATES } from "./catalog.ts";
 import type { InitTemplate } from "./types.ts";
 
@@ -18,10 +18,10 @@ function canRunWizard(): boolean {
   return !(isCiEnv() || isDenoTestingEnv()) && checkIsInteractive();
 }
 
-export async function runInteractiveWizard(): Promise<WizardResult> {
+export async function runInteractiveWizard(existingName?: string): Promise<WizardResult> {
   if (!canRunWizard()) {
     return {
-      projectName: null,
+      projectName: existingName ?? null,
       template: "minimal",
       initGit: false,
       skipped: true,
@@ -37,46 +37,9 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
   console.log(`│  Let's set up your project.`);
   console.log("│");
 
-  // Step 1: Location prompt
-  const locationChoice = await select(
-    "Where should we create your project?",
-    [
-      { value: "current", label: "Current folder", description: "Use this directory" },
-      { value: "new", label: "New folder", description: "Create a new directory" },
-    ],
-    0,
-  );
+  const projectName: string | null = existingName ?? null;
 
-  if (locationChoice === null) {
-    console.log(muted("\n  Cancelled.\n"));
-    return {
-      projectName: null,
-      template: "minimal",
-      initGit: false,
-      skipped: false,
-      cancelled: true,
-    };
-  }
-
-  let projectName: string | null = null;
-  if (locationChoice === "new") {
-    const name = await textInput("Project name", "my-app");
-    if (name === null) {
-      console.log(muted("\n  Cancelled.\n"));
-      return {
-        projectName: null,
-        template: "minimal",
-        initGit: false,
-        skipped: false,
-        cancelled: true,
-      };
-    }
-    if (name) {
-      projectName = name;
-    }
-  }
-
-  // Step 2: Template selection
+  // Template selection
   const templateChoice = await select(
     "What would you like to build?",
     getTemplateSelectOptions(),
@@ -96,7 +59,7 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
 
   const template = templateChoice as InitTemplate;
 
-  // Step 3: Git init prompt
+  // Git init prompt
   const gitChoice = await select(
     "Initialize a git repository?",
     [

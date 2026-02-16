@@ -186,14 +186,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
   let initGit = false;
 
   if (shouldRunWizard(options)) {
-    const wizardResult = await runInteractiveWizard();
+    const wizardResult = await runInteractiveWizard(name);
     if (wizardResult.cancelled) {
       return;
     }
     template = wizardResult.template;
-    if (wizardResult.projectName) {
-      projectName = wizardResult.projectName;
-    }
+    projectName = wizardResult.projectName;
     initGit = wizardResult.initGit;
   } else {
     template = options.template ?? "minimal";
