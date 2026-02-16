@@ -261,10 +261,14 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          deno task build:npm
-          cd npm
-          jq --arg v "$VERSION" '.version = $v' package.json > package.json.tmp && mv package.json.tmp package.json
-          npm publish --access public --tag rc
+          if npm view veryfront@"${VERSION}" version 2>/dev/null; then
+            echo "::notice::v${VERSION} already published to npm — skipping publish"
+          else
+            deno task build:npm
+            cd npm
+            jq --arg v "$VERSION" '.version = $v' package.json > package.json.tmp && mv package.json.tmp package.json
+            npm publish --access public --tag rc
+          fi
 
       - uses: actions/download-artifact@v4
         with:
@@ -339,11 +343,16 @@ jobs:
       - run: npm install -g npm@latest
 
       - name: Build and publish
-        run: |
-          deno task build:npm
-          cd npm && npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if npm view veryfront@"${VERSION}" version 2>/dev/null; then
+            echo "::notice::v${VERSION} already published to npm — skipping publish"
+          else
+            deno task build:npm
+            cd npm && npm publish --access public
+          fi
 
       - uses: actions/download-artifact@v4
         with:
@@ -380,10 +389,13 @@ jobs:
             | xargs -I{} gh release delete {} --repo veryfront/veryfront --yes --cleanup-tag 2>/dev/null || true
 
           # Public repo release with binaries and install scripts
-          gh release create "v${VERSION}" \
-            --repo veryfront/veryfront \
-            --title "v${VERSION}" \
-            --notes '## Install
+          if gh release view "v${VERSION}" --repo veryfront/veryfront &>/dev/null; then
+            echo "::notice::Release v${VERSION} already exists on veryfront/veryfront — skipping"
+          else
+            gh release create "v${VERSION}" \
+              --repo veryfront/veryfront \
+              --title "v${VERSION}" \
+              --notes '## Install
 
           ```bash
           # macOS/Linux
@@ -392,18 +404,24 @@ jobs:
           # npm
           npm install -g veryfront
           ```' \
-            $BINARIES \
-            scripts/install.sh \
-            scripts/install.ps1
+              $BINARIES \
+              scripts/install.sh \
+              scripts/install.ps1
+          fi
 
       - name: Create source repo release
-        run: |
-          gh release create "v${{ steps.version.outputs.version }}" \
-            --title "v${{ steps.version.outputs.version }}" \
-            --generate-notes \
-            --notes 'Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${{ steps.version.outputs.version }}'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "v${VERSION}" &>/dev/null; then
+            echo "::notice::Release v${VERSION} already exists on source repo — skipping"
+          else
+            gh release create "v${VERSION}" \
+              --title "v${VERSION}" \
+              --generate-notes \
+              --notes "Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${VERSION}"
+          fi
 
       - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@v3
@@ -426,7 +444,7 @@ jobs:
       - name: Update Homebrew tap
         uses: nick-fields/retry@v3
         env:
-          GITHUB_PAT: ${{ secrets.GH_PAT_VERYFRONT }}
+          HOMEBREW_TAP_PAT: ${{ secrets.GH_PAT_HOMEBREW_TAP || secrets.GH_PAT_VERYFRONT }}
         with:
           timeout_minutes: 5
           max_attempts: 3
@@ -449,9 +467,9 @@ jobs:
             FORMULA="${FORMULA//SHA256_LINUX_ARM64_PLACEHOLDER/${SHAS[veryfront-linux-arm64]}}"
             FORMULA="${FORMULA//SHA256_LINUX_X64_PLACEHOLDER/${SHAS[veryfront-linux-x64]}}"
 
-            # Push to tap repo (fresh clone each retry to avoid conflicts)
+            # Create PR against tap repo (branch protection requires PRs)
             rm -rf tap
-            git clone "https://x-access-token:${GITHUB_PAT}@github.com/veryfront/homebrew-tap.git" tap
+            git clone "https://x-access-token:${HOMEBREW_TAP_PAT}@github.com/veryfront/homebrew-tap.git" tap
             mkdir -p tap/Formula
             echo "$FORMULA" > tap/Formula/veryfront.rb
             cd tap
@@ -459,5 +477,39 @@ jobs:
             git config user.email "actions@github.com"
             git add Formula/veryfront.rb
             git diff --cached --quiet && echo "No changes to commit" && exit 0
+
+            BRANCH="update-veryfront-v${VERSION}"
+            git checkout -b "${BRANCH}"
             git commit -m "Update veryfront to v${VERSION}"
-            git push
+            git push -u origin "${BRANCH}" || git push -u origin "${BRANCH}" --force-with-lease
+
+            PR_NUMBER=$(GH_TOKEN="${HOMEBREW_TAP_PAT}" gh api \
+              --method GET \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/veryfront/homebrew-tap/pulls?state=open&head=veryfront:${BRANCH}&base=main&per_page=1" \
+              --jq '.[0].number // empty')
+
+            if [ -z "${PR_NUMBER}" ]; then
+              CREATE_PR_OUTPUT=$(GH_TOKEN="${HOMEBREW_TAP_PAT}" gh api \
+                --method POST \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "/repos/veryfront/homebrew-tap/pulls" \
+                -f title="Update veryfront to v${VERSION}" \
+                -f base="main" \
+                -f head="${BRANCH}" \
+                -f body="Automated update from CI - veryfront v${VERSION}" \
+                --jq '.number' 2>&1) || {
+                  if echo "${CREATE_PR_OUTPUT}" | grep -q "Resource not accessible by personal access token"; then
+                    echo "::error::Homebrew tap update requires a token with Pull requests: write and Contents: write on veryfront/homebrew-tap (set GH_PAT_HOMEBREW_TAP or fix GH_PAT_VERYFRONT)."
+                  fi
+                  echo "${CREATE_PR_OUTPUT}"
+                  exit 1
+                }
+              PR_NUMBER="${CREATE_PR_OUTPUT}"
+            fi
+
+            GH_TOKEN="${HOMEBREW_TAP_PAT}" gh api \
+              --method PUT \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/veryfront/homebrew-tap/pulls/${PR_NUMBER}/merge" \
+              -f merge_method="merge"

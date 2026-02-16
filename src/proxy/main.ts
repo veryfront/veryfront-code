@@ -15,6 +15,9 @@
  * - LOCAL_PROJECTS: JSON map of slug → filesystem path (for dev)
  * - CACHE_TYPE: "memory" (default) or "redis"
  * - REDIS_URL: Redis connection URL (required if CACHE_TYPE=redis)
+ * - VERYFRONT_API_INTERNAL_URL: API URL for internal endpoints (falls back to VERYFRONT_PROXY_API_BASE_URL)
+ * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
+ * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
  */
 
 import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
@@ -34,6 +37,7 @@ import {
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { ErrorPages } from "../server/utils/error-html.ts";
 import { RendererRouter } from "./renderer-router.ts";
+import { ServerResolver } from "./server-resolver.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
@@ -81,6 +85,13 @@ const rendererRouter = (discoveryHost || staticTargets)
     parseInt(getEnv("VERYFRONT_SERVER_DISCOVERY_INTERVAL_MS") || "15000") || 15000,
   )
   : null;
+
+// Dedicated server resolver: routes environments to their dedicated server if assigned
+const apiInternalUrl = getEnv("VERYFRONT_API_INTERNAL_URL") || config.apiBaseUrl;
+const apiInternalUser = getEnv("VERYFRONT_API_INTERNAL_USER") || "";
+const apiInternalPass = getEnv("VERYFRONT_API_INTERNAL_PASS") || "";
+const serverResolver = new ServerResolver(apiInternalUrl, apiInternalUser, apiInternalPass);
+
 const { hostname: HOST, port: PORT } = resolveProxyBinding();
 const WS_CONNECT_TIMEOUT_MS = 30000;
 // Timeout for forwarding requests to production server (SSR can take time on cold start)
@@ -338,10 +349,17 @@ function forwardToServer(req: Request): Promise<Response> {
           const isIdempotent = ["GET", "HEAD", "OPTIONS"].includes(req.method);
           const maxRetries = isIdempotent ? VERYFRONT_SERVER_RETRY_COUNT : 0;
           let lastError: Error | null = null;
+          // After a retryable connection error to a dedicated server, fall back to shared pool
+          let skipDedicated = false;
 
           for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            // Re-resolve on each attempt so retries can pick a different pod
-            const baseUrl = rendererRouter?.resolve(ctx.projectSlug) ?? PRODUCTION_SERVER_URL;
+            // Resolve dedicated server per attempt so retries can fall back to shared pool
+            const dedicatedServerUrl = skipDedicated
+              ? null
+              : await serverResolver.resolve(ctx.environmentId);
+            const baseUrl = dedicatedServerUrl ??
+              rendererRouter?.resolve(ctx.projectSlug) ??
+              PRODUCTION_SERVER_URL;
             const serverUrl = new URL(url.pathname + url.search, baseUrl);
             // Delay before retry (not on first attempt)
             if (attempt > 0) {
@@ -423,10 +441,26 @@ function forwardToServer(req: Request): Promise<Response> {
 
               // Check if this is a retryable error and we have retries left
               if (isRetryableConnectionError(error) && attempt < maxRetries) {
-                proxyLogger.warn(`[Retry] Retryable connection error on attempt ${attempt + 1}`, {
-                  pathname: url.pathname,
-                  error: error instanceof Error ? error.message : String(error),
-                });
+                // If we were targeting a dedicated server, fall back to shared pool on retry
+                if (dedicatedServerUrl) {
+                  skipDedicated = true;
+                  proxyLogger.warn(
+                    `[Retry] Dedicated server unreachable, falling back to shared pool`,
+                    {
+                      pathname: url.pathname,
+                      dedicatedServerUrl,
+                      error: error instanceof Error ? error.message : String(error),
+                    },
+                  );
+                } else {
+                  proxyLogger.warn(
+                    `[Retry] Retryable connection error on attempt ${attempt + 1}`,
+                    {
+                      pathname: url.pathname,
+                      error: error instanceof Error ? error.message : String(error),
+                    },
+                  );
+                }
                 continue; // Try again
               }
 
@@ -549,6 +583,7 @@ function router(req: Request): Promise<Response> {
 async function shutdown(): Promise<void> {
   proxyLogger.info("Shutting down");
   rendererRouter?.close();
+  serverResolver.close();
   await proxyHandler.close();
   await shutdownOTLP();
   proxyLogger.info("Closed connections");
