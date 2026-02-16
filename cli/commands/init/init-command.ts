@@ -35,7 +35,11 @@ import {
   loadIntegrations,
   validateIntegrations,
 } from "../../templates/integration-loader.ts";
-import { runInteractiveWizard, shouldRunWizard, validateProjectName } from "./interactive-wizard.ts";
+import {
+  runInteractiveWizard,
+  shouldRunWizard,
+  validateProjectName,
+} from "./interactive-wizard.ts";
 
 /**
  * Icon mapping for integrations based on category/name
