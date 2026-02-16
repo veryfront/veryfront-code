@@ -192,7 +192,13 @@ describe("init command integration", () => {
       await Deno.mkdir(dirPath);
 
       try {
-        const result = await runInitCommand([dirName, "-t", "minimal", "--skip-install", "--force"]);
+        const result = await runInitCommand([
+          dirName,
+          "-t",
+          "minimal",
+          "--skip-install",
+          "--force",
+        ]);
 
         assertEquals(result.code, 0);
         assertEquals(await exists(join(dirPath, "app")), true);

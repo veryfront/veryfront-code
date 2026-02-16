@@ -191,7 +191,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
     const targetDir = join(cwd(), name);
     if (await fs.exists(targetDir)) {
       console.error(
-        red(`Directory "${name}" already exists. Choose a different name or use --force to overwrite.`),
+        red(
+          `Directory "${name}" already exists. Choose a different name or use --force to overwrite.`,
+        ),
       );
       return;
     }
