@@ -136,7 +136,7 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
   return { projectName, template, initGit, skipped: false, cancelled: false };
 }
 
-export function shouldRunWizard(options: { template?: string; name?: string }): boolean {
-  // Run wizard if no template and no name specified via CLI
-  return !options.template && !options.name;
+export function shouldRunWizard(options: { template?: string }): boolean {
+  // Always run wizard unless template is explicitly specified via --template
+  return !options.template;
 }
