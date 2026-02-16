@@ -160,7 +160,10 @@ function renderHelpBar(state: AppState): string {
   if (!state.showHelp) {
     const userInfo = state.remote.user ? `  ${dim("-")}  ${brand(state.remote.user.email)}` : "";
     if (!hasItems) {
-      return `  ${dim("n")} ${dim("new project")}  ${dim("a")} ${dim("login")}  ${dim("? more")}  ${
+      const authHint = state.remote.user
+        ? `${dim("x")} ${dim("logout")}`
+        : `${dim("a")} ${dim("login")}`;
+      return `  ${dim("n")} ${dim("new project")}  ${authHint}  ${dim("? more")}  ${
         dim("q quit")
       }${userInfo}`;
     }
