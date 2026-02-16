@@ -56,7 +56,7 @@ agent({ model: "local/smollm2-135m" })
 // Also available: "local/smollm2-360m", "local/smollm2-1.7b"
 ```
 
-To disable local AI (e.g. in tests or to force cloud-only):
+To disable server-side local AI (e.g. in tests):
 
 ```bash
 VERYFRONT_DISABLE_LOCAL_AI=1

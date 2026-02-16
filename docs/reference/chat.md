@@ -144,9 +144,7 @@ function AgentUI() {
 | Name | Description |
 |------|-------------|
 | `AgentCard` | Agent status, tool calls, and messages |
-| `InferenceBadge` | Shows inference mode indicator ("Running locally", download progress) |
-| `UpgradeCTA` | Dismissible banner suggesting adding an API key for better models |
-| `Chat` | Full chat UI (messages + input) |
+| `Chat` | Full chat UI (messages + input, includes InferenceBadge and UpgradeCTA when `inferenceMode` prop is passed) |
 | `ChatComponents` | Compound components for custom layouts |
 | `ChatFooter` | Chat footer section |
 | `ChatHeader` | Chat header section |
@@ -179,7 +177,6 @@ function AgentUI() {
 | `AgentCardProps` | `<AgentCard>` props |
 | `BrowserInferenceStatus` | Browser model status: `"idle"`, `"loading-runtime"`, `"downloading-model"`, `"ready"`, `"generating"`, `"error"` |
 | `InferenceMode` | Where inference runs: `"cloud"`, `"server-local"`, `"browser"` |
-| `InferenceBadgeProps` | `<InferenceBadge>` props |
 | `AgentTheme` | Agent card theme config |
 | `AIErrorBoundaryProps` | `<AIErrorBoundary>` props |
 | `ChatProps` | `<Chat>` props |

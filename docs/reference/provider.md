@@ -103,7 +103,6 @@ Get list of registered model provider names.
 | `hasModelProvider` | Check if provider is registered |
 | `getRegisteredModelProviders` | List registered provider names |
 | `clearModelProviders` | Clear all providers (for testing) |
-| `createLocalModel` | Create a local AI SDK LanguageModel for SmolLM2 |
 
 ### Types
 

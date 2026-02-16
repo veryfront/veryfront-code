@@ -111,7 +111,7 @@ Set environment variables in `.env` files or your deployment platform:
 
 | Variable | Description |
 |----------|-------------|
-| `VERYFRONT_DISABLE_LOCAL_AI` | Set to `1` to disable local model fallback (forces cloud-only) |
+| `VERYFRONT_DISABLE_LOCAL_AI` | Set to `1` to disable server-side local model fallback (browser fallback may still run unless `browserFallback: false` is set in `useChat`) |
 
 ### Framework
 

@@ -186,25 +186,18 @@ export default function Autocomplete() {
 
 ```tsx
 'use client'
-import { Chat, InferenceBadge, UpgradeCTA, useChat } from "veryfront/chat";
+import { Chat, useChat } from "veryfront/chat";
 
 export default function ChatPage() {
   const chat = useChat({ api: "/api/chat" });
 
   return (
-    <div>
-      <InferenceBadge
-        inferenceMode={chat.inferenceMode}
-        browserStatus={chat.browserStatus}
-      />
-      <Chat {...chat} inferenceMode={chat.inferenceMode} browserStatus={chat.browserStatus} />
-      <UpgradeCTA inferenceMode={chat.inferenceMode} />
-    </div>
+    <Chat {...chat} inferenceMode={chat.inferenceMode} browserStatus={chat.browserStatus} />
   );
 }
 ```
 
-The `Chat` component includes `InferenceBadge` and `UpgradeCTA` automatically when `inferenceMode` and `browserStatus` are passed as props.
+The `Chat` component renders `InferenceBadge` and `UpgradeCTA` automatically when `inferenceMode` and `browserStatus` are passed as props.
 
 | `inferenceMode` | Description |
 |-----------------|-------------|
