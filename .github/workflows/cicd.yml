@@ -261,10 +261,14 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          deno task build:npm
-          cd npm
-          jq --arg v "$VERSION" '.version = $v' package.json > package.json.tmp && mv package.json.tmp package.json
-          npm publish --access public --tag rc
+          if npm view veryfront@"${VERSION}" version 2>/dev/null; then
+            echo "::notice::v${VERSION} already published to npm — skipping publish"
+          else
+            deno task build:npm
+            cd npm
+            jq --arg v "$VERSION" '.version = $v' package.json > package.json.tmp && mv package.json.tmp package.json
+            npm publish --access public --tag rc
+          fi
 
       - uses: actions/download-artifact@v4
         with:
@@ -339,11 +343,16 @@ jobs:
       - run: npm install -g npm@latest
 
       - name: Build and publish
-        run: |
-          deno task build:npm
-          cd npm && npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if npm view veryfront@"${VERSION}" version 2>/dev/null; then
+            echo "::notice::v${VERSION} already published to npm — skipping publish"
+          else
+            deno task build:npm
+            cd npm && npm publish --access public
+          fi
 
       - uses: actions/download-artifact@v4
         with:
