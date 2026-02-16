@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Card } from "./Card.tsx";
 import { ErrorState, LoadingState, PageLayout } from "./shared.tsx";
+import { TracesSection } from "./TracesSection.tsx";
 
-type SubTab = "metrics" | "memory";
+type SubTab = "metrics" | "memory" | "traces";
 
 interface HeapStats {
   usedHeapSizeMB: number;
@@ -95,6 +96,11 @@ export function RuntimeTab(): React.JSX.Element {
             onClick={() => setSubTab("memory")}
             label={`Memory (${memory?.caches.length ?? 0} caches)`}
           />
+          <TabButton
+            active={subTab === "traces"}
+            onClick={() => setSubTab("traces")}
+            label="Traces"
+          />
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-400">Auto-refresh: 15s</span>
@@ -111,6 +117,7 @@ export function RuntimeTab(): React.JSX.Element {
 
       {subTab === "metrics" && <MetricsSection metrics={metrics} />}
       {subTab === "memory" && memory && <MemorySection memory={memory} />}
+      {subTab === "traces" && <TracesSection />}
     </PageLayout>
   );
 }

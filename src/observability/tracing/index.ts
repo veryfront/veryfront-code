@@ -132,3 +132,14 @@ export function withSpanSync<T>(
 
 export { tracingManager } from "./manager.ts";
 export { TracingManager } from "./manager.ts";
+
+export {
+  getSpanBuffer,
+  resetSpanBuffer,
+  SpanBuffer,
+  type SpanEntry,
+  type SpanFilter,
+  type SpanKind,
+  type SpanStatus,
+  type SpanSubscriber,
+} from "./span-buffer.ts";

@@ -59,15 +59,82 @@ export class TracingManager {
     const api = (await import("@opentelemetry/api")) as OpenTelemetryAPI;
     this.state.api = api;
 
-    this.state.tracer = api.trace.getTracer(config.serviceName ?? "veryfront", VERSION);
-
     const { W3CTraceContextPropagator } = await import("@opentelemetry/core");
     const propagator = new W3CTraceContextPropagator();
     this.state.propagator = propagator;
     api.propagation.setGlobalPropagator(propagator);
 
+    if (config.exporter === "console") {
+      await this.initializeConsoleTracer(api, config);
+    } else if (config.exporter === "otlp" && config.endpoint) {
+      await this.initializeOTLPTracer(api, config);
+    } else {
+      // Fallback: tracer without processor (spans are no-ops)
+      this.state.tracer = api.trace.getTracer(config.serviceName ?? "veryfront", VERSION);
+    }
+
     this.spanOps = this.state.tracer ? new SpanOperations(api, this.state.tracer) : null;
     this.contextProp = new ContextPropagation(api, propagator);
+  }
+
+  private async initializeConsoleTracer(
+    api: OpenTelemetryAPI,
+    config: TracingConfig,
+  ): Promise<void> {
+    const { BasicTracerProvider, SimpleSpanProcessor } = await import(
+      "@opentelemetry/sdk-trace-base"
+    );
+    const { Resource } = await import("@opentelemetry/resources");
+    const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = await import(
+      "@opentelemetry/semantic-conventions"
+    );
+    const { AsyncLocalStorageContextManager } = await import("@opentelemetry/context-async-hooks");
+    const { ConsoleSpanExporter } = await import("./exporters/console-exporter.ts");
+
+    const resource = new Resource({
+      [ATTR_SERVICE_NAME]: config.serviceName ?? "veryfront",
+      [ATTR_SERVICE_VERSION]: VERSION,
+    });
+
+    const provider = new BasicTracerProvider({ resource });
+    provider.addSpanProcessor(new SimpleSpanProcessor(new ConsoleSpanExporter()));
+
+    const contextManager = new AsyncLocalStorageContextManager();
+    contextManager.enable();
+    provider.register({ contextManager });
+
+    this.state.tracer = api.trace.getTracer(config.serviceName ?? "veryfront", VERSION);
+  }
+
+  private async initializeOTLPTracer(api: OpenTelemetryAPI, config: TracingConfig): Promise<void> {
+    const { BasicTracerProvider, BatchSpanProcessor } = await import(
+      "@opentelemetry/sdk-trace-base"
+    );
+    const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
+    const { Resource } = await import("@opentelemetry/resources");
+    const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = await import(
+      "@opentelemetry/semantic-conventions"
+    );
+    const { AsyncLocalStorageContextManager } = await import("@opentelemetry/context-async-hooks");
+
+    const resource = new Resource({
+      [ATTR_SERVICE_NAME]: config.serviceName ?? "veryfront",
+      [ATTR_SERVICE_VERSION]: VERSION,
+    });
+
+    const endpointBase = (config.endpoint ?? "").replace(/\/$/, "");
+    const exporter = new OTLPTraceExporter({
+      url: `${endpointBase}/v1/traces`,
+    });
+
+    const provider = new BasicTracerProvider({ resource });
+    provider.addSpanProcessor(new BatchSpanProcessor(exporter));
+
+    const contextManager = new AsyncLocalStorageContextManager();
+    contextManager.enable();
+    provider.register({ contextManager });
+
+    this.state.tracer = api.trace.getTracer(config.serviceName ?? "veryfront", VERSION);
   }
 
   isEnabled(): boolean {

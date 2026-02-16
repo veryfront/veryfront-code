@@ -22,6 +22,8 @@ import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
+import { getSpanBuffer } from "#veryfront/observability/tracing/span-buffer.ts";
+import type { SpanStatus } from "#veryfront/observability/tracing/span-buffer.ts";
 import { ReloadNotifier } from "../../../reload-notifier.ts";
 import type { HandlerContext } from "../../types.ts";
 
@@ -98,6 +100,8 @@ export function handleDashboardAPI(
         return handleLiveErrors(req);
       case "/_dev/api/live-logs":
         return handleLiveLogs(req);
+      case "/_dev/api/traces":
+        return handleGetTraces(req);
       default:
         return null;
     }
@@ -590,6 +594,49 @@ function handleLiveLogs(req: Request): Response {
     logs: entries,
     count: entries.length,
     countByLevel: buffer.countByLevel(),
+    timestamp: new Date().toISOString(),
+  });
+}
+
+function handleGetTraces(req: Request): Response {
+  const url = new URL(req.url);
+  const traceId = url.searchParams.get("traceId") ?? undefined;
+  const name = url.searchParams.get("name") ?? undefined;
+  const status = url.searchParams.get("status") ?? undefined;
+  const minDuration = url.searchParams.get("minDuration");
+  const since = url.searchParams.get("since");
+  const limit = url.searchParams.get("limit");
+
+  const buffer = getSpanBuffer();
+
+  if (traceId) {
+    const spans = buffer.getTrace(traceId);
+    return jsonResponse({
+      traceId,
+      spans,
+      count: spans.length,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  const filtered = buffer.query({
+    name,
+    status: status as SpanStatus | undefined,
+    minDuration: minDuration ? parseFloat(minDuration) : undefined,
+    since: since ? parseInt(since, 10) : undefined,
+    limit: limit ? parseInt(limit, 10) : undefined,
+  });
+
+  const traces = buffer.getTraces({
+    limit: limit ? parseInt(limit, 10) : 50,
+    since: since ? parseInt(since, 10) : undefined,
+  });
+
+  return jsonResponse({
+    traces,
+    spans: filtered.length,
+    countByStatus: buffer.countByStatus(),
+    total: buffer.count,
     timestamp: new Date().toISOString(),
   });
 }

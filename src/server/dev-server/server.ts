@@ -141,6 +141,17 @@ export class DevServer {
       });
     }
 
+    // Zero-config: enable console tracing in dev mode
+    import("#veryfront/observability").then(({ initAutoInstrumentation }) =>
+      initAutoInstrumentation({
+        tracing: { enabled: true, exporter: "console", serviceName: "veryfront-dev" },
+        instrumentHttp: true,
+        instrumentFetch: true,
+      })
+    ).catch((err) => {
+      devServerLog.debug("Tracing init failed (non-fatal)", err);
+    });
+
     // Auto-discover AI primitives (tools, agents, workflows, prompts, resources)
     await this.runAIDiscovery();
 
