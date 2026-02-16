@@ -34,6 +34,7 @@ import {
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { ErrorPages } from "../server/utils/error-html.ts";
 import { RendererRouter } from "./renderer-router.ts";
+import { ServerResolver } from "./server-resolver.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
@@ -81,6 +82,13 @@ const rendererRouter = (discoveryHost || staticTargets)
     parseInt(getEnv("VERYFRONT_SERVER_DISCOVERY_INTERVAL_MS") || "15000") || 15000,
   )
   : null;
+
+// Dedicated server resolver: routes environments to their dedicated server if assigned
+const apiInternalUrl = getEnv("VERYFRONT_API_INTERNAL_URL") || config.apiBaseUrl;
+const apiInternalUser = getEnv("VERYFRONT_API_INTERNAL_USER") || "";
+const apiInternalPass = getEnv("VERYFRONT_API_INTERNAL_PASS") || "";
+const serverResolver = new ServerResolver(apiInternalUrl, apiInternalUser, apiInternalPass);
+
 const { hostname: HOST, port: PORT } = resolveProxyBinding();
 const WS_CONNECT_TIMEOUT_MS = 30000;
 // Timeout for forwarding requests to production server (SSR can take time on cold start)
@@ -339,9 +347,14 @@ function forwardToServer(req: Request): Promise<Response> {
           const maxRetries = isIdempotent ? VERYFRONT_SERVER_RETRY_COUNT : 0;
           let lastError: Error | null = null;
 
+          // Check if this environment has a dedicated server
+          const dedicatedServerUrl = await serverResolver.resolve(ctx.environmentId);
+
           for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            // Re-resolve on each attempt so retries can pick a different pod
-            const baseUrl = rendererRouter?.resolve(ctx.projectSlug) ?? PRODUCTION_SERVER_URL;
+            // Dedicated server takes priority; otherwise use shared pool with renderer router
+            const baseUrl = dedicatedServerUrl
+              ?? rendererRouter?.resolve(ctx.projectSlug)
+              ?? PRODUCTION_SERVER_URL;
             const serverUrl = new URL(url.pathname + url.search, baseUrl);
             // Delay before retry (not on first attempt)
             if (attempt > 0) {
@@ -549,6 +562,7 @@ function router(req: Request): Promise<Response> {
 async function shutdown(): Promise<void> {
   proxyLogger.info("Shutting down");
   rendererRouter?.close();
+  serverResolver.close();
   await proxyHandler.close();
   await shutdownOTLP();
   proxyLogger.info("Closed connections");
