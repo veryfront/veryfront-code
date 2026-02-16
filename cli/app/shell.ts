@@ -156,7 +156,7 @@ export function createApp(config: AppConfig): App {
       case "dashboard":
         content = state.projects.items.length > 0 || state.examples.items.length > 0
           ? renderDashboard(state)
-          : renderEmptyState();
+          : renderEmptyState(state);
         break;
       case "new-project":
         content = renderNewProjectView(state);
