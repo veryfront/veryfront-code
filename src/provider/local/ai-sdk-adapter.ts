@@ -13,7 +13,7 @@ import { generate, generateStream } from "./local-engine.ts";
 import type { ChatMessage, GenerateOptions } from "./local-engine.ts";
 import { DEFAULT_LOCAL_MODEL } from "./model-catalog.ts";
 import { serverLogger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, fromError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 const logger = serverLogger.component("local-llm");
 
@@ -181,6 +181,11 @@ export function createLocalModel(modelId?: string): LanguageModel {
 
             controller.close();
           } catch (error) {
+            // Let no_ai_available propagate — the chat handler needs it
+            // for a proper 503 response instead of a 200 with in-band error.
+            const vfError = fromError(error);
+            if (vfError?.type === "no_ai_available") throw error;
+
             controller.enqueue({
               type: "error",
               error: error instanceof Error ? error : new Error(String(error)),

@@ -40,6 +40,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
   const [browserStatus, setBrowserStatus] = useState<BrowserInferenceStatus | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const browserInferenceActiveRef = useRef(false);
+  const browserInferenceRejectRef = useRef<((reason: Error) => void) | null>(null);
 
   // System prompt for browser fallback (from 503 response or options)
   const systemPromptRef = useRef<string>(
@@ -91,6 +92,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
         );
 
         await new Promise<void>((resolve, reject) => {
+          browserInferenceRejectRef.current = reject;
           let hasAddedMessage = false;
 
           runBrowserInference(allMessages, systemPromptRef.current, {
@@ -111,6 +113,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
                 return prev.map((m) => m.id === assistantMessage.id ? assistantMessage : m);
               });
               options.onFinish?.(assistantMessage);
+              browserInferenceRejectRef.current = null;
               resolve();
             },
             onStatusChange: (status: BrowserInferenceStatus) => {
@@ -120,6 +123,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
               // Progress is tracked via onStatusChange("downloading-model")
             },
             onError: (err: Error) => {
+              browserInferenceRejectRef.current = null;
               reject(err);
             },
           });
@@ -295,6 +299,10 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
     // Also stop browser inference Worker if active
     if (browserInferenceActiveRef.current) {
+      // Settle the pending doBrowserInference promise before terminating the Worker
+      browserInferenceRejectRef.current?.(new Error("Generation stopped by user"));
+      browserInferenceRejectRef.current = null;
+
       const { stopBrowserInference } = await import(
         "./browser-inference/browser-engine.ts"
       );
