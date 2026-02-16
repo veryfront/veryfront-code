@@ -46,3 +46,8 @@ const args = getArgs();
 const { parseCliArgs } = await import("./shared/args.ts");
 const { routeCommand } = await import("./router.ts");
 await routeCommand(parseCliArgs(args));
+
+// Exit cleanly after one-shot commands. Long-running commands (dev, start, mcp)
+// never return from routeCommand, so this only runs for commands like deploy, push, init, build.
+const { exitProcess } = await import("./utils/index.ts");
+exitProcess(0);
