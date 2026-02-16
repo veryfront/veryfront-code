@@ -6,6 +6,13 @@ import { select, textInput } from "../../utils/terminal-select.ts";
 import { getTemplateSelectOptions, TEMPLATES } from "./catalog.ts";
 import type { InitTemplate } from "./types.ts";
 
+/** Reject path separators and traversal so the name stays a single directory. */
+export function validateProjectName(name: string): string | null {
+  if (/[/\\]/.test(name)) return 'Project name cannot contain "/" or "\\"';
+  if (name === "." || name === "..") return 'Project name cannot be "." or ".."';
+  return null;
+}
+
 export interface WizardResult {
   projectName: string | null; // null = use current directory
   template: InitTemplate;
@@ -81,7 +88,19 @@ export async function runInteractiveWizard(existingName?: string): Promise<Wizar
           cancelled: true,
         };
       }
-      projectName = name || "my-app";
+      const validName = name || "my-app";
+      const nameError = validateProjectName(validName);
+      if (nameError) {
+        console.log(muted(`\n  ${nameError}\n`));
+        return {
+          projectName: null,
+          template: "minimal",
+          initGit: false,
+          skipped: false,
+          cancelled: true,
+        };
+      }
+      projectName = validName;
     }
   }
 

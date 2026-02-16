@@ -35,7 +35,7 @@ import {
   loadIntegrations,
   validateIntegrations,
 } from "../../templates/integration-loader.ts";
-import { runInteractiveWizard, shouldRunWizard } from "./interactive-wizard.ts";
+import { runInteractiveWizard, shouldRunWizard, validateProjectName } from "./interactive-wizard.ts";
 
 /**
  * Icon mapping for integrations based on category/name
@@ -184,6 +184,15 @@ export async function initCommand(options: InitOptions): Promise<void> {
   let template: InitTemplate;
   let projectName = name;
   let initGit = false;
+
+  // Validate project name before doing anything else
+  if (name) {
+    const nameError = validateProjectName(name);
+    if (nameError) {
+      console.error(red(nameError));
+      return;
+    }
+  }
 
   // Check if directory already exists before entering the wizard
   if (name && !options.force) {
