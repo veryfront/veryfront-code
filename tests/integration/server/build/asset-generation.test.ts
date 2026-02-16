@@ -429,32 +429,16 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
 
       expect(typeof css).toBe("string");
       expect(css.length).toBeGreaterThan(0);
-
-      expect(css.includes("body")).toBe(true);
-      expect(css.includes("margin")).toBe(true);
-    });
-
-    it("CSS contains loading spinner styles", () => {
-      const css = loadClientStyles();
-
-      expect(css.includes("loading-spinner")).toBe(true);
-      expect(css.includes("@keyframes")).toBe(true);
-      expect(css.includes("spin")).toBe(true);
-    });
-
-    it("CSS contains error container styles", () => {
-      const css = loadClientStyles();
-
       expect(css.includes("error-container")).toBe(true);
-      expect(css.includes("border")).toBe(true);
     });
 
-    it("CSS contains prose styles", () => {
+    it("does not contain styles redundant with Tailwind", () => {
       const css = loadClientStyles();
 
-      expect(css.includes(".prose")).toBe(true);
-      expect(css.includes("max-width")).toBe(true);
-      expect(css.includes("code")).toBe(true);
+      expect(css.includes(".prose")).toBe(false);
+      expect(css.includes(".loading-container")).toBe(false);
+      expect(css.includes(".loading-spinner")).toBe(false);
+      expect(css.includes("@keyframes spin")).toBe(false);
     });
 
     it("returns valid CSS syntax", () => {
@@ -463,44 +447,10 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
       const openBraces = (css.match(/\{/g) ?? []).length;
       const closeBraces = (css.match(/\}/g) ?? []).length;
       expect(openBraces).toBe(closeBraces);
-
-      expect(css.includes("#")).toBe(true);
-    });
-
-    it("always returns embedded CSS (no file I/O)", () => {
-      const css = loadClientStyles();
-      expect(typeof css).toBe("string");
-      expect(css.length).toBeGreaterThan(0);
     });
 
     it("returns consistent CSS across calls", () => {
       expect(loadClientStyles()).toBe(loadClientStyles());
-    });
-
-    it("CSS contains expected selectors", () => {
-      const css = loadClientStyles();
-
-      const expectedSelectors = [
-        "body",
-        ".loading-container",
-        ".loading-spinner",
-        ".error-container",
-        ".prose",
-        ".prose h1",
-        ".prose code",
-        ".prose pre",
-      ];
-
-      for (const selector of expectedSelectors) {
-        expect(css.includes(selector)).toBe(true);
-      }
-    });
-
-    it("CSS is minification-ready", () => {
-      const css = loadClientStyles();
-
-      expect(css.includes(";;")).toBe(false);
-      expect(css.includes("::")).toBe(css.includes("::before") || css.includes("::after"));
     });
   });
 });
