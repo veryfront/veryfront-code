@@ -2,7 +2,7 @@ import { brand, dim, muted } from "#cli/ui";
 import { getAgentFace } from "../../ui/dot-matrix.ts";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
-import { select } from "../../utils/terminal-select.ts";
+import { select, textInput } from "../../utils/terminal-select.ts";
 import { getTemplateSelectOptions, TEMPLATES } from "./catalog.ts";
 import type { InitTemplate } from "./types.ts";
 
@@ -37,7 +37,55 @@ export async function runInteractiveWizard(existingName?: string): Promise<Wizar
   console.log(`│  Let's set up your project.`);
   console.log("│");
 
-  const projectName: string | null = existingName ?? null;
+  let projectName: string | null = existingName ?? null;
+
+  // Location prompt (skip when name was provided via CLI)
+  if (!existingName) {
+    const locationChoice = await select(
+      "Where should we create your project?",
+      [
+        {
+          value: "current",
+          label: "Current folder",
+          description: "Use this directory",
+        },
+        {
+          value: "new",
+          label: "New folder",
+          description: "Create a new directory",
+        },
+      ],
+      0,
+    );
+
+    if (locationChoice === null) {
+      console.log(muted("\n  Cancelled.\n"));
+      return {
+        projectName: null,
+        template: "minimal",
+        initGit: false,
+        skipped: false,
+        cancelled: true,
+      };
+    }
+
+    if (locationChoice === "new") {
+      const name = await textInput("Project name", "my-app");
+      if (name === null) {
+        console.log(muted("\n  Cancelled.\n"));
+        return {
+          projectName: null,
+          template: "minimal",
+          initGit: false,
+          skipped: false,
+          cancelled: true,
+        };
+      }
+      if (name) {
+        projectName = name;
+      }
+    }
+  }
 
   // Template selection
   const templateChoice = await select(
