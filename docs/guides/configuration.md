@@ -107,6 +107,12 @@ Set environment variables in `.env` files or your deployment platform:
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `GOOGLE_API_KEY` | Google AI API key |
 
+### Local AI
+
+| Variable | Description |
+|----------|-------------|
+| `VERYFRONT_DISABLE_LOCAL_AI` | Set to `1` to disable local model fallback (forces cloud-only) |
+
 ### Framework
 
 | Variable | Description |

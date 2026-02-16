@@ -84,6 +84,9 @@ function AgentUI() {
 | `onFinish?` | `(message: UIMessage) => void` | Completion callback |
 | `onError?` | `(error: Error) => void` | Error callback |
 | `onToolCall?` | `(arg: OnToolCallArg) => void \\| Promise<void>` | Tool call handler for client-side execution |
+| `model?` | `string` | Override model at runtime (e.g. `"openai/gpt-4o"`) |
+| `systemPrompt?` | `string` | System prompt for browser-side inference (server uses agent config) |
+| `browserFallback?` | `boolean` | Enable browser fallback when server can't provide AI (default: `true`) |
 
 ### `UseChatResult`
 
@@ -98,10 +101,13 @@ function AgentUI() {
 | `setInput` | `(input: string) => void` | Set input value |
 | `sendMessage` | `(message: { text: string }) => Promise<void>` | Send a message programmatically |
 | `reload` | `() => Promise<void>` | Re-send last user message |
-| `stop` | `() => void` | Abort current request |
+| `stop` | `() => Promise<void>` | Abort current request (also stops browser Worker if active) |
 | `setMessages` | `(messages: UIMessage[]) => void` | Replace message history |
 | `addToolOutput` | `(output: ToolOutput) => void` | Submit client-side tool result |
-| `data?` | `unknown` | Extra data from server response |
+| `model` | `string \\| undefined` | Current model override |
+| `inferenceMode` | `InferenceMode` | Where inference is happening: `"cloud"`, `"server-local"`, or `"browser"` |
+| `browserStatus` | `BrowserInferenceStatus \\| null` | Browser model loading/inference status (`null` when not using browser fallback) |
+| `data` | `unknown` | Extra data from server response |
 | `handleInputChange` | `(e: React.ChangeEvent<HTMLInputElement \\| HTMLTextAreaElement>) => void` | Bind to input onChange |
 | `handleSubmit` | `(e: React.FormEvent) => Promise<void>` | Submit current input |
 
@@ -138,6 +144,8 @@ function AgentUI() {
 | Name | Description |
 |------|-------------|
 | `AgentCard` | Agent status, tool calls, and messages |
+| `InferenceBadge` | Shows inference mode indicator ("Running locally", download progress) |
+| `UpgradeCTA` | Dismissible banner suggesting adding an API key for better models |
 | `Chat` | Full chat UI (messages + input) |
 | `ChatComponents` | Compound components for custom layouts |
 | `ChatFooter` | Chat footer section |
@@ -169,6 +177,9 @@ function AgentUI() {
 | Name | Description |
 |------|-------------|
 | `AgentCardProps` | `<AgentCard>` props |
+| `BrowserInferenceStatus` | Browser model status: `"idle"`, `"loading-runtime"`, `"downloading-model"`, `"ready"`, `"generating"`, `"error"` |
+| `InferenceMode` | Where inference runs: `"cloud"`, `"server-local"`, `"browser"` |
+| `InferenceBadgeProps` | `<InferenceBadge>` props |
 | `AgentTheme` | Agent card theme config |
 | `AIErrorBoundaryProps` | `<AIErrorBoundary>` props |
 | `ChatProps` | `<Chat>` props |
