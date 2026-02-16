@@ -2,16 +2,10 @@ name: CI/CD
 
 on:
   workflow_dispatch:
-    inputs:
-      release:
-        description: "Create a stable release from the current version in deno.json"
-        type: boolean
-        default: false
   pull_request:
     branches: [main]
   push:
     branches: [main]
-    tags: ["v*"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,10 +13,9 @@ concurrency:
 
 jobs:
   # ============================================
-  # CI: Quality Checks (PR + main, skip tags)
+  # CI: Quality Checks
   # ============================================
   ci:
-    if: startsWith(github.ref, 'refs/tags/') == false
     runs-on: veryfront-k8s-runners
     strategy:
       fail-fast: false
@@ -40,11 +33,10 @@ jobs:
           esac
 
   # ============================================
-  # CI: Tests (PR + main, skip tags)
+  # CI: Tests
   # ============================================
 
   tests:
-    if: startsWith(github.ref, 'refs/tags/') == false
     runs-on: veryfront-k8s-runners
     timeout-minutes: 15
     strategy:
@@ -69,11 +61,10 @@ jobs:
             fi
 
   # ============================================
-  # CI: Compiled Binary E2E Tests (PR + main, skip tags)
+  # CI: Compiled Binary E2E Tests
   # ============================================
 
   tests-binary-e2e:
-    if: startsWith(github.ref, 'refs/tags/') == false
     runs-on: veryfront-k8s-runners
     timeout-minutes: 20
     name: tests (binary e2e)
@@ -91,11 +82,11 @@ jobs:
             VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary --no-lock
 
   # ============================================
-  # CI: Split Mode Test (PR + main, skip tags)
+  # CI: Split Mode Test
   # ============================================
 
   tests-split-mode:
-    if: startsWith(github.ref, 'refs/tags/') == false && vars.RUN_SPLIT_MODE_TEST == 'true'
+    if: vars.RUN_SPLIT_MODE_TEST == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     name: tests (split mode)
@@ -149,12 +140,38 @@ jobs:
           echo "Split mode startup test passed"
 
   # ============================================
-  # CD: Build Binaries (main + tags)
+  # CD: Detect release type from deno.json
+  # X.Y.Z = stable (npm latest), anything else = RC
+  # ============================================
+
+  version-check:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      is_stable: ${{ steps.check.outputs.is_stable }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect release type
+        id: check
+        run: |
+          VERSION=$(jq -r '.version' deno.json)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "is_stable=true" >> $GITHUB_OUTPUT
+            echo "::notice::Stable version detected: $VERSION → will publish as latest"
+          else
+            echo "is_stable=false" >> $GITHUB_OUTPUT
+            echo "::notice::Pre-release version detected: $VERSION → will publish as rc"
+          fi
+
+  # ============================================
+  # CD: Build Binaries (main only)
   # Version comes directly from deno.json
   # ============================================
 
   build-binaries:
-    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ contains(matrix.os, 'windows') }}
     strategy:
@@ -207,13 +224,14 @@ jobs:
           retention-days: 7
 
   # ============================================
-  # CD: Pre-release (main only)
-  # Publishes whatever version is in deno.json with --tag rc
+  # CD: Pre-release (RC versions only)
+  # Runs when deno.json version has a prerelease suffix (e.g. 0.1.14-rc)
+  # Appends .{run_number} and publishes with --tag rc
   # ============================================
 
   prerelease:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [ci, tests, tests-binary-e2e, build-binaries]
+    if: needs.version-check.outputs.is_stable == 'false'
+    needs: [ci, tests, tests-binary-e2e, build-binaries, version-check]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -233,11 +251,10 @@ jobs:
       - name: Compute RC version
         id: version
         run: |
-          BASE=$(jq -r '.version' deno.json)
-          RC_VERSION="${BASE}-rc.${{ github.run_number }}"
-          echo "base=${BASE}" >> $GITHUB_OUTPUT
+          BASE=${{ needs.version-check.outputs.version }}
+          RC_VERSION="${BASE}.${{ github.run_number }}"
           echo "version=${RC_VERSION}" >> $GITHUB_OUTPUT
-          echo "Publishing ${RC_VERSION}"
+          echo "Publishing RC: ${RC_VERSION}"
 
       - name: Build and publish
         env:
@@ -288,12 +305,14 @@ jobs:
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
   # ============================================
-  # CD: Stable Release (tags only)
+  # CD: Stable Release (clean semver only)
+  # Runs when deno.json version is X.Y.Z (no suffix)
+  # Publishes with --tag latest, creates git tag, updates Homebrew
   # ============================================
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-binaries]
+    if: needs.version-check.outputs.is_stable == 'true'
+    needs: [ci, tests, tests-binary-e2e, build-binaries, version-check]
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -302,18 +321,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate tag matches deno.json
-        run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          DENO_VERSION=$(jq -r '.version' deno.json)
-          if [ "$TAG_VERSION" != "$DENO_VERSION" ]; then
-            echo "Error: Tag ($TAG_VERSION) doesn't match deno.json ($DENO_VERSION)"
-            exit 1
-          fi
-
       - name: Read version
         id: version
-        run: echo "version=$(jq -r '.version' deno.json)" >> $GITHUB_OUTPUT
+        run: |
+          echo "version=${{ needs.version-check.outputs.version }}" >> $GITHUB_OUTPUT
+          echo "Publishing stable: ${{ needs.version-check.outputs.version }}"
 
       - uses: denoland/setup-deno@v2
         with:
@@ -336,6 +348,19 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: binaries
+
+      - name: Create git tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          TAG="v${VERSION}"
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag ${TAG} already exists, skipping"
+          else
+            git tag "${TAG}"
+            git push origin "${TAG}"
+            echo "Created tag ${TAG}"
+          fi
 
       - name: Create GitHub releases
         env:
@@ -389,12 +414,11 @@ jobs:
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
   # ============================================
-  # CD: Update Homebrew (tags only)
+  # CD: Update Homebrew (stable releases only)
   # ============================================
 
   update-homebrew:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: release
+    needs: [release, version-check]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -408,7 +432,7 @@ jobs:
           max_attempts: 3
           retry_wait_seconds: 10
           command: |
-            VERSION="${GITHUB_REF#refs/tags/v}"
+            VERSION="${{ needs.version-check.outputs.version }}"
 
             # Download binaries and calculate checksums
             declare -A SHAS
@@ -437,41 +461,3 @@ jobs:
             git diff --cached --quiet && echo "No changes to commit" && exit 0
             git commit -m "Update veryfront to v${VERSION}"
             git push
-
-  # ============================================
-  # CD: Manual Stable Release (workflow_dispatch)
-  # Reads version from deno.json, validates it's
-  # a clean semver (no -rc/prerelease), creates
-  # the git tag which triggers the release job.
-  # ============================================
-
-  release-tag:
-    if: github.event_name == 'workflow_dispatch' && inputs.release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Validate and tag
-        run: |
-          VERSION=$(jq -r '.version' deno.json)
-
-          # Only allow clean semver (no prerelease suffix)
-          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Version $VERSION is a valid stable release"
-          else
-            echo "Error: Version '$VERSION' contains a prerelease suffix. Only major.minor.patch versions can be released as stable."
-            exit 1
-          fi
-
-          TAG="v${VERSION}"
-
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Error: Tag $TAG already exists. Bump the version in deno.json first."
-            exit 1
-          fi
-
-          git tag "$TAG"
-          git push origin "$TAG"
-          echo "Created and pushed tag $TAG — release pipeline will take over."
