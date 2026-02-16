@@ -444,7 +444,7 @@ jobs:
       - name: Update Homebrew tap
         uses: nick-fields/retry@v3
         env:
-          GITHUB_PAT: ${{ secrets.GH_PAT_VERYFRONT }}
+          HOMEBREW_TAP_PAT: ${{ secrets.GH_PAT_HOMEBREW_TAP || secrets.GH_PAT_VERYFRONT }}
         with:
           timeout_minutes: 5
           max_attempts: 3
@@ -469,7 +469,7 @@ jobs:
 
             # Create PR against tap repo (branch protection requires PRs)
             rm -rf tap
-            git clone "https://x-access-token:${GITHUB_PAT}@github.com/veryfront/homebrew-tap.git" tap
+            git clone "https://x-access-token:${HOMEBREW_TAP_PAT}@github.com/veryfront/homebrew-tap.git" tap
             mkdir -p tap/Formula
             echo "$FORMULA" > tap/Formula/veryfront.rb
             cd tap
@@ -483,32 +483,33 @@ jobs:
             git commit -m "Update veryfront to v${VERSION}"
             git push -u origin "${BRANCH}" || git push -u origin "${BRANCH}" --force-with-lease
 
-            PR_NUMBER=$(GH_TOKEN="${GITHUB_PAT}" gh pr list \
-              --repo veryfront/homebrew-tap \
-              --base main \
-              --head "${BRANCH}" \
-              --state open \
-              --json number \
-              --jq '.[0].number')
+            PR_NUMBER=$(GH_TOKEN="${HOMEBREW_TAP_PAT}" gh api \
+              --method GET \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/veryfront/homebrew-tap/pulls?state=open&head=veryfront:${BRANCH}&base=main&per_page=1" \
+              --jq '.[0].number // empty')
 
-            if [ -z "${PR_NUMBER}" ] || [ "${PR_NUMBER}" = "null" ]; then
-              GH_TOKEN="${GITHUB_PAT}" gh pr create \
-                --repo veryfront/homebrew-tap \
-                --base main \
-                --head "${BRANCH}" \
-                --title "Update veryfront to v${VERSION}" \
-                --body "Automated update from CI — veryfront v${VERSION}" \
-                --fill
-
-              PR_NUMBER=$(GH_TOKEN="${GITHUB_PAT}" gh pr list \
-                --repo veryfront/homebrew-tap \
-                --base main \
-                --head "${BRANCH}" \
-                --state open \
-                --json number \
-                --jq '.[0].number')
+            if [ -z "${PR_NUMBER}" ]; then
+              CREATE_PR_OUTPUT=$(GH_TOKEN="${HOMEBREW_TAP_PAT}" gh api \
+                --method POST \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "/repos/veryfront/homebrew-tap/pulls" \
+                -f title="Update veryfront to v${VERSION}" \
+                -f base="main" \
+                -f head="${BRANCH}" \
+                -f body="Automated update from CI - veryfront v${VERSION}" \
+                --jq '.number' 2>&1) || {
+                  if echo "${CREATE_PR_OUTPUT}" | grep -q "Resource not accessible by personal access token"; then
+                    echo "::error::Homebrew tap update requires a token with Pull requests: write and Contents: write on veryfront/homebrew-tap (set GH_PAT_HOMEBREW_TAP or fix GH_PAT_VERYFRONT)."
+                  fi
+                  echo "${CREATE_PR_OUTPUT}"
+                  exit 1
+                }
+              PR_NUMBER="${CREATE_PR_OUTPUT}"
             fi
 
-            GH_TOKEN="${GITHUB_PAT}" gh pr merge "${PR_NUMBER}" \
-              --repo veryfront/homebrew-tap \
-              --merge --auto
+            GH_TOKEN="${HOMEBREW_TAP_PAT}" gh api \
+              --method PUT \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/veryfront/homebrew-tap/pulls/${PR_NUMBER}/merge" \
+              -f merge_method="merge"
