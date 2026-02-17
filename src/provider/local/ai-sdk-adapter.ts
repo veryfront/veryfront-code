@@ -65,8 +65,10 @@ function convertPrompt(prompt: any[]): ChatMessage[] {
 export function createLocalModel(modelId?: string): LanguageModel {
   const resolvedId = modelId || DEFAULT_LOCAL_MODEL;
 
-  // deno-lint-ignore no-explicit-any
-  const model: any = {
+  const model = {
+    /** Marker so ensureModelReady() can distinguish real local-engine models
+     *  from mock/custom providers that happen to use provider:"local". */
+    _isVfLocalModel: true as const,
     specificationVersion: "v2" as const,
     provider: "local",
     modelId: `local/${resolvedId}`,

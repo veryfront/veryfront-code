@@ -6,10 +6,12 @@
  * for fast CI — run manually with `--filter "local-engine"`.
  */
 
-import { assertEquals, assertExists } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { assertEquals, assertExists, assertRejects } from "#std/assert";
+import { afterEach, describe, it } from "#std/testing/bdd";
 import { DEFAULT_LOCAL_MODEL, getLocalModelIds, resolveLocalModel } from "./model-catalog.ts";
 import { createLocalModel } from "./ai-sdk-adapter.ts";
+import { clearModelProviders, ensureModelReady } from "../model-registry.ts";
+import { fromError } from "#veryfront/errors/veryfront-error.ts";
 
 describe("model-catalog", () => {
   it("resolves known model IDs to HuggingFace IDs", () => {
@@ -52,6 +54,49 @@ describe("ai-sdk-adapter", () => {
     const model = createLocalModel();
     // deno-lint-ignore no-explicit-any
     assertEquals((model as any).modelId, "local/smollm2-135m");
+  });
+
+  it("sets _isVfLocalModel marker for ensureModelReady detection", () => {
+    const model = createLocalModel("smollm2-135m");
+    const m = model as Record<string, unknown>;
+    assertEquals(m._isVfLocalModel, true);
+  });
+});
+
+describe("ensureModelReady", () => {
+  afterEach(() => {
+    clearModelProviders();
+  });
+
+  it("is a no-op for non-local models (no _isVfLocalModel marker)", async () => {
+    // A mock model without _isVfLocalModel should pass through immediately
+    const mockModel = {
+      specificationVersion: "v2" as const,
+      provider: "openai",
+      modelId: "openai/gpt-4o",
+      supportedUrls: {},
+      doGenerate: async () => ({}),
+      doStream: async () => ({ stream: new ReadableStream() }),
+    };
+    // Should not throw — just returns without verifying runtime
+    // deno-lint-ignore no-explicit-any
+    await ensureModelReady(mockModel as any);
+  });
+
+  it("throws no_ai_available for local models when runtime unavailable", async () => {
+    const prev = Deno.env.get("VERYFRONT_DISABLE_LOCAL_AI");
+    Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", "1");
+    try {
+      const localModel = createLocalModel("smollm2-135m");
+      const error = await assertRejects(
+        () => ensureModelReady(localModel),
+      );
+      const vfError = fromError(error);
+      assertEquals(vfError?.type, "no_ai_available");
+    } finally {
+      if (prev === undefined) Deno.env.delete("VERYFRONT_DISABLE_LOCAL_AI");
+      else Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", prev);
+    }
   });
 });
 

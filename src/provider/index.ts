@@ -18,6 +18,7 @@
 
 export {
   clearModelProviders,
+  ensureModelReady,
   getRegisteredModelProviders,
   hasModelProvider,
   registerModelProvider,
