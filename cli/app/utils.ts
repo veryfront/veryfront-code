@@ -6,8 +6,6 @@
 
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
-import { getEnvironmentConfig } from "veryfront/config";
-import { capitalizeSeparatedWords } from "veryfront/utils/case-utils";
 import { readToken } from "../auth/token-store.ts";
 import { pullCommand } from "../commands/pull/index.ts";
 import { addLog, type AppState, type StateUpdater } from "./state.ts";
@@ -42,32 +40,6 @@ export function generateRandomSlug(): string {
 
 export function normalizeSlug(projectName: string): string {
   return projectName.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
-}
-
-export function slugToName(slug: string): string {
-  return capitalizeSeparatedWords(slug, "-", " ");
-}
-
-export async function createRemoteProject(
-  token: string,
-  slug: string,
-): Promise<{ slug: string }> {
-  const apiUrl = getEnvironmentConfig().apiUrl || "https://api.veryfront.com";
-  const response = await fetch(`${apiUrl}/projects`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({ slug, name: slugToName(slug) }),
-  });
-
-  if (response.ok) return (await response.json()) as { slug: string };
-
-  const error = await response.json().catch(() => ({}));
-  const msg = (error as { message?: string }).message || `HTTP ${response.status}`;
-  throw new Error(msg);
 }
 
 export function getLocalProjectsFromState(
