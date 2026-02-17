@@ -603,7 +603,9 @@ export const vfRemoteDeleteBranch: MCPTool<RemoteDeleteBranchInput, RemoteDelete
 // ============================================================================
 
 const remoteCreateProjectInput = z.object({
-  slug: z.string().describe("Project slug (lowercase letters, numbers, hyphens only). A random suffix is appended if the slug is already taken."),
+  slug: z.string().describe(
+    "Project slug (lowercase letters, numbers, hyphens only). A random suffix is appended if the slug is already taken.",
+  ),
   template: z.string().optional().describe("Template to use (e.g., 'chat', 'rag', 'minimal')"),
   is_public: z.boolean().optional().describe("Whether the project is public (default: false)"),
 });
