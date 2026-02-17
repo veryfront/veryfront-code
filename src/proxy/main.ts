@@ -593,18 +593,21 @@ async function shutdown(): Promise<void> {
 onSignal("SIGINT", shutdown);
 onSignal("SIGTERM", shutdown);
 
-// Wait for sticky-session router to resolve initial target list
-await rendererRouter?.ready();
-
-// Initialize tracing and start server
-await initializeOTLPWithApis();
-
 proxyLogger.debug("Starting proxy server (split mode)", {
   port: PORT,
   serverUrl: PRODUCTION_SERVER_URL,
   apiBaseUrl: config.apiBaseUrl,
 });
 
-// Create and start the HTTP server
+// Start HTTP server first so health checks pass immediately.
+// The health endpoint (/_proxy/health) is stateless and doesn't depend on
+// the renderer router or OTEL, so we can serve it while those initialize.
 const server = createHttpServer();
 await server.serve(router, { port: PORT, hostname: HOST });
+
+// Complete async initialization after server is listening.
+// These run concurrently and don't block request handling.
+await Promise.all([
+  rendererRouter?.ready(),
+  initializeOTLPWithApis(),
+]);
