@@ -350,22 +350,18 @@ describe("cli/mcp/remote-file-tools", () => {
       assertEquals(vfRemoteCreateProject.name, "vf_remote_create_project");
     });
 
-    it("should require name and slug", () => {
+    it("should require slug", () => {
       const valid = vfRemoteCreateProject.inputSchema.safeParse({
-        name: "My Project",
         slug: "my-project",
       });
       assertEquals(valid.success, true);
 
-      const missingSlug = vfRemoteCreateProject.inputSchema.safeParse({
-        name: "My Project",
-      });
+      const missingSlug = vfRemoteCreateProject.inputSchema.safeParse({});
       assertEquals(missingSlug.success, false);
     });
 
     it("should accept optional template and is_public", () => {
       const result = vfRemoteCreateProject.inputSchema.safeParse({
-        name: "My Project",
         slug: "my-project",
         template: "chat",
         is_public: true,
@@ -379,17 +375,15 @@ describe("cli/mcp/remote-file-tools", () => {
       assertEquals(vfRemoteCloneProject.name, "vf_remote_clone_project");
     });
 
-    it("should require source_project, target_name, target_slug", () => {
+    it("should require source_project and target_slug", () => {
       const valid = vfRemoteCloneProject.inputSchema.safeParse({
         source_project: "source-proj",
-        target_name: "Clone Project",
         target_slug: "clone-project",
       });
       assertEquals(valid.success, true);
 
       const missingTarget = vfRemoteCloneProject.inputSchema.safeParse({
         source_project: "source-proj",
-        target_name: "Clone Project",
       });
       assertEquals(missingTarget.success, false);
     });
@@ -397,7 +391,6 @@ describe("cli/mcp/remote-file-tools", () => {
     it("should accept optional file_pattern", () => {
       const result = vfRemoteCloneProject.inputSchema.safeParse({
         source_project: "source-proj",
-        target_name: "Clone Project",
         target_slug: "clone-project",
         file_pattern: "*.tsx",
       });
@@ -482,7 +475,6 @@ describe("cli/mcp/remote-file-tools", () => {
     it("should return error for create project without token", async () => {
       await assertExecuteError(
         vfRemoteCreateProject.execute({
-          name: "Test",
           slug: "test",
         }),
       );

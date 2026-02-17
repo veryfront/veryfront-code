@@ -13,6 +13,7 @@ import { z } from "zod";
 import type { MCPTool } from "./tools.ts";
 import { getEnvironmentConfig } from "veryfront/config";
 import { withSpan } from "veryfront/observability/otlp-setup";
+import { randomSuffix } from "#cli/shared/slug";
 
 import { DEFAULT_LOCAL_API_URL } from "#cli/shared/constants";
 
@@ -131,6 +132,37 @@ interface Project {
   description?: string;
   is_public?: boolean;
   created_at?: string;
+}
+
+const MAX_SLUG_ATTEMPTS = 10;
+
+/**
+ * Create a project with slug conflict retry.
+ * On 409, appends a random suffix and retries (matches reserveProjectSlug behavior).
+ */
+async function createProjectWithRetry(
+  slug: string,
+  body: Record<string, unknown>,
+): Promise<{ ok: true; data: Project; slug: string } | { ok: false; error: string }> {
+  let currentSlug = slug;
+
+  for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt++) {
+    const result = await apiRequest<Project>("POST", "/projects", {
+      body: { ...body, slug: currentSlug, name: currentSlug },
+    });
+
+    if (result.ok && result.data) {
+      return { ok: true, data: result.data, slug: currentSlug };
+    }
+
+    if (result.status !== 409) {
+      return { ok: false, error: result.error ?? "Failed to create project" };
+    }
+
+    currentSlug = `${slug}-${randomSuffix()}`;
+  }
+
+  return { ok: false, error: `Could not find available slug after ${MAX_SLUG_ATTEMPTS} attempts` };
 }
 
 // ============================================================================
@@ -571,8 +603,7 @@ export const vfRemoteDeleteBranch: MCPTool<RemoteDeleteBranchInput, RemoteDelete
 // ============================================================================
 
 const remoteCreateProjectInput = z.object({
-  name: z.string().describe("Project name"),
-  slug: z.string().describe("Project slug (lowercase letters, numbers, hyphens only)"),
+  slug: z.string().describe("Project slug (lowercase letters, numbers, hyphens only). A random suffix is appended if the slug is already taken."),
   template: z.string().optional().describe("Template to use (e.g., 'chat', 'rag', 'minimal')"),
   is_public: z.boolean().optional().describe("Whether the project is public (default: false)"),
 });
@@ -590,13 +621,9 @@ export const vfRemoteCreateProject: MCPTool<RemoteCreateProjectInput, RemoteCrea
   description: "Create a new Veryfront project. Returns the project details including ID and slug.",
   inputSchema: remoteCreateProjectInput,
   execute: async (input) => {
-    const result = await apiRequest<Project>("POST", "/projects", {
-      body: {
-        name: input.name,
-        slug: input.slug,
-        template: input.template,
-        isPublic: input.is_public,
-      },
+    const result = await createProjectWithRetry(input.slug, {
+      template: input.template,
+      isPublic: input.is_public,
     });
 
     if (!result.ok) return { success: false, error: result.error };
@@ -610,9 +637,8 @@ export const vfRemoteCreateProject: MCPTool<RemoteCreateProjectInput, RemoteCrea
 
 const remoteCloneProjectInput = z.object({
   source_project: z.string().describe("Source project slug or ID to clone from"),
-  target_name: z.string().describe("Name for the new project"),
   target_slug: z.string().describe(
-    "Slug for the new project (lowercase letters, numbers, hyphens only)",
+    "Slug for the new project (lowercase letters, numbers, hyphens only). A random suffix is appended if the slug is already taken.",
   ),
   file_pattern: z.string().optional().describe(
     "Optional file pattern to filter which files to clone (e.g., '*.tsx')",
@@ -637,9 +663,7 @@ export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneP
     withSpan(
       "cli.mcp.tool.vf_remote_clone_project",
       async () => {
-        const createResult = await apiRequest<Project>("POST", "/projects", {
-          body: { name: input.target_name, slug: input.target_slug },
-        });
+        const createResult = await createProjectWithRetry(input.target_slug, {});
 
         if (!createResult.ok) {
           return { success: false, error: `Failed to create project: ${createResult.error}` };
@@ -682,7 +706,7 @@ export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneP
 
           const createFileResult = await apiRequest<{ id: string; path: string }>(
             "PUT",
-            `/${input.target_slug}/files/${encodeFilePath(file.path)}`,
+            `/${createResult.slug}/files/${encodeFilePath(file.path)}`,
             { body: { content: getResult.data.content } },
           );
 

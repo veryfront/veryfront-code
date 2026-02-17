@@ -12,11 +12,11 @@ import { readToken } from "../../auth/token-store.ts";
 import { fetchRemoteProjects } from "../../sync/index.ts";
 import {
   copyDirectory,
-  createRemoteProject,
   generateRandomSlug,
   getLocalProjectsFromState,
   normalizeSlug,
 } from "../utils.ts";
+import { reserveProjectSlug } from "../../shared/reserve-slug.ts";
 import { initCommand } from "../../commands/init/init-command.ts";
 import type { InitTemplate } from "../../commands/init/types.ts";
 
@@ -45,7 +45,7 @@ export async function createProject(
     }
 
     const normalizedSlug = normalizeSlug(projectName);
-    const { slug } = await createRemoteProject(token, normalizedSlug);
+    const { slug } = await reserveProjectSlug(normalizedSlug, token);
     const projectPath = `${cwd()}/projects/${slug}`;
 
     await initCommand({
@@ -95,7 +95,7 @@ export async function createProjectFromExample(
     }
 
     const normalizedSlug = normalizeSlug(projectName);
-    const { slug } = await createRemoteProject(token, normalizedSlug);
+    const { slug } = await reserveProjectSlug(normalizedSlug, token);
     const projectPath = `${cwd()}/projects/${slug}`;
 
     await copyDirectory(example.path, projectPath);
