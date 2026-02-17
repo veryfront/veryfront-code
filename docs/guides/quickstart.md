@@ -23,12 +23,12 @@ cd my-app
 
 The CLI walks you through template selection:
 
-- **minimal** — single page, no extras
-- **app** — dashboard with auth and API routes
-- **blog** — MDX content with file-based posts
-- **ai** — agent with tools, prompts, and a chat UI
-
-You can also add features interactively: AI, auth, MDX, Redis, workflows.
+- **AI Chatbot** — Agent + chat UI + streaming
+- **Chat with Your Docs** — RAG with source citations
+- **Multi-Agent System** — Agents that delegate to each other
+- **AI Workflow Pipeline** — Steps + approvals + parallelism
+- **Coding Agent** — Claude Code-powered code assistant
+- **AI SaaS** — Auth + chat + per-user memory
 
 ## Start the dev server
 
@@ -50,7 +50,7 @@ my-app/
   package.json
 ```
 
-If you picked the **ai** template, you also get:
+If you picked the **AI Chatbot** template, you also get:
 
 ```
 my-app/
