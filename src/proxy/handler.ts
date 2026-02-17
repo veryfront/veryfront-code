@@ -1,4 +1,4 @@
-import { TokenManager, type TokenScope } from "./token-manager.ts";
+import { TokenManager, type TokenScope, ProjectNotFoundError } from "./token-manager.ts";
 import { type ParsedDomain, parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -333,7 +333,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           try {
             token = await tokenManager.getToken(scope, projectSlug, customDomain);
           } catch (error) {
-            logger?.error("Token fetch failed", error as Error, { projectSlug, customDomain });
+            // Log ProjectNotFoundError at debug level since it's expected for invalid domains
+            if (error instanceof ProjectNotFoundError) {
+              logger?.debug("Token fetch failed: project not found", { customDomain: error.domain });
+            } else {
+              logger?.error("Token fetch failed", error as Error, { projectSlug, customDomain });
+            }
           }
         }
       }
@@ -347,8 +352,9 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
       if (isCustomDomain && !projectSlug) {
         if (!token) {
-          logger?.error("Cannot process custom domain without token", undefined, { domain: host });
-          return makeErrorContext(base, 502, `Failed to authenticate for domain: ${host}`, token);
+          // Log at debug level for expected "not found" scenarios to reduce noise
+          logger?.debug("Cannot process custom domain without token", { domain: host });
+          return makeErrorContext(base, 404, `No project configured for domain: ${host}`, token);
         }
 
         const lookupResult = await lookupProjectByDomain(host, config.apiBaseUrl, token, logger);

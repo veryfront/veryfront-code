@@ -165,7 +165,7 @@ describe("Token Priority Cascade", () => {
   });
 
   describe("no token available", () => {
-    it("returns 502 for custom domain when no token source exists", async () => {
+    it("returns 404 for custom domain when no token source exists", async () => {
       const handler = createProxyHandler({
         config: {
           apiBaseUrl: "http://localhost:9999",
@@ -183,10 +183,10 @@ describe("Token Priority Cascade", () => {
       const ctx = await handler.processRequest(req);
 
       assertEquals(ctx.token, undefined);
-      assertEquals(ctx.error?.status, 502);
+      assertEquals(ctx.error?.status, 404);
       assertEquals(
         ctx.error?.message,
-        "Failed to authenticate for domain: custom-domain.com",
+        "No project configured for domain: custom-domain.com",
       );
 
       await handler.close();

@@ -103,7 +103,7 @@ describe("Proxy Handler", () => {
       }
     });
 
-    it("returns 502 error when no token available for custom domain", async () => {
+    it("returns 404 error when no token available for custom domain", async () => {
       const handler = createProxyHandler({
         config: {
           apiBaseUrl: "http://localhost:9999",
@@ -121,10 +121,10 @@ describe("Proxy Handler", () => {
       const ctx = await handler.processRequest(req);
 
       assertEquals(ctx.projectSlug, undefined);
-      assertEquals(ctx.error?.status, 502);
+      assertEquals(ctx.error?.status, 404);
       assertEquals(
         ctx.error?.message,
-        "Failed to authenticate for domain: custom-domain.com",
+        "No project configured for domain: custom-domain.com",
       );
 
       await handler.close();
