@@ -61,6 +61,18 @@ self.onmessage = async (event) => {
     }
     chatMessages.push(...messages);
 
+    // Helper: generated_text is a plain string for raw prompts but an array
+    // of {role, content} message objects when using chat format. Extract the
+    // last assistant message's content in either case.
+    function extractText(generated) {
+      if (typeof generated === "string") return generated;
+      if (Array.isArray(generated)) {
+        const last = generated[generated.length - 1];
+        return last?.content ?? "";
+      }
+      return "";
+    }
+
     const result = await pipe(chatMessages, {
       max_new_tokens: options?.maxNewTokens ?? 512,
       temperature: options?.temperature ?? 0.7,
@@ -68,15 +80,15 @@ self.onmessage = async (event) => {
       return_full_text: false,
       callback_function: (output) => {
         if (!generating) return;
-        const text = output?.[0]?.generated_text;
-        if (typeof text === "string") {
+        const text = extractText(output?.[0]?.generated_text);
+        if (text) {
           self.postMessage({ type: "token", id, token: text });
         }
       },
     });
 
     generating = false;
-    const finalText = result?.[0]?.generated_text ?? "";
+    const finalText = extractText(result?.[0]?.generated_text);
     self.postMessage({ type: "done", id, text: finalText });
   } catch (error) {
     generating = false;

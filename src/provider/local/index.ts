@@ -18,7 +18,13 @@
 
 export { createLocalModel } from "./ai-sdk-adapter.ts";
 export { isLocalAIDisabled } from "./env.ts";
-export { generate, generateStream, isModelLoaded, preloadModel, verifyLocalRuntime } from "./local-engine.ts";
+export {
+  generate,
+  generateStream,
+  isModelLoaded,
+  preloadModel,
+  verifyLocalRuntime,
+} from "./local-engine.ts";
 export type { ChatMessage, GenerateOptions } from "./local-engine.ts";
 export { DEFAULT_LOCAL_MODEL, getLocalModelIds, resolveLocalModel } from "./model-catalog.ts";
 export type { ModelInfo } from "./model-catalog.ts";

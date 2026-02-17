@@ -241,7 +241,10 @@ export function getRegisteredModelProviders(): string[] {
  * distinguish real local-engine models from mock/custom providers that
  * happen to use `provider: "local"`.
  */
-export async function ensureModelReady(model: LanguageModel, _requestedModel: string): Promise<void> {
+export async function ensureModelReady(
+  model: LanguageModel,
+  _requestedModel: string,
+): Promise<void> {
   const m = model as Record<string, unknown>;
   if (!m._isVfLocalModel) return;
   await verifyLocalRuntime();
