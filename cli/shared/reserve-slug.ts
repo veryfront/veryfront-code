@@ -7,7 +7,12 @@
  */
 
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import { capitalizeSeparatedWords } from "veryfront/utils/case-utils";
 import { randomSuffix } from "#cli/shared/slug";
+
+function slugToName(slug: string): string {
+  return capitalizeSeparatedWords(slug, "-", " ");
+}
 
 export interface ReserveResult {
   slug: string;
@@ -37,10 +42,11 @@ export async function reserveProjectSlug(
   token: string,
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<ReserveResult> {
+  const name = slugToName(slug);
   let currentSlug = slug;
 
   for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt++) {
-    const result = await tryCreateProject(currentSlug, token, env);
+    const result = await tryCreateProject(currentSlug, name, token, env);
 
     if (result.success) {
       return {
@@ -62,6 +68,7 @@ export async function reserveProjectSlug(
 
 async function tryCreateProject(
   slug: string,
+  name: string,
   token: string,
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<CreateProjectResult> {
@@ -73,7 +80,7 @@ async function tryCreateProject(
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({ slug, name: slug }),
+      body: JSON.stringify({ slug, name }),
     });
 
     if (response.ok) {

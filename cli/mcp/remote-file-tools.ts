@@ -136,19 +136,28 @@ interface Project {
 
 const MAX_SLUG_ATTEMPTS = 10;
 
+function slugToName(slug: string): string {
+  return slug
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
 /**
  * Create a project with slug conflict retry.
  * On 409, appends a random suffix and retries (matches reserveProjectSlug behavior).
+ * Name is derived from the base slug (without random suffix) for readability.
  */
 async function createProjectWithRetry(
   slug: string,
   body: Record<string, unknown>,
 ): Promise<{ ok: true; data: Project; slug: string } | { ok: false; error: string }> {
+  const name = slugToName(slug);
   let currentSlug = slug;
 
   for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt++) {
     const result = await apiRequest<Project>("POST", "/projects", {
-      body: { ...body, slug: currentSlug, name: currentSlug },
+      body: { ...body, slug: currentSlug, name },
     });
 
     if (result.ok && result.data) {
