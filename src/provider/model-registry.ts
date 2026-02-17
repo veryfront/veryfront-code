@@ -28,6 +28,7 @@ import { serverLogger } from "#veryfront/utils";
 import { DEFAULT_LOCAL_MODEL } from "./local/model-catalog.ts";
 import { createLocalModel } from "./local/ai-sdk-adapter.ts";
 import { isLocalAIDisabled } from "./local/env.ts";
+import { verifyLocalRuntime } from "./local/local-engine.ts";
 
 const localLogger = serverLogger.component("local-llm");
 
@@ -225,6 +226,25 @@ export function hasModelProvider(name: string): boolean {
 export function getRegisteredModelProviders(): string[] {
   autoInitializeFromEnv();
   return manager.getAllIds();
+}
+
+/**
+ * Eagerly verify that the resolved model's runtime is available.
+ *
+ * For real local-engine models (created by `createLocalModel()`) this
+ * eagerly loads the ONNX pipeline to surface `no_ai_available` errors
+ * **before** the HTTP response stream is created. Must happen before the
+ * ReadableStream so the chat handler can return a proper 503 (with
+ * browser-fallback info) rather than a 200 with an in-band SSE error.
+ *
+ * Uses the `_isVfLocalModel` marker set by `createLocalModel()` to
+ * distinguish real local-engine models from mock/custom providers that
+ * happen to use `provider: "local"`.
+ */
+export async function ensureModelReady(model: LanguageModel, _requestedModel: string): Promise<void> {
+  const m = model as Record<string, unknown>;
+  if (!m._isVfLocalModel) return;
+  await verifyLocalRuntime();
 }
 
 /**

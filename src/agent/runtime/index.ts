@@ -21,7 +21,7 @@ import {
   type MessagePart,
   type ToolCall,
 } from "../types.ts";
-import { resolveModel } from "#veryfront/provider";
+import { ensureModelReady, resolveModel } from "#veryfront/provider";
 import { executeTool } from "#veryfront/tool";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
@@ -161,6 +161,13 @@ export class AgentRuntime {
     // (e.g., no_ai_available), the error propagates to the caller who can
     // return a proper error response (503) instead of a 200 with an error event.
     const languageModel = resolveModel(requestedModel);
+
+    // Eagerly verify the model runtime is available. For local models this
+    // checks that @huggingface/transformers can be imported. Must happen
+    // BEFORE creating the ReadableStream so no_ai_available errors propagate
+    // to the caller (createChatHandler) who returns a 503 with browser fallback
+    // info, instead of being swallowed as an in-band SSE error in a 200 response.
+    await ensureModelReady(languageModel, requestedModel);
 
     return new ReadableStream<Uint8Array>({
       start: async (controller) => {
