@@ -172,8 +172,8 @@ async function loadPipeline(modelInfo: ModelInfo): Promise<Pipeline> {
  * surfaces the error before the response stream is created.  The pipeline is
  * cached after the first successful call, so subsequent checks are instant.
  */
-export async function verifyLocalRuntime(): Promise<void> {
-  const modelInfo = resolveLocalModel(DEFAULT_LOCAL_MODEL);
+export async function verifyLocalRuntime(modelId?: string): Promise<void> {
+  const modelInfo = resolveLocalModel(modelId || DEFAULT_LOCAL_MODEL);
   await loadPipeline(modelInfo);
 }
 

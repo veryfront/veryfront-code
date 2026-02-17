@@ -167,7 +167,7 @@ export class AgentRuntime {
     // BEFORE creating the ReadableStream so no_ai_available errors propagate
     // to the caller (createChatHandler) who returns a 503 with browser fallback
     // info, instead of being swallowed as an in-band SSE error in a 200 response.
-    await ensureModelReady(languageModel, requestedModel);
+    await ensureModelReady(languageModel);
 
     return new ReadableStream<Uint8Array>({
       start: async (controller) => {

@@ -243,11 +243,12 @@ export function getRegisteredModelProviders(): string[] {
  */
 export async function ensureModelReady(
   model: LanguageModel,
-  _requestedModel: string,
 ): Promise<void> {
   const m = model as Record<string, unknown>;
   if (!m._isVfLocalModel) return;
-  await verifyLocalRuntime();
+  // modelId is "local/<id>" — strip the prefix to get the catalog id.
+  const catalogId = typeof m.modelId === "string" ? m.modelId.replace(/^local\//, "") : undefined;
+  await verifyLocalRuntime(catalogId);
 }
 
 /**
