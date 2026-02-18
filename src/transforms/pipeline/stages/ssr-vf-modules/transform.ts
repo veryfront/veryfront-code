@@ -18,6 +18,7 @@ import { buildReactUrl, getReactImportMap } from "../../../import-rewriter/url-b
 import { findRelativeImports } from "./import-finder.ts";
 import { resolveRelativeFrameworkImport, resolveVeryfrontSourcePath } from "./path-resolver.ts";
 import {
+  EMBEDDED_SRC_DIR,
   FRAMEWORK_ROOT,
   frameworkFileCache,
   frameworkWriteFlight,
@@ -193,6 +194,11 @@ export async function transformFrameworkCode(
     // cycles, and frameworkFileCache deduplicates already-transformed files.
     const relativeReplacements = new Map<string, string>();
 
+    // Prefixes for framework source directories - files outside these are
+    // already-compiled JS (e.g. dnt shims) that should not be recursively transformed.
+    const frameworkSrcDir = join(FRAMEWORK_ROOT, "src") + "/";
+    const embeddedSrcDirPrefix = EMBEDDED_SRC_DIR + "/";
+
     {
       const relativeImports = findRelativeImports(transformed);
 
@@ -212,6 +218,17 @@ export async function transformFrameworkCode(
           logger.warn(
             `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,
           );
+          continue;
+        }
+
+        // Files outside framework source directories (e.g. _dnt.shims.js,
+        // _dnt.polyfills.js) are already-compiled JS with bare npm imports
+        // that Deno resolves natively. Skip recursive transformation and
+        // just point to the file directly.
+        const isFrameworkSource = resolvedPath.startsWith(frameworkSrcDir) ||
+          resolvedPath.startsWith(embeddedSrcDirPrefix);
+        if (!isFrameworkSource) {
+          relativeReplacements.set(specifier, `file://${resolvedPath}`);
           continue;
         }
 

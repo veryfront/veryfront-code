@@ -85,6 +85,7 @@ export const _testExports = {
   resolveVeryfrontSourcePath,
   resolveAndTransformVeryfrontImport,
   FRAMEWORK_ROOT,
+  EMBEDDED_SRC_DIR,
   EXTENSIONS,
 };
 

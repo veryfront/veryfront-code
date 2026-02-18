@@ -396,16 +396,34 @@ export class DenoAdapter implements RuntimeAdapter {
     // dnt rewrites both `Deno.*` and `globalThis.*` to use @deno/shim-deno which lacks .serve.
     // `self` is not shimmed by dnt and equals `globalThis` in Deno.
     const nativeDeno = (self as unknown as Record<string, typeof Deno>)["Deno"]!;
+
+    // Access native Response via `self` to bypass dnt shim transform.
+    // In npm packages, dnt replaces Response with undici's polyfill,
+    // but Deno.serve requires native Response instances.
+    const NativeResponse = (self as unknown as { Response: typeof Response })
+      .Response;
+
     const server = nativeDeno.serve({
       port,
       hostname,
       signal,
       handler: async (request) => {
         try {
-          return await wrappedHandler(request);
+          const response: Response = await wrappedHandler(request);
+          // If already native (compiled binary), return as-is
+          if (response instanceof NativeResponse) return response;
+          // Re-wrap polyfilled Response as native Response.
+          // dnt replaces Response with undici's polyfill which fails
+          // Deno.serve's native instanceof check.
+          const r = response as unknown as Response;
+          return new NativeResponse(r.body, {
+            status: r.status,
+            statusText: r.statusText,
+            headers: r.headers,
+          });
         } catch (error) {
           serverLogger.error("Request handler error:", error);
-          return new Response("Internal Server Error", { status: 500 });
+          return new NativeResponse("Internal Server Error", { status: 500 });
         }
       },
       onListen: (params) => {

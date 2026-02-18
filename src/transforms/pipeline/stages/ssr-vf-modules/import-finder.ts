@@ -26,10 +26,17 @@ export function findVfModuleImports(code: string): string[] {
  */
 export function findRelativeImports(code: string): string[] {
   const imports: string[] = [];
-  const pattern = /from\s*["'](\.\.?\/[^"']+)["']/g;
+
+  // Match: from "./foo" or from "../bar"
+  const fromPattern = /from\s*["'](\.\.?\/[^"']+)["']/g;
+  // Match side-effect imports: import "./foo" or import "../bar" (no `from`)
+  const sideEffectPattern = /import\s*["'](\.\.?\/[^"']+)["']/g;
 
   let match: RegExpExecArray | null;
-  while ((match = pattern.exec(code)) !== null) {
+  while ((match = fromPattern.exec(code)) !== null) {
+    imports.push(match[1]!);
+  }
+  while ((match = sideEffectPattern.exec(code)) !== null) {
     imports.push(match[1]!);
   }
 
