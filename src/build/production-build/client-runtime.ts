@@ -30,6 +30,33 @@ try {
   // Pre-bundled scripts not available (Deno development mode)
 }
 
+// Fallback: try pre-bundled JSON from compiled binary build step.
+// In `deno compile` builds, source files aren't embedded so bundleClientEntry
+// can't read them. The prebundle-client-scripts.ts build step generates this
+// JSON file which is included via --include dist/framework-src.
+if (!CLIENT_ROUTER_BUNDLE || !CLIENT_PREFETCH_BUNDLE) {
+  try {
+    const _dir = dirname(fromFileUrl(import.meta.url));
+    const _root = resolve(_dir, "..", "..", "..");
+    const bundlesPath = resolve(
+      _root,
+      "dist",
+      "framework-src",
+      "_client-bundles.json",
+    );
+    const fs = createFileSystem();
+    const raw = await fs.readTextFile(bundlesPath);
+    const bundles = JSON.parse(raw) as {
+      routerBundle?: string;
+      prefetchBundle?: string;
+    };
+    CLIENT_ROUTER_BUNDLE ??= bundles.routerBundle;
+    CLIENT_PREFETCH_BUNDLE ??= bundles.prefetchBundle;
+  } catch {
+    // Pre-bundled client scripts not available (dev mode)
+  }
+}
+
 interface FileStatResult {
   isFile: boolean;
 }
