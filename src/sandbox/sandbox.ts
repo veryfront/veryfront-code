@@ -110,22 +110,27 @@ export class Sandbox {
     throw new Error("Sandbox did not become ready within timeout");
   }
 
-  /** Execute a bash command in the sandbox (buffered). */
+  /** Execute a bash command in the sandbox and return buffered result. */
   async executeCommand(command: string): Promise<ExecResult> {
-    const res = await fetch(`${this.endpoint}/exec`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ command }),
-    });
+    let stdout = "";
+    let stderr = "";
+    let exitCode = 1;
 
-    if (!res.ok) {
-      throw new Error(`Exec failed: ${res.status} ${await res.text()}`);
+    for await (const event of this.executeStream(command)) {
+      switch (event.type) {
+        case "stdout":
+          stdout += event.data ?? "";
+          break;
+        case "stderr":
+          stderr += event.data ?? "";
+          break;
+        case "exit":
+          exitCode = event.exitCode ?? 1;
+          break;
+      }
     }
 
-    return res.json();
+    return { stdout, stderr, exitCode };
   }
 
   /** Execute a bash command with streaming output (NDJSON). */
@@ -135,7 +140,6 @@ export class Sandbox {
       headers: {
         Authorization: `Bearer ${this.authToken}`,
         "Content-Type": "application/json",
-        Accept: "application/x-ndjson",
       },
       body: JSON.stringify({ command }),
     });
