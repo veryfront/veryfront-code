@@ -42,7 +42,7 @@ export class Sandbox {
         : process.env.VERYFRONT_API_URL) ||
       "https://api.veryfront.com";
 
-    const res = await fetch(`${apiUrl}/api/sandbox-sessions`, {
+    const res = await fetch(`${apiUrl}/sandbox-sessions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${options.authToken}`,
@@ -72,7 +72,7 @@ export class Sandbox {
         : process.env.VERYFRONT_API_URL) ||
       "https://api.veryfront.com";
 
-    const res = await fetch(`${apiUrl}/api/sandbox-sessions/${id}`, {
+    const res = await fetch(`${apiUrl}/sandbox-sessions/${id}`, {
       headers: { Authorization: `Bearer ${options.authToken}` },
     });
 
@@ -95,7 +95,7 @@ export class Sandbox {
     while (Date.now() - start < maxWaitMs) {
       await new Promise((r) => setTimeout(r, pollIntervalMs));
 
-      const res = await fetch(`${apiUrl}/api/sandbox-sessions/${id}`, {
+      const res = await fetch(`${apiUrl}/sandbox-sessions/${id}`, {
         headers: { Authorization: `Bearer ${authToken}` },
       });
 
@@ -208,7 +208,7 @@ export class Sandbox {
 
   /** Send a heartbeat to prevent idle timeout. */
   async heartbeat(): Promise<void> {
-    await fetch(`${this.apiUrl}/api/sandbox-sessions/${this.sessionId}/heartbeat`, {
+    await fetch(`${this.apiUrl}/sandbox-sessions/${this.sessionId}/heartbeat`, {
       method: "POST",
       headers: { Authorization: `Bearer ${this.authToken}` },
     });
@@ -216,7 +216,7 @@ export class Sandbox {
 
   /** Close the sandbox session and mark for deletion. */
   async close(): Promise<void> {
-    await fetch(`${this.apiUrl}/api/sandbox-sessions/${this.sessionId}`, {
+    await fetch(`${this.apiUrl}/sandbox-sessions/${this.sessionId}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${this.authToken}` },
     });
