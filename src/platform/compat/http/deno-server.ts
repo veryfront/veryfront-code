@@ -12,7 +12,9 @@ export class DenoHttpServer implements HttpServer {
 
     onListen?.({ hostname, port });
 
-    await Deno.serve({ port, hostname, signal: serveSignal }, handler);
+    // Access native Deno.serve via `self` to bypass dnt shim transform.
+    const nativeDeno = (self as unknown as Record<string, typeof Deno>)["Deno"]!;
+    await nativeDeno.serve({ port, hostname, signal: serveSignal }, handler);
   }
 
   close(): Promise<void> {
