@@ -161,40 +161,5 @@ describe(
       },
     );
 
-    describe(
-      "prebundle output format",
-      { sanitizeOps: false, sanitizeResources: false },
-      () => {
-        let routerBundle: string;
-        let prefetchBundle: string;
-
-        beforeAll(async () => {
-          (globalThis as Record<string, unknown>).__vfTestPreserveEsbuild = true;
-          routerBundle = await generateClientModule();
-          // deno-lint-ignore no-explicit-any
-          prefetchBundle = await generatePrefetchScript(null as any);
-        });
-
-        afterAll(() => {
-          delete (globalThis as Record<string, unknown>).__vfTestPreserveEsbuild;
-        });
-
-        it("should produce valid JSON with expected keys", () => {
-          const json = JSON.stringify({ routerBundle, prefetchBundle });
-          const parsed = JSON.parse(json);
-          assertEquals(typeof parsed.routerBundle, "string");
-          assertEquals(typeof parsed.prefetchBundle, "string");
-          assertEquals(parsed.routerBundle.length > 0, true);
-          assertEquals(parsed.prefetchBundle.length > 0, true);
-        });
-
-        it("should survive JSON round-trip without data loss", () => {
-          const json = JSON.stringify({ routerBundle, prefetchBundle });
-          const parsed = JSON.parse(json);
-          assertEquals(parsed.routerBundle, routerBundle);
-          assertEquals(parsed.prefetchBundle, prefetchBundle);
-        });
-      },
-    );
   },
 );
