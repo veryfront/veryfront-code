@@ -58,8 +58,6 @@ my-app/
     assistant.ts    # AI agent definition
   tools/
     calculator.ts   # Tool the agent can call
-  prompts/
-    assistant.ts    # System prompt
   app/
     layout.tsx
     page.tsx        # Chat UI
