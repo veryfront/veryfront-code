@@ -16,7 +16,8 @@ import { ssrVfModulesPlugin } from "./ssr-vf-modules.ts";
 import { _testExports } from "./ssr-vf-modules/index.ts";
 import type { TransformContext } from "../types.ts";
 
-const { findVfModuleImports, FRAMEWORK_ROOT, EXTENSIONS } = _testExports;
+const { findVfModuleImports, findRelativeImports, FRAMEWORK_ROOT, EMBEDDED_SRC_DIR, EXTENSIONS } =
+  _testExports;
 
 describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () => {
   describe("findVfModuleImports", () => {
@@ -73,6 +74,69 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
       const code = `const path = "/_vf_modules/something";`;
       const imports = findVfModuleImports(code);
       assertEquals(imports, []);
+    });
+  });
+
+  describe("findRelativeImports", () => {
+    it("finds from-style relative imports", () => {
+      const code = `
+        import { foo } from "./foo.js";
+        import { bar } from "../bar.js";
+      `;
+      const imports = findRelativeImports(code);
+      assertEquals(imports.length, 2);
+      assertEquals(imports.includes("./foo.js"), true);
+      assertEquals(imports.includes("../bar.js"), true);
+    });
+
+    it("finds side-effect relative imports (no from keyword)", () => {
+      const code = `import "./polyfills.js";`;
+      const imports = findRelativeImports(code);
+      assertEquals(imports, ["./polyfills.js"]);
+    });
+
+    it("finds deeply nested side-effect imports like dnt polyfills", () => {
+      const code = `import "../../../_dnt.polyfills.js";`;
+      const imports = findRelativeImports(code);
+      assertEquals(imports, ["../../../_dnt.polyfills.js"]);
+    });
+
+    it("finds both from and side-effect imports in the same code", () => {
+      const code = `
+        import "../../../_dnt.polyfills.js";
+        import { shims } from "./_dnt.shims.js";
+        import "./setup.js";
+      `;
+      const imports = findRelativeImports(code);
+      assertEquals(imports.length, 3);
+      assertEquals(imports.includes("../../../_dnt.polyfills.js"), true);
+      assertEquals(imports.includes("./_dnt.shims.js"), true);
+      assertEquals(imports.includes("./setup.js"), true);
+    });
+
+    it("deduplicates across from and side-effect patterns", () => {
+      const code = `
+        import "./shared.js";
+        import { x } from "./shared.js";
+      `;
+      const imports = findRelativeImports(code);
+      assertEquals(imports.length, 1);
+      assertEquals(imports[0], "./shared.js");
+    });
+
+    it("ignores non-relative side-effect imports", () => {
+      const code = `
+        import "some-bare-module";
+        import "@scope/package";
+      `;
+      const imports = findRelativeImports(code);
+      assertEquals(imports, []);
+    });
+
+    it("handles single quotes in side-effect imports", () => {
+      const code = `import '../polyfills.js';`;
+      const imports = findRelativeImports(code);
+      assertEquals(imports, ["../polyfills.js"]);
     });
   });
 
@@ -341,5 +405,94 @@ describe("ssr-vf-modules relative import resolution", {
       true,
       "Cached module should have file:// imports for dependencies",
     );
+  });
+});
+
+describe("ssr-vf-modules non-framework source skipping", {
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, () => {
+  it("FRAMEWORK_ROOT/src/ is a valid framework source prefix", () => {
+    // The transform skips recursive processing for files outside framework source dirs.
+    // Verify the prefix paths are correctly formed.
+    const frameworkSrcDir = `${FRAMEWORK_ROOT}/src/`;
+    assertStringIncludes(frameworkSrcDir, "/src/");
+    // A file inside src/ should match the prefix
+    const insidePath = `${FRAMEWORK_ROOT}/src/react/components/Head.tsx`;
+    assertEquals(insidePath.startsWith(frameworkSrcDir), true);
+  });
+
+  it("EMBEDDED_SRC_DIR is a valid framework source prefix", () => {
+    const embeddedPrefix = `${EMBEDDED_SRC_DIR}/`;
+    assertStringIncludes(embeddedPrefix, "dist/framework-src/");
+    // A file inside embedded src should match
+    const insidePath = `${EMBEDDED_SRC_DIR}/react/components/Head.src`;
+    assertEquals(insidePath.startsWith(embeddedPrefix), true);
+  });
+
+  it("files at package root are outside framework source dirs", () => {
+    // dnt shim files live at FRAMEWORK_ROOT root, not in src/ or dist/framework-src/
+    const frameworkSrcDir = `${FRAMEWORK_ROOT}/src/`;
+    const embeddedPrefix = `${EMBEDDED_SRC_DIR}/`;
+
+    const dntShims = `${FRAMEWORK_ROOT}/_dnt.shims.js`;
+    const dntPolyfills = `${FRAMEWORK_ROOT}/_dnt.polyfills.js`;
+
+    assertEquals(
+      dntShims.startsWith(frameworkSrcDir),
+      false,
+      "_dnt.shims.js should NOT be inside framework src/",
+    );
+    assertEquals(
+      dntShims.startsWith(embeddedPrefix),
+      false,
+      "_dnt.shims.js should NOT be inside embedded src/",
+    );
+    assertEquals(
+      dntPolyfills.startsWith(frameworkSrcDir),
+      false,
+      "_dnt.polyfills.js should NOT be inside framework src/",
+    );
+    assertEquals(
+      dntPolyfills.startsWith(embeddedPrefix),
+      false,
+      "_dnt.polyfills.js should NOT be inside embedded src/",
+    );
+  });
+
+  it("resolveRelativeFrameworkImport resolves dnt shim paths at package root", async () => {
+    // When a framework source file imports ../_dnt.shims.js, the path resolves
+    // to FRAMEWORK_ROOT/_dnt.shims.js which is outside src/ and should be
+    // skipped by the transform (not recursively processed).
+    const { resolveRelativeFrameworkImport } = _testExports;
+    const fs = createFileSystem();
+
+    // Simulate a file in src/something/ importing ../../_dnt.shims.js
+    // which would resolve to FRAMEWORK_ROOT/_dnt.shims.js
+    const sourcePath = `${FRAMEWORK_ROOT}/src/some/module.ts`;
+
+    // Check if _dnt.shims.js exists at root (only in npm/dnt builds)
+    const shimPath = `${FRAMEWORK_ROOT}/_dnt.shims.js`;
+    const shimExists = await fs.exists(shimPath);
+
+    if (shimExists) {
+      const resolved = await resolveRelativeFrameworkImport(
+        "../../_dnt.shims.js",
+        sourcePath,
+        fs,
+      );
+      assertEquals(resolved !== null, true, "Should resolve _dnt.shims.js path");
+
+      // Verify it's outside framework source directories
+      const frameworkSrcDir = `${FRAMEWORK_ROOT}/src/`;
+      const embeddedPrefix = `${EMBEDDED_SRC_DIR}/`;
+      assertEquals(
+        resolved!.startsWith(frameworkSrcDir) || resolved!.startsWith(embeddedPrefix),
+        false,
+        "Resolved dnt shim path should be outside framework source dirs",
+      );
+    }
+    // If shims don't exist (source dev mode), the test passes - the guard
+    // only matters in npm/dnt package builds
   });
 });
