@@ -27,4 +27,4 @@
  * @module
  */
 
-export { Sandbox, type SandboxOptions, type ExecResult } from "./sandbox.ts";
+export { Sandbox, type SandboxOptions, type ExecResult, type ExecStreamEvent } from "./sandbox.ts";

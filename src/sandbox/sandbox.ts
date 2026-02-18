@@ -20,6 +20,12 @@ export interface ExecResult {
   exitCode: number;
 }
 
+export interface ExecStreamEvent {
+  type: "stdout" | "stderr" | "exit" | "error";
+  data?: string;
+  exitCode?: number;
+}
+
 export class Sandbox {
   private constructor(
     private endpoint: string,
@@ -104,7 +110,7 @@ export class Sandbox {
     throw new Error("Sandbox did not become ready within timeout");
   }
 
-  /** Execute a bash command in the sandbox. */
+  /** Execute a bash command in the sandbox (buffered). */
   async executeCommand(command: string): Promise<ExecResult> {
     const res = await fetch(`${this.endpoint}/exec`, {
       method: "POST",
@@ -120,6 +126,46 @@ export class Sandbox {
     }
 
     return res.json();
+  }
+
+  /** Execute a bash command with streaming output (NDJSON). */
+  async *executeStream(command: string): AsyncGenerator<ExecStreamEvent> {
+    const res = await fetch(`${this.endpoint}/exec`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/x-ndjson",
+      },
+      body: JSON.stringify({ command }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Exec failed: ${res.status} ${await res.text()}`);
+    }
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop()!;
+
+      for (const line of lines) {
+        if (line.trim()) {
+          yield JSON.parse(line) as ExecStreamEvent;
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      yield JSON.parse(buffer) as ExecStreamEvent;
+    }
   }
 
   /** Read a file from the sandbox workspace. */
