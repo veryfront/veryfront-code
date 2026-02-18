@@ -37,6 +37,7 @@
     "./provider": "./src/provider/index.ts",
     "./fs": "./src/fs/index.ts",
     "./integrations": "./src/integrations/index.ts",
+    "./sandbox": "./src/sandbox/index.ts",
     "./cli": "./cli/main.ts"
   },
   "imports": {
@@ -55,6 +56,7 @@
     "veryfront/react/fonts": "./src/react/fonts/index.ts",
     "veryfront/react/components/ai": "./src/react/components/ai/index.ts",
     "veryfront/components/ai": "./src/react/components/ai/index.ts",
+    "veryfront/sandbox": "./src/sandbox/index.ts",
     "veryfront/agent/react": "./src/agent/react/index.ts",
     "veryfront/agent/testing": "./src/agent/testing/index.ts",
     "veryfront/agent/middleware": "./src/agent/middleware/index.ts",
@@ -137,6 +139,7 @@
     "#veryfront/testing/bdd.ts": "./src/testing/bdd.ts",
     "#veryfront/testing/deno-compat": "./src/testing/deno-compat.ts",
     "#veryfront/testing/utils": "./src/testing/utils.ts",
+    "#veryfront/sandbox": "./src/sandbox/index.ts",
     "#veryfront/tool": "./src/tool/index.ts",
     "#veryfront/tool/schema": "./src/tool/schema/index.ts",
     "#veryfront/transforms": "./src/transforms/index.ts",
