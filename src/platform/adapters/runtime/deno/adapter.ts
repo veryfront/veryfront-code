@@ -392,7 +392,11 @@ export class DenoAdapter implements RuntimeAdapter {
       }
       : handler;
 
-    const server = Deno.serve({
+    // Access native Deno.serve via `self` to bypass dnt shim transform.
+    // dnt rewrites both `Deno.*` and `globalThis.*` to use @deno/shim-deno which lacks .serve.
+    // `self` is not shimmed by dnt and equals `globalThis` in Deno.
+    const nativeDeno = (self as unknown as Record<string, typeof Deno>)["Deno"]!;
+    const server = nativeDeno.serve({
       port,
       hostname,
       signal,
