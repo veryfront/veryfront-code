@@ -8,6 +8,19 @@ order: 21
 
 Veryfront CLI entry point.
 
+## Import
+
+```ts
+import {
+  ensureEnvLoaded,
+  args,
+  exitProcess,
+  getArgs,
+  hasEnvLoaded,
+  loadEnv,
+} from "veryfront/cli";
+```
+
 ## Examples
 
 ```sh
