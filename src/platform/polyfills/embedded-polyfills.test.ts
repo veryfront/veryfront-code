@@ -47,4 +47,38 @@ describe("Embedded Polyfills", () => {
       }
     }
   });
+
+  it("dnt shim polyfills exist with _veryfront/ prefix", () => {
+    const keys = Object.keys(EMBEDDED_POLYFILLS);
+    assertEquals(keys.includes("_veryfront/_dnt.shims"), true);
+    assertEquals(keys.includes("_veryfront/_dnt.polyfills"), true);
+  });
+
+  it("dnt shim polyfills exist without prefix (for relative imports)", () => {
+    const keys = Object.keys(EMBEDDED_POLYFILLS);
+    assertEquals(keys.includes("_dnt.shims"), true);
+    assertEquals(keys.includes("_dnt.polyfills"), true);
+  });
+
+  it("dnt shims polyfill exports dntGlobalThis", () => {
+    const content = EMBEDDED_POLYFILLS["_veryfront/_dnt.shims"];
+    assertEquals(content.includes("dntGlobalThis"), true);
+  });
+
+  it("dnt shims polyfill exports fetch with bind to avoid illegal invocation", () => {
+    const content = EMBEDDED_POLYFILLS["_veryfront/_dnt.shims"];
+    assertEquals(content.includes("fetch"), true);
+    assertEquals(content.includes(".bind(globalThis)"), true);
+  });
+
+  it("prefixed and unprefixed dnt shim entries have identical content", () => {
+    assertEquals(
+      EMBEDDED_POLYFILLS["_veryfront/_dnt.shims"],
+      EMBEDDED_POLYFILLS["_dnt.shims"],
+    );
+    assertEquals(
+      EMBEDDED_POLYFILLS["_veryfront/_dnt.polyfills"],
+      EMBEDDED_POLYFILLS["_dnt.polyfills"],
+    );
+  });
 });

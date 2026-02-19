@@ -52,7 +52,10 @@ describe("isModuleRequest", () => {
   });
 });
 
-describe("serveModule", () => {
+// sanitizeResources disabled: serveModule initialises the esbuild transform
+// pipeline which spawns a long-lived child process. This is a pre-existing
+// resource that cannot be torn down inside a unit test.
+describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, () => {
   async function serve(req: Request): Promise<Response> {
     const { serveModule } = await import("./module-server.ts");
     return await serveModule(req, {
@@ -87,5 +90,54 @@ describe("serveModule", () => {
     const response = await serve(new Request("http://localhost:3000/_vf_modules/_cross//@/"));
 
     assertEquals(response.status === 404 || response.status === 500, true);
+  });
+
+  it("should serve _dnt.shims.js with _veryfront/ prefix", async () => {
+    const response = await serve(
+      new Request("http://localhost:3000/_vf_modules/_veryfront/_dnt.shims.js"),
+    );
+
+    assertEquals(response.status, 200);
+    const text = await response.text();
+    assertEquals(text.includes("dntGlobalThis"), true);
+    assertEquals(text.includes("fetch"), true);
+  });
+
+  it("should serve _dnt.polyfills.js with _veryfront/ prefix", async () => {
+    const response = await serve(
+      new Request("http://localhost:3000/_vf_modules/_veryfront/_dnt.polyfills.js"),
+    );
+
+    assertEquals(response.status, 200);
+    const text = await response.text();
+    assertEquals(text.includes("export"), true);
+  });
+
+  it("should serve _dnt.shims.js without prefix (relative imports)", async () => {
+    const response = await serve(
+      new Request("http://localhost:3000/_vf_modules/_dnt.shims.js"),
+    );
+
+    assertEquals(response.status, 200);
+    const text = await response.text();
+    assertEquals(text.includes("dntGlobalThis"), true);
+  });
+
+  it("should serve _dnt.polyfills.js without prefix (relative imports)", async () => {
+    const response = await serve(
+      new Request("http://localhost:3000/_vf_modules/_dnt.polyfills.js"),
+    );
+
+    assertEquals(response.status, 200);
+  });
+
+  it("should serve dnt shims as JavaScript content type", async () => {
+    const response = await serve(
+      new Request("http://localhost:3000/_vf_modules/_veryfront/_dnt.shims.js"),
+    );
+
+    assertEquals(response.status, 200);
+    const contentType = response.headers.get("content-type") ?? "";
+    assertEquals(contentType.includes("javascript"), true);
   });
 });
