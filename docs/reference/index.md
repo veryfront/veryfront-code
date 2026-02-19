@@ -34,6 +34,8 @@ npm install veryfront
 | [`veryfront/mcp`](./mcp.md) | MCP server exposing tools, prompts, and resources. |
 | [`veryfront/middleware`](./middleware.md) | CORS, rate limiting, logging, and timeout middleware. |
 | [`veryfront/oauth`](./oauth.md) | OAuth 2.0 with 37 pre-configured providers. |
-| [`veryfront/provider`](./provider.md) | Unified LLM interface for Anthropic, Google, and OpenAI. |
+| [`veryfront/provider`](./provider.md) | AI SDK model provider registry. Maps "provider/model" strings to AI SDK LanguageModel instances. Auto-initializes providers from environment variables on first use. |
 | [`veryfront/fs`](./fs.md) | Filesystem operations and path utilities. |
 | [`veryfront/integrations`](./integrations.md) | Integration metadata and SVG icons for all connectors. |
+| [`veryfront/sandbox`](./sandbox.md) | Sandbox module for ephemeral compute environments. Provides the `Sandbox` class for creating and interacting with isolated execution environments. |
+| [`veryfront/cli`](./cli.md) | Veryfront CLI entry point. |

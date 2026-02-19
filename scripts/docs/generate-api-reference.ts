@@ -62,7 +62,7 @@ interface TsType {
     typeParams?: unknown[];
   };
   typeLiteral?: {
-    properties: Array<{ name: string; optional: boolean; tsType?: TsType; params?: unknown[]; typeParams?: unknown[] }>;
+    properties: Array<{ name: string; optional: boolean; tsType?: TsType; jsDoc?: { doc?: string }; params?: unknown[]; typeParams?: unknown[] }>;
     callSignatures?: unknown[];
     indexSignatures?: unknown[];
     constructors?: unknown[];
@@ -196,6 +196,8 @@ const IMPORT_PRIORITY: Record<string, string[]> = {
     "registerModelProvider", "resolveModel", "hasModelProvider", "getRegisteredModelProviders",
   ],
   "veryfront/fs": ["readTextFile", "writeTextFile", "join", "resolve", "exists", "mkdir"],
+  // CLI is an executable entry point, not an importable module — skip import snippet
+  "veryfront/cli": [],
 };
 
 // ---------------------------------------------------------------------------
@@ -301,7 +303,7 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     parseJsonBody: "Parse and validate JSON body",
     parseFormData: "Parse multipart form data",
     parseQueryParams: "Parse and validate query params",
-    sanitizeData: "****** Sanitize data to prevent XSS and prototype pollution attacks",
+    sanitizeData: "Sanitize data to prevent XSS and prototype pollution attacks",
     createValidationError: "Create an input validation error.",
     CommonSchemas: "Built-in Zod schemas (email, URL, etc.)",
     INPUT_VALIDATION_FAILED: "HTTP request input validation failures (replaces ValidationError)",
@@ -315,9 +317,11 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     StaticPathsResult: "`getStaticPaths` return type",
     MDXFrontmatter: "Parsed MDX frontmatter",
     PageContext: "Page runtime context",
-    StartVeryfrontServerOptions: "Server startup options",
+    StartServerOptions: "Server options (dev with HMR or production)",
     VeryfrontConfig: "Project configuration shape",
-    VeryfrontServerHandle: "Server handle (for shutdown)",
+    VeryfrontHandler: "Web API request handler with WebSocket upgrade and HMR helpers",
+    VeryfrontServer: "Running server instance with lifecycle controls",
+    toNodeHandler: "Convert a Web API request handler into a Node.js HTTP request listener",
     ValidatedHandlerConfig: "`createValidatedHandler` config",
     ValidatedHandlerFunction: "Handler with validated inputs",
   },
@@ -355,13 +359,14 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     ChatComponents: "Compound components for custom layouts",
     ChatHeader: "Chat header section",
     ChatMessages: "Scrollable message list",
+    ModelSelector: "Dropdown for switching models at runtime",
     ChatInput: "Text input with send button",
     ChatFooter: "Chat footer section",
     Message: "Chat message bubble",
     StreamingMessage: "Incrementally rendered message",
     AgentCard: "Agent status, tool calls, and messages",
     AIErrorBoundary: "Error boundary with retry",
-    useChat: "useChat hook for managing chat state - AI SDK v5 compatible",
+    useChat: "useChat hook for managing chat state with veryfront stream events",
     useAgent: "Agent interactions with tool call tracking",
     useCompletion: "useCompletion hook for single text generation",
     useStreaming: "Low-level streaming hook",
@@ -698,6 +703,19 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     IntegrationToolMeta: "Tool metadata: name, description, write requirements",
     OAuthConfig: "OAuth/API key authentication type and parameters",
     OAuthField: "Form field for OAuth configuration with mapping",
+  },
+
+  "veryfront/cli": {
+    ensureEnvLoaded: "Load `.env` files and initialize environment config if not already done",
+    args: "Raw command-line arguments array",
+    exitProcess: "Exit the process with the given code",
+    getArgs: "Get command-line arguments (cross-runtime)",
+    hasEnvLoaded: "Check whether `.env` files have already been loaded",
+    loadEnv: "Load environment variables from `.env` files",
+    markEnvLoaded: "Mark environment variables as loaded",
+    parseCliArgs: "Parse raw CLI arguments into a structured object with aliases",
+    routeCommand: "Route and execute the appropriate CLI command",
+    supportsEnvFiles: "Check whether `.env` file loading is supported in the current runtime",
   },
 };
 
@@ -1133,6 +1151,7 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     middleware: "Execution middleware pipeline",
     edge: "Edge runtime configuration",
     multimodal: "Enable vision and/or audio",
+    allowedModels: 'Restrict runtime model overrides to these "provider/model" strings',
   },
   MemoryConfig: {
     type: "Memory strategy (`\"buffer\"`, `\"conversation\"`, `\"summary\"`)",
@@ -1158,6 +1177,9 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     headers: "Custom request headers",
     body: "Extra body fields sent with each request",
     credentials: "Fetch credentials mode",
+    model: 'Override model at runtime (e.g. "openai/gpt-4o")',
+    systemPrompt: "System prompt for browser-side inference (server uses agent config)",
+    browserFallback: "Enable/disable browser fallback when server can't provide AI. Default: true",
     onError: "Error callback",
     onFinish: "Completion callback",
     onResponse: "Raw response callback",
@@ -1167,6 +1189,10 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     messages: "All messages in the conversation",
     input: "Current input value",
     setInput: "Set input value",
+    model: "Current model override (undefined = use agent default)",
+    setModel: "Change the model for subsequent requests",
+    inferenceMode: "Where inference is currently happening",
+    browserStatus: "Browser-side model loading/inference status (null when not using browser fallback)",
     handleInputChange: "Bind to input onChange",
     handleSubmit: "Submit current input",
     sendMessage: "Send a message programmatically",
@@ -1421,8 +1447,8 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
                 name: p.name,
                 optional: p.optional,
                 tsType: p.tsType,
-                // Inject curated param description as jsDoc
-                jsDoc: paramDescs[p.name] ? { doc: paramDescs[p.name] } : undefined,
+                // Prefer curated param description, then upstream JSDoc
+                jsDoc: paramDescs[p.name] ? { doc: paramDescs[p.name] } : p.jsDoc,
               }));
               lines.push(...renderPropertyTable(`${typeName}.${method.name}`, interfaceProps));
               lines.push("");
@@ -1566,7 +1592,7 @@ function generateMD(
   }
 
   // Import snippet — use curated priority list
-  const priorityNames = IMPORT_PRIORITY[entry.importPath] ?? [];
+  const priorityNames = IMPORT_PRIORITY[entry.importPath];
   const allExportNames = new Set([
     ...exports.functions.map((e) => e.name),
     ...exports.components.map((e) => e.name),
@@ -1574,12 +1600,16 @@ function generateMD(
     ...exports.constants.map((e) => e.name),
   ]);
 
-  // Use priority names that actually exist in exports, then fill with remaining
-  const importNames = priorityNames.filter((n) => allExportNames.has(n));
-  if (importNames.length < 6) {
-    for (const n of allExportNames) {
-      if (importNames.length >= 6) break;
-      if (!importNames.includes(n)) importNames.push(n);
+  // Explicit empty array = skip import section (e.g. CLI executable)
+  const importNames: string[] = [];
+  if (priorityNames === undefined || priorityNames.length > 0) {
+    const priority = priorityNames ?? [];
+    importNames.push(...priority.filter((n) => allExportNames.has(n)));
+    if (importNames.length < 6) {
+      for (const n of allExportNames) {
+        if (importNames.length >= 6) break;
+        if (!importNames.includes(n)) importNames.push(n);
+      }
     }
   }
 

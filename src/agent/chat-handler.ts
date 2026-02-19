@@ -121,6 +121,7 @@ function transformUIMessages(messages: ParsedMessage[]): Message[] {
 // Public API
 // ---------------------------------------------------------------------------
 
+/** Options for `createChatHandler` — customize the context passed to the agent. */
 export interface ChatHandlerOptions {
   /** Override context passed to agent.stream(). Default: `{ userId: "current-user" }` */
   context?:

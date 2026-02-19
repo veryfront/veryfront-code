@@ -72,9 +72,9 @@ export function getServerData(ctx: DataContext) {
 | `apiNotFound` | 404 Not Found response |
 | `apiRedirect` | Redirect response |
 | `badRequest` | 400 Bad Request response |
+| `createHandler` | Create HTTP request handler |
 | `createValidatedHandler` | Create a validated API handler wrapper that auto-validates body/query with Zod schemas |
 | `createValidationError` | Create an input validation error. |
-| `createVeryfrontHandler` | Create HTTP request handler |
 | `defineConfig` | Define project configuration |
 | `forbidden` | 403 Forbidden response |
 | `getEnv` | Read environment variable (typed) |
@@ -84,9 +84,10 @@ export function getServerData(ctx: DataContext) {
 | `parseJsonBody` | Parse and validate JSON body |
 | `parseQueryParams` | Parse and validate query params |
 | `redirect` | Throw redirect in data loaders |
-| `sanitizeData` | ****** Sanitize data to prevent XSS and prototype pollution attacks |
+| `sanitizeData` | Sanitize data to prevent XSS and prototype pollution attacks. |
 | `serverError` | 500 Internal Server Error response |
-| `startVeryfrontServer` | Start a Veryfront server in development or production mode. |
+| `startServer` | Start a Veryfront server in development or production mode. |
+| `toNodeHandler` | Convert a Web API request handler into a Node.js HTTP request listener. |
 | `unauthorized` | 401 Unauthorized response |
 
 ### Types
@@ -102,12 +103,13 @@ export function getServerData(ctx: DataContext) {
 | `MDXFrontmatter` | Parsed MDX frontmatter |
 | `PageContext` | Page runtime context |
 | `PageWithData` | Page with data fetching capabilities |
-| `StartVeryfrontServerOptions` | Server options. Use `mode: "development"` for dev server with HMR, |
+| `StartServerOptions` | Server options. Defaults to development mode with HMR. |
 | `StaticPathsResult` | `getStaticPaths` return type |
 | `ValidatedHandlerConfig` | `createValidatedHandler` config |
 | `ValidatedHandlerFunction` | Handler with validated inputs |
 | `VeryfrontConfig` | Project configuration shape |
-| `VeryfrontServerHandle` | Server handle (for shutdown) |
+| `VeryfrontHandler` | Web API request handler with WebSocket upgrade and HMR helpers. |
+| `VeryfrontServer` | Running server instance with lifecycle controls. |
 
 ## Related
 

@@ -7,6 +7,7 @@
 
 import * as React from "react";
 
+/** A "provider/model" value and its display label. */
 export interface ModelOption {
   /** "provider/model" string (e.g. "openai/gpt-4o") */
   value: string;
@@ -14,6 +15,7 @@ export interface ModelOption {
   label: string;
 }
 
+/** Props for `<ModelSelector>`. */
 export interface ModelSelectorProps {
   /** Available models */
   models: ModelOption[];

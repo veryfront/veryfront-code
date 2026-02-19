@@ -110,6 +110,7 @@ Create an agent
 | `middleware?` | `AgentMiddleware[]` | Execution middleware pipeline |
 | `edge?` | `EdgeConfig` | Edge runtime configuration |
 | `multimodal?` | `{ vision?: boolean; audio?: boolean }` | Enable vision and/or audio |
+| `allowedModels?` | `ModelString[]` | Restrict runtime model overrides to these "provider/model" strings. |
 
 **Returns:** `Agent`
 
@@ -121,6 +122,7 @@ Run the agent and return a complete response. Accepts a string or message array 
 |----------|------|-------------|
 | `input` | `string \\| Message[]` | Prompt string or message history |
 | `context?` | `Record<string, unknown>` | Additional context passed to the agent |
+| `model?` | `ModelString` | Override the agent's default model for this request. Must be in `allowedModels` if configured. |
 
 **Returns:** `Promise<AgentResponse>`
 
@@ -133,6 +135,7 @@ Run the agent and stream the response. Returns a result with `.toDataStreamRespo
 | `input?` | `string` | Prompt string |
 | `messages?` | `Message[]` | Conversation message history |
 | `context?` | `Record<string, unknown>` | Additional context passed to the agent |
+| `model?` | `ModelString` | Override the agent's default model for this request. Must be in `allowedModels` if configured. |
 | `onToolCall?` | `(toolCall: ToolCall) => void` | Callback fired when a tool is invoked |
 | `onChunk?` | `(chunk: string) => void` | Callback fired for each text chunk |
 
@@ -170,6 +173,7 @@ Clear all stored messages from memory.
 |------|-------------|
 | `agent` | Create an agent |
 | `agentAsTool` | Wrap agent as callable tool |
+| `createChatHandler` | Create a POST handler for a chat API route. |
 | `createMemory` | Create memory (buffer, conversation, summary) |
 | `createRedisMemory` | Create Redis-backed memory |
 | `createWorkflow` | Create sequential agent workflow |
@@ -203,6 +207,7 @@ Clear all stored messages from memory.
 | `AgentResponse` | Agent execution response |
 | `AgentStatus` | Agent status (idle, running, etc.) |
 | `AgentStreamResult` | Streaming result (`.toDataStreamResponse()`) |
+| `ChatHandlerOptions` | Options for `createChatHandler` — customize the context passed to the agent. |
 | `EdgeConfig` | Agent-to-agent edge config |
 | `Memory` | Memory interface |
 | `MemoryConfig` | Memory creation config |

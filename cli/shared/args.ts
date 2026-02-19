@@ -238,6 +238,7 @@ function parse(
   return result;
 }
 
+/** Parse raw CLI arguments into a structured `ParsedArgs` object with aliases. */
 export function parseCliArgs(args: string[]): ParsedArgs {
   return parse(args, {
     alias: {

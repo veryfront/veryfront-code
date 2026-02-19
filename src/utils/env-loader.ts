@@ -7,6 +7,7 @@ const logger = serverLogger.component("env");
 const envSources = new Map<string, string>();
 let envLoaded = false;
 
+/** Load environment variables from `.env` files (`.env`, `.env.{NODE_ENV|DENO_ENV}`, `.env.local`). */
 export async function loadEnv(
   options: {
     cwd?: string;
@@ -135,14 +136,17 @@ function expandVariables(value: string, vars: Record<string, string>): string {
   return value;
 }
 
+/** Check whether `.env` file loading is supported in the current runtime. */
 export function supportsEnvFiles(): boolean {
   return typeof readTextFile === "function";
 }
 
+/** Mark environment variables as loaded so subsequent calls to `loadEnv` are skipped. */
 export function markEnvLoaded(): void {
   envLoaded = true;
 }
 
+/** Check whether environment variables have already been loaded from `.env` files. */
 export function hasEnvLoaded(): boolean {
   return envLoaded;
 }
