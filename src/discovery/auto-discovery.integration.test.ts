@@ -11,8 +11,8 @@ import { join, resolve } from "#veryfront/compat/path";
 import { cwd } from "#veryfront/compat/process.ts";
 import { discoverAll } from "./index.ts";
 
-function getExamplesPath(): string {
-  return resolve(join(cwd(), "examples", "autodiscovery"));
+function getFixturePath(): string {
+  return resolve(join(cwd(), "src", "discovery", "__fixtures__", "autodiscovery"));
 }
 
 describe(
@@ -27,7 +27,7 @@ describe(
 
     it("should discover tools from tools/ directory", async () => {
       const result = await discoverAll({
-        baseDir: getExamplesPath(),
+        baseDir: getFixturePath(),
         verbose: false,
       });
 
@@ -37,7 +37,7 @@ describe(
 
     it("should discover resources from resources/ directory", async () => {
       const result = await discoverAll({
-        baseDir: getExamplesPath(),
+        baseDir: getFixturePath(),
         verbose: false,
       });
 
@@ -46,7 +46,7 @@ describe(
 
     it("should discover prompts from prompts/ directory", async () => {
       const result = await discoverAll({
-        baseDir: getExamplesPath(),
+        baseDir: getFixturePath(),
         verbose: false,
       });
 
@@ -55,7 +55,7 @@ describe(
 
     it("should register discovered tools in registry", async () => {
       await discoverAll({
-        baseDir: getExamplesPath(),
+        baseDir: getFixturePath(),
         verbose: false,
       });
 
