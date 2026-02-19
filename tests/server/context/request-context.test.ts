@@ -22,7 +22,7 @@ describe("request-context", () => {
   describe("createRequestContext", () => {
     it("extracts slug from production domain", () => {
       const ctx = createRequestContext(
-        new Request("https://myapp.veryfront.com/page"),
+        new Request("https://myapp.production.veryfront.com/page"),
       );
 
       assertEquals(ctx.slug, "myapp");
@@ -72,7 +72,7 @@ describe("request-context", () => {
 
     it("prefers x-token header over env var", () => {
       const ctx = createRequestContext(
-        new Request("https://myapp.veryfront.com/", {
+        new Request("https://myapp.production.veryfront.com/", {
           headers: { "x-token": "header-token" },
         }),
       );
@@ -82,7 +82,7 @@ describe("request-context", () => {
 
     it("prefers x-project-slug header over domain slug", () => {
       const ctx = createRequestContext(
-        new Request("https://other.veryfront.com/", {
+        new Request("https://other.production.veryfront.com/", {
           headers: { "x-project-slug": "override-slug" },
         }),
       );

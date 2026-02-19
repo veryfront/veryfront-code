@@ -35,7 +35,7 @@ The production server serves pre-built assets, handles API routes, and renders d
 veryfront deploy
 ```
 
-Deploys your project to Veryfront Cloud. Your site is available at `https://<slug>.veryfront.com`.
+Deploys your project to Veryfront Cloud. Your site is available at `https://<slug>.production.veryfront.com`.
 
 ### Preview deployments
 

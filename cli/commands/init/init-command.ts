@@ -477,7 +477,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
             quiet: true,
           });
 
-          log(`  ${green("✓")} Deployed to ${brand(`https://${deployedSlug}.veryfront.com`)}`);
+          log(
+            `  ${green("✓")} Deployed to ${brand(`https://${deployedSlug}.production.veryfront.com`)}`,
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           log(`\n  Deploy failed: ${message}`);
@@ -512,7 +514,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
   if (deployedSlug) {
     successContent.push(
       "",
-      `${green("Live:")} https://${deployedSlug}.veryfront.com`,
+      `${green("Live:")} https://${deployedSlug}.production.veryfront.com`,
     );
   }
 

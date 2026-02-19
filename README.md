@@ -212,7 +212,7 @@ veryfront merge my-branch     # Merge into main
 veryfront deploy              # Release to production
 ```
 
-Preview at `https://<slug>--<branch>.preview.veryfront.com`, production at `https://<slug>.veryfront.com`.
+Preview at `https://<slug>--<branch>.preview.veryfront.com`, production at `https://<slug>.production.veryfront.com`.
 
 ## Terminal UI
 

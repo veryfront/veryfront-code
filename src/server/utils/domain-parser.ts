@@ -99,6 +99,15 @@ export function parseProjectDomain(host: string): ParsedDomain {
     return createParsedDomain(null, null, "production", false, false);
   }
 
+  // Local development explicit production: {slug}.production.{lvh.me|veryfront.dev}
+  const localProductionMatch = matchDomain(
+    domain,
+    `^([A-Za-z0-9-]+)\\.production\\.(${LOCAL_DEV_DOMAINS})$`,
+  );
+  if (localProductionMatch?.[1]) {
+    return createParsedDomain(localProductionMatch[1], null, "production", true, false);
+  }
+
   // Local development base: {slug}.{lvh.me|veryfront.dev}
   // Mirrors production behavior: serves released content (isDraft: false)
   // Use {slug}.preview.lvh.me for draft content
@@ -141,12 +150,6 @@ export function parseProjectDomain(host: string): ParsedDomain {
   if (envRootMatch?.[1]) {
     const env = envRootMatch[1] as Environment;
     return createParsedDomain(null, null, env, true, env === "preview");
-  }
-
-  // Production base: {slug}.veryfront.{com|org}
-  const prodBaseMatch = matchDomain(domain, `^([A-Za-z0-9-]+)\\.(${PROD_DOMAINS})$`);
-  if (prodBaseMatch?.[1]) {
-    return createParsedDomain(prodBaseMatch[1], null, "production", true, false);
   }
 
   return createParsedDomain(null, null, null, false, false);

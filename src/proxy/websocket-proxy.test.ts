@@ -22,7 +22,7 @@ describe("Proxy WebSocket Handler Tests", () => {
     });
 
     it("parses production domain correctly for WebSocket context", () => {
-      const host = "myproject.veryfront.com";
+      const host = "myproject.production.veryfront.com";
       const parsed = parseProjectDomain(host);
 
       assertEquals(parsed.slug, "myproject");

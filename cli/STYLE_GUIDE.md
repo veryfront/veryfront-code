@@ -26,11 +26,11 @@ If the implementation is hard to explain, it's a bad idea.
 
 ```typescript
 // DO: Clean, minimal success
-console.log("  " + success("✓") + " Deployed to " + brand("myapp.veryfront.com"));
+console.log("  " + success("✓") + " Deployed to " + brand("myapp.production.veryfront.com"));
 
 // DON'T: Noisy, verbose
 console.log(
-  "[SUCCESS] Deployment completed successfully to https://myapp.veryfront.com at 2024-01-15T10:30:00Z",
+  "[SUCCESS] Deployment completed successfully to https://myapp.production.veryfront.com at 2024-01-15T10:30:00Z",
 );
 ```
 

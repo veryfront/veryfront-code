@@ -435,7 +435,7 @@ async function executeStepAction(
           dryRun: false,
         });
 
-        const deployedUrl = `https://${actualProjectSlug ?? projectName}.veryfront.com`;
+        const deployedUrl = `https://${actualProjectSlug ?? projectName}.production.veryfront.com`;
         console.log(`  ${success("✓")} Deployed to ${brand(deployedUrl)}`);
       } catch (e) {
         console.log(
@@ -599,7 +599,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
     }
 
     write(CLEAR_SCREEN + MOVE_HOME);
-    const finalUrl = `https://${actualProjectSlug ?? projectName}.veryfront.com`;
+    const finalUrl = `https://${actualProjectSlug ?? projectName}.production.veryfront.com`;
     console.log();
 
     console.log(

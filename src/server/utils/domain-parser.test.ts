@@ -107,10 +107,27 @@ describe("domain-parser", () => {
       assertEquals(result.isDraft, false);
     });
 
-    it("veryfront.com base domain", () => {
+    it("veryfront.com bare subdomain is not recognized (no longer supported)", () => {
       const result = parseProjectDomain("myproject.veryfront.com");
+      assertEquals(result.slug, null);
+      assertEquals(result.environment, null);
+      assertEquals(result.isVeryfrontDomain, false);
+    });
+
+    it("local dev explicit production: {slug}.production.lvh.me", () => {
+      const result = parseProjectDomain("myproject.production.lvh.me:3001");
       assertEquals(result.slug, "myproject");
       assertEquals(result.environment, "production");
+      assertEquals(result.isVeryfrontDomain, true);
+      assertEquals(result.isDraft, false);
+    });
+
+    it("local dev explicit production: {slug}.production.veryfront.me", () => {
+      const result = parseProjectDomain("myproject.production.veryfront.me:8080");
+      assertEquals(result.slug, "myproject");
+      assertEquals(result.environment, "production");
+      assertEquals(result.isVeryfrontDomain, true);
+      assertEquals(result.isDraft, false);
     });
 
     it("environment root (no slug)", () => {
@@ -211,7 +228,7 @@ describe("domain-parser", () => {
 
   describe("allowIframeEmbed", () => {
     it("allows embed for veryfront domains", () => {
-      assertEquals(parseProjectDomain("myproject.veryfront.com").allowIframeEmbed, true);
+      assertEquals(parseProjectDomain("myproject.production.veryfront.com").allowIframeEmbed, true);
       assertEquals(parseProjectDomain("myproject.preview.veryfront.com").allowIframeEmbed, true);
       assertEquals(parseProjectDomain("myproject.lvh.me").allowIframeEmbed, true);
       assertEquals(parseProjectDomain("myproject.veryfront.me").allowIframeEmbed, true);
