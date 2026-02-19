@@ -1003,6 +1003,20 @@ function renderType(t: TsType | undefined): string {
   }
 }
 
+/** Wrap a rendered type string for safe MDX output. Uses <code> with HTML entities when the type contains characters that MDX would parse as JSX. */
+function mdxType(raw: string): string {
+  if (/[<>{}]/.test(raw)) {
+    const escaped = raw
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/{/g, "&#123;")
+      .replace(/}/g, "&#125;");
+    return `<code>${escaped}</code>`;
+  }
+  return `\`${raw}\``;
+}
+
 // ---------------------------------------------------------------------------
 // 5a. Curated API documentation specs per module
 // ---------------------------------------------------------------------------
@@ -1355,9 +1369,9 @@ function renderPropertyTable(
   lines.push("|----------|------|-------------|");
   for (const prop of properties) {
     const name = prop.optional ? `${prop.name}?` : prop.name;
-    const type = renderType(prop.tsType).replace(/\|/g, "\\|");
+    const rawType = renderType(prop.tsType).replace(/\|/g, "\\|");
     const desc = getPropertyDescription(typeName, prop.name, prop);
-    lines.push(`| \`${name}\` | \`${type}\` | ${desc} |`);
+    lines.push(`| \`${name}\` | ${mdxType(rawType)} | ${desc} |`);
   }
   return lines;
 }
@@ -1405,7 +1419,7 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
 
       // Return type
       if (fd.returnType) {
-        lines.push(`**Returns:** \`${renderType(fd.returnType)}\``);
+        lines.push(`**Returns:** ${mdxType(renderType(fd.returnType))}`);
         lines.push("");
       }
     }
@@ -1457,7 +1471,7 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
 
           // Return type
           if (method.returnType) {
-            lines.push(`**Returns:** \`${renderType(method.returnType)}\``);
+            lines.push(`**Returns:** ${mdxType(renderType(method.returnType))}`);
             lines.push("");
           }
         }
@@ -1489,7 +1503,7 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           }
 
           if (fd.returnType) {
-            lines.push(`**Returns:** \`${renderType(fd.returnType)}\``);
+            lines.push(`**Returns:** ${mdxType(renderType(fd.returnType))}`);
             lines.push("");
           }
         }

@@ -73,25 +73,25 @@ Compose all registered middleware into a single handler function.
 
 Execute the pipeline for an incoming request.
 
-**Returns:** `Promise<Response>`
+**Returns:** <code>Promise&lt;Response&gt;</code>
 
 ### `middlewarePipeline.handle(req, handler)`
 
 Run the middleware pipeline with a final request handler.
 
-**Returns:** `Promise<Response>`
+**Returns:** <code>Promise&lt;Response&gt;</code>
 
 ### `middlewarePipeline.teardown()`
 
 Run all registered teardown callbacks.
 
-**Returns:** `Promise<void>`
+**Returns:** <code>Promise&lt;void&gt;</code>
 
 ### `middlewarePipeline.getMiddleware()`
 
 List registered middleware with metadata.
 
-**Returns:** `Array<{ name?: string; order?: number }>`
+**Returns:** <code>Array&lt;&#123; name?: string; order?: number &#125;&gt;</code>
 
 ## Type Reference
 
@@ -117,7 +117,7 @@ Rate limit config
 | `maxRequests?` | `number` | Max requests per window |
 | `windowMs?` | `number` | Time window (ms) |
 | `store?` | `RateLimitStore` | Storage backend |
-| `keyGenerator?` | `(req: Request) => string` | Function to derive rate limit key from request |
+| `keyGenerator?` | <code>(req: Request) =&gt; string</code> | Function to derive rate limit key from request |
 
 ### `LoggerOptions`
 
@@ -126,8 +126,8 @@ Logger config
 | Property | Type | Description |
 |----------|------|-------------|
 | `format?` | `LogFormat` | Log format (combined, common, dev, short) |
-| `skip?` | `(req: Request) => boolean` | Skip logging for matching requests |
-| `log?` | `(message: string) => void` | Custom log output function |
+| `skip?` | <code>(req: Request) =&gt; boolean</code> | Skip logging for matching requests |
+| `log?` | <code>(message: string) =&gt; void</code> | Custom log output function |
 
 ### `TimeoutOptions`
 

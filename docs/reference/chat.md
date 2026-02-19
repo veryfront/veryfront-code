@@ -77,16 +77,16 @@ function AgentUI() {
 |----------|------|-------------|
 | `api` | `string` | Chat API endpoint URL |
 | `initialMessages?` | `UIMessage[]` | Pre-populated messages |
-| `body?` | `Record<string, unknown>` | Extra body fields sent with each request |
-| `headers?` | `Record<string, string>` | Custom request headers |
+| `body?` | <code>Record&lt;string, unknown&gt;</code> | Extra body fields sent with each request |
+| `headers?` | <code>Record&lt;string, string&gt;</code> | Custom request headers |
 | `credentials?` | `RequestCredentials` | Fetch credentials mode |
 | `model?` | `string` | Override model at runtime (e.g. "openai/gpt-4o", "anthropic/claude-sonnet-4-5-20250929") |
 | `systemPrompt?` | `string` | System prompt for browser-side inference (server uses agent config) |
 | `browserFallback?` | `boolean` | Enable/disable browser fallback when server can't provide AI. Default: true |
-| `onResponse?` | `(response: Response) => void` | Raw response callback |
-| `onFinish?` | `(message: UIMessage) => void` | Completion callback |
-| `onError?` | `(error: Error) => void` | Error callback |
-| `onToolCall?` | `(arg: OnToolCallArg) => void \\| Promise<void>` | Tool call handler for client-side execution |
+| `onResponse?` | <code>(response: Response) =&gt; void</code> | Raw response callback |
+| `onFinish?` | <code>(message: UIMessage) =&gt; void</code> | Completion callback |
+| `onError?` | <code>(error: Error) =&gt; void</code> | Error callback |
+| `onToolCall?` | <code>(arg: OnToolCallArg) =&gt; void \\| Promise&lt;void&gt;</code> | Tool call handler for client-side execution |
 
 ### `UseChatResult`
 
@@ -101,16 +101,16 @@ function AgentUI() {
 | `model` | `string \\| undefined` | Current model override (undefined = use agent default) |
 | `inferenceMode` | `InferenceMode` | Where inference is currently happening |
 | `browserStatus` | `BrowserInferenceStatus \\| null` | Browser-side model loading/inference status (null when not using browser fallback) |
-| `setInput` | `(input: string) => void` | Set input value |
-| `setModel` | `(model: string \\| undefined) => void` | Change the model for subsequent requests |
-| `sendMessage` | `(message: { text: string }) => Promise<void>` | Send a message programmatically |
-| `reload` | `() => Promise<void>` | Re-send last user message |
-| `stop` | `() => void` | Abort current request |
-| `setMessages` | `(messages: UIMessage[]) => void` | Replace message history |
-| `addToolOutput` | `(output: ToolOutput) => void` | Submit client-side tool result |
+| `setInput` | <code>(input: string) =&gt; void</code> | Set input value |
+| `setModel` | <code>(model: string \\| undefined) =&gt; void</code> | Change the model for subsequent requests |
+| `sendMessage` | <code>(message: &#123; text: string &#125;) =&gt; Promise&lt;void&gt;</code> | Send a message programmatically |
+| `reload` | <code>() =&gt; Promise&lt;void&gt;</code> | Re-send last user message |
+| `stop` | <code>() =&gt; void</code> | Abort current request |
+| `setMessages` | <code>(messages: UIMessage[]) =&gt; void</code> | Replace message history |
+| `addToolOutput` | <code>(output: ToolOutput) =&gt; void</code> | Submit client-side tool result |
 | `data?` | `unknown` | Extra data from server response |
-| `handleInputChange` | `(e: React.ChangeEvent<HTMLInputElement \\| HTMLTextAreaElement>) => void` | Bind to input onChange |
-| `handleSubmit` | `(e: React.FormEvent) => Promise<void>` | Submit current input |
+| `handleInputChange` | <code>(e: React.ChangeEvent&lt;HTMLInputElement \\| HTMLTextAreaElement&gt;) =&gt; void</code> | Bind to input onChange |
+| `handleSubmit` | <code>(e: React.FormEvent) =&gt; Promise&lt;void&gt;</code> | Submit current input |
 
 ### `UseAgentOptions`
 
@@ -119,9 +119,9 @@ function AgentUI() {
 | Property | Type | Description |
 |----------|------|-------------|
 | `agent` | `string` | Agent ID or endpoint |
-| `onToolCall?` | `(toolCall: ToolCall) => void` | Callback when tool is called |
-| `onToolResult?` | `(toolCall: ToolCall, result: unknown) => void` | Callback when tool result received |
-| `onError?` | `(error: Error) => void` | Callback when error occurs |
+| `onToolCall?` | <code>(toolCall: ToolCall) =&gt; void</code> | Callback when tool is called |
+| `onToolResult?` | <code>(toolCall: ToolCall, result: unknown) =&gt; void</code> | Callback when tool result received |
+| `onError?` | <code>(error: Error) =&gt; void</code> | Callback when error occurs |
 
 ### `UseAgentResult`
 
@@ -133,8 +133,8 @@ function AgentUI() {
 | `toolCalls` | `ToolCall[]` | Active tool calls |
 | `status` | `AgentStatus` | Agent status |
 | `thinking?` | `string` | Thinking/reasoning text |
-| `invoke` | `(input: string) => Promise<void>` | Invoke the agent |
-| `stop` | `() => void` | Stop agent execution |
+| `invoke` | <code>(input: string) =&gt; Promise&lt;void&gt;</code> | Invoke the agent |
+| `stop` | <code>() =&gt; void</code> | Stop agent execution |
 | `isLoading` | `boolean` | Loading state |
 | `error` | `Error \\| null` | Error state |
 

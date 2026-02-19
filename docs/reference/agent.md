@@ -102,14 +102,14 @@ Create an agent
 |----------|------|-------------|
 | `id?` | `string` | Unique identifier (auto-generated if omitted) |
 | `model` | `ModelString` | Provider and model (e.g. `"openai/gpt-4o"`) |
-| `system` | `string \\| (() => string) \\| (() => Promise<string>)` | System prompt — string, function, or async function |
-| `tools?` | `true \\| Record<string, Tool \\| boolean>` | Tools available to the agent |
+| `system` | <code>string \\| (() =&gt; string) \\| (() =&gt; Promise&lt;string&gt;)</code> | System prompt — string, function, or async function |
+| `tools?` | <code>true \\| Record&lt;string, Tool \\| boolean&gt;</code> | Tools available to the agent |
 | `maxSteps?` | `number` | Max tool-call iterations per request |
 | `streaming?` | `boolean` | Enable streaming responses |
 | `memory?` | `MemoryConfig` | Conversation memory settings |
 | `middleware?` | `AgentMiddleware[]` | Execution middleware pipeline |
 | `edge?` | `EdgeConfig` | Edge runtime configuration |
-| `multimodal?` | `{ vision?: boolean; audio?: boolean }` | Enable vision and/or audio |
+| `multimodal?` | <code>&#123; vision?: boolean; audio?: boolean &#125;</code> | Enable vision and/or audio |
 | `allowedModels?` | `ModelString[]` | Restrict runtime model overrides to these "provider/model" strings. |
 
 **Returns:** `Agent`
@@ -121,10 +121,10 @@ Run the agent and return a complete response. Accepts a string or message array 
 | Property | Type | Description |
 |----------|------|-------------|
 | `input` | `string \\| Message[]` | Prompt string or message history |
-| `context?` | `Record<string, unknown>` | Additional context passed to the agent |
+| `context?` | <code>Record&lt;string, unknown&gt;</code> | Additional context passed to the agent |
 | `model?` | `ModelString` | Override the agent's default model for this request. Must be in `allowedModels` if configured. |
 
-**Returns:** `Promise<AgentResponse>`
+**Returns:** <code>Promise&lt;AgentResponse&gt;</code>
 
 ### `agent.stream(input)`
 
@@ -134,36 +134,36 @@ Run the agent and stream the response. Returns a result with `.toDataStreamRespo
 |----------|------|-------------|
 | `input?` | `string` | Prompt string |
 | `messages?` | `Message[]` | Conversation message history |
-| `context?` | `Record<string, unknown>` | Additional context passed to the agent |
+| `context?` | <code>Record&lt;string, unknown&gt;</code> | Additional context passed to the agent |
 | `model?` | `ModelString` | Override the agent's default model for this request. Must be in `allowedModels` if configured. |
-| `onToolCall?` | `(toolCall: ToolCall) => void` | Callback fired when a tool is invoked |
-| `onChunk?` | `(chunk: string) => void` | Callback fired for each text chunk |
+| `onToolCall?` | <code>(toolCall: ToolCall) =&gt; void</code> | Callback fired when a tool is invoked |
+| `onChunk?` | <code>(chunk: string) =&gt; void</code> | Callback fired for each text chunk |
 
-**Returns:** `Promise<AgentStreamResult>`
+**Returns:** <code>Promise&lt;AgentStreamResult&gt;</code>
 
 ### `agent.respond(request)`
 
 Handle an incoming HTTP request and return a streaming `Response`. Reads messages from the request body.
 
-**Returns:** `Promise<Response>`
+**Returns:** <code>Promise&lt;Response&gt;</code>
 
 ### `agent.getMemory()`
 
 Get the agent's memory instance.
 
-**Returns:** `Memory<Message>`
+**Returns:** <code>Memory&lt;Message&gt;</code>
 
 ### `agent.getMemoryStats()`
 
 Get memory usage statistics (message count, estimated tokens, type).
 
-**Returns:** `Promise<{ totalMessages: number; estimatedTokens: number; type: string }>`
+**Returns:** <code>Promise&lt;&#123; totalMessages: number; estimatedTokens: number; type: string &#125;&gt;</code>
 
 ### `agent.clearMemory()`
 
 Clear all stored messages from memory.
 
-**Returns:** `Promise<void>`
+**Returns:** <code>Promise&lt;void&gt;</code>
 
 ## Exports
 
