@@ -17,7 +17,7 @@ describe("local-project-discovery", () => {
 
   describe("constants", () => {
     it("has expected standard project directories", () => {
-      assertEquals(standardProjectDirs, ["data/projects", "projects", "examples"]);
+      assertEquals(standardProjectDirs, ["data/projects", "projects"]);
     });
   });
 
