@@ -478,7 +478,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
           });
 
           log(
-            `  ${green("✓")} Deployed to ${brand(`https://${deployedSlug}.production.veryfront.com`)}`,
+            `  ${green("✓")} Deployed to ${
+              brand(`https://${deployedSlug}.production.veryfront.com`)
+            }`,
           );
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

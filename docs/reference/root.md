@@ -84,7 +84,7 @@ export function getServerData(ctx: DataContext) {
 | `parseJsonBody` | Parse and validate JSON body |
 | `parseQueryParams` | Parse and validate query params |
 | `redirect` | Throw redirect in data loaders |
-| `sanitizeData` | ****** Sanitize data to prevent XSS and prototype pollution attacks |
+| `sanitizeData` | Sanitize data to prevent XSS and prototype pollution attacks. |
 | `serverError` | 500 Internal Server Error response |
 | `startServer` | Start a Veryfront server in development or production mode. |
 | `toNodeHandler` | Convert a Web API request handler into a Node.js HTTP request listener. |

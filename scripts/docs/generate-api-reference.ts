@@ -62,7 +62,7 @@ interface TsType {
     typeParams?: unknown[];
   };
   typeLiteral?: {
-    properties: Array<{ name: string; optional: boolean; tsType?: TsType; params?: unknown[]; typeParams?: unknown[] }>;
+    properties: Array<{ name: string; optional: boolean; tsType?: TsType; jsDoc?: { doc?: string }; params?: unknown[]; typeParams?: unknown[] }>;
     callSignatures?: unknown[];
     indexSignatures?: unknown[];
     constructors?: unknown[];
@@ -196,6 +196,8 @@ const IMPORT_PRIORITY: Record<string, string[]> = {
     "registerModelProvider", "resolveModel", "hasModelProvider", "getRegisteredModelProviders",
   ],
   "veryfront/fs": ["readTextFile", "writeTextFile", "join", "resolve", "exists", "mkdir"],
+  // CLI is an executable entry point, not an importable module — skip import snippet
+  "veryfront/cli": [],
 };
 
 // ---------------------------------------------------------------------------
@@ -301,7 +303,7 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     parseJsonBody: "Parse and validate JSON body",
     parseFormData: "Parse multipart form data",
     parseQueryParams: "Parse and validate query params",
-    sanitizeData: "****** Sanitize data to prevent XSS and prototype pollution attacks",
+    sanitizeData: "Sanitize data to prevent XSS and prototype pollution attacks",
     createValidationError: "Create an input validation error.",
     CommonSchemas: "Built-in Zod schemas (email, URL, etc.)",
     INPUT_VALIDATION_FAILED: "HTTP request input validation failures (replaces ValidationError)",
@@ -1590,7 +1592,7 @@ function generateMD(
   }
 
   // Import snippet — use curated priority list
-  const priorityNames = IMPORT_PRIORITY[entry.importPath] ?? [];
+  const priorityNames = IMPORT_PRIORITY[entry.importPath];
   const allExportNames = new Set([
     ...exports.functions.map((e) => e.name),
     ...exports.components.map((e) => e.name),
@@ -1598,12 +1600,16 @@ function generateMD(
     ...exports.constants.map((e) => e.name),
   ]);
 
-  // Use priority names that actually exist in exports, then fill with remaining
-  const importNames = priorityNames.filter((n) => allExportNames.has(n));
-  if (importNames.length < 6) {
-    for (const n of allExportNames) {
-      if (importNames.length >= 6) break;
-      if (!importNames.includes(n)) importNames.push(n);
+  // Explicit empty array = skip import section (e.g. CLI executable)
+  const importNames: string[] = [];
+  if (priorityNames === undefined || priorityNames.length > 0) {
+    const priority = priorityNames ?? [];
+    importNames.push(...priority.filter((n) => allExportNames.has(n)));
+    if (importNames.length < 6) {
+      for (const n of allExportNames) {
+        if (importNames.length >= 6) break;
+        if (!importNames.includes(n)) importNames.push(n);
+      }
     }
   }
 

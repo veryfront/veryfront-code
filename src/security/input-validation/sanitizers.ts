@@ -1,4 +1,4 @@
-/******** Sanitize data to prevent XSS and prototype pollution attacks */
+/** Sanitize data to prevent XSS and prototype pollution attacks. */
 export function sanitizeData(data: unknown): unknown {
   if (typeof data === "string") return sanitizeString(data);
   if (Array.isArray(data)) return data.map(sanitizeData);
