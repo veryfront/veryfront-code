@@ -45,6 +45,9 @@ async function runProxy(options: ServeOptions): Promise<void> {
   // DenoHttpServer.serve() blocks until the server stops,
   // so this import keeps the process alive.
   await import("veryfront/proxy/main");
+
+  // Keep the process alive (Deno.serve returns immediately in compiled binaries)
+  await new Promise(() => {});
 }
 
 async function runProductionServer(options: ServeOptions): Promise<void> {
