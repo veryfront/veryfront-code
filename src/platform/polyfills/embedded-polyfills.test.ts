@@ -61,12 +61,12 @@ describe("Embedded Polyfills", () => {
   });
 
   it("dnt shims polyfill exports dntGlobalThis", () => {
-    const content = EMBEDDED_POLYFILLS["_veryfront/_dnt.shims"];
+    const content = EMBEDDED_POLYFILLS["_veryfront/_dnt.shims"] ?? "";
     assertEquals(content.includes("dntGlobalThis"), true);
   });
 
   it("dnt shims polyfill exports fetch with bind to avoid illegal invocation", () => {
-    const content = EMBEDDED_POLYFILLS["_veryfront/_dnt.shims"];
+    const content = EMBEDDED_POLYFILLS["_veryfront/_dnt.shims"] ?? "";
     assertEquals(content.includes("fetch"), true);
     assertEquals(content.includes(".bind(globalThis)"), true);
   });
