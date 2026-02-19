@@ -17,7 +17,7 @@ describe("local-project-discovery", () => {
 
   describe("constants", () => {
     it("has expected standard project directories", () => {
-      assertEquals(standardProjectDirs, ["data/projects", "projects", "examples"]);
+      assertEquals(standardProjectDirs, ["data/projects", "projects"]);
     });
   });
 
@@ -130,13 +130,13 @@ describe("local-project-discovery", () => {
 
     it("discovers project with components directory", async () => {
       const adapter = createMockAdapter({
-        "examples/demo": { isDirectory: true },
-        "examples/demo/components": { isDirectory: true },
+        "projects/demo": { isDirectory: true },
+        "projects/demo/components": { isDirectory: true },
       });
 
       const path = await findLocalProjectPath("demo", adapter);
 
-      assertEquals(path?.endsWith("examples/demo"), true);
+      assertEquals(path?.endsWith("projects/demo"), true);
     });
 
     it("returns undefined for non-existent project", async () => {
@@ -159,12 +159,12 @@ describe("local-project-discovery", () => {
     });
 
     it("searches directories in order", async () => {
-      // Project exists in both data/projects and examples
+      // Project exists in both data/projects and projects
       const adapter = createMockAdapter({
         "data/projects/myproject": { isDirectory: true },
         "data/projects/myproject/app": { isDirectory: true },
-        "examples/myproject": { isDirectory: true },
-        "examples/myproject/app": { isDirectory: true },
+        "projects/myproject": { isDirectory: true },
+        "projects/myproject/app": { isDirectory: true },
       });
 
       const path = await findLocalProjectPath("myproject", adapter);

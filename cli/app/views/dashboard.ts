@@ -22,7 +22,6 @@ export function renderDashboard(state: AppState): string {
   lines.push(renderBanner(state), "");
 
   const hasProjects = state.projects.items.length > 0;
-  const hasExamples = state.examples.items.length > 0;
   const hasRemoteProjects = !!state.remote.user && state.remote.projects.length > 0;
 
   if (hasProjects) {
@@ -67,20 +66,6 @@ export function renderDashboard(state: AppState): string {
     }
 
     lines.push("");
-  }
-
-  if (hasExamples) {
-    const isActive = state.activeList === "examples";
-    lines.push(renderSection("Examples", isActive));
-    lines.push(
-      renderList(state.examples, {
-        maxWidth: maxListWidth,
-        visibleCount: 5,
-        showNumbers: true,
-        showSelection: isActive,
-      }),
-      "",
-    );
   }
 
   lines.push(renderHelpBar(state));
@@ -154,7 +139,7 @@ function renderSection(title: string, isActive = true): string {
  * Render the help bar at the bottom
  */
 function renderHelpBar(state: AppState): string {
-  const hasItems = state.projects.items.length > 0 || state.examples.items.length > 0 ||
+  const hasItems = state.projects.items.length > 0 ||
     (!!state.remote.user && state.remote.projects.length > 0);
 
   if (!state.showHelp) {

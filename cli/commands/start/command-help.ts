@@ -47,6 +47,5 @@ export const startHelp: CommandHelp = {
     "          app/",
     "        site-b/        # auto-discovered",
     "          app/",
-    "      examples/         # also scanned",
   ],
 };
