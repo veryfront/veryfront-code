@@ -52,6 +52,34 @@ export class AsyncLocalStorage {
  */
 export default {};
 `,
+  // dnt build artifacts — no-op in browser. These imports are injected by
+  // dnt when building the npm package and must resolve when the module
+  // server serves framework files from the npm cache.
+  "_veryfront/_dnt.shims": [
+    `export const Deno = undefined;`,
+    `export const dntGlobalThis = globalThis;`,
+    // Re-export browser globals that dnt would normally shim from Node packages.
+    // Methods like fetch/setTimeout must be bound — destructuring detaches them
+    // from window, causing "Illegal invocation" when called.
+    `export const fetch = globalThis.fetch.bind(globalThis);`,
+    `export const setTimeout = globalThis.setTimeout.bind(globalThis);`,
+    `export const setInterval = globalThis.setInterval.bind(globalThis);`,
+    `export const { Request, Response, Headers, Blob, File, FormData, crypto } = globalThis;`,
+    `export default {};`,
+  ].join("\n") + "\n",
+  "_veryfront/_dnt.polyfills": `export default {};\n`,
+  // Relative imports from deeply nested modules (e.g. ../../../../_dnt.shims.js)
+  // resolve to paths outside the _veryfront/ prefix. Register without prefix too.
+  "_dnt.shims": [
+    `export const Deno = undefined;`,
+    `export const dntGlobalThis = globalThis;`,
+    `export const fetch = globalThis.fetch.bind(globalThis);`,
+    `export const setTimeout = globalThis.setTimeout.bind(globalThis);`,
+    `export const setInterval = globalThis.setInterval.bind(globalThis);`,
+    `export const { Request, Response, Headers, Blob, File, FormData, crypto } = globalThis;`,
+    `export default {};`,
+  ].join("\n") + "\n",
+  "_dnt.polyfills": `export default {};\n`,
 };
 
 /**
@@ -479,24 +507,28 @@ async function findSourceFile(
   ];
   const isFrameworkPath = basePathWithoutExt.startsWith("_veryfront/");
 
+  // Check embedded polyfills first (no filesystem access needed).
+  // These cover both compiled-binary polyfills (node:async_hooks etc.)
+  // and dnt build artifacts (_dnt.shims, _dnt.polyfills) that don't
+  // exist as source files but are imported by npm-cached framework modules.
+  // Note: checked before isFrameworkPath guard because relative imports from
+  // deeply nested modules (e.g. ../../../../_dnt.shims.js) resolve outside
+  // the _veryfront/ prefix.
+  const embeddedContent = EMBEDDED_POLYFILLS[basePathWithoutExt];
+  if (embeddedContent) {
+    logger.debug("Using embedded polyfill", {
+      basePath: basePathWithoutExt,
+    });
+    return {
+      path: `embedded:${basePathWithoutExt}`,
+      isFrameworkFile: true,
+      embeddedContent,
+    };
+  }
+
   async function resolveFrameworkFile(
     lookups: [string, string, string, boolean][],
   ): Promise<FindSourceFileResult | null> {
-    // In compiled binaries, check for embedded polyfills first (no filesystem access)
-    if (isDenoCompiled) {
-      const embeddedContent = EMBEDDED_POLYFILLS[basePathWithoutExt];
-      if (embeddedContent) {
-        logger.debug("Using embedded polyfill for compiled binary", {
-          basePath: basePathWithoutExt,
-        });
-        return {
-          path: `embedded:${basePathWithoutExt}`,
-          isFrameworkFile: true,
-          embeddedContent,
-        };
-      }
-    }
-
     // Look for framework files using native filesystem (not secureFs which goes to API)
     const platformFs = createFileSystem();
     for (const [prefix, frameworkDir, label, stripPrefix] of lookups) {

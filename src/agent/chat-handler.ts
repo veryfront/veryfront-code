@@ -135,11 +135,23 @@ export interface ChatHandlerOptions {
  * Pages Router handlers receive `(ctx)` where `ctx.request` is the Request.
  * App Router handlers receive `(request, context)` where `request` IS the Request.
  */
+function isRequest(obj: unknown): obj is Request {
+  // Use duck-typing instead of instanceof because dnt replaces `Request`
+  // with undici's version, which doesn't match Deno's native Request.
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    typeof (obj as Request).json === "function" &&
+    typeof (obj as Request).url === "string" &&
+    typeof (obj as Request).method === "string"
+  );
+}
+
 function extractRequest(requestOrCtx: unknown): Request {
-  if (requestOrCtx instanceof Request) return requestOrCtx;
+  if (isRequest(requestOrCtx)) return requestOrCtx;
   // Pages Router APIContext — has a .request property
   const ctx = requestOrCtx as { request?: Request };
-  if (ctx.request instanceof Request) return ctx.request;
+  if (isRequest(ctx.request)) return ctx.request;
   throw new Error("Invalid handler argument: expected Request or APIContext");
 }
 

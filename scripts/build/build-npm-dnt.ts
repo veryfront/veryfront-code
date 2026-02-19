@@ -173,6 +173,21 @@ await build({
 			throw new Error(`npm install failed with exit code ${code}`);
 		}
 
+		// Copy RSC client files that are read at runtime (not imported as modules).
+		// script-handlers.ts resolves these relative to import.meta.url.
+		const rscClientFiles = ["client-boot.ts", "client-dom.ts", "client-hydrator.ts", "hydrate-client.ts"];
+		const rscSrc = "./src/rendering/rsc";
+		const rscDest = "./npm/esm/src/rendering/rsc";
+		await Deno.mkdir(rscDest, { recursive: true });
+		for (const file of rscClientFiles) {
+			try {
+				await Deno.copyFile(`${rscSrc}/${file}`, `${rscDest}/${file}`);
+			} catch {
+				console.warn(`⚠️ Could not copy ${file}`);
+			}
+		}
+		console.log(`📝 Copied ${rscClientFiles.length} RSC client files`);
+
 		// Fix dnt polyfill bug: process.argv[1] can be undefined in dynamic imports
 		const polyfillPath = "./npm/esm/_dnt.polyfills.js";
 		let polyfillContent = await Deno.readTextFile(polyfillPath);
