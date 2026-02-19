@@ -83,7 +83,7 @@ veryfront start
 veryfront deploy
 ```
 
-Deploys to Veryfront Cloud. Your site is live at `https://<slug>.veryfront.com`.
+Deploys to Veryfront Cloud. Your site is live at `https://<slug>.production.veryfront.com`.
 
 ## Next
 

@@ -13,7 +13,7 @@
 - **Composable features**: ai, workflows
 - **20+ export paths**: routing, agents, tools, workflows, chat, MCP, OAuth, middleware, providers, prompts, resources
 - **19 guide docs**: from quickstart through deployment
-- **Deploy target**: Veryfront Cloud (`<slug>.veryfront.com`)
+- **Deploy target**: Veryfront Cloud (`<slug>.production.veryfront.com`)
 
 ---
 
