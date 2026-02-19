@@ -10,7 +10,6 @@ import type { AppState } from "../state.ts";
 export function renderNewProjectView(state: AppState): string {
   const options = [
     { label: "From template", desc: "Start with a pre-built template" },
-    { label: "From example", desc: "Copy an example project" },
     { label: "From scratch", desc: "Empty project" },
   ];
 

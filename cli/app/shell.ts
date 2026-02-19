@@ -21,10 +21,8 @@ import {
   getActiveSelection,
   goBack,
   navigateTo,
-  type ProjectInfo,
   scrollLogs,
   setActiveList,
-  setExamples,
   setProjects,
   setTemplates,
   startInput,
@@ -43,7 +41,6 @@ import {
   renderAuthView,
   renderDashboard,
   renderEmptyState,
-  renderExamplesView,
   renderHelpView,
   renderNewProjectView,
   renderTemplatesView,
@@ -66,12 +63,11 @@ import {
 } from "./handlers/remote-navigation.ts";
 import {
   handleAuthKey,
-  handleExamplesKey,
   handleNewProjectKey,
   handleTemplatesKey,
   type ViewHandlerContext,
 } from "./handlers/view-handlers.ts";
-import { createProject, createProjectFromExample } from "./operations/project-creation.ts";
+import { createProject } from "./operations/project-creation.ts";
 import { interceptConsole } from "./logging/console-interceptor.ts";
 
 const KEY_UP = "\x1b[A";
@@ -95,16 +91,8 @@ export function createApp(config: AppConfig): App {
     Array.from(config.projects.entries()).map(([slug, path]) => ({ slug, path })),
   )(state);
 
-  if (config.examples) {
-    state = setExamples(
-      Array.from(config.examples.entries()).map(([slug, path]) => ({ slug, path })),
-    )(state);
-  }
-
   if (state.projects.items.length > 0) {
     state = { ...state, activeList: "projects" };
-  } else if (state.examples.items.length > 0) {
-    state = { ...state, activeList: "examples" };
   }
 
   state = setTemplates([
@@ -154,7 +142,7 @@ export function createApp(config: AppConfig): App {
 
     switch (state.view) {
       case "dashboard":
-        content = state.projects.items.length > 0 || state.examples.items.length > 0
+        content = state.projects.items.length > 0
           ? renderDashboard(state)
           : renderEmptyState(state);
         break;
@@ -163,9 +151,6 @@ export function createApp(config: AppConfig): App {
         break;
       case "templates":
         content = renderTemplatesView(state);
-        break;
-      case "examples":
-        content = renderExamplesView(state);
         break;
       case "auth":
         content = renderAuthView(state);
@@ -272,10 +257,6 @@ export function createApp(config: AppConfig): App {
     return promptForProjectWithSource(template, createProject, onCancel);
   }
 
-  function promptForExampleProject(example: ProjectInfo, onCancel: () => void): void {
-    return promptForProjectWithSource(example, createProjectFromExample, onCancel);
-  }
-
   // View handler context for delegating to extracted handlers
   function getViewHandlerContext(): ViewHandlerContext {
     return {
@@ -283,7 +264,6 @@ export function createApp(config: AppConfig): App {
       render,
       update,
       promptForProjectName,
-      promptForExampleProject,
     };
   }
 
@@ -335,14 +315,6 @@ export function createApp(config: AppConfig): App {
     switch (state.view) {
       case "templates": {
         const result = handleTemplatesKey(key, ctx);
-        if (result.handled) {
-          state = result.state;
-          render();
-        }
-        return;
-      }
-      case "examples": {
-        const result = handleExamplesKey(key, ctx);
         if (result.handled) {
           state = result.state;
           render();
@@ -409,13 +381,11 @@ export function createApp(config: AppConfig): App {
     // Tab to switch sections
     if (key === "\t") {
       const hasProjects = state.projects.items.length > 0;
-      const hasExamples = state.examples.items.length > 0;
       const hasRemoteProjects = !!state.remote.user && state.remote.projects.length > 0;
 
-      const sections: Array<"projects" | "remoteProjects" | "examples"> = [];
+      const sections: Array<"projects" | "remoteProjects"> = [];
       if (hasProjects) sections.push("projects");
       if (hasRemoteProjects) sections.push("remoteProjects");
-      if (hasExamples) sections.push("examples");
 
       if (sections.length > 1) {
         const currentIndex = sections.indexOf(state.activeList as typeof sections[number]);
@@ -468,20 +438,6 @@ export function createApp(config: AppConfig): App {
         state = { ...state, [state.activeList]: selectByNumber(activeList, num) };
         render();
         const selected = activeList.items[num - 1];
-        if (selected?.data) await openInBrowser(selected.data, state.server.port);
-        return;
-      }
-    }
-
-    if (
-      key >= "a" && key <= "z" && key !== "j" && key !== "k" && key !== "p" && key !== "u" &&
-      state.activeList === "examples"
-    ) {
-      const num = key.charCodeAt(0) - 96;
-      if (num <= state.examples.items.length) {
-        state = { ...state, examples: selectByNumber(state.examples, num) };
-        render();
-        const selected = state.examples.items[num - 1];
         if (selected?.data) await openInBrowser(selected.data, state.server.port);
         return;
       }

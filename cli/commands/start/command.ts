@@ -64,10 +64,10 @@ async function findProjectsInDirs(baseDirs: string[]): Promise<Map<string, strin
 }
 
 async function discoverProjects(explicitPath: string | null): Promise<DiscoveredProjects> {
-  const [projects, examples] = await Promise.all([
+  const [projects] = await Promise.all([
     findProjectsInDirs(["data/projects", "projects"]),
-    findProjectsInDirs(["examples"]),
   ]);
+  const examples = new Map<string, string>();
 
   const fs = createFileSystem();
   let defaultProject: string | null = null;

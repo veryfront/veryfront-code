@@ -9,7 +9,6 @@ import type { AppState, StateUpdater } from "../state.ts";
 import { navigateTo } from "../state.ts";
 import { moveDown, moveUp } from "../components/list-select.ts";
 import type { InitTemplate } from "../../commands/init/types.ts";
-import type { ProjectInfo } from "../state.ts";
 import { login } from "../../auth/login.ts";
 import { fetchRemoteProjects } from "../../sync/index.ts";
 import { addLog, updateRemote } from "../state.ts";
@@ -24,7 +23,6 @@ export interface ViewHandlerContext {
   render: () => void;
   update: (updater: StateUpdater) => void;
   promptForProjectName: (template: InitTemplate, onCancel: () => void) => void;
-  promptForExampleProject: (example: ProjectInfo, onCancel: () => void) => void;
 }
 
 /**
@@ -61,39 +59,6 @@ export function handleTemplatesKey(
 }
 
 /**
- * Handle keyboard input in the examples view
- */
-export function handleExamplesKey(
-  key: string,
-  ctx: ViewHandlerContext,
-): { state: AppState; handled: boolean } {
-  const { state, render, promptForExampleProject } = ctx;
-
-  if (key === KEY_UP || key === "k") {
-    const newState = { ...state, examples: moveUp(state.examples) };
-    return { state: newState, handled: true };
-  }
-
-  if (key === KEY_DOWN || key === "j") {
-    const newState = {
-      ...state,
-      examples: moveDown(state.examples, state.examples.items.length),
-    };
-    return { state: newState, handled: true };
-  }
-
-  if (key === KEY_ENTER || key === KEY_NEWLINE) {
-    const selected = state.examples.items[state.examples.selectedIndex];
-    if (selected?.data) {
-      promptForExampleProject(selected.data, () => render());
-    }
-    return { state, handled: true };
-  }
-
-  return { state, handled: false };
-}
-
-/**
  * Handle keyboard input in the new-project view
  */
 export function handleNewProjectKey(
@@ -105,7 +70,7 @@ export function handleNewProjectKey(
   if (key === KEY_UP || key === "k") {
     const newState = {
       ...state,
-      newProjectIndex: state.newProjectIndex > 0 ? state.newProjectIndex - 1 : 2,
+      newProjectIndex: state.newProjectIndex > 0 ? state.newProjectIndex - 1 : 1,
     };
     return { state: newState, handled: true };
   }
@@ -113,17 +78,17 @@ export function handleNewProjectKey(
   if (key === KEY_DOWN || key === "j") {
     const newState = {
       ...state,
-      newProjectIndex: state.newProjectIndex < 2 ? state.newProjectIndex + 1 : 0,
+      newProjectIndex: state.newProjectIndex < 1 ? state.newProjectIndex + 1 : 0,
     };
     return { state: newState, handled: true };
   }
 
-  if (key >= "1" && key <= "3") {
+  if (key >= "1" && key <= "2") {
     const newState = { ...state, newProjectIndex: parseInt(key, 10) - 1 };
     return { state: newState, handled: true };
   }
 
-  if (key !== KEY_ENTER && key !== KEY_NEWLINE && !(key >= "1" && key <= "3")) {
+  if (key !== KEY_ENTER && key !== KEY_NEWLINE && !(key >= "1" && key <= "2")) {
     return { state, handled: false };
   }
 
@@ -133,9 +98,6 @@ export function handleNewProjectKey(
       update(navigateTo("templates"));
       return { state, handled: true };
     case 1:
-      update(navigateTo("examples"));
-      return { state, handled: true };
-    case 2:
       promptForProjectName("minimal", () => render());
       return { state, handled: true };
   }
