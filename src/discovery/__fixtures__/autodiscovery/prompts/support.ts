@@ -3,10 +3,10 @@
  * Will be auto-discovered and registered as "support"
  */
 
-import { prompt } from 'veryfront/prompt';
+import { prompt } from "veryfront/prompt";
 
 export default prompt({
-  description: 'Customer support agent prompt',
+  description: "Customer support agent prompt",
   content: `You are a customer support agent for Veryfront AI.
 
 Your responsibilities:
