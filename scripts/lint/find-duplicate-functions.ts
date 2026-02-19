@@ -153,7 +153,6 @@ const DEFAULT_EXCLUDES = [
   "dist/",
   "coverage/",
   "npm/",
-  "examples/",
   "cli/templates/",
   "scripts/rlm-ts/output/",
 ];

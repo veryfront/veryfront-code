@@ -2,7 +2,7 @@
  * Local Project Discovery
  *
  * Handles discovery and caching of local project paths for the dev server.
- * Supports finding projects in standard directories (data/projects, projects, examples).
+ * Supports finding projects in standard directories (data/projects, projects).
  *
  * @module server/runtime-handler/local-project-discovery
  */
@@ -26,7 +26,7 @@ export const localAdapterCache = new LRUCache<string, RuntimeAdapter>({
 registerLRUCache("local-adapter-cache", localAdapterCache);
 
 /** Standard directories to search for local projects */
-export const standardProjectDirs = ["data/projects", "projects", "examples"];
+export const standardProjectDirs = ["data/projects", "projects"];
 
 /** Cache of discovered local project paths by slug */
 export const localProjectCache = new LRUCache<string, string>({
