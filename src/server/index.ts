@@ -88,6 +88,7 @@ export interface StartProductionModeOptions extends BaseServerOptions {
  */
 export type StartServerOptions = StartDevModeOptions | StartProductionModeOptions;
 
+/** Running server instance with lifecycle controls. */
 export interface VeryfrontServer {
   /** Resolves when the server is ready to accept requests. */
   ready: Promise<void>;
@@ -99,6 +100,7 @@ export interface VeryfrontServer {
   url: string;
 }
 
+/** Web API request handler with WebSocket upgrade and HMR helpers. */
 export type VeryfrontHandler = ((req: Request) => Promise<Response>) & {
   /**
    * Attach WebSocket upgrade handling to a Node.js HTTP server.

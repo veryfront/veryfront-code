@@ -1,5 +1,5 @@
 /**
- * AI SDK Model Provider Registry
+ * AI SDK model provider registry.
  *
  * Maps "provider/model" strings to AI SDK LanguageModel instances.
  * Auto-initializes providers from environment variables on first use.

@@ -19,6 +19,7 @@ const { hasEnvLoaded, loadEnv, markEnvLoaded, supportsEnvFiles } = await import(
   "veryfront/utils/env-loader"
 );
 
+/** Load `.env` files and initialize environment config if not already done. */
 async function ensureEnvLoaded(): Promise<void> {
   if (hasEnvLoaded()) return;
 

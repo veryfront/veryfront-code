@@ -80,13 +80,13 @@ function AgentUI() {
 | `body?` | `Record<string, unknown>` | Extra body fields sent with each request |
 | `headers?` | `Record<string, string>` | Custom request headers |
 | `credentials?` | `RequestCredentials` | Fetch credentials mode |
+| `model?` | `string` | Override model at runtime (e.g. "openai/gpt-4o", "anthropic/claude-sonnet-4-5-20250929") |
+| `systemPrompt?` | `string` | System prompt for browser-side inference (server uses agent config) |
+| `browserFallback?` | `boolean` | Enable/disable browser fallback when server can't provide AI. Default: true |
 | `onResponse?` | `(response: Response) => void` | Raw response callback |
 | `onFinish?` | `(message: UIMessage) => void` | Completion callback |
 | `onError?` | `(error: Error) => void` | Error callback |
 | `onToolCall?` | `(arg: OnToolCallArg) => void \\| Promise<void>` | Tool call handler for client-side execution |
-| `model?` | `string` | Override model at runtime (e.g. `"openai/gpt-4o"`) |
-| `systemPrompt?` | `string` | System prompt for browser-side inference (server uses agent config) |
-| `browserFallback?` | `boolean` | Enable browser fallback when server can't provide AI (default: `true`) |
 
 ### `UseChatResult`
 
@@ -98,16 +98,17 @@ function AgentUI() {
 | `input` | `string` | Current input value |
 | `isLoading` | `boolean` | Whether a request is in flight |
 | `error` | `Error \\| null` | Last error (if any) |
+| `model` | `string \\| undefined` | Current model override (undefined = use agent default) |
+| `inferenceMode` | `InferenceMode` | Where inference is currently happening |
+| `browserStatus` | `BrowserInferenceStatus \\| null` | Browser-side model loading/inference status (null when not using browser fallback) |
 | `setInput` | `(input: string) => void` | Set input value |
+| `setModel` | `(model: string \\| undefined) => void` | Change the model for subsequent requests |
 | `sendMessage` | `(message: { text: string }) => Promise<void>` | Send a message programmatically |
 | `reload` | `() => Promise<void>` | Re-send last user message |
-| `stop` | `() => Promise<void>` | Abort current request (also stops browser Worker if active) |
+| `stop` | `() => void` | Abort current request |
 | `setMessages` | `(messages: UIMessage[]) => void` | Replace message history |
 | `addToolOutput` | `(output: ToolOutput) => void` | Submit client-side tool result |
-| `model` | `string \\| undefined` | Current model override |
-| `inferenceMode` | `InferenceMode` | Where inference is happening: `"cloud"`, `"server-local"`, or `"browser"` |
-| `browserStatus` | `BrowserInferenceStatus \\| null` | Browser model loading/inference status (`null` when not using browser fallback) |
-| `data` | `unknown` | Extra data from server response |
+| `data?` | `unknown` | Extra data from server response |
 | `handleInputChange` | `(e: React.ChangeEvent<HTMLInputElement \\| HTMLTextAreaElement>) => void` | Bind to input onChange |
 | `handleSubmit` | `(e: React.FormEvent) => Promise<void>` | Submit current input |
 
@@ -144,13 +145,14 @@ function AgentUI() {
 | Name | Description |
 |------|-------------|
 | `AgentCard` | Agent status, tool calls, and messages |
-| `Chat` | Full chat UI (messages + input, includes InferenceBadge and UpgradeCTA when `inferenceMode` prop is passed) |
+| `Chat` | Full chat UI (messages + input) |
 | `ChatComponents` | Compound components for custom layouts |
 | `ChatFooter` | Chat footer section |
 | `ChatHeader` | Chat header section |
 | `ChatInput` | Text input with send button |
 | `ChatMessages` | Scrollable message list |
 | `Message` | Chat message bubble |
+| `ModelSelector` | Dropdown for switching models at runtime |
 | `StreamingMessage` | Incrementally rendered message |
 
 ### Functions
@@ -159,7 +161,7 @@ function AgentUI() {
 |------|-------------|
 | `useAgent` | Agent interactions with tool call tracking |
 | `useAIErrorHandler` | Programmatic AI error handler |
-| `useChat` | useChat hook for managing chat state - AI SDK v5 compatible |
+| `useChat` | useChat hook for managing chat state with veryfront stream events. |
 | `useCompletion` | useCompletion hook for single text generation |
 | `useStreaming` | Low-level streaming hook |
 | `useVoiceInput` | Voice input (Web Speech API) |
@@ -175,14 +177,16 @@ function AgentUI() {
 | Name | Description |
 |------|-------------|
 | `AgentCardProps` | `<AgentCard>` props |
-| `BrowserInferenceStatus` | Browser model status: `"idle"`, `"loading-runtime"`, `"downloading-model"`, `"ready"`, `"generating"`, `"error"` |
-| `InferenceMode` | Where inference runs: `"cloud"`, `"server-local"`, `"browser"` |
 | `AgentTheme` | Agent card theme config |
 | `AIErrorBoundaryProps` | `<AIErrorBoundary>` props |
+| `BrowserInferenceStatus` | Browser-side model loading and inference status |
 | `ChatProps` | `<Chat>` props |
 | `ChatTheme` | Theme System for Styled Components |
 | `DynamicToolUIPart` | Dynamic tool call UI part |
+| `InferenceMode` | Where inference is happening |
 | `MessageProps` | `<Message>` props |
+| `ModelOption` | A "provider/model" value and its display label. |
+| `ModelSelectorProps` | Props for `<ModelSelector>`. |
 | `OnToolCallArg` | `onToolCall` callback argument |
 | `ReasoningUIPart` | Chain-of-thought segment |
 | `StreamingMessageProps` | `<StreamingMessage>` props |

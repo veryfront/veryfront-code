@@ -7,6 +7,7 @@
  * @module
  */
 
+/** Options for creating a sandbox session. */
 export interface SandboxOptions {
   /** Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL env. */
   apiUrl?: string;
@@ -14,18 +15,21 @@ export interface SandboxOptions {
   authToken: string;
 }
 
+/** Result of a command execution: stdout, stderr, and exit code. */
 export interface ExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
 }
 
+/** Streaming event emitted during command execution. */
 export interface ExecStreamEvent {
   type: "stdout" | "stderr" | "exit" | "error";
   data?: string;
   exitCode?: number;
 }
 
+/** Client for isolated ephemeral compute environments with command execution and file I/O. */
 export class Sandbox {
   private constructor(
     private endpoint: string,

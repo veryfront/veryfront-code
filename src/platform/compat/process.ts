@@ -16,12 +16,14 @@ function isWindowsPlatform(): boolean {
   return platform === "win32";
 }
 
+/** Get command-line arguments (cross-runtime: Deno.args or process.argv). */
 export function getArgs(): string[] {
   if (IS_DENO) return Deno.args;
   if (hasNodeProcess) return nodeProcess!.argv.slice(2);
   return [];
 }
 
+/** Exit the process with an optional code (cross-runtime: Deno.exit or process.exit). */
 export function exit(code?: number): never {
   if (IS_DENO) Deno.exit(code);
   if (hasNodeProcess) nodeProcess!.exit(code);

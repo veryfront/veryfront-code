@@ -211,6 +211,7 @@ export async function confirmPrompt(
   return normalized === "y" || normalized === "yes";
 }
 
+/** Exit the process with the given code. */
 export function exitProcess(code: number): void {
   exit(code);
 }

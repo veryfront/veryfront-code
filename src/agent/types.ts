@@ -109,6 +109,7 @@ export interface Agent {
   generate(input: {
     input: string | Message[];
     context?: Record<string, unknown>;
+    /** Override the agent's default model for this request. Must be in `allowedModels` if configured. */
     model?: ModelString;
   }): Promise<AgentResponse>;
 
@@ -116,6 +117,7 @@ export interface Agent {
     input?: string;
     messages?: Message[];
     context?: Record<string, unknown>;
+    /** Override the agent's default model for this request. Must be in `allowedModels` if configured. */
     model?: ModelString;
     onToolCall?: (toolCall: ToolCall) => void;
     onChunk?: (chunk: string) => void;
