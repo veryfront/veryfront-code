@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.11",
+  "version": "0.1.15",
   "description": "The simplest way to build AI-powered apps",
   "keywords": [
     "react",
@@ -19,7 +19,7 @@
     "type": "git",
     "url": "git+https://github.com/veryfront/veryfront.git"
   },
-  "license": "Apache-2.0",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/veryfront/veryfront/issues"
   },
@@ -94,6 +94,9 @@
     "./integrations": {
       "import": "./esm/src/integrations/index.js"
     },
+    "./sandbox": {
+      "import": "./esm/src/sandbox/index.js"
+    },
     "./cli": {
       "import": "./esm/cli/main.js"
     },
@@ -104,6 +107,9 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^3.4.2"
   },
   "peerDependenciesMeta": {
     "better-sqlite3": {
@@ -119,6 +125,7 @@
     "@babel/parser": "7.26.3",
     "@babel/traverse": "7.26.3",
     "@babel/types": "7.26.3",
+    "@huggingface/transformers": "3.4.2",
     "@mdx-js/mdx": "3.0.0",
     "@opentelemetry/api": "1",
     "@opentelemetry/context-async-hooks": "1",
