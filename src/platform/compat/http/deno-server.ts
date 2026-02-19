@@ -36,10 +36,15 @@ export class DenoHttpServer implements HttpServer {
       });
     };
 
-    await nativeDeno.serve(
+    const httpServer = nativeDeno.serve(
       { port, hostname, signal: serveSignal },
       wrappedHandler,
     );
+
+    // Block until the server stops (e.g. via signal abort).
+    // Deno.serve() returns synchronously; without awaiting .finished
+    // the event loop drains and the process exits in compiled binaries.
+    await httpServer.finished;
   }
 
   close(): Promise<void> {
