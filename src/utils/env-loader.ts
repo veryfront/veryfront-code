@@ -7,7 +7,7 @@ const logger = serverLogger.component("env");
 const envSources = new Map<string, string>();
 let envLoaded = false;
 
-/** Load environment variables from `.env` files (`.env`, `.env.{NODE_ENV}`, `.env.local`). */
+/** Load environment variables from `.env` files (`.env`, `.env.{NODE_ENV|DENO_ENV}`, `.env.local`). */
 export async function loadEnv(
   options: {
     cwd?: string;
