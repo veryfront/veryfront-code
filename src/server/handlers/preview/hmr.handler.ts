@@ -1,9 +1,11 @@
 import {
+  HMR_CLOSE_MESSAGE_TOO_LARGE,
+  HMR_CLOSE_RATE_LIMIT,
   HMR_MAX_MESSAGE_SIZE_BYTES,
   HMR_MAX_MESSAGES_PER_MINUTE,
   serverLogger,
 } from "#veryfront/utils";
-import { RateLimiter, setupWebSocketHandlers } from "#veryfront/modules/server/index.ts";
+import { RateLimiter } from "#veryfront/modules/server/index.ts";
 import { BaseHandler } from "../response/base.ts";
 import {
   type HandlerContext,
@@ -17,7 +19,6 @@ import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import {
   addClient,
   clearAll,
-  clientSockets,
   getClient,
   getClientCount,
   getClientDetails,
@@ -53,13 +54,10 @@ export class HMRHandler extends BaseHandler {
     logger.info("Subscribing to ReloadNotifier");
 
     HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, project) => {
-      logger.info("ReloadNotifier callback triggered", {
+      logger.debug("ReloadNotifier callback triggered", {
         changedPaths,
         projectSlug: project?.projectSlug,
-        projectId: project?.projectId,
-        environment: project?.environment,
-        branch: project?.branch,
-        clientCount: clientSockets.size,
+        clientCount: getClientCount(),
       });
 
       const projectSlug = project?.projectSlug ?? "preview";
@@ -68,7 +66,7 @@ export class HMRHandler extends BaseHandler {
         environment: project?.environment,
         branchId: project?.branch ?? undefined,
       });
-      broadcastUpdate(changedPaths);
+      broadcastUpdate(changedPaths, project?.projectSlug);
     });
 
     startPingInterval();
@@ -153,21 +151,66 @@ export class HMRHandler extends BaseHandler {
         lastActivity: now,
       });
 
-      setupWebSocketHandlers(socket, {
-        clients: clientSockets,
-        rateLimiter: HMRHandler.rateLimiter,
-        maxMessageSize: HMR_MAX_MESSAGE_SIZE_BYTES,
-        reactRefresh: false,
-      });
+      // Send connected message when socket opens
+      const sendConnected = () => {
+        try {
+          socket.send(JSON.stringify({ type: "connected" }));
+        } catch {
+          // Socket may have closed immediately
+        }
+      };
 
-      socket.addEventListener("close", () => {
-        removeClient(clientId);
-      });
+      if (socket.readyState === WebSocket.OPEN) {
+        sendConnected();
+      } else {
+        socket.addEventListener("open", sendConnected, { once: true });
+      }
 
-      socket.addEventListener("message", () => {
+      // Handle incoming messages (size/rate guard, ping/pong, activity tracking)
+      socket.addEventListener("message", (event) => {
+        const messageSize = HMRHandler.getMessageSize(event.data);
+        if (messageSize > HMR_MAX_MESSAGE_SIZE_BYTES) {
+          try {
+            socket.close(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
+          } catch {
+            // Ignore close errors
+          }
+          return;
+        }
+
+        if (!HMRHandler.rateLimiter.check(socket)) {
+          try {
+            socket.close(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
+          } catch {
+            // Ignore close errors
+          }
+          return;
+        }
+
         const client = getClient(clientId);
-        if (client) client.lastActivity = Date.now();
+        if (client) {
+          client.lastActivity = Date.now();
+        }
+
+        if (typeof event.data !== "string") return;
+
+        try {
+          const data = JSON.parse(event.data);
+          if (data?.type === "ping") {
+            socket.send(JSON.stringify({ type: "pong" }));
+          }
+        } catch {
+          // Ignore parse errors from client
+        }
       });
+
+      // Clean up on close or error
+      const cleanup = () => {
+        HMRHandler.rateLimiter.cleanup(socket);
+        removeClient(clientId);
+      };
+      socket.addEventListener("close", cleanup);
+      socket.addEventListener("error", cleanup);
 
       logger.debug("Client connected", {
         clientId,
@@ -248,9 +291,18 @@ export class HMRHandler extends BaseHandler {
 
     stopPingInterval();
     clearAll();
+    HMRHandler.rateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
 
     HMRHandler.initialized = false;
 
     logger.debug("Shutdown complete");
+  }
+
+  private static getMessageSize(data: unknown): number {
+    if (typeof data === "string") return data.length;
+    if (data instanceof ArrayBuffer) return data.byteLength;
+    if (ArrayBuffer.isView(data)) return data.byteLength;
+    if (data instanceof Blob) return data.size;
+    return 0;
   }
 }

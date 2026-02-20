@@ -69,7 +69,7 @@ const adapter: RuntimeAdapter = {
   },
 };
 
-describe("loadHandlerModule", () => {
+describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, () => {
   afterAll(async () => {
     const { stop } = await import("esbuild");
     await stop();

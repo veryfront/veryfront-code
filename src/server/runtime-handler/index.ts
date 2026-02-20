@@ -98,6 +98,7 @@ import {
   fetchProjectEnvVars,
   runWithProjectEnv,
 } from "../project-env/index.ts";
+import { SCANNER_PATH_PATTERN } from "#veryfront/utils/constants/security.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -302,6 +303,11 @@ export function createVeryfrontHandler(
       );
 
       if (!isolationCheck.allowed) {
+        endContentMetrics({
+          requestId: lifecycle.requestId,
+          pathname: url.pathname,
+          mode: "isolation",
+        });
         completeRequestTracking(lifecycle.requestId, 503, false);
         const response = createIsolationErrorResponse(isolationCheck);
         endRequestTracing(spanInfo.span, response.status);
@@ -323,6 +329,14 @@ export function createVeryfrontHandler(
               host: req.headers.get("host"),
               forwardedHost: req.headers.get("x-forwarded-host"),
             });
+            endContentMetrics({
+              requestId: lifecycle.requestId,
+              pathname: url.pathname,
+              mode: "proxy",
+            });
+            completeRequestTracking(lifecycle.requestId, 502, false);
+            completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, false);
+            endRequestTracing(spanInfo.span, 502);
             return new Response(
               JSON.stringify({
                 error: "Missing project context",
@@ -337,6 +351,14 @@ export function createVeryfrontHandler(
               domain,
               projectSlug: headers.projectSlug,
             });
+            endContentMetrics({
+              requestId: lifecycle.requestId,
+              pathname: url.pathname,
+              mode: "proxy",
+            });
+            completeRequestTracking(lifecycle.requestId, 502, false);
+            completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, false);
+            endRequestTracing(spanInfo.span, 502);
             return new Response(
               JSON.stringify({
                 error: "Missing authentication context",
@@ -347,18 +369,23 @@ export function createVeryfrontHandler(
           }
         }
 
-        await readyPromise;
-
-        await timeAsync("security:load", async () => {
-          if (isProxyMode) return;
-          await securityLoader.ensureLoaded();
-        });
-
-        await timeAsync("config:load", async () => {
-          await configPromise;
-        });
-
         const executeHandler = async (): Promise<Response> => {
+          // Fast rejection of vulnerability scanner probes before any async work
+          if (SCANNER_PATH_PATTERN.test(url.pathname)) {
+            return new Response("Not Found", { status: 404 });
+          }
+
+          await readyPromise;
+
+          await timeAsync("security:load", async () => {
+            if (isProxyMode) return;
+            await securityLoader.ensureLoaded();
+          });
+
+          await timeAsync("config:load", async () => {
+            await configPromise;
+          });
+
           const reqCtx = createRequestContext(req);
 
           const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;

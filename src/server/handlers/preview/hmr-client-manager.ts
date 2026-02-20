@@ -21,14 +21,12 @@ export interface HMRClientDetail {
   connectionDurationMs: number;
 }
 
-const clientsMap = new Map<string, HMRClientInfo>();
-
 /**
- * WebSocket set kept in sync for backward compat with setupWebSocketHandlers.
- * setupWebSocketHandlers manages add/remove on open/close internally,
- * so we expose the set directly.
+ * Single source of truth for all HMR WebSocket clients.
+ * Previous architecture had separate clientsMap + clientSockets that drifted
+ * out of sync when errors occurred without close events.
  */
-export const clientSockets = new Set<WebSocket>();
+const clientsMap = new Map<string, HMRClientInfo>();
 
 export function getClientCount(): number {
   return clientsMap.size;
@@ -67,6 +65,29 @@ export function getClientDetails(): HMRClientDetail[] {
   }));
 }
 
+/**
+ * Get all open WebSocket connections, optionally filtered by projectSlug.
+ * This replaces the old exported `clientSockets` Set that drifted out of sync.
+ */
+export function getOpenSockets(projectSlug?: string): WebSocket[] {
+  const sockets: WebSocket[] = [];
+  for (const client of clientsMap.values()) {
+    if (client.socket.readyState !== WebSocket.OPEN) continue;
+    if (projectSlug && client.projectSlug !== projectSlug) continue;
+    sockets.push(client.socket);
+  }
+  return sockets;
+}
+
+/** Get count of open sockets (may differ from clientsMap.size if some are closing) */
+export function getOpenSocketCount(): number {
+  let count = 0;
+  for (const client of clientsMap.values()) {
+    if (client.socket.readyState === WebSocket.OPEN) count++;
+  }
+  return count;
+}
+
 export function clearAll(): void {
   for (const client of clientsMap.values()) {
     try {
@@ -76,5 +97,4 @@ export function clearAll(): void {
     }
   }
   clientsMap.clear();
-  clientSockets.clear();
 }

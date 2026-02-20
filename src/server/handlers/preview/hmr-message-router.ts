@@ -1,5 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
-import { clientSockets, getClientCount } from "./hmr-client-manager.ts";
+import { getClientCount, getOpenSockets } from "./hmr-client-manager.ts";
 
 const logger = serverLogger.component("hmr-handler");
 
@@ -24,73 +24,54 @@ export function requiresFullReload(path: string): boolean {
   return ext === "mdx" || ext === "md" || path.includes("veryfront.config");
 }
 
-export function broadcastUpdate(changedPaths?: string[]): void {
+/**
+ * Broadcast update to all connected HMR clients, optionally filtered by projectSlug.
+ * No server-side debounce here — ReloadNotifier already debounces (300ms).
+ */
+export function broadcastUpdate(changedPaths?: string[], projectSlug?: string): void {
+  logger.debug("broadcastUpdate called", {
+    changedPaths,
+    totalClients: getClientCount(),
+    projectSlug,
+  });
+
   const timestamp = Date.now();
   metrics.broadcastsSent++;
   metrics.lastBroadcastTime = timestamp;
-
-  logger.info("broadcastUpdate called", {
-    changedPaths,
-    totalClients: getClientCount(),
-    clientsSetSize: clientSockets.size,
-  });
 
   const needsFullReload = !changedPaths?.length ||
     changedPaths.some((path) => requiresFullReload(path));
 
   if (needsFullReload) {
     const message = JSON.stringify({ type: "reload", timestamp });
-    logger.debug("Broadcasting full reload", {
-      reason: changedPaths?.length ? "server-rendered content" : "no paths",
-    });
-    broadcastMessage(message);
+    broadcastMessage(message, projectSlug);
     metrics.messagesForwarded++;
-    return;
+  } else {
+    for (const path of changedPaths) {
+      const message = JSON.stringify({ type: "update", path, timestamp });
+      broadcastMessage(message, projectSlug);
+      metrics.messagesForwarded++;
+    }
   }
-
-  for (const path of changedPaths) {
-    const message = JSON.stringify({ type: "update", path, timestamp });
-    logger.debug("Broadcasting update message", { path });
-    broadcastMessage(message);
-    metrics.messagesForwarded++;
-  }
-
-  logger.debug("Broadcast update complete", {
-    changedPaths: changedPaths.length,
-    totalClients: getClientCount(),
-  });
 }
 
-export function broadcastMessage(message: string): void {
+export function broadcastMessage(message: string, projectSlug?: string): void {
+  const sockets = getOpenSockets(projectSlug);
   let sentCount = 0;
-  let skippedCount = 0;
 
-  logger.info("broadcastMessage starting", {
-    message: message.substring(0, 100),
-    totalClients: clientSockets.size,
-  });
-
-  for (const client of clientSockets) {
-    if (client.readyState !== WebSocket.OPEN) {
-      skippedCount++;
-      logger.debug("Skipping client - not open", {
-        readyState: client.readyState,
-      });
-      continue;
-    }
-
+  for (const socket of sockets) {
     try {
-      client.send(message);
+      socket.send(message);
       sentCount++;
     } catch (error) {
       logger.warn("Failed to send to client", { error });
     }
   }
 
-  logger.info("broadcastMessage complete", {
+  logger.debug("broadcastMessage complete", {
     sentCount,
-    skippedCount,
-    totalClients: clientSockets.size,
+    totalClients: getClientCount(),
+    projectSlug,
   });
 }
 

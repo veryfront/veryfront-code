@@ -128,14 +128,13 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
   });
 
   describe("DevServer - Dev Endpoint Handler", {}, () => {
-    it("serves HMR runtime when HMR is enabled", async () => {
+    it("serves HMR script when HMR is enabled", async () => {
       await withTestContext("dev-server-hmr-runtime", async (context) => {
         const { server, port } = await createTestDevServer(context, {
           enableHMR: true,
-          hmrPort: await context.allocatePort(),
         });
 
-        const response = await fetch(`http://127.0.0.1:${port}/_veryfront/hmr-runtime.js`);
+        const response = await fetch(`http://127.0.0.1:${port}/_veryfront/hmr.js`);
 
         assertEquals(response.status, 200);
         assertJsNoCache(response);
@@ -165,14 +164,13 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
       });
     });
 
-    it("responds to HEAD requests for HMR runtime", async () => {
+    it("responds to HEAD requests for HMR script", async () => {
       await withTestContext("dev-server-hmr-head", async (context) => {
         const { server, port } = await createTestDevServer(context, {
           enableHMR: true,
-          hmrPort: await context.allocatePort(),
         });
 
-        const response = await fetch(`http://127.0.0.1:${port}/_veryfront/hmr-runtime.js`, {
+        const response = await fetch(`http://127.0.0.1:${port}/_veryfront/hmr.js`, {
           method: "HEAD",
         });
 

@@ -170,13 +170,26 @@ describe("VFS Proxy Mode - Compiled Binary", { sanitizeOps: false, sanitizeResou
     const projectDir = await createMinimalVFSProject();
     const server = await startVFSServer(projectDir);
     try {
-      await new Promise((r) => setTimeout(r, 5_000));
+      // Wait for the server to actually start by polling the health endpoint
+      // or for the expected log to appear (up to 30s)
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const allLogs = server.logs.join("\n");
+        if (allLogs.includes("Production server listening")) break;
+        try {
+          const r = await fetch(`http://127.0.0.1:${server.port}/`);
+          await r.text();
+          break;
+        } catch { /* server not ready yet */ }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+
       const allLogs = server.logs.join("\n");
 
       // Config loader should detect proxy mode and select veryfront-api
       assert(
         allLogs.includes("Using veryfront-api filesystem (proxy mode)"),
-        "Should log 'Using veryfront-api filesystem (proxy mode)'",
+        `Should log 'Using veryfront-api filesystem (proxy mode)'. Got logs:\n${allLogs.slice(0, 1000)}`,
       );
       assert(
         !allLogs.includes("Using local filesystem (no proxy mode)"),

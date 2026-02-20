@@ -10,7 +10,6 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { clearConfigCache } from "#veryfront/config";
 import { ErrorOverlay } from "./error-overlay/index.ts";
-import type { HMRServer } from "./hmr-server.ts";
 import { createResponseBuilder } from "#veryfront/security/index.ts";
 import { resetApiHandler } from "../handlers/request/api/pages-api-handler.ts";
 import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts";
@@ -28,7 +27,6 @@ export class RequestHandler {
     private adapter: RuntimeAdapter,
     private isReady: () => boolean,
     private isDebug: () => boolean,
-    private hmrServer?: HMRServer,
     private config?: VeryfrontConfig,
     private defaultProjectSlug?: string,
     private defaultProjectId?: string,
@@ -107,16 +105,6 @@ export class RequestHandler {
     });
 
     switch (normalized) {
-      case DEV_SERVER_ENDPOINTS.HMR_RUNTIME: {
-        if (!this.hmrServer) return null;
-        if (isHeadRequest) return builder.withContentType(HTTP_CONTENT_TYPES.JS, "", HTTP_OK);
-
-        const runtime = this.getHMRRuntime();
-        if (runtime === null) return null;
-
-        return builder.withContentType(HTTP_CONTENT_TYPES.JS, runtime, HTTP_OK);
-      }
-
       case DEV_SERVER_ENDPOINTS.ERROR_OVERLAY: {
         const overlay = isHeadRequest ? null : ErrorOverlay.getRuntime();
         return builder.withContentType(HTTP_CONTENT_TYPES.JS, overlay, HTTP_OK);
@@ -129,7 +117,6 @@ export class RequestHandler {
 
   private normalizeDevEndpoint(pathname: string): string | null {
     const validEndpoints = new Set<string>([
-      DEV_SERVER_ENDPOINTS.HMR_RUNTIME,
       DEV_SERVER_ENDPOINTS.ERROR_OVERLAY,
     ]);
 
@@ -138,18 +125,6 @@ export class RequestHandler {
 
     const rewritten = pathname.replace("/__veryfront/", "/_veryfront/");
     return validEndpoints.has(rewritten) ? rewritten : null;
-  }
-
-  private getHMRRuntime(): string | null {
-    const runtimeProvider = this.hmrServer as { getHMRRuntime?: () => string } | undefined;
-    if (typeof runtimeProvider?.getHMRRuntime !== "function") return null;
-
-    try {
-      return runtimeProvider.getHMRRuntime();
-    } catch (error) {
-      logger.debug("failed to read HMR runtime from server", error);
-      return null;
-    }
   }
 
   private async handleApplicationRequest(req: Request): Promise<Response> {

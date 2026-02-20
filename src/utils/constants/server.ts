@@ -44,6 +44,7 @@ export const INTERNAL_ENDPOINTS = {
   HMR: `${INTERNAL_PREFIX}/hmr.js`,
   HYDRATE: `${INTERNAL_PREFIX}/hydrate.js`,
   ERROR_OVERLAY: `${INTERNAL_PREFIX}/error-overlay.js`,
+  // Legacy endpoint retained for backward compatibility (no active handler).
   DEV_LOADER: `${INTERNAL_PREFIX}/dev-loader.js`,
   CLIENT_LOG: `${INTERNAL_PREFIX}/log`,
 

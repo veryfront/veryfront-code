@@ -2,13 +2,11 @@ import { serverLogger as logger } from "#veryfront/utils";
 import { handleErrorWithFallback } from "#veryfront/errors/index.ts";
 import { join, relative, sep } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { HMRServer } from "./hmr-server.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
 import type { RouteDiscovery } from "./route-discovery.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
 import type { DevServer } from "./server.ts";
 import { invalidateModulePaths } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
-import { broadcastUpdate } from "../handlers/preview/hmr-message-router.ts";
 
 const hmrLog = logger.component("hmr");
 const fileWatchSetupLog = logger.component("file-watch-setup");
@@ -47,11 +45,12 @@ export class FileWatchSetup {
   private optimizedWatcher?: OptimizedFileWatcher;
   private batchCount = 0;
   private aiDirs: Set<string>;
+  /** Content hashes to skip re-renders when file content is unchanged */
+  private contentHashes = new Map<string, number>();
 
   constructor(
     private projectDir: string,
     private adapter: RuntimeAdapter,
-    private hmrServer: HMRServer,
     private routeDiscovery: RouteDiscovery,
     private debounceMs: number,
     private invalidateHandler: () => void = () => {},
@@ -154,22 +153,16 @@ export class FileWatchSetup {
 
     // Invalidate on-disk ESM cache for changed files immediately,
     // before the browser reloads, so the next SSR render picks up fresh content.
-    const relativePaths = paths.map((p) => p.replace(this.projectDir + "/", ""));
+    const relativePaths = paths.map((p) => relative(this.projectDir, p).split(sep).join("/"));
     invalidateModulePaths(relativePaths);
 
     const display = paths.map((p) => p.replace(this.projectDir, ".")).join(", ");
     logger.debug(logMessage, { files: display });
 
-    this.hmrServer.sendUpdate({ type: "reload", timestamp: Date.now() });
-
-    // Immediately broadcast to /_ws WebSocket clients (local dev HMR).
-    // ReloadNotifier.triggerReload below is debounced 300ms which is too slow —
-    // the browser reloads before caches are invalidated. Send directly instead.
-    const relativePaths2 = paths.map((p) => p.replace(this.projectDir + "/", ""));
-    broadcastUpdate(relativePaths2);
-
-    // Also trigger ReloadNotifier for proxy mode and cache invalidation
-    ReloadNotifier.triggerReload(paths);
+    // Single source of truth for HMR signaling:
+    // ReloadNotifier immediately invalidates runtime caches and then sends
+    // one debounced browser update for both local dev and preview clients.
+    ReloadNotifier.triggerReload(relativePaths);
   }
 
   /**
@@ -182,16 +175,52 @@ export class FileWatchSetup {
     return this.aiDirs.has(firstSegment);
   }
 
+  /** FNV-1a hash for fast content comparison */
+  private hashContent(content: string): number {
+    let h = 2166136261;
+    for (let i = 0; i < content.length; i++) {
+      h ^= content.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h;
+  }
+
+  /** Filter out files whose content hasn't actually changed */
+  private async filterChangedFiles(paths: string[]): Promise<string[]> {
+    const changed: string[] = [];
+    for (const path of paths) {
+      try {
+        const content = await this.adapter.fs.readFile(path);
+        const hash = this.hashContent(content);
+        if (this.contentHashes.get(path) === hash) continue;
+        this.contentHashes.set(path, hash);
+        changed.push(path);
+      } catch {
+        // File deleted or unreadable — treat as changed
+        this.contentHashes.delete(path);
+        changed.push(path);
+      }
+    }
+    return changed;
+  }
+
   private async handleBatchedFileChanges(changes: string[]): Promise<void> {
     const startTime = performance.now();
 
+    // Skip files whose content hasn't actually changed (e.g., save without edits)
+    const actualChanges = await this.filterChangedFiles(changes);
+    if (actualChanges.length === 0) {
+      hmrLog.debug("All file changes had identical content, skipping HMR");
+      return;
+    }
+
     // Check for AI file changes and trigger re-discovery
-    const hasAIChanges = changes.some((p) => this.isAIPath(p));
+    const hasAIChanges = actualChanges.some((p) => this.isAIPath(p));
     if (hasAIChanges && this.devServer) {
       await this.devServer.rediscoverAI();
     }
 
-    await this.refreshAndReload(changes, "");
+    await this.refreshAndReload(actualChanges, "");
 
     const duration = (performance.now() - startTime).toFixed(0);
     hmrLog.debug(`Batch processed ${changes.length} file changes in ${duration}ms`, {
@@ -205,7 +234,9 @@ export class FileWatchSetup {
   }
 
   private async handleImmediateFileChange(paths: string[]): Promise<void> {
-    await this.refreshAndReload(paths, "[HMR] file change");
+    const actualChanges = await this.filterChangedFiles(paths);
+    if (actualChanges.length === 0) return;
+    await this.refreshAndReload(actualChanges, "[HMR] file change");
   }
 
   getMetrics() {

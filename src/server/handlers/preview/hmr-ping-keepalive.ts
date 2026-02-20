@@ -1,5 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
-import { clientSockets } from "./hmr-client-manager.ts";
+import { getOpenSockets } from "./hmr-client-manager.ts";
 
 const logger = serverLogger.component("hmr-handler");
 
@@ -26,24 +26,23 @@ export function getPingIntervalMs(): number {
 }
 
 function sendPingToAllClients(): void {
-  if (clientSockets.size === 0) return;
+  const sockets = getOpenSockets();
+  if (sockets.length === 0) return;
 
   const pingMessage = JSON.stringify({ type: "ping", timestamp: Date.now() });
   let sentCount = 0;
 
-  for (const client of clientSockets) {
-    if (client.readyState !== WebSocket.OPEN) continue;
-
+  for (const socket of sockets) {
     try {
-      client.send(pingMessage);
+      socket.send(pingMessage);
       sentCount++;
     } catch {
-      // Client will be cleaned up on close event
+      // Client will be cleaned up when socket closes
     }
   }
 
   logger.debug("Sent ping to clients", {
     sentCount,
-    totalClients: clientSockets.size,
+    totalClients: sockets.length,
   });
 }

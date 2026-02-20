@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { logger as baseLogger } from "#veryfront/utils";
 import {
   recordContentCacheHit,
@@ -40,7 +41,7 @@ const cumulativeMetrics: CumulativeMetrics = {
   requestsTracked: 0,
 };
 
-let currentRequest: PerRequestMetrics | null = null;
+const metricsStore = new AsyncLocalStorage<PerRequestMetrics>();
 
 function createFreshRequestMetrics(): PerRequestMetrics {
   return {
@@ -68,15 +69,15 @@ function detectFileType(path: string): FileType {
 }
 
 export function startRequestMetrics(): void {
-  currentRequest = createFreshRequestMetrics();
+  metricsStore.enterWith(createFreshRequestMetrics());
 }
 
 export function endRequestMetrics(
   requestContext?: { requestId?: string; pathname?: string; mode?: string },
 ): void {
-  if (!currentRequest) return;
+  const req = metricsStore.getStore();
+  if (!req) return;
 
-  const req = currentRequest;
   const durationMs = Math.round(performance.now() - req.startTime);
 
   const totalCacheHits = req.requestScopedHits + req.persistentCacheHits + req.fileListHits;
@@ -112,8 +113,6 @@ export function endRequestMetrics(
     uniqueFiles: req.filesAccessed.size,
     isPreviewMode: req.isPreviewMode,
   });
-
-  currentRequest = null;
 }
 
 export type ContentMetricEvent =
@@ -136,6 +135,7 @@ export function logContentMetric(
   },
 ): void {
   const path = details.path ?? "";
+  const currentRequest = metricsStore.getStore();
 
   if (currentRequest) {
     currentRequest.filesAccessed.add(path);

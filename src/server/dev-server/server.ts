@@ -8,7 +8,6 @@ import { ComponentRegistry } from "#veryfront/modules/component-registry/index.t
 import type { VeryfrontConfig } from "#veryfront/config";
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { bootstrapDev } from "../bootstrap.ts";
-import { HMRServer } from "./hmr-server.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
 import type { DevServerOptions } from "./types.ts";
 import { RequestHandler } from "./request-handler.ts";
@@ -51,7 +50,6 @@ function deriveProjectSlug(projectDir: string): string {
 export class DevServer {
   private router: DynamicRouter;
   private componentRegistry!: ComponentRegistry;
-  private hmrServer?: HMRServer;
   private fileWatchSetup?: FileWatchSetup;
   private pipeline: MiddlewarePipeline;
   private adapter!: RuntimeAdapter;
@@ -145,14 +143,6 @@ export class DevServer {
     await this.runAIDiscovery();
 
     if (this.options.enableHMR) {
-      this.hmrServer = new HMRServer({
-        port: this.options.hmrPort || this.options.port + 1,
-        projectDir: this.options.projectDir,
-        reactRefresh: this.options.enableFastRefresh,
-        adapter: this.adapter,
-      });
-
-      await this.hmrServer.start();
       await this.setupFileWatchers();
 
       // Subscribe to immediate invalidation for cache clearing (fires immediately)
@@ -161,15 +151,7 @@ export class DevServer {
         this.requestHandler?.invalidateRuntimeHandler();
       });
 
-      // Subscribe to debounced reload for browser refresh (batches rapid changes)
-      this.reloadUnsubscribe = ReloadNotifier.subscribe(() => {
-        devServerLog.debug("RELOAD callback triggered - sending HMR reload to browser");
-        this.hmrServer?.sendUpdate({ type: "reload", timestamp: Date.now() });
-      });
-
-      devServerLog.debug("ReloadNotifier subscriptions registered", {
-        hasHmrServer: !!this.hmrServer,
-      });
+      devServerLog.debug("ReloadNotifier invalidation subscription registered");
     }
 
     const moduleServerUrl = buildLocalhostUrl(this.options.port);
@@ -204,7 +186,6 @@ export class DevServer {
       this.adapter,
       () => this._isReady,
       () => this.isDebug(),
-      this.hmrServer,
       this.appConfig,
       defaultProjectSlug,
       this.options.defaultProjectId,
@@ -403,8 +384,6 @@ export class DevServer {
   }
 
   private async setupFileWatchers(): Promise<void> {
-    if (!this.hmrServer) return;
-
     const isProxyMode = this.appConfig?.fs?.veryfront?.proxyMode === true;
     if (isProxyMode) {
       devServerLog.debug("Skipping file watchers in proxy mode");
@@ -430,7 +409,6 @@ export class DevServer {
     this.fileWatchSetup = new FileWatchSetup(
       this.options.projectDir,
       this.adapter,
-      this.hmrServer,
       routeDiscovery,
       debounceMs,
       () => this.requestHandler?.invalidateRuntimeHandler(),
@@ -457,10 +435,6 @@ export class DevServer {
         hmrLog.debug("Final performance metrics", metrics);
       }
       this.fileWatchSetup.cleanup();
-    }
-
-    if (this.hmrServer) {
-      await this.hmrServer.stop();
     }
 
     if (this.server) {

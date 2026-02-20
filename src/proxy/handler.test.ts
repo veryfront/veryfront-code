@@ -130,6 +130,54 @@ describe("Proxy Handler", () => {
       await handler.close();
     });
 
+    it("strips port from custom domain host before token fetch", async () => {
+      const tokenRequests: string[] = [];
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          const body = req.text().then((t) => JSON.parse(t));
+          body.then((b) => {
+            if (b.custom_domain) tokenRequests.push(b.custom_domain);
+          });
+          return createTokenResponse();
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "fin-ops",
+            name: "Fin Ops",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["fin-ops.ai"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://fin-ops.ai:443/page", {
+          headers: { host: "fin-ops.ai:443" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.projectSlug, "fin-ops");
+        assertEquals(ctx.error, undefined);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("extracts project slug from veryfront subdomain without lookup", async () => {
       const handler = createProxyHandler({
         config: {
