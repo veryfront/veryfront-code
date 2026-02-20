@@ -101,7 +101,7 @@ CORS config
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `origin?` | `string \\| string[] \\| OriginValidator` | Allowed origins (string, regex, array, or function) |
+| `origin?` | `string \| string[] \| OriginValidator` | Allowed origins (string, regex, array, or function) |
 | `methods?` | `string[]` | Allowed HTTP methods |
 | `allowedHeaders?` | `string[]` | Allowed request headers |
 | `exposedHeaders?` | `string[]` | Headers exposed to client |

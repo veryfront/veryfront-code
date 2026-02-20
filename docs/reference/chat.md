@@ -86,7 +86,7 @@ function AgentUI() {
 | `onResponse?` | <code>(response: Response) =&gt; void</code> | Raw response callback |
 | `onFinish?` | <code>(message: UIMessage) =&gt; void</code> | Completion callback |
 | `onError?` | <code>(error: Error) =&gt; void</code> | Error callback |
-| `onToolCall?` | <code>(arg: OnToolCallArg) =&gt; void \\| Promise&lt;void&gt;</code> | Tool call handler for client-side execution |
+| `onToolCall?` | <code>(arg: OnToolCallArg) =&gt; void &#124; Promise&lt;void&gt;</code> | Tool call handler for client-side execution |
 
 ### `UseChatResult`
 
@@ -97,19 +97,19 @@ function AgentUI() {
 | `messages` | `UIMessage[]` | All messages in the conversation |
 | `input` | `string` | Current input value |
 | `isLoading` | `boolean` | Whether a request is in flight |
-| `error` | `Error \\| null` | Last error (if any) |
-| `model` | `string \\| undefined` | Current model override (undefined = use agent default) |
+| `error` | `Error \| null` | Last error (if any) |
+| `model` | `string \| undefined` | Current model override (undefined = use agent default) |
 | `inferenceMode` | `InferenceMode` | Where inference is currently happening |
-| `browserStatus` | `BrowserInferenceStatus \\| null` | Browser-side model loading/inference status (null when not using browser fallback) |
+| `browserStatus` | `BrowserInferenceStatus \| null` | Browser-side model loading/inference status (null when not using browser fallback) |
 | `setInput` | <code>(input: string) =&gt; void</code> | Set input value |
-| `setModel` | <code>(model: string \\| undefined) =&gt; void</code> | Change the model for subsequent requests |
+| `setModel` | <code>(model: string &#124; undefined) =&gt; void</code> | Change the model for subsequent requests |
 | `sendMessage` | <code>(message: &#123; text: string &#125;) =&gt; Promise&lt;void&gt;</code> | Send a message programmatically |
 | `reload` | <code>() =&gt; Promise&lt;void&gt;</code> | Re-send last user message |
 | `stop` | <code>() =&gt; void</code> | Abort current request |
 | `setMessages` | <code>(messages: UIMessage[]) =&gt; void</code> | Replace message history |
 | `addToolOutput` | <code>(output: ToolOutput) =&gt; void</code> | Submit client-side tool result |
 | `data?` | `unknown` | Extra data from server response |
-| `handleInputChange` | <code>(e: React.ChangeEvent&lt;HTMLInputElement \\| HTMLTextAreaElement&gt;) =&gt; void</code> | Bind to input onChange |
+| `handleInputChange` | <code>(e: React.ChangeEvent&lt;HTMLInputElement &#124; HTMLTextAreaElement&gt;) =&gt; void</code> | Bind to input onChange |
 | `handleSubmit` | <code>(e: React.FormEvent) =&gt; Promise&lt;void&gt;</code> | Submit current input |
 
 ### `UseAgentOptions`
@@ -136,7 +136,7 @@ function AgentUI() {
 | `invoke` | <code>(input: string) =&gt; Promise&lt;void&gt;</code> | Invoke the agent |
 | `stop` | <code>() =&gt; void</code> | Stop agent execution |
 | `isLoading` | `boolean` | Loading state |
-| `error` | `Error \\| null` | Error state |
+| `error` | `Error \| null` | Error state |
 
 ## Exports
 
