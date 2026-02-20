@@ -82,6 +82,15 @@ export class FileListIndex {
 
     const fileList = await this.getFileListCache();
     if (!fileList) {
+      // Cache entry expired or unavailable. If we already have a built index from a
+      // previous successful cache read, keep using it rather than forcing network fetches.
+      // The index stays valid until explicitly cleared via clear() (triggered by WebSocket pokes).
+      if (this.index) {
+        logger.debug("getOrBuildFileListIndex: cache expired, using existing in-memory index", {
+          indexSize: this.index.size,
+        });
+        return this.index;
+      }
       logger.debug(
         "[ReadOperations] getOrBuildFileListIndex: getFileListCache returned null/undefined",
       );
