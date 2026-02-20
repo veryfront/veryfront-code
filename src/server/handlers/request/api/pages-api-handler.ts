@@ -18,6 +18,7 @@ export interface HandlerCache<T> {
   set(key: string, value: T): void;
   delete(key: string): boolean;
   clear(): void;
+  entries(): IterableIterator<[string, T]>;
   values(): IterableIterator<T>;
 }
 
@@ -83,4 +84,28 @@ export async function resetApiHandler(projectDir?: string): Promise<void> {
   const handlers = Array.from(cache.values());
   cache.clear();
   await Promise.all(handlers.map(destroyHandler));
+}
+
+/**
+ * Reset cached API handlers for a specific project slug.
+ *
+ * In proxy/production mode the cache key is `"${projectDir}:${projectSlug}"`,
+ * so we can't reuse `resetApiHandler(projectDir)`. Instead we iterate all
+ * entries and destroy those whose key ends with `:${projectSlug}`.
+ */
+export async function resetApiHandlerForProject(
+  projectSlug: string,
+): Promise<void> {
+  const cache = getCache();
+  const suffix = `:${projectSlug}`;
+  const toDestroy: Promise<APIRouteHandler>[] = [];
+
+  for (const [key, promise] of cache.entries()) {
+    if (key.endsWith(suffix) || key === projectSlug) {
+      cache.delete(key);
+      toDestroy.push(promise);
+    }
+  }
+
+  await Promise.all(toDestroy.map(destroyHandler));
 }
