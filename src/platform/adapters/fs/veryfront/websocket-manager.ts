@@ -18,6 +18,8 @@ const logger = baseLogger.component("web-socket-manager");
 
 const INVALIDATION_DEBOUNCE_MS = 100;
 const WS_RECONNECT_DELAY_MS = 5000;
+const WS_RECONNECT_MAX_DELAY_MS = 120000;
+const WS_RECONNECT_MAX_FAILURES = 10;
 const WS_HEARTBEAT_INTERVAL_MS = 60000;
 const WS_HEARTBEAT_TIMEOUT_MS = 300000;
 
@@ -50,6 +52,7 @@ export class WebSocketManager {
   private pendingChangedPaths = new Set<string>();
 
   private wsConnectionId: string | null = null;
+  private wsConsecutiveFailures = 0;
   private pokeMetrics = {
     received: 0,
     invalidationsTriggered: 0,
@@ -70,6 +73,16 @@ export class WebSocketManager {
   connect(projectId: string): void {
     this.cleanupTimers();
 
+    if (this.wsConsecutiveFailures >= WS_RECONNECT_MAX_FAILURES) {
+      logger.warn("WebSocket reconnect failure cap reached, resetting failure counter", {
+        consecutiveFailures: this.wsConsecutiveFailures,
+        maxFailures: WS_RECONNECT_MAX_FAILURES,
+        cappedDelayMs: WS_RECONNECT_MAX_DELAY_MS,
+        projectId,
+      });
+      this.wsConsecutiveFailures = 0;
+    }
+
     const wsUrl = this.deps.apiBaseUrl
       .replace(/^http:/, "ws:")
       .replace(/^https:/, "wss:")
@@ -78,6 +91,7 @@ export class WebSocketManager {
 
     logger.debug("Connecting to WebSocket", {
       url: url.replace(this.deps.apiToken, "***"),
+      consecutiveFailures: this.wsConsecutiveFailures,
     });
 
     try {
@@ -85,6 +99,7 @@ export class WebSocketManager {
       this.wsConnectionId = crypto.randomUUID().slice(0, 8);
 
       this.ws.onopen = () => {
+        this.wsConsecutiveFailures = 0;
         logger.debug("WebSocket connected to events channel", {
           projectId,
           connectionId: this.wsConnectionId,
@@ -102,23 +117,37 @@ export class WebSocketManager {
       };
 
       this.ws.onclose = () => {
+        this.wsConsecutiveFailures++;
+        const delay = this.getReconnectDelay();
         logger.debug("WebSocket closed, reconnecting", {
-          delayMs: WS_RECONNECT_DELAY_MS,
+          delayMs: delay,
           connectionId: this.wsConnectionId,
           totalPokesReceived: this.pokeMetrics.received,
+          consecutiveFailures: this.wsConsecutiveFailures,
         });
         this.wsConnectionId = null;
         this.cleanupTimers();
-        this.wsReconnectTimer = setTimeout(() => this.connect(projectId), WS_RECONNECT_DELAY_MS);
+        this.wsReconnectTimer = setTimeout(() => this.connect(projectId), delay);
       };
 
       this.ws.onerror = (error) => {
         logger.warn("WebSocket error", { error });
       };
     } catch (error) {
-      logger.warn("Failed to connect WebSocket", { error });
-      this.wsReconnectTimer = setTimeout(() => this.connect(projectId), WS_RECONNECT_DELAY_MS);
+      this.wsConsecutiveFailures++;
+      const delay = this.getReconnectDelay();
+      logger.warn("Failed to connect WebSocket", {
+        error,
+        consecutiveFailures: this.wsConsecutiveFailures,
+      });
+      this.wsReconnectTimer = setTimeout(() => this.connect(projectId), delay);
     }
+  }
+
+  private getReconnectDelay(): number {
+    // Exponential backoff: 5s, 10s, 20s, 40s, 80s, capped at 120s
+    const delay = WS_RECONNECT_DELAY_MS * Math.pow(2, this.wsConsecutiveFailures - 1);
+    return Math.min(delay, WS_RECONNECT_MAX_DELAY_MS);
   }
 
   dispose(): void {
@@ -690,12 +719,18 @@ export class WebSocketManager {
         timeSinceLastPong,
       });
 
-      try {
-        this.ws?.close();
-      } catch (error) {
-        logger.error("WebSocket close failed during heartbeat timeout", {
-          error: error instanceof Error ? error.message : String(error),
-        });
+      // Detach onclose before closing to prevent double-reconnect:
+      // ws.close() triggers onclose asynchronously, which would increment
+      // the failure counter and schedule a separate reconnect timer.
+      if (this.ws) {
+        this.ws.onclose = null;
+        try {
+          this.ws.close();
+        } catch (error) {
+          logger.error("WebSocket close failed during heartbeat timeout", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
 
       this.cleanupTimers();
