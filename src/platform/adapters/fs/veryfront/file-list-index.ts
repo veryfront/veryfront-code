@@ -40,6 +40,7 @@ export class FileListIndex {
     const size = this.index.size;
     this.index = null;
     this.indexKey = null;
+    this.indexBuiltAt = 0;
     logger.debug("Cleared file list index", { entriesCleared: size });
   }
 
