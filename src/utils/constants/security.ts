@@ -7,7 +7,7 @@ export const FORBIDDEN_PATH_PATTERNS = [/\0/];
  * routes are not accidentally blocked.
  */
 export const SCANNER_PATH_PATTERN =
-  /^\/(?:wp-admin(?:\/|$)|wp-login\.php$|wp-includes(?:\/|$)|cgi-bin(?:\/|$)|wp-config\.php$|xmlrpc\.php$|\.git(?:\/|$)|\.env(?:\..*)?$)/i;
+  /^\/(?:wp-(?:admin|login\.php|includes|content|config\.php)(?:\/|$)|cgi-bin(?:\/|$)|xmlrpc\.php$|\.git(?:\/|$)|\.env(?:\..*)?$)/i;
 export const DIRECTORY_TRAVERSAL_PATTERN = /\.\.[\/\\]/;
 export const ABSOLUTE_PATH_PATTERN = /^[\/\\]/;
 export const MAX_PATH_LENGTH = 4096;

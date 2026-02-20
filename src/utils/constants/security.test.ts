@@ -9,6 +9,7 @@ describe("constants/security", () => {
       assertEquals(SCANNER_PATH_PATTERN.test("/wp-admin/install.php"), true);
       assertEquals(SCANNER_PATH_PATTERN.test("/wp-login.php"), true);
       assertEquals(SCANNER_PATH_PATTERN.test("/wp-includes/js/wp-emoji.js"), true);
+      assertEquals(SCANNER_PATH_PATTERN.test("/wp-content/plugins/exploit"), true);
       assertEquals(SCANNER_PATH_PATTERN.test("/wp-config.php"), true);
       assertEquals(SCANNER_PATH_PATTERN.test("/xmlrpc.php"), true);
       assertEquals(SCANNER_PATH_PATTERN.test("/.git/config"), true);
