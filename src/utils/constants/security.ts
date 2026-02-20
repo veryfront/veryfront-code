@@ -3,11 +3,11 @@ export const FORBIDDEN_PATH_PATTERNS = [/\0/];
 
 /**
  * Fast-match pattern for common vulnerability scanner probe paths.
- * These paths are never valid Veryfront routes and can be rejected
- * before entering the rendering pipeline.
+ * Keep this scoped to root-level probe paths so valid nested application
+ * routes are not accidentally blocked.
  */
 export const SCANNER_PATH_PATTERN =
-  /\.(?:php|asp|aspx|jsp|cgi|env)$|\/(?:wp-(?:admin|login|includes|content)|\.git|cgi-bin)\//i;
+  /^\/(?:wp-admin(?:\/|$)|wp-login\.php$|wp-includes(?:\/|$)|cgi-bin(?:\/|$)|wp-config\.php$|xmlrpc\.php$|\.git(?:\/|$)|\.env(?:\..*)?$)/i;
 export const DIRECTORY_TRAVERSAL_PATTERN = /\.\.[\/\\]/;
 export const ABSOLUTE_PATH_PATTERN = /^[\/\\]/;
 export const MAX_PATH_LENGTH = 4096;

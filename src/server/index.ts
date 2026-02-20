@@ -33,6 +33,7 @@ import {
   HMR_CLOSE_RATE_LIMIT,
   HMR_MAX_MESSAGE_SIZE_BYTES,
   HMR_MAX_MESSAGES_PER_MINUTE,
+  serverLogger,
 } from "#veryfront/utils";
 
 export { DevServer, startDevServer, startProductionServer };
@@ -46,6 +47,8 @@ export type {
 };
 export { ReloadNotifier } from "./reload-notifier.ts";
 export type { BuildOptions, BuildStats } from "./build-types.ts";
+
+const serverApiLog = serverLogger.component("server-api");
 
 /** Shared options for both development and production server modes. */
 interface BaseServerOptions {
@@ -68,6 +71,7 @@ interface BaseServerOptions {
 
 export interface StartDevModeOptions extends BaseServerOptions {
   mode?: "development";
+  /** @deprecated Ignored: HMR now uses /_ws on the main server port. */
   hmrPort?: number;
   moduleServerPort?: number;
   enableHMR?: boolean;
@@ -387,11 +391,17 @@ export async function startServer(
   }
 
   // Development mode (default)
+  if ("hmrPort" in options && options.hmrPort !== undefined) {
+    serverApiLog.warn(
+      "`hmrPort` is deprecated and ignored. HMR now uses /_ws on the main server port.",
+      { hmrPort: options.hmrPort, serverPort: port },
+    );
+  }
+
   const devServer = await startDevServer({
     port,
     projectDir,
     bindAddress: options.bindAddress,
-    hmrPort: ("hmrPort" in options ? options.hmrPort : undefined) ?? port + 1,
     moduleServerPort: "moduleServerPort" in options ? options.moduleServerPort : undefined,
     enableHMR: ("enableHMR" in options ? options.enableHMR : undefined) ?? true,
     enableFastRefresh: ("enableFastRefresh" in options ? options.enableFastRefresh : undefined) ??
