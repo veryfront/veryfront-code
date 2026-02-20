@@ -69,9 +69,28 @@ function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileS
   };
 }
 
+/**
+ * Check if an object is a cross-context Response (e.g. Deno native Response
+ * when this code runs in the npm package context with a different constructor).
+ */
+function isCrossContextResponse(
+  value: unknown,
+): value is { status: number; statusText: string; headers: Headers; body: ReadableStream | null } {
+  if (value == null || typeof value !== "object") return false;
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.status === "number" &&
+    typeof r.headers === "object" &&
+    r.headers !== null &&
+    typeof (r.headers as Headers).get === "function" &&
+    typeof r.text === "function" &&
+    typeof r.arrayBuffer === "function"
+  );
+}
+
 function validateResponse(response: unknown): asserts response is Response {
   if (response instanceof Response) return;
-
+  if (isCrossContextResponse(response)) return;
   throw toError(
     createError({
       type: "api",

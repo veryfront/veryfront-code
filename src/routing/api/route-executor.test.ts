@@ -8,7 +8,24 @@ function makeAdapter(mode = "development"): RuntimeAdapter {
   const envMap = new Map<string, string>([["MODE", mode]]);
 
   return {
-    env: { get: (key: string) => envMap.get(key) },
+    id: "node",
+    name: "test-stub",
+    capabilities: {
+      typescript: true,
+      jsx: true,
+      http2: false,
+      websocket: false,
+      workers: false,
+      fileWatching: false,
+      shell: false,
+      kvStore: false,
+      writableFs: false,
+    },
+    env: {
+      get: (key: string) => envMap.get(key),
+      set: (key: string, value: string) => envMap.set(key, value),
+      toObject: () => Object.fromEntries(envMap),
+    },
     fs: {
       readFile: () => Promise.resolve(""),
       writeFile: () => Promise.resolve(),
@@ -29,6 +46,14 @@ function makeAdapter(mode = "development"): RuntimeAdapter {
         close: () => {},
         [Symbol.asyncIterator]: async function* () {},
       }),
+    },
+    server: {
+      upgradeWebSocket: () => {
+        throw new Error("not implemented");
+      },
+    },
+    serve: () => {
+      throw new Error("not implemented");
     },
   };
 }
@@ -136,6 +161,76 @@ describe("routing/api/route-executor", () => {
     it("should return error response when handler returns non-Response", async () => {
       const handler = {
         GET: () => "not a response" as unknown as Response,
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assertEquals(response.status, 500);
+    });
+
+    it("should accept Response.json() return value", async () => {
+      const handler = {
+        GET: () => Response.json({ ok: true }),
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), { ok: true });
+    });
+
+    it("should accept cross-context Response-like objects (duck typing)", async () => {
+      const fakeResponse = {
+        status: 200,
+        statusText: "OK",
+        headers: new Headers({ "content-type": "application/json" }),
+        body: null,
+        ok: true,
+        redirected: false,
+        type: "basic" as ResponseType,
+        url: "",
+        text: () => Promise.resolve('{"cross":"context"}'),
+        json: () => Promise.resolve({ cross: "context" }),
+        clone: () => fakeResponse,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+        blob: () => Promise.resolve(new Blob()),
+        formData: () => Promise.resolve(new FormData()),
+        bodyUsed: false,
+      };
+
+      const handler = {
+        GET: () => fakeResponse as unknown as Response,
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assertEquals(response.status, 200);
+    });
+
+    it("should reject objects missing Response interface", async () => {
+      const handler = {
+        GET: () => ({ data: "not a response" }) as unknown as Response,
       };
 
       const request = new Request("http://localhost/api/test", { method: "GET" });
