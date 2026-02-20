@@ -74,11 +74,16 @@ export class WebSocketManager {
     this.cleanupTimers();
 
     if (this.wsConsecutiveFailures >= WS_RECONNECT_MAX_FAILURES) {
-      logger.warn("WebSocket reconnect limit reached, giving up", {
+      logger.warn("WebSocket reconnect limit reached, switching to slow retry", {
         consecutiveFailures: this.wsConsecutiveFailures,
         maxFailures: WS_RECONNECT_MAX_FAILURES,
+        retryDelayMs: WS_RECONNECT_MAX_DELAY_MS,
         projectId,
       });
+      this.wsReconnectTimer = setTimeout(() => {
+        this.wsConsecutiveFailures = 0;
+        this.connect(projectId);
+      }, WS_RECONNECT_MAX_DELAY_MS);
       return;
     }
 
