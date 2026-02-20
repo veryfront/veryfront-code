@@ -72,6 +72,20 @@ function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileS
 function validateResponse(response: unknown): asserts response is Response {
   if (response instanceof Response) return;
 
+  // Duck-type check for cross-context Response objects. When user route files
+  // are loaded via direct Deno import (loadTSModuleDirect), they return native
+  // Deno Response objects, while this code runs in the npm package context
+  // which may have a different Response constructor.
+  if (
+    response != null &&
+    typeof response === "object" &&
+    "status" in response &&
+    "headers" in response &&
+    typeof (response as Response).text === "function"
+  ) {
+    return;
+  }
+
   throw toError(
     createError({
       type: "api",
