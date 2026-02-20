@@ -41,6 +41,12 @@ export function generateHMRClientTemplate(
           if (reactRefreshEnabled) setupReactRefresh();
           break;
         }
+        case 'ping':
+          console.log('[HMR] Ping received, sending pong');
+          try { ws.send(JSON.stringify({ type: 'pong' })); } catch (e) { /* ignore */ }
+          break;
+        case 'pong':
+          break;
         case 'update':
           handleUpdate(message);
           break;

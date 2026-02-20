@@ -1,6 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { clearBatchCache, getBatchCacheStats, handleModuleBatch } from "./module-batch-handler.ts";
+import {
+  type BatchHandlerOptions,
+  clearBatchCache,
+  getBatchCacheStats,
+  handleModuleBatch,
+} from "./module-batch-handler.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 
 describe(
@@ -40,8 +45,8 @@ describe(
       }
 
       function createOptions(
-        overrides: Record<string, unknown> = {},
-      ): Record<string, unknown> {
+        overrides: Partial<BatchHandlerOptions> = {},
+      ): BatchHandlerOptions {
         return {
           projectDir: "/test-project",
           adapter: createMockAdapter(),

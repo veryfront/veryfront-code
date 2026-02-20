@@ -116,6 +116,12 @@ ws.onmessage = (event) => {
       case 'connected':
         console.log('[HMR] Server acknowledged connection');
         break;
+      case 'ping':
+        console.log('[HMR] Ping received, sending pong');
+        try { ws.send(JSON.stringify({ type: 'pong' })); } catch (e) { /* ignore */ }
+        break;
+      case 'pong':
+        break;
       case 'reload':
         console.log('[HMR] Reload requested');
         notifyStudioAndReload();
@@ -157,7 +163,7 @@ window.addEventListener('beforeunload', () => {
 // Debounce HMR updates to prevent flashing from rapid-fire cache population
 let pendingUpdates = [];
 let updateDebounceTimer = null;
-const UPDATE_DEBOUNCE_MS = 100;
+const UPDATE_DEBOUNCE_MS = 300;
 
 async function handleUpdate(update) {
   if (!update.path) {
@@ -263,6 +269,11 @@ export function getHMRRuntime(): string {
         break;
       case 'connected':
         console.log('[HMR Runtime] Server acknowledged connection');
+        break;
+      case 'ping':
+        try { ws.send(JSON.stringify({ type: 'pong' })); } catch (e) { /* ignore */ }
+        break;
+      case 'pong':
         break;
       default:
         console.log('[HMR Runtime] Message:', data.type);
@@ -378,6 +389,11 @@ export function getPreviewHMRScript(): string {
           case 'pong':
             lastPongAt = Date.now();
             break;
+          case 'ping':
+            console.log('[Preview HMR] Ping received from server, sending pong');
+            try { ws.send(JSON.stringify({ type: 'pong' })); } catch (e) { /* ignore */ }
+            lastPongAt = Date.now();
+            break;
           case 'update':
             console.log('[Preview HMR] Handling update for path:', data.path);
             handleUpdate(data);
@@ -422,7 +438,7 @@ export function getPreviewHMRScript(): string {
   // Debounce HMR updates to prevent flashing from rapid-fire cache population
   let pendingUpdates = [];
   let updateDebounceTimer = null;
-  const UPDATE_DEBOUNCE_MS = 100;
+  const UPDATE_DEBOUNCE_MS = 300;
 
   async function handleUpdate(update) {
     console.log('[Preview HMR] handleUpdate called with:', JSON.stringify(update));

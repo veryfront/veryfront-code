@@ -68,6 +68,13 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
     addHint(pathToModuleUrl(relativePath, studioEmbed));
   }
 
+  // Skip manifest-based preloads in preview/studio-embed mode:
+  // HMR reloads modules with ?t=timestamp, so preloaded versions won't match
+  // and the browser will warn about unused preloads.
+  if (studioEmbed || options.environment === "preview") {
+    return hints.join("\n  ");
+  }
+
   const projectSlug = options.projectId;
   const route = options.pagePath
     ? getRelativePagePath(options.pagePath, projectDir)

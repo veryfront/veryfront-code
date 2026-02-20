@@ -47,6 +47,8 @@ export class FileWatchSetup {
   private optimizedWatcher?: OptimizedFileWatcher;
   private batchCount = 0;
   private aiDirs: Set<string>;
+  /** Content hashes to skip re-renders when file content is unchanged */
+  private contentHashes = new Map<string, number>();
 
   constructor(
     private projectDir: string,
@@ -182,16 +184,52 @@ export class FileWatchSetup {
     return this.aiDirs.has(firstSegment);
   }
 
+  /** FNV-1a hash for fast content comparison */
+  private hashContent(content: string): number {
+    let h = 2166136261;
+    for (let i = 0; i < content.length; i++) {
+      h ^= content.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h;
+  }
+
+  /** Filter out files whose content hasn't actually changed */
+  private async filterChangedFiles(paths: string[]): Promise<string[]> {
+    const changed: string[] = [];
+    for (const path of paths) {
+      try {
+        const content = await this.adapter.fs.readFile(path);
+        const hash = this.hashContent(content);
+        if (this.contentHashes.get(path) === hash) continue;
+        this.contentHashes.set(path, hash);
+        changed.push(path);
+      } catch {
+        // File deleted or unreadable — treat as changed
+        this.contentHashes.delete(path);
+        changed.push(path);
+      }
+    }
+    return changed;
+  }
+
   private async handleBatchedFileChanges(changes: string[]): Promise<void> {
     const startTime = performance.now();
 
+    // Skip files whose content hasn't actually changed (e.g., save without edits)
+    const actualChanges = await this.filterChangedFiles(changes);
+    if (actualChanges.length === 0) {
+      hmrLog.debug("All file changes had identical content, skipping HMR");
+      return;
+    }
+
     // Check for AI file changes and trigger re-discovery
-    const hasAIChanges = changes.some((p) => this.isAIPath(p));
+    const hasAIChanges = actualChanges.some((p) => this.isAIPath(p));
     if (hasAIChanges && this.devServer) {
       await this.devServer.rediscoverAI();
     }
 
-    await this.refreshAndReload(changes, "");
+    await this.refreshAndReload(actualChanges, "");
 
     const duration = (performance.now() - startTime).toFixed(0);
     hmrLog.debug(`Batch processed ${changes.length} file changes in ${duration}ms`, {
@@ -205,7 +243,9 @@ export class FileWatchSetup {
   }
 
   private async handleImmediateFileChange(paths: string[]): Promise<void> {
-    await this.refreshAndReload(paths, "[HMR] file change");
+    const actualChanges = await this.filterChangedFiles(paths);
+    if (actualChanges.length === 0) return;
+    await this.refreshAndReload(actualChanges, "[HMR] file change");
   }
 
   getMetrics() {
