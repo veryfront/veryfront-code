@@ -27,12 +27,14 @@ import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { bootstrapProd } from "./bootstrap.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
 import { addClient, getClient, removeClient } from "./handlers/preview/hmr-client-manager.ts";
+import { broadcastUpdate } from "./handlers/preview/hmr-message-router.ts";
 import { RateLimiter } from "#veryfront/modules/server/index.ts";
 import {
   HMR_CLOSE_MESSAGE_TOO_LARGE,
   HMR_CLOSE_RATE_LIMIT,
   HMR_MAX_MESSAGE_SIZE_BYTES,
   HMR_MAX_MESSAGES_PER_MINUTE,
+  serverLogger,
 } from "#veryfront/utils";
 
 export { DevServer, startDevServer, startProductionServer };
@@ -44,8 +46,11 @@ export type {
   ServerHandle,
   StartProductionServerOptions,
 };
-export { ReloadNotifier } from "./reload-notifier.ts";
+import { ReloadNotifier } from "./reload-notifier.ts";
+export { ReloadNotifier };
 export type { BuildOptions, BuildStats } from "./build-types.ts";
+
+const serverApiLog = serverLogger.component("server-api");
 
 /** Shared options for both development and production server modes. */
 interface BaseServerOptions {
@@ -68,6 +73,7 @@ interface BaseServerOptions {
 
 export interface StartDevModeOptions extends BaseServerOptions {
   mode?: "development";
+  /** @deprecated Ignored: HMR now uses /_ws on the main server port. */
   hmrPort?: number;
   moduleServerPort?: number;
   enableHMR?: boolean;
@@ -189,6 +195,13 @@ export async function createHandler(
     handlerOnly: true,
   });
   await devServer.start();
+
+  // Subscribe to ReloadNotifier so file changes broadcast to connectHMR clients.
+  // HMRHandler.initialize() only runs on /_ws requests through the handler pipeline,
+  // but connectHMR bypasses the pipeline (Bun/Elysia manage upgrades natively).
+  ReloadNotifier.subscribe((changedPaths) => {
+    broadcastUpdate(changedPaths);
+  });
 
   const internalFetch = devServer.handler;
   const fetch = async (req: Request) => toNativeResponse(await internalFetch(req));
@@ -387,11 +400,17 @@ export async function startServer(
   }
 
   // Development mode (default)
+  if ("hmrPort" in options && options.hmrPort !== undefined) {
+    serverApiLog.warn(
+      "`hmrPort` is deprecated and ignored. HMR now uses /_ws on the main server port.",
+      { hmrPort: options.hmrPort, serverPort: port },
+    );
+  }
+
   const devServer = await startDevServer({
     port,
     projectDir,
     bindAddress: options.bindAddress,
-    hmrPort: ("hmrPort" in options ? options.hmrPort : undefined) ?? port + 1,
     moduleServerPort: "moduleServerPort" in options ? options.moduleServerPort : undefined,
     enableHMR: ("enableHMR" in options ? options.enableHMR : undefined) ?? true,
     enableFastRefresh: ("enableFastRefresh" in options ? options.enableFastRefresh : undefined) ??

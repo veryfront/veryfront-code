@@ -117,6 +117,13 @@ export class DevServer {
       fastRefresh: this.options.enableFastRefresh,
     });
 
+    if (this.options.hmrPort !== undefined) {
+      devServerLog.warn(
+        "`hmrPort` is deprecated and ignored. HMR now uses /_ws on the main dev server port.",
+        { hmrPort: this.options.hmrPort, serverPort: this.options.port },
+      );
+    }
+
     // Set VERYFRONT_DEV_PORT for ESM module loader HTTP fallback
     // This ensures the correct port is used when fetching modules via localhost
     setEnv("VERYFRONT_DEV_PORT", String(this.options.port));

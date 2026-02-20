@@ -171,6 +171,8 @@ describe("Proxy Handler", () => {
 
         assertEquals(ctx.projectSlug, "fin-ops");
         assertEquals(ctx.error, undefined);
+        assertEquals(tokenRequests.length > 0, true);
+        assertEquals(tokenRequests[0], "fin-ops.ai");
 
         await handler.close();
       } finally {
