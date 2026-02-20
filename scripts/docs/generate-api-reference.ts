@@ -926,7 +926,7 @@ function renderType(t: TsType | undefined): string {
           return `(${rendered})`;
         }
         return rendered;
-      }).join(" \\| ");
+      }).join(" | ");
     }
 
     case "intersection": {
@@ -1003,7 +1003,9 @@ function renderType(t: TsType | undefined): string {
   }
 }
 
-/** Wrap a rendered type string for safe MDX output. Uses <code> with HTML entities when the type contains characters that MDX would parse as JSX. */
+/** Wrap a rendered type string for safe MDX output in a markdown table cell.
+ *  Uses <code> with HTML entities when the type contains characters that MDX
+ *  would parse as JSX. Handles pipe escaping for both formats. */
 function mdxType(raw: string): string {
   if (/[<>{}]/.test(raw)) {
     const escaped = raw
@@ -1011,10 +1013,11 @@ function mdxType(raw: string): string {
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/{/g, "&#123;")
-      .replace(/}/g, "&#125;");
+      .replace(/}/g, "&#125;")
+      .replace(/\|/g, "&#124;");
     return `<code>${escaped}</code>`;
   }
-  return `\`${raw}\``;
+  return `\`${raw.replace(/\|/g, "\\|")}\``;
 }
 
 // ---------------------------------------------------------------------------
@@ -1369,7 +1372,7 @@ function renderPropertyTable(
   lines.push("|----------|------|-------------|");
   for (const prop of properties) {
     const name = prop.optional ? `${prop.name}?` : prop.name;
-    const rawType = renderType(prop.tsType).replace(/\|/g, "\\|");
+    const rawType = renderType(prop.tsType);
     const desc = getPropertyDescription(typeName, prop.name, prop);
     lines.push(`| \`${name}\` | ${mdxType(rawType)} | ${desc} |`);
   }

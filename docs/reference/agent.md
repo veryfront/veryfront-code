@@ -102,8 +102,8 @@ Create an agent
 |----------|------|-------------|
 | `id?` | `string` | Unique identifier (auto-generated if omitted) |
 | `model` | `ModelString` | Provider and model (e.g. `"openai/gpt-4o"`) |
-| `system` | <code>string \\| (() =&gt; string) \\| (() =&gt; Promise&lt;string&gt;)</code> | System prompt — string, function, or async function |
-| `tools?` | <code>true \\| Record&lt;string, Tool \\| boolean&gt;</code> | Tools available to the agent |
+| `system` | <code>string &#124; (() =&gt; string) &#124; (() =&gt; Promise&lt;string&gt;)</code> | System prompt — string, function, or async function |
+| `tools?` | <code>true &#124; Record&lt;string, Tool &#124; boolean&gt;</code> | Tools available to the agent |
 | `maxSteps?` | `number` | Max tool-call iterations per request |
 | `streaming?` | `boolean` | Enable streaming responses |
 | `memory?` | `MemoryConfig` | Conversation memory settings |
@@ -120,7 +120,7 @@ Run the agent and return a complete response. Accepts a string or message array 
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `input` | `string \\| Message[]` | Prompt string or message history |
+| `input` | `string \| Message[]` | Prompt string or message history |
 | `context?` | <code>Record&lt;string, unknown&gt;</code> | Additional context passed to the agent |
 | `model?` | `ModelString` | Override the agent's default model for this request. Must be in `allowedModels` if configured. |
 

@@ -74,8 +74,8 @@ Create typed tool (Zod-validated)
 | `description` | `string` | Tool description for the AI model |
 | `inputSchema` | <code>z.ZodSchema&lt;TInput&gt;</code> | Input schema (Zod schema) |
 | `allowUnknownSchema?` | `boolean` | Allow unknown/non-Zod schemas to fall back to a permissive JSON schema. |
-| `execute` | <code>(input: TInput, context?: ToolExecutionContext) =&gt; Promise&lt;TOutput&gt; \\| TOutput</code> | Tool execution function |
-| `mcp?` | <code>&#123; enabled?: boolean; requiresAuth?: boolean; cachePolicy?: "no-cache" \\| "cache" \\| "cache-first" &#125;</code> | MCP configuration |
+| `execute` | <code>(input: TInput, context?: ToolExecutionContext) =&gt; Promise&lt;TOutput&gt; &#124; TOutput</code> | Tool execution function |
+| `mcp?` | <code>&#123; enabled?: boolean; requiresAuth?: boolean; cachePolicy?: "no-cache" &#124; "cache" &#124; "cache-first" &#125;</code> | MCP configuration |
 
 **Returns:** <code>Tool&lt;TInput, TOutput&gt;</code>
 

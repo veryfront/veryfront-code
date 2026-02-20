@@ -73,11 +73,11 @@ Define workflow with step DAG
 | `inputSchema?` | <code>z.ZodSchema&lt;TInput&gt;</code> | Zod schema for workflow input validation |
 | `outputSchema?` | <code>z.ZodSchema&lt;TOutput&gt;</code> | Zod schema for workflow output validation |
 | `retry?` | `RetryConfig` | Retry configuration for failed steps |
-| `timeout?` | `string \\| number` | Max execution time (ms) |
+| `timeout?` | `string \| number` | Max execution time (ms) |
 | `introspect?` | `boolean` | Enable runtime introspection for debugging |
-| `steps` | <code>WorkflowNode[] \\| ((context: StepBuilderContext&lt;TInput&gt;) =&gt; WorkflowNode[])</code> | Workflow step definitions |
-| `onError?` | <code>(error: Error, context: WorkflowContext) =&gt; void \\| Promise&lt;void&gt;</code> | Error handler called when a step fails |
-| `onComplete?` | <code>(result: TOutput, context: WorkflowContext) =&gt; void \\| Promise&lt;void&gt;</code> | Callback fired after workflow completes |
+| `steps` | <code>WorkflowNode[] &#124; ((context: StepBuilderContext&lt;TInput&gt;) =&gt; WorkflowNode[])</code> | Workflow step definitions |
+| `onError?` | <code>(error: Error, context: WorkflowContext) =&gt; void &#124; Promise&lt;void&gt;</code> | Error handler called when a step fails |
+| `onComplete?` | <code>(result: TOutput, context: WorkflowContext) =&gt; void &#124; Promise&lt;void&gt;</code> | Callback fired after workflow completes |
 
 **Returns:** <code>Workflow&lt;TInput, TOutput&gt;</code>
 
@@ -89,13 +89,13 @@ Define workflow with step DAG
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `agent?` | `string \\| Agent` | Agent to run (by ID or instance) |
-| `tool?` | `string \\| Tool` | Tool to execute (by ID or instance) |
-| `input?` | <code>string \\| Record&lt;string, unknown&gt; \\| ((context: WorkflowContext) =&gt; unknown)</code> | Step input — static value or function of workflow context |
+| `agent?` | `string \| Agent` | Agent to run (by ID or instance) |
+| `tool?` | `string \| Tool` | Tool to execute (by ID or instance) |
+| `input?` | <code>string &#124; Record&lt;string, unknown&gt; &#124; ((context: WorkflowContext) =&gt; unknown)</code> | Step input — static value or function of workflow context |
 | `checkpoint?` | `boolean` | Persist state after this step |
 | `retry?` | `RetryConfig` | Retry configuration for this step |
-| `timeout?` | `string \\| number` | Step timeout (ms) |
-| `skip?` | <code>(context: WorkflowContext) =&gt; boolean \\| Promise&lt;boolean&gt;</code> | Predicate — skip this step if returns true |
+| `timeout?` | `string \| number` | Step timeout (ms) |
+| `skip?` | <code>(context: WorkflowContext) =&gt; boolean &#124; Promise&lt;boolean&gt;</code> | Predicate — skip this step if returns true |
 
 ### `BranchOptions`
 
@@ -103,13 +103,13 @@ Define workflow with step DAG
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `condition` | <code>(context: WorkflowContext) =&gt; boolean \\| Promise&lt;boolean&gt;</code> | Branch predicate function |
+| `condition` | <code>(context: WorkflowContext) =&gt; boolean &#124; Promise&lt;boolean&gt;</code> | Branch predicate function |
 | `then` | `WorkflowNode[]` | Steps when condition is true |
 | `else?` | `WorkflowNode[]` | Steps when condition is false |
 | `checkpoint?` | `boolean` | Persist state after this node |
 | `retry?` | `RetryConfig` | Retry configuration |
-| `timeout?` | `string \\| number` | Node timeout (ms or duration string) |
-| `skip?` | <code>(context: WorkflowContext) =&gt; boolean \\| Promise&lt;boolean&gt;</code> | Predicate — skip if returns true |
+| `timeout?` | `string \| number` | Node timeout (ms or duration string) |
+| `skip?` | <code>(context: WorkflowContext) =&gt; boolean &#124; Promise&lt;boolean&gt;</code> | Predicate — skip if returns true |
 
 ### `ParallelOptions`
 
@@ -117,11 +117,11 @@ Define workflow with step DAG
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `strategy?` | `"all" \\| "race" \\| "allSettled"` | Completion strategy (`"all"`, `"race"`, `"allSettled"`) |
+| `strategy?` | `"all" \| "race" \| "allSettled"` | Completion strategy (`"all"`, `"race"`, `"allSettled"`) |
 | `checkpoint?` | `boolean` | Persist state after this node |
 | `retry?` | `RetryConfig` | Retry configuration |
-| `timeout?` | `string \\| number` | Node timeout (ms or duration string) |
-| `skip?` | <code>(context: WorkflowContext) =&gt; boolean \\| Promise&lt;boolean&gt;</code> | Predicate — skip if returns true |
+| `timeout?` | `string \| number` | Node timeout (ms or duration string) |
+| `skip?` | <code>(context: WorkflowContext) =&gt; boolean &#124; Promise&lt;boolean&gt;</code> | Predicate — skip if returns true |
 
 ## Exports
 
