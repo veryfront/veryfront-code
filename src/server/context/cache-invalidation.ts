@@ -12,6 +12,7 @@ import { cacheRegistry } from "#veryfront/cache";
 import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
 import { clearRouterDetectionCache } from "#veryfront/rendering/router-detection.ts";
 import { clearSnippetCacheForProject } from "#veryfront/rendering/snippet-renderer.ts";
+import { resetApiHandlerForProject } from "#veryfront/server/handlers/request/api/pages-api-handler.ts";
 
 const logger = serverLogger.component("cache-invalidation");
 
@@ -101,6 +102,9 @@ export async function invalidateProjectCaches(
 
   logger.debug("Clearing snippet cache (per-project)", { projectSlug });
   clearSnippetCacheForProject(projectSlug);
+
+  logger.debug("Clearing API route handler cache (per-project)", { projectSlug });
+  await resetApiHandlerForProject(projectSlug);
 
   if (projectId) {
     if (environment) {
