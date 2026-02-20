@@ -194,11 +194,17 @@ describe("routing/api/route-executor", () => {
     });
 
     it("should accept cross-context Response-like objects (duck typing)", async () => {
+      const bodyStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"cross":"context"}'));
+          controller.close();
+        },
+      });
       const fakeResponse = {
         status: 200,
         statusText: "OK",
         headers: new Headers({ "content-type": "application/json" }),
-        body: null,
+        body: bodyStream,
         ok: true,
         redirected: false,
         type: "basic" as ResponseType,
@@ -227,6 +233,97 @@ describe("routing/api/route-executor", () => {
 
       assert(response instanceof Response, "should be normalized to a real Response instance");
       assertEquals(response.status, 200);
+      assertEquals(response.headers.get("content-type"), "application/json");
+      assertEquals(await response.text(), '{"cross":"context"}');
+    });
+
+    it("should normalize cross-context Response for HEAD requests", async () => {
+      const fakeResponse = {
+        status: 201,
+        statusText: "Created",
+        headers: new Headers({ "x-custom": "value" }),
+        body: new ReadableStream(),
+        ok: true,
+        redirected: false,
+        type: "basic" as ResponseType,
+        url: "",
+        text: () => Promise.resolve(""),
+        json: () => Promise.resolve({}),
+        clone: () => fakeResponse,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+        blob: () => Promise.resolve(new Blob()),
+        formData: () => Promise.resolve(new FormData()),
+        bodyUsed: false,
+      };
+
+      const handler = {
+        GET: () => fakeResponse as unknown as Response,
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "HEAD" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assert(response instanceof Response, "should be a real Response instance");
+      assertEquals(response.status, 201);
+      assertEquals(response.headers.get("x-custom"), "value");
+      assertEquals(await response.text(), "");
+    });
+
+    it("should return error response when handler returns null", async () => {
+      const handler = {
+        GET: () => null as unknown as Response,
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assertEquals(response.status, 500);
+    });
+
+    it("should return error response when handler returns undefined", async () => {
+      const handler = {
+        GET: () => undefined as unknown as Response,
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assertEquals(response.status, 500);
+    });
+
+    it("should return error response when async handler rejects", async () => {
+      const handler = {
+        GET: () => Promise.reject(new Error("async failure")),
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assertEquals(response.status, 500);
     });
 
     it("should reject objects missing Response interface", async () => {
