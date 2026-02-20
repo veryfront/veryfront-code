@@ -125,7 +125,10 @@ export class FileListIndex {
     const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
       fileList[fileList.length - 1]?.path ?? ""
     }`;
-    if (this.index && this.indexKey === indexKey) return this.index;
+    if (this.index && this.indexKey === indexKey) {
+      this.indexBuiltAt = Date.now();
+      return this.index;
+    }
 
     const index = new Map<string, string>();
     for (const file of fileList) {

@@ -719,12 +719,18 @@ export class WebSocketManager {
         timeSinceLastPong,
       });
 
-      try {
-        this.ws?.close();
-      } catch (error) {
-        logger.error("WebSocket close failed during heartbeat timeout", {
-          error: error instanceof Error ? error.message : String(error),
-        });
+      // Detach onclose before closing to prevent double-reconnect:
+      // ws.close() triggers onclose asynchronously, which would increment
+      // the failure counter and schedule a separate reconnect timer.
+      if (this.ws) {
+        this.ws.onclose = null;
+        try {
+          this.ws.close();
+        } catch (error) {
+          logger.error("WebSocket close failed during heartbeat timeout", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
 
       this.cleanupTimers();
