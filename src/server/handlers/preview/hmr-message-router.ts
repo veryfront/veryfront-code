@@ -1,5 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
-import { clientSockets, getClientCount } from "./hmr-client-manager.ts";
+import { getClientCount, getOpenSockets } from "./hmr-client-manager.ts";
 
 const logger = serverLogger.component("hmr-handler");
 
@@ -24,86 +24,44 @@ export function requiresFullReload(path: string): boolean {
   return ext === "mdx" || ext === "md" || path.includes("veryfront.config");
 }
 
-// Server-side debounce to batch rapid-fire file saves into a single broadcast
-const BROADCAST_DEBOUNCE_MS = 200;
-let pendingPaths = new Set<string>();
-let pendingFullReload = false;
-let broadcastTimer: ReturnType<typeof setTimeout> | null = null;
-
-function flushBroadcast(): void {
-  broadcastTimer = null;
-  const timestamp = Date.now();
-
-  metrics.broadcastsSent++;
-  metrics.lastBroadcastTime = timestamp;
-
-  if (pendingFullReload) {
-    const message = JSON.stringify({ type: "reload", timestamp });
-    logger.debug("Broadcasting full reload (debounced)");
-    broadcastMessage(message);
-    metrics.messagesForwarded++;
-  } else {
-    // Deduplicate: send one message per unique path
-    for (const path of pendingPaths) {
-      const message = JSON.stringify({ type: "update", path, timestamp });
-      logger.debug("Broadcasting update message (debounced)", { path });
-      broadcastMessage(message);
-      metrics.messagesForwarded++;
-    }
-  }
-
-  logger.debug("Debounced broadcast complete", {
-    changedPaths: pendingPaths.size,
-    fullReload: pendingFullReload,
-    totalClients: getClientCount(),
-  });
-
-  pendingPaths = new Set<string>();
-  pendingFullReload = false;
-}
-
-export function broadcastUpdate(changedPaths?: string[]): void {
+/**
+ * Broadcast update to all connected HMR clients, optionally filtered by projectSlug.
+ * No server-side debounce here — ReloadNotifier already debounces (300ms).
+ */
+export function broadcastUpdate(changedPaths?: string[], projectSlug?: string): void {
   logger.debug("broadcastUpdate called", {
     changedPaths,
     totalClients: getClientCount(),
+    projectSlug,
   });
+
+  const timestamp = Date.now();
+  metrics.broadcastsSent++;
+  metrics.lastBroadcastTime = timestamp;
 
   const needsFullReload = !changedPaths?.length ||
     changedPaths.some((path) => requiresFullReload(path));
 
   if (needsFullReload) {
-    pendingFullReload = true;
+    const message = JSON.stringify({ type: "reload", timestamp });
+    broadcastMessage(message, projectSlug);
+    metrics.messagesForwarded++;
   } else {
     for (const path of changedPaths) {
-      pendingPaths.add(path);
+      const message = JSON.stringify({ type: "update", path, timestamp });
+      broadcastMessage(message, projectSlug);
+      metrics.messagesForwarded++;
     }
   }
-
-  if (broadcastTimer) {
-    clearTimeout(broadcastTimer);
-  }
-  broadcastTimer = setTimeout(flushBroadcast, BROADCAST_DEBOUNCE_MS);
 }
 
-export function broadcastMessage(message: string): void {
+export function broadcastMessage(message: string, projectSlug?: string): void {
+  const sockets = getOpenSockets(projectSlug);
   let sentCount = 0;
-  let skippedCount = 0;
 
-  logger.debug("broadcastMessage starting", {
-    totalClients: clientSockets.size,
-  });
-
-  for (const client of clientSockets) {
-    if (client.readyState !== WebSocket.OPEN) {
-      skippedCount++;
-      logger.debug("Skipping client - not open", {
-        readyState: client.readyState,
-      });
-      continue;
-    }
-
+  for (const socket of sockets) {
     try {
-      client.send(message);
+      socket.send(message);
       sentCount++;
     } catch (error) {
       logger.warn("Failed to send to client", { error });
@@ -112,7 +70,8 @@ export function broadcastMessage(message: string): void {
 
   logger.debug("broadcastMessage complete", {
     sentCount,
-    skippedCount,
+    totalClients: getClientCount(),
+    projectSlug,
   });
 }
 
@@ -120,10 +79,4 @@ export function resetMetrics(): void {
   metrics.broadcastsSent = 0;
   metrics.messagesForwarded = 0;
   metrics.lastBroadcastTime = 0;
-  if (broadcastTimer) {
-    clearTimeout(broadcastTimer);
-    broadcastTimer = null;
-  }
-  pendingPaths = new Set<string>();
-  pendingFullReload = false;
 }

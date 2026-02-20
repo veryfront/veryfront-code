@@ -1,21 +1,3 @@
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-
-export interface HMRServerOptions {
-  port: number;
-  projectDir: string;
-  adapter: RuntimeAdapter;
-  reactRefresh?: boolean;
-  maxMessageSize?: number;
-  maxMessagesPerMinute?: number;
-  signal?: AbortSignal;
-}
-
-export interface HMRUpdate {
-  type: "update" | "reload";
-  path?: string;
-  timestamp?: number;
-}
-
 export interface WebSocketContext {
   clients: Set<WebSocket>;
   rateLimiter: RateLimiter;

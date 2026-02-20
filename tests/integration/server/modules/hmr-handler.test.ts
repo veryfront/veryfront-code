@@ -5,6 +5,43 @@ import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd";
 import { HMRHandler } from "../../../../src/server/handlers/preview/hmr.handler.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import {
+  HMR_CLOSE_MESSAGE_TOO_LARGE,
+  HMR_CLOSE_RATE_LIMIT,
+  HMR_MAX_MESSAGE_SIZE_BYTES,
+  HMR_MAX_MESSAGES_PER_MINUTE,
+} from "#veryfront/utils";
+
+function createMockSocket() {
+  const listeners = new Map<string, Set<(event?: unknown) => void>>();
+  const sentMessages: string[] = [];
+  const closeCalls: Array<{ code?: number; reason?: string }> = [];
+
+  const emit = (type: string, event?: unknown) => {
+    for (const listener of listeners.get(type) ?? []) listener(event);
+  };
+
+  const socket = {
+    readyState: WebSocket.OPEN,
+    send(data: string) {
+      sentMessages.push(data);
+    },
+    close(code?: number, reason?: string) {
+      closeCalls.push({ code, reason });
+      emit("close");
+    },
+    addEventListener(type: string, listener: (event?: unknown) => void) {
+      let set = listeners.get(type);
+      if (!set) {
+        set = new Set();
+        listeners.set(type, set);
+      }
+      set.add(listener);
+    },
+  } as unknown as WebSocket;
+
+  return { socket, sentMessages, closeCalls, emit };
+}
 
 describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterAll(async () => {
@@ -155,6 +192,113 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       assertExists(result.response);
       assertEquals(result.response.status, 501);
+    });
+  });
+
+  describe("HMR Handler - WebSocket Guardrails", () => {
+    it("responds to ping messages with pong", async () => {
+      const handler = new HMRHandler();
+      const mock = createMockSocket();
+
+      const req = new Request("http://localhost:3000/_ws", {
+        headers: { upgrade: "websocket" },
+      });
+      const ctx = {
+        requestContext: { mode: "preview" },
+        mode: "development",
+        projectDir: "/tmp/test",
+        projectSlug: "test-project",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: {
+          fs: {},
+          server: {
+            upgradeWebSocket: () => ({
+              socket: mock.socket,
+              response: new Response(null, { status: 101 }),
+            }),
+          },
+        },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      const result = await handler.handle(req, ctx);
+      assertExists(result.response);
+      assertEquals(result.response.status, 101);
+
+      mock.emit("message", { data: JSON.stringify({ type: "ping" }) });
+
+      assertEquals(mock.sentMessages.includes(JSON.stringify({ type: "pong" })), true);
+    });
+
+    it("closes connection when message exceeds max size", async () => {
+      const handler = new HMRHandler();
+      const mock = createMockSocket();
+
+      const req = new Request("http://localhost:3000/_ws", {
+        headers: { upgrade: "websocket" },
+      });
+      const ctx = {
+        requestContext: { mode: "preview" },
+        mode: "development",
+        projectDir: "/tmp/test",
+        projectSlug: "test-project",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: {
+          fs: {},
+          server: {
+            upgradeWebSocket: () => ({
+              socket: mock.socket,
+              response: new Response(null, { status: 101 }),
+            }),
+          },
+        },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      await handler.handle(req, ctx);
+      mock.emit("message", {
+        data: "x".repeat(HMR_MAX_MESSAGE_SIZE_BYTES + 1),
+      });
+
+      assertExists(mock.closeCalls[0]);
+      assertEquals(mock.closeCalls[0].code, HMR_CLOSE_MESSAGE_TOO_LARGE);
+      assertEquals(HMRHandler.getClientCount(), 0);
+    });
+
+    it("closes connection when message rate limit is exceeded", async () => {
+      const handler = new HMRHandler();
+      const mock = createMockSocket();
+
+      const req = new Request("http://localhost:3000/_ws", {
+        headers: { upgrade: "websocket" },
+      });
+      const ctx = {
+        requestContext: { mode: "preview" },
+        mode: "development",
+        projectDir: "/tmp/test",
+        projectSlug: "test-project",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: {
+          fs: {},
+          server: {
+            upgradeWebSocket: () => ({
+              socket: mock.socket,
+              response: new Response(null, { status: 101 }),
+            }),
+          },
+        },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      await handler.handle(req, ctx);
+
+      for (let i = 0; i <= HMR_MAX_MESSAGES_PER_MINUTE; i++) {
+        mock.emit("message", { data: JSON.stringify({ type: "ping" }) });
+      }
+
+      const rateLimitClose = mock.closeCalls.find((call) => call.code === HMR_CLOSE_RATE_LIMIT);
+      assertExists(rateLimitClose);
+      assertEquals(HMRHandler.getClientCount(), 0);
     });
   });
 

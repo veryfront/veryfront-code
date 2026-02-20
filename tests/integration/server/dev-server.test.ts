@@ -165,7 +165,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           signal: controller.signal,
         });
 
-        const response = await fetch(`http://127.0.0.1:${server.port}/_veryfront/hmr-runtime.js`);
+        const response = await fetch(`http://127.0.0.1:${server.port}/_veryfront/hmr.js`);
         assertEquals(response.status, 200, "Should serve HMR runtime");
 
         const body = await response.text();

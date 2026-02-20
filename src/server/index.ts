@@ -26,9 +26,14 @@ import {
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { bootstrapProd } from "./bootstrap.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
-import { clientSockets } from "./handlers/preview/hmr-client-manager.ts";
-import { RateLimiter, setupWebSocketHandlers } from "#veryfront/modules/server/index.ts";
-import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "#veryfront/utils";
+import { addClient, getClient, removeClient } from "./handlers/preview/hmr-client-manager.ts";
+import { RateLimiter } from "#veryfront/modules/server/index.ts";
+import {
+  HMR_CLOSE_MESSAGE_TOO_LARGE,
+  HMR_CLOSE_RATE_LIMIT,
+  HMR_MAX_MESSAGE_SIZE_BYTES,
+  HMR_MAX_MESSAGES_PER_MINUTE,
+} from "#veryfront/utils";
 
 export { DevServer, startDevServer, startProductionServer };
 export type {
@@ -153,6 +158,14 @@ function toNativeResponse(res: Response): Response {
   });
 }
 
+function getWebSocketMessageSize(data: unknown): number {
+  if (typeof data === "string") return data.length;
+  if (data instanceof ArrayBuffer) return data.byteLength;
+  if (ArrayBuffer.isView(data)) return data.byteLength;
+  if (data instanceof Blob) return data.size;
+  return 0;
+}
+
 export async function createHandler(
   options: { projectDir?: string; mode?: "development" | "production"; port?: number } = {},
 ): Promise<VeryfrontHandler> {
@@ -179,6 +192,7 @@ export async function createHandler(
 
   const internalFetch = devServer.handler;
   const fetch = async (req: Request) => toNativeResponse(await internalFetch(req));
+  const hmrRateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
 
   const upgrade = (server: unknown) => {
     const httpServer = server as import("node:http").Server;
@@ -216,15 +230,70 @@ export async function createHandler(
     });
   };
 
-  const hmrRateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
-
   const connectHMR = (ws: WebSocket) => {
-    setupWebSocketHandlers(ws, {
-      clients: clientSockets,
-      rateLimiter: hmrRateLimiter,
-      maxMessageSize: HMR_MAX_MESSAGE_SIZE_BYTES,
-      reactRefresh: true,
+    const clientId = crypto.randomUUID().slice(0, 8);
+    addClient({
+      id: clientId,
+      socket: ws,
+      connectedAt: Date.now(),
+      lastActivity: Date.now(),
     });
+
+    let cleanedUp = false;
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      hmrRateLimiter.cleanup(ws);
+      removeClient(clientId);
+    };
+    ws.addEventListener("close", cleanup);
+    ws.addEventListener("error", cleanup);
+
+    ws.addEventListener("message", (event) => {
+      const messageSize = getWebSocketMessageSize(event.data);
+      if (messageSize > HMR_MAX_MESSAGE_SIZE_BYTES) {
+        try {
+          ws.close(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
+        } catch {
+          // Ignore close errors
+        }
+        return;
+      }
+
+      if (!hmrRateLimiter.check(ws)) {
+        try {
+          ws.close(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
+        } catch {
+          // Ignore close errors
+        }
+        return;
+      }
+
+      const client = getClient(clientId);
+      if (client) client.lastActivity = Date.now();
+
+      if (typeof event.data !== "string") return;
+
+      try {
+        const data = JSON.parse(event.data);
+        if (data?.type === "ping") {
+          ws.send(JSON.stringify({ type: "pong" }));
+        }
+      } catch {
+        // Ignore parse errors from client
+      }
+    });
+
+    const sendConnected = () => {
+      try {
+        ws.send(JSON.stringify({ type: "connected" }));
+      } catch {
+        // Socket may have closed immediately
+      }
+    };
+
+    if (ws.readyState === WebSocket.OPEN) sendConnected();
+    else ws.addEventListener("open", sendConnected, { once: true });
   };
 
   return Object.assign(fetch, { upgrade, connectHMR });
