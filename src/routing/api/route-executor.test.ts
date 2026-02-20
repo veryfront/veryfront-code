@@ -47,8 +47,14 @@ function makeAdapter(mode = "development"): RuntimeAdapter {
         [Symbol.asyncIterator]: async function* () {},
       }),
     },
-    server: { upgradeWebSocket: () => { throw new Error("not implemented"); } },
-    serve: () => { throw new Error("not implemented"); },
+    server: {
+      upgradeWebSocket: () => {
+        throw new Error("not implemented");
+      },
+    },
+    serve: () => {
+      throw new Error("not implemented");
+    },
   };
 }
 
