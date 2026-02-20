@@ -24,6 +24,10 @@ function getUpdateJSFunction(logPrefix: string): string {
     console.log('${logPrefix} Tailwind CSS link refreshed');
   }
 
+  function getRenderPath() {
+    return window.location.pathname + window.location.search + window.location.hash;
+  }
+
   async function updateJS(path) {
     console.log('${logPrefix} Updating JS module:', path);
 
@@ -49,13 +53,14 @@ function getUpdateJSFunction(logPrefix: string): string {
       // Re-render the page with fresh modules
       // The server will add ?t=timestamp to all imports in the module response
       if (window.__veryfrontRenderPage) {
-        console.log('${logPrefix} Re-rendering page with fresh modules');
-        await window.__veryfrontRenderPage(window.location.pathname);
+        const renderPath = getRenderPath();
+        console.log('${logPrefix} Re-rendering page with fresh modules:', renderPath);
+        await window.__veryfrontRenderPage(renderPath);
         console.log('${logPrefix} Page re-render complete');
         notifyStudio();
       } else {
         console.log('${logPrefix} No __veryfrontRenderPage, falling back to reload');
-        notifyStudioAndReload();
+        notifyStudioAndReload('missing-renderer');
       }
 
       // Clear timestamp after render for normal SPA caching
@@ -68,7 +73,7 @@ function getUpdateJSFunction(logPrefix: string): string {
       if (window.__veryfrontSetHMRRefreshTimestamp) {
         window.__veryfrontSetHMRRefreshTimestamp(null);
       }
-      notifyStudioAndReload();
+      notifyStudioAndReload('update-failed');
     }
   }`;
 }
@@ -96,69 +101,118 @@ if (window.parent !== window) {
 // The server's HMRHandler handles WebSocket upgrades at this path
 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 const wsUrl = protocol + '//' + window.location.host + '/_ws';
-const ws = new WebSocket(wsUrl);
+
+let ws = null;
 let wasConnected = false;
+let reconnectAttempts = 0;
 let reconnectTimeoutId = null;
+let isUnloading = false;
+let lastReloadAt = 0;
 
-ws.onopen = () => {
-  wasConnected = true;
-  if (reconnectTimeoutId !== null) {
-    clearTimeout(reconnectTimeoutId);
-    reconnectTimeoutId = null;
+const RECONNECT_BASE_DELAY_MS = 500;
+const RECONNECT_MAX_DELAY_MS = 5000;
+const RELOAD_THROTTLE_MS = 2000;
+
+function getReconnectDelay() {
+  return Math.min(
+    RECONNECT_BASE_DELAY_MS * Math.pow(1.5, reconnectAttempts),
+    RECONNECT_MAX_DELAY_MS,
+  );
+}
+
+function notifyStudio() {
+  if (window.parent !== window) {
+    try {
+      window.parent.postMessage({ action: 'appUpdated', url: window.location.href }, '*');
+    } catch (e) { /* ignore */ }
   }
-  console.log('[HMR] Connected to ' + wsUrl);
-};
+}
 
-ws.onmessage = (event) => {
-  try {
-    const data = JSON.parse(event.data);
-    switch (data.type) {
-      case 'connected':
-        console.log('[HMR] Server acknowledged connection');
-        break;
-      case 'ping':
-        console.log('[HMR] Ping received, sending pong');
-        try { ws.send(JSON.stringify({ type: 'pong' })); } catch (e) { /* ignore */ }
-        break;
-      case 'pong':
-        break;
-      case 'reload':
-        console.log('[HMR] Reload requested');
-        notifyStudioAndReload();
-        break;
-      case 'update':
-        console.log('[HMR] Update received for:', data.path);
-        handleUpdate(data);
-        break;
-      default:
-        console.log('[HMR] Unknown message type:', data.type);
+function notifyStudioAndReload(reason) {
+  const now = Date.now();
+  if (now - lastReloadAt < RELOAD_THROTTLE_MS) {
+    console.warn('[HMR] Reload throttled:', reason || 'unknown');
+    return;
+  }
+  lastReloadAt = now;
+
+  if (reason) {
+    console.warn('[HMR] Reloading page:', reason);
+  }
+
+  notifyStudio();
+  setTimeout(() => window.location.reload(), 100);
+}
+
+function scheduleReconnect() {
+  if (isUnloading || reconnectTimeoutId !== null) return;
+
+  reconnectAttempts++;
+  const delay = getReconnectDelay();
+  console.log('[HMR] Connection closed, reconnecting in ' + Math.round(delay / 1000) + 's...');
+
+  reconnectTimeoutId = setTimeout(() => {
+    reconnectTimeoutId = null;
+    connect();
+  }, delay);
+}
+
+function connect() {
+  ws = new WebSocket(wsUrl);
+  window.__veryfrontHMRWebSocket = ws;
+
+  ws.onopen = () => {
+    wasConnected = true;
+    reconnectAttempts = 0;
+    if (reconnectTimeoutId !== null) {
+      clearTimeout(reconnectTimeoutId);
+      reconnectTimeoutId = null;
     }
-  } catch (e) {
-    console.error('[HMR] Failed to parse message', e);
-  }
-};
+    console.log('[HMR] Connected to ' + wsUrl);
+  };
 
-ws.onclose = () => {
-  if (!wasConnected) {
-    console.log('[HMR] Connection failed - HMR server may not be running');
-  } else {
-    // Reconnect after delay if connection was established
-    console.log('[HMR] Connection closed, will reload in 2s...');
-    reconnectTimeoutId = setTimeout(() => window.location.reload(), 2000);
-  }
-};
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      switch (data.type) {
+        case 'connected':
+          console.log('[HMR] Server acknowledged connection');
+          break;
+        case 'ping':
+          try { ws.send(JSON.stringify({ type: 'pong' })); } catch (e) { /* ignore */ }
+          break;
+        case 'pong':
+          break;
+        case 'reload':
+          notifyStudioAndReload('server-reload');
+          break;
+        case 'update':
+          handleUpdate(data);
+          break;
+        default:
+          console.log('[HMR] Unknown message type:', data.type);
+      }
+    } catch (e) {
+      console.error('[HMR] Failed to parse message', e);
+    }
+  };
 
-ws.onerror = (error) => {
-  console.error('[HMR] WebSocket error:', error);
-};
+  ws.onclose = () => {
+    if (isUnloading) return;
 
-window.addEventListener('beforeunload', () => {
-  if (reconnectTimeoutId !== null) {
-    clearTimeout(reconnectTimeoutId);
-    reconnectTimeoutId = null;
-  }
-  ws.close();
-});
+    if (!wasConnected) {
+      console.log('[HMR] Connection failed - HMR server may not be running');
+      scheduleReconnect();
+      return;
+    }
+
+    scheduleReconnect();
+  };
+
+  ws.onerror = (error) => {
+    console.error('[HMR] WebSocket error:', error);
+  };
+}
 
 // Debounce HMR updates to prevent flashing from rapid-fire cache population
 let pendingUpdates = [];
@@ -170,10 +224,10 @@ async function handleUpdate(update) {
     console.warn('[HMR] Update message missing path');
     return;
   }
+
   // CSS changes trigger full reload to get fresh Tailwind compilation
   if (update.path.endsWith('.css')) {
-    console.log('[HMR] CSS changed, reloading page');
-    notifyStudioAndReload();
+    notifyStudioAndReload('css-update');
     return;
   }
 
@@ -189,9 +243,7 @@ async function handleUpdate(update) {
     pendingUpdates = [];
     updateDebounceTimer = null;
 
-    if (paths.length === 1) {
-      console.log('[HMR] Processing single update:', paths[0]);
-    } else {
+    if (paths.length > 1) {
       console.log('[HMR] Processing', paths.length, 'batched updates');
     }
 
@@ -201,20 +253,20 @@ async function handleUpdate(update) {
 }
 ${getUpdateJSFunction("[HMR]")}
 
-function notifyStudio() {
-  if (window.parent !== window) {
-    try {
-      window.parent.postMessage({ action: 'appUpdated', url: window.location.href }, '*');
-    } catch (e) { /* ignore */ }
+connect();
+
+window.addEventListener('beforeunload', () => {
+  isUnloading = true;
+  if (reconnectTimeoutId !== null) {
+    clearTimeout(reconnectTimeoutId);
+    reconnectTimeoutId = null;
   }
-}
-
-function notifyStudioAndReload() {
-  notifyStudio();
-  setTimeout(() => window.location.reload(), 100);
-}
-
-window.__veryfrontHMRWebSocket = ws;
+  try {
+    ws && ws.close();
+  } catch {
+    // Ignore close errors
+  }
+});
     `.trim();
 }
 
@@ -304,25 +356,27 @@ export function getPreviewHMRScript(): string {
 // Connects to /_ws WebSocket and handles true HMR updates
 
 (function() {
-  console.log('[Preview HMR] Script loaded at', new Date().toISOString());
-  console.log('[Preview HMR] Location:', window.location.href);
-  console.log('[Preview HMR] Global functions available:', {
-    __veryfrontRenderPage: typeof window.__veryfrontRenderPage,
-    __veryfrontSetHMRRefreshTimestamp: typeof window.__veryfrontSetHMRRefreshTimestamp,
-    __veryfrontClearComponentCache: typeof window.__veryfrontClearComponentCache
-  });
+  const HMR_DEBUG = (() => {
+    try {
+      return window.localStorage.getItem('VERYFRONT_DEBUG_HMR') === '1';
+    } catch {
+      return false;
+    }
+  })();
+  const dlog = (...args) => {
+    if (HMR_DEBUG) console.log(...args);
+  };
 
   // Notify Studio that the app is ready (clears loading indicator)
   if (window.parent !== window) {
     try {
-      console.log('[Preview HMR] Notifying Studio of initial load');
       window.parent.postMessage({
         action: 'appUpdated',
         isInitialLoad: true,
         url: window.location.href
       }, '*');
-    } catch (e) {
-      console.warn('[Preview HMR] Failed to notify Studio:', e.message);
+    } catch {
+      // Cross-origin frame access may fail
     }
   }
 
@@ -332,34 +386,78 @@ export function getPreviewHMRScript(): string {
 
   let ws = null;
   let reconnectAttempts = 0;
-  const baseDelay = 1000; // Start with 1s
-  const maxDelay = 10000; // Cap at 10s
-  const pingIntervalMs = 30000; // Keepalive ping every 30s
-  const pongTimeoutMs = 90000; // Reconnect if no pong for 90s
+  let reconnectTimerId = null;
+  let isUnloading = false;
+  const baseDelay = 1000;
+  const maxDelay = 10000;
+  const pingIntervalMs = 30000;
+  const pongTimeoutMs = 90000;
   let pingIntervalId = null;
   let lastPongAt = Date.now();
+  let lastReloadAt = 0;
+  const RELOAD_THROTTLE_MS = 2000;
+
+  function notifyStudio() {
+    if (window.parent !== window) {
+      try {
+        window.parent.postMessage({
+          action: 'appUpdated',
+          isInitialLoad: false,
+          url: window.location.href
+        }, '*');
+      } catch {
+        // Cross-origin frame access may fail
+      }
+    }
+  }
+
+  function notifyStudioAndReload(reason) {
+    const now = Date.now();
+    if (now - lastReloadAt < RELOAD_THROTTLE_MS) {
+      dlog('[Preview HMR] Reload throttled:', reason || 'unknown');
+      return;
+    }
+    lastReloadAt = now;
+
+    if (reason) {
+      console.warn('[Preview HMR] Reloading page:', reason);
+    }
+
+    notifyStudio();
+    setTimeout(() => window.location.reload(), 100);
+  }
 
   // Exponential backoff with jitter
   function getReconnectDelay() {
     const delay = Math.min(baseDelay * Math.pow(1.5, reconnectAttempts), maxDelay);
-    const jitter = delay * 0.2 * Math.random(); // Add up to 20% jitter
+    const jitter = delay * 0.2 * Math.random();
     return Math.round(delay + jitter);
   }
 
-  function connect() {
-    if (reconnectAttempts > 0) {
-      console.log('[Preview HMR] Reconnecting... (attempt ' + (reconnectAttempts + 1) + ')');
-    }
+  function scheduleReconnect() {
+    if (isUnloading || reconnectTimerId !== null) return;
 
+    reconnectAttempts++;
+    const delay = getReconnectDelay();
+    dlog('[Preview HMR] Reconnecting in', delay, 'ms');
+
+    reconnectTimerId = setTimeout(() => {
+      reconnectTimerId = null;
+      connect();
+    }, delay);
+  }
+
+  function connect() {
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      console.log('[Preview HMR] Connected to', wsUrl);
-      if (reconnectAttempts > 0) {
-        console.log('[Preview HMR] Reconnected successfully after ' + reconnectAttempts + ' attempts');
-      }
+      dlog('[Preview HMR] Connected to', wsUrl);
       reconnectAttempts = 0;
       lastPongAt = Date.now();
+      if (reconnectTimerId !== null) {
+        clearTimeout(reconnectTimerId);
+        reconnectTimerId = null;
+      }
       if (pingIntervalId !== null) {
         clearInterval(pingIntervalId);
       }
@@ -367,8 +465,8 @@ export function getPreviewHMRScript(): string {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         const sincePong = Date.now() - lastPongAt;
         if (sincePong > pongTimeoutMs) {
-          console.warn('[Preview HMR] Pong timeout (' + sincePong + 'ms), reconnecting...');
-          try { ws.close(); } catch { /* SILENT: WebSocket already closed */ }
+          console.warn('[Preview HMR] Pong timeout, reconnecting...');
+          try { ws.close(); } catch { /* ignore */ }
           return;
         }
         try {
@@ -380,58 +478,45 @@ export function getPreviewHMRScript(): string {
     };
 
     ws.onmessage = (event) => {
-      console.log('[Preview HMR] Raw message received:', event.data);
       try {
         const data = JSON.parse(event.data);
-        console.log('[Preview HMR] Parsed message:', JSON.stringify(data, null, 2));
 
         switch (data.type) {
           case 'pong':
             lastPongAt = Date.now();
             break;
           case 'ping':
-            console.log('[Preview HMR] Ping received from server, sending pong');
             try { ws.send(JSON.stringify({ type: 'pong' })); } catch (e) { /* ignore */ }
             lastPongAt = Date.now();
             break;
           case 'update':
-            console.log('[Preview HMR] Handling update for path:', data.path);
             handleUpdate(data);
             break;
           case 'reload':
-            console.log('[Preview HMR] Full reload requested by server');
-            notifyStudioAndReload();
+            notifyStudioAndReload('server-reload');
             break;
           case 'connected':
-            console.log('[Preview HMR] Server acknowledged connection, clientId:', data.clientId || 'none');
+            dlog('[Preview HMR] Server acknowledged connection');
             break;
           default:
-            console.log('[Preview HMR] Unknown message type:', data.type, data);
+            dlog('[Preview HMR] Unknown message type:', data.type);
         }
       } catch (e) {
-        console.error('[Preview HMR] Failed to parse message:', e, 'Raw:', event.data);
+        console.error('[Preview HMR] Failed to parse message:', e);
       }
     };
 
     ws.onerror = () => {
-      // Log more details about the error
-      console.error('[Preview HMR] WebSocket error:', {
-        url: wsUrl,
-        readyState: ws ? ws.readyState : 'N/A',
-        attempt: reconnectAttempts + 1
-      });
+      dlog('[Preview HMR] WebSocket error', { readyState: ws ? ws.readyState : 'N/A' });
     };
 
-    ws.onclose = (event) => {
+    ws.onclose = () => {
       if (pingIntervalId !== null) {
         clearInterval(pingIntervalId);
         pingIntervalId = null;
       }
-      reconnectAttempts++;
-      const delay = getReconnectDelay();
-      console.log('[Preview HMR] Connection closed (code: ' + event.code + ', reason: ' + (event.reason || 'none') + ')');
-      console.log('[Preview HMR] Reconnecting in ' + Math.round(delay / 1000) + 's...');
-      setTimeout(connect, delay);
+      if (isUnloading) return;
+      scheduleReconnect();
     };
   }
 
@@ -441,18 +526,14 @@ export function getPreviewHMRScript(): string {
   const UPDATE_DEBOUNCE_MS = 300;
 
   async function handleUpdate(update) {
-    console.log('[Preview HMR] handleUpdate called with:', JSON.stringify(update));
     if (!update.path) {
       console.warn('[Preview HMR] Update message missing path');
       return;
     }
 
-    console.log('[Preview HMR] Processing update for:', update.path);
-
     // CSS changes trigger full reload to get fresh Tailwind compilation
     if (update.path.endsWith('.css')) {
-      console.log('[Preview HMR] CSS changed, reloading page');
-      notifyStudioAndReload();
+      notifyStudioAndReload('css-update');
       return;
     }
 
@@ -468,10 +549,8 @@ export function getPreviewHMRScript(): string {
       pendingUpdates = [];
       updateDebounceTimer = null;
 
-      if (paths.length === 1) {
-        console.log('[Preview HMR] Processing single update:', paths[0]);
-      } else {
-        console.log('[Preview HMR] Processing', paths.length, 'batched updates');
+      if (paths.length > 1) {
+        dlog('[Preview HMR] Processing', paths.length, 'batched updates');
       }
 
       // Single re-render for all batched updates
@@ -480,39 +559,28 @@ export function getPreviewHMRScript(): string {
   }
 ${getUpdateJSFunction("[Preview HMR]")}
 
-  function notifyStudio() {
-    console.log('[Preview HMR] notifyStudio called, isInIframe:', window.parent !== window);
-    if (window.parent !== window) {
-      try {
-        const message = {
-          action: 'appUpdated',
-          isInitialLoad: false,
-          url: window.location.href
-        };
-        console.log('[Preview HMR] Posting message to Studio:', JSON.stringify(message));
-        window.parent.postMessage(message, '*');
-        console.log('[Preview HMR] Message posted successfully');
-      } catch (e) {
-        console.warn('[Preview HMR] Failed to notify Studio:', e.message);
-      }
-    }
-  }
-
-  function notifyStudioAndReload() {
-    console.log('[Preview HMR] notifyStudioAndReload called - will reload in 100ms');
-    notifyStudio();
-    // Small delay to let Studio know, then reload
-    setTimeout(() => {
-      console.log('[Preview HMR] Reloading page now');
-      window.location.reload();
-    }, 100);
-  }
-
   // Start connection
   connect();
 
+  window.addEventListener('beforeunload', () => {
+    isUnloading = true;
+    if (reconnectTimerId !== null) {
+      clearTimeout(reconnectTimerId);
+      reconnectTimerId = null;
+    }
+    if (pingIntervalId !== null) {
+      clearInterval(pingIntervalId);
+      pingIntervalId = null;
+    }
+    try {
+      ws && ws.close();
+    } catch {
+      // Ignore close errors
+    }
+  });
+
   // Expose for debugging
-  window.__veryfrontPreviewHMR = { getSocket: () => ws };
+  window.__veryfrontPreviewHMR = { getSocket: () => ws, debug: HMR_DEBUG };
 })();
     `.trim();
 }

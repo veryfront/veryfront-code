@@ -8,7 +8,7 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { getHMRRuntime, getHMRScript, getPreviewHMRScript } from "./scripts/hmr-scripts.ts";
 import { getErrorOverlay } from "./scripts/error-overlay.ts";
-import { getDevLoader, getHydrateScript } from "./scripts/dev-loader.ts";
+import { getHydrateScript } from "./scripts/dev-loader.ts";
 
 export class DevEndpointsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -17,7 +17,6 @@ export class DevEndpointsHandler extends BaseHandler {
     patterns: [
       { pattern: "/_veryfront/hmr-runtime.js", exact: true },
       { pattern: "/_veryfront/error-overlay.js", exact: true },
-      { pattern: "/_veryfront/dev-loader.js", exact: true },
       { pattern: "/_veryfront/hmr.js", exact: true },
       { pattern: "/_veryfront/hydrate.js", exact: true },
       { pattern: "/_veryfront/preview-hmr.js", exact: true },
@@ -57,8 +56,6 @@ export class DevEndpointsHandler extends BaseHandler {
         return getHMRRuntime();
       case "/_veryfront/error-overlay.js":
         return getErrorOverlay();
-      case "/_veryfront/dev-loader.js":
-        return getDevLoader();
       case "/_veryfront/preview-hmr.js":
         return getPreviewHMRScript();
       default:

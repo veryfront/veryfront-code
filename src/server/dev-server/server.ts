@@ -430,7 +430,6 @@ export class DevServer {
     this.fileWatchSetup = new FileWatchSetup(
       this.options.projectDir,
       this.adapter,
-      this.hmrServer,
       routeDiscovery,
       debounceMs,
       () => this.requestHandler?.invalidateRuntimeHandler(),

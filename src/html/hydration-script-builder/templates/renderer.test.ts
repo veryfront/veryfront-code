@@ -41,7 +41,10 @@ describe("hydration-script-builder/templates/renderer", () => {
     });
 
     it("should handle root path in fallback", () => {
-      assertIncludes(getRendererScript(), "pathname === '/' ? 'index' : pathname.slice(1)");
+      assertIncludes(
+        getRendererScript(),
+        "resolvedPathname === '/' ? 'index' : resolvedPathname.slice(1)",
+      );
     });
 
     it("should get PageComponent from default export", () => {

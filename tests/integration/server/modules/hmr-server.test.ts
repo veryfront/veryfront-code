@@ -108,7 +108,7 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
 
         const content = await response.text();
         assertEquals(content.includes("Veryfront HMR Runtime"), true);
-        assertEquals(content.includes(`ws://' + host + ':${port}`), true);
+        assertEquals(content.includes(`wsProtocol + '//' + host + ':${port}`), true);
 
         await stopServer(controller, server);
       });

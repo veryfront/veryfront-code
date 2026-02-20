@@ -4,15 +4,17 @@ export function generateHMRClientTemplate(
   reloadDelay: number,
 ): string {
   return `const HMR_PORT = ${port};
-  const HMR_RELOAD_DELAY_MS = ${reloadDelay};
+  const HMR_RECONNECT_DELAY_MS = ${reloadDelay};
   const host = window.location.hostname || '${hostname}';
-  // Connect to HMR server at ws://localhost:${port}
-  const ws = new WebSocket('ws://' + host + ':${port}');
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = wsProtocol + '//' + host + ':${port}';
+  let ws = null;
   let reactRefreshEnabled = false;
   let reconnectTimeoutId = null;
   let wasConnected = false; // Track if connection was ever established
-
-  window.__veryfrontHMRWebSocket = ws;
+  let isUnloading = false;
+  let lastReloadAt = 0;
+  const RELOAD_THROTTLE_MS = 2000;
 
   // Notify Studio that the app is ready (clears loading indicator)
   if (window.parent !== window) {
@@ -25,64 +27,105 @@ export function generateHMRClientTemplate(
     } catch (e) { /* postMessage may fail in cross-origin iframes - expected */ }
   }
 
-  ws.onopen = () => {
-    wasConnected = true;
-    if (reconnectTimeoutId === null) return;
-    clearTimeout(reconnectTimeoutId);
-    reconnectTimeoutId = null;
-  };
+  function getRenderPath() {
+    return window.location.pathname + window.location.search + window.location.hash;
+  }
 
-  ws.onmessage = (event) => {
+  function notifyStudioUpdateCompleted() {
+    if (window.parent === window) return;
     try {
-      const message = JSON.parse(event.data);
-      switch (message.type) {
-        case 'connected': {
-          reactRefreshEnabled = message.reactRefresh || false;
-          if (reactRefreshEnabled) setupReactRefresh();
-          break;
-        }
-        case 'ping':
-          console.log('[HMR] Ping received, sending pong');
-          try { ws.send(JSON.stringify({ type: 'pong' })); } catch (e) { /* ignore */ }
-          break;
-        case 'pong':
-          break;
-        case 'update':
-          handleUpdate(message);
-          break;
-        case 'reload':
-          window.location.reload();
-          break;
-        default:
-          console.warn('[HMR] Unknown message type:', message);
-      }
-    } catch (error) {
-      console.error('[HMR] Failed to process message:', error);
-    }
-  };
+      window.parent.postMessage({ action: 'appUpdated', url: window.location.href }, '*');
+    } catch (e) { /* ignore */ }
+  }
 
-  ws.onclose = () => {
-    // Only schedule reload if connection was previously established
-    // This prevents reload loops when HMR server is not running
-    if (!wasConnected) {
-      console.warn('[HMR] Connection failed - HMR server may not be running');
+  function notifyStudioAndReload(reason) {
+    const now = Date.now();
+    if (now - lastReloadAt < RELOAD_THROTTLE_MS) {
+      console.warn('[HMR] Reload throttled:', reason || 'unknown');
       return;
     }
-    reconnectTimeoutId = setTimeout(() => {
-      window.location.reload();
-    }, HMR_RELOAD_DELAY_MS);
-  };
+    lastReloadAt = now;
 
-  ws.onerror = (error) => {
-    console.error('[HMR] WebSocket error:', error);
-  };
+    if (reason) {
+      console.warn('[HMR] Reloading page:', reason);
+    }
+
+    notifyStudioUpdateCompleted();
+    window.location.reload();
+  }
+
+  function connect() {
+    ws = new WebSocket(wsUrl);
+    window.__veryfrontHMRWebSocket = ws;
+
+    ws.onopen = () => {
+      wasConnected = true;
+      if (reconnectTimeoutId !== null) {
+        clearTimeout(reconnectTimeoutId);
+        reconnectTimeoutId = null;
+      }
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        switch (message.type) {
+          case 'connected': {
+            reactRefreshEnabled = message.reactRefresh || false;
+            if (reactRefreshEnabled) setupReactRefresh();
+            break;
+          }
+          case 'ping':
+            try { ws.send(JSON.stringify({ type: 'pong' })); } catch (e) { /* ignore */ }
+            break;
+          case 'pong':
+            break;
+          case 'update':
+            handleUpdate(message);
+            break;
+          case 'reload':
+            notifyStudioAndReload('server-reload');
+            break;
+          default:
+            console.warn('[HMR] Unknown message type:', message);
+        }
+      } catch (error) {
+        console.error('[HMR] Failed to process message:', error);
+      }
+    };
+
+    ws.onclose = () => {
+      // Avoid reconnect/reload loops on unload
+      if (isUnloading) return;
+
+      // Keep trying to reconnect instead of hard-reloading immediately.
+      if (!wasConnected) {
+        console.warn('[HMR] Connection failed - HMR server may not be running');
+      }
+
+      if (reconnectTimeoutId !== null) return;
+      reconnectTimeoutId = setTimeout(() => {
+        reconnectTimeoutId = null;
+        connect();
+      }, HMR_RECONNECT_DELAY_MS);
+    };
+
+    ws.onerror = (error) => {
+      console.error('[HMR] WebSocket error:', error);
+    };
+  }
 
   window.addEventListener('beforeunload', () => {
+    isUnloading = true;
     if (reconnectTimeoutId !== null) {
       clearTimeout(reconnectTimeoutId);
       reconnectTimeoutId = null;
     }
-    ws.close();
+    try {
+      ws && ws.close();
+    } catch {
+      // Ignore close errors
+    }
   });
 
   function handleUpdate(update) {
@@ -107,13 +150,6 @@ export function generateHMRClientTemplate(
     console.log('[HMR] Tailwind CSS link refreshed');
   }
 
-  function notifyStudioUpdateCompleted() {
-    if (window.parent === window) return;
-    try {
-      window.parent.postMessage({ action: 'appUpdated', url: window.location.href }, '*');
-    } catch (e) { /* ignore */ }
-  }
-
   function updateJS(path) {
     try {
       const cacheBusted = path + (path.includes('?') ? '&' : '?') + 't=' + Date.now();
@@ -132,7 +168,7 @@ export function generateHMRClientTemplate(
         // This is more reliable than React Refresh for our architecture
         // where layouts and pages are dynamically loaded
         if (window.__veryfrontRenderPage) {
-          window.__veryfrontRenderPage(window.location.pathname);
+          window.__veryfrontRenderPage(getRenderPath());
           notifyStudioUpdateCompleted();
           return;
         }
@@ -142,18 +178,18 @@ export function generateHMRClientTemplate(
           return;
         }
 
-        window.location.reload();
+        notifyStudioAndReload('missing-renderer');
       };
 
       script.onerror = () => {
-        window.location.reload();
+        notifyStudioAndReload('module-load-error');
       };
 
       script.src = cacheBusted;
       document.head.appendChild(script);
     } catch (error) {
       console.error('[HMR] Failed to update JS module:', error);
-      window.location.reload();
+      notifyStudioAndReload('update-failed');
     }
   }
 
@@ -162,5 +198,7 @@ export function generateHMRClientTemplate(
     window.$RefreshRuntime$.injectIntoGlobalHook(window);
     window.$RefreshReg$ = () => {};
     window.$RefreshSig$ = () => (type) => type;
-  }`;
+  }
+
+  connect();`;
 }

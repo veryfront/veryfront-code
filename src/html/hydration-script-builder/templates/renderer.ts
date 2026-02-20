@@ -2,6 +2,16 @@ export const getRendererScript = () => `
     // Note: DEBUG, log, logError are defined in router.ts which loads first
 
     async function renderPage(pathname) {
+      const resolvedPathname = (() => {
+        const input = typeof pathname === 'string' ? pathname : window.location.pathname;
+        try {
+          return new URL(input, window.location.origin).pathname || '/';
+        } catch {
+          const [pathOnly] = String(input || '/').split(/[?#]/);
+          return pathOnly || '/';
+        }
+      })();
+
       const dataScript = document.getElementById('veryfront-hydration-data');
       if (!dataScript) {
         logError('Hydration data not found');
@@ -38,7 +48,7 @@ export const getRendererScript = () => `
         }
 
         if (!pageModule) {
-          const pageSlug = pathname === '/' ? 'index' : pathname.slice(1);
+          const pageSlug = resolvedPathname === '/' ? 'index' : resolvedPathname.slice(1);
           log('Falling back to Pages Router pattern:', pageSlug);
 
           const prefix = pageSlug.startsWith('@/') ? '' : '/pages';
@@ -86,7 +96,7 @@ export const getRendererScript = () => `
         const headings = data.headings || [];
         const pageContext = {
           slug: data.slug || '',
-          path: data.pagePath || pathname,
+          path: data.pagePath || resolvedPathname,
           params: data.params || {},
           query: Object.fromEntries(new URLSearchParams(window.location.search)),
           frontmatter: data.frontmatter || {},

@@ -2,13 +2,11 @@ import { serverLogger as logger } from "#veryfront/utils";
 import { handleErrorWithFallback } from "#veryfront/errors/index.ts";
 import { join, relative, sep } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { HMRServer } from "./hmr-server.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
 import type { RouteDiscovery } from "./route-discovery.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
 import type { DevServer } from "./server.ts";
 import { invalidateModulePaths } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
-import { broadcastUpdate } from "../handlers/preview/hmr-message-router.ts";
 
 const hmrLog = logger.component("hmr");
 const fileWatchSetupLog = logger.component("file-watch-setup");
@@ -53,7 +51,6 @@ export class FileWatchSetup {
   constructor(
     private projectDir: string,
     private adapter: RuntimeAdapter,
-    private hmrServer: HMRServer,
     private routeDiscovery: RouteDiscovery,
     private debounceMs: number,
     private invalidateHandler: () => void = () => {},
@@ -156,22 +153,16 @@ export class FileWatchSetup {
 
     // Invalidate on-disk ESM cache for changed files immediately,
     // before the browser reloads, so the next SSR render picks up fresh content.
-    const relativePaths = paths.map((p) => p.replace(this.projectDir + "/", ""));
+    const relativePaths = paths.map((p) => relative(this.projectDir, p).split(sep).join("/"));
     invalidateModulePaths(relativePaths);
 
     const display = paths.map((p) => p.replace(this.projectDir, ".")).join(", ");
     logger.debug(logMessage, { files: display });
 
-    this.hmrServer.sendUpdate({ type: "reload", timestamp: Date.now() });
-
-    // Immediately broadcast to /_ws WebSocket clients (local dev HMR).
-    // ReloadNotifier.triggerReload below is debounced 300ms which is too slow —
-    // the browser reloads before caches are invalidated. Send directly instead.
-    const relativePaths2 = paths.map((p) => p.replace(this.projectDir + "/", ""));
-    broadcastUpdate(relativePaths2);
-
-    // Also trigger ReloadNotifier for proxy mode and cache invalidation
-    ReloadNotifier.triggerReload(paths);
+    // Single source of truth for HMR signaling:
+    // ReloadNotifier immediately invalidates runtime caches and then sends
+    // one debounced browser update for both local dev and preview clients.
+    ReloadNotifier.triggerReload(relativePaths);
   }
 
   /**
