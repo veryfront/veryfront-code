@@ -140,7 +140,10 @@ export class WebSocketManager {
     } catch (error) {
       this.wsConsecutiveFailures++;
       const delay = this.getReconnectDelay();
-      logger.warn("Failed to connect WebSocket", { error, consecutiveFailures: this.wsConsecutiveFailures });
+      logger.warn("Failed to connect WebSocket", {
+        error,
+        consecutiveFailures: this.wsConsecutiveFailures,
+      });
       this.wsReconnectTimer = setTimeout(() => this.connect(projectId), delay);
     }
   }
