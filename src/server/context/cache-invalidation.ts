@@ -104,7 +104,11 @@ export async function invalidateProjectCaches(
   clearSnippetCacheForProject(projectSlug);
 
   logger.debug("Clearing API route handler cache (per-project)", { projectSlug });
-  await resetApiHandlerForProject(projectSlug);
+  try {
+    await resetApiHandlerForProject(projectSlug);
+  } catch (error) {
+    logger.error("Failed to reset API route handler cache", { projectSlug, error });
+  }
 
   if (projectId) {
     if (environment) {
