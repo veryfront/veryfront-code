@@ -88,9 +88,20 @@ function isCrossContextResponse(
   );
 }
 
-function validateResponse(response: unknown): asserts response is Response {
-  if (response instanceof Response) return;
-  if (isCrossContextResponse(response)) return;
+function validateResponse(response: unknown): Response {
+  if (response instanceof Response) return response;
+
+  // Normalize cross-context Response objects into a real Response so downstream
+  // code (toHeadResponse, applyCORSHeaders, withHeaders) always receives a
+  // genuine instance with correct body, headers, and status.
+  if (isCrossContextResponse(response)) {
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+
   throw toError(
     createError({
       type: "api",
@@ -129,8 +140,7 @@ export function executeAppRoute(
 
       try {
         const appContext: AppRouteContext = { params: normalizeParams(match.params) };
-        const response = await resolvedFn(request, appContext);
-        validateResponse(response);
+        const response = validateResponse(await resolvedFn(request, appContext));
         return method === "HEAD" ? toHeadResponse(response) : response;
       } catch (error) {
         return handleAPIError(error, pathname, adapter);
@@ -162,9 +172,7 @@ export function executePagesRoute(
       try {
         const fs = projectDir ? createProjectScopedFs(adapter.fs, projectDir) : adapter.fs;
         const ctx = createContext(request, match, fs);
-        const response = await (methodHandler as PagesRouteHandler)(ctx);
-        validateResponse(response);
-        return response;
+        return validateResponse(await (methodHandler as PagesRouteHandler)(ctx));
       } catch (error) {
         return handleAPIError(error, pathname, adapter);
       }

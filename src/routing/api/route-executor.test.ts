@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { executeAppRoute, executePagesRoute } from "./route-executor.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
@@ -225,6 +225,7 @@ describe("routing/api/route-executor", () => {
         makeAdapter(),
       );
 
+      assert(response instanceof Response, "should be normalized to a real Response instance");
       assertEquals(response.status, 200);
     });
 
