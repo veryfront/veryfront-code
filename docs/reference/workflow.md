@@ -70,16 +70,16 @@ Define workflow with step DAG
 | `id` | `string` | Unique workflow identifier |
 | `description?` | `string` | Human-readable description |
 | `version?` | `string` | Semantic version string |
-| `inputSchema?` | `z.ZodSchema<TInput>` | Zod schema for workflow input validation |
-| `outputSchema?` | `z.ZodSchema<TOutput>` | Zod schema for workflow output validation |
+| `inputSchema?` | <code>z.ZodSchema&lt;TInput&gt;</code> | Zod schema for workflow input validation |
+| `outputSchema?` | <code>z.ZodSchema&lt;TOutput&gt;</code> | Zod schema for workflow output validation |
 | `retry?` | `RetryConfig` | Retry configuration for failed steps |
 | `timeout?` | `string \\| number` | Max execution time (ms) |
 | `introspect?` | `boolean` | Enable runtime introspection for debugging |
-| `steps` | `WorkflowNode[] \\| ((context: StepBuilderContext<TInput>) => WorkflowNode[])` | Workflow step definitions |
-| `onError?` | `(error: Error, context: WorkflowContext) => void \\| Promise<void>` | Error handler called when a step fails |
-| `onComplete?` | `(result: TOutput, context: WorkflowContext) => void \\| Promise<void>` | Callback fired after workflow completes |
+| `steps` | <code>WorkflowNode[] \\| ((context: StepBuilderContext&lt;TInput&gt;) =&gt; WorkflowNode[])</code> | Workflow step definitions |
+| `onError?` | <code>(error: Error, context: WorkflowContext) =&gt; void \\| Promise&lt;void&gt;</code> | Error handler called when a step fails |
+| `onComplete?` | <code>(result: TOutput, context: WorkflowContext) =&gt; void \\| Promise&lt;void&gt;</code> | Callback fired after workflow completes |
 
-**Returns:** `Workflow<TInput, TOutput>`
+**Returns:** <code>Workflow&lt;TInput, TOutput&gt;</code>
 
 ## Type Reference
 
@@ -91,11 +91,11 @@ Define workflow with step DAG
 |----------|------|-------------|
 | `agent?` | `string \\| Agent` | Agent to run (by ID or instance) |
 | `tool?` | `string \\| Tool` | Tool to execute (by ID or instance) |
-| `input?` | `string \\| Record<string, unknown> \\| ((context: WorkflowContext) => unknown)` | Step input — static value or function of workflow context |
+| `input?` | <code>string \\| Record&lt;string, unknown&gt; \\| ((context: WorkflowContext) =&gt; unknown)</code> | Step input — static value or function of workflow context |
 | `checkpoint?` | `boolean` | Persist state after this step |
 | `retry?` | `RetryConfig` | Retry configuration for this step |
 | `timeout?` | `string \\| number` | Step timeout (ms) |
-| `skip?` | `(context: WorkflowContext) => boolean \\| Promise<boolean>` | Predicate — skip this step if returns true |
+| `skip?` | <code>(context: WorkflowContext) =&gt; boolean \\| Promise&lt;boolean&gt;</code> | Predicate — skip this step if returns true |
 
 ### `BranchOptions`
 
@@ -103,13 +103,13 @@ Define workflow with step DAG
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `condition` | `(context: WorkflowContext) => boolean \\| Promise<boolean>` | Branch predicate function |
+| `condition` | <code>(context: WorkflowContext) =&gt; boolean \\| Promise&lt;boolean&gt;</code> | Branch predicate function |
 | `then` | `WorkflowNode[]` | Steps when condition is true |
 | `else?` | `WorkflowNode[]` | Steps when condition is false |
 | `checkpoint?` | `boolean` | Persist state after this node |
 | `retry?` | `RetryConfig` | Retry configuration |
 | `timeout?` | `string \\| number` | Node timeout (ms or duration string) |
-| `skip?` | `(context: WorkflowContext) => boolean \\| Promise<boolean>` | Predicate — skip if returns true |
+| `skip?` | <code>(context: WorkflowContext) =&gt; boolean \\| Promise&lt;boolean&gt;</code> | Predicate — skip if returns true |
 
 ### `ParallelOptions`
 
@@ -121,7 +121,7 @@ Define workflow with step DAG
 | `checkpoint?` | `boolean` | Persist state after this node |
 | `retry?` | `RetryConfig` | Retry configuration |
 | `timeout?` | `string \\| number` | Node timeout (ms or duration string) |
-| `skip?` | `(context: WorkflowContext) => boolean \\| Promise<boolean>` | Predicate — skip if returns true |
+| `skip?` | <code>(context: WorkflowContext) =&gt; boolean \\| Promise&lt;boolean&gt;</code> | Predicate — skip if returns true |
 
 ## Exports
 

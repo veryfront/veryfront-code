@@ -40,12 +40,12 @@ Create MCP-discoverable resource
 |----------|------|-------------|
 | `pattern?` | `string` | URI template pattern for parameterized resources |
 | `description` | `string` | Resource description |
-| `paramsSchema` | `z.ZodSchema<TParams>` | Zod schema for URI parameters |
-| `load` | `(params: TParams) => Promise<TData> \\| TData` | Function returning resource content |
-| `subscribe?` | `(params: TParams) => AsyncIterable<TData>` | Async iterable for real-time resource updates |
+| `paramsSchema` | <code>z.ZodSchema&lt;TParams&gt;</code> | Zod schema for URI parameters |
+| `load` | <code>(params: TParams) =&gt; Promise&lt;TData&gt; \\| TData</code> | Function returning resource content |
+| `subscribe?` | <code>(params: TParams) =&gt; AsyncIterable&lt;TData&gt;</code> | Async iterable for real-time resource updates |
 | `mcp?` | `McpConfig` | MCP server configuration |
 
-**Returns:** `Resource<TParams, TData>`
+**Returns:** <code>Resource&lt;TParams, TData&gt;</code>
 
 ## Exports
 
