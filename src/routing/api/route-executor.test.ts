@@ -8,7 +8,24 @@ function makeAdapter(mode = "development"): RuntimeAdapter {
   const envMap = new Map<string, string>([["MODE", mode]]);
 
   return {
-    env: { get: (key: string) => envMap.get(key) },
+    id: "node",
+    name: "test-stub",
+    capabilities: {
+      typescript: true,
+      jsx: true,
+      http2: false,
+      websocket: false,
+      workers: false,
+      fileWatching: false,
+      shell: false,
+      kvStore: false,
+      writableFs: false,
+    },
+    env: {
+      get: (key: string) => envMap.get(key),
+      set: (key: string, value: string) => envMap.set(key, value),
+      toObject: () => Object.fromEntries(envMap),
+    },
     fs: {
       readFile: () => Promise.resolve(""),
       writeFile: () => Promise.resolve(),
@@ -30,6 +47,8 @@ function makeAdapter(mode = "development"): RuntimeAdapter {
         [Symbol.asyncIterator]: async function* () {},
       }),
     },
+    server: { upgradeWebSocket: () => { throw new Error("not implemented"); } },
+    serve: () => { throw new Error("not implemented"); },
   };
 }
 
