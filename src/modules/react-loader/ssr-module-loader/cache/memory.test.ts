@@ -15,6 +15,7 @@ import {
 import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
 import { getTransformPerProjectLimit } from "../constants.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 
 describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
   function resetState(): void {
@@ -214,8 +215,8 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
       resetState();
 
       const baseCacheDir = getMdxEsmCacheDir();
-      const key1 = `${baseCacheDir}|${encodeURIComponent("project-1")}|preview-main`;
-      const key2 = `${baseCacheDir}|${encodeURIComponent("project-2")}|preview-main`;
+      const key1 = `${baseCacheDir}|${hashCodeHex("project-1")}|preview-main`;
+      const key2 = `${baseCacheDir}|${hashCodeHex("project-2")}|preview-main`;
 
       globalTmpDirs.set(key1, "/tmp/proj1");
       globalTmpDirs.set(key2, "/tmp/proj2");

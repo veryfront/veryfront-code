@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { executeAppRoute, executePagesRoute } from "./route-executor.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
@@ -8,7 +8,24 @@ function makeAdapter(mode = "development"): RuntimeAdapter {
   const envMap = new Map<string, string>([["MODE", mode]]);
 
   return {
-    env: { get: (key: string) => envMap.get(key) },
+    id: "node",
+    name: "test-stub",
+    capabilities: {
+      typescript: true,
+      jsx: true,
+      http2: false,
+      websocket: false,
+      workers: false,
+      fileWatching: false,
+      shell: false,
+      kvStore: false,
+      writableFs: false,
+    },
+    env: {
+      get: (key: string) => envMap.get(key),
+      set: (key: string, value: string) => envMap.set(key, value),
+      toObject: () => Object.fromEntries(envMap),
+    },
     fs: {
       readFile: () => Promise.resolve(""),
       writeFile: () => Promise.resolve(),
@@ -29,6 +46,14 @@ function makeAdapter(mode = "development"): RuntimeAdapter {
         close: () => {},
         [Symbol.asyncIterator]: async function* () {},
       }),
+    },
+    server: {
+      upgradeWebSocket: () => {
+        throw new Error("not implemented");
+      },
+    },
+    serve: () => {
+      throw new Error("not implemented");
     },
   };
 }
@@ -136,6 +161,174 @@ describe("routing/api/route-executor", () => {
     it("should return error response when handler returns non-Response", async () => {
       const handler = {
         GET: () => "not a response" as unknown as Response,
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assertEquals(response.status, 500);
+    });
+
+    it("should accept Response.json() return value", async () => {
+      const handler = {
+        GET: () => Response.json({ ok: true }),
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), { ok: true });
+    });
+
+    it("should accept cross-context Response-like objects (duck typing)", async () => {
+      const bodyStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"cross":"context"}'));
+          controller.close();
+        },
+      });
+      const fakeResponse = {
+        status: 200,
+        statusText: "OK",
+        headers: new Headers({ "content-type": "application/json" }),
+        body: bodyStream,
+        ok: true,
+        redirected: false,
+        type: "basic" as ResponseType,
+        url: "",
+        text: () => Promise.resolve('{"cross":"context"}'),
+        json: () => Promise.resolve({ cross: "context" }),
+        clone: () => fakeResponse,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+        blob: () => Promise.resolve(new Blob()),
+        formData: () => Promise.resolve(new FormData()),
+        bodyUsed: false,
+      };
+
+      const handler = {
+        GET: () => fakeResponse as unknown as Response,
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assert(response instanceof Response, "should be normalized to a real Response instance");
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get("content-type"), "application/json");
+      assertEquals(await response.text(), '{"cross":"context"}');
+    });
+
+    it("should normalize cross-context Response for HEAD requests", async () => {
+      const fakeResponse = {
+        status: 201,
+        statusText: "Created",
+        headers: new Headers({ "x-custom": "value" }),
+        body: new ReadableStream(),
+        ok: true,
+        redirected: false,
+        type: "basic" as ResponseType,
+        url: "",
+        text: () => Promise.resolve(""),
+        json: () => Promise.resolve({}),
+        clone: () => fakeResponse,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+        blob: () => Promise.resolve(new Blob()),
+        formData: () => Promise.resolve(new FormData()),
+        bodyUsed: false,
+      };
+
+      const handler = {
+        GET: () => fakeResponse as unknown as Response,
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "HEAD" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assert(response instanceof Response, "should be a real Response instance");
+      assertEquals(response.status, 201);
+      assertEquals(response.headers.get("x-custom"), "value");
+      assertEquals(await response.text(), "");
+    });
+
+    it("should return error response when handler returns null", async () => {
+      const handler = {
+        GET: () => null as unknown as Response,
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assertEquals(response.status, 500);
+    });
+
+    it("should return error response when handler returns undefined", async () => {
+      const handler = {
+        GET: () => undefined as unknown as Response,
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assertEquals(response.status, 500);
+    });
+
+    it("should return error response when async handler rejects", async () => {
+      const handler = {
+        GET: () => Promise.reject(new Error("async failure")),
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assertEquals(response.status, 500);
+    });
+
+    it("should reject objects missing Response interface", async () => {
+      const handler = {
+        GET: () => ({ data: "not a response" }) as unknown as Response,
       };
 
       const request = new Request("http://localhost/api/test", { method: "GET" });

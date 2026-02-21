@@ -4,6 +4,8 @@
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd";
 import { HMRHandler } from "../../../../src/server/handlers/preview/hmr.handler.ts";
+import { ReloadNotifier } from "../../../../src/server/reload-notifier.ts";
+import { broadcastUpdate } from "../../../../src/server/handlers/preview/hmr-message-router.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import {
   HMR_CLOSE_MESSAGE_TOO_LARGE,
@@ -116,6 +118,86 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       assertEquals(result.continue, true);
       assertEquals(result.response, undefined);
+    });
+
+    it("does not treat *.production.veryfront.me as localhost", async () => {
+      const handler = new HMRHandler();
+
+      const req = new Request("http://localhost:3000/_ws", {
+        headers: { host: "myproject.production.veryfront.me:3000" },
+      });
+      const ctx = {
+        requestContext: { mode: "production" },
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: { fs: {}, server: null },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
+    });
+
+    it("does not treat *.staging.veryfront.me as localhost", async () => {
+      const handler = new HMRHandler();
+
+      const req = new Request("http://localhost:3000/_ws", {
+        headers: { host: "myproject.staging.veryfront.me:3000" },
+      });
+      const ctx = {
+        requestContext: { mode: "production" },
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: { fs: {}, server: null },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
+    });
+
+    it("does not treat unknown *.veryfront.me namespace as localhost", async () => {
+      const handler = new HMRHandler();
+
+      const req = new Request("http://localhost:3000/_ws", {
+        headers: { host: "myproject.foobar.veryfront.me:3000" },
+      });
+      const ctx = {
+        requestContext: { mode: "production" },
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: { fs: {}, server: null },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
+    });
+
+    it("treats preview.veryfront.me as local preview host", async () => {
+      const handler = new HMRHandler();
+
+      const req = new Request("http://localhost:3000/_ws", {
+        headers: { host: "preview.veryfront.me:3000" },
+      });
+      const ctx = {
+        requestContext: { mode: "production" },
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: { fs: {}, server: null },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      const result = await handler.handle(req, ctx);
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
     });
 
     it("handle accepts preview via query param (for proxy WebSocket)", async () => {
@@ -299,6 +381,66 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const rateLimitClose = mock.closeCalls.find((call) => call.code === HMR_CLOSE_RATE_LIMIT);
       assertExists(rateLimitClose);
       assertEquals(HMRHandler.getClientCount(), 0);
+    });
+
+    it("avoids duplicate reload broadcasts when external source is registered", async () => {
+      const handler = new HMRHandler();
+      const mock = createMockSocket();
+
+      const unregisterExternalSource = HMRHandler.registerExternalBroadcastSource();
+      const unsubscribeExternalReload = ReloadNotifier.subscribe((changedPaths, project) => {
+        broadcastUpdate(changedPaths, project?.projectSlug);
+      });
+
+      try {
+        const req = new Request("http://localhost:3000/_ws", {
+          headers: { upgrade: "websocket" },
+        });
+        const ctx = {
+          requestContext: { mode: "preview" },
+          mode: "development",
+          projectDir: "/tmp/test",
+          projectSlug: "test-project",
+          securityConfig: null,
+          cspUserHeader: null,
+          adapter: {
+            fs: {},
+            server: {
+              upgradeWebSocket: () => ({
+                socket: mock.socket,
+                response: new Response(null, { status: 101 }),
+              }),
+            },
+          },
+        } as unknown as Parameters<typeof handler.handle>[1];
+
+        await handler.handle(req, ctx);
+
+        // Ignore initial "connected" message; only validate reload/update emission.
+        mock.sentMessages.length = 0;
+
+        ReloadNotifier.triggerReload(["app.tsx"], { projectSlug: "test-project" });
+        await new Promise((resolve) => setTimeout(resolve, 350));
+
+        const hmrMessages = mock.sentMessages
+          .map((message) => {
+            try {
+              return JSON.parse(message) as { type?: string; path?: string };
+            } catch {
+              return null;
+            }
+          })
+          .filter((msg): msg is { type?: string; path?: string } =>
+            !!msg && (msg.type === "update" || msg.type === "reload")
+          );
+
+        assertEquals(hmrMessages.length, 1);
+        assertEquals(hmrMessages[0]?.type, "update");
+        assertEquals(hmrMessages[0]?.path, "app.tsx");
+      } finally {
+        unsubscribeExternalReload();
+        unregisterExternalSource();
+      }
     });
   });
 

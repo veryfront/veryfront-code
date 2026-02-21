@@ -3,13 +3,14 @@
  */
 
 import { join } from "#veryfront/compat/path/index.ts";
+import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 
 export function getTmpDirCacheKey(
   baseCacheDir: string,
   projectId: string,
   contentSourceId: string,
 ): string {
-  const projectKey = encodeURIComponent(projectId);
+  const projectKey = hashCodeHex(projectId);
   return `${baseCacheDir}|${projectKey}|${contentSourceId}`;
 }
 
@@ -18,7 +19,7 @@ export function buildTmpDirPath(
   projectId: string,
   contentSourceId: string,
 ): string {
-  const projectKey = encodeURIComponent(projectId);
+  const projectKey = hashCodeHex(projectId);
   return join(baseCacheDir, projectKey, contentSourceId);
 }
 

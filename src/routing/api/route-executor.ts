@@ -69,8 +69,38 @@ function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileS
   };
 }
 
-function validateResponse(response: unknown): asserts response is Response {
-  if (response instanceof Response) return;
+/**
+ * Check if an object is a cross-context Response (e.g. Deno native Response
+ * when this code runs in the npm package context with a different constructor).
+ */
+function isCrossContextResponse(
+  value: unknown,
+): value is { status: number; statusText: string; headers: Headers; body: ReadableStream | null } {
+  if (value == null || typeof value !== "object") return false;
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.status === "number" &&
+    typeof r.headers === "object" &&
+    r.headers !== null &&
+    typeof (r.headers as Headers).get === "function" &&
+    typeof r.text === "function" &&
+    typeof r.arrayBuffer === "function"
+  );
+}
+
+function validateResponse(response: unknown): Response {
+  if (response instanceof Response) return response;
+
+  // Normalize cross-context Response objects into a real Response so downstream
+  // code (toHeadResponse, applyCORSHeaders, withHeaders) always receives a
+  // genuine instance with correct body, headers, and status.
+  if (isCrossContextResponse(response)) {
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
 
   throw toError(
     createError({
@@ -110,8 +140,7 @@ export function executeAppRoute(
 
       try {
         const appContext: AppRouteContext = { params: normalizeParams(match.params) };
-        const response = await resolvedFn(request, appContext);
-        validateResponse(response);
+        const response = validateResponse(await resolvedFn(request, appContext));
         return method === "HEAD" ? toHeadResponse(response) : response;
       } catch (error) {
         return handleAPIError(error, pathname, adapter);
@@ -143,9 +172,7 @@ export function executePagesRoute(
       try {
         const fs = projectDir ? createProjectScopedFs(adapter.fs, projectDir) : adapter.fs;
         const ctx = createContext(request, match, fs);
-        const response = await (methodHandler as PagesRouteHandler)(ctx);
-        validateResponse(response);
-        return response;
+        return validateResponse(await (methodHandler as PagesRouteHandler)(ctx));
       } catch (error) {
         return handleAPIError(error, pathname, adapter);
       }

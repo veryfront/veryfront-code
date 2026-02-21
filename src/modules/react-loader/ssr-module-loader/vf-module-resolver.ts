@@ -5,6 +5,7 @@
  */
 
 import { join } from "#veryfront/compat/path/index.ts";
+import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -68,7 +69,7 @@ export async function resolveVfModuleImports(
   });
 
   const baseCacheDir = getMdxEsmCacheDir();
-  const projectKey = encodeURIComponent(options.projectId);
+  const projectKey = hashCodeHex(options.projectId);
   const esmCacheDir = join(baseCacheDir, projectKey, options.contentSourceId);
 
   const fetcherContext = createModuleFetcherContext(
