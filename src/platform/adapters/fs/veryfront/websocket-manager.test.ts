@@ -21,7 +21,7 @@ class MockWebSocket {
   onclose: ((this: WebSocket, ev: CloseEvent) => unknown) | null = null;
   onerror: ((this: WebSocket, ev: Event) => unknown) | null = null;
 
-  constructor(public readonly url: string) {
+  constructor(readonly url: string) {
     MockWebSocket.instances.push(this);
   }
 
