@@ -27,7 +27,6 @@ import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { bootstrapProd } from "./bootstrap.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
 import { addClient, getClient, removeClient } from "./handlers/preview/hmr-client-manager.ts";
-import { broadcastUpdate } from "./handlers/preview/hmr-message-router.ts";
 import { RateLimiter } from "#veryfront/modules/server/index.ts";
 import {
   HMR_CLOSE_MESSAGE_TOO_LARGE,
@@ -196,12 +195,8 @@ export async function createHandler(
   });
   await devServer.start();
 
-  // Subscribe to ReloadNotifier so file changes broadcast to connectHMR clients.
-  // HMRHandler.initialize() only runs on /_ws requests through the handler pipeline,
-  // but connectHMR bypasses the pipeline (Bun/Elysia manage upgrades natively).
-  ReloadNotifier.subscribe((changedPaths) => {
-    broadcastUpdate(changedPaths);
-  });
+  // ReloadNotifier subscription for HMR broadcast is now handled eagerly
+  // inside DevServer.start() — no additional subscription needed here.
 
   const internalFetch = devServer.handler;
   const fetch = async (req: Request) => toNativeResponse(await internalFetch(req));
