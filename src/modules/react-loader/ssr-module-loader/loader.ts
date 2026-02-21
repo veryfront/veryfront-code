@@ -17,6 +17,7 @@ import {
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { verifyCacheFileExists, writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -404,7 +405,7 @@ export class SSRModuleLoader {
 
     if (this.options.projectId && this.options.contentSourceId) {
       const baseCacheDir = getMdxEsmCacheDir();
-      const projectKey = encodeURIComponent(this.options.projectId);
+      const projectKey = hashCodeHex(this.options.projectId);
       const sourceKey = this.options.contentSourceId;
       const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
 

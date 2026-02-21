@@ -15,6 +15,7 @@
 
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { isKeyForProject, registerMapCache } from "#veryfront/cache/keys.ts";
+import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
@@ -223,7 +224,7 @@ export function clearSSRModuleCache(): void {
 
 export function clearSSRModuleCacheForProject(projectId: string): void {
   let cleared = 0;
-  const encodedProjectId = encodeURIComponent(projectId);
+  const encodedProjectId = hashCodeHex(projectId);
 
   for (const key of globalModuleCache.keys()) {
     if (!isKeyForProject(key, projectId)) continue;
