@@ -38,6 +38,7 @@ const PRIORITY_HMR: HandlerPriority = HandlerPriority.EARLY;
 export class HMRHandler extends BaseHandler {
   private static rateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
   private static reloadUnsubscribe: (() => void) | null = null;
+  private static externalBroadcastSourceCount = 0;
   private static initialized = false;
 
   metadata: HandlerMetadata = {
@@ -66,6 +67,15 @@ export class HMRHandler extends BaseHandler {
         environment: project?.environment,
         branchId: project?.branch ?? undefined,
       });
+
+      if (HMRHandler.externalBroadcastSourceCount > 0) {
+        logger.debug("Skipping handler broadcast - external source active", {
+          projectSlug: project?.projectSlug,
+          externalBroadcastSourceCount: HMRHandler.externalBroadcastSourceCount,
+        });
+        return;
+      }
+
       broadcastUpdate(changedPaths, project?.projectSlug);
     });
 
@@ -84,14 +94,33 @@ export class HMRHandler extends BaseHandler {
     const isPreviewMode = ctx.requestContext?.mode === "preview" || queryEnv === "preview";
     const isLocal = !!ctx.isLocalProject;
     const host = req.headers.get("host") ?? "";
-    const isLocalhost = host.startsWith("localhost") || host.startsWith("127.0.0.1");
+    const hostWithoutPort = host.replace(/:\d+$/, "").toLowerCase();
+    const isVeryfrontMeRoot = hostWithoutPort === "veryfront.me";
+    const isVeryfrontMePreviewRoot = hostWithoutPort === "preview.veryfront.me";
+    const isVeryfrontMeProjectBase = /^[a-z0-9-]+\.veryfront\.me$/.test(hostWithoutPort);
+    const isVeryfrontMeProjectPreview = /^[a-z0-9-]+(?:--[a-z0-9-]+)?\.preview\.veryfront\.me$/
+      .test(hostWithoutPort);
+    const isLocalVeryfrontMeHost = isVeryfrontMeRoot ||
+      isVeryfrontMePreviewRoot ||
+      isVeryfrontMeProjectBase ||
+      isVeryfrontMeProjectPreview;
+    const isLocalhost = hostWithoutPort === "localhost" ||
+      hostWithoutPort === "127.0.0.1" ||
+      hostWithoutPort === "0.0.0.0" ||
+      hostWithoutPort.endsWith(".localhost") ||
+      hostWithoutPort.endsWith(".lvh.me") ||
+      hostWithoutPort === "lvh.me" ||
+      isLocalVeryfrontMeHost;
 
     if (!isPreviewMode && !isLocal && !isLocalhost) {
-      logger.debug("Skipping - not preview or local dev", {
+      logger.warn("Skipping /_ws - not preview, local dev, or localhost", {
         mode: ctx.requestContext?.mode,
         queryEnv,
         isLocalProject: ctx.isLocalProject,
         host,
+        isPreviewMode,
+        isLocal,
+        isLocalhost,
       });
       return Promise.resolve(this.continue());
     }
@@ -283,6 +312,17 @@ export class HMRHandler extends BaseHandler {
     lastBroadcastTime: number;
   } {
     return getMetrics();
+  }
+
+  static registerExternalBroadcastSource(): () => void {
+    HMRHandler.externalBroadcastSourceCount++;
+
+    return () => {
+      HMRHandler.externalBroadcastSourceCount = Math.max(
+        0,
+        HMRHandler.externalBroadcastSourceCount - 1,
+      );
+    };
   }
 
   static shutdown(): void {

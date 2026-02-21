@@ -108,6 +108,25 @@ export function parseProjectDomain(host: string): ParsedDomain {
     return createParsedDomain(localProductionMatch[1], null, "production", true, false);
   }
 
+  // Local development explicit staging: {slug}.staging.{lvh.me|veryfront.dev}
+  const localStagingMatch = matchDomain(
+    domain,
+    `^([A-Za-z0-9-]+)\\.staging\\.(${LOCAL_DEV_DOMAINS})$`,
+  );
+  if (localStagingMatch?.[1]) {
+    return createParsedDomain(localStagingMatch[1], null, "staging", true, false);
+  }
+
+  // Local environment root domains (no slug): preview|staging|production.{lvh.me|veryfront.dev}
+  const localEnvRootMatch = matchDomain(
+    domain,
+    `^(preview|staging|production)\\.(${LOCAL_DEV_DOMAINS})$`,
+  );
+  if (localEnvRootMatch?.[1]) {
+    const env = localEnvRootMatch[1] as Environment;
+    return createParsedDomain(null, null, env, true, env === "preview");
+  }
+
   // Local development base: {slug}.{lvh.me|veryfront.dev}
   // Mirrors production behavior: serves released content (isDraft: false)
   // Use {slug}.preview.lvh.me for draft content

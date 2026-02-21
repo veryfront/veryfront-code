@@ -70,6 +70,16 @@ describe("request-context", () => {
       assertEquals(ctx.branch, null);
     });
 
+    it("sets preview mode from local preview environment root domain", () => {
+      const ctx = createRequestContext(
+        new Request("http://preview.veryfront.me:8080/page"),
+      );
+
+      assertEquals(ctx.slug, "");
+      assertEquals(ctx.mode, "preview");
+      assertEquals(ctx.branch, null);
+    });
+
     it("prefers x-token header over env var", () => {
       const ctx = createRequestContext(
         new Request("https://myapp.production.veryfront.com/", {

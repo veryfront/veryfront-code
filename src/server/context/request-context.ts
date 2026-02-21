@@ -20,7 +20,8 @@ export function createRequestContext(req: Request): RequestContext {
 
   const xEnvironment = req.headers.get("x-environment");
 
-  const mode: "preview" | "production" = effectiveHost.includes(".preview.") ||
+  const mode: "preview" | "production" = parsed.environment === "preview" ||
+      effectiveHost.includes(".preview.") ||
       xEnvironment === "preview"
     ? "preview"
     : "production";

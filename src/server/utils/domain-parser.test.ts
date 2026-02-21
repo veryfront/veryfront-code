@@ -43,6 +43,14 @@ describe("domain-parser", () => {
       assertEquals(result.isDraft, true);
     });
 
+    it("local preview environment root (veryfront.me)", () => {
+      const result = parseProjectDomain("preview.veryfront.me");
+      assertEquals(result.slug, null);
+      assertEquals(result.environment, "preview");
+      assertEquals(result.isVeryfrontDomain, true);
+      assertEquals(result.isDraft, true);
+    });
+
     it("lvh.me preview", () => {
       const result = parseProjectDomain("myproject.preview.lvh.me:3001");
       assertEquals(result.slug, "myproject");
@@ -78,6 +86,14 @@ describe("domain-parser", () => {
       assertEquals(result.slug, null);
       assertEquals(result.environment, "development");
       assertEquals(result.isVeryfrontDomain, true);
+    });
+
+    it("local preview environment root (lvh.me)", () => {
+      const result = parseProjectDomain("preview.lvh.me");
+      assertEquals(result.slug, null);
+      assertEquals(result.environment, "preview");
+      assertEquals(result.isVeryfrontDomain, true);
+      assertEquals(result.isDraft, true);
     });
 
     it("veryfront.com preview", () => {
@@ -130,11 +146,26 @@ describe("domain-parser", () => {
       assertEquals(result.isDraft, false);
     });
 
+    it("local dev explicit staging: {slug}.staging.veryfront.me", () => {
+      const result = parseProjectDomain("myproject.staging.veryfront.me:8080");
+      assertEquals(result.slug, "myproject");
+      assertEquals(result.environment, "staging");
+      assertEquals(result.isVeryfrontDomain, true);
+      assertEquals(result.isDraft, false);
+    });
+
     it("environment root (no slug)", () => {
       const result = parseProjectDomain("preview.veryfront.com");
       assertEquals(result.slug, null);
       assertEquals(result.environment, "preview");
       assertEquals(result.isVeryfrontDomain, true);
+    });
+
+    it("local unknown namespace is not recognized", () => {
+      const result = parseProjectDomain("myproject.foobar.veryfront.me");
+      assertEquals(result.slug, null);
+      assertEquals(result.environment, null);
+      assertEquals(result.isVeryfrontDomain, false);
     });
 
     it("custom domain (not recognized)", () => {

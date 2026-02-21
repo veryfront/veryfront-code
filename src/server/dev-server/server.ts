@@ -9,6 +9,8 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { bootstrapDev } from "../bootstrap.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
+import { broadcastUpdate } from "../handlers/preview/hmr-message-router.ts";
+import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
 import type { DevServerOptions } from "./types.ts";
 import { RequestHandler } from "./request-handler.ts";
 import { setupMiddleware } from "./middleware.ts";
@@ -62,6 +64,7 @@ export class DevServer {
   private _isReady = false;
   private reloadUnsubscribe?: () => void;
   private invalidateUnsubscribe?: () => void;
+  private releaseExternalBroadcastSource?: () => void;
 
   constructor(private options: DevServerOptions) {
     this.ready = new Promise<void>((resolve) => {
@@ -158,7 +161,21 @@ export class DevServer {
         this.requestHandler?.invalidateRuntimeHandler();
       });
 
-      devServerLog.debug("ReloadNotifier invalidation subscription registered");
+      // Subscribe to debounced reload for broadcasting updates to connected HMR clients.
+      // This subscription must be eagerly registered here rather than lazily inside
+      // HMRHandler.initialize(), because HMRHandler.initialize() only runs when the
+      // first /_ws WebSocket request arrives. If that connection fails or hasn't
+      // happened yet, file changes are silently lost.
+      this.releaseExternalBroadcastSource = HMRHandler.registerExternalBroadcastSource();
+      this.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, project) => {
+        hmrLog.debug("RELOAD callback triggered - broadcasting to HMR clients", {
+          changedPaths,
+          projectSlug: project?.projectSlug,
+        });
+        broadcastUpdate(changedPaths, project?.projectSlug);
+      });
+
+      hmrLog.debug("ReloadNotifier subscriptions registered (invalidate + reload broadcast)");
     }
 
     const moduleServerUrl = buildLocalhostUrl(this.options.port);
@@ -435,6 +452,7 @@ export class DevServer {
 
     this.reloadUnsubscribe?.();
     this.invalidateUnsubscribe?.();
+    this.releaseExternalBroadcastSource?.();
 
     if (this.fileWatchSetup) {
       const metrics = this.fileWatchSetup.getMetrics();
