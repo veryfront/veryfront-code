@@ -16,6 +16,7 @@ import {
 import { ReloadNotifier } from "../../reload-notifier.ts";
 import { invalidateProjectCaches } from "../../context/cache-invalidation.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { isLocalDevHost } from "../../utils/domain-parser.ts";
 import {
   addClient,
   clearAll,
@@ -94,23 +95,7 @@ export class HMRHandler extends BaseHandler {
     const isPreviewMode = ctx.requestContext?.mode === "preview" || queryEnv === "preview";
     const isLocal = !!ctx.isLocalProject;
     const host = req.headers.get("host") ?? "";
-    const hostWithoutPort = host.replace(/:\d+$/, "").toLowerCase();
-    const isVeryfrontMeRoot = hostWithoutPort === "veryfront.me";
-    const isVeryfrontMePreviewRoot = hostWithoutPort === "preview.veryfront.me";
-    const isVeryfrontMeProjectBase = /^[a-z0-9-]+\.veryfront\.me$/.test(hostWithoutPort);
-    const isVeryfrontMeProjectPreview = /^[a-z0-9-]+(?:--[a-z0-9-]+)?\.preview\.veryfront\.me$/
-      .test(hostWithoutPort);
-    const isLocalVeryfrontMeHost = isVeryfrontMeRoot ||
-      isVeryfrontMePreviewRoot ||
-      isVeryfrontMeProjectBase ||
-      isVeryfrontMeProjectPreview;
-    const isLocalhost = hostWithoutPort === "localhost" ||
-      hostWithoutPort === "127.0.0.1" ||
-      hostWithoutPort === "0.0.0.0" ||
-      hostWithoutPort.endsWith(".localhost") ||
-      hostWithoutPort.endsWith(".lvh.me") ||
-      hostWithoutPort === "lvh.me" ||
-      isLocalVeryfrontMeHost;
+    const isLocalhost = isLocalDevHost(host);
 
     if (!isPreviewMode && !isLocal && !isLocalhost) {
       logger.warn("Skipping /_ws - not preview, local dev, or localhost", {
@@ -332,6 +317,7 @@ export class HMRHandler extends BaseHandler {
     stopPingInterval();
     clearAll();
     HMRHandler.rateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
+    HMRHandler.externalBroadcastSourceCount = 0;
 
     HMRHandler.initialized = false;
 
