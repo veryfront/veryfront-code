@@ -7,10 +7,10 @@
     "type": "oauth2",
     "provider": "figma",
     "authorizationUrl": "https://www.figma.com/oauth",
-    "tokenUrl": "https://www.figma.com/api/oauth/token",
-    "scopes": ["file_read"],
+    "tokenUrl": "https://api.figma.com/v1/oauth/token",
+    "scopes": ["file_content:read"],
     "callbackPath": "/api/auth/figma/callback",
-    "tokenAuthMethod": "client_secret_post",
+    "tokenAuthMethod": "client_secret_basic",
     "requiredApis": [
       {
         "name": "Figma OAuth App",
