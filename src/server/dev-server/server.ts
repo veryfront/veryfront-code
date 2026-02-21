@@ -172,7 +172,9 @@ export class DevServer {
           changedPaths,
           projectSlug: project?.projectSlug,
         });
-        broadcastUpdate(changedPaths, project?.projectSlug);
+        // Broadcast without projectSlug filter so that connectHMR() clients
+        // (which are registered without a projectSlug) also receive updates.
+        broadcastUpdate(changedPaths);
       });
 
       hmrLog.debug("ReloadNotifier subscriptions registered (invalidate + reload broadcast)");
