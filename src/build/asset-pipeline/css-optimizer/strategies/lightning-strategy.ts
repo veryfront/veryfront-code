@@ -20,7 +20,7 @@ export class LightningCSSStrategy implements CSSOptimizationStrategy {
     this.initialized = true;
 
     try {
-      this.lightningCSS = await import("https://esm.sh/lightningcss@1.22.0");
+      this.lightningCSS = await import("https://esm.sh/lightningcss@1.29.2");
       logger.info("Lightning CSS optimizer loaded successfully");
       return true;
     } catch (error) {

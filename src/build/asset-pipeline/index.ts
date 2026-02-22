@@ -198,7 +198,7 @@ export async function checkAssetPipelineDependencies(): Promise<{
   }
 
   try {
-    await import("https://esm.sh/lightningcss@1.22.0");
+    await import("https://esm.sh/lightningcss@1.29.2");
     dependencies.lightningCSS = true;
   } catch (error) {
     logger.debug("Lightning CSS not available:", error);
