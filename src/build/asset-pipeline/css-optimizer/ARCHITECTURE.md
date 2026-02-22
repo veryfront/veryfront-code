@@ -428,7 +428,7 @@ tests/build/asset-pipeline/
 
 ### Optional (External)
 
-- `https://esm.sh/lightningcss@1.22.0` - Advanced CSS optimization
+- `https://esm.sh/lightningcss@1.29.2` - Advanced CSS optimization
 
 ### Internal
 
