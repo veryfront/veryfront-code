@@ -15,6 +15,9 @@ import { build, emptyDir } from "jsr:@deno/dnt";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
+if (!version) {
+	throw new Error("deno.json must have a 'version' field");
+}
 const license = denoJson.license;
 if (!license) {
 	throw new Error("deno.json must have a 'license' field");
@@ -254,8 +257,8 @@ if (existsSync(nativeBinary)) {
 		// Copy LICENSE (must exist at repo root)
 		await Deno.copyFile("./LICENSE", "./npm/LICENSE");
 
-		// Copy README (optional)
-		await copyFileIfExists("./README.md", "./npm/README.md");
+		// Copy README (must exist at repo root)
+		await Deno.copyFile("./README.md", "./npm/README.md");
 
 		// Copy base tsconfig for user projects to extend
 		await Deno.writeTextFile("./npm/tsconfig.json", JSON.stringify({
@@ -282,14 +285,6 @@ if (existsSync(nativeBinary)) {
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
 	},
 });
-
-async function copyFileIfExists(src: string, dest: string): Promise<void> {
-	try {
-		await Deno.copyFile(src, dest);
-	} catch {
-		// Ignore if file doesn't exist
-	}
-}
 
 console.log(`
 ✅ Build complete!
