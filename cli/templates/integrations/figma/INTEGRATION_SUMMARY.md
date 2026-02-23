@@ -171,7 +171,7 @@ getFileSummary(file) → FileSummary
 ```
 Auth URL: https://www.figma.com/oauth
 Token URL: https://www.figma.com/api/oauth/token
-Scopes: file_read
+Scopes: file_content:read
 Callback: https://yourdomain.com/api/auth/figma/callback
 ```
 

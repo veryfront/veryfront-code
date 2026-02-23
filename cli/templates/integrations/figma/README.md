@@ -56,7 +56,7 @@ This integration enables AI assistants to:
 3. Configure your app:
    - **Name**: Your app name
    - **Callback URL**: `https://yourdomain.com/api/auth/figma/callback`
-   - **Scopes**: `file_read` (required)
+   - **Scopes**: `file_content:read` (required)
 
 ### 2. Configure Environment Variables
 
@@ -238,7 +238,7 @@ export async function getAccessToken(userId: string) {
 ```
 
 ### Scope Requirements
-- `file_read` - Required for all read operations
+- `file_content:read` - Required for all read operations (replaces deprecated `file_read`)
 - Additional scopes can be added in `connector.json`
 
 ## Troubleshooting
