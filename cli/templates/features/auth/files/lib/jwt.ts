@@ -1,6 +1,11 @@
-const SECRET_KEY = new TextEncoder().encode(
-  process.env.JWT_SECRET ?? "super-secret-key-change-this-in-production",
-);
+if (!process.env.JWT_SECRET) {
+  throw new Error(
+    "JWT_SECRET environment variable is required. " +
+      "Generate one with: openssl rand -base64 32",
+  );
+}
+
+const SECRET_KEY = new TextEncoder().encode(process.env.JWT_SECRET);
 
 const ALGORITHM: HmacImportParams = { name: "HMAC", hash: "SHA-256" };
 
