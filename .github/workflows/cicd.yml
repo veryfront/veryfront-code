@@ -308,6 +308,14 @@ jobs:
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
+      - name: Trigger job-runner deploy
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GH_PAT_VERYFRONT }}
+          repository: veryfront/veryfront-job-runner
+          event-type: veryfront-code-released
+          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
+
   # ============================================
   # CD: Stable Release (clean semver only)
   # Runs when deno.json version is X.Y.Z (no suffix)
@@ -428,6 +436,14 @@ jobs:
         with:
           token: ${{ secrets.GH_PAT_VERYFRONT }}
           repository: veryfront/veryfront-server
+          event-type: veryfront-code-released
+          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
+
+      - name: Trigger job-runner deploy
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GH_PAT_VERYFRONT }}
+          repository: veryfront/veryfront-job-runner
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
