@@ -140,8 +140,8 @@ export class MarkdownPreviewHandler extends BaseHandler {
 
       const html = generateMarkdownHtml({
         rawHtml: bundle.rawHtml || "",
-        title: (frontmatter.title as string) || filePath,
-        description: (frontmatter.description as string) || "",
+        title: frontmatter.title != null ? String(frontmatter.title) : filePath,
+        description: frontmatter.description != null ? String(frontmatter.description) : "",
         request: req,
         url,
         projectId: ctx.projectSlug || ctx.projectId || "markdown-preview",
