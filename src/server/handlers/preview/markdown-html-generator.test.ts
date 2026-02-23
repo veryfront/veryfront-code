@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
 
