@@ -234,6 +234,21 @@ describe("getEntityBySlug", () => {
     });
   });
 
+  it("does not misclassify pages/layouts/ files as layouts", async () => {
+    await withTestContext("entity-pages-layouts-dir", async (context) => {
+      const layoutsPageDir = join(context.projectDir, "pages", "layouts");
+      await createTestFile(
+        join(layoutsPageDir, "index.tsx"),
+        `export default function LayoutsIndex() { return <div>Layouts page</div>; }`,
+      );
+
+      const info = await getEntityInfo(join(layoutsPageDir, "index.tsx"));
+      assertExists(info);
+      assertEquals(info.entity.isPage, true);
+      assertEquals(info.entity.isLayout, false);
+    });
+  });
+
   it("skips non-page entities", async () => {
     await withTestContext("entity-slug-skip", async (context) => {
       const pagesDir = join(context.projectDir, "pages");
@@ -304,6 +319,86 @@ Generic layout`,
       const genericLayout = await getLayoutEntity(context.projectDir, "any");
       assertExists(genericLayout);
       assertEquals(genericLayout.entity.content.includes("Generic layout"), true);
+    });
+  });
+
+  it("finds layout in layouts/ with .jsx extension", async () => {
+    await withTestContext("entity-layout-jsx", async (context) => {
+      const layoutsDir = join(context.projectDir, "layouts");
+      await createTestFile(
+        join(layoutsDir, "sidebar.jsx"),
+        `export default function SidebarLayout({ children }) {
+    return children;
+  }`,
+      );
+
+      const layout = await getLayoutEntity(context.projectDir, "sidebar");
+      assertExists(layout);
+      assertEquals(layout.entity.isLayout, true);
+    });
+  });
+
+  it("finds layout in layouts/ with .ts extension", async () => {
+    await withTestContext("entity-layout-ts", async (context) => {
+      const layoutsDir = join(context.projectDir, "layouts");
+      await createTestFile(
+        join(layoutsDir, "minimal.ts"),
+        `export default function MinimalLayout({ children }: { children: any }) {
+    return children;
+  }`,
+      );
+
+      const layout = await getLayoutEntity(context.projectDir, "minimal");
+      assertExists(layout);
+      assertEquals(layout.entity.isLayout, true);
+    });
+  });
+
+  it("finds layout in layouts/ with .js extension", async () => {
+    await withTestContext("entity-layout-js", async (context) => {
+      const layoutsDir = join(context.projectDir, "layouts");
+      await createTestFile(
+        join(layoutsDir, "simple.js"),
+        `export default function SimpleLayout({ children }) {
+    return children;
+  }`,
+      );
+
+      const layout = await getLayoutEntity(context.projectDir, "simple");
+      assertExists(layout);
+      assertEquals(layout.entity.isLayout, true);
+    });
+  });
+
+  it("finds ComponentLayout in components/ with .jsx extension", async () => {
+    await withTestContext("entity-layout-component-jsx", async (context) => {
+      const componentsDir = join(context.projectDir, "components");
+      await createTestFile(
+        join(componentsDir, "BlogLayout.jsx"),
+        `export default function BlogLayout({ children }) {
+    return children;
+  }`,
+      );
+
+      const layout = await getLayoutEntity(context.projectDir, "Blog");
+      assertExists(layout);
+      assertEquals(layout.entity.isLayout, true);
+    });
+  });
+
+  it("finds Layout fallback in components/ with .jsx extension", async () => {
+    await withTestContext("entity-layout-fallback-jsx", async (context) => {
+      const componentsDir = join(context.projectDir, "components");
+      await createTestFile(
+        join(componentsDir, "Layout.jsx"),
+        `export default function Layout({ children }) {
+    return children;
+  }`,
+      );
+
+      const layout = await getLayoutEntity(context.projectDir, "anything");
+      assertExists(layout);
+      assertEquals(layout.entity.isLayout, true);
     });
   });
 

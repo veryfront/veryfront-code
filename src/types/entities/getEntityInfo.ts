@@ -377,24 +377,54 @@ export async function getLayoutEntity(
         return null;
       }
 
-      const possiblePaths = [
+      // Files in layouts/ are treated as layouts by convention (any extension)
+      const layoutsDirPaths = [
         pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.mdx`),
         pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.md`),
         pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.tsx`),
+        pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.jsx`),
+        pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.ts`),
+        pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.js`),
+      ];
+
+      // Files in components/ must be detected as layouts by name/frontmatter
+      const componentsPaths = [
         pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.mdx`),
         pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.md`),
         pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.tsx`),
+        pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.jsx`),
+        pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.ts`),
+        pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.js`),
         pathHelper.join(projectDir, "components", "Layout.mdx"),
         pathHelper.join(projectDir, "components", "Layout.md"),
         pathHelper.join(projectDir, "components", "Layout.tsx"),
+        pathHelper.join(projectDir, "components", "Layout.jsx"),
+        pathHelper.join(projectDir, "components", "Layout.ts"),
+        pathHelper.join(projectDir, "components", "Layout.js"),
       ];
 
-      const pathResults = await parallelMap(possiblePaths, async (p) => {
+      const allPaths = [...layoutsDirPaths, ...componentsPaths];
+      const pathResults = await parallelMap(allPaths, async (p) => {
         return await getEntityInfo(p, adapter);
       });
 
-      for (const info of pathResults) {
-        if (info?.entity.isLayout) return info;
+      const layoutsDirCount = layoutsDirPaths.length;
+      for (let i = 0; i < pathResults.length; i++) {
+        const info = pathResults[i];
+        if (!info) continue;
+        // layouts/ dir: any valid entity is a layout
+        // components/ dir: must be detected as layout by name/frontmatter
+        if (i < layoutsDirCount || info.entity.isLayout) {
+          return {
+            entity: {
+              ...info.entity,
+              type: "layout",
+              isLayout: true,
+              isComponent: false,
+              isPage: false,
+            },
+          };
+        }
       }
 
       return null;
