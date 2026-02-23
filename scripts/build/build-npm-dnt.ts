@@ -43,6 +43,10 @@ await emptyDir("./npm");
 const entryPoints = Object.entries(denoJson.exports as Record<string, string>)
 	.map(([name, path]) => ({ name, path }));
 
+// Auto-derive esm.sh URL mappings from deno.json imports so versions stay in sync.
+// dnt ignores mappings it doesn't encounter, so including all is safe.
+const esmShMappings = buildEsmShMappings(denoJson.imports as Record<string, string>);
+
 await build({
 	entryPoints,
 	outDir: "./npm",
@@ -91,25 +95,8 @@ await build({
 			name: "@types/unist",
 			version: "^3.0.2",
 		},
-		// esm.sh URLs - map to npm packages (only include URLs actually imported)
-		"https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3": {
-			name: "react",
-			version: "19.1.1",
-		},
-		"https://esm.sh/react-dom@19.1.1/server?external=react&target=es2022&deps=csstype@3.2.3": {
-			name: "react-dom",
-			version: "19.1.1",
-			subPath: "server",
-		},
-		"https://esm.sh/react@19.1.1/jsx-runtime?external=react&target=es2022&deps=csstype@3.2.3": {
-			name: "react",
-			version: "19.1.1",
-			subPath: "jsx-runtime",
-		},
-		"https://esm.sh/tailwindcss@4.1.8": {
-			name: "tailwindcss",
-			version: "4.1.8",
-		},
+		// esm.sh URLs - derived from deno.json imports
+		...esmShMappings,
 	},
 
 	package: {
@@ -187,38 +174,27 @@ await build({
 		const rscDest = "./npm/esm/src/rendering/rsc";
 		await Deno.mkdir(rscDest, { recursive: true });
 		for (const file of rscClientFiles) {
-			try {
-				await Deno.copyFile(`${rscSrc}/${file}`, `${rscDest}/${file}`);
-			} catch {
-				console.warn(`⚠️ Could not copy ${file}`);
-			}
+			await Deno.copyFile(`${rscSrc}/${file}`, `${rscDest}/${file}`);
 		}
 		console.log(`📝 Copied ${rscClientFiles.length} RSC client files`);
 
 		// Fix dnt polyfill bug: process.argv[1] can be undefined in dynamic imports
-		const polyfillPath = "./npm/esm/_dnt.polyfills.js";
-		let polyfillContent = await Deno.readTextFile(polyfillPath);
-		polyfillContent = polyfillContent.replace(
+		patchFile(
+			"./npm/esm/_dnt.polyfills.js",
 			'process.argv[1].replace',
 			'(process.argv[1] ?? "").replace',
+			"dnt polyfill process.argv[1] fix",
 		);
-		await Deno.writeTextFile(polyfillPath, polyfillContent);
 
 		// Bake version into embedded deno.js so VERSION constant works without env var.
 		// The npm package reads version from this embedded config, and without this fix
 		// it would use the stale version from the original deno.json at build time.
-		const denoJsPath = "./npm/esm/deno.js";
-		try {
-			let denoJsContent = await Deno.readTextFile(denoJsPath);
-			denoJsContent = denoJsContent.replace(
-				/"version":\s*"[^"]*"/,
-				`"version": "${version}"`,
-			);
-			await Deno.writeTextFile(denoJsPath, denoJsContent);
-			console.log(`📝 Updated embedded deno.js version to ${version}`);
-		} catch (error) {
-			console.warn(`⚠️ Could not update embedded deno.js version: ${error}`);
-		}
+		patchFile(
+			"./npm/esm/deno.js",
+			/"version":\s*"[^"]*"/,
+			`"version": "${version}"`,
+			"embedded deno.js version",
+		);
 
 		// Copy postinstall script
 		await Deno.mkdir("./npm/scripts", { recursive: true });
@@ -227,37 +203,13 @@ await build({
 		// Note: Templates are now embedded in manifest.json which is bundled by dnt
 		// No need to copy template files separately
 
-		// Create bin wrapper
+		// Copy bin wrapper
 		await Deno.mkdir("./npm/bin", { recursive: true });
-		await Deno.writeTextFile("./npm/bin/veryfront.js", `#!/usr/bin/env node
-import { existsSync } from 'node:fs';
-import { spawn } from 'node:child_process';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-await import('../esm/_dnt.polyfills.js');
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const nativeBinary = join(__dirname, process.platform === 'win32' ? 'veryfront.exe' : 'veryfront');
-
-async function runJsFallback() {
-  await import('../esm/cli/main.js');
-}
-
-if (existsSync(nativeBinary)) {
-  const child = spawn(nativeBinary, process.argv.slice(2), { stdio: 'inherit' });
-  child.on('close', (code) => process.exit(code ?? 0));
-  child.on('error', () => runJsFallback().catch(err => { console.error(err); process.exit(1); }));
-} else {
-  runJsFallback().catch(err => { console.error(err); process.exit(1); });
-}
-`);
+		await Deno.copyFile("./scripts/build/bin-wrapper.js", "./npm/bin/veryfront.js");
 		await Deno.chmod("./npm/bin/veryfront.js", 0o755);
 
-		// Copy LICENSE (must exist at repo root)
+		// Copy LICENSE and README (must exist at repo root)
 		await Deno.copyFile("./LICENSE", "./npm/LICENSE");
-
-		// Copy README (must exist at repo root)
 		await Deno.copyFile("./README.md", "./npm/README.md");
 
 		// Copy base tsconfig for user projects to extend
@@ -285,6 +237,52 @@ if (existsSync(nativeBinary)) {
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
 	},
 });
+
+/** Patch a generated file with string or regex replacement. Throws if pattern not found. */
+function patchFile(
+	path: string,
+	search: string | RegExp,
+	replacement: string,
+	description: string,
+): void {
+	const content = Deno.readTextFileSync(path);
+	const patched = typeof search === "string"
+		? content.replace(search, replacement)
+		: content.replace(search, replacement);
+	if (patched === content) {
+		throw new Error(
+			`Patch failed: "${description}" did not match anything in ${path}. ` +
+				`dnt output may have changed — update the patch or remove it if the bug is fixed.`,
+		);
+	}
+	Deno.writeTextFileSync(path, patched);
+	console.log(`📝 Patched ${description} in ${path}`);
+}
+
+/** Parse esm.sh URLs from deno.json imports into dnt mappings. */
+function buildEsmShMappings(
+	imports: Record<string, string>,
+): Record<string, { name: string; version: string; subPath?: string }> {
+	const mappings: Record<string, { name: string; version: string; subPath?: string }> = {};
+
+	for (const url of Object.values(imports)) {
+		if (!url.startsWith("https://esm.sh/")) continue;
+
+		// Strip prefix and query params: "react@19.1.1/jsx-runtime"
+		const pathPart = url.replace("https://esm.sh/", "").split("?")[0]!;
+
+		// Match scoped (@scope/name@version/subPath) or regular (name@version/subPath)
+		const match = pathPart.match(/^(@[^/]+\/[^@]+|[^@]+)@([^/]+)(?:\/(.+))?$/);
+		if (!match) continue;
+
+		const [, name, ver, subPath] = match;
+		const entry: { name: string; version: string; subPath?: string } = { name: name!, version: ver! };
+		if (subPath) entry.subPath = subPath;
+		mappings[url] = entry;
+	}
+
+	return mappings;
+}
 
 console.log(`
 ✅ Build complete!
