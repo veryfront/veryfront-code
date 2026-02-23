@@ -24,6 +24,9 @@ export interface RunTaskOptions {
   /** Project ID (for cloud context) */
   projectId?: string;
 
+  /** If set, only these env var names are passed to the task. */
+  envAllowlist?: string[];
+
   /** Enable debug logging */
   debug?: boolean;
 }
@@ -49,18 +52,22 @@ export interface TaskRunResult {
  * Run a task with the given options
  */
 export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
-  const { task, config = {}, projectId, debug = false } = options;
+  const { task, config = {}, projectId, envAllowlist, debug = false } = options;
   const start = Date.now();
 
   if (debug) {
     logger.info(`Running task "${task.id}" (${task.name})`);
   }
 
-  // TODO(@kojiwakayama): For cloud execution (Jobs/CronJobs), filter env vars
-  // to prevent leaking infrastructure secrets to user code. Accept an allowlist
-  // of env var names in RunTaskOptions and only pass those through.
+  const allEnv = Deno.env.toObject();
+  const env = envAllowlist
+    ? Object.fromEntries(
+      envAllowlist.filter((k) => k in allEnv).map((k) => [k, allEnv[k]]),
+    )
+    : { ...allEnv };
+
   const ctx: TaskContext = {
-    env: { ...Deno.env.toObject() },
+    env,
     config,
     projectId,
   };
