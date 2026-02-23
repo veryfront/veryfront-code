@@ -20,6 +20,7 @@ import {
   agentHandler,
   promptHandler,
   resourceHandler,
+  taskHandler,
   toolHandler,
   workflowHandler,
 } from "./handlers/index.ts";
@@ -89,6 +90,7 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     resources: new Map(),
     prompts: new Map(),
     workflows: new Map(),
+    tasks: new Map(),
     errors: [],
   };
 
@@ -115,6 +117,11 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
   // Discover workflows
   for (const dir of config.workflowDirs ?? ["workflows"]) {
     await discoverItems(`${baseDir}/${dir}`, result, context, workflowHandler, config.verbose);
+  }
+
+  // Discover tasks
+  for (const dir of config.taskDirs ?? ["tasks"]) {
+    await discoverItems(`${baseDir}/${dir}`, result, context, taskHandler, config.verbose);
   }
 
   return result;
