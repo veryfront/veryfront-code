@@ -59,12 +59,12 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
     logger.info(`Running task "${task.id}" (${task.name})`);
   }
 
-  const allEnv = Deno.env.toObject();
-  const env = envAllowlist
-    ? Object.fromEntries(
-      envAllowlist.filter((k) => k in allEnv).map((k) => [k, allEnv[k]]),
-    )
-    : { ...allEnv };
+  const env: Record<string, string> = { ...Deno.env.toObject() };
+  if (envAllowlist) {
+    for (const k of Object.keys(env)) {
+      if (!envAllowlist.includes(k)) delete env[k];
+    }
+  }
 
   const ctx: TaskContext = {
     env,
