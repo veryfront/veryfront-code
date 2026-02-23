@@ -1,7 +1,7 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
-const MODULE_PATH = new URL("./jwt.ts", import.meta.url).href;
+const MODULE_PATH = new URL("./files/lib/jwt.ts", import.meta.url).href;
 
 /**
  * Dynamically import jwt.ts with a cache-busting query param so each
@@ -10,7 +10,7 @@ const MODULE_PATH = new URL("./jwt.ts", import.meta.url).href;
 let importCounter = 0;
 function importJwt() {
   return import(`${MODULE_PATH}?v=${++importCounter}`) as Promise<
-    typeof import("./jwt.ts")
+    typeof import("./files/lib/jwt.ts")
   >;
 }
 
