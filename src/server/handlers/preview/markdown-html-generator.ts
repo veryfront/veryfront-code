@@ -9,6 +9,7 @@
  */
 
 import { generateStudioBridgeScript } from "#veryfront/studio/bridge-template.ts";
+import { escapeHtml } from "veryfront/utils/html-escape";
 
 /** Options for generating markdown preview HTML. */
 export interface MarkdownHtmlOptions {
@@ -86,8 +87,8 @@ export function generateMarkdownHtml(options: MarkdownHtmlOptions): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  ${description ? `<meta name="description" content="${description}">` : ""}
-  <title>${title}</title>
+  ${description ? `<meta name="description" content="${escapeHtml(description)}">` : ""}
+  <title>${escapeHtml(title)}</title>
 
   <!-- GitHub Markdown Preview Styles -->
   <link rel="stylesheet" href="https://cdn.veryfront.com/styles/github-markdown.min.css">
