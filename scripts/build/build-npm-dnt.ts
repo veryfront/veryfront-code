@@ -15,7 +15,10 @@ import { build, emptyDir } from "jsr:@deno/dnt";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
-const license = denoJson.license ?? "Apache-2.0";
+const license = denoJson.license;
+if (!license) {
+	throw new Error("deno.json must have a 'license' field");
+}
 
 console.log(`\n📦 Building Veryfront v${version} for npm using dnt...\n`);
 
@@ -248,8 +251,8 @@ if (existsSync(nativeBinary)) {
 `);
 		await Deno.chmod("./npm/bin/veryfront.js", 0o755);
 
-		// Copy LICENSE (generate default if missing)
-		await copyFileOrGenerate("./LICENSE", "./npm/LICENSE", generateApacheLicense);
+		// Copy LICENSE (must exist at repo root)
+		await Deno.copyFile("./LICENSE", "./npm/LICENSE");
 
 		// Copy README (optional)
 		await copyFileIfExists("./README.md", "./npm/README.md");
@@ -286,36 +289,6 @@ async function copyFileIfExists(src: string, dest: string): Promise<void> {
 	} catch {
 		// Ignore if file doesn't exist
 	}
-}
-
-async function copyFileOrGenerate(
-	src: string,
-	dest: string,
-	generate: () => string,
-): Promise<void> {
-	try {
-		await Deno.copyFile(src, dest);
-	} catch {
-		await Deno.writeTextFile(dest, generate());
-	}
-}
-
-function generateApacheLicense(): string {
-	const year = new Date().getFullYear();
-	return `Copyright ${year} Veryfront GmbH
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-`;
 }
 
 console.log(`
