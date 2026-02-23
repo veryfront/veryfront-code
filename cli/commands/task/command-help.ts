@@ -16,7 +16,7 @@ export const taskHelp: CommandHelp = {
   ],
   examples: [
     "veryfront task sync-data",
-    "veryfront task send-report --config '{\"to\": \"team@example.com\"}'",
+    'veryfront task send-report --config \'{"to": "team@example.com"}\'',
     "veryfront task cleanup --debug",
   ],
 };
