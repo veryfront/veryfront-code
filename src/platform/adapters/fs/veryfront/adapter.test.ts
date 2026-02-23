@@ -307,4 +307,52 @@ describe("VeryfrontFSAdapter", () => {
       assertExists(createAdapter().getClient());
     });
   });
+
+  describe("initialize", () => {
+    it("should throw without causing unhandled rejection when file list fetch fails", async () => {
+      // Regression: initialize() used to call fileListReadyReject() in its catch block.
+      // Since no lookup() was pending, the rejected promise had no handler, causing
+      // "Uncaught (in promise)" that crashed the Deno process.
+      const adapter = createAdapter();
+
+      // Stub client methods so initialize() reaches fetchFileListForContext (the inner try/catch)
+      const client = (adapter as any).client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      // This is what fetchFileListForContext calls — simulate 404
+      client.listAllFiles = () => Promise.reject(new Error("API request failed: 404 Not Found"));
+
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+
+      let unhandledRejection: PromiseRejectionEvent | null = null;
+      const handler = (e: PromiseRejectionEvent) => {
+        unhandledRejection = e;
+        e.preventDefault();
+      };
+      globalThis.addEventListener("unhandledrejection", handler);
+
+      let threw = false;
+      try {
+        try {
+          await adapter.initialize();
+        } catch {
+          threw = true;
+        }
+
+        // Let microtasks flush so any unhandled rejection would fire
+        await new Promise((r) => setTimeout(r, 50));
+
+        assertEquals(threw, true, "initialize() should throw");
+        assertEquals(unhandledRejection, null, "should not cause unhandled rejection");
+      } finally {
+        globalThis.removeEventListener("unhandledrejection", handler);
+      }
+    });
+  });
 });

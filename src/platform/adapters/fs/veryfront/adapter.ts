@@ -42,8 +42,6 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   /** Resolves when file list initialization is complete (for coordinating reads) */
   private fileListReadyResolve: (() => void) | null = null;
-  /** Rejects when file list initialization fails */
-  private fileListReadyReject: ((error: Error) => void) | null = null;
 
   private projectData?: Project;
   private apiBaseUrl: string;
@@ -233,9 +231,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return;
     }
 
-    const fileListReadyPromise = new Promise<void>((resolve, reject) => {
+    const fileListReadyPromise = new Promise<void>((resolve) => {
       this.fileListReadyResolve = resolve;
-      this.fileListReadyReject = reject;
     });
     this.readOps.setFileListReadyPromise(fileListReadyPromise);
 
@@ -303,7 +300,6 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
       this.fileListReadyResolve?.();
       this.fileListReadyResolve = null;
-      this.fileListReadyReject = null;
 
       logger.debug("Fetched files during initialization", {
         cacheKey,
@@ -357,9 +353,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
         this.wsManager.connect(projectId);
       }
     } catch (error) {
-      this.fileListReadyReject?.(error instanceof Error ? error : new Error(String(error)));
+      // Resolve (not reject) to avoid an unhandled-rejection crash in Deno when no lookup() is awaiting.
+      this.fileListReadyResolve?.();
       this.fileListReadyResolve = null;
-      this.fileListReadyReject = null;
       throw error;
     }
   }
