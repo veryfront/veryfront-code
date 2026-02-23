@@ -490,7 +490,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
     html2canvasPromise = new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+      script.src = 'https://cdn.jsdelivr.net/npm/html2canvas-pro@2.0.0/dist/html2canvas-pro.min.js';
       script.onload = () => {
         html2canvasLoaded = true;
         resolve();
@@ -528,7 +528,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         await new Promise(r => setTimeout(r, 100));
       }
 
-      const canvas = await window.html2canvas(document.body, canvasOptions);
+      const html2canvasFn = window.html2canvas.default || window.html2canvas;
+      const canvas = await html2canvasFn(document.body, canvasOptions);
       const dataUrl = canvas.toDataURL('image/png', quality);
 
       window.scrollTo(0, originalScrollY);
