@@ -186,16 +186,6 @@ await build({
 			"dnt polyfill process.argv[1] fix",
 		);
 
-		// Bake version into embedded deno.js so VERSION constant works without env var.
-		// The npm package reads version from this embedded config, and without this fix
-		// it would use the stale version from the original deno.json at build time.
-		patchFile(
-			"./npm/esm/deno.js",
-			/"version":\s*"[^"]*"/,
-			`"version": "${version}"`,
-			"embedded deno.js version",
-		);
-
 		// Copy postinstall script
 		await Deno.mkdir("./npm/scripts", { recursive: true });
 		await Deno.copyFile("./scripts/postinstall.js", "./npm/scripts/postinstall.js");
@@ -259,14 +249,25 @@ function patchFile(
 	console.log(`📝 Patched ${description} in ${path}`);
 }
 
-/** Parse esm.sh URLs from deno.json imports into dnt mappings. */
+/**
+ * Parse esm.sh URLs from deno.json imports into dnt mappings.
+ * Only includes imports that dnt actually encounters in the build graph.
+ * Type-only packages (@types/*, csstype) and client-only imports (react-dom,
+ * react-dom/client) are excluded — dnt errors on unused mappings.
+ */
 function buildEsmShMappings(
 	imports: Record<string, string>,
 ): Record<string, { name: string; version: string; subPath?: string }> {
 	const mappings: Record<string, { name: string; version: string; subPath?: string }> = {};
 
-	for (const url of Object.values(imports)) {
+	for (const [key, url] of Object.entries(imports)) {
 		if (!url.startsWith("https://esm.sh/")) continue;
+
+		// Skip packages not reached from npm entry points. dnt errors on unused mappings.
+		// - @types/* and csstype: type-only, never in JS output
+		// - react-dom (base) and react-dom/client: client-side only, not in server build graph
+		if (key.startsWith("@types/") || key === "csstype") continue;
+		if (key === "react-dom" || key === "react-dom/client") continue;
 
 		// Strip prefix and query params: "react@19.1.1/jsx-runtime"
 		const pathPart = url.replace("https://esm.sh/", "").split("?")[0]!;
