@@ -56,6 +56,9 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
     logger.info(`Running task "${task.id}" (${task.name})`);
   }
 
+  // TODO: For cloud execution (Jobs/CronJobs), filter env vars to prevent
+  // leaking infrastructure secrets to user code. Accept an allowlist of
+  // env var names in RunTaskOptions and only pass those through.
   const ctx: TaskContext = {
     env: { ...Deno.env.toObject() },
     config,

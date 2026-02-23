@@ -29,3 +29,12 @@ export interface TaskDefinition {
   /** The function to execute */
   run: (ctx: TaskContext) => Promise<unknown> | unknown;
 }
+
+/**
+ * Type guard: checks if a value looks like a TaskDefinition
+ */
+export function isTaskDefinition(value: unknown): value is TaskDefinition {
+  if (!value || typeof value !== "object") return false;
+  const obj = value as Record<string, unknown>;
+  return typeof obj.run === "function";
+}

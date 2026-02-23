@@ -27,6 +27,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 import { loadHandlerModule } from "#veryfront/routing/api/module-loader/loader.ts";
 import type { TaskDefinition } from "./types.ts";
+import { isTaskDefinition } from "./types.ts";
 
 const logger = baseLogger.component("task-discovery");
 
@@ -82,18 +83,9 @@ export interface TaskDiscoveryResult {
 }
 
 /**
- * Check if a value looks like a task definition
- */
-function isTaskDefinition(value: unknown): value is TaskDefinition {
-  if (!value || typeof value !== "object") return false;
-  const obj = value as Record<string, unknown>;
-  return typeof obj.run === "function";
-}
-
-/**
  * Derive task ID from file path (e.g., "tasks/sync-data.ts" → "sync-data")
  */
-function deriveTaskId(filePath: string, tasksDir: string): string {
+export function deriveTaskId(filePath: string, tasksDir: string): string {
   // Remove the tasks dir prefix and extension
   let relative = filePath;
   const dirPrefix = tasksDir.endsWith("/") ? tasksDir : `${tasksDir}/`;
@@ -161,22 +153,40 @@ export async function discoverTasks(
 
         if (!module) continue;
 
-        // Check all exports for task definitions
-        for (const [exportName, value] of Object.entries(module)) {
-          if (isTaskDefinition(value)) {
-            const id = deriveTaskId(file.path, baseDir);
-            tasks.push({
-              id,
-              name: value.name || id,
-              filePath: file.path,
-              exportName,
-              definition: value,
-            });
+        // Prefer default export (aligned with discovery-engine behaviour)
+        const defaultExport = (module as Record<string, unknown>).default;
+        if (isTaskDefinition(defaultExport)) {
+          const id = deriveTaskId(file.path, baseDir);
+          tasks.push({
+            id,
+            name: defaultExport.name || id,
+            filePath: file.path,
+            exportName: "default",
+            definition: defaultExport,
+          });
 
-            if (debug) {
-              logger.info(`Found task "${id}" in ${file.path} (export: ${exportName})`);
+          if (debug) {
+            logger.info(`Found task "${id}" in ${file.path} (export: default)`);
+          }
+        } else {
+          // Fallback: check named exports
+          for (const [exportName, value] of Object.entries(module)) {
+            if (exportName === "default") continue;
+            if (isTaskDefinition(value)) {
+              const id = deriveTaskId(file.path, baseDir);
+              tasks.push({
+                id,
+                name: value.name || id,
+                filePath: file.path,
+                exportName,
+                definition: value,
+              });
+
+              if (debug) {
+                logger.info(`Found task "${id}" in ${file.path} (export: ${exportName})`);
+              }
+              break; // Only take the first valid named export per file
             }
-            break; // Only take the first valid export per file
           }
         }
       } catch (error) {
@@ -204,6 +214,10 @@ export async function discoverTasks(
 
 /**
  * Find a specific task by ID
+ *
+ * TODO: Optimise by short-circuiting discovery once the target task is found
+ * instead of discovering all tasks first. This is consistent with the workflow
+ * pattern but could be improved for large projects with many task files.
  */
 export async function findTaskById(
   taskId: string,
