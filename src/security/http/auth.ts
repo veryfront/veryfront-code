@@ -35,6 +35,10 @@ function encodeBase64(value: string): string {
   );
 }
 
+function sanitizeRealm(realm: string): string {
+  return realm.replace(/[\x00-\x1f\x7f"\\]/g, "");
+}
+
 export class AuthHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "AuthHandler",
@@ -73,7 +77,7 @@ export class AuthHandler extends BaseHandler {
     if (authConfig?.basic) {
       this.basicUser = authConfig.basic.username;
       this.basicPass = authConfig.basic.password;
-      this.basicRealm = authConfig.basic.realm || "Secure Area";
+      this.basicRealm = sanitizeRealm(authConfig.basic.realm || "Secure Area");
       return;
     }
 
