@@ -1,11 +1,14 @@
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
-import { describe, it, afterEach } from "#veryfront/testing/bdd.ts";
+import { describe, it, beforeEach, afterEach } from "#veryfront/testing/bdd.ts";
 import {
   encryptToken,
   decryptToken,
   generateEncryptionKey,
   type OAuthToken,
 } from "./templates/integrations/_base/files/lib/token-store.ts";
+
+const AUTO_KEY_STORAGE = "__veryfront_auto_encryption_key__";
+const globalStore = globalThis as Record<string, unknown>;
 
 /**
  * Tests that the token store does not leak sensitive data via console output.
@@ -21,12 +24,12 @@ describe("token store console output", () => {
   let logCalls: unknown[][] = [];
   let errorCalls: unknown[][] = [];
 
-  function spyConsole() {
+  beforeEach(() => {
     logCalls = [];
     errorCalls = [];
     console.log = (...args: unknown[]) => logCalls.push(args);
     console.error = (...args: unknown[]) => errorCalls.push(args);
-  }
+  });
 
   afterEach(() => {
     console.log = originalLog;
@@ -34,7 +37,8 @@ describe("token store console output", () => {
   });
 
   it("does not log auto-generated encryption key to console", async () => {
-    spyConsole();
+    // Clear cached key to force regeneration code path
+    delete globalStore[AUTO_KEY_STORAGE];
 
     // Trigger encryption which causes auto-key generation
     const token: OAuthToken = { accessToken: "test-access-token" };
@@ -52,8 +56,6 @@ describe("token store console output", () => {
   });
 
   it("does not include error object in decryption failure log", async () => {
-    spyConsole();
-
     // Pass corrupted encrypted data to trigger decryption failure
     const result = await decryptToken("encrypted:aW52YWxpZC1kYXRh");
 
