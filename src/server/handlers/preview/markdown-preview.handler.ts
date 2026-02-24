@@ -17,6 +17,7 @@ import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { tryNotFoundFallback } from "../request/ssr/not-found-fallback.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
+import { validatePathSync } from "#veryfront/security";
 
 const logger = serverLogger.component("markdown-preview-handler");
 
@@ -45,6 +46,16 @@ export class MarkdownPreviewHandler extends BaseHandler {
     }
 
     const filePath = pathname.replace(/^\//, "");
+
+    const pathResult = validatePathSync(filePath, {
+      baseDir: ctx.projectDir,
+    });
+
+    if (!pathResult.valid) {
+      logger.warn("Path traversal blocked in markdown preview", { pathname, filePath });
+      return this.continue();
+    }
+
     const fsAdapter = ctx.adapter.fs;
 
     logger.debug("Attempting to serve", {

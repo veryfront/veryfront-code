@@ -4,8 +4,9 @@ import { serverLogger } from "#veryfront/utils";
 import { renderSnippet } from "#veryfront/rendering/snippet-renderer.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
-import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import { FILE_NOT_FOUND, SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
 import { createErrorResponse } from "#veryfront/errors/http-error.ts";
+import { validatePathSync } from "#veryfront/security";
 
 const logger = serverLogger.component("snippet-handler");
 
@@ -32,6 +33,18 @@ export class SnippetHandler extends BaseHandler {
     });
 
     const filePath = this.resolveFilePath(pathname);
+
+    const pathResult = validatePathSync(filePath, {
+      baseDir: ctx.projectDir,
+    });
+
+    if (!pathResult.valid) {
+      logger.warn("Path traversal blocked in snippet request", { pathname, filePath });
+      const error = SECURITY_VIOLATION.create({
+        detail: "Invalid snippet path",
+      });
+      return Promise.resolve({ response: createErrorResponse(error) });
+    }
 
     logger.debug("Resolved file path", { filePath });
 
