@@ -35,9 +35,9 @@ function encodeBase64(value: string): string {
   );
 }
 
-function sanitizeRealm(realm: string): string {
+function sanitizeRealm(realm: unknown): string {
   // deno-lint-ignore no-control-regex
-  return realm.replace(/[\x00-\x1f\x7f"\\]/g, "");
+  return String(realm).replace(/[\x00-\x1f\x7f"\\]/g, "");
 }
 
 export class AuthHandler extends BaseHandler {

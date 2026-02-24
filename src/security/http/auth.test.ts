@@ -11,8 +11,8 @@ describe("AuthHandler realm sanitization", () => {
     return new AuthHandler();
   }
 
-  function createCtx(realm?: string) {
-    const basic: Record<string, string> = { username: "admin", password: "secret" };
+  function createCtx(realm?: unknown) {
+    const basic: Record<string, unknown> = { username: "admin", password: "secret" };
     if (realm !== undefined) basic.realm = realm;
     return {
       securityConfig: { auth: { basic } },
@@ -21,7 +21,7 @@ describe("AuthHandler realm sanitization", () => {
     };
   }
 
-  async function getWwwAuthenticate(handler: AuthHandler, realm?: string): Promise<string> {
+  async function getWwwAuthenticate(handler: AuthHandler, realm?: unknown): Promise<string> {
     const ctx = createCtx(realm);
     const req = new Request("http://localhost/test");
     const result = await handler.handle(req, ctx as any);
@@ -66,5 +66,11 @@ describe("AuthHandler realm sanitization", () => {
     const handler = createHandler();
     const header = await getWwwAuthenticate(handler);
     expect(header).toBe('Basic realm="Secure Area"');
+  });
+
+  it("coerces non-string realm values to string", async () => {
+    const handler = createHandler();
+    const header = await getWwwAuthenticate(handler, 12345);
+    expect(header).toBe('Basic realm="12345"');
   });
 });
