@@ -530,7 +530,26 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
       const html2canvasFn = window.html2canvas.default || window.html2canvas;
       const canvas = await html2canvasFn(document.body, canvasOptions);
+
+      if (!canvas || canvas.width === 0 || canvas.height === 0) {
+        console.error('[bridge] html2canvas produced empty canvas:', canvas?.width, 'x', canvas?.height);
+        window.scrollTo(0, originalScrollY);
+        return {
+          success: false,
+          error: 'html2canvas produced empty canvas (0x0 dimensions)'
+        };
+      }
+
       const dataUrl = canvas.toDataURL('image/png', quality);
+
+      if (!dataUrl || !dataUrl.startsWith('data:image/') || dataUrl.length < 100) {
+        console.error('[bridge] html2canvas produced invalid data URL:', dataUrl?.substring(0, 50));
+        window.scrollTo(0, originalScrollY);
+        return {
+          success: false,
+          error: 'html2canvas produced invalid image data'
+        };
+      }
 
       window.scrollTo(0, originalScrollY);
 
@@ -545,6 +564,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         url: window.location.href
       };
     } catch (error) {
+      console.error('[bridge] html2canvas error:', error);
       window.scrollTo(0, originalScrollY);
       return {
         success: false,
