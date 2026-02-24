@@ -1,6 +1,7 @@
 import * as React from "react";
 import { cn } from "./theme.ts";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
+import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 
 export interface MarkdownProps {
   /** Markdown content to render */
@@ -72,7 +73,7 @@ function MermaidDiagram({ code }: { code: string }): React.ReactElement {
         const { svg: renderedSvg } = await mermaid.default.render(id, code);
 
         if (cancelled) return;
-        setSvg(renderedSvg);
+        setSvg(validateTrustedHtml(renderedSvg, { strict: true }));
         setError("");
       } catch (error) {
         if (cancelled) return;
