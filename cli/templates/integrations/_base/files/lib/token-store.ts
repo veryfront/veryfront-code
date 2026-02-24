@@ -97,8 +97,8 @@ export async function decryptToken(encrypted: string): Promise<OAuthToken | null
     const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, cryptoKey, ciphertext);
 
     return JSON.parse(new TextDecoder().decode(decrypted)) as OAuthToken;
-  } catch (error) {
-    console.error("[Token Store] Decryption failed:", error);
+  } catch {
+    console.error("[Token Store] Decryption failed");
     return null;
   }
 }
@@ -135,7 +135,6 @@ function getEncryptionKey(): Uint8Array | null {
 
   if (!globalStore[AUTO_KEY_STORAGE]) {
     globalStore[AUTO_KEY_STORAGE] = generateEncryptionKey();
-    console.log("[Token Store] Auto-generated encryption key for this session");
   }
 
   return hexToKeyBytes(globalStore[AUTO_KEY_STORAGE] as string);
