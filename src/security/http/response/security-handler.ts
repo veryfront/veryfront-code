@@ -104,6 +104,11 @@ export function applySecurityHeaders(
   headers.set("Cross-Origin-Resource-Policy", corp);
   if (coep) headers.set("Cross-Origin-Embedder-Policy", coep);
 
+  headers.set(
+    "Referrer-Policy",
+    getHeaderOverride("referrer-policy") ?? "strict-origin-when-cross-origin",
+  );
+
   const extraHeaders = config?.headers;
   if (extraHeaders) {
     for (const [key, value] of Object.entries(extraHeaders)) {

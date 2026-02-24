@@ -230,5 +230,28 @@ describe("security/http/response/security-handler", () => {
       applySecurityHeaders(headers, false, "nonce", null, config);
       assertEquals(headers.get("X-Content-Type-Options"), "custom-value");
     });
+
+    it("should set Referrer-Policy to strict-origin-when-cross-origin by default", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      assertEquals(headers.get("Referrer-Policy"), "strict-origin-when-cross-origin");
+    });
+
+    it("should set Referrer-Policy in dev mode", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, true, "nonce", null);
+      assertEquals(headers.get("Referrer-Policy"), "strict-origin-when-cross-origin");
+    });
+
+    it("should allow overriding Referrer-Policy via config.headers", () => {
+      const headers = new Headers();
+      const config: SecurityConfig = {
+        headers: {
+          "Referrer-Policy": "no-referrer",
+        },
+      };
+      applySecurityHeaders(headers, false, "nonce", null, config);
+      assertEquals(headers.get("Referrer-Policy"), "no-referrer");
+    });
   });
 });
