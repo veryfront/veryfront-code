@@ -11,25 +11,18 @@ describe("AuthHandler realm sanitization", () => {
     return new AuthHandler();
   }
 
-  function createCtx(realm: string) {
+  function createCtx(realm?: string) {
+    const basic: Record<string, string> = { username: "admin", password: "secret" };
+    if (realm !== undefined) basic.realm = realm;
     return {
-      securityConfig: {
-        auth: {
-          basic: {
-            username: "admin",
-            password: "secret",
-            realm,
-          },
-        },
-      },
+      securityConfig: { auth: { basic } },
       adapter: { env: { get: () => "" } },
       isLocalProject: false,
     };
   }
 
-  async function getWwwAuthenticate(handler: AuthHandler, realm: string): Promise<string> {
+  async function getWwwAuthenticate(handler: AuthHandler, realm?: string): Promise<string> {
     const ctx = createCtx(realm);
-    // Send request with no auth header to trigger 401 with WWW-Authenticate
     const req = new Request("http://localhost/test");
     const result = await handler.handle(req, ctx as any);
     const response = (result as any).response as Response;
@@ -71,19 +64,7 @@ describe("AuthHandler realm sanitization", () => {
 
   it("uses default realm when none is configured", async () => {
     const handler = createHandler();
-    const ctx = {
-      securityConfig: {
-        auth: {
-          basic: { username: "admin", password: "secret" },
-        },
-      },
-      adapter: { env: { get: () => "" } },
-      isLocalProject: false,
-    };
-    const req = new Request("http://localhost/test");
-    const result = await handler.handle(req, ctx as any);
-    const response = (result as any).response as Response;
-    const header = response.headers.get("WWW-Authenticate") ?? "";
+    const header = await getWwwAuthenticate(handler);
     expect(header).toBe('Basic realm="Secure Area"');
   });
 });
