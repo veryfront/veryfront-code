@@ -1,8 +1,8 @@
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
-import { describe, it, beforeEach, afterEach } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  encryptToken,
   decryptToken,
+  encryptToken,
   generateEncryptionKey,
   type OAuthToken,
 } from "./templates/integrations/_base/files/lib/token-store.ts";
