@@ -338,13 +338,34 @@ Add to `~/.gemini/settings.json`:
 
 ## Documentation
 
-- [Quickstart](https://veryfront.com/code/guides/quickstart)
-- [Project Structure](https://veryfront.com/code/guides/project-structure)
-- [Agents](https://veryfront.com/code/guides/agents)
-- [Tools](https://veryfront.com/code/guides/tools)
-- [Workflows](https://veryfront.com/code/guides/workflows)
-- [Chat UI](https://veryfront.com/code/guides/chat-ui)
-- [API Reference](https://veryfront.com/code/api)
+**Getting Started**
+- [Quickstart](https://veryfront.com/docs/code/guides/quickstart)
+
+**Basics**
+- [Project Structure](https://veryfront.com/docs/code/guides/project-structure)
+- [Pages & Routing](https://veryfront.com/docs/code/guides/pages-and-routing)
+- [Data Fetching](https://veryfront.com/docs/code/guides/data-fetching)
+- [API Routes](https://veryfront.com/docs/code/guides/api-routes)
+
+**AI**
+- [Agents](https://veryfront.com/docs/code/guides/agents)
+- [Tools](https://veryfront.com/docs/code/guides/tools)
+- [Memory & Streaming](https://veryfront.com/docs/code/guides/memory-and-streaming)
+- [Chat UI](https://veryfront.com/docs/code/guides/chat-ui)
+- [Workflows](https://veryfront.com/docs/code/guides/workflows)
+- [Multi-Agent](https://veryfront.com/docs/code/guides/multi-agent)
+
+**Infrastructure**
+- [Providers](https://veryfront.com/docs/code/guides/providers)
+- [Middleware](https://veryfront.com/docs/code/guides/middleware)
+- [OAuth](https://veryfront.com/docs/code/guides/oauth)
+- [MCP Server](https://veryfront.com/docs/code/guides/mcp-server)
+- [Integrations](https://veryfront.com/docs/code/integrations)
+
+**Production**
+- [Configuration](https://veryfront.com/docs/code/guides/configuration)
+- [Building & Deploying](https://veryfront.com/docs/code/guides/deploying)
+- [Head & SEO](https://veryfront.com/docs/code/guides/head-and-seo)
 
 ## License
 
