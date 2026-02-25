@@ -1,0 +1,70 @@
+name: Bug Report
+description: Report a bug to help us improve Veryfront
+title: '[BUG] '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible to help us address the issue quickly.
+
+  - type: textarea
+    attributes:
+      label: Describe the Bug
+      description: A clear and concise description of what the bug is.
+      placeholder: 'When trying to use the workflow feature with an agent, the execution fails with an error message...'
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Steps To Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Create a new project with `npm create veryfront`
+        2. Add the following code to `agents/assistant.ts`
+        3. Run `veryfront dev`
+        4. Try to execute the agent
+        5. See error
+    validations:
+      required: true
+
+  - type: input
+    id: bug-reproduction
+    attributes:
+      label: Link to Minimal Reproducible Example
+      description: 'A minimal reproduction is required so that others can help debug your issue. If a report is vague (e.g. just a generic error message) and has no reproduction, it may be closed.'
+      placeholder: 'https://github.com/your-username/your-repo'
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Expected Behavior
+      description: A clear and concise description of what you expected to happen.
+      placeholder: 'The agent should execute successfully and return the expected result.'
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Environment Information
+      description: Please include your runtime, OS, and Veryfront version.
+      render: block
+      placeholder: |
+        - Veryfront version: (e.g., 0.1.24)
+        - Runtime: (e.g., Node.js 22, Deno 2.1, Bun 1.2)
+        - OS: (e.g., macOS 15, Ubuntu 24.04, Windows 11)
+        - Browser (if applicable): (e.g., Chrome 120)
+    validations:
+      required: true
+
+  - type: checkboxes
+    attributes:
+      label: Verification
+      description: Before submitting, please make sure you've completed the following
+      options:
+        - label: I have searched the existing issues to make sure this is not a duplicate
+          required: true
+        - label: I have included sufficient information for the team to reproduce and understand the issue
+          required: true

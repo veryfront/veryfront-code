@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Veryfront Documentation
+    url: https://veryfront.com/docs/code
+    about: Check out our documentation for answers to common questions
+  - name: Questions & Discussions
+    url: https://discord.gg/veryfront
+    about: If you have any questions or want to discuss something, join our Discord server
