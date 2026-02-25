@@ -131,6 +131,41 @@ describe("AliasStrategy", () => {
       });
     });
 
+    describe("CSS file imports (issue #453)", () => {
+      it("should NOT append .js to .css imports for SSR", () => {
+        // Bug: @/globals.css becomes /_vf_modules/globals.css.js
+        // because .css is not in the known extension list
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/globals.css"),
+          makeCtx({ target: "ssr", filePath: "/project/app/layout.tsx" }),
+        );
+        // Expected: /_vf_modules/globals.css (preserve .css extension)
+        // Actual (bug): /_vf_modules/globals.css.js
+        assertEquals(result.specifier, "/_vf_modules/globals.css");
+      });
+
+      it("should NOT append .js to .css imports with moduleServerUrl", () => {
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/globals.css"),
+          makeCtx({
+            filePath: "/project/app/layout.tsx",
+            moduleServerUrl: "/_vf_modules",
+          }),
+        );
+        assertEquals(result.specifier, "/_vf_modules/globals.css");
+      });
+
+      it("should NOT append .js to .css imports in browser fallback", () => {
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/globals.css"),
+          makeCtx({ filePath: "/project/app/layout.tsx" }),
+        );
+        // Should preserve .css, not become globals.css.js
+        assertEquals(result.specifier?.endsWith(".css"), true);
+        assertEquals(result.specifier?.endsWith(".css.js"), false);
+      });
+    });
+
     describe("relative path fallback (no moduleServerUrl)", () => {
       it("should handle file at components/elements depth correctly", () => {
         // File is at components/elements/Textarea.tsx
