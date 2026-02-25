@@ -44,4 +44,6 @@ You agree to notify Us of any facts or circumstances of which You become aware t
 
 By signing this CLA, You accept and agree to the terms and conditions of this Agreement for Your present and future Contributions submitted to the Project.
 
-**To sign:** When prompted by the CLA Assistant bot on your pull request, follow the link to sign this agreement. Your signature will be recorded and linked to your GitHub account.
+**Individual contributors:** Add your contributor entry in `CONTRIBUTORS.md` in your pull request. By adding your name, you agree to this Individual CLA.
+
+**Corporate contributors:** If you are contributing on behalf of your employer or another organization, your organization must also sign the [Corporate CLA](./CLA-CORPORATE.md). Please contact **cla@veryfront.com**.
