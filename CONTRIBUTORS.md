@@ -12,3 +12,4 @@ Name (GitHub @username)
 ## Contributors
 
 Koji Wakayama (@kojiwakayama)
+Aris Kemper (@ariskemper)
