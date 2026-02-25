@@ -65,6 +65,11 @@ async function pipedriveFetch<T>(endpoint: string, options: RequestInit = {}): P
   }
 
   const url = new URL(`${PIPEDRIVE_BASE_URL}${endpoint}`);
+  // SECURITY: Pipedrive's v1 API requires the token as a query parameter.
+  // Tokens in query params may be recorded in browser history, server/proxy
+  // access logs, and leaked via the Referer header. The Referrer-Policy
+  // header (set by Veryfront's security middleware) mitigates the Referer leak.
+  // This is an API design limitation — there is no Authorization header alternative.
   url.searchParams.set("api_token", token);
 
   const response = await fetch(url.toString(), {
