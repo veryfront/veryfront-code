@@ -2,9 +2,10 @@ name: CLA Check
 
 on:
   pull_request_target:
-    types: [opened, synchronize]
+    types: [opened, synchronize, reopened]
 
 permissions:
+  contents: read
   pull-requests: write
 
 jobs:
@@ -20,60 +21,103 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.ref }}
 
-      - name: Check CONTRIBUTORS file
+      - name: Check CLA coverage for PR contributors
         id: check
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          if grep -qi "@${PR_AUTHOR})" CONTRIBUTORS.md; then
+          set -euo pipefail
+
+          mapfile -t contributors < <(
+            {
+              echo "${PR_AUTHOR}"
+              gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}/commits" --paginate --jq '.[] | .author.login, .committer.login'
+            } | sed '/^null$/d;/^$/d' | sort -u
+          )
+
+          contributors_patch=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq '.[] | select(.filename=="CONTRIBUTORS.md") | .patch // ""')
+          added_lines=$(printf '%s\n' "${contributors_patch}" | grep -E '^\+[^+]' || true)
+
+          missing=()
+          for login in "${contributors[@]}"; do
+            case "${login}" in
+              dependabot\[bot\]|github-actions\[bot\]|renovate\[bot\])
+                continue
+                ;;
+            esac
+
+            # Already signed in base branch contributors list.
+            if grep -Fqi "@${login})" CONTRIBUTORS.md; then
+              continue
+            fi
+
+            # Newly added in this PR as an explicit contributor entry.
+            if printf '%s\n' "${added_lines}" | grep -Fqi "@${login})"; then
+              continue
+            fi
+
+            missing+=("${login}")
+          done
+
+          if [ "${#missing[@]}" -eq 0 ]; then
             echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "missing_logins=" >> "$GITHUB_OUTPUT"
           else
             echo "signed=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check if PR adds contributor
-        if: steps.check.outputs.signed == 'false'
-        id: pr_check
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Check if the PR itself modifies CONTRIBUTORS
-          FILES=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --jq '.[].filename')
-          if echo "$FILES" | grep -q "^CONTRIBUTORS.md$"; then
-            echo "adding=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "adding=false" >> "$GITHUB_OUTPUT"
+            printf 'missing_logins=%s\n' "$(IFS=,; echo "${missing[*]}")" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Post CLA reminder
-        if: steps.check.outputs.signed == 'false' && steps.pr_check.outputs.adding == 'false'
+        if: steps.check.outputs.signed == 'false'
         uses: actions/github-script@v7
+        env:
+          MISSING_LOGINS: ${{ steps.check.outputs.missing_logins }}
         with:
           script: |
-            const author = context.payload.pull_request.user.login;
-            const body = `Thanks for your contribution, @${author}!
+            const marker = "<!-- veryfront-cla-check -->";
+            const missing = (process.env.MISSING_LOGINS || "")
+              .split(",")
+              .map(s => s.trim())
+              .filter(Boolean);
+            const mentionList = missing.map(user => `@${user}`).join(", ");
+            const example = missing.map(user => `Your Name (@${user})`).join("\n");
+
+            const body = `${marker}
+            Thanks for your contribution${mentionList ? `, ${mentionList}` : ""}!
 
             Before we can merge this PR, we need you to accept our [Contributor License Agreement (CLA)](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CLA.md).
 
-            **How to sign:** Add yourself to the \`CONTRIBUTORS.md\` file in this PR:
+            Missing CLA entries for: ${mentionList || "one or more contributors"}.
+
+            **How to sign:** Add contributor entry lines in \`CONTRIBUTORS.md\` in this PR:
 
             \`\`\`
-            Your Name (@${author})
+            ${example || "Your Name (@your-github-login)"}
             \`\`\`
 
             By adding your name, you agree to the [CLA](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CLA.md). This is a one-time step.`;
 
-            // Check if we already posted a CLA comment
+            // Create or update a single sticky CLA comment from this bot.
             const comments = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
             });
             const existing = comments.data.find(c =>
-              c.user.type === 'Bot' && c.body.includes('Contributor License Agreement')
+              c.user.type === "Bot" && c.body.includes(marker)
             );
 
-            if (!existing) {
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -83,7 +127,7 @@ jobs:
             }
 
       - name: Fail if CLA not signed
-        if: steps.check.outputs.signed == 'false' && steps.pr_check.outputs.adding == 'false'
+        if: steps.check.outputs.signed == 'false'
         run: |
-          echo "::error::CLA not signed. Please add yourself to CONTRIBUTORS.md."
+          echo "::error::CLA not signed for: ${{ steps.check.outputs.missing_logins }}. Please add those users to CONTRIBUTORS.md."
           exit 1
