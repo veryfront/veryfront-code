@@ -127,5 +127,21 @@ describe("server/handlers/monitoring/client-log", () => {
       const result = await handler.handle(req, localCtx);
       await assertOkResponse(result);
     });
+
+    it("should reject oversized body with 413", async () => {
+      const handler = createHandler();
+      // 64 KB limit — send a body that exceeds it
+      const oversizedBody = "x".repeat(65 * 1024);
+      const req = new Request("http://localhost/_veryfront/log", {
+        method: "POST",
+        body: oversizedBody,
+      });
+      const result = await handler.handle(req, localCtx);
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 413);
+      const body = await result.response.json();
+      assertEquals(body.error, "Payload too large");
+    });
   });
 });
