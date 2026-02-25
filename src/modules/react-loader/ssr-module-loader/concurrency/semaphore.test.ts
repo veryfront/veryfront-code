@@ -78,5 +78,68 @@ describe("modules/react-loader/ssr-module-loader/concurrency/semaphore", () => {
       sem.release();
       assertEquals(sem.available, 1);
     });
+
+    it("should reject immediately when queue is at max size", async () => {
+      const sem = new Semaphore(1, { maxQueueSize: 2 });
+
+      // Exhaust the single permit
+      await sem.tryAcquire();
+
+      // Fill the queue to capacity
+      const p1 = sem.tryAcquire(500);
+      const p2 = sem.tryAcquire(500);
+      assertEquals(sem.waiting, 2);
+
+      // Next acquire should be rejected immediately (queue full)
+      const rejected = await sem.tryAcquire(500);
+      assertEquals(rejected, false);
+      assertEquals(sem.waiting, 2);
+
+      // Release all to clean up
+      sem.release();
+      sem.release();
+      assertEquals(await p1, true);
+      assertEquals(await p2, true);
+    });
+
+    it("should accept new waiters after queue drains below max", async () => {
+      const sem = new Semaphore(1, { maxQueueSize: 1 });
+
+      await sem.tryAcquire();
+
+      // Fill the single queue slot
+      const p1 = sem.tryAcquire(500);
+      assertEquals(sem.waiting, 1);
+
+      // Queue is full
+      assertEquals(await sem.tryAcquire(500), false);
+
+      // Release permit — wakes p1, queue drains
+      sem.release();
+      assertEquals(await p1, true);
+      assertEquals(sem.waiting, 0);
+
+      // Now a new waiter can queue again
+      const p2 = sem.tryAcquire(500);
+      assertEquals(sem.waiting, 1);
+
+      sem.release();
+      assertEquals(await p2, true);
+    });
+
+    it("should have unbounded queue by default", async () => {
+      const sem = new Semaphore(1);
+
+      await sem.tryAcquire();
+
+      // Queue many waiters — should all be accepted
+      const promises = Array.from({ length: 50 }, () => sem.tryAcquire(500));
+      assertEquals(sem.waiting, 50);
+
+      // Release all
+      for (let i = 0; i < 50; i++) sem.release();
+      const results = await Promise.all(promises);
+      assertEquals(results.every((r) => r === true), true);
+    });
   });
 });

@@ -49,7 +49,11 @@ export const LOCK_TIMEOUT_MS = 10_000;
  * Global render semaphore - limits concurrent renders across all projects per pod.
  * This is a last-line defense against resource exhaustion.
  */
-export const renderSemaphore = new Semaphore(RENDER_MAX_CONCURRENT);
+export const RENDER_MAX_QUEUE_SIZE = 100;
+
+export const renderSemaphore = new Semaphore(RENDER_MAX_CONCURRENT, {
+  maxQueueSize: RENDER_MAX_QUEUE_SIZE,
+});
 
 /**
  * Per-project active render counter. Prevents a single noisy tenant from
