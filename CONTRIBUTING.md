@@ -4,6 +4,7 @@ Thank you for your interest in contributing to Veryfront! This document provides
 
 ## Table of Contents
 
+- [Contributor License Agreement](#contributor-license-agreement)
 - [Code Organization](#code-organization)
 - [Development Setup](#development-setup)
 - [Code Style](#code-style)
@@ -11,6 +12,15 @@ Thank you for your interest in contributing to Veryfront! This document provides
 - [Pull Request Process](#pull-request-process)
 - [Release Process](#release-process)
 - [Module Guidelines](#module-guidelines)
+
+## Contributor License Agreement
+
+Before we can accept your contributions, you must sign our Contributor License Agreement (CLA). This is a one-time requirement that protects both you and the project.
+
+- **Individual contributors**: When you open your first pull request, the CLA Assistant bot will prompt you to sign the [Individual CLA](./CLA.md) by posting a comment on the PR.
+- **Corporate contributors**: If you are contributing on behalf of your employer, your organization must sign the [Corporate CLA](./CLA-CORPORATE.md). Please contact cla@veryfront.com to arrange this.
+
+The CLA grants Veryfront GmbH the ability to distribute your contributions under the project's Apache 2.0 license as well as other licenses if needed for the long-term sustainability of the project. You retain full ownership of your contributions.
 
 ## Code Organization
 
