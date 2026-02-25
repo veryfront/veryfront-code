@@ -1,14 +1,32 @@
-import { MEMORY_CACHE_MAX_ENTRIES } from "#veryfront/utils/constants/cache.ts";
+import {
+  MEMORY_CACHE_MAX_ENTRIES,
+  MEMORY_CACHE_MAX_SIZE_BYTES,
+} from "#veryfront/utils/constants/cache.ts";
 import type { CacheBackend } from "../types.ts";
 
 export class MemoryCacheBackend implements CacheBackend {
   readonly type = "memory" as const;
-  private store = new Map<string, { value: string; expiresAt: number }>();
+  private store = new Map<string, { value: string; expiresAt: number; sizeBytes: number }>();
   private regexCache = new Map<string, RegExp>();
   private maxEntries: number;
+  private readonly maxSizeBytes: number;
+  private currentSizeBytes = 0;
 
-  constructor(maxEntries = MEMORY_CACHE_MAX_ENTRIES) {
+  constructor(maxEntries = MEMORY_CACHE_MAX_ENTRIES, options?: { maxSizeBytes?: number }) {
     this.maxEntries = maxEntries;
+    this.maxSizeBytes = options?.maxSizeBytes ?? MEMORY_CACHE_MAX_SIZE_BYTES;
+  }
+
+  private estimateSize(key: string, value: string): number {
+    return key.length + value.length;
+  }
+
+  private evictOldest(): void {
+    const oldest = this.store.keys().next().value as string | undefined;
+    if (!oldest) return;
+    const entry = this.store.get(oldest);
+    if (entry) this.currentSizeBytes -= entry.sizeBytes;
+    this.store.delete(oldest);
   }
 
   get(key: string): Promise<string | null> {
@@ -16,6 +34,7 @@ export class MemoryCacheBackend implements CacheBackend {
     if (!entry) return Promise.resolve(null);
 
     if (Date.now() > entry.expiresAt) {
+      this.currentSizeBytes -= entry.sizeBytes;
       this.store.delete(key);
       return Promise.resolve(null);
     }
@@ -35,6 +54,7 @@ export class MemoryCacheBackend implements CacheBackend {
       }
 
       if (now > entry.expiresAt) {
+        this.currentSizeBytes -= entry.sizeBytes;
         this.store.delete(key);
         results.set(key, null);
         continue;
@@ -47,12 +67,30 @@ export class MemoryCacheBackend implements CacheBackend {
   }
 
   set(key: string, value: string, ttlSeconds = 300): Promise<void> {
-    if (this.store.size >= this.maxEntries && !this.store.has(key)) {
-      const oldest = this.store.keys().next().value as string | undefined;
-      if (oldest) this.store.delete(oldest);
+    const entrySize = this.estimateSize(key, value);
+
+    // Reject single entries that exceed the byte limit on their own
+    if (entrySize > this.maxSizeBytes) return Promise.resolve();
+
+    // Remove existing entry for clean size tracking
+    const existing = this.store.get(key);
+    if (existing) {
+      this.currentSizeBytes -= existing.sizeBytes;
+      this.store.delete(key);
     }
 
-    this.store.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
+    // Evict oldest entries while over count or size limits
+    while (
+      this.store.size > 0 && (
+        this.store.size >= this.maxEntries ||
+        this.currentSizeBytes + entrySize > this.maxSizeBytes
+      )
+    ) {
+      this.evictOldest();
+    }
+
+    this.currentSizeBytes += entrySize;
+    this.store.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000, sizeBytes: entrySize });
     return Promise.resolve();
   }
 
@@ -60,14 +98,30 @@ export class MemoryCacheBackend implements CacheBackend {
     const now = Date.now();
 
     for (const { key, value, ttl } of entries) {
-      if (this.store.size >= this.maxEntries && !this.store.has(key)) {
-        const oldest = this.store.keys().next().value as string | undefined;
-        if (oldest) this.store.delete(oldest);
+      const entrySize = this.estimateSize(key, value);
+
+      if (entrySize > this.maxSizeBytes) continue;
+
+      const existing = this.store.get(key);
+      if (existing) {
+        this.currentSizeBytes -= existing.sizeBytes;
+        this.store.delete(key);
       }
 
+      while (
+        this.store.size > 0 && (
+          this.store.size >= this.maxEntries ||
+          this.currentSizeBytes + entrySize > this.maxSizeBytes
+        )
+      ) {
+        this.evictOldest();
+      }
+
+      this.currentSizeBytes += entrySize;
       this.store.set(key, {
         value,
         expiresAt: now + (ttl ?? 300) * 1000,
+        sizeBytes: entrySize,
       });
     }
 
@@ -75,6 +129,8 @@ export class MemoryCacheBackend implements CacheBackend {
   }
 
   del(key: string): Promise<void> {
+    const entry = this.store.get(key);
+    if (entry) this.currentSizeBytes -= entry.sizeBytes;
     this.store.delete(key);
     return Promise.resolve();
   }
@@ -96,6 +152,8 @@ export class MemoryCacheBackend implements CacheBackend {
     let deleted = 0;
     for (const key of this.store.keys()) {
       if (!regex.test(key)) continue;
+      const entry = this.store.get(key);
+      if (entry) this.currentSizeBytes -= entry.sizeBytes;
       this.store.delete(key);
       deleted++;
     }
@@ -106,9 +164,14 @@ export class MemoryCacheBackend implements CacheBackend {
   clear(): void {
     this.store.clear();
     this.regexCache.clear();
+    this.currentSizeBytes = 0;
   }
 
   get size(): number {
     return this.store.size;
+  }
+
+  get sizeBytes(): number {
+    return this.currentSizeBytes;
   }
 }

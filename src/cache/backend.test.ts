@@ -198,6 +198,107 @@ Deno.test("MemoryCacheBackend set overwrites existing entry without eviction", a
   assertEquals(await cache.get("b"), "2");
 });
 
+Deno.test("MemoryCacheBackend evicts when byte size limit exceeded", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  // maxSizeBytes=20 chars (key.length + value.length as estimate)
+  const cache = new MemoryCacheBackend(100, { maxSizeBytes: 20 });
+
+  // "a" + "12345678" = 9 chars
+  await cache.set("a", "12345678");
+  assertEquals(cache.size, 1);
+  assertEquals(cache.sizeBytes, 9);
+
+  // "b" + "12345678" = 9 chars, total 18 — fits within 20
+  await cache.set("b", "12345678");
+  assertEquals(cache.size, 2);
+  assertEquals(cache.sizeBytes, 18);
+
+  // "c" + "12345678" = 9 chars, total would be 27 — evict oldest ("a") until it fits
+  await cache.set("c", "12345678");
+  assertEquals(cache.size, 2);
+  assertEquals(await cache.get("a"), null);
+  assertEquals(await cache.get("b"), "12345678");
+  assertEquals(await cache.get("c"), "12345678");
+});
+
+Deno.test("MemoryCacheBackend sizeBytes tracks correctly through operations", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(100, { maxSizeBytes: 1000 });
+
+  await cache.set("key1", "value1");
+  const size1 = cache.sizeBytes;
+  assertEquals(size1 > 0, true);
+
+  // Overwrite with larger value — sizeBytes should update
+  await cache.set("key1", "a-much-longer-value");
+  assertEquals(cache.sizeBytes > size1, true);
+
+  // Delete — sizeBytes should decrease
+  await cache.del("key1");
+  assertEquals(cache.sizeBytes, 0);
+
+  // setBatch
+  await cache.setBatch([
+    { key: "x", value: "111" },
+    { key: "y", value: "222" },
+  ]);
+  const batchSize = cache.sizeBytes;
+  assertEquals(batchSize > 0, true);
+
+  // delByPattern — sizeBytes should decrease
+  await cache.delByPattern("*");
+  assertEquals(cache.sizeBytes, 0);
+
+  // clear — sizeBytes should reset
+  await cache.set("z", "data");
+  cache.clear();
+  assertEquals(cache.sizeBytes, 0);
+});
+
+Deno.test("MemoryCacheBackend setBatch evicts by byte size", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  // maxSizeBytes=15
+  const cache = new MemoryCacheBackend(100, { maxSizeBytes: 15 });
+
+  // "a" + "1234" = 5, "b" + "1234" = 5 — total 10
+  await cache.setBatch([
+    { key: "a", value: "1234" },
+    { key: "b", value: "1234" },
+  ]);
+  assertEquals(cache.size, 2);
+
+  // "c" + "1234567890" = 11 — total would be 21, must evict both a and b
+  await cache.setBatch([
+    { key: "c", value: "1234567890" },
+  ]);
+  assertEquals(await cache.get("a"), null);
+  assertEquals(await cache.get("b"), null);
+  assertEquals(await cache.get("c"), "1234567890");
+});
+
+Deno.test("MemoryCacheBackend rejects single entry exceeding maxSizeBytes", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  // maxSizeBytes=10
+  const cache = new MemoryCacheBackend(100, { maxSizeBytes: 10 });
+
+  // "k" + "small" = 6 — fits
+  await cache.set("k", "small");
+  assertEquals(await cache.get("k"), "small");
+  assertEquals(cache.sizeBytes, 6);
+
+  // "x" + "this-value-is-way-too-large" = 28 — exceeds limit, silently dropped
+  await cache.set("x", "this-value-is-way-too-large");
+  assertEquals(await cache.get("x"), null);
+  assertEquals(cache.sizeBytes, 6);
+
+  // Existing entries should be untouched
+  assertEquals(await cache.get("k"), "small");
+});
+
 Deno.test("ApiCacheBackend requires auth and project context", async () => {
   const { ApiCacheBackend } = await importBackend();
 
