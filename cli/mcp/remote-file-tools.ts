@@ -615,7 +615,7 @@ const remoteCreateProjectInput = z.object({
   slug: z.string().describe(
     "Project slug (lowercase letters, numbers, hyphens only). A random suffix is appended if the slug is already taken.",
   ),
-  template: z.string().optional().describe("Template to use (e.g., 'chat', 'rag', 'minimal')"),
+  templateSlug: z.string().optional().describe("Template project slug to fork from (e.g., 'blank', 'chat', 'rag')"),
   is_public: z.boolean().optional().describe("Whether the project is public (default: false)"),
 });
 
@@ -633,7 +633,7 @@ export const vfRemoteCreateProject: MCPTool<RemoteCreateProjectInput, RemoteCrea
   inputSchema: remoteCreateProjectInput,
   execute: async (input) => {
     const result = await createProjectWithRetry(input.slug, {
-      template: input.template,
+      templateSlug: input.templateSlug,
       isPublic: input.is_public,
     });
 
