@@ -58,3 +58,5 @@ Provide the following information:
 - List of initial Authorized Contributors (GitHub usernames)
 
 The Corporate CLA must be signed by an authorized representative of the corporation.
+
+For individual (non-corporate) contributions, see the [Individual CLA](./CLA.md).

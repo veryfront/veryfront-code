@@ -99,7 +99,9 @@ jobs:
             ${example || "Your Name (@your-github-login)"}
             \`\`\`
 
-            By adding your name, you agree to the [CLA](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CLA.md). This is a one-time step.`;
+            By adding your name, you agree to the [CLA](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CLA.md). This is a one-time step.
+
+            If you are contributing on behalf of a company, please see our [Corporate CLA](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CLA-CORPORATE.md).`;
 
             // Create or update a single sticky CLA comment from this bot.
             const comments = await github.rest.issues.listComments({
