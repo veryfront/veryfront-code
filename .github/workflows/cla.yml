@@ -84,6 +84,7 @@ jobs:
               .filter(Boolean);
             const mentionList = missing.map(user => `@${user}`).join(", ");
             const example = missing.map(user => `Your Name (@${user})`).join("\n");
+            const contributorsUrl = `https://github.com/${context.payload.pull_request.head.repo.full_name}/blob/${context.payload.pull_request.head.ref}/CONTRIBUTORS.md`;
 
             const body = `${marker}
             Thanks for your contribution${mentionList ? `, ${mentionList}` : ""}!
@@ -92,7 +93,7 @@ jobs:
 
             Missing CLA entries for: ${mentionList || "one or more contributors"}.
 
-            **How to sign:** Add contributor entry lines in \`CONTRIBUTORS.md\` in this PR:
+            **How to sign:** Add contributor entry lines in [\`CONTRIBUTORS.md\`](${contributorsUrl}) in this PR:
 
             \`\`\`
             ${example || "Your Name (@your-github-login)"}
