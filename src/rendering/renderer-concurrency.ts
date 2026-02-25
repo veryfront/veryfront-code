@@ -4,7 +4,7 @@
  * Manages concurrency control for the shared multi-tenant renderer:
  * - Global render semaphore (limits total concurrent renders per pod)
  * - Per-project slot management (noisy-neighbor protection)
- * - Lock primitives for race-free slot acquisition
+ * - Mutex-based locking for race-free slot acquisition
  *
  * @module rendering/renderer-concurrency
  */
@@ -38,8 +38,66 @@ export const RENDER_PER_PROJECT_LIMIT = getEnvNumber("RENDER_PER_PROJECT_LIMIT")
  */
 export const RENDER_ACQUIRE_TIMEOUT_MS = 5000;
 
-/** Maximum time to wait for a lock before giving up (10 seconds) */
+/** Maximum time to wait for a project lock before giving up (10 seconds) */
 export const LOCK_TIMEOUT_MS = 10_000;
+
+// ---------------------------------------------------------------------------
+// Mutex
+// ---------------------------------------------------------------------------
+
+/**
+ * Promise-based mutex with atomic lock state transitions.
+ * No TOCTOU race: `acquire()` synchronously marks the lock as held when
+ * uncontested, and `release()` atomically hands the lock to the next waiter.
+ */
+export class Mutex {
+  private queue: Array<(release: () => void) => void> = [];
+  private locked = false;
+
+  acquire(timeoutMs?: number): Promise<() => void> {
+    if (!this.locked) {
+      this.locked = true;
+      return Promise.resolve(() => this.release());
+    }
+
+    return new Promise<() => void>((resolve, reject) => {
+      let settled = false;
+
+      const onAcquire = (release: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+        resolve(release);
+      };
+
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      if (timeoutMs !== undefined && timeoutMs > 0) {
+        timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          const idx = this.queue.indexOf(onAcquire);
+          if (idx !== -1) this.queue.splice(idx, 1);
+          reject(new Error(`Lock acquisition timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }
+
+      this.queue.push(onAcquire);
+    });
+  }
+
+  private release(): void {
+    const next = this.queue.shift();
+    if (next) {
+      next(() => this.release());
+    } else {
+      this.locked = false;
+    }
+  }
+
+  get waiting(): number {
+    return this.queue.length;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Global State
@@ -63,62 +121,40 @@ export const renderSemaphore = new Semaphore(RENDER_MAX_CONCURRENT, {
 export const projectRenderCounts = new Map<string, number>();
 
 /**
- * Lock map to prevent race conditions in acquireProjectSlot/releaseProjectSlot.
- * Each project has its own lock to allow concurrent access across different projects
- * while serializing access within the same project.
- *
- * The race condition: Without locking, concurrent requests can read the same count,
- * both pass the limit check, and both increment - allowing 2*limit concurrent renders.
+ * Per-project mutexes for serializing slot acquire/release within the same project.
+ * Each project gets its own mutex so different projects don't block each other.
  */
-export const projectSlotLocks = new Map<string, Promise<void>>();
+const projectMutexes = new Map<string, Mutex>();
+
+function getProjectMutex(projectId: string): Mutex {
+  let mutex = projectMutexes.get(projectId);
+  if (!mutex) {
+    mutex = new Mutex();
+    projectMutexes.set(projectId, mutex);
+  }
+  return mutex;
+}
 
 // ---------------------------------------------------------------------------
-// Lock Functions
+// Slot Functions
 // ---------------------------------------------------------------------------
 
 /**
  * Acquire a lock for a specific project. Returns a release function.
- * Uses a retry loop to ensure atomicity - avoids TOCTOU race conditions.
  */
-export async function acquireProjectLock(projectId: string): Promise<() => void> {
-  const startTime = Date.now();
-
-  while (true) {
-    if (Date.now() - startTime > LOCK_TIMEOUT_MS) {
-      throw new Error(`Lock acquisition timeout for project: ${projectId}`);
-    }
-
-    const existingLock = projectSlotLocks.get(projectId);
-    if (existingLock) {
-      await existingLock;
-      continue;
-    }
-
-    let releaseLock!: () => void;
-    const lockPromise = new Promise<void>((resolve) => {
-      releaseLock = resolve;
-    });
-
-    if (projectSlotLocks.has(projectId)) {
-      continue;
-    }
-
-    projectSlotLocks.set(projectId, lockPromise);
-
-    return () => {
-      releaseLock();
-      if (projectSlotLocks.get(projectId) === lockPromise) {
-        projectSlotLocks.delete(projectId);
-      }
-    };
-  }
+export function acquireProjectLock(
+  projectId: string,
+): Promise<() => void> {
+  return getProjectMutex(projectId).acquire(LOCK_TIMEOUT_MS);
 }
 
 /**
  * Attempt to acquire a project render slot with proper locking.
  * Returns true if acquired, false if limit reached.
  */
-export async function acquireProjectSlot(projectId: string): Promise<boolean> {
+export async function acquireProjectSlot(
+  projectId: string,
+): Promise<boolean> {
   if (RENDER_PER_PROJECT_LIMIT <= 0) return true;
 
   const release = await acquireProjectLock(projectId);
@@ -136,7 +172,9 @@ export async function acquireProjectSlot(projectId: string): Promise<boolean> {
 /**
  * Release a project render slot with proper locking.
  */
-export async function releaseProjectSlot(projectId: string): Promise<void> {
+export async function releaseProjectSlot(
+  projectId: string,
+): Promise<void> {
   if (RENDER_PER_PROJECT_LIMIT <= 0) return;
 
   const release = await acquireProjectLock(projectId);
@@ -144,6 +182,7 @@ export async function releaseProjectSlot(projectId: string): Promise<void> {
     const current = projectRenderCounts.get(projectId) ?? 0;
     if (current <= 1) {
       projectRenderCounts.delete(projectId);
+      projectMutexes.delete(projectId);
       return;
     }
     projectRenderCounts.set(projectId, current - 1);
