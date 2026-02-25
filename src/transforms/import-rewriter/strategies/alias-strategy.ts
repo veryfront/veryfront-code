@@ -21,7 +21,7 @@ export class AliasStrategy implements ImportRewriteStrategy {
     if (ctx.target === "ssr") {
       let normalizedPath = normalizeExtension(path);
       // Add .js if no extension present
-      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|js)$/.test(normalizedPath)) {
+      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css|js)$/.test(normalizedPath)) {
         normalizedPath = `${normalizedPath}.js`;
       }
       return { specifier: `/_vf_modules/${normalizedPath}` };
@@ -33,7 +33,7 @@ export class AliasStrategy implements ImportRewriteStrategy {
     // but module path is "_vf_modules/components/elements/Textarea.js").
     if (ctx.moduleServerUrl) {
       let normalizedPath = normalizeExtension(path);
-      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|js)$/.test(normalizedPath)) {
+      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css|js)$/.test(normalizedPath)) {
         normalizedPath = `${normalizedPath}.js`;
       }
       return { specifier: `${ctx.moduleServerUrl}/${normalizedPath}` };
@@ -47,7 +47,7 @@ export class AliasStrategy implements ImportRewriteStrategy {
 
     let relativePath = depth === 0 ? `./${path}` : `${"../".repeat(depth)}${path}`;
 
-    if (!/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(relativePath)) {
+    if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css)$/.test(relativePath)) {
       relativePath = `${relativePath}.js`;
     }
 
