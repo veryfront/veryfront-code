@@ -241,7 +241,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   }
 
   function makeAuthRedirectUrl(req: Request): string {
-    return `https://veryfront.com/sign-in?from=${encodeURIComponent(req.url)}`;
+    const url = new URL(req.url);
+    // Collapse leading slashes to prevent protocol-relative open redirects (e.g. "//evil.com/path")
+    const safePath = url.pathname.replace(/^\/\/+/, "/");
+    const returnPath = safePath + url.search;
+    return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnPath)}`;
   }
 
   async function resolveReleaseAndProtection(

@@ -246,7 +246,7 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error?.message, "Authentication required");
         assertEquals(
           ctx.error?.redirectUrl,
-          "https://veryfront.com/sign-in?from=http%3A%2F%2Fprotected.example.com%2Fpage",
+          "https://veryfront.com/sign-in?from=%2Fpage",
         );
 
         await handler.close();
@@ -340,7 +340,7 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error?.message, "Authentication required");
         assertEquals(
           ctx.error?.redirectUrl,
-          "https://veryfront.com/sign-in?from=http%3A%2F%2Fprotected-project.staging.veryfront.com%2Fpage",
+          "https://veryfront.com/sign-in?from=%2Fpage",
         );
 
         await handler.close();
@@ -390,6 +390,144 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.releaseId, "rel-123");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("strips origin from redirect URL to prevent open redirect", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://protected.example.com/dashboard?tab=settings", {
+          headers: { host: "protected.example.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 302);
+        // Must contain only pathname + search, never the full origin
+        assertEquals(
+          ctx.error?.redirectUrl,
+          "https://veryfront.com/sign-in?from=%2Fdashboard%3Ftab%3Dsettings",
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("collapses protocol-relative redirect to prevent open redirect via //evil.com", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        // An attacker might craft a URL with //evil.com to get a protocol-relative redirect
+        const req = new Request("http://protected.example.com//evil.com/callback", {
+          headers: { host: "protected.example.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 302);
+        // Leading double slashes must be collapsed to a single slash
+        assertEquals(
+          ctx.error?.redirectUrl,
+          "https://veryfront.com/sign-in?from=%2Fevil.com%2Fcallback",
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("uses only root path for redirect when request is to /", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://protected.example.com/", {
+          headers: { host: "protected.example.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 302);
+        assertEquals(
+          ctx.error?.redirectUrl,
+          "https://veryfront.com/sign-in?from=%2F",
+        );
 
         await handler.close();
       } finally {
