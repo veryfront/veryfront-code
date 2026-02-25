@@ -1,6 +1,8 @@
-# Veryfront
+# Veryfront Code
 
-The full-stack React framework for agentic AI apps. Works with Node.js, Deno, and Bun.
+AI-native full-stack framework for building agentic apps and agents with TypeScript and React. Works with Node.js, Deno, and Bun.
+
+## Getting started
 
 ```bash
 npm create veryfront
@@ -194,9 +196,9 @@ npx veryfront init my-app
 
 | Template | Description |
 |----------|-------------|
-| **chat** | AI chatbot with agent, tools, streaming UI |
-| **rag** | Chat with your docs via retrieval-augmented generation |
-| **multi-agent** | Agents that delegate to each other as tools |
+| **chat** | Conversational chat agent with tools and streaming UI |
+| **rag** | RAG-powered app to chat with your docs |
+| **multi-agent** | Coordinated AI agents that delegate to each other as tools |
 | **workflow** | Multi-step AI pipeline with approvals and parallelism |
 | **coding-agent** | AI code assistant with file read/write/edit tools |
 | **saas** | AI SaaS with auth, per-user chat, memory |
