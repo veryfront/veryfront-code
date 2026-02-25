@@ -1,15 +1,21 @@
 export class Semaphore {
   private permits: number;
+  private readonly maxQueueSize: number;
   private waitQueue: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
 
-  constructor(permits: number) {
+  constructor(permits: number, options?: { maxQueueSize?: number }) {
     this.permits = permits;
+    this.maxQueueSize = options?.maxQueueSize ?? Infinity;
   }
 
   tryAcquire(timeoutMs = 100): Promise<boolean> {
     if (this.permits > 0) {
       this.permits--;
       return Promise.resolve(true);
+    }
+
+    if (this.waitQueue.length >= this.maxQueueSize) {
+      return Promise.resolve(false);
     }
 
     return new Promise<boolean>((resolve) => {

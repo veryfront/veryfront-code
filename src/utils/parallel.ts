@@ -13,6 +13,9 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 const DEFAULT_CONCURRENCY = 20;
 const ACQUIRE_TIMEOUT_MS = 30_000;
 
+// No maxQueueSize — parallelMap schedules all items via Promise.all,
+// so a queue cap would reject items in large batches instead of letting
+// them progress under the concurrency limit with timeout-based backpressure.
 const apiSemaphore = new Semaphore(DEFAULT_CONCURRENCY);
 
 type ParallelOptions = {
