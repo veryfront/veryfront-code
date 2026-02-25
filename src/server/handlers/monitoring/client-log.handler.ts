@@ -1,11 +1,15 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { ResponseBuilder } from "#veryfront/security/index.ts";
+import { readBodyWithLimit, ResponseBuilder } from "#veryfront/security/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { HTTP_OK, PRIORITY_HIGH_CLIENT_LOG } from "#veryfront/utils/constants/index.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 const logger = serverLogger.component("client-log-handler");
+
+/** Max body size for client log payloads (64 KB) */
+const CLIENT_LOG_MAX_BODY_BYTES = 64 * 1024;
 
 export class ClientLogHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -27,7 +31,7 @@ export class ClientLogHandler extends BaseHandler {
     let body = "";
 
     try {
-      body = await req.text();
+      body = await readBodyWithLimit(req, CLIENT_LOG_MAX_BODY_BYTES);
       const logData = JSON.parse(body);
 
       const level = typeof logData?.level === "string" ? logData.level : "info";
@@ -47,6 +51,19 @@ export class ClientLogHandler extends BaseHandler {
         serverLogger.debug(`${prefix} ${message}`, details);
       }
     } catch (e) {
+      if (
+        e instanceof VeryfrontError &&
+        e.slug === "input-validation-failed" &&
+        e.detail === "Request body exceeds size limit"
+      ) {
+        logger.warn("Client log body too large, rejected");
+        return this.respond(
+          ResponseBuilder.json({ error: "Payload too large" }, req, {
+            corsConfig: ctx.securityConfig?.cors,
+            status: 413,
+          }),
+        );
+      }
       this.handleParseError(e, body);
     }
 
