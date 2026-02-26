@@ -19,6 +19,7 @@ import {
 } from "#veryfront/rendering/snippet-renderer.ts";
 import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
 import { invalidateProjectCSS } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { invalidateProjectCandidateManifests } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
 
 export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
   const type = config.type ?? "local";
@@ -51,7 +52,10 @@ export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
             clearRouterDetectionCacheForProject,
             clearSnippetCacheForProject,
             clearRendererCacheForProject,
-            clearProjectCSSCache: invalidateProjectCSS,
+            clearProjectCSSCache: (projectSlug: string) => {
+              invalidateProjectCSS(projectSlug);
+              invalidateProjectCandidateManifests(projectSlug);
+            },
             ...config.invalidationCallbacks,
           },
         };

@@ -1,3 +1,7 @@
+/**
+ * Task system public exports.
+ * @module
+ */
 export type { TaskContext, TaskDefinition } from "./types.ts";
 export { isTaskDefinition } from "./types.ts";
 export { deriveTaskId, discoverTasks, findTaskById } from "./discovery.ts";

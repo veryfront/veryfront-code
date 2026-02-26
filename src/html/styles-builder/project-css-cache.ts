@@ -18,6 +18,7 @@ import {
   resolveStylesheet,
 } from "./tailwind-compiler-utils.ts";
 import { cacheCSSAsync, DEFAULT_STYLESHEET } from "./css-hash-cache.ts";
+import { TAILWIND_VERSION } from "#veryfront/utils/constants/cdn.ts";
 
 const projectCssCacheLog = logger.component("project-css-cache");
 const tailwindLog = logger.component("tailwind");
@@ -40,7 +41,15 @@ export interface ProjectCSSRequestContext {
   projectSlug: string;
   stylesheet: string;
   candidatesHash: string;
+  profileHash: string;
+  environment: string;
   cacheKey: string;
+}
+
+export interface ProjectCSSProfile {
+  minify?: boolean;
+  environment?: string;
+  buildMode?: "development" | "production";
 }
 
 // ============================================================================
@@ -116,15 +125,29 @@ export function createProjectCSSRequestContext(
   projectSlug: string,
   stylesheet: string | undefined,
   candidates: Set<string>,
+  profile?: ProjectCSSProfile,
 ): ProjectCSSRequestContext {
   const resolvedStylesheet = resolveStylesheet(stylesheet, DEFAULT_STYLESHEET);
   const stylesheetHash = hashString(resolvedStylesheet);
   const candidatesHash = hashCandidates(candidates);
+  const environment = profile?.environment ?? "preview";
+  const profileHash = hashString(
+    JSON.stringify({
+      cacheSchema: "v2",
+      tailwindVersion: TAILWIND_VERSION,
+      minify: profile?.minify ?? false,
+      buildMode: profile?.buildMode ?? "production",
+      environment,
+    }),
+  );
+
   return {
     projectSlug,
     stylesheet: resolvedStylesheet,
     candidatesHash,
-    cacheKey: `${projectSlug}:${stylesheetHash}`,
+    profileHash,
+    environment,
+    cacheKey: `${projectSlug}:${environment}:${stylesheetHash}:${candidatesHash}:${profileHash}`,
   };
 }
 
