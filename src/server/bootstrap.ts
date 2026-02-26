@@ -181,7 +181,10 @@ export async function bootstrap(
   let dispose: (() => void) | undefined;
   if (isExtendedFSAdapter(enhancedAdapter.fs)) {
     const underlying = enhancedAdapter.fs.getUnderlyingAdapter();
-    if ("dispose" in underlying && typeof (underlying as { dispose?: () => void }).dispose === "function") {
+    if (
+      "dispose" in underlying &&
+      typeof (underlying as { dispose?: () => void }).dispose === "function"
+    ) {
       dispose = () => (underlying as { dispose: () => void }).dispose();
     }
   }
