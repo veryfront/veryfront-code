@@ -53,6 +53,7 @@ export class WebSocketManager {
 
   private wsConnectionId: string | null = null;
   private wsConsecutiveFailures = 0;
+  private disposed = false;
   private pokeMetrics = {
     received: 0,
     invalidationsTriggered: 0,
@@ -71,6 +72,8 @@ export class WebSocketManager {
   }
 
   connect(projectId: string): void {
+    if (this.disposed) return;
+
     this.cleanupTimers();
 
     if (this.wsConsecutiveFailures >= WS_RECONNECT_MAX_FAILURES) {
@@ -117,16 +120,18 @@ export class WebSocketManager {
       };
 
       this.ws.onclose = () => {
+        this.wsConnectionId = null;
+        this.cleanupTimers();
+
+        if (this.disposed) return;
+
         this.wsConsecutiveFailures++;
         const delay = this.getReconnectDelay();
         logger.debug("WebSocket closed, reconnecting", {
           delayMs: delay,
-          connectionId: this.wsConnectionId,
           totalPokesReceived: this.pokeMetrics.received,
           consecutiveFailures: this.wsConsecutiveFailures,
         });
-        this.wsConnectionId = null;
-        this.cleanupTimers();
         this.wsReconnectTimer = setTimeout(() => this.connect(projectId), delay);
       };
 
@@ -156,6 +161,7 @@ export class WebSocketManager {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.cleanupTimers();
 
     if (this.invalidationTimer) {
@@ -169,6 +175,11 @@ export class WebSocketManager {
     }
 
     if (!this.ws) return;
+
+    // Detach handlers before closing to prevent onclose from scheduling a reconnect
+    this.ws.onclose = null;
+    this.ws.onerror = null;
+    this.ws.onmessage = null;
 
     try {
       this.ws.close();
