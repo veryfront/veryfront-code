@@ -37,11 +37,6 @@ async function runProxy(options: ServeOptions): Promise<void> {
   setEnv("PORT", String(options.port));
   setEnv("HOST", options.bindAddress);
 
-  registerTerminationSignals((signal) => {
-    cliLogger.info(`Received ${signal}, shutting down proxy server...`);
-    exitProcess(0);
-  });
-
   // DenoHttpServer.serve() blocks until the server stops,
   // so this import keeps the process alive.
   await import("veryfront/proxy/main");

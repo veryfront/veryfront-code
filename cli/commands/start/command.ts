@@ -232,22 +232,27 @@ export async function startCommand(options: StartOptions): Promise<void> {
   app.setServerReady();
 
   let shuttingDown = false;
-  async function shutdown(): Promise<void> {
+  async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
 
     restoreConsole();
-    cliLogger.info("Shutting down...");
+    cliLogger.info(`Received ${signal}, shutting down...`);
 
-    app.stop();
-    await mcpServer.stop();
-    shutdownController.abort();
-    await server.stop();
-    await proxy.close();
-    exitProcess(0);
+    try {
+      app.stop();
+      await mcpServer.stop();
+      shutdownController.abort();
+      await server.stop();
+      await proxy.close();
+    } catch (error) {
+      cliLogger.warn("Error while shutting down start command:", error);
+    } finally {
+      exitProcess(0);
+    }
   }
 
-  registerTerminationSignals(() => void shutdown());
+  registerTerminationSignals((signal) => shutdown(signal));
   app.start();
 
   await new Promise(() => {});
