@@ -292,12 +292,15 @@ if (import.meta.main) {
     // Note: Don't use HOSTNAME - K8s sets it to pod name which resolves to pod IP
     const bindAddress = adapter.env.get("BIND_ADDRESS") ?? "0.0.0.0";
 
+    const bootstrap = await bootstrapProd(projectDir, adapter);
+
     const server = await startProductionServer({
       projectDir,
       port,
       bindAddress,
       debug: isDebugEnabled(adapter.env),
       adapter, // Pass adapter to avoid re-detection
+      bootstrapResult: bootstrap,
       signal: shutdownController.signal,
     });
 
@@ -337,6 +340,7 @@ if (import.meta.main) {
         // Phase 3: Stop accepting new connections and clean up
         stopMemoryMonitoring();
         requestTracker.shutdown();
+        bootstrap.dispose?.();
         shutdownController.abort();
         await server.stop();
         await shutdownOTLP();

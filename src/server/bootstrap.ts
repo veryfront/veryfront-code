@@ -8,6 +8,7 @@ import {
 } from "#veryfront/config/environment-config.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { logger } from "#veryfront/utils";
@@ -38,6 +39,9 @@ export interface BootstrapResult {
 
   /** FSAdapter type (if used) */
   fsAdapterType?: string;
+
+  /** Dispose FSAdapter resources (WebSocket connections, caches) */
+  dispose?: () => void;
 }
 
 let envLogged = false;
@@ -174,11 +178,20 @@ export async function bootstrap(
     fsAdapter: fsType,
   });
 
+  let dispose: (() => void) | undefined;
+  if (isExtendedFSAdapter(enhancedAdapter.fs)) {
+    const underlying = enhancedAdapter.fs.getUnderlyingAdapter();
+    if ("dispose" in underlying && typeof (underlying as { dispose?: () => void }).dispose === "function") {
+      dispose = () => (underlying as { dispose: () => void }).dispose();
+    }
+  }
+
   return {
     adapter: enhancedAdapter,
     config,
     usingFSAdapter: true,
     fsAdapterType: fsType,
+    dispose,
   };
 }
 
