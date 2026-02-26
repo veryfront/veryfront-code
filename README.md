@@ -58,6 +58,10 @@ brew install veryfront/tap/veryfront
 
 Follow the [Quickstart guide](https://veryfront.com/docs/code/guides/quickstart) for step-by-step setup, or explore our [templates](https://veryfront.com/docs/code/guides/quickstart#templates) to start building with Veryfront today.
 
+## Examples
+
+Check out the [veryfront-examples](https://github.com/veryfront/veryfront-examples) repo for standalone, runnable examples.
+
 ## Documentation
 
 Visit our [official documentation](https://veryfront.com/docs/code).
