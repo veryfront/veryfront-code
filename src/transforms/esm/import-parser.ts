@@ -26,12 +26,13 @@ export interface MissingImport {
 
 export interface ParseLocalImportsResult {
   imports: LocalImport[];
+  cssImports: LocalImport[];
   crossProjectImports: CrossProjectImport[];
   missing: MissingImport[];
 }
 
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
-const HAS_EXTENSION_RE = /\.(tsx?|jsx?|mjs|cjs|mdx)$/;
+const HAS_EXTENSION_RE = /\.(tsx?|jsx?|mjs|cjs|mdx|css)$/;
 
 export async function parseLocalImports(
   code: string,
@@ -40,7 +41,7 @@ export async function parseLocalImports(
   adapter?: RuntimeAdapter,
 ): Promise<ParseLocalImportsResult> {
   if (filePath.endsWith(".css") || filePath.endsWith(".json")) {
-    return { imports: [], crossProjectImports: [], missing: [] };
+    return { imports: [], cssImports: [], crossProjectImports: [], missing: [] };
   }
 
   const esbuild = await getEsbuild();
@@ -58,6 +59,7 @@ export async function parseLocalImports(
 
   const imports = await parseImports(result.code);
   const localImports: LocalImport[] = [];
+  const cssImports: LocalImport[] = [];
   const crossProjectImports: CrossProjectImport[] = [];
   const missingImports: MissingImport[] = [];
 
@@ -68,7 +70,11 @@ export async function parseLocalImports(
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       const resolved = await resolveLocalImportPath(filePath, specifier, adapter);
       if (resolved) {
-        localImports.push({ specifier, absolutePath: resolved });
+        if (resolved.endsWith(".css")) {
+          cssImports.push({ specifier, absolutePath: resolved });
+        } else {
+          localImports.push({ specifier, absolutePath: resolved });
+        }
         continue;
       }
 
@@ -84,7 +90,11 @@ export async function parseLocalImports(
       const aliasPath = specifier.slice(2);
       const resolved = await resolveAliasImportPath(aliasPath, projectDir, adapter);
       if (resolved) {
-        localImports.push({ specifier, absolutePath: resolved });
+        if (resolved.endsWith(".css")) {
+          cssImports.push({ specifier, absolutePath: resolved });
+        } else {
+          localImports.push({ specifier, absolutePath: resolved });
+        }
         continue;
       }
 
@@ -109,7 +119,7 @@ export async function parseLocalImports(
     });
   }
 
-  return { imports: localImports, crossProjectImports, missing: missingImports };
+  return { imports: localImports, cssImports, crossProjectImports, missing: missingImports };
 }
 
 async function checkFileExists(path: string, adapter?: RuntimeAdapter): Promise<boolean> {

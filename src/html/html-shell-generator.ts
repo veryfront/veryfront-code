@@ -141,6 +141,8 @@ async function generateHTMLShellPartsImpl(
   if (useProductionCSS && projectSlug !== "default") {
     const projectCSS = await getProjectCSS(projectSlug, stylesheetContent, candidates, {
       minify: true,
+      environment: options.environment,
+      buildMode: options.mode,
     });
     cssHash = projectCSS.hash;
   }

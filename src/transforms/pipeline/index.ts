@@ -22,6 +22,7 @@ import type {
 } from "./types.ts";
 import {
   compilePlugin,
+  cssStripPlugin,
   finalizePlugin,
   parsePlugin,
   resolveImportsPlugin,
@@ -39,6 +40,7 @@ import { extractFrameworkBundlePaths } from "../shared/framework-bundle-paths.ts
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
   compilePlugin,
+  cssStripPlugin, // Strip CSS imports before they hit import resolution
   resolveImportsPlugin, // Unified import resolution
   ssrVfModulesPlugin, // Resolve /_vf_modules/ to framework files with React transforms
   ssrHttpStubPlugin,
@@ -49,6 +51,7 @@ const SSR_PIPELINE: TransformPlugin[] = [
 const BROWSER_PIPELINE: TransformPlugin[] = [
   parsePlugin,
   compilePlugin,
+  cssStripPlugin, // Strip CSS imports before they hit import resolution
   resolveImportsPlugin, // Unified import resolution
   finalizePlugin,
 ];

@@ -9,6 +9,7 @@
 
 import type { CrossProjectImport, MissingImport } from "#veryfront/transforms/esm/import-parser.ts";
 import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
+import { registerCSSImport } from "../css-import-collector.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { rendererLogger } from "#veryfront/utils";
@@ -91,6 +92,11 @@ export class SSRDependencyValidator {
       this.projectDir,
       this.adapter,
     );
+
+    // Register CSS imports from cached modules for HTML inclusion
+    for (const cssImport of parseResult.cssImports) {
+      registerCSSImport(cssImport.absolutePath);
+    }
 
     if (parseResult.missing.length > 0) {
       this.missingDependencies.push(...parseResult.missing);

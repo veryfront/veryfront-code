@@ -43,6 +43,11 @@ export {
 } from "./project-css-cache.ts";
 
 const logger = serverLogger.component("tailwind");
+const inFlightProjectCSS = new Map<
+  string,
+  Promise<{ css: string; hash: string; fromCache: boolean }>
+>();
+const inFlightRegeneration = new Map<string, Promise<string | undefined>>();
 
 export interface TailwindResult {
   css: string;
@@ -51,6 +56,8 @@ export interface TailwindResult {
 
 export interface GenerateOptions {
   minify?: boolean;
+  environment?: string;
+  buildMode?: "development" | "production";
 }
 
 export interface CSSErrorInfo {
@@ -69,7 +76,11 @@ export async function getProjectCSS(
   candidates: Set<string>,
   options?: GenerateOptions,
 ): Promise<{ css: string; hash: string; fromCache: boolean }> {
-  const context = createProjectCSSRequestContext(projectSlug, stylesheet, candidates);
+  const context = createProjectCSSRequestContext(projectSlug, stylesheet, candidates, {
+    minify: options?.minify,
+    environment: options?.environment,
+    buildMode: options?.buildMode,
+  });
 
   const localHit = await tryGetProjectCSSFromLocalFallback(context, candidates);
   if (localHit) return localHit;
@@ -81,36 +92,55 @@ export async function getProjectCSS(
   const distributedHit = await tryGetProjectCSSFromDistributedCache(context, candidates);
   if (distributedHit) return distributedHit;
 
-  // Generate fresh CSS
-  const result = await generateTailwindCSS(context.stylesheet, candidates, options);
-
-  if (result.error) {
-    const formatted = formatCSSError(result.error);
-    logger.error("Project CSS generation failed", {
+  const inFlight = inFlightProjectCSS.get(context.cacheKey);
+  if (inFlight) {
+    logger.debug("Project CSS compile single-flight hit", {
       projectSlug: context.projectSlug,
-      error: formatted.message,
-      suggestion: formatted.suggestion,
+      cacheKeySuffix: context.cacheKey.slice(-24),
     });
-    throw new Error(
-      `[tailwind] ${formatted.title}: ${formatted.message} Suggestion: ${formatted.suggestion}`,
-    );
+    return inFlight;
   }
 
-  const hash = hashCSS(result.css);
-  await storeProjectCSS(
-    context,
-    { css: result.css, hash, candidatesHash: context.candidatesHash },
-    candidates,
-  );
+  const generationPromise = (async () => {
+    // Generate fresh CSS
+    const result = await generateTailwindCSS(context.stylesheet, candidates, options);
 
-  logger.debug("Project CSS generated", {
-    projectSlug: context.projectSlug,
-    hash,
-    cssLength: result.css.length,
-    candidateCount: candidates.size,
-  });
+    if (result.error) {
+      const formatted = formatCSSError(result.error);
+      logger.error("Project CSS generation failed", {
+        projectSlug: context.projectSlug,
+        error: formatted.message,
+        suggestion: formatted.suggestion,
+      });
+      throw new Error(
+        `[tailwind] ${formatted.title}: ${formatted.message} Suggestion: ${formatted.suggestion}`,
+      );
+    }
 
-  return { css: result.css, hash, fromCache: false };
+    const hash = hashCSS(result.css);
+    await storeProjectCSS(
+      context,
+      { css: result.css, hash, candidatesHash: context.candidatesHash },
+      candidates,
+    );
+
+    logger.debug("Project CSS generated", {
+      projectSlug: context.projectSlug,
+      hash,
+      cssLength: result.css.length,
+      candidateCount: candidates.size,
+    });
+
+    return { css: result.css, hash, fromCache: false };
+  })();
+
+  inFlightProjectCSS.set(context.cacheKey, generationPromise);
+
+  try {
+    return await generationPromise;
+  } finally {
+    inFlightProjectCSS.delete(context.cacheKey);
+  }
 }
 
 // ============================================================================
@@ -128,7 +158,10 @@ export async function getProjectCSS(
  * @returns The regenerated CSS if inputs are cached and hash matches, undefined otherwise
  */
 export async function regenerateCSSByHash(expectedHash: string): Promise<string | undefined> {
-  return await withSpan(
+  const inFlight = inFlightRegeneration.get(expectedHash);
+  if (inFlight) return await inFlight;
+
+  const regenerationPromise = withSpan(
     SpanNames.HTML_REGENERATE_CSS_BY_HASH,
     async () => {
       const inputs = await resolveRegenerationInputs(expectedHash);
@@ -175,6 +208,14 @@ export async function regenerateCSSByHash(expectedHash: string): Promise<string 
     },
     { "css.hash": expectedHash },
   );
+
+  inFlightRegeneration.set(expectedHash, regenerationPromise);
+
+  try {
+    return await regenerationPromise;
+  } finally {
+    inFlightRegeneration.delete(expectedHash);
+  }
 }
 
 // ============================================================================

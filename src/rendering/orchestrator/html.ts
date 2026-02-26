@@ -8,7 +8,6 @@ import {
   injectHTMLContent,
   isFullHTMLDocument,
 } from "#veryfront/html";
-import { extractCandidates } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import type { CollectedHead } from "#veryfront/react/head-collector.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type {
@@ -25,6 +24,11 @@ import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
 import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
+import {
+  normalizeCssModuleKey,
+  rewriteCssModuleContent,
+} from "#veryfront/transforms/css-modules/naming.ts";
+import { getRouteCandidates } from "./css-candidate-manifest.ts";
 
 const logger = rendererLogger.component("html-generator");
 
@@ -46,6 +50,8 @@ export interface HTMLGenerationContext {
   ssrHash: string;
   options?: RenderOptions;
   collectedHead?: CollectedHead;
+  /** Absolute paths to CSS files imported by components (collected during module loading) */
+  cssImports?: string[];
 }
 
 export class HTMLGenerator {
@@ -306,11 +312,15 @@ export class HTMLGenerator {
     mergedFrontmatter: MDXFrontmatter,
   ): Promise<HTMLGenerationOptions> {
     const stylesheetPath = this.config.config?.tailwind?.stylesheet || "globals.css";
-    const [appComponentPath, globalCSS, projectClasses] = await Promise.all([
+    const [appComponentPath, globalCSS] = await Promise.all([
       this.resolveAppPath().then((p) => p ?? undefined),
       this.loadProjectFile(stylesheetPath),
-      this.extractProjectClasses(),
     ]);
+    const projectClasses = await this.extractProjectClassesForRoute(context, appComponentPath);
+
+    // Load CSS imported by components and merge with globalCSS.
+    // Deduplicate against the configured stylesheet to avoid double-loading.
+    const combinedCSS = await this.mergeImportedCSS(globalCSS, context.cssImports, stylesheetPath);
 
     logger.debug("App component resolution", {
       appComponentPath,
@@ -351,7 +361,7 @@ export class HTMLGenerator {
       pagePath,
       pageType,
       nonce: context.options?.nonce,
-      globalCSS,
+      globalCSS: combinedCSS,
       frontmatter: mergedFrontmatter,
       studioEmbed: context.options?.studioEmbed,
       projectId: context.options?.projectId,
@@ -368,8 +378,94 @@ export class HTMLGenerator {
     };
   }
 
-  private async extractProjectClasses(): Promise<Set<string>> {
-    const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
+  /**
+   * Load CSS files imported by components and merge with the global stylesheet.
+   * Deduplicates against the configured Tailwind stylesheet path to avoid
+   * double-loading globals.css when it's both auto-discovered and explicitly imported.
+   */
+  private async mergeImportedCSS(
+    globalCSS: string | undefined,
+    cssImports: string[] | undefined,
+    stylesheetPath: string,
+  ): Promise<string | undefined> {
+    if (!cssImports || cssImports.length === 0) return globalCSS;
+
+    const normalizedStylesheetPath = stylesheetPath.replace(/^\/+/, "");
+    const configuredStylesheetAbsolute = normalizeCssModuleKey(
+      join(this.config.projectDir, normalizedStylesheetPath),
+    );
+    const uniqueImports = new Map<string, string>();
+    for (const cssPath of cssImports) {
+      const normalized = normalizeCssModuleKey(cssPath);
+      if (!uniqueImports.has(normalized)) {
+        uniqueImports.set(normalized, cssPath);
+      }
+    }
+
+    const sortedImports = [...uniqueImports.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const regularCssSegments: string[] = [];
+    const moduleCssSegments: string[] = [];
+
+    for (const [normalizedCssPath, cssPath] of sortedImports) {
+      // Deduplicate only exact path matches to avoid skipping unrelated files
+      // like /styles/globals.css when the configured stylesheet is /globals.css.
+      if (normalizedCssPath === configuredStylesheetAbsolute) {
+        continue;
+      }
+
+      try {
+        const content = await this.config.adapter.fs.readFile(cssPath);
+        if (!content) continue;
+
+        if (normalizedCssPath.endsWith(".module.css")) {
+          moduleCssSegments.push(rewriteCssModuleContent(content, normalizedCssPath));
+        } else {
+          regularCssSegments.push(content);
+        }
+      } catch {
+        logger.debug("Could not load imported CSS file", { cssPath });
+      }
+    }
+
+    if (regularCssSegments.length === 0 && moduleCssSegments.length === 0) return globalCSS;
+
+    const combined = [globalCSS, ...regularCssSegments, ...moduleCssSegments]
+      .filter(Boolean)
+      .join("\n");
+    logger.debug("Merged imported CSS with global stylesheet", {
+      importedCount: regularCssSegments.length + moduleCssSegments.length,
+      regularCount: regularCssSegments.length,
+      moduleCount: moduleCssSegments.length,
+      totalLength: combined.length,
+    });
+    return combined;
+  }
+
+  private getProjectContentVersion(): string | undefined {
+    const wrappedFs = this.config.adapter.fs as unknown as {
+      getUnderlyingAdapter?: () => unknown;
+    };
+
+    if (typeof wrappedFs.getUnderlyingAdapter !== "function") return undefined;
+
+    const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
+      getProjectData?: () => { updated_at?: string } | undefined;
+    };
+
+    return fsAdapter.getProjectData?.()?.updated_at;
+  }
+
+  private buildRouteManifestKey(pagePath: string): string {
+    const relativePagePath = extractRelativePath(pagePath, this.config.projectDir);
+    return relativePagePath
+      .replace(/\.(tsx|ts|jsx|mdx|md|js)$/, "")
+      .replace(/^pages\//, "");
+  }
+
+  private async extractProjectClassesForRoute(
+    context: HTMLGenerationContext,
+    appComponentPath?: string,
+  ): Promise<Set<string>> {
     const classes = new Set<string>();
 
     const wrappedFs = this.config.adapter.fs as unknown as {
@@ -387,20 +483,36 @@ export class HTMLGenerator {
     if (typeof fsAdapter.getAllSourceFiles !== "function") return classes;
 
     const files = await fsAdapter.getAllSourceFiles();
+    const projectScope = context.options?.projectSlug || context.options?.projectId ||
+      this.config.projectDir;
+    const projectVersion = this.getProjectContentVersion() ??
+      (this.config.mode === "development" ? "dev" : "unknown");
+    const routeKey = this.buildRouteManifestKey(context.pageInfo.entity.path);
+    const routeLayoutPaths = context.nestedLayouts
+      .map((layout) => layout.componentPath || layout.path)
+      .filter((path): path is string => Boolean(path));
+    const routeFilePaths = [
+      context.pageInfo.entity.path,
+      ...routeLayoutPaths,
+      ...(appComponentPath ? [appComponentPath] : []),
+    ];
 
-    let filesProcessed = 0;
-    for (const file of files) {
-      if (!file.content) continue;
-      if (!SOURCE_EXTENSIONS.some((ext) => file.path.endsWith(ext))) continue;
+    const routeCandidates = getRouteCandidates({
+      projectScope,
+      projectVersion,
+      projectDir: this.config.projectDir,
+      routeKey,
+      routeFilePaths,
+      files,
+      developmentMode: this.config.mode === "development",
+    });
 
-      filesProcessed++;
-      for (const cls of extractCandidates(file.content)) {
-        classes.add(cls);
-      }
-    }
+    for (const cls of routeCandidates) classes.add(cls);
 
     logger.debug("extractProjectClasses", {
-      filesProcessed,
+      filesProcessed: files.length,
+      routeKey,
+      routeFileCount: routeFilePaths.length,
       totalClasses: classes.size,
     });
 

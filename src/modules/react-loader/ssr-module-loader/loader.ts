@@ -52,6 +52,7 @@ import { SSRCircuitBreaker } from "./ssr-circuit-breaker.ts";
 import { SSRDependencyValidator } from "./ssr-dependency-validator.ts";
 import { preflightLocalImports } from "./preflight-imports.ts";
 import { resolveVfModuleImports } from "./vf-module-resolver.ts";
+import { registerCSSImport } from "../css-import-collector.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
@@ -479,6 +480,12 @@ export class SSRModuleLoader {
         this.options.projectDir,
         this.options.adapter,
       );
+
+      // Register CSS imports for later inclusion in HTML output.
+      // CSS files are not JS modules — skip them in the dependency graph.
+      for (const cssImport of parseResult.cssImports) {
+        registerCSSImport(cssImport.absolutePath);
+      }
 
       if (parseResult.missing.length > 0) {
         this.depValidator.missingDependencies.push(...parseResult.missing);
