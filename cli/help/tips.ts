@@ -16,12 +16,12 @@ export function getBuildTips(): string {
 
 export function getInitTemplates(): string {
   return `${yellow("Available Templates:")}\n` +
-    `  • ${green("chat")}          - AI chatbot with tools and streaming\n` +
-    `  • ${green("rag")}           - Chat with your docs (RAG + citations)\n` +
-    `  • ${green("multi-agent")}   - Agents that delegate to each other\n` +
-    `  • ${green("workflow")}      - AI pipeline with approvals\n` +
-    `  • ${green("coding-agent")}  - AI code assistant with file tools\n` +
-    `  • ${green("saas")}          - AI SaaS with auth + per-user memory\n` +
+    `  • ${green("ai-assistant")}         - AI chatbot with tools and streaming\n` +
+    `  • ${green("chat-with-your-docs")} - Chat with your docs (RAG + citations)\n` +
+    `  • ${green("multi-agent-system")}  - Agents that delegate to each other\n` +
+    `  • ${green("agentic-workflow")}    - AI pipeline with approvals\n` +
+    `  • ${green("coding-agent")}        - AI code assistant with file tools\n` +
+    `  • ${green("saas-starter")}        - AI SaaS with auth + per-user memory\n` +
     `  • ${green("minimal")}       - Blank canvas\n`;
 }
 

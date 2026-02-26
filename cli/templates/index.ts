@@ -49,27 +49,27 @@ const OPENAI_KEY_CONFIG = {
 } as const;
 
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
-  chat: { envVars: [OPENAI_KEY_CONFIG] },
-  rag: { envVars: [OPENAI_KEY_CONFIG] },
-  "multi-agent": { envVars: [OPENAI_KEY_CONFIG] },
-  workflow: { envVars: [OPENAI_KEY_CONFIG] },
+  "ai-assistant": { envVars: [OPENAI_KEY_CONFIG] },
+  "chat-with-your-docs": { envVars: [OPENAI_KEY_CONFIG] },
+  "multi-agent-system": { envVars: [OPENAI_KEY_CONFIG] },
+  "agentic-workflow": { envVars: [OPENAI_KEY_CONFIG] },
   "coding-agent": { envVars: [OPENAI_KEY_CONFIG] },
-  saas: { envVars: [OPENAI_KEY_CONFIG] },
+  "saas-starter": { envVars: [OPENAI_KEY_CONFIG] },
 };
 
 const DIRECTORY_BASED_TEMPLATES: TemplateName[] = [
-  "chat",
-  "rag",
-  "multi-agent",
-  "workflow",
+  "ai-assistant",
+  "chat-with-your-docs",
+  "multi-agent-system",
+  "agentic-workflow",
   "coding-agent",
-  "saas",
+  "saas-starter",
   "minimal",
 ];
 
 export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | null> {
   if (name === "pages-router" || name === "app-router") {
-    return getTemplate("chat");
+    return getTemplate("ai-assistant");
   }
 
   if (!DIRECTORY_BASED_TEMPLATES.includes(name)) {

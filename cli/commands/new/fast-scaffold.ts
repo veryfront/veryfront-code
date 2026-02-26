@@ -17,7 +17,7 @@ export interface ScaffoldResult {
 
 export async function scaffoldProjectFast(
   projectDir: string,
-  template: InitTemplate = "chat",
+  template: InitTemplate = "ai-assistant",
   slug: string,
   integrations: IntegrationName[] = [],
 ): Promise<ScaffoldResult> {
@@ -78,12 +78,12 @@ function dedupeFilesByPath(files: TemplateFile[]): TemplateFile[] {
 
 function createVeryfrontConfig(slug: string, template: InitTemplate): TemplateFile {
   const usesAppRouter = [
-    "chat",
-    "rag",
-    "multi-agent",
-    "workflow",
+    "ai-assistant",
+    "chat-with-your-docs",
+    "multi-agent-system",
+    "agentic-workflow",
     "coding-agent",
-    "saas",
+    "saas-starter",
     "minimal",
   ].includes(template);
 

@@ -66,7 +66,7 @@ describe("init command integration", () => {
     it("should scaffold a project locally", async () => {
       const result = await runInitCommand(projectName, [
         "-t",
-        "chat",
+        "ai-assistant",
         "--skip-install",
         "--skip-env-prompt",
       ]);
@@ -77,8 +77,13 @@ describe("init command integration", () => {
       assertEquals(statResult.isDirectory, true);
     });
 
-    it("should use chat template when specified", async () => {
-      await runInitCommand(projectName, ["-t", "chat", "--skip-install", "--skip-env-prompt"]);
+    it("should use ai-assistant template when specified", async () => {
+      await runInitCommand(projectName, [
+        "-t",
+        "ai-assistant",
+        "--skip-install",
+        "--skip-env-prompt",
+      ]);
 
       assertEquals(await pathIsDirectory(join(projectDir, "agents")), true);
     });
@@ -97,7 +102,7 @@ describe("init command integration", () => {
 
       const result = await runInitCommand(projectName, [
         "-t",
-        "chat",
+        "ai-assistant",
         "--skip-install",
         "--skip-env-prompt",
       ]);
@@ -110,7 +115,7 @@ describe("init command integration", () => {
 
       const result = await runInitCommand(projectName, [
         "-t",
-        "chat",
+        "ai-assistant",
         "--force",
         "--skip-install",
         "--skip-env-prompt",
@@ -123,7 +128,7 @@ describe("init command integration", () => {
     it("should scaffold project with single integration", async () => {
       const result = await runInitCommand(projectName, [
         "-t",
-        "chat",
+        "ai-assistant",
         "--integrations",
         "github",
         "--skip-install",
@@ -145,7 +150,7 @@ describe("init command integration", () => {
     it("should scaffold project with multiple integrations (comma-separated)", async () => {
       const result = await runInitCommand(projectName, [
         "-t",
-        "chat",
+        "ai-assistant",
         "--integrations",
         "github,slack",
         "--skip-install",
@@ -182,7 +187,7 @@ describe("init command integration", () => {
     it("should skip wizard in non-TTY environment", async () => {
       const result = await runInitCommand(projectName, [
         "-t",
-        "chat",
+        "ai-assistant",
         "--skip-install",
         "--skip-env-prompt",
       ]);

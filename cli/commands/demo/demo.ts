@@ -327,7 +327,7 @@ async function executeStepAction(
     case "create": {
       await initCommand({
         name: projectName,
-        template: "chat",
+        template: "ai-assistant",
         quiet: true,
         skipInstall: true,
         skipEnvPrompt: true,

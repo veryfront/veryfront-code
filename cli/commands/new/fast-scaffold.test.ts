@@ -13,13 +13,13 @@ describe("fast-scaffold", () => {
     it("should have required properties", () => {
       const result: ScaffoldResult = {
         filesWritten: 12,
-        template: "chat",
+        template: "ai-assistant",
         slug: "my-app",
         integrations: [],
       };
 
       assertEquals(result.filesWritten, 12);
-      assertEquals(result.template, "chat");
+      assertEquals(result.template, "ai-assistant");
       assertEquals(result.slug, "my-app");
       assertEquals(result.integrations.length, 0);
     });
@@ -27,7 +27,7 @@ describe("fast-scaffold", () => {
     it("should support integrations array", () => {
       const result: ScaffoldResult = {
         filesWritten: 20,
-        template: "chat",
+        template: "ai-assistant",
         slug: "my-app",
         integrations: ["github", "slack"],
       };

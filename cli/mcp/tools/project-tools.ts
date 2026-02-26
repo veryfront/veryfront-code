@@ -318,7 +318,7 @@ async function detectVeryfrontProject(projectPath: string): Promise<LocalProject
   const hasAIDir = await directoryExists(join(projectPath, "ai"));
   const hasChatRoute = await fileExists(join(projectPath, "app/api/chat/route.ts"));
   let template: string | undefined;
-  if (hasAIDir || hasChatRoute) template = "chat";
+  if (hasAIDir || hasChatRoute) template = "ai-assistant";
   else if (hasAppDir) template = "minimal";
 
   const integrations: string[] = [];

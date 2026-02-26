@@ -24,12 +24,12 @@ export interface TemplateConfig {
 }
 
 export type TemplateName =
-  | "chat"
-  | "rag"
-  | "multi-agent"
-  | "workflow"
+  | "ai-assistant"
+  | "chat-with-your-docs"
+  | "multi-agent-system"
+  | "agentic-workflow"
   | "coding-agent"
-  | "saas"
+  | "saas-starter"
   | "minimal"
   | "pages-router"
   | "app-router";

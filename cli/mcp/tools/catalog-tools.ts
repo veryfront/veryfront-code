@@ -27,7 +27,7 @@ const EXAMPLES: ExampleInfo[] = [
   {
     name: "ai-assistant",
     description: "Personal AI assistant with Gmail, Slack, and Calendar integrations",
-    template: "chat",
+    template: "ai-assistant",
     integrations: ["gmail", "slack", "calendar"],
     features: ["Chat UI", "Tool calling", "OAuth"],
     difficulty: "beginner",
@@ -43,7 +43,7 @@ const EXAMPLES: ExampleInfo[] = [
   {
     name: "support-bot",
     description: "Multi-agent customer support with Zendesk and Slack",
-    template: "multi-agent",
+    template: "multi-agent-system",
     integrations: ["zendesk", "slack", "notion"],
     features: ["Ticket management", "Knowledge base", "Escalation"],
     difficulty: "intermediate",
@@ -51,7 +51,7 @@ const EXAMPLES: ExampleInfo[] = [
   {
     name: "data-analyst",
     description: "RAG-powered data analyst with Sheets and Snowflake",
-    template: "rag",
+    template: "chat-with-your-docs",
     integrations: ["sheets", "snowflake", "notion"],
     features: ["Document search", "Chart generation", "Reports"],
     difficulty: "advanced",
@@ -59,7 +59,7 @@ const EXAMPLES: ExampleInfo[] = [
   {
     name: "content-pipeline",
     description: "AI workflow for research, writing, and publishing",
-    template: "workflow",
+    template: "agentic-workflow",
     integrations: ["notion", "slack"],
     features: ["Multi-step pipeline", "Approvals", "Parallel tasks"],
     difficulty: "intermediate",
@@ -67,7 +67,7 @@ const EXAMPLES: ExampleInfo[] = [
   {
     name: "saas-starter",
     description: "Full-stack AI SaaS with auth, billing, and per-user memory",
-    template: "saas",
+    template: "saas-starter",
     integrations: ["stripe"],
     features: ["Auth", "Per-user memory", "Dashboard", "API"],
     difficulty: "advanced",
@@ -83,23 +83,23 @@ interface TemplateInfo {
 
 const TEMPLATES: TemplateInfo[] = [
   {
-    name: "chat",
+    name: "ai-assistant",
     description: "AI chatbot with agent, tools, and streaming chat UI",
     features: ["Chat UI", "AI tools", "Agent runtime", "Streaming"],
     recommended: true,
   },
   {
-    name: "rag",
+    name: "chat-with-your-docs",
     description: "Chat with your docs using retrieval-augmented generation",
     features: ["Document search", "Source citations", "File-based knowledge"],
   },
   {
-    name: "multi-agent",
+    name: "multi-agent-system",
     description: "Agents that delegate to each other as tools",
     features: ["Agent composition", "Orchestrator pattern", "Specialized agents"],
   },
   {
-    name: "workflow",
+    name: "agentic-workflow",
     description: "Multi-step AI pipeline with approvals and parallelism",
     features: ["Step sequencing", "Approvals", "Parallel tasks", "React hooks"],
   },
@@ -109,7 +109,7 @@ const TEMPLATES: TemplateInfo[] = [
     features: ["File tools", "Code generation", "Code review"],
   },
   {
-    name: "saas",
+    name: "saas-starter",
     description: "AI SaaS with auth, per-user chat, and memory",
     features: ["Auth", "Per-user memory", "Dashboard", "API routes"],
   },
@@ -405,9 +405,17 @@ export const vfListUsecases: MCPTool<ListUsecasesInput, UsecaseInfo[]> = {
 const createProjectInput = z.object({
   name: z.string().describe("Project name (will be converted to slug for directory)"),
   template: z
-    .enum(["chat", "rag", "multi-agent", "workflow", "coding-agent", "saas", "minimal"])
+    .enum([
+      "ai-assistant",
+      "chat-with-your-docs",
+      "multi-agent-system",
+      "agentic-workflow",
+      "coding-agent",
+      "saas-starter",
+      "minimal",
+    ])
     .optional()
-    .default("chat")
+    .default("ai-assistant")
     .describe("Project template to use"),
   integrations: z
     .array(z.string())

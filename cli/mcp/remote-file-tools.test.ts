@@ -363,7 +363,7 @@ describe("cli/mcp/remote-file-tools", () => {
     it("should accept optional template and is_public", () => {
       const result = vfRemoteCreateProject.inputSchema.safeParse({
         slug: "my-project",
-        template: "chat",
+        template: "ai-assistant",
         is_public: true,
       });
       assertEquals(result.success, true);

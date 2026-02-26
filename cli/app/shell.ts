@@ -96,12 +96,16 @@ export function createApp(config: AppConfig): App {
   }
 
   state = setTemplates([
-    { id: "chat", name: "AI Chatbot", description: "Agent + chat UI + streaming" },
-    { id: "rag", name: "Chat with Docs", description: "RAG with source citations" },
-    { id: "multi-agent", name: "Multi-Agent", description: "Agents that delegate to each other" },
-    { id: "workflow", name: "AI Workflow", description: "Steps + approvals + parallelism" },
+    { id: "ai-assistant", name: "AI Chatbot", description: "Agent + chat UI + streaming" },
+    { id: "chat-with-your-docs", name: "Chat with Docs", description: "RAG with source citations" },
+    {
+      id: "multi-agent-system",
+      name: "Multi-Agent",
+      description: "Agents that delegate to each other",
+    },
+    { id: "agentic-workflow", name: "AI Workflow", description: "Steps + approvals + parallelism" },
     { id: "coding-agent", name: "Coding Agent", description: "AI code assistant with file tools" },
-    { id: "saas", name: "AI SaaS", description: "Auth + chat + per-user memory" },
+    { id: "saas-starter", name: "AI SaaS", description: "Auth + chat + per-user memory" },
     { id: "minimal", name: "Minimal", description: "Blank canvas" },
   ])(state);
 

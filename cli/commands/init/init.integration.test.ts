@@ -84,8 +84,8 @@ describe("init command integration", () => {
       assertEquals(await exists(join(projectDir, "app", "page.tsx")), true);
     });
 
-    it("should use chat template when specified", async () => {
-      const result = await runInitCommand([projectName, "-t", "chat", "--skip-install"]);
+    it("should use ai-assistant template when specified", async () => {
+      const result = await runInitCommand([projectName, "-t", "ai-assistant", "--skip-install"]);
 
       assertEquals(result.code, 0);
 
@@ -93,15 +93,25 @@ describe("init command integration", () => {
       assertEquals(statResult.isDirectory, true);
     });
 
-    it("should use rag template when specified", async () => {
-      const result = await runInitCommand([projectName, "-t", "rag", "--skip-install"]);
+    it("should use chat-with-your-docs template when specified", async () => {
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "chat-with-your-docs",
+        "--skip-install",
+      ]);
 
       assertEquals(result.code, 0);
       assertEquals(await exists(join(projectDir, "app")), true);
     });
 
-    it("should use workflow template when specified", async () => {
-      const result = await runInitCommand([projectName, "-t", "workflow", "--skip-install"]);
+    it("should use agentic-workflow template when specified", async () => {
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "agentic-workflow",
+        "--skip-install",
+      ]);
 
       assertEquals(result.code, 0);
 
@@ -115,7 +125,7 @@ describe("init command integration", () => {
       const result = await runInitCommand([
         projectName,
         "-t",
-        "chat",
+        "ai-assistant",
         "--skip-install",
         "--skip-env-prompt",
       ]);
@@ -128,7 +138,7 @@ describe("init command integration", () => {
       const result = await runInitCommand([
         projectName,
         "-t",
-        "chat",
+        "ai-assistant",
         "--skip-install",
         "--skip-env-prompt",
       ]);
