@@ -56,23 +56,11 @@ brew install veryfront/tap/veryfront
 
 </details>
 
-Follow the [Quickstart guide](https://veryfront.com/docs/code/guides/quickstart) for step-by-step setup, or explore our [templates](https://veryfront.com/docs/code/guides/quickstart#templates) to start building with Veryfront today.
+Follow the [Quickstart guide](https://veryfront.com/docs/code/guides/quickstart) for step-by-step setup, or explore our [templates](https://veryfront.com/docs/code/guides/quickstart#templates) to start building your first application with Veryfront. For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
 
 ## Examples
 
-Check out the [veryfront-examples](https://github.com/veryfront/veryfront-examples) repo for standalone, runnable examples.
-
-## Documentation
-
-Visit our [official documentation](https://veryfront.com/docs/code).
-
-**Getting Started** — [Quickstart](https://veryfront.com/docs/code/guides/quickstart) · [Project Structure](https://veryfront.com/docs/code/guides/project-structure)
-
-**AI** — [Agents](https://veryfront.com/docs/code/guides/agents) · [Tools](https://veryfront.com/docs/code/guides/tools) · [Memory & Streaming](https://veryfront.com/docs/code/guides/memory-and-streaming) · [Chat UI](https://veryfront.com/docs/code/guides/chat-ui) · [Workflows](https://veryfront.com/docs/code/guides/workflows) · [Multi-Agent](https://veryfront.com/docs/code/guides/multi-agent)
-
-**Infrastructure** — [Providers](https://veryfront.com/docs/code/guides/providers) · [Pages & Routing](https://veryfront.com/docs/code/guides/pages-and-routing) · [Data Fetching](https://veryfront.com/docs/code/guides/data-fetching) · [API Routes](https://veryfront.com/docs/code/guides/api-routes) · [Middleware](https://veryfront.com/docs/code/guides/middleware) · [OAuth](https://veryfront.com/docs/code/guides/oauth) · [MCP Server](https://veryfront.com/docs/code/guides/mcp-server) · [Integrations](https://veryfront.com/docs/code/integrations)
-
-**Production** — [Configuration](https://veryfront.com/docs/code/guides/configuration) · [Building & Deploying](https://veryfront.com/docs/code/guides/deploying) · [Head & SEO](https://veryfront.com/docs/code/guides/head-and-seo)
+You can find standalone, runnable examples in the [veryfront-examples](https://github.com/veryfront/veryfront-examples) repo.
 
 ## Contributing
 
