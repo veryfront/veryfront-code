@@ -78,7 +78,12 @@ describe("init command integration", () => {
     });
 
     it("should use ai-assistant template when specified", async () => {
-      await runInitCommand(projectName, ["-t", "ai-assistant", "--skip-install", "--skip-env-prompt"]);
+      await runInitCommand(projectName, [
+        "-t",
+        "ai-assistant",
+        "--skip-install",
+        "--skip-env-prompt",
+      ]);
 
       assertEquals(await pathIsDirectory(join(projectDir, "agents")), true);
     });

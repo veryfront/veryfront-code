@@ -405,7 +405,15 @@ export const vfListUsecases: MCPTool<ListUsecasesInput, UsecaseInfo[]> = {
 const createProjectInput = z.object({
   name: z.string().describe("Project name (will be converted to slug for directory)"),
   template: z
-    .enum(["ai-assistant", "chat-with-your-docs", "multi-agent-system", "agentic-workflow", "coding-agent", "saas-starter", "minimal"])
+    .enum([
+      "ai-assistant",
+      "chat-with-your-docs",
+      "multi-agent-system",
+      "agentic-workflow",
+      "coding-agent",
+      "saas-starter",
+      "minimal",
+    ])
     .optional()
     .default("ai-assistant")
     .describe("Project template to use"),

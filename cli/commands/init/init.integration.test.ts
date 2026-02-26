@@ -94,14 +94,24 @@ describe("init command integration", () => {
     });
 
     it("should use chat-with-your-docs template when specified", async () => {
-      const result = await runInitCommand([projectName, "-t", "chat-with-your-docs", "--skip-install"]);
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "chat-with-your-docs",
+        "--skip-install",
+      ]);
 
       assertEquals(result.code, 0);
       assertEquals(await exists(join(projectDir, "app")), true);
     });
 
     it("should use agentic-workflow template when specified", async () => {
-      const result = await runInitCommand([projectName, "-t", "agentic-workflow", "--skip-install"]);
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "agentic-workflow",
+        "--skip-install",
+      ]);
 
       assertEquals(result.code, 0);
 
