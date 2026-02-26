@@ -130,8 +130,13 @@ export class WebSocketManager {
         this.wsReconnectTimer = setTimeout(() => this.connect(projectId), delay);
       };
 
-      this.ws.onerror = (error) => {
-        logger.warn("WebSocket error", { error });
+      this.ws.onerror = (event) => {
+        logger.warn("WebSocket error", {
+          type: event.type,
+          url: (event.target as WebSocket)?.url?.replace(/token=[^&]+/, "token=***"),
+          readyState: (event.target as WebSocket)?.readyState,
+          consecutiveFailures: this.wsConsecutiveFailures,
+        });
       };
     } catch (error) {
       this.wsConsecutiveFailures++;
