@@ -11,12 +11,12 @@ import type { InitOptions, InitTemplate } from "./types.ts";
 describe("InitCommand Types", () => {
   describe("InitTemplate", () => {
     const templates: InitTemplate[] = [
-      "chat",
-      "rag",
-      "multi-agent",
-      "workflow",
+      "ai-assistant",
+      "chat-with-your-docs",
+      "multi-agent-system",
+      "agentic-workflow",
       "coding-agent",
-      "saas",
+      "saas-starter",
       "minimal",
     ];
 
@@ -39,8 +39,8 @@ describe("InitCommand Types", () => {
     });
 
     it("should allow template option", () => {
-      const options: InitOptions = { template: "chat" };
-      assertEquals(options.template, "chat");
+      const options: InitOptions = { template: "ai-assistant" };
+      assertEquals(options.template, "ai-assistant");
     });
 
     it("should allow skipInstall option", () => {
@@ -66,7 +66,7 @@ describe("InitCommand Types", () => {
     it("should allow combined options", () => {
       const options: InitOptions = {
         name: "my-ai-app",
-        template: "chat",
+        template: "ai-assistant",
         skipInstall: false,
         skipEnvPrompt: false,
         features: [],
@@ -74,7 +74,7 @@ describe("InitCommand Types", () => {
       };
 
       assertEquals(options.name, "my-ai-app");
-      assertEquals(options.template, "chat");
+      assertEquals(options.template, "ai-assistant");
       assertEquals(options.skipInstall, false);
       assertEquals(options.skipEnvPrompt, false);
       assertExists(options.features);

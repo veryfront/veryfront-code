@@ -44,7 +44,7 @@ describe("interactive-wizard", () => {
     });
 
     it("should return false when template is specified", () => {
-      assertEquals(shouldRunWizard({ template: "chat" }), false);
+      assertEquals(shouldRunWizard({ template: "ai-assistant" }), false);
     });
 
     it("should return false when template is minimal", () => {

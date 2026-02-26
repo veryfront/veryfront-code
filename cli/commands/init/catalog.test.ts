@@ -21,12 +21,12 @@ describe("catalog", () => {
       const ids = TEMPLATES.map((t) => t.id);
       assertEquals(ids, [
         "minimal",
-        "chat",
-        "rag",
-        "workflow",
-        "multi-agent",
+        "ai-assistant",
+        "chat-with-your-docs",
+        "agentic-workflow",
+        "multi-agent-system",
         "coding-agent",
-        "saas",
+        "saas-starter",
       ]);
     });
 
