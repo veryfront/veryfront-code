@@ -17,6 +17,6 @@ jobs:
       - uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.GH_PAT_VERYFRONT }}
-          repository: veryfront/docs
+          repository: veryfront/veryfront-docs
           event-type: docs-update
           client-payload: '{"sha": "${{ github.sha }}"}'
