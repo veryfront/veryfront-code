@@ -76,6 +76,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   let markdownLatestMdxImportMap = {};
   let markdownLatestPresenceUsers = [];
   let markdownLatestSelections = [];
+  let markdownHasUnsavedChanges = false;
 
   const MARKDOWN_SLASH_COMMANDS = [
     {
@@ -327,17 +328,15 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
       .vf-markdown-editor__surface {
         width: 100%;
+        max-width: 980px;
+        margin: 0 auto;
         height: 100%;
         overflow: auto;
         outline: none;
         position: relative;
         z-index: 1;
-        font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-        font-size: 16px;
-        line-height: 1.6;
-        color: #111827;
         background: transparent;
-        padding: 16px;
+        padding: 32px 40px;
         box-sizing: border-box;
       }
 
@@ -571,28 +570,17 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         white-space: nowrap;
       }
 
+      .vf-markdown-editor__surface [data-lexical-editor] {
+        outline: none;
+      }
+
+      .vf-markdown-editor__surface p:empty::before {
+        content: '';
+        display: inline-block;
+      }
+
       .vf-markdown-editor__surface p {
-        margin: 0 0 12px;
-      }
-
-      .vf-markdown-editor__surface h1,
-      .vf-markdown-editor__surface h2,
-      .vf-markdown-editor__surface h3,
-      .vf-markdown-editor__surface h4,
-      .vf-markdown-editor__surface h5,
-      .vf-markdown-editor__surface h6 {
-        margin: 20px 0 12px;
-        line-height: 1.35;
-      }
-
-      .vf-markdown-editor__surface ul,
-      .vf-markdown-editor__surface ol {
-        margin: 0 0 12px 24px;
-        padding: 0;
-      }
-
-      .vf-markdown-editor__surface code {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+        min-height: 1.5em;
       }
 
       .vf-markdown-editor__textarea {
@@ -666,10 +654,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         border-color: rgba(255, 255, 255, 0.2);
         color: #f9fafb;
         background: #111827;
-      }
-
-      [data-theme='dark'] .vf-markdown-editor__surface {
-        color: #f9fafb;
       }
 
       [data-theme='dark'] .vf-markdown-editor__textarea {
@@ -839,13 +823,18 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   }
 
   function isFromStudio(event) {
-    const origin = event.origin || '';
-    return (
-      origin.includes('veryfront.org') ||
-      origin.includes('veryfront.com') ||
-      origin.includes('veryfront.dev') ||
-      origin.includes('localhost')
-    );
+    try {
+      const url = new URL(event.origin || '');
+      const host = url.hostname;
+      return (
+        host === 'localhost' ||
+        host.endsWith('.veryfront.org') || host === 'veryfront.org' ||
+        host.endsWith('.veryfront.com') || host === 'veryfront.com' ||
+        host.endsWith('.veryfront.dev') || host === 'veryfront.dev'
+      );
+    } catch (e) {
+      return false;
+    }
   }
 
   const originalConsole = {};
@@ -1740,7 +1729,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
     applyMarkdownContent(nextFullContent);
     if (hasChanged) {
-      setMarkdownPersistStatus('saving');
+      markdownHasUnsavedChanges = true;
       scheduleMarkdownSync(nextFullContent);
     }
 
@@ -2926,9 +2915,28 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       return;
     }
     markdownCurrentContent = fullContent;
-    setMarkdownPersistStatus('saving');
+    markdownHasUnsavedChanges = true;
     scheduleMarkdownSync(fullContent);
     scheduleMarkdownSelectionOverlayRender();
+  }
+
+  function saveMarkdownContent() {
+    if (!markdownHasUnsavedChanges) {
+      return;
+    }
+    setMarkdownPersistStatus('saving');
+    if (markdownSyncTimer) {
+      clearTimeout(markdownSyncTimer);
+      markdownSyncTimer = null;
+    }
+    postToStudio({
+      action: 'markdownContentChange',
+      fileId: markdownFileId,
+      filePath: PAGE_PATH,
+      content: markdownCurrentContent,
+      save: true
+    });
+    markdownHasUnsavedChanges = false;
   }
 
   function setupMarkdownLexicalEditor() {
@@ -2980,10 +2988,15 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
         let nextContent = '';
         update.editorState.read(function() {
-          nextContent = markdownModule.$convertToMarkdownString(markdownModule.TRANSFORMERS);
+          nextContent = markdownModule.$convertToMarkdownString(markdownModule.TRANSFORMERS, true);
         });
         const restoredBody = restoreRawBlocksFromEditor(nextContent);
-        markdownLexicalRenderedContent = composeMarkdownContent(restoredBody);
+        const fullContent = composeMarkdownContent(restoredBody);
+
+        if (fullContent === markdownLexicalRenderedContent) {
+          return;
+        }
+        markdownLexicalRenderedContent = fullContent;
 
         handleMarkdownLocalChange(nextContent);
         scheduleMarkdownSlashMenuUpdate();
@@ -3063,6 +3076,15 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       return;
     }
 
+    if (markdownLexicalApi && markdownLexicalRenderedContent === content) {
+      markdownCurrentContent = content;
+      scheduleMarkdownSelectionOverlayRender();
+      scheduleMarkdownSlashMenuUpdate();
+      scheduleMarkdownInlineToolbarUpdate();
+      hideMarkdownBlockDropIndicator();
+      return;
+    }
+
     const mdxImportMap = parseMdxImportMap(content);
     const parts = extractMarkdownParts(content);
     const extracted = extractRawBlocksForEditor(parts.body, mdxImportMap);
@@ -3074,35 +3096,26 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     markdownLatestMdxImportMap = mdxImportMap;
     setMarkdownMdxBlocks(mdxBlocks);
 
-    if (markdownLexicalApi && markdownLexicalRenderedContent === content) {
-      markdownCurrentContent = content;
-      markdownCurrentEditorContent = editorContent;
-      scheduleMarkdownSelectionOverlayRender();
-      scheduleMarkdownSlashMenuUpdate();
-      scheduleMarkdownInlineToolbarUpdate();
-      hideMarkdownBlockDropIndicator();
-      return;
-    }
-
     markdownCurrentContent = content;
     markdownCurrentEditorContent = editorContent;
 
     if (markdownLexicalApi) {
       markdownApplyingRemoteUpdate = true;
-      markdownLexicalRenderedContent = content;
-      markdownLexicalApi.editor.update(function() {
-        const lexicalModule = markdownLexicalApi.lexicalModule;
-        const markdownModule = markdownLexicalApi.markdownModule;
-        const root = lexicalModule.$getRoot();
-        root.clear();
-        markdownModule.$convertFromMarkdownString(editorContent, markdownModule.TRANSFORMERS);
-        if (root.getChildrenSize() === 0) {
-          root.append(lexicalModule.$createParagraphNode());
-        }
-      });
-      setTimeout(function() {
+      try {
+        markdownLexicalRenderedContent = content;
+        markdownLexicalApi.editor.update(function() {
+          const lexicalModule = markdownLexicalApi.lexicalModule;
+          const markdownModule = markdownLexicalApi.markdownModule;
+          const root = lexicalModule.$getRoot();
+          root.clear();
+          markdownModule.$convertFromMarkdownString(editorContent, markdownModule.TRANSFORMERS, true);
+          if (root.getChildrenSize() === 0) {
+            root.append(lexicalModule.$createParagraphNode());
+          }
+        }, { discrete: true });
+      } finally {
         markdownApplyingRemoteUpdate = false;
-      }, 0);
+      }
       scheduleMarkdownSelectionOverlayRender();
       scheduleMarkdownSlashMenuUpdate();
       scheduleMarkdownInlineToolbarUpdate();
@@ -3305,8 +3318,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     const status = document.createElement('div');
     status.className = 'vf-markdown-editor__status';
     status.setAttribute(DATA_VF_IGNORE, 'true');
-    status.textContent = 'Saved';
-    status.setAttribute('data-state', 'saved');
+    status.textContent = '';
+    status.setAttribute('data-state', '');
 
     const presence = document.createElement('div');
     presence.className = 'vf-markdown-editor__presence';
@@ -3377,7 +3390,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     mdxBlocks.setAttribute(DATA_VF_IGNORE, 'true');
 
     const surface = document.createElement('div');
-    surface.className = 'vf-markdown-editor__surface';
+    surface.className = 'vf-markdown-editor__surface markdown-body';
     surface.setAttribute(DATA_VF_IGNORE, 'true');
     surface.setAttribute('contenteditable', 'true');
     surface.setAttribute('aria-label', 'Markdown editor');
@@ -3406,6 +3419,12 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         if (moved) {
           event.preventDefault();
         }
+      }
+    });
+    surface.addEventListener('keydown', function(event) {
+      if ((event.metaKey || event.ctrlKey) && event.key === 's') {
+        event.preventDefault();
+        saveMarkdownContent();
       }
     });
     surface.addEventListener('scroll', scheduleMarkdownSelectionOverlayRender);
@@ -3677,7 +3696,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       setupMarkdownLexicalEditor();
       markdownBody.style.display = 'none';
       markdownEditorRoot.style.display = 'block';
-      setMarkdownPersistStatus('saved');
+      markdownHasUnsavedChanges = false;
       focusMarkdownEditor();
       scheduleMarkdownSelectionSync();
       scheduleMarkdownSelectionOverlayRender();
@@ -3918,9 +3937,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         if (!inspectMode) showHoverOverlay(message.id);
         return;
 
-      case 'toggleLayout':
-        return;
-
       case 'setMarkdownContent':
         if (!isMarkdownPage()) {
           return;
@@ -3939,6 +3955,9 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
           return;
         }
         setMarkdownPersistStatus(message.status || 'saved');
+        if (message.status === 'saved') {
+          markdownHasUnsavedChanges = false;
+        }
         return;
 
       case 'setMarkdownPresence':
