@@ -82,6 +82,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   let markdownYProvider = null;
   let markdownYText = null;
   let markdownYjsConnected = false;
+  let markdownYjsSetupId = 0;
   const LEXICAL_YJS_ORIGIN = 'lexical-yjs-binding';
 
   const MARKDOWN_SLASH_COMMANDS = [
@@ -1469,10 +1470,17 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       return;
     }
 
+    var setupId = ++markdownYjsSetupId;
+
     Promise.all([
       import('https://esm.sh/yjs@13.6.28?target=es2022'),
       import('https://esm.sh/y-websocket@2.1.0?target=es2022')
     ]).then(function(modules) {
+      // Abort if edit mode was closed while imports were loading
+      if (setupId !== markdownYjsSetupId) {
+        return;
+      }
+
       var Y = modules[0];
       var WebsocketProvider = modules[1].WebsocketProvider;
 
@@ -1508,10 +1516,13 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         if (synced && !markdownYjsConnected) {
           markdownYjsConnected = true;
 
-          // Seed editor with Y.Text content
-          var content = ytext.toString();
-          if (content) {
-            applyMarkdownContent(content);
+          var ytextContent = ytext.toString();
+          if (markdownCurrentContent && markdownCurrentContent !== ytextContent) {
+            // User typed before sync completed — push local edits to Y.Text
+            syncLocalChangeToYText(markdownCurrentContent);
+          } else if (ytextContent) {
+            // No local edits — seed editor from Y.Text
+            applyMarkdownContent(ytextContent);
           }
 
           // Observe Y.Text for remote changes (from other users / Monaco)
@@ -1535,6 +1546,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   }
 
   function disposeMarkdownYjs() {
+    markdownYjsSetupId++;
     if (markdownYProvider) {
       markdownYProvider.disconnect();
       markdownYProvider.destroy();
