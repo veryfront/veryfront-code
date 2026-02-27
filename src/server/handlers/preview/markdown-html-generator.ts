@@ -27,6 +27,10 @@ export interface MarkdownHtmlOptions {
   projectId: string;
   /** File path of the markdown file. */
   filePath: string;
+  /** Branch ID for Yjs room GUID computation. */
+  branchId?: string | null;
+  /** Request host for computing the WebSocket URL. */
+  requestHost?: string;
 }
 
 /**
@@ -56,21 +60,37 @@ function detectTheme(req: Request, url: URL): "light" | "dark" | null {
  * Injected when embedded in Studio (`studio_embed=true`) or for standalone
  * markdown/MDX pages so the edit button and editor features are available.
  */
-function buildStudioScript(url: URL, projectId: string, filePath: string): string {
+function buildStudioScript(
+  url: URL,
+  projectId: string,
+  filePath: string,
+  branchId?: string | null,
+  requestHost?: string,
+): string {
   const studioEmbed = url.searchParams.get("studio_embed") === "true";
   const isMarkdown = /\.mdx?$/i.test(filePath);
   if (!studioEmbed && !isMarkdown) return "";
 
-  const queryProjectId = url.searchParams.get("vf_project_id")?.trim() || "";
+  const rawQueryProjectId = url.searchParams.get("vf_project_id")?.trim() || "";
+  // Validate query param to prevent path traversal in WebSocket URL
+  const queryProjectId = /^[a-zA-Z0-9_-]+$/.test(rawQueryProjectId) ? rawQueryProjectId : "";
   const queryFileId = url.searchParams.get("vf_file_id")?.trim() || "";
   const canonicalProjectId = queryProjectId || projectId;
   const canonicalPageId = queryFileId || filePath;
+
+  // Compute Yjs connection config for the bridge to self-connect
+  const wsProtocol = url.protocol === "https:" ? "wss" : "ws";
+  const host = requestHost || url.host;
+  const wsUrl = `${wsProtocol}://${host}/api/ws/${canonicalProjectId}/yjs`;
+  const yjsGuid = branchId ? `${canonicalProjectId}:${branchId}` : canonicalProjectId;
 
   return `<script>${
     generateStudioBridgeScript({
       projectId: canonicalProjectId,
       pageId: canonicalPageId,
       pagePath: filePath,
+      wsUrl,
+      yjsGuid,
     })
   }</script>`;
 }
@@ -83,10 +103,11 @@ function buildStudioScript(url: URL, projectId: string, filePath: string): strin
  * studio bridge integration.
  */
 export function generateMarkdownHtml(options: MarkdownHtmlOptions): string {
-  const { rawHtml, title, description, request, url, projectId, filePath } = options;
+  const { rawHtml, title, description, request, url, projectId, filePath, branchId, requestHost } =
+    options;
 
   const theme = detectTheme(request, url);
-  const studioScript = buildStudioScript(url, projectId, filePath);
+  const studioScript = buildStudioScript(url, projectId, filePath, branchId, requestHost);
   const themeAttrs = theme ? ` data-theme="${theme}" style="color-scheme: ${theme};"` : "";
 
   return `<!DOCTYPE html>

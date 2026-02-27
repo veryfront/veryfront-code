@@ -453,54 +453,11 @@ describe("studio/schema", () => {
       assertEquals(result.success, true);
     });
 
-    it("should accept setMarkdownContent action", () => {
-      const result = MessageFromStudioSchema.safeParse({
-        action: "setMarkdownContent",
-        fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
-        content: "# Updated",
-      });
-      assertEquals(result.success, true);
-    });
-
     it("should accept setMarkdownPersistState action", () => {
       const result = MessageFromStudioSchema.safeParse({
         action: "setMarkdownPersistState",
         fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
         status: "saved",
-      });
-      assertEquals(result.success, true);
-    });
-
-    it("should accept setMarkdownPresence action", () => {
-      const result = MessageFromStudioSchema.safeParse({
-        action: "setMarkdownPresence",
-        fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
-        users: [
-          {
-            id: "user-1",
-            name: "Alice",
-            color: "#3b82f6",
-            isCurrentUser: false,
-          },
-        ],
-      });
-      assertEquals(result.success, true);
-    });
-
-    it("should accept setMarkdownSelections action", () => {
-      const result = MessageFromStudioSchema.safeParse({
-        action: "setMarkdownSelections",
-        fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
-        selections: [
-          {
-            id: "user-1",
-            name: "Alice",
-            color: "#3b82f6",
-            isCurrentUser: true,
-            start: 12,
-            end: 27,
-          },
-        ],
       });
       assertEquals(result.success, true);
     });

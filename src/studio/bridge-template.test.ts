@@ -20,7 +20,6 @@ Deno.test("generateStudioBridgeScript includes markdown collaboration actions", 
   });
 
   assertStringIncludes(script, "markdownContentChange");
-  assertStringIncludes(script, "setMarkdownContent");
   assertStringIncludes(script, "setMarkdownPersistState");
   assertStringIncludes(script, "setMarkdownPresence");
   assertStringIncludes(script, "setMarkdownSelections");

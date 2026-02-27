@@ -23,6 +23,10 @@ export interface InjectHTMLContentOptions {
   pageId?: string;
   /** CSP nonce */
   nonce?: string;
+  /** WebSocket URL for direct Yjs connection from the bridge */
+  wsUrl?: string;
+  /** Yjs document GUID for the bridge to join the same room */
+  yjsGuid?: string;
 }
 
 export function injectHTMLContent(
@@ -99,6 +103,8 @@ export function injectHTMLContent(
       projectId: options.projectId ?? options.slug,
       pageId: options.pageId ?? options.slug,
       nonce: options.nonce,
+      wsUrl: options.wsUrl,
+      yjsGuid: options.yjsGuid,
     });
     html = html.replace(/<\/body>/i, `${studioScripts}</body>`);
   }

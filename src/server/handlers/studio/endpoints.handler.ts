@@ -36,8 +36,10 @@ export class StudioEndpointsHandler extends BaseHandler {
     const projectId = url.searchParams.get("projectId") ?? "";
     const pageId = url.searchParams.get("pageId") ?? "";
     const pagePath = url.searchParams.get("pagePath") ?? undefined;
+    const wsUrl = url.searchParams.get("wsUrl") ?? undefined;
+    const yjsGuid = url.searchParams.get("yjsGuid") ?? undefined;
 
-    const script = generateStudioBridgeScript({ projectId, pageId, pagePath });
+    const script = generateStudioBridgeScript({ projectId, pageId, pagePath, wsUrl, yjsGuid });
     const response = builder.withCache("no-cache").javascript(script, HTTP_OK);
 
     return Promise.resolve(this.respond(response));
