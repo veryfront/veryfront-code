@@ -149,6 +149,8 @@ export const MessageFromRendererSchema = z.discriminatedUnion("action", [
     filePath: z.string(),
     start: z.number(),
     end: z.number(),
+    relativeStart: z.unknown().optional(),
+    relativeEnd: z.unknown().optional(),
   }),
   z.object({
     action: z.literal("logEvent"),
