@@ -83,6 +83,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   let markdownYText = null;
   let markdownYjsConnected = false;
   let markdownYjsSetupId = 0;
+  let markdownYjsY = null;
   const LEXICAL_YJS_ORIGIN = 'lexical-yjs-binding';
 
   const MARKDOWN_SLASH_COMMANDS = [
@@ -1474,7 +1475,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
     Promise.all([
       import('https://esm.sh/yjs@13.6.28?target=es2022'),
-      import('https://esm.sh/y-websocket@2.1.0?target=es2022')
+      import('https://esm.sh/y-websocket@2.1.0?deps=yjs@13.6.28&target=es2022')
     ]).then(function(modules) {
       // Abort if edit mode was closed while imports were loading
       if (setupId !== markdownYjsSetupId) {
@@ -1483,6 +1484,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
       var Y = modules[0];
       var WebsocketProvider = modules[1].WebsocketProvider;
+      markdownYjsY = Y;
 
       var doc = new Y.Doc({ guid: config.guid });
       var provider = new WebsocketProvider(config.wsUrl, config.guid, doc, {
@@ -1558,6 +1560,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     }
     markdownYText = null;
     markdownYjsConnected = false;
+    markdownYjsY = null;
   }
 
   function getTextOffsetWithinRoot(root, targetNode, targetOffset) {
@@ -2645,13 +2648,29 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       const start = editorOffsetToSourceOffset(selection.start, 'start');
       const end = editorOffsetToSourceOffset(selection.end, 'end');
 
-      postToStudio({
+      var message = {
         action: 'markdownSelectionChange',
         fileId: markdownFileId,
         filePath: PAGE_PATH,
         start: start,
         end: end
-      });
+      };
+
+      // When Yjs is connected, include pre-computed RelativePositions
+      // from the bridge's Y.Text (which is up-to-date) so Studio doesn't
+      // need to compute against potentially stale Y.Text
+      if (markdownYjsConnected && markdownYText && markdownYjsY) {
+        var clampedStart = Math.max(0, Math.min(markdownYText.length, start));
+        var clampedEnd = Math.max(0, Math.min(markdownYText.length, end));
+        message.relativeStart = markdownYjsY.relativePositionToJSON(
+          markdownYjsY.createRelativePositionFromTypeIndex(markdownYText, clampedStart)
+        );
+        message.relativeEnd = markdownYjsY.relativePositionToJSON(
+          markdownYjsY.createRelativePositionFromTypeIndex(markdownYText, clampedEnd)
+        );
+      }
+
+      postToStudio(message);
     }, 80);
   }
 
@@ -3224,7 +3243,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       return;
     }
 
-    if (markdownLexicalApi && (markdownLexicalRenderedContent === content || markdownCurrentContent === content)) {
+    if (markdownLexicalApi && markdownLexicalRenderedContent === content) {
       console.debug('[StudioBridge] applyMarkdownContent: skipped (content unchanged)');
       markdownCurrentContent = content;
       scheduleMarkdownSelectionOverlayRender();
