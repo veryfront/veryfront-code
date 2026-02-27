@@ -86,6 +86,36 @@ describe("generateMarkdownHtml", () => {
     );
   });
 
+  it("injects bridge script for standalone markdown pages without studio_embed", () => {
+    const html = generateMarkdownHtml(
+      makeOptions({
+        url: new URL("http://localhost/test.md"),
+        filePath: "docs/README.md",
+      }),
+    );
+    assert(html.includes("PAGE_PATH"));
+  });
+
+  it("injects bridge script for standalone mdx pages without studio_embed", () => {
+    const html = generateMarkdownHtml(
+      makeOptions({
+        url: new URL("http://localhost/test.mdx"),
+        filePath: "docs/page.mdx",
+      }),
+    );
+    assert(html.includes("PAGE_PATH"));
+  });
+
+  it("omits bridge script for non-markdown pages without studio_embed", () => {
+    const html = generateMarkdownHtml(
+      makeOptions({
+        url: new URL("http://localhost/index.html"),
+        filePath: "index.html",
+      }),
+    );
+    assert(!html.includes("PAGE_PATH"));
+  });
+
   it("prefers vf_project_id for bridge project id when present", () => {
     const html = generateMarkdownHtml(
       makeOptions({

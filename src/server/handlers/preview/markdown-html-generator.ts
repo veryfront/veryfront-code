@@ -52,12 +52,14 @@ function detectTheme(req: Request, url: URL): "light" | "dark" | null {
 }
 
 /**
- * Generate the studio bridge `<script>` tag when embedded in Studio.
- * Returns an empty string when not in studio embed mode.
+ * Generate the studio bridge `<script>` tag.
+ * Injected when embedded in Studio (`studio_embed=true`) or for standalone
+ * markdown/MDX pages so the edit button and editor features are available.
  */
 function buildStudioScript(url: URL, projectId: string, filePath: string): string {
   const studioEmbed = url.searchParams.get("studio_embed") === "true";
-  if (!studioEmbed) return "";
+  const isMarkdown = /\.mdx?$/i.test(filePath);
+  if (!studioEmbed && !isMarkdown) return "";
 
   const queryProjectId = url.searchParams.get("vf_project_id")?.trim() || "";
   const queryFileId = url.searchParams.get("vf_file_id")?.trim() || "";
