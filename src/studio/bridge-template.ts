@@ -760,7 +760,14 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         color: #e5e7eb;
       }
     \`;
-    document.head.appendChild(style);
+    try {
+      document.head.appendChild(style);
+      if (!style.sheet) {
+        console.warn('[StudioBridge] Inline style injection may be blocked by CSP (style-src).');
+      }
+    } catch (error) {
+      console.warn('[StudioBridge] Failed to inject bridge styles. This may be caused by CSP style-src restrictions.', error);
+    }
   }
 
   function createOverlay(type) {
@@ -3744,8 +3751,22 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         html2canvasLoaded = true;
         resolve();
       };
-      script.onerror = reject;
-      document.head.appendChild(script);
+      script.onerror = (event) => {
+        console.warn(
+          '[StudioBridge] Failed to load html2canvas script. This may be caused by CSP script-src restrictions.',
+          event
+        );
+        reject(new Error('Failed to load html2canvas script'));
+      };
+      try {
+        document.head.appendChild(script);
+      } catch (error) {
+        console.warn(
+          '[StudioBridge] Failed to append html2canvas script element. This may be caused by CSP script-src restrictions.',
+          error
+        );
+        reject(error instanceof Error ? error : new Error('Failed to append html2canvas script element'));
+      }
     });
 
     return html2canvasPromise;
