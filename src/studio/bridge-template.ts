@@ -76,6 +76,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   let markdownLatestMdxImportMap = {};
   let markdownLatestPresenceUsers = [];
   let markdownLatestSelections = [];
+  let markdownHasUnsavedChanges = false;
 
   const MARKDOWN_SLASH_COMMANDS = [
     {
@@ -655,9 +656,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         background: #111827;
       }
 
-      [data-theme='dark'] .vf-markdown-editor__surface {
-      }
-
       [data-theme='dark'] .vf-markdown-editor__textarea {
         color: #f9fafb;
       }
@@ -825,13 +823,18 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   }
 
   function isFromStudio(event) {
-    const origin = event.origin || '';
-    return (
-      origin.includes('veryfront.org') ||
-      origin.includes('veryfront.com') ||
-      origin.includes('veryfront.dev') ||
-      origin.includes('localhost')
-    );
+    try {
+      const url = new URL(event.origin || '');
+      const host = url.hostname;
+      return (
+        host === 'localhost' ||
+        host.endsWith('.veryfront.org') || host === 'veryfront.org' ||
+        host.endsWith('.veryfront.com') || host === 'veryfront.com' ||
+        host.endsWith('.veryfront.dev') || host === 'veryfront.dev'
+      );
+    } catch (e) {
+      return false;
+    }
   }
 
   const originalConsole = {};
@@ -1726,7 +1729,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
     applyMarkdownContent(nextFullContent);
     if (hasChanged) {
-      setMarkdownPersistStatus('saving');
+      markdownHasUnsavedChanges = true;
       scheduleMarkdownSync(nextFullContent);
     }
 
@@ -2912,9 +2915,28 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       return;
     }
     markdownCurrentContent = fullContent;
-    setMarkdownPersistStatus('saving');
+    markdownHasUnsavedChanges = true;
     scheduleMarkdownSync(fullContent);
     scheduleMarkdownSelectionOverlayRender();
+  }
+
+  function saveMarkdownContent() {
+    if (!markdownHasUnsavedChanges) {
+      return;
+    }
+    setMarkdownPersistStatus('saving');
+    if (markdownSyncTimer) {
+      clearTimeout(markdownSyncTimer);
+      markdownSyncTimer = null;
+    }
+    postToStudio({
+      action: 'markdownContentChange',
+      fileId: markdownFileId,
+      filePath: PAGE_PATH,
+      content: markdownCurrentContent,
+      save: true
+    });
+    markdownHasUnsavedChanges = false;
   }
 
   function setupMarkdownLexicalEditor() {
@@ -3079,18 +3101,21 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
     if (markdownLexicalApi) {
       markdownApplyingRemoteUpdate = true;
-      markdownLexicalRenderedContent = content;
-      markdownLexicalApi.editor.update(function() {
-        const lexicalModule = markdownLexicalApi.lexicalModule;
-        const markdownModule = markdownLexicalApi.markdownModule;
-        const root = lexicalModule.$getRoot();
-        root.clear();
-        markdownModule.$convertFromMarkdownString(editorContent, markdownModule.TRANSFORMERS, true);
-        if (root.getChildrenSize() === 0) {
-          root.append(lexicalModule.$createParagraphNode());
-        }
-      }, { discrete: true });
-      markdownApplyingRemoteUpdate = false;
+      try {
+        markdownLexicalRenderedContent = content;
+        markdownLexicalApi.editor.update(function() {
+          const lexicalModule = markdownLexicalApi.lexicalModule;
+          const markdownModule = markdownLexicalApi.markdownModule;
+          const root = lexicalModule.$getRoot();
+          root.clear();
+          markdownModule.$convertFromMarkdownString(editorContent, markdownModule.TRANSFORMERS, true);
+          if (root.getChildrenSize() === 0) {
+            root.append(lexicalModule.$createParagraphNode());
+          }
+        }, { discrete: true });
+      } finally {
+        markdownApplyingRemoteUpdate = false;
+      }
       scheduleMarkdownSelectionOverlayRender();
       scheduleMarkdownSlashMenuUpdate();
       scheduleMarkdownInlineToolbarUpdate();
@@ -3293,8 +3318,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     const status = document.createElement('div');
     status.className = 'vf-markdown-editor__status';
     status.setAttribute(DATA_VF_IGNORE, 'true');
-    status.textContent = 'Saved';
-    status.setAttribute('data-state', 'saved');
+    status.textContent = '';
+    status.setAttribute('data-state', '');
 
     const presence = document.createElement('div');
     presence.className = 'vf-markdown-editor__presence';
@@ -3394,6 +3419,12 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         if (moved) {
           event.preventDefault();
         }
+      }
+    });
+    surface.addEventListener('keydown', function(event) {
+      if ((event.metaKey || event.ctrlKey) && event.key === 's') {
+        event.preventDefault();
+        saveMarkdownContent();
       }
     });
     surface.addEventListener('scroll', scheduleMarkdownSelectionOverlayRender);
@@ -3665,7 +3696,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       setupMarkdownLexicalEditor();
       markdownBody.style.display = 'none';
       markdownEditorRoot.style.display = 'block';
-      setMarkdownPersistStatus('saved');
+      markdownHasUnsavedChanges = false;
       focusMarkdownEditor();
       scheduleMarkdownSelectionSync();
       scheduleMarkdownSelectionOverlayRender();
@@ -3906,9 +3937,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         if (!inspectMode) showHoverOverlay(message.id);
         return;
 
-      case 'toggleLayout':
-        return;
-
       case 'setMarkdownContent':
         if (!isMarkdownPage()) {
           return;
@@ -3927,6 +3955,9 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
           return;
         }
         setMarkdownPersistStatus(message.status || 'saved');
+        if (message.status === 'saved') {
+          markdownHasUnsavedChanges = false;
+        }
         return;
 
       case 'setMarkdownPresence':
