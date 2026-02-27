@@ -240,6 +240,14 @@ export const MessageFromStudioSchema = z.discriminatedUnion("action", [
     content: z.string(),
   }),
   z.object({
+    action: z.literal("initYjsConnection"),
+    fileId: z.string(),
+    wsUrl: z.string(),
+    guid: z.string(),
+    authToken: z.string(),
+    initialContent: z.string().optional(),
+  }),
+  z.object({
     action: z.literal("setMarkdownPersistState"),
     fileId: z.string(),
     status: z.enum(["saving", "saved", "error"]),
