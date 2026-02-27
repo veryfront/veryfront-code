@@ -61,6 +61,7 @@ function detectTheme(req: Request, url: URL): "light" | "dark" | null {
  * markdown/MDX pages so the edit button and editor features are available.
  */
 function buildStudioScript(
+  req: Request,
   url: URL,
   projectId: string,
   filePath: string,
@@ -79,7 +80,10 @@ function buildStudioScript(
   const canonicalPageId = queryFileId || filePath;
 
   // Compute Yjs connection config for the bridge to self-connect
-  const wsProtocol = url.protocol === "https:" ? "wss" : "ws";
+  // Use x-forwarded-proto to detect the public-facing protocol (internal K8s URL is always http)
+  const forwardedProto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const isSecure = forwardedProto === "https" || url.protocol === "https:";
+  const wsProtocol = isSecure ? "wss" : "ws";
   const host = requestHost || url.host;
   const wsUrl = `${wsProtocol}://${host}/api/ws/${canonicalProjectId}/yjs`;
   const yjsGuid = branchId ? `${canonicalProjectId}:${branchId}` : canonicalProjectId;
@@ -107,7 +111,7 @@ export function generateMarkdownHtml(options: MarkdownHtmlOptions): string {
     options;
 
   const theme = detectTheme(request, url);
-  const studioScript = buildStudioScript(url, projectId, filePath, branchId, requestHost);
+  const studioScript = buildStudioScript(request, url, projectId, filePath, branchId, requestHost);
   const themeAttrs = theme ? ` data-theme="${theme}" style="color-scheme: ${theme};"` : "";
 
   return `<!DOCTYPE html>
