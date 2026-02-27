@@ -158,7 +158,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
         projectId: ctx.projectSlug || ctx.projectId || "markdown-preview",
         filePath,
         branchId: ctx.parsedDomain?.branch ?? null,
-        requestHost: req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host,
+        requestHost: req.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || req.headers.get("host") || url.host,
       });
 
       const responseBuilder = this.createResponseBuilder(ctx)
