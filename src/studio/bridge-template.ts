@@ -2988,7 +2988,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
         let nextContent = '';
         update.editorState.read(function() {
-          nextContent = markdownModule.$convertToMarkdownString(markdownModule.TRANSFORMERS, true);
+          nextContent = markdownModule.$convertToMarkdownString(markdownModule.TRANSFORMERS, undefined, true);
         });
         const restoredBody = restoreRawBlocksFromEditor(nextContent);
         const fullContent = composeMarkdownContent(restoredBody);
@@ -3108,7 +3108,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
           const markdownModule = markdownLexicalApi.markdownModule;
           const root = lexicalModule.$getRoot();
           root.clear();
-          markdownModule.$convertFromMarkdownString(editorContent, markdownModule.TRANSFORMERS, true);
+          markdownModule.$convertFromMarkdownString(editorContent, markdownModule.TRANSFORMERS, undefined, true);
           if (root.getChildrenSize() === 0) {
             root.append(lexicalModule.$createParagraphNode());
           }
