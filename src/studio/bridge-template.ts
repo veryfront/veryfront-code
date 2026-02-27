@@ -78,6 +78,11 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   let markdownLatestSelections = [];
   let markdownHasUnsavedChanges = false;
   let markdownSaveInProgress = false;
+  let markdownYDoc = null;
+  let markdownYProvider = null;
+  let markdownYText = null;
+  let markdownYjsConnected = false;
+  const LEXICAL_YJS_ORIGIN = 'lexical-yjs-binding';
 
   const MARKDOWN_SLASH_COMMANDS = [
     {
@@ -1416,6 +1421,131 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         content: content
       });
     }, 120);
+  }
+
+  function computeTextDiff(oldText, newText) {
+    var prefixLen = 0;
+    var minLen = Math.min(oldText.length, newText.length);
+    while (prefixLen < minLen && oldText.charCodeAt(prefixLen) === newText.charCodeAt(prefixLen)) {
+      prefixLen++;
+    }
+    var suffixLen = 0;
+    var maxSuffix = minLen - prefixLen;
+    while (suffixLen < maxSuffix &&
+           oldText.charCodeAt(oldText.length - 1 - suffixLen) === newText.charCodeAt(newText.length - 1 - suffixLen)) {
+      suffixLen++;
+    }
+    return {
+      index: prefixLen,
+      deleteCount: oldText.length - prefixLen - suffixLen,
+      insertText: newText.slice(prefixLen, suffixLen > 0 ? newText.length - suffixLen : undefined)
+    };
+  }
+
+  function syncLocalChangeToYText(fullContent) {
+    if (!markdownYText || !markdownYDoc) {
+      return;
+    }
+    var currentYContent = markdownYText.toString();
+    if (currentYContent === fullContent) {
+      return;
+    }
+    var diff = computeTextDiff(currentYContent, fullContent);
+    if (diff.deleteCount === 0 && diff.insertText === '') {
+      return;
+    }
+    markdownYDoc.transact(function() {
+      if (diff.deleteCount > 0) {
+        markdownYText.delete(diff.index, diff.deleteCount);
+      }
+      if (diff.insertText) {
+        markdownYText.insert(diff.index, diff.insertText);
+      }
+    }, LEXICAL_YJS_ORIGIN);
+  }
+
+  function setupMarkdownYjsConnection(config) {
+    if (markdownYDoc) {
+      return;
+    }
+
+    Promise.all([
+      import('https://esm.sh/yjs@13.6.28?target=es2022'),
+      import('https://esm.sh/y-websocket@2.1.0?target=es2022')
+    ]).then(function(modules) {
+      var Y = modules[0];
+      var WebsocketProvider = modules[1].WebsocketProvider;
+
+      var doc = new Y.Doc({ guid: config.guid });
+      var provider = new WebsocketProvider(config.wsUrl, config.guid, doc, {
+        resyncInterval: -1,
+        params: { token: config.authToken }
+      });
+
+      var ytext = doc.getText(config.fileId);
+
+      markdownYDoc = doc;
+      markdownYProvider = provider;
+      markdownYText = ytext;
+
+      // Filter non-binary messages to prevent y-websocket parse errors
+      provider.on('status', function(event) {
+        console.debug('[StudioBridge] Yjs status:', event.status);
+        if (event.status === 'connected' && provider.ws) {
+          var origOnMessage = provider.ws.onmessage;
+          provider.ws.onmessage = function(wsEvent) {
+            if (typeof wsEvent.data === 'string') {
+              return;
+            }
+            if (origOnMessage) {
+              origOnMessage.call(provider.ws, wsEvent);
+            }
+          };
+        }
+      });
+
+      provider.on('sync', function(synced) {
+        if (synced && !markdownYjsConnected) {
+          markdownYjsConnected = true;
+
+          // Seed editor with Y.Text content
+          var content = ytext.toString();
+          if (content) {
+            applyMarkdownContent(content);
+          }
+
+          // Observe Y.Text for remote changes (from other users / Monaco)
+          ytext.observe(function(event) {
+            if (event.transaction.origin === LEXICAL_YJS_ORIGIN) {
+              return;
+            }
+            var fullContent = ytext.toString();
+            if (fullContent === markdownCurrentContent) {
+              return;
+            }
+            applyMarkdownContent(fullContent);
+          });
+
+          console.debug('[StudioBridge] Yjs synced, bound to Y.Text for fileId:', config.fileId);
+        }
+      });
+    }).catch(function(error) {
+      console.error('[StudioBridge] Failed to setup Yjs connection:', error);
+    });
+  }
+
+  function disposeMarkdownYjs() {
+    if (markdownYProvider) {
+      markdownYProvider.disconnect();
+      markdownYProvider.destroy();
+      markdownYProvider = null;
+    }
+    if (markdownYDoc) {
+      markdownYDoc.destroy();
+      markdownYDoc = null;
+    }
+    markdownYText = null;
+    markdownYjsConnected = false;
   }
 
   function getTextOffsetWithinRoot(root, targetNode, targetOffset) {
@@ -2917,7 +3047,11 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     }
     markdownCurrentContent = fullContent;
     markdownHasUnsavedChanges = true;
-    scheduleMarkdownSync(fullContent);
+    if (markdownYjsConnected) {
+      syncLocalChangeToYText(fullContent);
+    } else {
+      scheduleMarkdownSync(fullContent);
+    }
     scheduleMarkdownSelectionOverlayRender();
   }
 
@@ -3719,6 +3853,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       markdownOverlaySelections = [];
       clearMarkdownSelectionOverlay();
       clearMarkdownSelectionSync();
+      disposeMarkdownYjs();
     }
 
     const nextUrl = new URL(window.location.href);
@@ -3949,7 +4084,28 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         if (message.fileId && markdownFileId && message.fileId !== markdownFileId) {
           return;
         }
+        if (markdownYjsConnected) {
+          return;
+        }
         applyMarkdownContent(message.content || '');
+        return;
+
+      case 'initYjsConnection':
+        if (!isMarkdownPage()) {
+          return;
+        }
+        if (message.fileId && markdownFileId && message.fileId !== markdownFileId) {
+          return;
+        }
+        if (message.initialContent) {
+          applyMarkdownContent(message.initialContent);
+        }
+        setupMarkdownYjsConnection({
+          wsUrl: message.wsUrl,
+          guid: message.guid,
+          fileId: message.fileId || markdownFileId,
+          authToken: message.authToken
+        });
         return;
 
       case 'setMarkdownPersistState':
