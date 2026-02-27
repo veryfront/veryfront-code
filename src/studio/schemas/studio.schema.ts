@@ -149,8 +149,6 @@ export const MessageFromRendererSchema = z.discriminatedUnion("action", [
     filePath: z.string(),
     start: z.number(),
     end: z.number(),
-    relativeStart: z.unknown().optional(),
-    relativeEnd: z.unknown().optional(),
   }),
   z.object({
     action: z.literal("logEvent"),
@@ -237,49 +235,9 @@ export const MessageFromStudioSchema = z.discriminatedUnion("action", [
     id: z.string(),
   }),
   z.object({
-    action: z.literal("setMarkdownContent"),
-    fileId: z.string(),
-    content: z.string(),
-  }),
-  z.object({
-    action: z.literal("initYjsConnection"),
-    fileId: z.string(),
-    wsUrl: z.string(),
-    guid: z.string(),
-    authToken: z.string(),
-    initialContent: z.string().optional(),
-  }),
-  z.object({
     action: z.literal("setMarkdownPersistState"),
     fileId: z.string(),
     status: z.enum(["saving", "saved", "error"]),
-  }),
-  z.object({
-    action: z.literal("setMarkdownPresence"),
-    fileId: z.string(),
-    users: z.array(
-      z.object({
-        id: z.string(),
-        name: z.string(),
-        color: z.string(),
-        isCurrentUser: z.boolean().optional(),
-        isAgent: z.boolean().optional(),
-      }),
-    ),
-  }),
-  z.object({
-    action: z.literal("setMarkdownSelections"),
-    fileId: z.string(),
-    selections: z.array(
-      z.object({
-        id: z.string(),
-        name: z.string(),
-        color: z.string(),
-        isCurrentUser: z.boolean().optional(),
-        start: z.number(),
-        end: z.number(),
-      }),
-    ),
   }),
 ]);
 

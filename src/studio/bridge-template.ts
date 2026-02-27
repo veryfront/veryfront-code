@@ -2,6 +2,8 @@ export interface StudioBridgeOptions {
   projectId: string;
   pageId: string;
   pagePath?: string;
+  wsUrl?: string;
+  yjsGuid?: string;
   debugSkipInit?: boolean;
   debugExposeInternals?: boolean;
 }
@@ -13,6 +15,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   const PROJECT_ID = ${JSON.stringify(options.projectId)};
   const PAGE_ID = ${JSON.stringify(options.pageId)};
   const PAGE_PATH = ${JSON.stringify(options.pagePath ?? options.pageId)};
+  const WS_URL = ${JSON.stringify(options.wsUrl ?? "")};
+  const YJS_GUID = ${JSON.stringify(options.yjsGuid ?? "")};
   const DEBUG_SKIP_INIT = ${options.debugSkipInit ? "true" : "false"};
   const DEBUG_EXPOSE_INTERNALS = ${options.debugExposeInternals ? "true" : "false"};
 
@@ -84,6 +88,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   let markdownYjsConnected = false;
   let markdownYjsSetupId = 0;
   let markdownYjsY = null;
+  let markdownPendingSelection = null;
   const LEXICAL_YJS_ORIGIN = 'lexical-yjs-binding';
 
   const MARKDOWN_SLASH_COMMANDS = [
@@ -1487,9 +1492,10 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       markdownYjsY = Y;
 
       var doc = new Y.Doc({ guid: config.guid });
+      // Cookie auth: authToken cookie on .veryfront.com is sent automatically
+      // with the WebSocket upgrade request. No explicit token param needed.
       var provider = new WebsocketProvider(config.wsUrl, config.guid, doc, {
-        resyncInterval: -1,
-        params: { token: config.authToken }
+        resyncInterval: -1
       });
 
       var ytext = doc.getText(config.fileId);
@@ -1514,6 +1520,93 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         }
       });
 
+      // Extract user identity from authToken JWT cookie for presence
+      var presenceUser = { id: 'preview-' + Math.random().toString(36).slice(2), name: 'Preview' };
+      try {
+        var cookieMatch = document.cookie.match(/authToken=([^;]+)/);
+        if (cookieMatch) {
+          var parts = cookieMatch[1].split('.');
+          if (parts.length === 3) {
+            var payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+            if (payload.userId) {
+              presenceUser.id = payload.userId;
+            }
+            if (payload.email) {
+              var local = payload.email.split('@')[0] || '';
+              if (local.includes('.') || local.includes('_')) {
+                presenceUser.name = local.split(/[._]/).map(function(p) { return p.charAt(0).toUpperCase() + p.slice(1); }).join(' ');
+              } else {
+                presenceUser.name = local.charAt(0).toUpperCase() + local.slice(1);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // Fall back to defaults on any parse error
+      }
+
+      // Set local user on awareness for presence
+      provider.awareness.setLocalStateField('user', {
+        id: presenceUser.id,
+        name: presenceUser.name,
+        color: '#10b981'
+      });
+
+      // Observe awareness for remote presence and selection changes
+      function syncAwareness() {
+        var states = Array.from(provider.awareness.getStates().entries());
+
+        // Sync presence users
+        var users = [];
+        for (var i = 0; i < states.length; i++) {
+          var clientId = states[i][0];
+          var state = states[i][1];
+          var user = state.user;
+          if (!user || typeof user.name !== 'string') {
+            continue;
+          }
+          users.push({
+            id: user.id || String(clientId),
+            name: user.name,
+            color: user.color || '#6b7280',
+            isCurrentUser: clientId === provider.awareness.clientID,
+            isAgent: user.isAgent || false
+          });
+        }
+        setMarkdownPresence(users);
+
+        // Sync remote selections
+        var selections = [];
+        for (var j = 0; j < states.length; j++) {
+          var cId = states[j][0];
+          var st = states[j][1];
+          var u = st.user;
+          var ranges = st.selection;
+          if (!u || !Array.isArray(ranges) || ranges.length === 0) {
+            continue;
+          }
+          for (var k = 0; k < ranges.length; k++) {
+            var range = ranges[k];
+            var anchorPos = Y.createAbsolutePositionFromRelativePosition(range.anchor, doc);
+            var markerPos = Y.createAbsolutePositionFromRelativePosition(range.marker, doc);
+            if (!anchorPos || !markerPos || anchorPos.type !== ytext || markerPos.type !== ytext) {
+              continue;
+            }
+            selections.push({
+              id: u.id || String(cId),
+              name: u.name || 'Anonymous',
+              color: u.color || '#6b7280',
+              isCurrentUser: cId === provider.awareness.clientID,
+              start: Math.min(anchorPos.index, markerPos.index),
+              end: Math.max(anchorPos.index, markerPos.index)
+            });
+          }
+        }
+        setMarkdownSelections(selections);
+      }
+
+      provider.awareness.on('change', syncAwareness);
+
       provider.on('sync', function(synced) {
         if (synced && !markdownYjsConnected) {
           markdownYjsConnected = true;
@@ -1527,6 +1620,18 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
             applyMarkdownContent(ytextContent);
           }
 
+          // Replay any selection queued before Yjs was ready
+          if (markdownPendingSelection) {
+            var ps = markdownPendingSelection;
+            markdownPendingSelection = null;
+            var cs = Math.max(0, Math.min(ytext.length, ps.start));
+            var ce = Math.max(0, Math.min(ytext.length, ps.end));
+            provider.awareness.setLocalStateField('selection', [{
+              anchor: Y.createRelativePositionFromTypeIndex(ytext, cs),
+              marker: Y.createRelativePositionFromTypeIndex(ytext, ce)
+            }]);
+          }
+
           // Observe Y.Text for remote changes (from other users / Monaco)
           ytext.observe(function(event) {
             if (event.transaction.origin === LEXICAL_YJS_ORIGIN) {
@@ -1538,6 +1643,9 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
             }
             applyMarkdownContent(fullContent);
           });
+
+          // Initial awareness sync after Yjs is connected
+          syncAwareness();
 
           console.debug('[StudioBridge] Yjs synced, bound to Y.Text for fileId:', config.fileId);
         }
@@ -2648,43 +2756,26 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       const start = editorOffsetToSourceOffset(selection.start, 'start');
       const end = editorOffsetToSourceOffset(selection.end, 'end');
 
-      var message = {
-        action: 'markdownSelectionChange',
-        fileId: markdownFileId,
-        filePath: PAGE_PATH,
-        start: start,
-        end: end
-      };
-
-      // When Yjs is connected, include pre-computed RelativePositions
-      // from the bridge's Y.Text (which is up-to-date) so Studio doesn't
-      // need to compute against potentially stale Y.Text
-      if (markdownYjsConnected && markdownYText && markdownYjsY) {
+      // Set local selection on Yjs awareness directly
+      if (markdownYjsConnected && markdownYText && markdownYjsY && markdownYProvider) {
         var clampedStart = Math.max(0, Math.min(markdownYText.length, start));
         var clampedEnd = Math.max(0, Math.min(markdownYText.length, end));
-        message.relativeStart = markdownYjsY.relativePositionToJSON(
-          markdownYjsY.createRelativePositionFromTypeIndex(markdownYText, clampedStart)
-        );
-        message.relativeEnd = markdownYjsY.relativePositionToJSON(
-          markdownYjsY.createRelativePositionFromTypeIndex(markdownYText, clampedEnd)
-        );
+        markdownYProvider.awareness.setLocalStateField('selection', [{
+          anchor: markdownYjsY.createRelativePositionFromTypeIndex(markdownYText, clampedStart),
+          marker: markdownYjsY.createRelativePositionFromTypeIndex(markdownYText, clampedEnd)
+        }]);
+        markdownPendingSelection = null;
+      } else {
+        // Queue selection for replay after Yjs connects
+        markdownPendingSelection = { start: start, end: end };
       }
-
-      postToStudio(message);
     }, 80);
   }
 
   function clearMarkdownSelectionSync() {
-    if (!markdownFileId) {
-      return;
+    if (markdownYProvider) {
+      markdownYProvider.awareness.setLocalStateField('selection', null);
     }
-    postToStudio({
-      action: 'markdownSelectionChange',
-      fileId: markdownFileId,
-      filePath: PAGE_PATH,
-      start: -1,
-      end: -1
-    });
   }
 
   function clearMarkdownSelectionOverlay() {
@@ -3080,9 +3171,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     markdownHasUnsavedChanges = true;
     if (markdownYjsConnected) {
       syncLocalChangeToYText(fullContent);
-    } else {
-      scheduleMarkdownSync(fullContent);
     }
+    scheduleMarkdownSync(fullContent);
     scheduleMarkdownSelectionOverlayRender();
   }
 
@@ -3873,6 +3963,15 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       scheduleMarkdownSlashMenuUpdate();
       scheduleMarkdownInlineToolbarUpdate();
       postMarkdownEditorReady();
+
+      // Self-connect to Yjs when server-injected config is available
+      if (WS_URL && YJS_GUID && !markdownYDoc) {
+        setupMarkdownYjsConnection({
+          wsUrl: WS_URL,
+          guid: YJS_GUID,
+          fileId: markdownFileId
+        });
+      }
     } else {
       markdownBody.style.display = '';
       if (markdownEditorRoot) {
@@ -4108,37 +4207,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         if (!inspectMode) showHoverOverlay(message.id);
         return;
 
-      case 'setMarkdownContent':
-        if (!isMarkdownPage()) {
-          return;
-        }
-        if (message.fileId && markdownFileId && message.fileId !== markdownFileId) {
-          return;
-        }
-        if (markdownYjsConnected) {
-          return;
-        }
-        applyMarkdownContent(message.content || '');
-        return;
-
-      case 'initYjsConnection':
-        if (!isMarkdownPage()) {
-          return;
-        }
-        if (message.fileId && markdownFileId && message.fileId !== markdownFileId) {
-          return;
-        }
-        if (message.initialContent) {
-          applyMarkdownContent(message.initialContent);
-        }
-        setupMarkdownYjsConnection({
-          wsUrl: message.wsUrl,
-          guid: message.guid,
-          fileId: message.fileId || markdownFileId,
-          authToken: message.authToken
-        });
-        return;
-
       case 'setMarkdownPersistState':
         if (!isMarkdownPage()) {
           return;
@@ -4153,26 +4221,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
             markdownHasUnsavedChanges = false;
           }
         }
-        return;
-
-      case 'setMarkdownPresence':
-        if (!isMarkdownPage()) {
-          return;
-        }
-        if (message.fileId && markdownFileId && message.fileId !== markdownFileId) {
-          return;
-        }
-        setMarkdownPresence(message.users);
-        return;
-
-      case 'setMarkdownSelections':
-        if (!isMarkdownPage()) {
-          return;
-        }
-        if (message.fileId && markdownFileId && message.fileId !== markdownFileId) {
-          return;
-        }
-        setMarkdownSelections(message.selections);
         return;
 
       case 'screenshot':
@@ -4232,47 +4280,59 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   function init() {
     const params = new URLSearchParams(window.location.search);
     const studioEmbed = params.get('studio_embed') === 'true';
+    const isStandalone = window.parent === window && !studioEmbed;
 
-    if (window.parent === window && !studioEmbed) {
-      console.debug('[StudioBridge] Not in iframe and not studio_embed mode, skipping initialization');
-      return;
+    if (isStandalone) {
+      // Allow standalone markdown editing when WS_URL is available (server-injected Yjs config)
+      if (!WS_URL) {
+        console.debug('[StudioBridge] Not in iframe and not studio_embed mode, skipping initialization');
+        return;
+      }
     }
 
     console.debug('[StudioBridge] Initializing...');
 
-    injectOverlayStyles();
-    hoverOverlay = createOverlay('hover');
-    selectionOverlay = createOverlay('selection');
+    // Only set up Studio interaction features when embedded in Studio
+    if (!isStandalone) {
+      injectOverlayStyles();
+      hoverOverlay = createOverlay('hover');
+      selectionOverlay = createOverlay('selection');
 
-    setupConsoleCapture();
-    setupErrorHandling();
-    setupInspectMode();
+      setupConsoleCapture();
+      setupErrorHandling();
+      setupInspectMode();
+    }
+
     setupMarkdownEditor(params);
 
     window.addEventListener('message', handleStudioMessage);
 
-    // IMPORTANT: notifyAppLoaded() must be called BEFORE setupMutationObserver()
-    // because notifyAppLoaded sends onPageTransitionEnd which sets previewId,
-    // and treeUpdated (from setupMutationObserver) requires previewId to be set
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function() {
+    if (!isStandalone) {
+      // IMPORTANT: notifyAppLoaded() must be called BEFORE setupMutationObserver()
+      // because notifyAppLoaded sends onPageTransitionEnd which sets previewId,
+      // and treeUpdated (from setupMutationObserver) requires previewId to be set
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+          notifyAppLoaded();
+          setupMutationObserver();
+        });
+      } else {
         notifyAppLoaded();
         setupMutationObserver();
-      });
-    } else {
-      notifyAppLoaded();
-      setupMutationObserver();
-    }
+      }
 
-    window.addEventListener('beforeunload', notifyAppUnloaded);
+      window.addEventListener('beforeunload', notifyAppUnloaded);
+    }
 
     const colorMode = params.get('color_mode');
     if (colorMode) setColorMode(colorMode);
 
-    const inspectModeParam = params.get('inspect_mode');
-    if (inspectModeParam === 'true') {
-      inspectMode = true;
-      console.debug('[StudioBridge] Inspect mode enabled from query param');
+    if (!isStandalone) {
+      const inspectModeParam = params.get('inspect_mode');
+      if (inspectModeParam === 'true') {
+        inspectMode = true;
+        console.debug('[StudioBridge] Inspect mode enabled from query param');
+      }
     }
 
     console.debug('[StudioBridge] Initialized successfully');

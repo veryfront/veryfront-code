@@ -59,6 +59,10 @@ export interface StudioScriptOptions {
   nonce?: string;
   /** Hash of source code for sync detection with Navigator tree */
   sourceHash?: string;
+  /** WebSocket URL for direct Yjs connection from the bridge */
+  wsUrl?: string;
+  /** Yjs document GUID for the bridge to join the same room */
+  yjsGuid?: string;
 }
 
 export function getStudioScripts(options: StudioScriptOptions): string {
@@ -68,6 +72,8 @@ export function getStudioScripts(options: StudioScriptOptions): string {
     projectId: options.projectId,
     pageId: options.pageId,
     ...(options.pagePath ? { pagePath: options.pagePath } : {}),
+    ...(options.wsUrl ? { wsUrl: options.wsUrl } : {}),
+    ...(options.yjsGuid ? { yjsGuid: options.yjsGuid } : {}),
   }).toString();
 
   const sourceHashScript = options.sourceHash
