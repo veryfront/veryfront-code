@@ -327,17 +327,15 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
       .vf-markdown-editor__surface {
         width: 100%;
+        max-width: 980px;
+        margin: 0 auto;
         height: 100%;
         overflow: auto;
         outline: none;
         position: relative;
         z-index: 1;
-        font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-        font-size: 16px;
-        line-height: 1.6;
-        color: #111827;
         background: transparent;
-        padding: 16px;
+        padding: 32px 40px;
         box-sizing: border-box;
       }
 
@@ -571,28 +569,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         white-space: nowrap;
       }
 
-      .vf-markdown-editor__surface p {
-        margin: 0 0 12px;
-      }
-
-      .vf-markdown-editor__surface h1,
-      .vf-markdown-editor__surface h2,
-      .vf-markdown-editor__surface h3,
-      .vf-markdown-editor__surface h4,
-      .vf-markdown-editor__surface h5,
-      .vf-markdown-editor__surface h6 {
-        margin: 20px 0 12px;
-        line-height: 1.35;
-      }
-
-      .vf-markdown-editor__surface ul,
-      .vf-markdown-editor__surface ol {
-        margin: 0 0 12px 24px;
-        padding: 0;
-      }
-
-      .vf-markdown-editor__surface code {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+      .vf-markdown-editor__surface [data-lexical-editor] {
+        outline: none;
       }
 
       .vf-markdown-editor__textarea {
@@ -669,7 +647,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       }
 
       [data-theme='dark'] .vf-markdown-editor__surface {
-        color: #f9fafb;
       }
 
       [data-theme='dark'] .vf-markdown-editor__textarea {
@@ -2980,7 +2957,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
         let nextContent = '';
         update.editorState.read(function() {
-          nextContent = markdownModule.$convertToMarkdownString(markdownModule.TRANSFORMERS);
+          nextContent = markdownModule.$convertToMarkdownString(markdownModule.TRANSFORMERS, true);
         });
         const restoredBody = restoreRawBlocksFromEditor(nextContent);
         markdownLexicalRenderedContent = composeMarkdownContent(restoredBody);
@@ -3095,7 +3072,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         const markdownModule = markdownLexicalApi.markdownModule;
         const root = lexicalModule.$getRoot();
         root.clear();
-        markdownModule.$convertFromMarkdownString(editorContent, markdownModule.TRANSFORMERS);
+        markdownModule.$convertFromMarkdownString(editorContent, markdownModule.TRANSFORMERS, true);
         if (root.getChildrenSize() === 0) {
           root.append(lexicalModule.$createParagraphNode());
         }
@@ -3377,7 +3354,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     mdxBlocks.setAttribute(DATA_VF_IGNORE, 'true');
 
     const surface = document.createElement('div');
-    surface.className = 'vf-markdown-editor__surface';
+    surface.className = 'vf-markdown-editor__surface markdown-body';
     surface.setAttribute(DATA_VF_IGNORE, 'true');
     surface.setAttribute('contenteditable', 'true');
     surface.setAttribute('aria-label', 'Markdown editor');
@@ -3673,6 +3650,9 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     }
 
     if (enabled) {
+      if (!markdownCurrentContent && markdownBody.innerText) {
+        markdownCurrentContent = markdownBody.innerText.trim();
+      }
       ensureMarkdownEditor();
       setupMarkdownLexicalEditor();
       markdownBody.style.display = 'none';
