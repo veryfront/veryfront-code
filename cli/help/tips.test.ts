@@ -40,7 +40,7 @@ describe("cli/help/tips", () => {
       const templates = getInitTemplates();
       for (
         const template of [
-          "ai-assistant",
+          "ai-agent",
           "chat-with-your-docs",
           "multi-agent-system",
           "agentic-workflow",
@@ -70,7 +70,7 @@ describe("cli/help/tips", () => {
     it("should return init templates for 'init' command", () => {
       const tips = getCommandTips("init");
       assertEquals(typeof tips, "string");
-      assertEquals(tips?.includes("ai-assistant"), true);
+      assertEquals(tips?.includes("ai-agent"), true);
     });
 
     it("should return undefined for unknown command", () => {

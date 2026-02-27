@@ -19,7 +19,7 @@ export interface TemplateOption {
 
 export const TEMPLATES: readonly TemplateOption[] = [
   { id: "minimal", label: "Minimal", description: "Blank canvas, no extras" },
-  { id: "ai-assistant", label: "AI Assistant", description: "Agent + chat UI + streaming" },
+  { id: "ai-agent", label: "AI Agent", description: "Agent + chat UI + streaming" },
   {
     id: "chat-with-your-docs",
     label: "Chat with Your Docs",

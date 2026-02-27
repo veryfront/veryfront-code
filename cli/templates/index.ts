@@ -49,7 +49,7 @@ const OPENAI_KEY_CONFIG = {
 } as const;
 
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
-  "ai-assistant": { envVars: [OPENAI_KEY_CONFIG] },
+  "ai-agent": { envVars: [OPENAI_KEY_CONFIG] },
   "chat-with-your-docs": { envVars: [OPENAI_KEY_CONFIG] },
   "multi-agent-system": { envVars: [OPENAI_KEY_CONFIG] },
   "agentic-workflow": { envVars: [OPENAI_KEY_CONFIG] },
@@ -58,7 +58,7 @@ export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
 };
 
 const DIRECTORY_BASED_TEMPLATES: TemplateName[] = [
-  "ai-assistant",
+  "ai-agent",
   "chat-with-your-docs",
   "multi-agent-system",
   "agentic-workflow",
@@ -69,7 +69,7 @@ const DIRECTORY_BASED_TEMPLATES: TemplateName[] = [
 
 export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | null> {
   if (name === "pages-router" || name === "app-router") {
-    return getTemplate("ai-assistant");
+    return getTemplate("ai-agent");
   }
 
   if (!DIRECTORY_BASED_TEMPLATES.includes(name)) {

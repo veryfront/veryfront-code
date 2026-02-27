@@ -21,7 +21,7 @@ describe("catalog", () => {
       const ids = TEMPLATES.map((t) => t.id);
       assertEquals(ids, [
         "minimal",
-        "ai-assistant",
+        "ai-agent",
         "chat-with-your-docs",
         "agentic-workflow",
         "multi-agent-system",

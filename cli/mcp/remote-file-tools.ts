@@ -616,7 +616,7 @@ const remoteCreateProjectInput = z.object({
     "Project slug (lowercase letters, numbers, hyphens only). A random suffix is appended if the slug is already taken.",
   ),
   templateSlug: z.string().optional().describe(
-    "Template project slug to fork from (e.g., 'blank', 'ai-assistant', 'chat-with-your-docs')",
+    "Template project slug to fork from (e.g., 'blank', 'ai-agent', 'chat-with-your-docs')",
   ),
   is_public: z.boolean().optional().describe("Whether the project is public (default: false)"),
 });

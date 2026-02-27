@@ -1,7 +1,7 @@
 import type { FeatureName, IntegrationName } from "../../templates/types.ts";
 
 export type InitTemplate =
-  | "ai-assistant"
+  | "ai-agent"
   | "chat-with-your-docs"
   | "multi-agent-system"
   | "agentic-workflow"

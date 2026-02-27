@@ -25,9 +25,9 @@ interface ExampleInfo {
 
 const EXAMPLES: ExampleInfo[] = [
   {
-    name: "ai-assistant",
+    name: "ai-agent",
     description: "Personal AI assistant with Gmail, Slack, and Calendar integrations",
-    template: "ai-assistant",
+    template: "ai-agent",
     integrations: ["gmail", "slack", "calendar"],
     features: ["Chat UI", "Tool calling", "OAuth"],
     difficulty: "beginner",
@@ -83,7 +83,7 @@ interface TemplateInfo {
 
 const TEMPLATES: TemplateInfo[] = [
   {
-    name: "ai-assistant",
+    name: "ai-agent",
     description: "AI chatbot with agent, tools, and streaming chat UI",
     features: ["Chat UI", "AI tools", "Agent runtime", "Streaming"],
     recommended: true,
@@ -406,7 +406,7 @@ const createProjectInput = z.object({
   name: z.string().describe("Project name (will be converted to slug for directory)"),
   template: z
     .enum([
-      "ai-assistant",
+      "ai-agent",
       "chat-with-your-docs",
       "multi-agent-system",
       "agentic-workflow",
@@ -415,7 +415,7 @@ const createProjectInput = z.object({
       "minimal",
     ])
     .optional()
-    .default("ai-assistant")
+    .default("ai-agent")
     .describe("Project template to use"),
   integrations: z
     .array(z.string())
