@@ -77,6 +77,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   let markdownLatestPresenceUsers = [];
   let markdownLatestSelections = [];
   let markdownHasUnsavedChanges = false;
+  let markdownSaveInProgress = false;
 
   const MARKDOWN_SLASH_COMMANDS = [
     {
@@ -2924,6 +2925,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     if (!markdownHasUnsavedChanges) {
       return;
     }
+    markdownSaveInProgress = true;
     setMarkdownPersistStatus('saving');
     if (markdownSyncTimer) {
       clearTimeout(markdownSyncTimer);
@@ -3076,7 +3078,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       return;
     }
 
-    if (markdownLexicalApi && markdownLexicalRenderedContent === content) {
+    if (markdownLexicalApi && (markdownLexicalRenderedContent === content || markdownCurrentContent === content)) {
+      console.debug('[StudioBridge] applyMarkdownContent: skipped (content unchanged)');
       markdownCurrentContent = content;
       scheduleMarkdownSelectionOverlayRender();
       scheduleMarkdownSlashMenuUpdate();
@@ -3084,6 +3087,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       hideMarkdownBlockDropIndicator();
       return;
     }
+
+    console.debug('[StudioBridge] applyMarkdownContent: rebuilding Lexical DOM, content length:', content.length, 'rendered match:', markdownLexicalRenderedContent === content, 'current match:', markdownCurrentContent === content);
 
     const mdxImportMap = parseMdxImportMap(content);
     const parts = extractMarkdownParts(content);
@@ -3954,9 +3959,12 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         if (message.fileId && markdownFileId && message.fileId !== markdownFileId) {
           return;
         }
-        setMarkdownPersistStatus(message.status || 'saved');
-        if (message.status === 'saved') {
-          markdownHasUnsavedChanges = false;
+        if (markdownSaveInProgress) {
+          setMarkdownPersistStatus(message.status || 'saved');
+          if (message.status === 'saved' || message.status === 'error') {
+            markdownSaveInProgress = false;
+            markdownHasUnsavedChanges = false;
+          }
         }
         return;
 
