@@ -37,7 +37,7 @@ describe("mcp/tools/catalog-tools", () => {
     });
 
     it("accepts template filter parameter", async () => {
-      const result = await vfListExamples.execute({ template: "ai-assistant" });
+      const result = await vfListExamples.execute({ template: "ai-agent" });
       assertEquals(Array.isArray(result), true);
       const first = result[0];
       if (first) {

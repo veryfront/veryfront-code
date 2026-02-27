@@ -1,4 +1,4 @@
-# AI Assistant
+# AI Agent
 
 A simple conversational AI with tool support.
 

@@ -66,7 +66,7 @@ describe("init command integration", () => {
     it("should scaffold a project locally", async () => {
       const result = await runInitCommand(projectName, [
         "-t",
-        "ai-assistant",
+        "ai-agent",
         "--skip-install",
         "--skip-env-prompt",
       ]);
@@ -77,10 +77,10 @@ describe("init command integration", () => {
       assertEquals(statResult.isDirectory, true);
     });
 
-    it("should use ai-assistant template when specified", async () => {
+    it("should use ai-agent template when specified", async () => {
       await runInitCommand(projectName, [
         "-t",
-        "ai-assistant",
+        "ai-agent",
         "--skip-install",
         "--skip-env-prompt",
       ]);
@@ -102,7 +102,7 @@ describe("init command integration", () => {
 
       const result = await runInitCommand(projectName, [
         "-t",
-        "ai-assistant",
+        "ai-agent",
         "--skip-install",
         "--skip-env-prompt",
       ]);
@@ -115,7 +115,7 @@ describe("init command integration", () => {
 
       const result = await runInitCommand(projectName, [
         "-t",
-        "ai-assistant",
+        "ai-agent",
         "--force",
         "--skip-install",
         "--skip-env-prompt",
@@ -128,7 +128,7 @@ describe("init command integration", () => {
     it("should scaffold project with single integration", async () => {
       const result = await runInitCommand(projectName, [
         "-t",
-        "ai-assistant",
+        "ai-agent",
         "--integrations",
         "github",
         "--skip-install",
@@ -150,7 +150,7 @@ describe("init command integration", () => {
     it("should scaffold project with multiple integrations (comma-separated)", async () => {
       const result = await runInitCommand(projectName, [
         "-t",
-        "ai-assistant",
+        "ai-agent",
         "--integrations",
         "github,slack",
         "--skip-install",
@@ -187,7 +187,7 @@ describe("init command integration", () => {
     it("should skip wizard in non-TTY environment", async () => {
       const result = await runInitCommand(projectName, [
         "-t",
-        "ai-assistant",
+        "ai-agent",
         "--skip-install",
         "--skip-env-prompt",
       ]);

@@ -84,8 +84,8 @@ describe("init command integration", () => {
       assertEquals(await exists(join(projectDir, "app", "page.tsx")), true);
     });
 
-    it("should use ai-assistant template when specified", async () => {
-      const result = await runInitCommand([projectName, "-t", "ai-assistant", "--skip-install"]);
+    it("should use ai-agent template when specified", async () => {
+      const result = await runInitCommand([projectName, "-t", "ai-agent", "--skip-install"]);
 
       assertEquals(result.code, 0);
 
@@ -125,7 +125,7 @@ describe("init command integration", () => {
       const result = await runInitCommand([
         projectName,
         "-t",
-        "ai-assistant",
+        "ai-agent",
         "--skip-install",
         "--skip-env-prompt",
       ]);
@@ -138,7 +138,7 @@ describe("init command integration", () => {
       const result = await runInitCommand([
         projectName,
         "-t",
-        "ai-assistant",
+        "ai-agent",
         "--skip-install",
         "--skip-env-prompt",
       ]);
