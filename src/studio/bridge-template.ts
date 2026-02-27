@@ -78,6 +78,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   let markdownLatestSelections = [];
   let markdownHasUnsavedChanges = false;
   let markdownSaveInProgress = false;
+  const markdownPendingEchoContents = new Set();
 
   const MARKDOWN_SLASH_COMMANDS = [
     {
@@ -1409,6 +1410,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       clearTimeout(markdownSyncTimer);
     }
     markdownSyncTimer = setTimeout(function() {
+      markdownPendingEchoContents.add(content);
+      setTimeout(function() { markdownPendingEchoContents.delete(content); }, 3000);
       postToStudio({
         action: 'markdownContentChange',
         fileId: markdownFileId,
@@ -2931,6 +2934,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       clearTimeout(markdownSyncTimer);
       markdownSyncTimer = null;
     }
+    markdownPendingEchoContents.add(markdownCurrentContent);
+    setTimeout(function() { markdownPendingEchoContents.delete(markdownCurrentContent); }, 3000);
     postToStudio({
       action: 'markdownContentChange',
       fileId: markdownFileId,
@@ -3078,8 +3083,11 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       return;
     }
 
-    if (markdownLexicalApi && (markdownLexicalRenderedContent === content || markdownCurrentContent === content)) {
-      console.debug('[StudioBridge] applyMarkdownContent: skipped (content unchanged)');
+    if (markdownLexicalApi && (markdownLexicalRenderedContent === content || markdownCurrentContent === content || markdownPendingEchoContents.has(content))) {
+      console.debug('[StudioBridge] applyMarkdownContent: skipped echo');
+      if (markdownPendingEchoContents.has(content)) {
+        markdownPendingEchoContents.delete(content);
+      }
       markdownCurrentContent = content;
       scheduleMarkdownSelectionOverlayRender();
       scheduleMarkdownSlashMenuUpdate();
@@ -3088,7 +3096,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       return;
     }
 
-    console.debug('[StudioBridge] applyMarkdownContent: rebuilding Lexical DOM, content length:', content.length, 'rendered match:', markdownLexicalRenderedContent === content, 'current match:', markdownCurrentContent === content);
+    console.debug('[StudioBridge] applyMarkdownContent: rebuilding Lexical DOM (external change)');
 
     const mdxImportMap = parseMdxImportMap(content);
     const parts = extractMarkdownParts(content);
