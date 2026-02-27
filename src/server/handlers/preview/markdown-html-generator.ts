@@ -59,10 +59,15 @@ function buildStudioScript(url: URL, projectId: string, filePath: string): strin
   const studioEmbed = url.searchParams.get("studio_embed") === "true";
   if (!studioEmbed) return "";
 
+  const queryProjectId = url.searchParams.get("vf_project_id")?.trim() || "";
+  const queryFileId = url.searchParams.get("vf_file_id")?.trim() || "";
+  const canonicalProjectId = queryProjectId || projectId;
+  const canonicalPageId = queryFileId || filePath;
+
   return `<script>${
     generateStudioBridgeScript({
-      projectId,
-      pageId: filePath,
+      projectId: canonicalProjectId,
+      pageId: canonicalPageId,
       pagePath: filePath,
     })
   }</script>`;

@@ -71,4 +71,34 @@ describe("generateMarkdownHtml", () => {
     const html = generateMarkdownHtml(makeOptions({ description: "" }));
     assert(!html.includes('meta name="description"'));
   });
+
+  it("prefers vf_file_id for bridge page id when present", () => {
+    const html = generateMarkdownHtml(
+      makeOptions({
+        url: new URL(
+          "http://localhost/test.md?studio_embed=true&vf_file_id=9c7ba88d-fef9-43c0-9f5d-7f1125536d0f",
+        ),
+      }),
+    );
+
+    assert(
+      html.includes('const PAGE_ID = "9c7ba88d-fef9-43c0-9f5d-7f1125536d0f";'),
+    );
+  });
+
+  it("prefers vf_project_id for bridge project id when present", () => {
+    const html = generateMarkdownHtml(
+      makeOptions({
+        url: new URL(
+          "http://localhost/test.md?studio_embed=true&vf_project_id=95c93d5a-51a1-4ade-b055-72162cf0a891",
+        ),
+      }),
+    );
+
+    assert(
+      html.includes(
+        'const PROJECT_ID = "95c93d5a-51a1-4ade-b055-72162cf0a891";',
+      ),
+    );
+  });
 });

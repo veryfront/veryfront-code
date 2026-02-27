@@ -263,6 +263,16 @@ describe("studio/schema", () => {
       assertEquals(result.success, true);
     });
 
+    it("should accept openFile action with optional symbol name", () => {
+      const result = MessageFromRendererSchema.safeParse({
+        action: "openFile",
+        filePath: "/path/to/file.tsx",
+        lineNumber: 1,
+        symbolName: "Button",
+      });
+      assertEquals(result.success, true);
+    });
+
     it("should accept openFile action with string line number", () => {
       const result = MessageFromRendererSchema.safeParse({
         action: "openFile",
@@ -278,6 +288,38 @@ describe("studio/schema", () => {
         value: { method: "log", data: ["test"] },
       });
       assertEquals(result.success, true);
+    });
+
+    it("should accept markdown editor sync actions", () => {
+      const actions = [
+        {
+          action: "markdownEditorReady",
+          fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
+          filePath: "docs/intro.md",
+        },
+        {
+          action: "markdownContentChange",
+          fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
+          filePath: "docs/intro.md",
+          content: "# Hello",
+        },
+        {
+          action: "markdownSelectionChange",
+          fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
+          filePath: "docs/intro.md",
+          start: 3,
+          end: 9,
+        },
+      ];
+
+      for (const action of actions) {
+        const result = MessageFromRendererSchema.safeParse(action);
+        assertEquals(
+          result.success,
+          true,
+          `${action.action} should be valid`,
+        );
+      }
     });
 
     it("should accept node manipulation actions", () => {
@@ -407,6 +449,58 @@ describe("studio/schema", () => {
       const result = MessageFromStudioSchema.safeParse({
         action: "setHoveredNode",
         id: "node-456",
+      });
+      assertEquals(result.success, true);
+    });
+
+    it("should accept setMarkdownContent action", () => {
+      const result = MessageFromStudioSchema.safeParse({
+        action: "setMarkdownContent",
+        fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
+        content: "# Updated",
+      });
+      assertEquals(result.success, true);
+    });
+
+    it("should accept setMarkdownPersistState action", () => {
+      const result = MessageFromStudioSchema.safeParse({
+        action: "setMarkdownPersistState",
+        fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
+        status: "saved",
+      });
+      assertEquals(result.success, true);
+    });
+
+    it("should accept setMarkdownPresence action", () => {
+      const result = MessageFromStudioSchema.safeParse({
+        action: "setMarkdownPresence",
+        fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
+        users: [
+          {
+            id: "user-1",
+            name: "Alice",
+            color: "#3b82f6",
+            isCurrentUser: false,
+          },
+        ],
+      });
+      assertEquals(result.success, true);
+    });
+
+    it("should accept setMarkdownSelections action", () => {
+      const result = MessageFromStudioSchema.safeParse({
+        action: "setMarkdownSelections",
+        fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
+        selections: [
+          {
+            id: "user-1",
+            name: "Alice",
+            color: "#3b82f6",
+            isCurrentUser: true,
+            start: 12,
+            end: 27,
+          },
+        ],
       });
       assertEquals(result.success, true);
     });
