@@ -573,6 +573,15 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         outline: none;
       }
 
+      .vf-markdown-editor__surface p:empty::before {
+        content: '';
+        display: inline-block;
+      }
+
+      .vf-markdown-editor__surface p {
+        min-height: 1.5em;
+      }
+
       .vf-markdown-editor__textarea {
         width: 100%;
         height: calc(100vh - 52px);
@@ -2960,7 +2969,12 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
           nextContent = markdownModule.$convertToMarkdownString(markdownModule.TRANSFORMERS, true);
         });
         const restoredBody = restoreRawBlocksFromEditor(nextContent);
-        markdownLexicalRenderedContent = composeMarkdownContent(restoredBody);
+        const fullContent = composeMarkdownContent(restoredBody);
+
+        if (fullContent === markdownLexicalRenderedContent) {
+          return;
+        }
+        markdownLexicalRenderedContent = fullContent;
 
         handleMarkdownLocalChange(nextContent);
         scheduleMarkdownSlashMenuUpdate();
@@ -3040,6 +3054,15 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       return;
     }
 
+    if (markdownLexicalApi && markdownLexicalRenderedContent === content) {
+      markdownCurrentContent = content;
+      scheduleMarkdownSelectionOverlayRender();
+      scheduleMarkdownSlashMenuUpdate();
+      scheduleMarkdownInlineToolbarUpdate();
+      hideMarkdownBlockDropIndicator();
+      return;
+    }
+
     const mdxImportMap = parseMdxImportMap(content);
     const parts = extractMarkdownParts(content);
     const extracted = extractRawBlocksForEditor(parts.body, mdxImportMap);
@@ -3050,16 +3073,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     markdownRawBlockTokenPrefix = extracted.tokenPrefix;
     markdownLatestMdxImportMap = mdxImportMap;
     setMarkdownMdxBlocks(mdxBlocks);
-
-    if (markdownLexicalApi && markdownLexicalRenderedContent === content) {
-      markdownCurrentContent = content;
-      markdownCurrentEditorContent = editorContent;
-      scheduleMarkdownSelectionOverlayRender();
-      scheduleMarkdownSlashMenuUpdate();
-      scheduleMarkdownInlineToolbarUpdate();
-      hideMarkdownBlockDropIndicator();
-      return;
-    }
 
     markdownCurrentContent = content;
     markdownCurrentEditorContent = editorContent;
@@ -3076,10 +3089,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         if (root.getChildrenSize() === 0) {
           root.append(lexicalModule.$createParagraphNode());
         }
-      });
-      setTimeout(function() {
-        markdownApplyingRemoteUpdate = false;
-      }, 0);
+      }, { discrete: true });
+      markdownApplyingRemoteUpdate = false;
       scheduleMarkdownSelectionOverlayRender();
       scheduleMarkdownSlashMenuUpdate();
       scheduleMarkdownInlineToolbarUpdate();
@@ -3650,9 +3661,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     }
 
     if (enabled) {
-      if (!markdownCurrentContent && markdownBody.innerText) {
-        markdownCurrentContent = markdownBody.innerText.trim();
-      }
       ensureMarkdownEditor();
       setupMarkdownLexicalEditor();
       markdownBody.style.display = 'none';
