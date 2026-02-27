@@ -579,19 +579,40 @@ function router(req: Request): Promise<Response> {
   return forwardToServer(req);
 }
 
+// Create server before signal registration so early SIGTERM/SIGINT can close it safely.
+const server = createHttpServer();
+
 // Graceful shutdown
-async function shutdown(): Promise<void> {
-  proxyLogger.info("Shutting down");
-  rendererRouter?.close();
-  serverResolver.close();
-  await proxyHandler.close();
-  await shutdownOTLP();
-  proxyLogger.info("Closed connections");
-  exit(0);
+let shuttingDown = false;
+async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  proxyLogger.info(`Received ${signal}, shutting down`);
+
+  try {
+    await server.close();
+    rendererRouter?.close();
+    serverResolver.close();
+    await proxyHandler.close();
+    await shutdownOTLP();
+    proxyLogger.info("Closed connections");
+  } catch (error) {
+    proxyLogger.error("Error while shutting down proxy", error);
+  } finally {
+    exit(0);
+  }
 }
 
-onSignal("SIGINT", shutdown);
-onSignal("SIGTERM", shutdown);
+const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {
+  void shutdown(signal).catch((error) => {
+    proxyLogger.error("Unhandled shutdown error", { signal }, error);
+    exit(1);
+  });
+};
+
+onSignal("SIGINT", () => handleSignal("SIGINT"));
+onSignal("SIGTERM", () => handleSignal("SIGTERM"));
 
 // Wait for sticky-session router to resolve initial target list
 await rendererRouter?.ready();
@@ -605,6 +626,5 @@ proxyLogger.debug("Starting proxy server (split mode)", {
   apiBaseUrl: config.apiBaseUrl,
 });
 
-// Create and start the HTTP server
-const server = createHttpServer();
+// Start the HTTP server
 await server.serve(router, { port: PORT, hostname: HOST });

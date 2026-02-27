@@ -115,7 +115,18 @@ export function registerTerminationSignals(
 
   for (const signal of signals) {
     onSignal(signal, () => {
-      void handler(signal);
+      try {
+        const result = handler(signal);
+        if (result && typeof (result as PromiseLike<void>).then === "function") {
+          void Promise.resolve(result).catch((error) => {
+            cliLogger.error(`Unhandled error while handling ${signal}:`, error);
+            exitProcess(1);
+          });
+        }
+      } catch (error) {
+        cliLogger.error(`Unhandled error while handling ${signal}:`, error);
+        exitProcess(1);
+      }
     });
   }
 }

@@ -360,7 +360,10 @@ export function getOsType(): string {
 /**
  * Register a signal handler (SIGINT, SIGTERM) for graceful shutdown
  */
-export function onSignal(signal: "SIGINT" | "SIGTERM", handler: () => void): void {
+export function onSignal(
+  signal: "SIGINT" | "SIGTERM",
+  handler: () => void,
+): void {
   if (IS_DENO) {
     Deno.addSignalListener(signal, handler);
     return;
@@ -396,14 +399,35 @@ export function onGlobalError(
 
   if (!hasNodeProcess) return;
 
+  const handleNodeGlobalError = (
+    error: Error,
+    type: "uncaughtException" | "unhandledRejection",
+  ): void => {
+    let shouldPreventExit = false;
+    try {
+      shouldPreventExit = onError(error, type) === true;
+    } catch (handlerError) {
+      const handlerException = handlerError instanceof Error
+        ? handlerError
+        : new Error(String(handlerError));
+      console.error("Global error handler threw while processing", type, handlerException);
+    }
+
+    if (shouldPreventExit) return;
+
+    // Node/Bun suppress default fatal behavior when a listener is registered.
+    // If the callback did not explicitly handle the error, exit to preserve
+    // expected fatal semantics for uncaught exceptions and unhandled rejections.
+    nodeProcess!.exit(1);
+  };
+
   nodeProcess!.on("uncaughtException", (error: Error) => {
-    onError(error, "uncaughtException");
-    // Note: In Node.js, uncaughtException doesn't exit by default if handler is registered
+    handleNodeGlobalError(error, "uncaughtException");
   });
 
   nodeProcess!.on("unhandledRejection", (reason: unknown) => {
     const error = reason instanceof Error ? reason : new Error(String(reason));
-    onError(error, "unhandledRejection");
+    handleNodeGlobalError(error, "unhandledRejection");
   });
 }
 

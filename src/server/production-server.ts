@@ -351,8 +351,14 @@ if (import.meta.main) {
       }
     };
 
-    onSignal("SIGINT", () => void shutdown("SIGINT"));
-    onSignal("SIGTERM", () => void shutdown("SIGTERM"));
+    const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {
+      void shutdown(signal).catch((error) => {
+        logger.warn("Unhandled error while shutting down production server", { signal, error });
+      });
+    };
+
+    onSignal("SIGINT", () => handleSignal("SIGINT"));
+    onSignal("SIGTERM", () => handleSignal("SIGTERM"));
   } catch (e) {
     logger.error("Failed to start production server:", e);
   }
