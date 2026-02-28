@@ -3969,7 +3969,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         setupMarkdownYjsConnection({
           wsUrl: WS_URL,
           guid: YJS_GUID,
-          fileId: markdownFileId
+          fileId: markdownFileId,
         });
       }
     } else {
