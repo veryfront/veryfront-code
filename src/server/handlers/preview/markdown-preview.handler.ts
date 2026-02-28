@@ -17,6 +17,7 @@ import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { tryNotFoundFallback } from "../request/ssr/not-found-fallback.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
+import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { validatePathSync } from "#veryfront/security";
 
 const logger = serverLogger.component("markdown-preview-handler");
@@ -158,8 +159,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
         projectId: ctx.projectSlug || ctx.projectId || "markdown-preview",
         filePath,
         branchId: ctx.parsedDomain?.branch ?? null,
-        requestHost: req.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ||
-          req.headers.get("host") || url.host,
+        apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
       });
 
       const responseBuilder = this.createResponseBuilder(ctx)
