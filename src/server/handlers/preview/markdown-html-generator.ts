@@ -98,7 +98,9 @@ function buildStudioScript(
   if (wsUrl) bridgeConfig.wsUrl = wsUrl;
   if (yjsGuid) bridgeConfig.yjsGuid = yjsGuid;
 
-  return `<script>window.__VF_BRIDGE_CONFIG__=${JSON.stringify(bridgeConfig)};</script>
+  // Escape </script> sequences to prevent XSS breakout from inline JSON
+  const safeJson = JSON.stringify(bridgeConfig).replace(/</g, "\\u003c");
+  return `<script>window.__VF_BRIDGE_CONFIG__=${safeJson};</script>
   <script type="module" src="/_veryfront/studio-bridge.js"></script>`;
 }
 

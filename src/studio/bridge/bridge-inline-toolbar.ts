@@ -9,35 +9,6 @@ import { state } from "./bridge-state.ts";
 import { DATA_VF_IGNORE } from "./bridge-constants.ts";
 
 // ---------------------------------------------------------------------------
-// Helper: create a toolbar button
-// ---------------------------------------------------------------------------
-
-function createInlineButton(
-  label: string,
-  format: string | null,
-  handler: (() => void) | null,
-): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "vf-markdown-editor__inline-button";
-  btn.setAttribute(DATA_VF_IGNORE, "true");
-  btn.textContent = label;
-  if (format) {
-    btn.setAttribute("data-format", format);
-  }
-  btn.addEventListener("mousedown", function (event: MouseEvent) {
-    event.preventDefault();
-  });
-  btn.addEventListener("click", function (event: MouseEvent) {
-    event.preventDefault();
-    if (handler) {
-      handler();
-    }
-  });
-  return btn;
-}
-
-// ---------------------------------------------------------------------------
 // Helper: create a separator element
 // ---------------------------------------------------------------------------
 

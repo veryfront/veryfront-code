@@ -8,7 +8,6 @@
 import { state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
 import { DATA_VF_IGNORE } from "./bridge-constants.ts";
-import { postToStudio } from "./bridge-messaging.ts";
 import { isMdxPage } from "./bridge-inspector.ts";
 
 // ---------------------------------------------------------------------------
@@ -509,7 +508,7 @@ export function showMarkdownBlockDropIndicator(slotIndex: number): void {
 
   const safeSlot = Math.max(0, Math.min(blocks.length, Math.trunc(slotIndex || 0)));
   const surfaceRect = state.markdownEditorSurface.getBoundingClientRect();
-  let top = surfaceRect.top + 6;
+  let top;
 
   if (safeSlot >= blocks.length) {
     const lastRect = blocks[blocks.length - 1]!.getBoundingClientRect();
@@ -653,7 +652,7 @@ export function moveMarkdownCurrentBlockByDelta(delta: number): boolean {
     return false;
   }
 
-  let targetSlot = index;
+  let targetSlot;
   if (step < 0) {
     targetSlot = Math.max(0, index - 1);
   } else {
