@@ -175,7 +175,9 @@ export function renderMarkdownSlashMenu(): void {
       "data-active",
       index === state.markdownSlashMenuActiveIndex ? "true" : "false",
     );
-    item.addEventListener("mousedown", function (event) { event.preventDefault(); });
+    item.addEventListener("mousedown", function (event) {
+      event.preventDefault();
+    });
     item.addEventListener("click", function (event) {
       event.preventDefault();
       state.markdownSlashMenuActiveIndex = index;

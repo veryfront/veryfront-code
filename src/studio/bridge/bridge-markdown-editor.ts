@@ -594,7 +594,9 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
       if (handler) handler();
     });
     if (format) button.setAttribute("data-format", format);
-    button.addEventListener("mousedown", function (event) { event.preventDefault(); });
+    button.addEventListener("mousedown", function (event) {
+      event.preventDefault();
+    });
     return button;
   }
 
@@ -623,7 +625,9 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
       scheduleMarkdownInlineToolbarUpdate();
     });
     opt.setAttribute("data-block-type", bt.type);
-    opt.addEventListener("mousedown", function (event) { event.preventDefault(); });
+    opt.addEventListener("mousedown", function (event) {
+      event.preventDefault();
+    });
     blockDropdown.appendChild(opt);
   });
 
@@ -638,7 +642,9 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
       blockDropdown.style.display = isOpen ? "none" : "block";
     },
   );
-  blockTrigger.addEventListener("mousedown", function (event) { event.preventDefault(); });
+  blockTrigger.addEventListener("mousedown", function (event) {
+    event.preventDefault();
+  });
 
   // -- Inline toolbar rows ---------------------------------------------------
 

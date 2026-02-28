@@ -160,8 +160,16 @@ export function removeMarkdownDragGhost(): void {
 export function createMarkdownDragGhost(block: Element): HTMLElement {
   const typeInfo = getMarkdownBlockTypeInfo(block);
   const ghost = el("div", "vf-markdown-editor__block-drag-ghost");
-  const title = el("span", "vf-markdown-editor__block-drag-ghost-title", "Moving " + typeInfo.label);
-  const text = el("span", "vf-markdown-editor__block-drag-ghost-text", getMarkdownBlockPreviewText(block));
+  const title = el(
+    "span",
+    "vf-markdown-editor__block-drag-ghost-title",
+    "Moving " + typeInfo.label,
+  );
+  const text = el(
+    "span",
+    "vf-markdown-editor__block-drag-ghost-text",
+    getMarkdownBlockPreviewText(block),
+  );
 
   ghost.appendChild(title);
   ghost.appendChild(text);
@@ -246,7 +254,11 @@ export function setMarkdownMdxBlocks(blocks: any[]): void {
     const safeLine = Number.isFinite(block.lineNumber)
       ? Math.max(1, Math.trunc(block.lineNumber))
       : 1;
-    const label = el("div", "vf-markdown-editor__mdx-block-label", block.label + " (line " + String(safeLine) + ")");
+    const label = el(
+      "div",
+      "vf-markdown-editor__mdx-block-label",
+      block.label + " (line " + String(safeLine) + ")",
+    );
     const openUiState = getMdxBlockOpenUiState(block);
 
     const openButton = btn("vf-markdown-editor__mdx-open", openUiState.buttonLabel, function () {

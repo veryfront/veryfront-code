@@ -11,11 +11,7 @@
  */
 
 import { editorState as state } from "./bridge-editor-state.ts";
-import {
-  LEXICAL_YJS_ORIGIN,
-  type PresenceUser,
-  type RemoteSelection,
-} from "./bridge-state.ts";
+import { LEXICAL_YJS_ORIGIN, type PresenceUser, type RemoteSelection } from "./bridge-state.ts";
 import { computeTextDiff } from "./bridge-markdown-core.ts";
 import {
   applyMarkdownContent,
