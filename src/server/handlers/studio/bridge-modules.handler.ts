@@ -58,7 +58,7 @@ async function bundleBridge(): Promise<{ js: string; etag: string }> {
   const { outputFiles } = await build({
     bundle: true,
     write: false,
-    format: "iife",
+    format: "esm",
     platform: "browser",
     target: "es2022",
     stdin: {

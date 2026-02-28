@@ -24,7 +24,7 @@ const { build } = await import("esbuild");
 const { outputFiles } = await build({
   bundle: true,
   write: false,
-  format: "iife",
+  format: "esm",
   platform: "browser",
   target: "es2022",
   entryPoints: [entryPoint],
