@@ -93,52 +93,76 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
   const MARKDOWN_SLASH_COMMANDS = [
     {
+      id: 'text',
+      label: 'Text',
+      description: 'Plain text block',
+      aliases: ['text', 'paragraph', 'p'],
+      icon: 'T',
+      shortcut: ''
+    },
+    {
       id: 'heading-1',
       label: 'Heading 1',
       description: 'Create a top-level heading',
-      aliases: ['h1', 'heading', 'title']
+      aliases: ['h1', 'heading', 'title'],
+      icon: 'H₁',
+      shortcut: '#'
     },
     {
       id: 'heading-2',
       label: 'Heading 2',
       description: 'Create a second-level heading',
-      aliases: ['h2', 'heading2', 'subheading']
+      aliases: ['h2', 'heading2', 'subheading'],
+      icon: 'H₂',
+      shortcut: '##'
     },
     {
       id: 'heading-3',
       label: 'Heading 3',
       description: 'Create a third-level heading',
-      aliases: ['h3', 'heading3']
+      aliases: ['h3', 'heading3'],
+      icon: 'H₃',
+      shortcut: '###'
     },
     {
       id: 'bulleted-list',
       label: 'Bulleted list',
       description: 'Start a bullet list item',
-      aliases: ['list', 'bullet', 'ul']
+      aliases: ['list', 'bullet', 'ul'],
+      icon: String.fromCharCode(8226),
+      shortcut: '-'
     },
     {
       id: 'numbered-list',
       label: 'Numbered list',
       description: 'Start a numbered list item',
-      aliases: ['olist', 'numbered', 'ol']
+      aliases: ['olist', 'numbered', 'ol'],
+      icon: '1.',
+      shortcut: '1.'
     },
     {
       id: 'quote-block',
       label: 'Quote',
       description: 'Insert a block quote line',
-      aliases: ['quote', 'blockquote']
+      aliases: ['quote', 'blockquote'],
+      icon: String.fromCharCode(8220),
+      shortcut: '>'
     },
     {
       id: 'code-block',
       label: 'Code block',
       description: 'Insert a fenced code block',
-      aliases: ['code', 'fence', 'snippet']
+      aliases: ['code', 'fence', 'snippet'],
+      icon: '<>',
+      shortcut: String.fromCharCode(96, 96, 96)
     },
     {
       id: 'image',
       label: 'Image',
       description: 'Insert markdown image syntax',
-      aliases: ['image', 'img', 'photo']
+      aliases: ['image', 'img', 'photo'],
+      icon: String.fromCodePoint(128444),
+      shortcut: ''
     }
   ];
 
@@ -221,8 +245,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         justify-content: space-between;
         align-items: center;
         gap: 8px;
-        padding: 12px 16px;
-        border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+        padding: 8px 16px;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
         background: rgba(255, 255, 255, 0.94);
         position: sticky;
         top: 0;
@@ -230,22 +254,11 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
       .vf-markdown-editor__title {
         font-size: 12px;
-        color: #374151;
-        font-weight: 600;
-        display: inline-flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-
-      .vf-markdown-editor__title-main {
-        font-size: 12px;
-        font-weight: 700;
-      }
-
-      .vf-markdown-editor__title-hints {
-        font-size: 10px;
-        font-weight: 500;
         color: #6b7280;
+        font-weight: 500;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
       }
 
       .vf-markdown-editor__actions {
@@ -389,59 +402,124 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       .vf-markdown-editor__slash-menu {
         position: fixed;
         z-index: 100005;
-        min-width: 220px;
+        min-width: 240px;
         max-width: 300px;
-        border: 1px solid rgba(17, 24, 39, 0.16);
+        border: 1px solid rgba(17, 24, 39, 0.12);
         border-radius: 10px;
         background: #ffffff;
-        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
-        padding: 6px;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12), 0 0 1px rgba(0, 0, 0, 0.1);
+        padding: 4px;
         display: none;
       }
 
+      .vf-markdown-editor__slash-section {
+        padding: 8px 10px 4px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #9ca3af;
+        text-transform: none;
+        letter-spacing: 0;
+      }
+
       .vf-markdown-editor__slash-item {
-        display: block;
+        display: flex;
+        align-items: center;
+        gap: 10px;
         width: 100%;
         border: 0;
-        border-radius: 8px;
+        border-radius: 6px;
         background: transparent;
         text-align: left;
-        padding: 8px 10px;
+        padding: 6px 10px;
         cursor: pointer;
       }
 
       .vf-markdown-editor__slash-item:hover,
       .vf-markdown-editor__slash-item[data-active='true'] {
-        background: rgba(0, 129, 248, 0.12);
+        background: rgba(0, 0, 0, 0.04);
+      }
+
+      .vf-markdown-editor__slash-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 4px;
+        background: #ffffff;
+        font-size: 13px;
+        font-weight: 600;
+        color: #374151;
+        flex-shrink: 0;
       }
 
       .vf-markdown-editor__slash-item-title {
         display: block;
-        font-size: 12px;
-        font-weight: 600;
+        font-size: 13px;
+        font-weight: 500;
         color: #111827;
         line-height: 1.35;
+        flex: 1;
       }
 
       .vf-markdown-editor__slash-item-desc {
-        display: block;
-        margin-top: 2px;
+        display: none;
+      }
+
+      .vf-markdown-editor__slash-shortcut {
         font-size: 11px;
-        color: #6b7280;
-        line-height: 1.35;
+        color: #9ca3af;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        flex-shrink: 0;
+      }
+
+      .vf-markdown-editor__slash-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 10px;
+        margin-top: 2px;
+        border-top: 1px solid rgba(0, 0, 0, 0.06);
+        font-size: 11px;
+        color: #9ca3af;
+      }
+
+      .vf-markdown-editor__slash-footer-key {
+        font-size: 10px;
+        color: #9ca3af;
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 3px;
+        padding: 1px 4px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       }
 
       .vf-markdown-editor__inline-toolbar {
         position: fixed;
         z-index: 100006;
         display: none;
+        flex-direction: column;
+        min-width: 200px;
+        border: 1px solid rgba(17, 24, 39, 0.12);
+        border-radius: 10px;
+        background: #ffffff;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12), 0 0 1px rgba(0, 0, 0, 0.1);
+        padding: 4px;
+      }
+
+      .vf-markdown-editor__inline-row {
+        display: flex;
         align-items: center;
         gap: 2px;
-        border: 1px solid rgba(17, 24, 39, 0.16);
-        border-radius: 8px;
-        background: #ffffff;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
-        padding: 4px;
+        padding: 2px 0;
+      }
+
+      .vf-markdown-editor__inline-separator {
+        width: 1px;
+        height: 20px;
+        background: rgba(0, 0, 0, 0.1);
+        margin: 0 2px;
+        flex-shrink: 0;
       }
 
       .vf-markdown-editor__inline-button {
@@ -453,13 +531,83 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         font-weight: 600;
         line-height: 1;
         min-width: 26px;
-        height: 24px;
+        height: 26px;
         padding: 0 7px;
         cursor: pointer;
       }
 
       .vf-markdown-editor__inline-button:hover {
-        background: rgba(0, 129, 248, 0.12);
+        background: rgba(0, 0, 0, 0.05);
+      }
+
+      .vf-markdown-editor__inline-button.active {
+        background: rgba(0, 129, 248, 0.14);
+        color: #0081f8;
+      }
+
+      .vf-markdown-editor__block-trigger {
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: #111827;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1;
+        height: 26px;
+        padding: 0 7px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        white-space: nowrap;
+      }
+
+      .vf-markdown-editor__block-trigger:hover {
+        background: rgba(0, 0, 0, 0.05);
+      }
+
+      .vf-markdown-editor__block-trigger::after {
+        content: '\\\\25BE';
+        font-size: 10px;
+        color: #9ca3af;
+      }
+
+      .vf-markdown-editor__block-dropdown {
+        position: absolute;
+        top: 100%;
+        left: 4px;
+        z-index: 100007;
+        min-width: 160px;
+        border: 1px solid rgba(17, 24, 39, 0.12);
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+        padding: 4px;
+        margin-top: 4px;
+        display: none;
+      }
+
+      .vf-markdown-editor__block-option {
+        display: block;
+        width: 100%;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        text-align: left;
+        padding: 6px 10px;
+        font-size: 13px;
+        font-weight: 500;
+        color: #111827;
+        cursor: pointer;
+      }
+
+      .vf-markdown-editor__block-option:hover {
+        background: rgba(0, 0, 0, 0.04);
+      }
+
+      .vf-markdown-editor__block-option.active {
+        background: rgba(0, 129, 248, 0.1);
+        color: #0081f8;
       }
 
       .vf-markdown-editor__block-handle {
@@ -588,8 +736,34 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       }
 
       .vf-markdown-editor__surface p:empty::before {
-        content: '';
-        display: inline-block;
+        content: "Type '/' for commands";
+        color: rgba(0, 0, 0, 0.3);
+        pointer-events: none;
+        font-style: normal;
+      }
+
+      .vf-markdown-editor__surface h1:empty::before {
+        content: 'Heading 1';
+        color: rgba(0, 0, 0, 0.3);
+        pointer-events: none;
+      }
+
+      .vf-markdown-editor__surface h2:empty::before {
+        content: 'Heading 2';
+        color: rgba(0, 0, 0, 0.3);
+        pointer-events: none;
+      }
+
+      .vf-markdown-editor__surface h3:empty::before {
+        content: 'Heading 3';
+        color: rgba(0, 0, 0, 0.3);
+        pointer-events: none;
+      }
+
+      .vf-markdown-editor__surface blockquote:empty::before {
+        content: 'Quote';
+        color: rgba(0, 0, 0, 0.3);
+        pointer-events: none;
       }
 
       .vf-markdown-editor__surface p {
@@ -617,15 +791,11 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       }
 
       [data-theme='dark'] .vf-markdown-editor__toolbar {
-        border-bottom-color: rgba(255, 255, 255, 0.18);
+        border-bottom-color: rgba(255, 255, 255, 0.08);
         background: rgba(17, 24, 39, 0.92);
       }
 
       [data-theme='dark'] .vf-markdown-editor__title {
-        color: #d1d5db;
-      }
-
-      [data-theme='dark'] .vf-markdown-editor__title-hints {
         color: #9ca3af;
       }
 
@@ -674,26 +844,50 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       }
 
       [data-theme='dark'] .vf-markdown-editor__slash-menu {
-        border-color: rgba(255, 255, 255, 0.2);
-        background: #111827;
+        border-color: rgba(255, 255, 255, 0.15);
+        background: #1e293b;
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__slash-section {
+        color: #6b7280;
       }
 
       [data-theme='dark'] .vf-markdown-editor__slash-item:hover,
       [data-theme='dark'] .vf-markdown-editor__slash-item[data-active='true'] {
-        background: rgba(59, 130, 246, 0.24);
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__slash-icon {
+        border-color: rgba(255, 255, 255, 0.15);
+        background: #1e293b;
+        color: #d1d5db;
       }
 
       [data-theme='dark'] .vf-markdown-editor__slash-item-title {
         color: #f9fafb;
       }
 
-      [data-theme='dark'] .vf-markdown-editor__slash-item-desc {
-        color: #9ca3af;
+      [data-theme='dark'] .vf-markdown-editor__slash-shortcut {
+        color: #6b7280;
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__slash-footer {
+        border-top-color: rgba(255, 255, 255, 0.08);
+        color: #6b7280;
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__slash-footer-key {
+        border-color: rgba(255, 255, 255, 0.15);
+        color: #6b7280;
       }
 
       [data-theme='dark'] .vf-markdown-editor__inline-toolbar {
-        border-color: rgba(255, 255, 255, 0.2);
-        background: #111827;
+        border-color: rgba(255, 255, 255, 0.15);
+        background: #1e293b;
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__inline-separator {
+        background: rgba(255, 255, 255, 0.12);
       }
 
       [data-theme='dark'] .vf-markdown-editor__inline-button {
@@ -701,7 +895,50 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       }
 
       [data-theme='dark'] .vf-markdown-editor__inline-button:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__inline-button.active {
         background: rgba(59, 130, 246, 0.24);
+        color: #60a5fa;
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__block-trigger {
+        color: #f9fafb;
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__block-trigger:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__block-trigger::after {
+        color: #6b7280;
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__block-dropdown {
+        border-color: rgba(255, 255, 255, 0.15);
+        background: #1e293b;
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__block-option {
+        color: #f9fafb;
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__block-option:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__block-option.active {
+        background: rgba(59, 130, 246, 0.2);
+        color: #60a5fa;
+      }
+
+      [data-theme='dark'] .vf-markdown-editor__surface p:empty::before,
+      [data-theme='dark'] .vf-markdown-editor__surface h1:empty::before,
+      [data-theme='dark'] .vf-markdown-editor__surface h2:empty::before,
+      [data-theme='dark'] .vf-markdown-editor__surface h3:empty::before,
+      [data-theme='dark'] .vf-markdown-editor__surface blockquote:empty::before {
+        color: rgba(255, 255, 255, 0.2);
       }
 
       [data-theme='dark'] .vf-markdown-editor__block-handle {
@@ -1914,6 +2151,10 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
   function getMarkdownSlashCommandInsert(id, indent) {
     const prefix = typeof indent === 'string' ? indent : '';
+    if (id === 'text') {
+      const text = prefix;
+      return { text: text, caretOffset: text.length };
+    }
     if (id === 'heading-1') {
       const text = prefix + '# ';
       return { text: text, caretOffset: text.length };
@@ -2008,11 +2249,16 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     markdownSlashMenuRoot.textContent = '';
 
     const maxLeft = Math.max(8, window.innerWidth - 312);
-    const maxTop = Math.max(8, window.innerHeight - 220);
+    const maxTop = Math.max(8, window.innerHeight - 320);
     const left = Math.max(8, Math.min(maxLeft, markdownSlashMenuContext.anchorLeft));
     const top = Math.max(8, Math.min(maxTop, markdownSlashMenuContext.anchorTop));
     markdownSlashMenuRoot.style.left = left + 'px';
     markdownSlashMenuRoot.style.top = top + 'px';
+
+    var sectionHeader = document.createElement('div');
+    sectionHeader.className = 'vf-markdown-editor__slash-section';
+    sectionHeader.textContent = 'Basic blocks';
+    markdownSlashMenuRoot.appendChild(sectionHeader);
 
     markdownSlashMenuCommands.forEach(function(command, index) {
       const item = document.createElement('button');
@@ -2029,18 +2275,37 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         applyMarkdownSlashCommand(markdownSlashMenuActiveIndex);
       });
 
+      var icon = document.createElement('span');
+      icon.className = 'vf-markdown-editor__slash-icon';
+      icon.textContent = command.icon || '';
+
       const title = document.createElement('span');
       title.className = 'vf-markdown-editor__slash-item-title';
       title.textContent = command.label;
 
-      const description = document.createElement('span');
-      description.className = 'vf-markdown-editor__slash-item-desc';
-      description.textContent = command.description;
-
+      item.appendChild(icon);
       item.appendChild(title);
-      item.appendChild(description);
+
+      if (command.shortcut) {
+        var shortcut = document.createElement('span');
+        shortcut.className = 'vf-markdown-editor__slash-shortcut';
+        shortcut.textContent = command.shortcut;
+        item.appendChild(shortcut);
+      }
+
       markdownSlashMenuRoot.appendChild(item);
     });
+
+    var footer = document.createElement('div');
+    footer.className = 'vf-markdown-editor__slash-footer';
+    var footerLabel = document.createElement('span');
+    footerLabel.textContent = 'Close menu';
+    var footerKey = document.createElement('span');
+    footerKey.className = 'vf-markdown-editor__slash-footer-key';
+    footerKey.textContent = 'esc';
+    footer.appendChild(footerLabel);
+    footer.appendChild(footerKey);
+    markdownSlashMenuRoot.appendChild(footer);
 
     markdownSlashMenuRoot.style.display = 'block';
   }
@@ -2163,6 +2428,10 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       return;
     }
     markdownInlineToolbarRoot.style.display = 'none';
+    var blockDropdown = markdownInlineToolbarRoot.querySelector('.vf-markdown-editor__block-dropdown');
+    if (blockDropdown) {
+      blockDropdown.style.display = 'none';
+    }
   }
 
   function toggleMarkdownInlineFormat(format) {
@@ -2176,6 +2445,100 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     markdownLexicalApi.editor.focus();
     markdownLexicalApi.editor.dispatchCommand(markdownLexicalApi.lexicalModule.FORMAT_TEXT_COMMAND, format);
     scheduleMarkdownInlineToolbarUpdate();
+  }
+
+  function insertMarkdownLink() {
+    if (!markdownLexicalApi || !markdownLexicalApi.editor || !markdownLexicalApi.lexicalModule) {
+      return;
+    }
+    markdownLexicalApi.editor.update(function() {
+      const selection = markdownLexicalApi.lexicalModule.$getSelection();
+      if (!selection || !markdownLexicalApi.lexicalModule.$isRangeSelection(selection)) {
+        return;
+      }
+      const text = selection.getTextContent() || 'link text';
+      selection.insertRawText('[' + text + '](url)');
+    });
+    scheduleMarkdownInlineToolbarUpdate();
+  }
+
+  function setMarkdownBlockType(type) {
+    if (!markdownLexicalApi || !markdownLexicalApi.editor || !markdownLexicalApi.lexicalModule) {
+      return;
+    }
+    var api = markdownLexicalApi;
+    api.editor.update(function() {
+      var selection = api.lexicalModule.$getSelection();
+      if (!selection || !api.lexicalModule.$isRangeSelection(selection)) {
+        return;
+      }
+      if (type === 'paragraph') {
+        api.selectionModule.$setBlocksType(selection, function() {
+          return api.lexicalModule.$createParagraphNode();
+        });
+      } else if (type === 'h1') {
+        api.selectionModule.$setBlocksType(selection, function() {
+          return api.richTextModule.$createHeadingNode('h1');
+        });
+      } else if (type === 'h2') {
+        api.selectionModule.$setBlocksType(selection, function() {
+          return api.richTextModule.$createHeadingNode('h2');
+        });
+      } else if (type === 'h3') {
+        api.selectionModule.$setBlocksType(selection, function() {
+          return api.richTextModule.$createHeadingNode('h3');
+        });
+      } else if (type === 'quote') {
+        api.selectionModule.$setBlocksType(selection, function() {
+          return api.richTextModule.$createQuoteNode();
+        });
+      } else if (type === 'bullet') {
+        api.editor.dispatchCommand(api.listModule.INSERT_UNORDERED_LIST_COMMAND, undefined);
+      } else if (type === 'number') {
+        api.editor.dispatchCommand(api.listModule.INSERT_ORDERED_LIST_COMMAND, undefined);
+      }
+    });
+    scheduleMarkdownInlineToolbarUpdate();
+  }
+
+  function getMarkdownToolbarState() {
+    var state = { bold: false, italic: false, underline: false, strikethrough: false, code: false, blockType: 'paragraph' };
+    if (!markdownLexicalApi || !markdownLexicalApi.editor || !markdownLexicalApi.lexicalModule) {
+      return state;
+    }
+    var api = markdownLexicalApi;
+    api.editor.getEditorState().read(function() {
+      var selection = api.lexicalModule.$getSelection();
+      if (!selection || !api.lexicalModule.$isRangeSelection(selection)) {
+        return;
+      }
+      state.bold = selection.hasFormat('bold');
+      state.italic = selection.hasFormat('italic');
+      state.underline = selection.hasFormat('underline');
+      state.strikethrough = selection.hasFormat('strikethrough');
+      state.code = selection.hasFormat('code');
+
+      var anchorNode = selection.anchor.getNode();
+      var element = anchorNode.getKey() === 'root'
+        ? anchorNode
+        : anchorNode.getTopLevelElementOrThrow();
+      var elementType = element.getType();
+      if (elementType === 'heading') {
+        state.blockType = element.getTag();
+      } else if (elementType === 'list') {
+        state.blockType = element.getListType() === 'number' ? 'number' : 'bullet';
+      } else if (elementType === 'listitem') {
+        var parent = element.getParent();
+        if (parent && parent.getType() === 'list') {
+          state.blockType = parent.getListType() === 'number' ? 'number' : 'bullet';
+        }
+      } else if (elementType === 'quote') {
+        state.blockType = 'quote';
+      } else {
+        state.blockType = 'paragraph';
+      }
+    });
+    return state;
   }
 
   function updateMarkdownInlineToolbar() {
@@ -2212,11 +2575,42 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       return;
     }
 
-    const left = Math.max(8, Math.min(window.innerWidth - 180, rect.left + rect.width / 2 - 66));
-    const top = Math.max(8, Math.min(window.innerHeight - 56, rect.top - 44));
+    var toolbarState = getMarkdownToolbarState();
+    var buttons = markdownInlineToolbarRoot.querySelectorAll('.vf-markdown-editor__inline-button[data-format]');
+    for (var i = 0; i < buttons.length; i++) {
+      var btn = buttons[i];
+      var fmt = btn.getAttribute('data-format');
+      if (fmt && toolbarState[fmt]) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    }
+
+    var blockTrigger = markdownInlineToolbarRoot.querySelector('.vf-markdown-editor__block-trigger');
+    if (blockTrigger) {
+      var blockLabels = { paragraph: '\\u00B6', h1: 'H\\u2081', h2: 'H\\u2082', h3: 'H\\u2083', quote: '\\u201C', bullet: '\\u2022', number: '1.' };
+      blockTrigger.textContent = blockLabels[toolbarState.blockType] || '\\u00B6';
+    }
+
+    var blockDropdown = markdownInlineToolbarRoot.querySelector('.vf-markdown-editor__block-dropdown');
+    if (blockDropdown) {
+      var options = blockDropdown.querySelectorAll('.vf-markdown-editor__block-option');
+      for (var j = 0; j < options.length; j++) {
+        var opt = options[j];
+        if (opt.getAttribute('data-block-type') === toolbarState.blockType) {
+          opt.classList.add('active');
+        } else {
+          opt.classList.remove('active');
+        }
+      }
+    }
+
+    const left = Math.max(8, Math.min(window.innerWidth - 220, rect.left + rect.width / 2 - 100));
+    const top = Math.max(8, Math.min(window.innerHeight - 80, rect.top - 72));
     markdownInlineToolbarRoot.style.left = left + 'px';
     markdownInlineToolbarRoot.style.top = top + 'px';
-    markdownInlineToolbarRoot.style.display = 'inline-flex';
+    markdownInlineToolbarRoot.style.display = 'flex';
   }
 
   function scheduleMarkdownInlineToolbarUpdate() {
@@ -3206,7 +3600,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       import('https://esm.sh/@lexical/rich-text@0.21.0?target=es2022'),
       import('https://esm.sh/@lexical/list@0.21.0?target=es2022'),
       import('https://esm.sh/@lexical/markdown@0.21.0?target=es2022'),
-      import('https://esm.sh/@lexical/history@0.21.0?target=es2022')
+      import('https://esm.sh/@lexical/history@0.21.0?target=es2022'),
+      import('https://esm.sh/@lexical/selection@0.21.0?target=es2022')
     ]).then(function(modules) {
       if (!markdownEditorSurface) {
         return;
@@ -3217,6 +3612,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       const listModule = modules[2];
       const markdownModule = modules[3];
       const historyModule = modules[4];
+      const selectionModule = modules[5];
 
       const editor = lexicalModule.createEditor({
         namespace: 'veryfront-markdown-preview',
@@ -3270,7 +3666,10 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       markdownLexicalApi = {
         editor: editor,
         lexicalModule: lexicalModule,
+        richTextModule: richTextModule,
+        listModule: listModule,
         markdownModule: markdownModule,
+        selectionModule: selectionModule,
         unregisterRichText: unregisterRichText,
         unregisterList: unregisterList,
         unregisterHistory: unregisterHistory,
@@ -3438,8 +3837,17 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       return;
     }
 
+    var seenIds = {};
     const visibleUsers = users.filter(function(user) {
-      return user && typeof user.name === 'string';
+      if (!user || typeof user.name !== 'string') {
+        return false;
+      }
+      var uniqueKey = user.id || user.name;
+      if (seenIds[uniqueKey]) {
+        return false;
+      }
+      seenIds[uniqueKey] = true;
+      return true;
     }).slice(0, 4);
 
     if (visibleUsers.length === 0) {
@@ -3557,19 +3965,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     const title = document.createElement('div');
     title.className = 'vf-markdown-editor__title';
     title.setAttribute(DATA_VF_IGNORE, 'true');
-
-    const titleMain = document.createElement('div');
-    titleMain.className = 'vf-markdown-editor__title-main';
-    titleMain.setAttribute(DATA_VF_IGNORE, 'true');
-    titleMain.textContent = 'Markdown editor';
-
-    const titleHints = document.createElement('div');
-    titleHints.className = 'vf-markdown-editor__title-hints';
-    titleHints.setAttribute(DATA_VF_IGNORE, 'true');
-    titleHints.textContent = '/ commands | Shift+Alt+Up/Down move block | Undo/Redo';
-
-    title.appendChild(titleMain);
-    title.appendChild(titleHints);
+    title.textContent = PAGE_PATH || 'Untitled';
 
     const actions = document.createElement('div');
     actions.className = 'vf-markdown-editor__actions';
@@ -3589,42 +3985,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     selections.className = 'vf-markdown-editor__selections';
     selections.setAttribute(DATA_VF_IGNORE, 'true');
 
-    const undoButton = document.createElement('button');
-    undoButton.type = 'button';
-    undoButton.className = 'vf-markdown-editor__history';
-    undoButton.setAttribute(DATA_VF_IGNORE, 'true');
-    undoButton.setAttribute('title', 'Undo');
-    undoButton.textContent = 'Undo';
-    undoButton.addEventListener('click', function() {
-      if (!markdownLexicalApi || !markdownLexicalApi.lexicalModule) {
-        return;
-      }
-      applyMarkdownHistoryCommand(markdownLexicalApi.lexicalModule.UNDO_COMMAND);
-    });
-
-    const redoButton = document.createElement('button');
-    redoButton.type = 'button';
-    redoButton.className = 'vf-markdown-editor__history';
-    redoButton.setAttribute(DATA_VF_IGNORE, 'true');
-    redoButton.setAttribute('title', 'Redo');
-    redoButton.textContent = 'Redo';
-    redoButton.addEventListener('click', function() {
-      if (!markdownLexicalApi || !markdownLexicalApi.lexicalModule) {
-        return;
-      }
-      applyMarkdownHistoryCommand(markdownLexicalApi.lexicalModule.REDO_COMMAND);
-    });
-
-    const openStudioButton = document.createElement('button');
-    openStudioButton.type = 'button';
-    openStudioButton.className = 'vf-markdown-editor__history';
-    openStudioButton.setAttribute(DATA_VF_IGNORE, 'true');
-    openStudioButton.setAttribute('title', 'Open file in Studio');
-    openStudioButton.textContent = 'Open';
-    openStudioButton.addEventListener('click', function() {
-      openMarkdownSourceInStudio(1);
-    });
-
     const exitButton = document.createElement('button');
     exitButton.type = 'button';
     exitButton.className = 'vf-markdown-editor__exit';
@@ -3637,9 +3997,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     actions.appendChild(status);
     actions.appendChild(presence);
     actions.appendChild(selections);
-    actions.appendChild(undoButton);
-    actions.appendChild(redoButton);
-    actions.appendChild(openStudioButton);
     actions.appendChild(exitButton);
 
     toolbar.appendChild(title);
@@ -3710,49 +4067,100 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     const inlineToolbar = document.createElement('div');
     inlineToolbar.className = 'vf-markdown-editor__inline-toolbar';
     inlineToolbar.setAttribute(DATA_VF_IGNORE, 'true');
+    inlineToolbar.style.position = 'relative';
 
-    const boldButton = document.createElement('button');
-    boldButton.type = 'button';
-    boldButton.className = 'vf-markdown-editor__inline-button';
-    boldButton.setAttribute(DATA_VF_IGNORE, 'true');
-    boldButton.textContent = 'B';
-    boldButton.addEventListener('mousedown', function(event) {
-      event.preventDefault();
-    });
-    boldButton.addEventListener('click', function(event) {
-      event.preventDefault();
-      toggleMarkdownInlineFormat('bold');
+    function createInlineButton(label, format, handler) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'vf-markdown-editor__inline-button';
+      btn.setAttribute(DATA_VF_IGNORE, 'true');
+      btn.textContent = label;
+      if (format) {
+        btn.setAttribute('data-format', format);
+      }
+      btn.addEventListener('mousedown', function(event) {
+        event.preventDefault();
+      });
+      btn.addEventListener('click', function(event) {
+        event.preventDefault();
+        if (handler) { handler(); }
+      });
+      return btn;
+    }
+
+    function createSeparator() {
+      var sep = document.createElement('div');
+      sep.className = 'vf-markdown-editor__inline-separator';
+      return sep;
+    }
+
+    var blockDropdown = document.createElement('div');
+    blockDropdown.className = 'vf-markdown-editor__block-dropdown';
+    blockDropdown.setAttribute(DATA_VF_IGNORE, 'true');
+
+    var blockTypes = [
+      { type: 'paragraph', label: 'Paragraph' },
+      { type: 'h1', label: 'Heading 1' },
+      { type: 'h2', label: 'Heading 2' },
+      { type: 'h3', label: 'Heading 3' },
+      { type: 'quote', label: 'Quote' }
+    ];
+    blockTypes.forEach(function(bt) {
+      var opt = document.createElement('button');
+      opt.type = 'button';
+      opt.className = 'vf-markdown-editor__block-option';
+      opt.setAttribute(DATA_VF_IGNORE, 'true');
+      opt.setAttribute('data-block-type', bt.type);
+      opt.textContent = bt.label;
+      opt.addEventListener('mousedown', function(event) {
+        event.preventDefault();
+      });
+      opt.addEventListener('click', function(event) {
+        event.preventDefault();
+        setMarkdownBlockType(bt.type);
+        blockDropdown.style.display = 'none';
+        scheduleMarkdownInlineToolbarUpdate();
+      });
+      blockDropdown.appendChild(opt);
     });
 
-    const italicButton = document.createElement('button');
-    italicButton.type = 'button';
-    italicButton.className = 'vf-markdown-editor__inline-button';
-    italicButton.setAttribute(DATA_VF_IGNORE, 'true');
-    italicButton.textContent = 'I';
-    italicButton.addEventListener('mousedown', function(event) {
+    var blockTrigger = document.createElement('button');
+    blockTrigger.type = 'button';
+    blockTrigger.className = 'vf-markdown-editor__block-trigger';
+    blockTrigger.setAttribute(DATA_VF_IGNORE, 'true');
+    blockTrigger.textContent = String.fromCharCode(182);
+    blockTrigger.addEventListener('mousedown', function(event) {
       event.preventDefault();
     });
-    italicButton.addEventListener('click', function(event) {
+    blockTrigger.addEventListener('click', function(event) {
       event.preventDefault();
-      toggleMarkdownInlineFormat('italic');
-    });
-
-    const codeButton = document.createElement('button');
-    codeButton.type = 'button';
-    codeButton.className = 'vf-markdown-editor__inline-button';
-    codeButton.setAttribute(DATA_VF_IGNORE, 'true');
-    codeButton.textContent = '</>';
-    codeButton.addEventListener('mousedown', function(event) {
-      event.preventDefault();
-    });
-    codeButton.addEventListener('click', function(event) {
-      event.preventDefault();
-      toggleMarkdownInlineFormat('code');
+      var isOpen = blockDropdown.style.display === 'block';
+      blockDropdown.style.display = isOpen ? 'none' : 'block';
     });
 
-    inlineToolbar.appendChild(boldButton);
-    inlineToolbar.appendChild(italicButton);
-    inlineToolbar.appendChild(codeButton);
+    var row1 = document.createElement('div');
+    row1.className = 'vf-markdown-editor__inline-row';
+    row1.appendChild(blockTrigger);
+    row1.appendChild(createSeparator());
+    row1.appendChild(createInlineButton('B', 'bold', function() { toggleMarkdownInlineFormat('bold'); }));
+    row1.appendChild(createInlineButton('I', 'italic', function() { toggleMarkdownInlineFormat('italic'); }));
+    row1.appendChild(createInlineButton('U', 'underline', function() { toggleMarkdownInlineFormat('underline'); }));
+
+    var row2 = document.createElement('div');
+    row2.className = 'vf-markdown-editor__inline-row';
+    row2.appendChild(createInlineButton(String.fromCodePoint(128279), null, function() { insertMarkdownLink(); }));
+    row2.appendChild(createInlineButton('S', 'strikethrough', function() { toggleMarkdownInlineFormat('strikethrough'); }));
+    row2.appendChild(createInlineButton('</>', 'code', function() { toggleMarkdownInlineFormat('code'); }));
+
+    inlineToolbar.appendChild(row1);
+    inlineToolbar.appendChild(row2);
+    inlineToolbar.appendChild(blockDropdown);
+
+    document.addEventListener('mousedown', function(event) {
+      if (blockDropdown.style.display === 'block' && !blockDropdown.contains(event.target) && event.target !== blockTrigger) {
+        blockDropdown.style.display = 'none';
+      }
+    });
 
     const blockDragHandle = document.createElement('button');
     blockDragHandle.type = 'button';
