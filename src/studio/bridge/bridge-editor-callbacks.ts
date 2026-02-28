@@ -25,6 +25,9 @@ export interface EditorCallbacks {
 let callbacks: EditorCallbacks | null = null;
 
 export function registerEditorCallbacks(cb: EditorCallbacks): void {
+  if (callbacks) {
+    console.warn("[StudioBridge] EditorCallbacks already registered, overwriting");
+  }
   callbacks = cb;
 }
 

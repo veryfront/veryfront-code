@@ -4,6 +4,7 @@
  * Dispatches incoming Studio messages to the appropriate bridge functions.
  */
 
+import { editorState, setMarkdownPersistStatus } from "./bridge-editor-state.ts";
 import { state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
 import { isFromStudio, postToStudio } from "./bridge-messaging.ts";
@@ -15,7 +16,6 @@ import {
   showHoverOverlay,
   showSelectionOverlay,
 } from "./bridge-inspector.ts";
-import { setMarkdownPersistStatus } from "./bridge-markdown-editor.ts";
 import { captureMultipleSections, captureScreenshot } from "./bridge-screenshot.ts";
 
 export function handleStudioMessage(event: MessageEvent): void {
@@ -81,14 +81,20 @@ export function handleStudioMessage(event: MessageEvent): void {
       if (!isMarkdownPage()) {
         return;
       }
-      if (message.fileId && state.markdownFileId && message.fileId !== state.markdownFileId) {
+      if (
+        message.fileId && editorState.markdownFileId &&
+        message.fileId !== editorState.markdownFileId
+      ) {
         return;
       }
-      if (state.markdownSaveInProgress) {
+      if (editorState.markdownSaveInProgress) {
         setMarkdownPersistStatus(message.status || "saved");
-        if (message.status === "saved" || message.status === "error") {
-          state.markdownSaveInProgress = false;
-          state.markdownHasUnsavedChanges = false;
+        if (message.status === "saved") {
+          editorState.markdownSaveInProgress = false;
+          editorState.markdownHasUnsavedChanges = false;
+        } else if (message.status === "error") {
+          editorState.markdownSaveInProgress = false;
+          // Keep markdownHasUnsavedChanges = true so user can retry
         }
       }
       return;

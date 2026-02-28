@@ -6,34 +6,23 @@
  * editor sync scheduling, and text diffing.
  *
  * NOTE: This module participates in a circular import cycle with
- * bridge-markdown-yjs.ts and bridge-markdown-editor.ts.
- * All cross-module calls must remain in function bodies (never at module top-level).
+ * bridge-markdown-yjs.ts. All cross-module calls must remain in
+ * function bodies (never at module top-level).
  */
 
-import { state } from "./bridge-state.ts";
-import { getConfig } from "./bridge-config.ts";
+import { editorState as state, setMarkdownPersistStatus } from "./bridge-editor-state.ts";
+import type { MdxBlock, MdxImportEntry } from "./bridge-state.ts";
+import { getConfig, isMdxPage } from "./bridge-config.ts";
 import { getEditorCallbacks } from "./bridge-editor-callbacks.ts";
 import { syncLocalChangeToYText } from "./bridge-markdown-yjs.ts";
-import { scheduleMarkdownSelectionOverlayRender } from "./bridge-selection.ts";
-import { setMarkdownPersistStatus } from "./bridge-markdown-editor.ts";
+import {
+  escapeRegexText,
+  getMarkdownRawBlockTokenPattern,
+  scheduleMarkdownSelectionOverlayRender,
+} from "./bridge-selection.ts";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface MdxImportEntry {
-  filePath: string;
-  symbolName: string;
-  importKind: string;
-}
-
-export interface MdxBlock {
-  tokenIndex: number;
-  label: string;
-  lineNumber: number;
-  filePath: string;
-  symbolName: string;
-}
+// Re-export shared types for consumers
+export type { MdxBlock, MdxImportEntry };
 
 export interface ExtractedRawBlocks {
   editorBody: string;
@@ -56,11 +45,6 @@ export interface TextDiff {
 // ---------------------------------------------------------------------------
 // Helpers (private to this module)
 // ---------------------------------------------------------------------------
-
-function isMdxPage(): boolean {
-  const pagePath = getConfig().pagePath;
-  return typeof pagePath === "string" && pagePath.toLowerCase().endsWith(".mdx");
-}
 
 function getLineNumberForOffset(text: string, offset: number): number {
   const source = typeof text === "string" ? text : "";
@@ -88,29 +72,6 @@ function getMdxComponentName(blockText: string): string {
     return "jsx block";
   }
   return "component block";
-}
-
-function escapeRegexText(value: string): string {
-  const text = String(value || "");
-  let escaped = "";
-  for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
-    if ("\\^$.*+?()[]{}|".indexOf(char) >= 0) {
-      escaped += "\\" + char;
-    } else {
-      escaped += char;
-    }
-  }
-  return escaped;
-}
-
-function getMarkdownRawBlockTokenPattern(): RegExp {
-  const prefix =
-    typeof state.markdownRawBlockTokenPrefix === "string" && state.markdownRawBlockTokenPrefix
-      ? state.markdownRawBlockTokenPrefix
-      : "VF_RAW_BLOCK";
-  const escapedPrefix = escapeRegexText(prefix);
-  return new RegExp("\\[\\[" + escapedPrefix + "_(\\d+)\\]\\]", "g");
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +289,7 @@ export function parseMdxImportMap(content: string): Record<string, MdxImportEntr
       if (commaIndex >= 0) {
         const defaultPart = normalizedSpecifier.slice(0, commaIndex).trim();
         const restPart = normalizedSpecifier.slice(commaIndex + 1).trim();
-        const normalizedDefaultPart = defaultPart.trim();
+        const normalizedDefaultPart = defaultPart;
         if (normalizedDefaultPart && !/^type\s+/.test(normalizedDefaultPart)) {
           setImportEntry(normalizedDefaultPart, resolvedPath, "", "default");
         }
@@ -341,8 +302,7 @@ export function parseMdxImportMap(content: string): Record<string, MdxImportEntr
           }
         }
       } else {
-        const defaultPart = normalizedSpecifier.trim();
-        const normalizedDefaultPart = defaultPart.trim();
+        const normalizedDefaultPart = normalizedSpecifier;
         if (normalizedDefaultPart && !/^type\s+/.test(normalizedDefaultPart)) {
           setImportEntry(normalizedDefaultPart, resolvedPath, "", "default");
         }
@@ -648,11 +608,19 @@ export function saveMarkdownContent(): void {
     clearTimeout(state.markdownSyncTimer);
     state.markdownSyncTimer = null;
   }
-  cb.onContentChange(
-    state.markdownFileId,
-    getConfig().pagePath,
-    state.markdownCurrentContent,
-    true,
-  );
-  state.markdownHasUnsavedChanges = false;
+  try {
+    cb.onContentChange(
+      state.markdownFileId,
+      getConfig().pagePath,
+      state.markdownCurrentContent,
+      true,
+    );
+  } catch (err) {
+    state.markdownSaveInProgress = false;
+    setMarkdownPersistStatus("error");
+    console.error("[StudioBridge] Save failed:", err);
+  }
+  // markdownHasUnsavedChanges is cleared by setMarkdownPersistState response
+  // from Studio, not here — avoids race where edits between save request
+  // and response would be incorrectly marked as saved.
 }

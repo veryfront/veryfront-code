@@ -1,9 +1,80 @@
 /**
  * Bridge Shared State
  *
- * Single mutable state object shared across all bridge modules.
- * All former IIFE `let` variables live here.
+ * Bridge infrastructure state (inspector, console, screenshot).
+ * Editor state lives in bridge-editor-state.ts.
  */
+
+// ---------------------------------------------------------------------------
+// Shared types (used by state and multiple bridge modules)
+// ---------------------------------------------------------------------------
+
+export interface PresenceUser {
+  id: string;
+  name: string;
+  color: string;
+  isCurrentUser: boolean;
+  isAgent: boolean;
+}
+
+export interface RemoteSelection {
+  id: string;
+  name: string;
+  color: string;
+  isCurrentUser: boolean;
+  start: number;
+  end: number;
+}
+
+export interface SlashMenuContext {
+  lineStart: number;
+  caret: number;
+  indent: string;
+  query: string;
+  anchorLeft: number;
+  anchorTop: number;
+}
+
+export interface SlashMenuCommand {
+  id: string;
+  label: string;
+  description: string;
+  aliases: string[];
+  icon: string;
+  shortcut: string;
+}
+
+export interface MdxImportEntry {
+  filePath: string;
+  symbolName: string;
+  importKind: string;
+}
+
+export interface MdxBlock {
+  tokenIndex: number;
+  label: string;
+  lineNumber: number;
+  filePath: string;
+  symbolName: string;
+}
+
+/** Lexical editor API surface exposed after dynamic import */
+export interface LexicalApi {
+  editor: unknown;
+  lexicalModule: unknown;
+  richTextModule: unknown;
+  listModule: unknown;
+  markdownModule: unknown;
+  selectionModule: unknown;
+  unregisterRichText: () => void;
+  unregisterList: () => void;
+  unregisterHistory: () => void;
+  unregisterUpdate: () => void;
+}
+
+// ---------------------------------------------------------------------------
+// Bridge infrastructure state
+// ---------------------------------------------------------------------------
 
 export const state = {
   // Inspector
@@ -16,87 +87,20 @@ export const state = {
   hoverOverlay: null as HTMLElement | null,
   selectionOverlay: null as HTMLElement | null,
 
-  // Markdown editor DOM
-  markdownEditorRoot: null as HTMLElement | null,
-  markdownEditorSurface: null as HTMLElement | null,
-  markdownEditorTextarea: null as HTMLTextAreaElement | null,
-  markdownEditButton: null as HTMLButtonElement | null,
-  markdownFileId: null as string | null,
-
-  // Markdown timers
-  markdownSyncTimer: null as ReturnType<typeof setTimeout> | null,
-  markdownSelectionSyncTimer: null as ReturnType<typeof setTimeout> | null,
-
-  // Markdown persist
-  markdownPersistStatus: null as HTMLElement | null,
-
-  // Markdown presence & selections
-  markdownPresenceRoot: null as HTMLElement | null,
-  markdownSelectionsRoot: null as HTMLElement | null,
-  markdownSelectionOverlayRoot: null as HTMLElement | null,
-  markdownOverlaySelections: [] as any[],
-  markdownSelectionOverlayRenderFrame: null as number | null,
-
-  // Slash menu
-  markdownSlashMenuRoot: null as HTMLElement | null,
-  markdownSlashMenuTimer: null as ReturnType<typeof setTimeout> | null,
-  markdownSlashMenuContext: null as any,
-  markdownSlashMenuCommands: [] as any[],
-  markdownSlashMenuActiveIndex: 0,
-
-  // Inline toolbar
-  markdownInlineToolbarRoot: null as HTMLElement | null,
-  markdownInlineToolbarFrame: null as number | null,
-
-  // Block drag
-  markdownBlockDragHandle: null as HTMLElement | null,
-  markdownBlockDropIndicator: null as HTMLElement | null,
-  markdownBlockDropLabel: null as HTMLElement | null,
-  markdownBlockDragGhost: null as HTMLElement | null,
-  markdownBlockDragSourceIndex: -1,
-  markdownBlockDropSlotIndex: -1,
-  markdownBlockHandleHoverIndex: -1,
-  markdownBlockDragActive: false,
-
-  // MDX blocks
-  markdownMdxBlocksRoot: null as HTMLElement | null,
-
-  // Lexical
-  markdownLexicalApi: null as any,
-  markdownLexicalSetupPromise: null as Promise<void> | null,
-
-  // Markdown content
-  markdownCurrentContent: "",
-  markdownCurrentEditorContent: "",
-  markdownLexicalRenderedContent: null as string | null,
-  markdownApplyingRemoteUpdate: false,
-  markdownFrontmatter: "",
-  markdownRawBlocks: [] as string[],
-  markdownRawBlockTokenPrefix: "VF_RAW_BLOCK",
-  markdownLatestMdxBlocks: [] as any[],
-  markdownLatestMdxImportMap: {} as Record<string, any>,
-  markdownLatestPresenceUsers: [] as any[],
-  markdownLatestSelections: [] as any[],
-  markdownHasUnsavedChanges: false,
-  markdownSaveInProgress: false,
-
-  // Yjs
-  markdownYDoc: null as any,
-  markdownYProvider: null as any,
-  markdownYText: null as any,
-  markdownYjsConnected: false,
-  markdownYjsSetupId: 0,
-  markdownYjsY: null as any,
-  markdownPendingSelection: null as any,
-
   // Console
-  originalConsole: {} as Record<string, (...args: any[]) => void>,
+  originalConsole: {} as Record<string, (...args: unknown[]) => void>,
   logCounter: 0,
 
   // Screenshot
   html2canvasLoaded: false,
   html2canvasPromise: null as Promise<void> | null,
 };
+
+// ---------------------------------------------------------------------------
+// Re-exports from editor state (for modules that import from bridge-state)
+// ---------------------------------------------------------------------------
+
+export { editorState, setMarkdownPersistStatus } from "./bridge-editor-state.ts";
 
 export const LEXICAL_YJS_ORIGIN = "lexical-yjs-binding";
 
@@ -113,7 +117,7 @@ export const CONSOLE_METHODS = [
 
 export const DOM_IGNORE_TAGS = ["SCRIPT", "STYLE", "LINK", "META", "NOSCRIPT"];
 
-export const MARKDOWN_SLASH_COMMANDS = [
+export const MARKDOWN_SLASH_COMMANDS: SlashMenuCommand[] = [
   {
     id: "text",
     label: "Text",
