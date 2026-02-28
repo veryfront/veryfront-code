@@ -1,66 +1,15 @@
 import { assertEquals } from "@std/assert";
-import { generateStudioBridgeScript } from "#veryfront/studio/bridge-template.ts";
+import { setConfigForTest } from "./bridge-config.ts";
+import { extractRawBlocksForEditor, parseMdxImportMap } from "./bridge-markdown-core.ts";
+import { getMdxBlockOpenUiState } from "./bridge-block-drag.ts";
 
-type BridgeDebugApi = {
-  parseMdxImportMap: (content: string) => Record<
-    string,
-    { filePath: string; symbolName: string; importKind: string }
-  >;
-  extractRawBlocksForEditor: (
-    body: string,
-    importMap: Record<string, { filePath: string; symbolName: string; importKind: string }>,
-  ) => {
-    markdown: string;
-    rawBlocks: string[];
-    tokenPrefix: string;
-    mdxBlocks: Array<{
-      tokenIndex: number;
-      label: string;
-      lineNumber: number;
-      filePath: string;
-      symbolName: string;
-    }>;
-  };
-  getMdxBlockOpenUiState: (
-    block: { filePath?: string | null } | null,
-  ) => { hasResolvedTarget: boolean; buttonLabel: string; showUnresolvedNote: boolean };
-};
-
-type WindowWithBridgeDebug = {
-  __VF_STUDIO_BRIDGE_DEBUG?: BridgeDebugApi;
-};
-
-function loadBridgeDebugApi(pagePath = "docs/guide/page.mdx"): BridgeDebugApi {
-  const script = generateStudioBridgeScript({
-    projectId: "project-id",
-    pageId: "page-id",
-    pagePath,
-    debugSkipInit: true,
-    debugExposeInternals: true,
-  });
-
-  const previousWindow = (globalThis as { window?: WindowWithBridgeDebug }).window;
-  const windowStub: WindowWithBridgeDebug = {};
-  (globalThis as { window?: WindowWithBridgeDebug }).window = windowStub;
-  try {
-    new Function(script)();
-  } finally {
-    if (previousWindow === undefined) {
-      delete (globalThis as { window?: WindowWithBridgeDebug }).window;
-    } else {
-      (globalThis as { window?: WindowWithBridgeDebug }).window = previousWindow;
-    }
-  }
-
-  if (!windowStub.__VF_STUDIO_BRIDGE_DEBUG) {
-    throw new Error("Bridge debug API not available");
-  }
-  return windowStub.__VF_STUDIO_BRIDGE_DEBUG;
+function setupConfig(pagePath = "docs/guide/page.mdx") {
+  setConfigForTest({ pagePath, pageId: "page-id", projectId: "project-id" });
 }
 
 Deno.test("parseMdxImportMap handles multiline/comments/default-as/type-only imports", () => {
-  const debugApi = loadBridgeDebugApi("docs/guide/page.mdx");
-  const importMap = debugApi.parseMdxImportMap(
+  setupConfig("docs/guide/page.mdx");
+  const importMap = parseMdxImportMap(
     [
       "import React from 'react';",
       "import DefaultComp, {",
@@ -124,10 +73,10 @@ Deno.test("parseMdxImportMap handles multiline/comments/default-as/type-only imp
 });
 
 Deno.test("getMdxBlockOpenUiState marks unresolved imports only when mapping is missing", () => {
-  const debugApi = loadBridgeDebugApi();
+  setupConfig();
 
   assertEquals(
-    debugApi.getMdxBlockOpenUiState({ filePath: "components/Button.tsx" }),
+    getMdxBlockOpenUiState({ filePath: "components/Button.tsx" }),
     {
       hasResolvedTarget: true,
       buttonLabel: "Edit in Studio",
@@ -136,7 +85,7 @@ Deno.test("getMdxBlockOpenUiState marks unresolved imports only when mapping is 
   );
 
   assertEquals(
-    debugApi.getMdxBlockOpenUiState({ filePath: "" }),
+    getMdxBlockOpenUiState({ filePath: "" }),
     {
       hasResolvedTarget: false,
       buttonLabel: "Open MDX source",
@@ -145,7 +94,7 @@ Deno.test("getMdxBlockOpenUiState marks unresolved imports only when mapping is 
   );
 
   assertEquals(
-    debugApi.getMdxBlockOpenUiState(null),
+    getMdxBlockOpenUiState(null),
     {
       hasResolvedTarget: false,
       buttonLabel: "Open MDX source",
@@ -155,7 +104,7 @@ Deno.test("getMdxBlockOpenUiState marks unresolved imports only when mapping is 
 });
 
 Deno.test("extractRawBlocksForEditor marks resolved and unresolved MDX component blocks", () => {
-  const debugApi = loadBridgeDebugApi("docs/guide/page.mdx");
+  setupConfig("docs/guide/page.mdx");
   const source = [
     "import { Card as UiCard } from './components/ui';",
     "",
@@ -167,8 +116,8 @@ Deno.test("extractRawBlocksForEditor marks resolved and unresolved MDX component
     "```",
   ].join("\n");
 
-  const importMap = debugApi.parseMdxImportMap(source);
-  const result = debugApi.extractRawBlocksForEditor(source, importMap);
+  const importMap = parseMdxImportMap(source);
+  const result = extractRawBlocksForEditor(source, importMap);
 
   const uiCardBlock = result.mdxBlocks.find((block) => block.label.includes("UiCard"));
   if (!uiCardBlock) {

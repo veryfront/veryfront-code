@@ -8,7 +8,6 @@
  * @module server/handlers/preview/markdown-html-generator
  */
 
-import { generateStudioBridgeScript } from "#veryfront/studio/bridge-template.ts";
 import { escapeHtml } from "veryfront/utils/html-escape";
 
 /** Options for generating markdown preview HTML. */
@@ -91,15 +90,18 @@ function buildStudioScript(
   }
   const yjsGuid = branchId ? `${canonicalProjectId}:${branchId}` : canonicalProjectId;
 
-  return `<script>${
-    generateStudioBridgeScript({
-      projectId: canonicalProjectId,
-      pageId: canonicalPageId,
-      pagePath: filePath,
-      wsUrl,
-      yjsGuid,
-    })
-  }</script>`;
+  const bridgeConfig: Record<string, unknown> = {
+    projectId: canonicalProjectId,
+    pageId: canonicalPageId,
+    pagePath: filePath,
+  };
+  if (wsUrl) bridgeConfig.wsUrl = wsUrl;
+  if (yjsGuid) bridgeConfig.yjsGuid = yjsGuid;
+
+  // Escape </script> sequences to prevent XSS breakout from inline JSON
+  const safeJson = JSON.stringify(bridgeConfig).replace(/</g, "\\u003c");
+  return `<script>window.__VF_BRIDGE_CONFIG__=${safeJson};</script>
+  <script type="module" src="/_veryfront/studio-bridge.js"></script>`;
 }
 
 /**

@@ -82,7 +82,7 @@ describe("generateMarkdownHtml", () => {
     );
 
     assert(
-      html.includes('const PAGE_ID = "9c7ba88d-fef9-43c0-9f5d-7f1125536d0f";'),
+      html.includes('"pageId":"9c7ba88d-fef9-43c0-9f5d-7f1125536d0f"'),
     );
   });
 
@@ -93,7 +93,8 @@ describe("generateMarkdownHtml", () => {
         filePath: "docs/README.md",
       }),
     );
-    assert(html.includes("PAGE_PATH"));
+    assert(html.includes("pagePath"));
+    assert(html.includes("studio-bridge.js"));
   });
 
   it("injects bridge script for standalone mdx pages without studio_embed", () => {
@@ -103,7 +104,8 @@ describe("generateMarkdownHtml", () => {
         filePath: "docs/page.mdx",
       }),
     );
-    assert(html.includes("PAGE_PATH"));
+    assert(html.includes("pagePath"));
+    assert(html.includes("studio-bridge.js"));
   });
 
   it("omits bridge script for non-markdown pages without studio_embed", () => {
@@ -113,7 +115,7 @@ describe("generateMarkdownHtml", () => {
         filePath: "index.html",
       }),
     );
-    assert(!html.includes("PAGE_PATH"));
+    assert(!html.includes("studio-bridge.js"));
   });
 
   it("prefers vf_project_id for bridge project id when present", () => {
@@ -127,7 +129,7 @@ describe("generateMarkdownHtml", () => {
 
     assert(
       html.includes(
-        'const PROJECT_ID = "95c93d5a-51a1-4ade-b055-72162cf0a891";',
+        '"projectId":"95c93d5a-51a1-4ade-b055-72162cf0a891"',
       ),
     );
   });

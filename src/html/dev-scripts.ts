@@ -68,18 +68,25 @@ export interface StudioScriptOptions {
 export function getStudioScripts(options: StudioScriptOptions): string {
   const nonceAttr = getNonceAttr(options.nonce);
 
-  const params = new URLSearchParams({
+  const bridgeConfig: Record<string, unknown> = {
     projectId: options.projectId,
     pageId: options.pageId,
-    ...(options.pagePath ? { pagePath: options.pagePath } : {}),
-    ...(options.wsUrl ? { wsUrl: options.wsUrl } : {}),
-    ...(options.yjsGuid ? { yjsGuid: options.yjsGuid } : {}),
-  }).toString();
+    pagePath: options.pagePath ?? options.pageId,
+  };
+  if (options.wsUrl) bridgeConfig.wsUrl = options.wsUrl;
+  if (options.yjsGuid) bridgeConfig.yjsGuid = options.yjsGuid;
 
   const sourceHashScript = options.sourceHash
-    ? `<script${nonceAttr}>window.__VERYFRONT_SOURCE_HASH__="${options.sourceHash}";</script>\n  `
+    ? `<script${nonceAttr}>window.__VERYFRONT_SOURCE_HASH__=${
+      JSON.stringify(options.sourceHash).replace(/</g, "\\u003c")
+    };</script>\n  `
     : "";
 
+  // Escape </script> sequences to prevent XSS breakout from inline JSON
+  const safeJson = JSON.stringify(bridgeConfig).replace(/</g, "\\u003c");
+  const configScript = `<script${nonceAttr}>window.__VF_BRIDGE_CONFIG__=${safeJson};</script>`;
+
   return `
-  ${sourceHashScript}<script type="module" src="/_veryfront/studio-bridge.js?${params}"${nonceAttr}></script>`;
+  ${sourceHashScript}${configScript}
+  <script type="module" src="/_veryfront/studio-bridge.js"${nonceAttr}></script>`;
 }

@@ -37,7 +37,7 @@ import { DevEndpointsHandler } from "../handlers/dev/endpoints.handler.ts";
 import { DevFileHandler } from "../handlers/dev/files/index.ts";
 import { DebugContextHandler } from "../handlers/dev/debug-context.handler.ts";
 import { StylesCSSHandler } from "../handlers/dev/styles-css.handler.ts";
-import { StudioEndpointsHandler } from "../handlers/studio/endpoints.handler.ts";
+import { StudioBridgeModulesHandler } from "../handlers/studio/bridge-modules.handler.ts";
 import { StaticHandler } from "../handlers/request/static.handler.ts";
 import { SnippetHandler } from "../handlers/request/snippet.handler.ts";
 import { LibModulesHandler } from "../handlers/request/lib-modules.handler.ts";
@@ -204,7 +204,7 @@ export function createVeryfrontHandler(
     new OpenAPIDocsHandler(),
     new DevDashboardHandler(),
     new ProjectsHandler(),
-    new StudioEndpointsHandler(),
+    new StudioBridgeModulesHandler(),
     new CSSHandler(),
     new DevFileHandler(),
     new SnippetHandler(),
