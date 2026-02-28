@@ -58,14 +58,85 @@ export interface MdxBlock {
   symbolName: string;
 }
 
+// ---------------------------------------------------------------------------
+// Lexical structural types (dynamically imported from ESM CDN)
+// ---------------------------------------------------------------------------
+
+// deno-lint-ignore no-explicit-any
+type LexicalCommand = any;
+// deno-lint-ignore no-explicit-any
+type LexicalEditorState = any;
+// deno-lint-ignore no-explicit-any
+type LexicalNode = any;
+// deno-lint-ignore no-explicit-any
+type LexicalSelection = any;
+
+export interface LexicalEditor {
+  focus(): void;
+  update(fn: () => void, options?: { discrete?: boolean }): void;
+  dispatchCommand(command: LexicalCommand, payload: unknown): void;
+  getEditorState(): { read(fn: () => void): void };
+  registerUpdateListener(fn: (payload: { editorState: LexicalEditorState }) => void): () => void;
+  setRootElement(element: HTMLElement | null): void;
+}
+
+export interface LexicalModule {
+  createEditor(config: Record<string, unknown>): LexicalEditor;
+  $getRoot(): LexicalNode;
+  $getSelection(): LexicalSelection | null;
+  $isRangeSelection(selection: unknown): boolean;
+  $createParagraphNode(): LexicalNode;
+  FORMAT_TEXT_COMMAND: LexicalCommand;
+}
+
+export interface LexicalRichTextModule {
+  HeadingNode: unknown;
+  QuoteNode: unknown;
+  registerRichText(editor: LexicalEditor): () => void;
+  $createHeadingNode(tag: string): LexicalNode;
+  $createQuoteNode(): LexicalNode;
+}
+
+export interface LexicalListModule {
+  ListNode: unknown;
+  ListItemNode: unknown;
+  registerList(editor: LexicalEditor): () => void;
+  INSERT_UNORDERED_LIST_COMMAND: LexicalCommand;
+  INSERT_ORDERED_LIST_COMMAND: LexicalCommand;
+}
+
+export interface LexicalMarkdownModule {
+  TRANSFORMERS: unknown[];
+  $convertToMarkdownString(
+    transformers: unknown[],
+    node?: unknown,
+    shouldPreserve?: boolean,
+  ): string;
+  $convertFromMarkdownString(
+    markdown: string,
+    transformers: unknown[],
+    node?: unknown,
+    shouldPreserve?: boolean,
+  ): void;
+}
+
+export interface LexicalSelectionModule {
+  $setBlocksType(selection: LexicalSelection, factory: () => LexicalNode): void;
+}
+
+export interface LexicalHistoryModule {
+  registerHistory(editor: LexicalEditor, state: unknown, delay: number): () => void;
+  createEmptyHistoryState(): unknown;
+}
+
 /** Lexical editor API surface exposed after dynamic import */
 export interface LexicalApi {
-  editor: unknown;
-  lexicalModule: unknown;
-  richTextModule: unknown;
-  listModule: unknown;
-  markdownModule: unknown;
-  selectionModule: unknown;
+  editor: LexicalEditor;
+  lexicalModule: LexicalModule;
+  richTextModule: LexicalRichTextModule;
+  listModule: LexicalListModule;
+  markdownModule: LexicalMarkdownModule;
+  selectionModule: LexicalSelectionModule;
   unregisterRichText: () => void;
   unregisterList: () => void;
   unregisterHistory: () => void;

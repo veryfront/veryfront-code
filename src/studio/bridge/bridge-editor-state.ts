@@ -20,6 +20,38 @@ import type {
   SlashMenuContext,
 } from "./bridge-state.ts";
 
+// ---------------------------------------------------------------------------
+// Yjs structural types (dynamically imported from ESM CDN)
+// ---------------------------------------------------------------------------
+
+export interface YText {
+  length: number;
+  insert(index: number, text: string): void;
+  delete(index: number, length: number): void;
+  toString(): string;
+  observe(fn: (event: unknown) => void): void;
+}
+
+export interface YjsAwareness {
+  clientID: number;
+  setLocalStateField(field: string, value: unknown): void;
+  getStates(): Map<number, Record<string, unknown>>;
+  on(event: string, fn: (...args: unknown[]) => void): void;
+}
+
+export interface YjsModule {
+  Doc: new (opts?: { guid?: string }) => {
+    getText(name: string): YText;
+    destroy(): void;
+    transact(fn: () => void, origin?: unknown): void;
+  };
+  createRelativePositionFromTypeIndex(type: YText, index: number): unknown;
+  createAbsolutePositionFromRelativePosition(
+    pos: unknown,
+    doc: unknown,
+  ): { index: number; type: unknown } | null;
+}
+
 export const editorState = {
   // Editor DOM
   markdownEditorRoot: null as HTMLElement | null,
@@ -89,17 +121,22 @@ export const editorState = {
   markdownSaveInProgress: false,
 
   // Yjs (dynamically imported — typed structurally)
-  markdownYDoc: null as { getText(name: string): unknown; destroy(): void } | null,
+  markdownYDoc: null as {
+    getText(name: string): YText;
+    destroy(): void;
+    transact(fn: () => void, origin?: unknown): void;
+  } | null,
   markdownYProvider: null as {
     on(event: string, cb: (...args: unknown[]) => void): void;
     disconnect(): void;
     destroy(): void;
-    awareness: unknown;
+    ws: WebSocket | null;
+    awareness: YjsAwareness;
   } | null,
-  markdownYText: null as { length: number } | null,
+  markdownYText: null as YText | null,
   markdownYjsConnected: false,
   markdownYjsSetupId: 0,
-  markdownYjsY: null as unknown,
+  markdownYjsY: null as YjsModule | null,
   markdownPendingSelection: null as { start: number; end: number } | null,
 };
 

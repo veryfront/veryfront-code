@@ -238,8 +238,8 @@ export function parseMdxImportMap(content: string): Record<string, MdxImportEntr
       const aliasMatch = normalizedPart.match(
         /^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/,
       );
-      const sourceName = aliasMatch ? aliasMatch[1] : normalizedPart;
-      const localName = aliasMatch ? aliasMatch[2] : normalizedPart;
+      const sourceName = aliasMatch ? aliasMatch[1]! : normalizedPart;
+      const localName = aliasMatch ? aliasMatch[2]! : normalizedPart;
       if (localName) {
         const isDefaultAlias = sourceName === "default";
         setImportEntry(
@@ -491,7 +491,7 @@ export function extractRawBlocksForEditor(
       label: label,
       lineNumber: getLineNumberForOffset(inputText, offset),
       filePath: componentPath,
-      symbolName: componentSymbol,
+      symbolName: componentSymbol || "",
     });
   };
 

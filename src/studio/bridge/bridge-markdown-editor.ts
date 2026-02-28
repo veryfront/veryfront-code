@@ -26,7 +26,11 @@ import {
   saveMarkdownContent,
 } from "./bridge-markdown-core.ts";
 
-import { disposeMarkdownYjs, setupMarkdownYjsConnection } from "./bridge-markdown-yjs.ts";
+import {
+  disposeMarkdownYjs,
+  setupMarkdownYjsConnection,
+  writeToYText,
+} from "./bridge-markdown-yjs.ts";
 
 import {
   clearMarkdownSelectionOverlay,
@@ -284,10 +288,11 @@ export function applyMarkdownContent(content: unknown): void {
     state.markdownApplyingRemoteUpdate = true;
     try {
       state.markdownLexicalRenderedContent = content;
-      state.markdownLexicalApi.editor.update(
+      const api = state.markdownLexicalApi;
+      api.editor.update(
         function () {
-          const lexicalModule = state.markdownLexicalApi.lexicalModule;
-          const markdownModule = state.markdownLexicalApi.markdownModule;
+          const lexicalModule = api.lexicalModule;
+          const markdownModule = api.markdownModule;
           const root = lexicalModule.$getRoot();
           root.clear();
           markdownModule.$convertFromMarkdownString(
@@ -465,8 +470,10 @@ export function setMarkdownSelections(selections: any[]): void {
     }
 
     state.markdownOverlaySelections.push({
+      id: selection.id || "",
       name: displayName,
       color: color,
+      isCurrentUser: selection.isCurrentUser || false,
       start: editorRange.start,
       end: editorRange.end,
     });
@@ -505,13 +512,30 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
 
   const presence = el("div", "vf-markdown-editor__presence");
   const selections = el("div", "vf-markdown-editor__selections");
+  // In Simple Mode the editor IS the experience — hide Done button.
+  // In Advanced Mode, show Done to return to preview.
   const exitButton = btn("vf-markdown-editor__exit", "Done", function () {
     setMarkdownEditMode(false);
   });
+  if (getConfig().studioMode === "simple") {
+    exitButton.style.display = "none";
+  }
 
   actions.appendChild(status);
   actions.appendChild(presence);
   actions.appendChild(selections);
+
+  // Debug button: write test content via Yjs (only visible when debugExposeInternals is on)
+  if (getConfig().debugExposeInternals) {
+    const debugBtn = btn("vf-markdown-editor__exit", "Yjs Write", function () {
+      const ok = writeToYText("\n\nHello from Yjs debug write!\n");
+      console.debug("[StudioBridge] Debug Yjs write:", ok ? "success" : "failed (not connected)");
+    });
+    debugBtn.style.fontSize = "10px";
+    debugBtn.style.opacity = "0.6";
+    actions.appendChild(debugBtn);
+  }
+
   actions.appendChild(exitButton);
 
   toolbar.appendChild(title);
@@ -534,7 +558,7 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
   });
   surface.addEventListener("keyup", scheduleMarkdownSlashMenuUpdate);
   surface.addEventListener("mouseup", scheduleMarkdownSlashMenuUpdate);
-  surface.addEventListener("keydown", handleMarkdownSlashMenuKeydown as EventListener);
+  surface.addEventListener("keydown", handleMarkdownSlashMenuKeydown as unknown as EventListener);
   surface.addEventListener("keydown", function (event: KeyboardEvent) {
     if (!event.shiftKey || !event.altKey) {
       return;
@@ -980,7 +1004,7 @@ export function setMarkdownEditMode(enabled: boolean): void {
       setupMarkdownYjsConnection({
         wsUrl: getConfig().wsUrl,
         guid: getConfig().yjsGuid,
-        fileId: state.markdownFileId,
+        fileId: state.markdownFileId || "",
       });
     }
   } else {
@@ -1037,9 +1061,17 @@ export function setupMarkdownEditor(params: URLSearchParams): void {
   }
 
   state.markdownFileId = params.get("vf_file_id") || getConfig().pageId || null;
-  ensureMarkdownEditButton();
 
-  if (params.get("edit") === "true") {
+  // In Simple Mode, auto-activate the editor for markdown pages
+  // (no Edit button needed — the editor IS the experience).
+  // In Advanced Mode, show the Edit button and wait for user click.
+  if (getConfig().studioMode === "simple") {
     setMarkdownEditMode(true);
+  } else {
+    ensureMarkdownEditButton();
+
+    if (params.get("edit") === "true") {
+      setMarkdownEditMode(true);
+    }
   }
 }

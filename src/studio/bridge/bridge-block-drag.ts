@@ -509,8 +509,9 @@ export function moveMarkdownLexicalBlock(sourceIndex: number, targetSlotIndex: n
   }
 
   let didMove = false;
-  state.markdownLexicalApi.editor.update(function () {
-    const root = state.markdownLexicalApi.lexicalModule.$getRoot();
+  const lexApi = state.markdownLexicalApi;
+  lexApi.editor.update(function () {
+    const root = lexApi.lexicalModule.$getRoot();
     const children = root.getChildren();
     const maxSlot = children.length;
     if (source < 0 || source >= maxSlot || targetSlot < 0 || targetSlot > maxSlot) {
