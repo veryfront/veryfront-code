@@ -242,19 +242,24 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
 
       provider.awareness.on("change", syncAwareness);
 
+      // Register Y.Text observer once (outside sync handler to prevent
+      // duplicate registration on reconnect — sync can fire multiple times)
+      let ytextObserverRegistered = false;
+
       provider.on("sync", (synced: boolean) => {
         if (synced && !state.markdownYjsConnected) {
           state.markdownYjsConnected = true;
 
           const ytextContent = ytext.toString();
           if (
+            state.markdownHasUnsavedChanges &&
             state.markdownCurrentContent &&
             state.markdownCurrentContent !== ytextContent
           ) {
-            // User typed before sync completed - push local edits to Y.Text
+            // User made actual edits before sync completed - push to Y.Text
             syncLocalChangeToYText(state.markdownCurrentContent);
           } else if (ytextContent) {
-            // No local edits - seed editor from Y.Text
+            // No local edits or same content - seed editor from Y.Text
             applyMarkdownContent(ytextContent);
           }
 
@@ -273,16 +278,19 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
           }
 
           // Observe Y.Text for remote changes (from other users / Monaco)
-          ytext.observe((event: any) => {
-            if (event.transaction.origin === LEXICAL_YJS_ORIGIN) {
-              return;
-            }
-            const fullContent = ytext.toString();
-            if (fullContent === state.markdownCurrentContent) {
-              return;
-            }
-            applyMarkdownContent(fullContent);
-          });
+          if (!ytextObserverRegistered) {
+            ytextObserverRegistered = true;
+            ytext.observe((event: any) => {
+              if (event.transaction.origin === LEXICAL_YJS_ORIGIN) {
+                return;
+              }
+              const fullContent = ytext.toString();
+              if (fullContent === state.markdownCurrentContent) {
+                return;
+              }
+              applyMarkdownContent(fullContent);
+            });
+          }
 
           // Initial awareness sync after Yjs is connected
           syncAwareness();
