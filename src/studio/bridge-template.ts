@@ -3871,7 +3871,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     }
 
     var seenIds = {};
-    const visibleUsers = users.filter(function(user) {
+    var uniqueUsers = users.filter(function(user) {
       if (!user || typeof user.name !== 'string') {
         return false;
       }
@@ -3881,7 +3881,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       }
       seenIds[uniqueKey] = true;
       return true;
-    }).slice(0, 4);
+    });
+    const visibleUsers = uniqueUsers.slice(0, 4);
 
     if (visibleUsers.length === 0) {
       markdownPresenceRoot.style.display = 'none';
@@ -3904,11 +3905,11 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       markdownPresenceRoot.appendChild(pill);
     }
 
-    if (users.length > visibleUsers.length) {
+    if (uniqueUsers.length > visibleUsers.length) {
       const extra = document.createElement('div');
       extra.className = 'vf-markdown-editor__presence-pill';
       extra.setAttribute(DATA_VF_IGNORE, 'true');
-      extra.textContent = '+' + String(users.length - visibleUsers.length);
+      extra.textContent = '+' + String(uniqueUsers.length - visibleUsers.length);
       markdownPresenceRoot.appendChild(extra);
     }
   }
