@@ -115,7 +115,7 @@ function readEnvSnapshot(): EnvironmentConfig {
     apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ||
       apiUrl?.replace("/graphql", "/api") ||
       DEFAULTS.apiBaseUrl,
-    publicApiBaseUrl: getEnv("VERYFRONT_PUBLIC_API_URL") ||
+    publicApiBaseUrl: getEnv("VERYFRONT_PUBLIC_API_BASE_URL") ||
       DEFAULTS.apiBaseUrl,
     apiUrl,
     apiToken: getEnv("VERYFRONT_API_TOKEN") || undefined,
