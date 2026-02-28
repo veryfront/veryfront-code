@@ -8,7 +8,10 @@
 
 import { state, LEXICAL_YJS_ORIGIN } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
-import { postToStudio } from "./bridge-messaging.ts";
+import { getEditorCallbacks } from "./bridge-editor-callbacks.ts";
+import { syncLocalChangeToYText } from "./bridge-markdown-yjs.ts";
+import { scheduleMarkdownSelectionOverlayRender } from "./bridge-selection.ts";
+import { setMarkdownPersistStatus } from "./bridge-markdown-editor.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -119,16 +122,12 @@ export function openFilePathInStudio(
     return;
   }
   const safeLine = Number.isFinite(lineNumber) ? Math.max(1, Math.trunc(lineNumber!)) : 1;
-  const payload: Record<string, unknown> = {
-    action: "openFile",
-    filePath: filePath,
-    lineNumber: safeLine,
-    columnNumber: 1,
-  };
-  if (typeof symbolName === "string" && symbolName.trim()) {
-    payload.symbolName = symbolName.trim();
-  }
-  postToStudio(payload);
+  getEditorCallbacks()?.onOpenFile(
+    filePath,
+    safeLine,
+    1,
+    typeof symbolName === "string" && symbolName.trim() ? symbolName.trim() : undefined,
+  );
 }
 
 export function openMarkdownSourceInStudio(lineNumber?: number): void {
@@ -360,11 +359,7 @@ export function postMarkdownEditorReady(): void {
   if (!state.markdownFileId) {
     return;
   }
-  postToStudio({
-    action: "markdownEditorReady",
-    fileId: state.markdownFileId,
-    filePath: getConfig().pagePath,
-  });
+  getEditorCallbacks()?.onEditorReady(state.markdownFileId, getConfig().pagePath);
 }
 
 export function scheduleMarkdownSync(content: string): void {
@@ -375,12 +370,11 @@ export function scheduleMarkdownSync(content: string): void {
     clearTimeout(state.markdownSyncTimer);
   }
   state.markdownSyncTimer = setTimeout(function () {
-    postToStudio({
-      action: "markdownContentChange",
-      fileId: state.markdownFileId,
-      filePath: getConfig().pagePath,
-      content: content,
-    });
+    getEditorCallbacks()?.onContentChange(
+      state.markdownFileId,
+      getConfig().pagePath,
+      content,
+    );
   }, 120);
 }
 
@@ -623,18 +617,10 @@ export function restoreRawBlocksFromEditor(editorBody: string): string {
 /**
  * Called when the local editor content changes.
  *
- * Imports `syncLocalChangeToYText` from bridge-markdown-yjs to push changes
- * to the Yjs document when the connection is active.
- *
- * Also imports `scheduleMarkdownSelectionOverlayRender` which will be
- * provided by the markdown UI module. Both are dynamically referenced here
- * as forward-declared imports.
+ * Syncs changes to Yjs when connected and schedules content sync
+ * and selection overlay rendering.
  */
-export function handleMarkdownLocalChange(
-  content: string,
-  syncLocalChangeToYText: (fullContent: string) => void,
-  scheduleMarkdownSelectionOverlayRender: () => void,
-): void {
+export function handleMarkdownLocalChange(content: string): void {
   if (typeof content !== "string") {
     return;
   }
@@ -654,9 +640,7 @@ export function handleMarkdownLocalChange(
   scheduleMarkdownSelectionOverlayRender();
 }
 
-export function saveMarkdownContent(
-  setMarkdownPersistStatus: (status: string) => void,
-): void {
+export function saveMarkdownContent(): void {
   if (!state.markdownHasUnsavedChanges) {
     return;
   }
@@ -666,12 +650,11 @@ export function saveMarkdownContent(
     clearTimeout(state.markdownSyncTimer);
     state.markdownSyncTimer = null;
   }
-  postToStudio({
-    action: "markdownContentChange",
-    fileId: state.markdownFileId,
-    filePath: getConfig().pagePath,
-    content: state.markdownCurrentContent,
-    save: true,
-  });
+  getEditorCallbacks()?.onContentChange(
+    state.markdownFileId,
+    getConfig().pagePath,
+    state.markdownCurrentContent,
+    true,
+  );
   state.markdownHasUnsavedChanges = false;
 }

@@ -50,6 +50,15 @@ export function getConfig(): BridgeConfig {
   return config;
 }
 
+export function isMarkdownPage(): boolean {
+  const cfg = getConfig();
+  if (typeof cfg.pagePath !== "string") {
+    return false;
+  }
+  const lowerPath = cfg.pagePath.toLowerCase();
+  return lowerPath.endsWith(".md") || lowerPath.endsWith(".mdx");
+}
+
 /** Set config directly (for tests only). */
 export function setConfigForTest(override: Partial<BridgeConfig>): void {
   config = {

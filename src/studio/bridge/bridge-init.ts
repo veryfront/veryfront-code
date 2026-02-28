@@ -8,6 +8,7 @@
 import { state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
 import { postToStudio } from "./bridge-messaging.ts";
+import { registerEditorCallbacks } from "./bridge-editor-callbacks.ts";
 import { injectOverlayStyles } from "./bridge-styles.ts";
 import {
   createOverlay,
@@ -74,6 +75,33 @@ export function init(): void {
     setupErrorHandling();
     setupInspectMode();
   }
+
+  registerEditorCallbacks({
+    onContentChange(fileId, filePath, content, save) {
+      postToStudio({
+        action: "markdownContentChange",
+        fileId,
+        filePath,
+        content,
+        ...(save ? { save: true } : {}),
+      });
+    },
+    onEditorReady(fileId, filePath) {
+      postToStudio({ action: "markdownEditorReady", fileId, filePath });
+    },
+    onOpenFile(filePath, lineNumber, columnNumber, symbolName) {
+      const payload: Record<string, unknown> = {
+        action: "openFile",
+        filePath,
+        lineNumber,
+        columnNumber,
+      };
+      if (symbolName) {
+        payload.symbolName = symbolName;
+      }
+      postToStudio(payload);
+    },
+  });
 
   setupMarkdownEditor(params);
 

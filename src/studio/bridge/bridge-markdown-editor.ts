@@ -7,9 +7,8 @@
  */
 
 import { state } from "./bridge-state.ts";
-import { getConfig } from "./bridge-config.ts";
+import { getConfig, isMarkdownPage } from "./bridge-config.ts";
 import { DATA_VF_IGNORE } from "./bridge-constants.ts";
-import { postToStudio } from "./bridge-messaging.ts";
 
 import {
   handleMarkdownLocalChange,
@@ -66,8 +65,6 @@ import {
   moveMarkdownCurrentBlockByDelta,
   setMarkdownMdxBlocks,
 } from "./bridge-block-drag.ts";
-
-import { isMarkdownPage } from "./bridge-inspector.ts";
 
 // ---------------------------------------------------------------------------
 // setupMarkdownLexicalEditor

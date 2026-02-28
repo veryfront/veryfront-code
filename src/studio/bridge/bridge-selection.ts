@@ -7,8 +7,6 @@
  */
 
 import { state } from "./bridge-state.ts";
-import { getConfig } from "./bridge-config.ts";
-import { postToStudio } from "./bridge-messaging.ts";
 import { DATA_VF_IGNORE } from "./bridge-constants.ts";
 
 // ---------------------------------------------------------------------------

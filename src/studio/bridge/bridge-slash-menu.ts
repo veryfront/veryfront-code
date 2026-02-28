@@ -10,14 +10,18 @@ import { DATA_VF_IGNORE } from "./bridge-constants.ts";
 import {
   composeMarkdownContent,
   restoreRawBlocksFromEditor,
+  scheduleMarkdownSync,
+} from "./bridge-markdown-core.ts";
+import {
   applyMarkdownContent,
   focusMarkdownEditor,
+} from "./bridge-markdown-editor.ts";
+import {
   setMarkdownEditorSelection,
   getMarkdownEditorSelection,
-  scheduleMarkdownSync,
   scheduleMarkdownSelectionSync,
   scheduleMarkdownSelectionOverlayRender,
-} from "./bridge-markdown-core.ts";
+} from "./bridge-selection.ts";
 
 // ---------------------------------------------------------------------------
 // Hide

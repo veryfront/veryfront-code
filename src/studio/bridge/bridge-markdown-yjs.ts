@@ -7,8 +7,6 @@
  */
 
 import { state, LEXICAL_YJS_ORIGIN } from "./bridge-state.ts";
-import { getConfig } from "./bridge-config.ts";
-import { postToStudio } from "./bridge-messaging.ts";
 import { computeTextDiff } from "./bridge-markdown-core.ts";
 import {
   applyMarkdownContent,
