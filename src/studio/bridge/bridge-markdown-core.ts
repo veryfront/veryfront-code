@@ -595,10 +595,12 @@ export function handleMarkdownLocalChange(
   }
   state.markdownCurrentContent = fullContent;
   state.markdownHasUnsavedChanges = true;
-  // Only sync to Yjs for genuinely local edits. When markdownLastRemoteContent
-  // is set, Lexical is still processing a remote update (e.g. normalizing
-  // whitespace) and the output should NOT echo back to Yjs.
-  if (state.markdownYjsConnected && state.markdownLastRemoteContent === null) {
+  // Echo-back prevention is handled upstream: the Lexical update listener
+  // returns early when markdownApplyingRemoteUpdate is true, capturing edits
+  // via pendingLocalReconcile for replay after the remote apply settles.
+  // This function always syncs to Yjs when connected to avoid silently
+  // dropping user edits.
+  if (state.markdownYjsConnected) {
     syncLocalChangeToYText(fullContent);
   }
   scheduleMarkdownSync(fullContent);

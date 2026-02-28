@@ -130,20 +130,15 @@ Deno.test("computeTextDiff: whitespace normalization (the real echo-back scenari
 });
 
 // ---------------------------------------------------------------------------
-// handleMarkdownLocalChange: echo-back guard
+// handleMarkdownLocalChange: state updates and Yjs sync
 // ---------------------------------------------------------------------------
 
-Deno.test("handleMarkdownLocalChange: syncs to Yjs when connected and no remote content pending", () => {
+Deno.test("handleMarkdownLocalChange: syncs to Yjs when connected", () => {
   resetState();
 
-  // Track whether syncLocalChangeToYText would be called by checking
-  // state changes that happen unconditionally
   editorState.markdownYjsConnected = true;
-  editorState.markdownLastRemoteContent = null;
   editorState.markdownCurrentContent = "old content";
 
-  // We can't easily mock syncLocalChangeToYText without Yjs being set up,
-  // but we CAN verify that the state is correctly updated
   handleMarkdownLocalChange("new body content", "new body content");
 
   assertEquals(editorState.markdownCurrentContent, "new body content");
@@ -152,23 +147,20 @@ Deno.test("handleMarkdownLocalChange: syncs to Yjs when connected and no remote 
   cleanupTimers();
 });
 
-Deno.test("handleMarkdownLocalChange: does NOT sync to Yjs when markdownLastRemoteContent is set", () => {
+Deno.test("handleMarkdownLocalChange: always syncs to Yjs even during remote update window", () => {
   resetState();
 
   editorState.markdownYjsConnected = true;
   editorState.markdownLastRemoteContent = "remote content being applied";
   editorState.markdownCurrentContent = "old content";
 
-  // When markdownLastRemoteContent is set, Lexical's normalization
-  // output should NOT be pushed back to Yjs. The state should still
-  // update locally, but the Yjs sync call should be skipped.
-  handleMarkdownLocalChange("normalized content", "normalized content");
+  // Echo-back prevention is handled UPSTREAM by the Lexical update listener
+  // (which returns early when markdownApplyingRemoteUpdate is true).
+  // handleMarkdownLocalChange always syncs to Yjs to avoid dropping edits.
+  handleMarkdownLocalChange("user edit during window", "user edit during window");
 
-  // State updates should still happen
-  assertEquals(editorState.markdownCurrentContent, "normalized content");
+  assertEquals(editorState.markdownCurrentContent, "user edit during window");
   assertEquals(editorState.markdownHasUnsavedChanges, true);
-  // markdownLastRemoteContent should NOT have been cleared by this function
-  assertEquals(editorState.markdownLastRemoteContent, "remote content being applied");
 
   cleanupTimers();
 });
@@ -177,7 +169,6 @@ Deno.test("handleMarkdownLocalChange: does NOT sync when Yjs is disconnected", (
   resetState();
 
   editorState.markdownYjsConnected = false;
-  editorState.markdownLastRemoteContent = null;
   editorState.markdownCurrentContent = "old content";
 
   handleMarkdownLocalChange("new content", "new content");
