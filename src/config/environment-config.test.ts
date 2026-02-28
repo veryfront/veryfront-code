@@ -216,6 +216,7 @@ describe("EnvironmentConfig", () => {
         "denoTesting",
         "perfEnabled",
         "apiBaseUrl",
+        "publicApiBaseUrl",
         "apiUrl",
         "apiToken",
         "projectSlug",
