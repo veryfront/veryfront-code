@@ -22,8 +22,7 @@ export function isFromStudio(event: MessageEvent): boolean {
   try {
     const url = new URL(event.origin || "");
     const host = url.hostname;
-    const valid =
-      host === "localhost" ||
+    const valid = host === "localhost" ||
       host.endsWith(".veryfront.org") ||
       host === "veryfront.org" ||
       host.endsWith(".veryfront.com") ||
