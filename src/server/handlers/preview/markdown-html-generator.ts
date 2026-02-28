@@ -84,7 +84,7 @@ function buildStudioScript(
     try {
       const apiUrl = new URL(apiBaseUrl);
       const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
-      wsUrl = `${wsProtocol}//${apiUrl.host}/api/ws/${canonicalProjectId}/yjs`;
+      wsUrl = `${wsProtocol}//${apiUrl.host}/ws/${canonicalProjectId}/yjs`;
     } catch {
       // Invalid API URL — wsUrl stays empty, bridge won't self-connect
     }
