@@ -312,8 +312,8 @@ export function writeToYText(
   text: string,
   options?: { position?: number; origin?: string },
 ): boolean {
-  if (!state.markdownYText || !state.markdownYDoc) {
-    console.warn("[StudioBridge] writeToYText: Yjs not connected");
+  if (!state.markdownYText || !state.markdownYDoc || !state.markdownYjsConnected) {
+    console.warn("[StudioBridge] writeToYText: Yjs not connected or not synced");
     return false;
   }
 
@@ -334,8 +334,8 @@ export function writeToYText(
  * Returns true if the write succeeded.
  */
 export function replaceYTextContent(content: string): boolean {
-  if (!state.markdownYText || !state.markdownYDoc) {
-    console.warn("[StudioBridge] replaceYTextContent: Yjs not connected");
+  if (!state.markdownYText || !state.markdownYDoc || !state.markdownYjsConnected) {
+    console.warn("[StudioBridge] replaceYTextContent: Yjs not connected or not synced");
     return false;
   }
 

@@ -26,7 +26,11 @@ import {
   saveMarkdownContent,
 } from "./bridge-markdown-core.ts";
 
-import { disposeMarkdownYjs, setupMarkdownYjsConnection, writeToYText } from "./bridge-markdown-yjs.ts";
+import {
+  disposeMarkdownYjs,
+  setupMarkdownYjsConnection,
+  writeToYText,
+} from "./bridge-markdown-yjs.ts";
 
 import {
   clearMarkdownSelectionOverlay,
@@ -508,9 +512,14 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
 
   const presence = el("div", "vf-markdown-editor__presence");
   const selections = el("div", "vf-markdown-editor__selections");
+  // In Simple Mode the editor IS the experience — hide Done button.
+  // In Advanced Mode, show Done to return to preview.
   const exitButton = btn("vf-markdown-editor__exit", "Done", function () {
     setMarkdownEditMode(false);
   });
+  if (getConfig().studioMode === "simple") {
+    exitButton.style.display = "none";
+  }
 
   actions.appendChild(status);
   actions.appendChild(presence);
