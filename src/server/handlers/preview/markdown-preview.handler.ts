@@ -159,7 +159,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
         projectId: ctx.projectSlug || ctx.projectId || "markdown-preview",
         filePath,
         branchId: ctx.parsedDomain?.branch ?? null,
-        apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
+        apiBaseUrl: getEnvironmentConfig().publicApiBaseUrl,
       });
 
       const responseBuilder = this.createResponseBuilder(ctx)

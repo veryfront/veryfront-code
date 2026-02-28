@@ -14,6 +14,8 @@ export interface EnvironmentConfig {
   perfEnabled: boolean;
 
   apiBaseUrl: string;
+  /** Public-facing API URL for browser-injected scripts (WebSocket URLs, etc.). */
+  publicApiBaseUrl: string;
   apiUrl: string | undefined;
   apiToken: string | undefined;
   projectSlug: string | undefined;
@@ -112,6 +114,8 @@ function readEnvSnapshot(): EnvironmentConfig {
 
     apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ||
       apiUrl?.replace("/graphql", "/api") ||
+      DEFAULTS.apiBaseUrl,
+    publicApiBaseUrl: getEnv("VERYFRONT_PUBLIC_API_BASE_URL") ||
       DEFAULTS.apiBaseUrl,
     apiUrl,
     apiToken: getEnv("VERYFRONT_API_TOKEN") || undefined,
