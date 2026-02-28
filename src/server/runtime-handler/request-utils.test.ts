@@ -96,7 +96,7 @@ describe("request-utils", () => {
       assertEquals(isLightweightPath("/_vf_modules/react.js"), true);
       assertEquals(isLightweightPath("/_veryfront/modules/client.js"), true);
       assertEquals(isLightweightPath("/_veryfront/preview-hmr.js"), true);
-      assertEquals(isLightweightPath("/_veryfront/studio-bridge/bridge-coordinator.js"), true);
+      assertEquals(isLightweightPath("/_veryfront/studio-bridge.js"), true);
     });
 
     it("returns true for CSS paths", () => {

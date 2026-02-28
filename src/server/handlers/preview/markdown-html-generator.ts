@@ -99,7 +99,7 @@ function buildStudioScript(
   if (yjsGuid) bridgeConfig.yjsGuid = yjsGuid;
 
   return `<script>window.__VF_BRIDGE_CONFIG__=${JSON.stringify(bridgeConfig)};</script>
-  <script type="module" src="/_veryfront/studio-bridge/bridge-coordinator.js"></script>`;
+  <script type="module" src="/_veryfront/studio-bridge.js"></script>`;
 }
 
 /**

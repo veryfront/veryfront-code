@@ -111,7 +111,7 @@ describe("html/html-injection", () => {
         },
       );
 
-      assertEquals(html.includes("bridge-coordinator.js"), true);
+      assertEquals(html.includes("studio-bridge.js"), true);
     });
   });
 });

@@ -85,5 +85,5 @@ export function getStudioScripts(options: StudioScriptOptions): string {
 
   return `
   ${sourceHashScript}${configScript}
-  <script type="module" src="/_veryfront/studio-bridge/bridge-coordinator.js"${nonceAttr}></script>`;
+  <script type="module" src="/_veryfront/studio-bridge.js"${nonceAttr}></script>`;
 }

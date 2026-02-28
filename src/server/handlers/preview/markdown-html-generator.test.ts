@@ -94,7 +94,7 @@ describe("generateMarkdownHtml", () => {
       }),
     );
     assert(html.includes("pagePath"));
-    assert(html.includes("bridge-coordinator.js"));
+    assert(html.includes("studio-bridge.js"));
   });
 
   it("injects bridge script for standalone mdx pages without studio_embed", () => {
@@ -105,7 +105,7 @@ describe("generateMarkdownHtml", () => {
       }),
     );
     assert(html.includes("pagePath"));
-    assert(html.includes("bridge-coordinator.js"));
+    assert(html.includes("studio-bridge.js"));
   });
 
   it("omits bridge script for non-markdown pages without studio_embed", () => {
@@ -115,7 +115,7 @@ describe("generateMarkdownHtml", () => {
         filePath: "index.html",
       }),
     );
-    assert(!html.includes("bridge-coordinator.js"));
+    assert(!html.includes("studio-bridge.js"));
   });
 
   it("prefers vf_project_id for bridge project id when present", () => {
