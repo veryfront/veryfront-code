@@ -261,15 +261,15 @@ export function updateMarkdownInlineToolbar(): void {
   );
   if (blockTrigger) {
     const blockLabels: Record<string, string> = {
-      paragraph: "\u00B6",
-      h1: "H\u2081",
-      h2: "H\u2082",
-      h3: "H\u2083",
-      quote: "\u201C",
-      bullet: "\u2022",
-      number: "1.",
+      paragraph: "Paragraph",
+      h1: "Heading 1",
+      h2: "Heading 2",
+      h3: "Heading 3",
+      quote: "Quote",
+      bullet: "Bulleted list",
+      number: "Numbered list",
     };
-    blockTrigger.textContent = blockLabels[toolbarState.blockType] || "\u00B6";
+    blockTrigger.textContent = blockLabels[toolbarState.blockType] || "Paragraph";
   }
 
   const blockDropdown = state.markdownInlineToolbarRoot.querySelector<HTMLElement>(

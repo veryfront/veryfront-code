@@ -659,7 +659,7 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
 
   const blockTrigger = btn(
     "vf-markdown-editor__block-trigger",
-    String.fromCharCode(182), // ¶
+    "Paragraph",
     function (event) {
       event.preventDefault();
       const isOpen = blockDropdown.style.display === "block";
@@ -686,30 +686,22 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
     }),
   );
   row1.appendChild(
-    createInlineButton("U", "underline", function () {
-      toggleMarkdownInlineFormat("underline");
-    }),
-  );
-
-  const row2 = el("div", "vf-markdown-editor__inline-row");
-  row2.appendChild(
-    createInlineButton(String.fromCodePoint(128279), null, function () {
-      insertMarkdownLink();
-    }),
-  );
-  row2.appendChild(
     createInlineButton("S", "strikethrough", function () {
       toggleMarkdownInlineFormat("strikethrough");
     }),
   );
-  row2.appendChild(
+  row1.appendChild(
     createInlineButton("</>", "code", function () {
       toggleMarkdownInlineFormat("code");
     }),
   );
+  row1.appendChild(
+    createInlineButton(String.fromCodePoint(128279), null, function () {
+      insertMarkdownLink();
+    }),
+  );
 
   inlineToolbar.appendChild(row1);
-  inlineToolbar.appendChild(row2);
   inlineToolbar.appendChild(blockDropdown);
 
   // -- Global listeners for block dropdown -----------------------------------
