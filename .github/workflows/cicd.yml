@@ -200,6 +200,7 @@ jobs:
 
       - run: deno run -A scripts/build/generate-templates-manifest.ts
       - run: deno run -A scripts/build/prepare-framework-sources.ts
+      - run: deno run -A scripts/build/prebundle-bridge.ts
 
       - name: Compile binary
         shell: bash
