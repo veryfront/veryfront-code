@@ -4,6 +4,10 @@
  * Yjs collaboration layer for the markdown editor.
  * Manages Y.Doc, WebsocketProvider, Y.Text binding, presence/awareness,
  * and remote change observation.
+ *
+ * NOTE: This module participates in a circular import cycle with
+ * bridge-markdown-core.ts and bridge-markdown-editor.ts.
+ * All cross-module calls must remain in function bodies (never at module top-level).
  */
 
 import { LEXICAL_YJS_ORIGIN, state } from "./bridge-state.ts";

@@ -4,6 +4,10 @@
  * Markdown file helpers: path resolution, MDX import parsing,
  * frontmatter extraction, raw-block tokenisation, content composition,
  * editor sync scheduling, and text diffing.
+ *
+ * NOTE: This module participates in a circular import cycle with
+ * bridge-markdown-yjs.ts and bridge-markdown-editor.ts.
+ * All cross-module calls must remain in function bodies (never at module top-level).
  */
 
 import { state } from "./bridge-state.ts";
@@ -634,13 +638,17 @@ export function saveMarkdownContent(): void {
   if (!state.markdownHasUnsavedChanges) {
     return;
   }
+  const cb = getEditorCallbacks();
+  if (!cb) {
+    return;
+  }
   state.markdownSaveInProgress = true;
   setMarkdownPersistStatus("saving");
   if (state.markdownSyncTimer) {
     clearTimeout(state.markdownSyncTimer);
     state.markdownSyncTimer = null;
   }
-  getEditorCallbacks()?.onContentChange(
+  cb.onContentChange(
     state.markdownFileId,
     getConfig().pagePath,
     state.markdownCurrentContent,

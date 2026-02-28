@@ -77,13 +77,14 @@ export function getStudioScripts(options: StudioScriptOptions): string {
   if (options.yjsGuid) bridgeConfig.yjsGuid = options.yjsGuid;
 
   const sourceHashScript = options.sourceHash
-    ? `<script${nonceAttr}>window.__VERYFRONT_SOURCE_HASH__="${options.sourceHash}";</script>\n  `
+    ? `<script${nonceAttr}>window.__VERYFRONT_SOURCE_HASH__=${
+      JSON.stringify(options.sourceHash).replace(/</g, "\\u003c")
+    };</script>\n  `
     : "";
 
   // Escape </script> sequences to prevent XSS breakout from inline JSON
   const safeJson = JSON.stringify(bridgeConfig).replace(/</g, "\\u003c");
-  const configScript =
-    `<script${nonceAttr}>window.__VF_BRIDGE_CONFIG__=${safeJson};</script>`;
+  const configScript = `<script${nonceAttr}>window.__VF_BRIDGE_CONFIG__=${safeJson};</script>`;
 
   return `
   ${sourceHashScript}${configScript}

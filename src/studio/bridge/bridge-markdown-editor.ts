@@ -4,6 +4,10 @@
  * Markdown editor lifecycle: Lexical rich-text setup, DOM scaffolding
  * (toolbar, surface, inline toolbar, block drag, textarea fallback),
  * content application, presence/selection pills, and edit-mode toggling.
+ *
+ * NOTE: This module participates in a circular import cycle with
+ * bridge-markdown-core.ts and bridge-markdown-yjs.ts.
+ * All cross-module calls must remain in function bodies (never at module top-level).
  */
 
 import { state } from "./bridge-state.ts";
