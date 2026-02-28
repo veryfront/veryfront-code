@@ -12,4 +12,5 @@ Name (GitHub @username)
 ## Contributors
 
 Koji Wakayama (@kojiwakayama)
+Kentaro Wakayama (@kwakayama)
 Aris Kemper (@ariskemper)

@@ -1,8 +1,8 @@
 /**
  * Studio Bridge Handler
  *
- * Bundles the decomposed bridge TypeScript modules into a single JS file
- * using esbuild (same JIT pipeline as DevFileHandler).
+ * Serves the studio bridge script. In compiled binaries, uses a pre-bundled
+ * version generated at build time. In dev mode, bundles on-the-fly with esbuild.
  *
  * Route: /_veryfront/studio-bridge.js
  *
@@ -17,6 +17,7 @@ import type {
   HandlerResult,
 } from "../../handlers/types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
+import { STUDIO_BRIDGE_BUNDLE } from "#veryfront/studio/bridge/bridge-bundle.generated.ts";
 
 /** Cached bundle output. */
 let bundleCache: { js: string; etag: string } | null = null;
@@ -36,11 +37,20 @@ async function computeEtag(content: string): Promise<string> {
 
 /**
  * Bundle the bridge coordinator (and all its imports) into a single JS file.
- * Uses esbuild.build() with bundle:true — same approach as DevFileHandler.
+ * Uses pre-bundled output when available (compiled binary), falls back to
+ * esbuild JIT bundling in dev mode.
  */
 async function bundleBridge(): Promise<{ js: string; etag: string }> {
   if (bundleCache) return bundleCache;
 
+  // Use pre-bundled output if available (compiled binary / CI builds)
+  if (STUDIO_BRIDGE_BUNDLE) {
+    const etag = await computeEtag(STUDIO_BRIDGE_BUNDLE);
+    bundleCache = { js: STUDIO_BRIDGE_BUNDLE, etag };
+    return bundleCache;
+  }
+
+  // Dev mode: bundle on-the-fly with esbuild
   const entryPoint = `${BRIDGE_DIR}bridge-coordinator.ts`;
   const source = await Deno.readTextFile(entryPoint);
 
