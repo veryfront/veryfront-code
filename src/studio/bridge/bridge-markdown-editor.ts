@@ -36,8 +36,10 @@ import {
   buildEditorRenderedMaps,
   clearMarkdownSelectionOverlay,
   clearMarkdownSelectionSync,
+  getTextOffsetWithinRoot,
   scheduleMarkdownSelectionOverlayRender,
   scheduleMarkdownSelectionSync,
+  setMarkdownEditorSelection,
   sourceSelectionToEditorRange,
 } from "./bridge-selection.ts";
 
@@ -157,7 +159,8 @@ export function setupMarkdownLexicalEditor(): void {
         }
         state.markdownLexicalRenderedContent = fullContent;
 
-        handleMarkdownLocalChange(nextContent);
+        // Pass pre-computed fullContent to avoid redundant restore+compose
+        handleMarkdownLocalChange(nextContent, fullContent);
         scheduleMarkdownSlashMenuUpdate();
         scheduleMarkdownInlineToolbarUpdate();
       });
@@ -294,39 +297,66 @@ export function applyMarkdownContent(content: unknown): void {
   state.markdownCurrentEditorContent = editorContent;
 
   if (state.markdownLexicalApi) {
-    state.markdownApplyingRemoteUpdate = true;
-    try {
-      state.markdownLexicalRenderedContent = content;
-      const api = state.markdownLexicalApi;
-      api.editor.update(
-        function () {
-          const lexicalModule = api.lexicalModule;
-          const markdownModule = api.markdownModule;
-          const root = lexicalModule.$getRoot();
-          root.clear();
-          markdownModule.$convertFromMarkdownString(
-            editorContent,
-            markdownModule.TRANSFORMERS,
-            undefined,
-            true,
+    // Save current selection offset before rebuilding the tree
+    let savedSelectionOffset = -1;
+    if (state.markdownEditorSurface) {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        if (state.markdownEditorSurface.contains(range.startContainer)) {
+          savedSelectionOffset = getTextOffsetWithinRoot(
+            state.markdownEditorSurface,
+            range.startContainer,
+            range.startOffset,
           );
-          if (root.getChildrenSize() === 0) {
-            root.append(lexicalModule.$createParagraphNode());
-          }
-        },
-        { discrete: true },
-      );
-
-      // Build editor↔rendered offset maps from committed state
-      api.editor.getEditorState().read(function () {
-        const renderedText = api.lexicalModule.$getRoot().getTextContent();
-        const maps = buildEditorRenderedMaps(editorContent, renderedText);
-        state.markdownEditorToRenderedMap = maps.editorToRendered;
-        state.markdownRenderedToEditorMap = maps.renderedToEditor;
-      });
-    } finally {
-      state.markdownApplyingRemoteUpdate = false;
+        }
+      }
     }
+
+    state.markdownApplyingRemoteUpdate = true;
+    state.markdownLexicalRenderedContent = content;
+    const api = state.markdownLexicalApi;
+    api.editor.update(
+      function () {
+        const lexicalModule = api.lexicalModule;
+        const markdownModule = api.markdownModule;
+        const root = lexicalModule.$getRoot();
+        root.clear();
+        markdownModule.$convertFromMarkdownString(
+          editorContent,
+          markdownModule.TRANSFORMERS,
+          undefined,
+          true,
+        );
+        if (root.getChildrenSize() === 0) {
+          root.append(lexicalModule.$createParagraphNode());
+        }
+      },
+      { discrete: true },
+    );
+
+    // Build editor↔rendered offset maps from committed state
+    api.editor.getEditorState().read(function () {
+      const renderedText = api.lexicalModule.$getRoot().getTextContent();
+      const maps = buildEditorRenderedMaps(editorContent, renderedText);
+      state.markdownEditorToRenderedMap = maps.editorToRendered;
+      state.markdownRenderedToEditorMap = maps.renderedToEditor;
+    });
+
+    // Reset flag after all synchronous Lexical reconciliation completes
+    // (avoids race where secondary updates from list normalization etc.
+    // are mistakenly treated as local changes and echoed back to Yjs)
+    queueMicrotask(function () {
+      state.markdownApplyingRemoteUpdate = false;
+    });
+
+    // Restore selection to the same offset (clamped to new content length)
+    if (savedSelectionOffset >= 0 && state.markdownEditorSurface) {
+      const maxOffset = editorContent.length;
+      const restoredOffset = Math.min(savedSelectionOffset, maxOffset);
+      setMarkdownEditorSelection(restoredOffset);
+    }
+
     scheduleMarkdownSelectionOverlayRender();
     scheduleMarkdownSlashMenuUpdate();
     scheduleMarkdownInlineToolbarUpdate();

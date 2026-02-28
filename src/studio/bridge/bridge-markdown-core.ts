@@ -495,12 +495,15 @@ export function extractRawBlocksForEditor(
     });
   };
 
-  const replaceWithToken = function (
-    match: string,
-    leadingNewline: string,
-    offset: number,
-    inputText: string,
-  ): string {
+  // Uses rest args because different patterns have different numbers of
+  // capture groups. In a .replace() callback, the last two args are
+  // always (offset, inputText), and the first capture group is always
+  // the leading newline.
+  const replaceWithToken = function (...args: any[]): string {
+    const match: string = args[0];
+    const leadingNewline: string = args[1];
+    const offset: number = args[args.length - 2];
+    const inputText: string = args[args.length - 1];
     const safeLeading = typeof leadingNewline === "string" ? leadingNewline : "";
     const tokenIndex = rawBlocks.length;
     const rawBlock = typeof match === "string" ? match.trimStart() : "";
@@ -522,8 +525,10 @@ export function extractRawBlocksForEditor(
     "(^|\\n)\\x60\\x60\\x60(?:tsx|jsx)[^\\n]*\\n[\\s\\S]*?\\n\\x60\\x60\\x60(?=\\n|$)",
     "g",
   );
+  // Match opening and closing tag names to handle nested elements correctly.
+  // Without backreference, <div><p>text</p></div> would stop at </p>.
   const htmlBlockPattern = new RegExp(
-    "(^|\\n)<[A-Za-z][\\w:-]*(?:\\s[^>\\n]*)?>[\\s\\S]*?<\\/[A-Za-z][\\w:-]*>(?=\\n|$)",
+    "(^|\\n)<([A-Za-z][\\w:-]*)(?:\\s[^>\\n]*)?>[\\s\\S]*?<\\/\\2>(?=\\n|$)",
     "g",
   );
   const htmlSelfClosingPattern = new RegExp(
@@ -574,14 +579,17 @@ export function restoreRawBlocksFromEditor(editorBody: string): string {
  * Syncs changes to Yjs when connected and schedules content sync
  * and selection overlay rendering.
  */
-export function handleMarkdownLocalChange(content: string): void {
+export function handleMarkdownLocalChange(
+  content: string,
+  precomputedFullContent?: string,
+): void {
   if (typeof content !== "string") {
     return;
   }
 
   state.markdownCurrentEditorContent = content;
-  const restoredBody = restoreRawBlocksFromEditor(content);
-  const fullContent = composeMarkdownContent(restoredBody);
+  const fullContent = precomputedFullContent ??
+    composeMarkdownContent(restoreRawBlocksFromEditor(content));
   if (fullContent === state.markdownCurrentContent) {
     return;
   }

@@ -101,14 +101,15 @@ export function handleStudioMessage(event: MessageEvent): void {
       return;
 
     case "agentWriteMarkdown": {
-      const mode: string = message.mode || "replace";
+      const content = typeof message.content === "string" ? message.content : "";
+      const mode: string = typeof message.mode === "string" ? message.mode : "replace";
       if (mode === "replace") {
-        replaceYTextContent(message.content || "");
+        replaceYTextContent(content);
       } else if (mode === "append") {
-        writeToYText(message.content || "");
+        writeToYText(content);
       } else if (mode === "insert_at") {
-        writeToYText(message.content || "", {
-          position: message.position ?? 0,
+        writeToYText(content, {
+          position: typeof message.position === "number" ? message.position : 0,
           origin: "agent-write",
         });
       }

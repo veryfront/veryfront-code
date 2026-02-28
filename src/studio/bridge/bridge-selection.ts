@@ -265,6 +265,17 @@ export function buildEditorRenderedMaps(
     }
   }
 
+  // Warn when alignment didn't consume all rendered text — indicates a
+  // mapping failure that will cause visible selection offset bugs.
+  if (ri < renderedText.length) {
+    console.warn(
+      "[StudioBridge] Offset mapping divergence: rendered text has",
+      renderedText.length - ri,
+      "unconsumed characters starting at index",
+      ri,
+    );
+  }
+
   // End-of-string sentinels
   e2r[editorContent.length] = Math.min(ri, renderedText.length);
   r2e[renderedText.length] = editorContent.length;
