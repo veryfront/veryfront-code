@@ -462,10 +462,6 @@ const OVERLAY_CSS = `
         text-decoration: line-through;
       }
 
-      .vf-markdown-editor__inline-button[data-format='underline'] {
-        text-decoration: underline;
-      }
-
       /* ------------------------------------------------------------------ */
       /* Block type trigger                                                  */
       /* ------------------------------------------------------------------ */

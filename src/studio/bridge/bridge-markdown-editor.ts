@@ -313,15 +313,17 @@ export function applyMarkdownContent(content: unknown): void {
           if (root.getChildrenSize() === 0) {
             root.append(lexicalModule.$createParagraphNode());
           }
-
-          // Build editor↔rendered offset maps after conversion
-          const renderedText = root.getTextContent();
-          const maps = buildEditorRenderedMaps(editorContent, renderedText);
-          state.markdownEditorToRenderedMap = maps.editorToRendered;
-          state.markdownRenderedToEditorMap = maps.renderedToEditor;
         },
         { discrete: true },
       );
+
+      // Build editor↔rendered offset maps from committed state
+      api.editor.getEditorState().read(function () {
+        const renderedText = api.lexicalModule.$getRoot().getTextContent();
+        const maps = buildEditorRenderedMaps(editorContent, renderedText);
+        state.markdownEditorToRenderedMap = maps.editorToRendered;
+        state.markdownRenderedToEditorMap = maps.renderedToEditor;
+      });
     } finally {
       state.markdownApplyingRemoteUpdate = false;
     }
@@ -1023,6 +1025,8 @@ export function setMarkdownEditMode(enabled: boolean): void {
     hideMarkdownInlineToolbar();
     hideMarkdownBlockDragUi();
     state.markdownOverlaySelections = [];
+    state.markdownEditorToRenderedMap = [];
+    state.markdownRenderedToEditorMap = [];
     clearMarkdownSelectionOverlay();
     clearMarkdownSelectionSync();
     disposeMarkdownYjs();
