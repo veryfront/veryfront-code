@@ -326,7 +326,7 @@ export function postMarkdownEditorReady(): void {
   getEditorCallbacks()?.onEditorReady(state.markdownFileId, getConfig().pagePath);
 }
 
-export function scheduleMarkdownSync(content: string): void {
+export function scheduleMarkdownSync(_content: string): void {
   if (!state.markdownFileId) {
     return;
   }
@@ -337,7 +337,7 @@ export function scheduleMarkdownSync(content: string): void {
     getEditorCallbacks()?.onContentChange(
       state.markdownFileId,
       getConfig().pagePath,
-      content,
+      state.markdownCurrentContent,
     );
   }, 120);
 }
@@ -595,6 +595,11 @@ export function handleMarkdownLocalChange(
   }
   state.markdownCurrentContent = fullContent;
   state.markdownHasUnsavedChanges = true;
+  // Echo-back prevention is handled upstream: the Lexical update listener
+  // returns early when markdownApplyingRemoteUpdate is true, capturing edits
+  // via pendingLocalReconcile for replay after the remote apply settles.
+  // This function always syncs to Yjs when connected to avoid silently
+  // dropping user edits.
   if (state.markdownYjsConnected) {
     syncLocalChangeToYText(fullContent);
   }
@@ -606,11 +611,15 @@ export function saveMarkdownContent(): void {
   if (!state.markdownHasUnsavedChanges) {
     return;
   }
+  if (state.markdownSaveInProgress) {
+    return;
+  }
   const cb = getEditorCallbacks();
   if (!cb) {
     return;
   }
   state.markdownSaveInProgress = true;
+  state.markdownSaveRequestedContent = state.markdownCurrentContent;
   setMarkdownPersistStatus("saving");
   if (state.markdownSyncTimer) {
     clearTimeout(state.markdownSyncTimer);
@@ -625,6 +634,7 @@ export function saveMarkdownContent(): void {
     );
   } catch (err) {
     state.markdownSaveInProgress = false;
+    state.markdownSaveRequestedContent = null;
     setMarkdownPersistStatus("error");
     console.error("[StudioBridge] Save failed:", err);
   }

@@ -132,6 +132,9 @@ export function setupMarkdownLexicalEditor(): void {
         update: any,
       ) {
         if (state.markdownApplyingRemoteUpdate) {
+          // Reconcile once remote apply settles so local edits during this window
+          // are not silently dropped.
+          state.markdownPendingLocalReconcile = true;
           return;
         }
 
@@ -296,6 +299,12 @@ export function applyMarkdownContent(content: unknown): void {
   state.markdownCurrentContent = content;
   state.markdownCurrentEditorContent = editorContent;
 
+  // Cancel any pending debounced sync from pre-remote local edits.
+  if (state.markdownSyncTimer) {
+    clearTimeout(state.markdownSyncTimer);
+    state.markdownSyncTimer = null;
+  }
+
   if (state.markdownLexicalApi) {
     // Save current selection offset before rebuilding the tree
     let savedSelectionOffset = -1;
@@ -313,9 +322,14 @@ export function applyMarkdownContent(content: unknown): void {
       }
     }
 
+    state.markdownLastRemoteContent = content;
+    const remoteUpdateToken = state.markdownRemoteUpdateToken + 1;
+    state.markdownRemoteUpdateToken = remoteUpdateToken;
+    state.markdownPendingLocalReconcile = false;
     state.markdownApplyingRemoteUpdate = true;
     state.markdownLexicalRenderedContent = content;
     const api = state.markdownLexicalApi;
+    const remoteContentSnapshot = content;
     api.editor.update(
       function () {
         const lexicalModule = api.lexicalModule;
@@ -343,12 +357,50 @@ export function applyMarkdownContent(content: unknown): void {
       state.markdownRenderedToEditorMap = maps.renderedToEditor;
     });
 
-    // Reset flag after all synchronous Lexical reconciliation completes
-    // (avoids race where secondary updates from list normalization etc.
-    // are mistakenly treated as local changes and echoed back to Yjs)
-    queueMicrotask(function () {
+    // Reset flags after all synchronous Lexical reconciliation completes.
+    // setTimeout(0) is more reliable than queueMicrotask for catching
+    // secondary updates from list normalization, etc.
+    setTimeout(function () {
+      // Ignore stale reset callbacks from earlier remote applies.
+      if (state.markdownRemoteUpdateToken !== remoteUpdateToken) {
+        return;
+      }
       state.markdownApplyingRemoteUpdate = false;
-    });
+      if (state.markdownLastRemoteContent === remoteContentSnapshot) {
+        state.markdownLastRemoteContent = null;
+      }
+
+      if (!state.markdownPendingLocalReconcile || !state.markdownLexicalApi) {
+        return;
+      }
+      state.markdownPendingLocalReconcile = false;
+
+      let nextContent = "";
+      let renderedText = "";
+      const reconcileApi = state.markdownLexicalApi;
+      reconcileApi.editor.getEditorState().read(function () {
+        nextContent = reconcileApi.markdownModule.$convertToMarkdownString(
+          reconcileApi.markdownModule.TRANSFORMERS,
+          undefined,
+          true,
+        );
+        renderedText = reconcileApi.lexicalModule.$getRoot().getTextContent();
+      });
+
+      const maps = buildEditorRenderedMaps(nextContent, renderedText);
+      state.markdownEditorToRenderedMap = maps.editorToRendered;
+      state.markdownRenderedToEditorMap = maps.renderedToEditor;
+
+      const restoredBody = restoreRawBlocksFromEditor(nextContent);
+      const fullContent = composeMarkdownContent(restoredBody);
+      if (fullContent === state.markdownLexicalRenderedContent) {
+        return;
+      }
+      state.markdownLexicalRenderedContent = fullContent;
+      handleMarkdownLocalChange(nextContent, fullContent);
+      scheduleMarkdownSlashMenuUpdate();
+      scheduleMarkdownInlineToolbarUpdate();
+    }, 0);
 
     // Restore selection to the same offset (clamped to new content length)
     if (savedSelectionOffset >= 0 && state.markdownEditorSurface) {
