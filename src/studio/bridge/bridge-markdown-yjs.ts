@@ -118,9 +118,17 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
       state.markdownYDoc = doc;
       state.markdownYProvider = provider;
       state.markdownYText = ytext;
+      const isCurrentSetup = (): boolean =>
+        setupId === state.markdownYjsSetupId &&
+        state.markdownYProvider === provider &&
+        state.markdownYDoc === doc &&
+        state.markdownYText === ytext;
 
       // Filter non-binary messages to prevent y-websocket parse errors
       provider.on("status", (event: { status: string }) => {
+        if (!isCurrentSetup()) {
+          return;
+        }
         console.debug("[StudioBridge] Yjs status:", event.status, {
           hasWs: !!provider.ws,
           wsReadyState: provider.ws?.readyState,
@@ -196,6 +204,9 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
        * selections, and push both to the editor UI.
        */
       function syncAwareness(): void {
+        if (!isCurrentSetup()) {
+          return;
+        }
         const states = Array.from(
           provider.awareness.getStates().entries(),
         ) as [number, Record<string, unknown>][];
@@ -264,6 +275,9 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
       let ytextObserverRegistered = false;
 
       provider.on("sync", (synced: boolean) => {
+        if (!isCurrentSetup()) {
+          return;
+        }
         console.debug("[StudioBridge] Yjs sync:", {
           synced,
           ytextLength: ytext.length,
@@ -306,6 +320,9 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
           if (!ytextObserverRegistered) {
             ytextObserverRegistered = true;
             ytext.observe((event: any) => {
+              if (!isCurrentSetup()) {
+                return;
+              }
               const origin = event.transaction.origin;
               if (origin === LEXICAL_YJS_ORIGIN) {
                 return;
@@ -414,6 +431,8 @@ export function disposeMarkdownYjs(): void {
   state.markdownYjsConnected = false;
   state.markdownYjsY = null;
   state.markdownPendingSelection = null;
+  state.markdownLastRemoteContent = null;
+  state.markdownApplyingRemoteUpdate = false;
   setMarkdownPresence([]);
   setMarkdownSelections([]);
 }

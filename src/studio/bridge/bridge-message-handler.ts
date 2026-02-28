@@ -90,13 +90,29 @@ export function handleStudioMessage(event: MessageEvent): void {
         return;
       }
       if (editorState.markdownSaveInProgress) {
-        setMarkdownPersistStatus(message.status || "saved");
-        if (message.status === "saved") {
+        const status = message.status || "saved";
+        if (status === "saved") {
+          const requestedContent = editorState.markdownSaveRequestedContent;
           editorState.markdownSaveInProgress = false;
-          editorState.markdownHasUnsavedChanges = false;
-        } else if (message.status === "error") {
+          editorState.markdownSaveRequestedContent = null;
+
+          // Only clear dirty state when current content still matches the request we saved.
+          if (
+            typeof requestedContent === "string" &&
+            editorState.markdownCurrentContent !== requestedContent
+          ) {
+            setMarkdownPersistStatus("saving");
+          } else {
+            editorState.markdownHasUnsavedChanges = false;
+            setMarkdownPersistStatus("saved");
+          }
+        } else if (status === "error") {
           editorState.markdownSaveInProgress = false;
+          editorState.markdownSaveRequestedContent = null;
+          setMarkdownPersistStatus("error");
           // Keep markdownHasUnsavedChanges = true so user can retry
+        } else {
+          setMarkdownPersistStatus(status);
         }
       }
       return;
@@ -130,8 +146,10 @@ export function handleStudioMessage(event: MessageEvent): void {
       const isEditMode = !!editorState.markdownEditorRoot &&
         editorState.markdownEditorRoot.style.display === "block";
 
-      if (isEditMode && content !== null) {
-        applyMarkdownContent(content);
+      if (isEditMode) {
+        if (content !== null && !editorState.markdownYjsConnected) {
+          applyMarkdownContent(content);
+        }
       } else {
         window.location.reload();
       }
