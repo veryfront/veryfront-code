@@ -4,7 +4,7 @@
  * Dispatches incoming Studio messages to the appropriate bridge functions.
  */
 
-import { state } from "./bridge-state.ts";
+import { setMarkdownPersistStatus, state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
 import { isFromStudio, postToStudio } from "./bridge-messaging.ts";
 import {
@@ -15,7 +15,6 @@ import {
   showHoverOverlay,
   showSelectionOverlay,
 } from "./bridge-inspector.ts";
-import { setMarkdownPersistStatus } from "./bridge-markdown-editor.ts";
 import { captureMultipleSections, captureScreenshot } from "./bridge-screenshot.ts";
 
 export function handleStudioMessage(event: MessageEvent): void {
@@ -86,9 +85,12 @@ export function handleStudioMessage(event: MessageEvent): void {
       }
       if (state.markdownSaveInProgress) {
         setMarkdownPersistStatus(message.status || "saved");
-        if (message.status === "saved" || message.status === "error") {
+        if (message.status === "saved") {
           state.markdownSaveInProgress = false;
           state.markdownHasUnsavedChanges = false;
+        } else if (message.status === "error") {
+          state.markdownSaveInProgress = false;
+          // Keep markdownHasUnsavedChanges = true so user can retry
         }
       }
       return;

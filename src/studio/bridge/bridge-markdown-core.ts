@@ -6,11 +6,16 @@
  * editor sync scheduling, and text diffing.
  *
  * NOTE: This module participates in a circular import cycle with
- * bridge-markdown-yjs.ts and bridge-markdown-editor.ts.
- * All cross-module calls must remain in function bodies (never at module top-level).
+ * bridge-markdown-yjs.ts. All cross-module calls must remain in
+ * function bodies (never at module top-level).
  */
 
-import { state } from "./bridge-state.ts";
+import {
+  setMarkdownPersistStatus,
+  state,
+  type MdxBlock,
+  type MdxImportEntry,
+} from "./bridge-state.ts";
 import { getConfig, isMdxPage } from "./bridge-config.ts";
 import { getEditorCallbacks } from "./bridge-editor-callbacks.ts";
 import { syncLocalChangeToYText } from "./bridge-markdown-yjs.ts";
@@ -19,25 +24,9 @@ import {
   getMarkdownRawBlockTokenPattern,
   scheduleMarkdownSelectionOverlayRender,
 } from "./bridge-selection.ts";
-import { setMarkdownPersistStatus } from "./bridge-markdown-editor.ts";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface MdxImportEntry {
-  filePath: string;
-  symbolName: string;
-  importKind: string;
-}
-
-export interface MdxBlock {
-  tokenIndex: number;
-  label: string;
-  lineNumber: number;
-  filePath: string;
-  symbolName: string;
-}
+// Re-export shared types for consumers
+export type { MdxBlock, MdxImportEntry };
 
 export interface ExtractedRawBlocks {
   editorBody: string;
@@ -623,12 +612,18 @@ export function saveMarkdownContent(): void {
     clearTimeout(state.markdownSyncTimer);
     state.markdownSyncTimer = null;
   }
-  cb.onContentChange(
-    state.markdownFileId,
-    getConfig().pagePath,
-    state.markdownCurrentContent,
-    true,
-  );
+  try {
+    cb.onContentChange(
+      state.markdownFileId,
+      getConfig().pagePath,
+      state.markdownCurrentContent,
+      true,
+    );
+  } catch (err) {
+    state.markdownSaveInProgress = false;
+    setMarkdownPersistStatus("error");
+    console.error("[StudioBridge] Save failed:", err);
+  }
   // markdownHasUnsavedChanges is cleared by setMarkdownPersistState response
   // from Studio, not here — avoids race where edits between save request
   // and response would be incorrectly marked as saved.

@@ -5,6 +5,77 @@
  * All former IIFE `let` variables live here.
  */
 
+// ---------------------------------------------------------------------------
+// Shared types (used by state and multiple bridge modules)
+// ---------------------------------------------------------------------------
+
+export interface PresenceUser {
+  id: string;
+  name: string;
+  color: string;
+  isCurrentUser: boolean;
+  isAgent: boolean;
+}
+
+export interface RemoteSelection {
+  id: string;
+  name: string;
+  color: string;
+  isCurrentUser: boolean;
+  start: number;
+  end: number;
+}
+
+export interface SlashMenuContext {
+  lineStart: number;
+  caret: number;
+  indent: string;
+  query: string;
+  anchorLeft: number;
+  anchorTop: number;
+}
+
+export interface SlashMenuCommand {
+  id: string;
+  label: string;
+  description: string;
+  aliases: string[];
+  icon: string;
+  shortcut: string;
+}
+
+export interface MdxImportEntry {
+  filePath: string;
+  symbolName: string;
+  importKind: string;
+}
+
+export interface MdxBlock {
+  tokenIndex: number;
+  label: string;
+  lineNumber: number;
+  filePath: string;
+  symbolName: string;
+}
+
+/** Lexical editor API surface exposed after dynamic import */
+export interface LexicalApi {
+  editor: unknown;
+  lexicalModule: unknown;
+  richTextModule: unknown;
+  listModule: unknown;
+  markdownModule: unknown;
+  selectionModule: unknown;
+  unregisterRichText: () => void;
+  unregisterList: () => void;
+  unregisterHistory: () => void;
+  unregisterUpdate: () => void;
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
 export const state = {
   // Inspector
   inspectMode: false,
@@ -34,14 +105,14 @@ export const state = {
   markdownPresenceRoot: null as HTMLElement | null,
   markdownSelectionsRoot: null as HTMLElement | null,
   markdownSelectionOverlayRoot: null as HTMLElement | null,
-  markdownOverlaySelections: [] as any[],
+  markdownOverlaySelections: [] as RemoteSelection[],
   markdownSelectionOverlayRenderFrame: null as number | null,
 
   // Slash menu
   markdownSlashMenuRoot: null as HTMLElement | null,
   markdownSlashMenuTimer: null as ReturnType<typeof setTimeout> | null,
-  markdownSlashMenuContext: null as any,
-  markdownSlashMenuCommands: [] as any[],
+  markdownSlashMenuContext: null as SlashMenuContext | null,
+  markdownSlashMenuCommands: [] as SlashMenuCommand[],
   markdownSlashMenuActiveIndex: 0,
 
   // Inline toolbar
@@ -65,7 +136,7 @@ export const state = {
   markdownGlobalListenerCleanups: [] as Array<() => void>,
 
   // Lexical
-  markdownLexicalApi: null as any,
+  markdownLexicalApi: null as LexicalApi | null,
   markdownLexicalSetupPromise: null as Promise<void> | null,
 
   // Markdown content
@@ -76,30 +147,60 @@ export const state = {
   markdownFrontmatter: "",
   markdownRawBlocks: [] as string[],
   markdownRawBlockTokenPrefix: "VF_RAW_BLOCK",
-  markdownLatestMdxBlocks: [] as any[],
-  markdownLatestMdxImportMap: {} as Record<string, any>,
-  markdownLatestPresenceUsers: [] as any[],
-  markdownLatestSelections: [] as any[],
+  markdownLatestMdxBlocks: [] as MdxBlock[],
+  markdownLatestMdxImportMap: {} as Record<string, MdxImportEntry>,
+  markdownLatestPresenceUsers: [] as PresenceUser[],
+  markdownLatestSelections: [] as RemoteSelection[],
   markdownHasUnsavedChanges: false,
   markdownSaveInProgress: false,
 
-  // Yjs
-  markdownYDoc: null as any,
-  markdownYProvider: null as any,
-  markdownYText: null as any,
+  // Yjs (dynamically imported — typed structurally)
+  markdownYDoc: null as { getText(name: string): unknown; destroy(): void } | null,
+  markdownYProvider: null as {
+    on(event: string, cb: (...args: unknown[]) => void): void;
+    disconnect(): void;
+    destroy(): void;
+    awareness: unknown;
+  } | null,
+  markdownYText: null as { length: number } | null,
   markdownYjsConnected: false,
   markdownYjsSetupId: 0,
-  markdownYjsY: null as any,
-  markdownPendingSelection: null as any,
+  markdownYjsY: null as unknown,
+  markdownPendingSelection: null as { start: number; end: number } | null,
 
   // Console
-  originalConsole: {} as Record<string, (...args: any[]) => void>,
+  originalConsole: {} as Record<string, (...args: unknown[]) => void>,
   logCounter: 0,
 
   // Screenshot
   html2canvasLoaded: false,
   html2canvasPromise: null as Promise<void> | null,
 };
+
+// ---------------------------------------------------------------------------
+// Persist status (lives here to avoid circular imports between core ↔ editor)
+// ---------------------------------------------------------------------------
+
+export function setMarkdownPersistStatus(status: string): void {
+  if (!state.markdownPersistStatus) {
+    return;
+  }
+
+  const nextStatus = status === "saving" || status === "saved" || status === "error"
+    ? status
+    : "saved";
+
+  state.markdownPersistStatus.setAttribute("data-state", nextStatus);
+  if (nextStatus === "saving") {
+    state.markdownPersistStatus.textContent = "Saving...";
+    return;
+  }
+  if (nextStatus === "error") {
+    state.markdownPersistStatus.textContent = "Save failed";
+    return;
+  }
+  state.markdownPersistStatus.textContent = "Saved";
+}
 
 export const LEXICAL_YJS_ORIGIN = "lexical-yjs-binding";
 

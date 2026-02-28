@@ -343,31 +343,6 @@ export function applyMarkdownContent(content: unknown): void {
 }
 
 // ---------------------------------------------------------------------------
-// setMarkdownPersistStatus
-// ---------------------------------------------------------------------------
-
-export function setMarkdownPersistStatus(status: string): void {
-  if (!state.markdownPersistStatus) {
-    return;
-  }
-
-  const nextStatus = status === "saving" || status === "saved" || status === "error"
-    ? status
-    : "saved";
-
-  state.markdownPersistStatus.setAttribute("data-state", nextStatus);
-  if (nextStatus === "saving") {
-    state.markdownPersistStatus.textContent = "Saving...";
-    return;
-  }
-  if (nextStatus === "error") {
-    state.markdownPersistStatus.textContent = "Save failed";
-    return;
-  }
-  state.markdownPersistStatus.textContent = "Saved";
-}
-
-// ---------------------------------------------------------------------------
 // setMarkdownPresence
 // ---------------------------------------------------------------------------
 

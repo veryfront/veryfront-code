@@ -10,7 +10,12 @@
  * All cross-module calls must remain in function bodies (never at module top-level).
  */
 
-import { LEXICAL_YJS_ORIGIN, state } from "./bridge-state.ts";
+import {
+  LEXICAL_YJS_ORIGIN,
+  state,
+  type PresenceUser,
+  type RemoteSelection,
+} from "./bridge-state.ts";
 import { computeTextDiff } from "./bridge-markdown-core.ts";
 import {
   applyMarkdownContent,
@@ -27,23 +32,6 @@ interface MarkdownYjsConnectionOptions {
   guid: string;
   fileId: string;
   token?: string;
-}
-
-interface PresenceUser {
-  id: string;
-  name: string;
-  color: string;
-  isCurrentUser: boolean;
-  isAgent: boolean;
-}
-
-interface RemoteSelection {
-  id: string;
-  name: string;
-  color: string;
-  isCurrentUser: boolean;
-  start: number;
-  end: number;
 }
 
 // ---------------------------------------------------------------------------
