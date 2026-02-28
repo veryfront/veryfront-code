@@ -55,12 +55,13 @@ export function syncLocalChangeToYText(fullContent: string): void {
     return;
   }
 
+  const ytext = state.markdownYText;
   state.markdownYDoc.transact(() => {
     if (diff.deleteCount > 0) {
-      state.markdownYText.delete(diff.index, diff.deleteCount);
+      ytext.delete(diff.index, diff.deleteCount);
     }
     if (diff.insertText) {
-      state.markdownYText.insert(diff.index, diff.insertText);
+      ytext.insert(diff.index, diff.insertText);
     }
   }, LEXICAL_YJS_ORIGIN);
 }
@@ -97,7 +98,7 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
 
       const Y = modules[0];
       const WebsocketProvider = modules[1].WebsocketProvider;
-      state.markdownYjsY = Y;
+      state.markdownYjsY = Y as unknown as import("./bridge-editor-state.ts").YjsModule;
 
       const doc = new Y.Doc({ guid: config.guid });
       // Cookie auth: authToken cookie on .veryfront.com is sent automatically
@@ -116,13 +117,14 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
       provider.on("status", (event: { status: string }) => {
         console.debug("[StudioBridge] Yjs status:", event.status);
         if (event.status === "connected" && provider.ws) {
-          const origOnMessage = provider.ws.onmessage;
-          provider.ws.onmessage = function (wsEvent: MessageEvent) {
+          const ws = provider.ws;
+          const origOnMessage = ws.onmessage;
+          ws.onmessage = function (wsEvent: MessageEvent) {
             if (typeof wsEvent.data === "string") {
               return;
             }
             if (origOnMessage) {
-              origOnMessage.call(provider.ws, wsEvent);
+              origOnMessage.call(ws, wsEvent);
             }
           };
         }
@@ -136,10 +138,10 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
       try {
         const cookieMatch = document.cookie.match(/authToken=([^;]+)/);
         if (cookieMatch) {
-          const parts = cookieMatch[1].split(".");
+          const parts = cookieMatch[1]!.split(".");
           if (parts.length === 3) {
             const payload = JSON.parse(
-              atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")),
+              atob(parts[1]!.replace(/-/g, "+").replace(/_/g, "/")),
             );
             if (payload.userId) {
               presenceUser.id = payload.userId;
@@ -177,41 +179,36 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
        * selections, and push both to the editor UI.
        */
       function syncAwareness(): void {
-        const states: [number, Record<string, any>][] = Array.from(
+        const states = Array.from(
           provider.awareness.getStates().entries(),
-        );
+        ) as [number, Record<string, unknown>][];
 
         // Sync presence users
         const users: PresenceUser[] = [];
-        for (let i = 0; i < states.length; i++) {
-          const clientId = states[i][0];
-          const st = states[i][1];
-          const user = st.user;
+        for (const [clientId, st] of states) {
+          const user = st.user as Record<string, unknown> | undefined;
           if (!user || typeof user.name !== "string") {
             continue;
           }
           users.push({
-            id: user.id || String(clientId),
+            id: (user.id as string) || String(clientId),
             name: user.name,
-            color: user.color || "#6b7280",
+            color: (user.color as string) || "#6b7280",
             isCurrentUser: clientId === provider.awareness.clientID,
-            isAgent: user.isAgent || false,
+            isAgent: (user.isAgent as boolean) || false,
           });
         }
         setMarkdownPresence(users);
 
         // Sync remote selections
         const selections: RemoteSelection[] = [];
-        for (let j = 0; j < states.length; j++) {
-          const cId = states[j][0];
-          const st = states[j][1];
-          const u = st.user;
+        for (const [cId, st] of states) {
+          const u = st.user as Record<string, unknown> | undefined;
           const ranges = st.selection;
           if (!u || !Array.isArray(ranges) || ranges.length === 0) {
             continue;
           }
-          for (let k = 0; k < ranges.length; k++) {
-            const range = ranges[k];
+          for (const range of ranges) {
             const anchorPos = Y.createAbsolutePositionFromRelativePosition(
               range.anchor,
               doc,
@@ -229,9 +226,9 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
               continue;
             }
             selections.push({
-              id: u.id || String(cId),
-              name: u.name || "Anonymous",
-              color: u.color || "#6b7280",
+              id: (u.id as string) || String(cId),
+              name: (u.name as string) || "Anonymous",
+              color: (u.color as string) || "#6b7280",
               isCurrentUser: cId === provider.awareness.clientID,
               start: Math.min(anchorPos.index, markerPos.index),
               end: Math.max(anchorPos.index, markerPos.index),
@@ -300,6 +297,55 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
     .catch((error) => {
       console.error("[StudioBridge] Failed to setup Yjs connection:", error);
     });
+}
+
+// ---------------------------------------------------------------------------
+// writeToYText (programmatic write, e.g. from agent or debug)
+// ---------------------------------------------------------------------------
+
+/**
+ * Write content into Y.Text at a given position or at the end.
+ * The write appears as coming from a distinct "agent" presence.
+ * Returns true if the write succeeded (Yjs is connected and Y.Text exists).
+ */
+export function writeToYText(
+  text: string,
+  options?: { position?: number; origin?: string },
+): boolean {
+  if (!state.markdownYText || !state.markdownYDoc) {
+    console.warn("[StudioBridge] writeToYText: Yjs not connected");
+    return false;
+  }
+
+  const origin = options?.origin ?? "agent-write";
+  const pos = options?.position ?? state.markdownYText.length;
+  const safePos = Math.max(0, Math.min(pos, state.markdownYText.length));
+
+  const yt = state.markdownYText;
+  state.markdownYDoc.transact(() => {
+    yt.insert(safePos, text);
+  }, origin);
+
+  return true;
+}
+
+/**
+ * Replace all Y.Text content with new content.
+ * Returns true if the write succeeded.
+ */
+export function replaceYTextContent(content: string): boolean {
+  if (!state.markdownYText || !state.markdownYDoc) {
+    console.warn("[StudioBridge] replaceYTextContent: Yjs not connected");
+    return false;
+  }
+
+  const yt2 = state.markdownYText;
+  state.markdownYDoc.transact(() => {
+    yt2.delete(0, yt2.length);
+    yt2.insert(0, content);
+  }, "agent-write");
+
+  return true;
 }
 
 // ---------------------------------------------------------------------------

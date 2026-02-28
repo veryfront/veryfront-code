@@ -5,12 +5,15 @@
  * and provides typed access to bridge options.
  */
 
+export type StudioMode = "simple" | "advanced";
+
 export interface BridgeConfig {
   projectId: string;
   pageId: string;
   pagePath: string;
   wsUrl: string;
   yjsGuid: string;
+  studioMode: StudioMode;
   debugSkipInit: boolean;
   debugExposeInternals: boolean;
 }
@@ -19,6 +22,14 @@ let config: BridgeConfig | null = null;
 
 export function initConfig(): void {
   const raw = (window as any).__VF_BRIDGE_CONFIG__;
+
+  // studioMode can come from the injected config or from a query parameter
+  // (Studio sets vf_studio_mode on the iframe URL).
+  const params = new URLSearchParams(window.location.search);
+  const qsMode = params.get("vf_studio_mode");
+  const resolveMode = (value: unknown): StudioMode =>
+    value === "simple" || qsMode === "simple" ? "simple" : "advanced";
+
   if (!raw || typeof raw !== "object") {
     console.warn("[StudioBridge] No bridge config found on window.__VF_BRIDGE_CONFIG__");
     config = {
@@ -27,6 +38,7 @@ export function initConfig(): void {
       pagePath: "",
       wsUrl: "",
       yjsGuid: "",
+      studioMode: resolveMode(undefined),
       debugSkipInit: false,
       debugExposeInternals: false,
     };
@@ -38,6 +50,7 @@ export function initConfig(): void {
     pagePath: raw.pagePath ?? raw.pageId ?? "",
     wsUrl: raw.wsUrl ?? "",
     yjsGuid: raw.yjsGuid ?? "",
+    studioMode: resolveMode(raw.studioMode),
     debugSkipInit: !!raw.debugSkipInit,
     debugExposeInternals: !!raw.debugExposeInternals,
   };
@@ -72,6 +85,7 @@ export function setConfigForTest(override: Partial<BridgeConfig>): void {
     pagePath: "",
     wsUrl: "",
     yjsGuid: "",
+    studioMode: "advanced",
     debugSkipInit: false,
     debugExposeInternals: false,
     ...override,

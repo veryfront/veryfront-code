@@ -96,7 +96,7 @@ export function escapeRegexText(value: unknown): string {
   const text = String(value || "");
   let escaped = "";
   for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
+    const char = text[i]!;
     if ("\\^$.*+?()[]{}|".indexOf(char) >= 0) {
       escaped += "\\" + char;
     } else {

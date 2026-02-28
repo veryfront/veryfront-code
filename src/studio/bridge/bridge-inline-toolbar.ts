@@ -60,11 +60,12 @@ export function insertMarkdownLink(): void {
   ) {
     return;
   }
-  state.markdownLexicalApi.editor.update(function () {
-    const selection = state.markdownLexicalApi.lexicalModule.$getSelection();
+  const api = state.markdownLexicalApi;
+  api.editor.update(function () {
+    const selection = api.lexicalModule.$getSelection();
     if (
       !selection ||
-      !state.markdownLexicalApi.lexicalModule.$isRangeSelection(selection)
+      !api.lexicalModule.$isRangeSelection(selection)
     ) {
       return;
     }
@@ -246,8 +247,7 @@ export function updateMarkdownInlineToolbar(): void {
   const buttons = state.markdownInlineToolbarRoot.querySelectorAll<HTMLElement>(
     ".vf-markdown-editor__inline-button[data-format]",
   );
-  for (let i = 0; i < buttons.length; i++) {
-    const btn = buttons[i];
+  for (const btn of buttons) {
     const fmt = btn.getAttribute("data-format");
     if (fmt && toolbarState[fmt]) {
       btn.classList.add("active");
@@ -279,8 +279,7 @@ export function updateMarkdownInlineToolbar(): void {
     const options = blockDropdown.querySelectorAll<HTMLElement>(
       ".vf-markdown-editor__block-option",
     );
-    for (let j = 0; j < options.length; j++) {
-      const opt = options[j];
+    for (const opt of options) {
       if (opt.getAttribute("data-block-type") === toolbarState.blockType) {
         opt.classList.add("active");
       } else {

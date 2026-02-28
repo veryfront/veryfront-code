@@ -9,6 +9,7 @@
 import { getConfig, initConfig } from "./bridge-config.ts";
 import { extractRawBlocksForEditor, parseMdxImportMap } from "./bridge-markdown-core.ts";
 import { getMdxBlockOpenUiState } from "./bridge-block-drag.ts";
+import { writeToYText, replaceYTextContent } from "./bridge-markdown-yjs.ts";
 import { init } from "./bridge-init.ts";
 
 // Initialize config from the global injected by the server
@@ -22,6 +23,8 @@ if (config.debugExposeInternals && typeof window !== "undefined") {
     parseMdxImportMap: parseMdxImportMap,
     extractRawBlocksForEditor: extractRawBlocksForEditor,
     getMdxBlockOpenUiState: getMdxBlockOpenUiState,
+    writeToYText: writeToYText,
+    replaceYTextContent: replaceYTextContent,
   };
 }
 

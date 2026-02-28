@@ -17,6 +17,7 @@ import {
   showSelectionOverlay,
 } from "./bridge-inspector.ts";
 import { captureMultipleSections, captureScreenshot } from "./bridge-screenshot.ts";
+import { replaceYTextContent, writeToYText } from "./bridge-markdown-yjs.ts";
 
 export function handleStudioMessage(event: MessageEvent): void {
   if (!isFromStudio(event)) return;
@@ -98,6 +99,21 @@ export function handleStudioMessage(event: MessageEvent): void {
         }
       }
       return;
+
+    case "agentWriteMarkdown": {
+      const mode: string = message.mode || "replace";
+      if (mode === "replace") {
+        replaceYTextContent(message.content || "");
+      } else if (mode === "append") {
+        writeToYText(message.content || "");
+      } else if (mode === "insert_at") {
+        writeToYText(message.content || "", {
+          position: message.position ?? 0,
+          origin: "agent-write",
+        });
+      }
+      return;
+    }
 
     case "screenshot":
       (async function () {
