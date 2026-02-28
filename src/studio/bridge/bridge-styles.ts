@@ -694,6 +694,12 @@ const OVERLAY_CSS = `
         outline: none;
       }
 
+      .vf-markdown-editor__surface s,
+      .vf-markdown-editor__surface del,
+      .vf-markdown-editor__surface [style*='line-through'] {
+        text-decoration: line-through;
+      }
+
       .vf-markdown-editor__surface p:empty::before {
         content: "Type '/' for commands";
         color: oklch(0.55 0.005 95.11 / 0.6);
