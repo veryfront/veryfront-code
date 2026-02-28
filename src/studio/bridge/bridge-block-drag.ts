@@ -6,58 +6,15 @@
  */
 
 import { state } from "./bridge-state.ts";
-import { getConfig } from "./bridge-config.ts";
+import { getConfig, isMdxPage } from "./bridge-config.ts";
 import { DATA_VF_IGNORE } from "./bridge-constants.ts";
-import { isMdxPage } from "./bridge-inspector.ts";
-
-// ---------------------------------------------------------------------------
-// Forward-declared imports from modules that may not exist yet.
-// These are referenced by moveMarkdownLexicalBlock and setMarkdownMdxBlocks.
-// When the corresponding bridge modules are created the imports should be
-// updated to point at the real files.  Until then the functions are typed as
-// optional stubs so the rest of this module compiles in isolation.
-// ---------------------------------------------------------------------------
-
-// Placeholder types – replace with real imports when available:
-//   import { handleMarkdownLocalChange, openFilePathInStudio, guessStudioFilePath } from "./bridge-markdown-core.ts";
-//   import { scheduleMarkdownSelectionSync, scheduleMarkdownSelectionOverlayRender,
-//            scheduleMarkdownSlashMenuUpdate, scheduleMarkdownInlineToolbarUpdate } from "./bridge-markdown-scheduling.ts";
-
-let _openFilePathInStudio:
-  | ((filePath: string, lineNumber: number, symbolName: string) => void)
-  | null = null;
-let _scheduleMarkdownSelectionSync: (() => void) | null = null;
-let _scheduleMarkdownSelectionOverlayRender: (() => void) | null = null;
-let _scheduleMarkdownSlashMenuUpdate: (() => void) | null = null;
-let _scheduleMarkdownInlineToolbarUpdate: (() => void) | null = null;
-
-/**
- * Register callback functions from other bridge modules to avoid circular
- * imports.  Call once during bridge initialisation.
- */
-export function registerBlockDragCallbacks(callbacks: {
-  openFilePathInStudio?: (filePath: string, lineNumber: number, symbolName: string) => void;
-  scheduleMarkdownSelectionSync?: () => void;
-  scheduleMarkdownSelectionOverlayRender?: () => void;
-  scheduleMarkdownSlashMenuUpdate?: () => void;
-  scheduleMarkdownInlineToolbarUpdate?: () => void;
-}): void {
-  if (callbacks.openFilePathInStudio) {
-    _openFilePathInStudio = callbacks.openFilePathInStudio;
-  }
-  if (callbacks.scheduleMarkdownSelectionSync) {
-    _scheduleMarkdownSelectionSync = callbacks.scheduleMarkdownSelectionSync;
-  }
-  if (callbacks.scheduleMarkdownSelectionOverlayRender) {
-    _scheduleMarkdownSelectionOverlayRender = callbacks.scheduleMarkdownSelectionOverlayRender;
-  }
-  if (callbacks.scheduleMarkdownSlashMenuUpdate) {
-    _scheduleMarkdownSlashMenuUpdate = callbacks.scheduleMarkdownSlashMenuUpdate;
-  }
-  if (callbacks.scheduleMarkdownInlineToolbarUpdate) {
-    _scheduleMarkdownInlineToolbarUpdate = callbacks.scheduleMarkdownInlineToolbarUpdate;
-  }
-}
+import { openFilePathInStudio } from "./bridge-markdown-core.ts";
+import {
+  scheduleMarkdownSelectionOverlayRender,
+  scheduleMarkdownSelectionSync,
+} from "./bridge-selection.ts";
+import { scheduleMarkdownSlashMenuUpdate } from "./bridge-slash-menu.ts";
+import { scheduleMarkdownInlineToolbarUpdate } from "./bridge-inline-toolbar.ts";
 
 // ---------------------------------------------------------------------------
 // Top-level block helpers
@@ -324,9 +281,7 @@ export function setMarkdownMdxBlocks(blocks: any[]): void {
         : typeof block.symbolName === "string"
         ? block.symbolName
         : "";
-      if (_openFilePathInStudio) {
-        _openFilePathInStudio(targetFile, targetLine, targetSymbol);
-      }
+      openFilePathInStudio(targetFile, targetLine, targetSymbol);
     });
 
     item.appendChild(label);
@@ -592,18 +547,10 @@ export function moveMarkdownLexicalBlock(sourceIndex: number, targetSlotIndex: n
   });
 
   if (didMove) {
-    if (_scheduleMarkdownSelectionSync) {
-      _scheduleMarkdownSelectionSync();
-    }
-    if (_scheduleMarkdownSelectionOverlayRender) {
-      _scheduleMarkdownSelectionOverlayRender();
-    }
-    if (_scheduleMarkdownSlashMenuUpdate) {
-      _scheduleMarkdownSlashMenuUpdate();
-    }
-    if (_scheduleMarkdownInlineToolbarUpdate) {
-      _scheduleMarkdownInlineToolbarUpdate();
-    }
+    scheduleMarkdownSelectionSync();
+    scheduleMarkdownSelectionOverlayRender();
+    scheduleMarkdownSlashMenuUpdate();
+    scheduleMarkdownInlineToolbarUpdate();
   }
   return didMove;
 }

@@ -343,9 +343,4 @@ export function setColorMode(mode: string): void {
 
 // --- Page type helpers ---
 
-export { isMarkdownPage } from "./bridge-config.ts";
-
-export function isMdxPage(): boolean {
-  const config = getConfig();
-  return typeof config.pagePath === "string" && config.pagePath.toLowerCase().endsWith(".mdx");
-}
+export { isMarkdownPage, isMdxPage } from "./bridge-config.ts";

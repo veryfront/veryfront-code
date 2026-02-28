@@ -59,6 +59,11 @@ export function isMarkdownPage(): boolean {
   return lowerPath.endsWith(".md") || lowerPath.endsWith(".mdx");
 }
 
+export function isMdxPage(): boolean {
+  const cfg = getConfig();
+  return typeof cfg.pagePath === "string" && cfg.pagePath.toLowerCase().endsWith(".mdx");
+}
+
 /** Set config directly (for tests only). */
 export function setConfigForTest(override: Partial<BridgeConfig>): void {
   config = {

@@ -771,6 +771,8 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
   inlineToolbar.appendChild(blockDropdown);
 
   // -- Global listeners for block dropdown -----------------------------------
+  // These self-guard via blockDropdown.style.display check and are closures
+  // over local DOM refs, so they persist for the editor's lifetime.
 
   document.addEventListener("mousedown", function (event: MouseEvent) {
     if (
@@ -965,28 +967,6 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
     moveMarkdownLexicalBlock(sourceIndex, slotIndex);
   });
 
-  // -- Selection change listener ---------------------------------------------
-
-  document.addEventListener("selectionchange", function () {
-    if (
-      !state.markdownEditorRoot ||
-      state.markdownEditorRoot.style.display !== "block"
-    ) {
-      return;
-    }
-    scheduleMarkdownSelectionSync();
-    scheduleMarkdownSelectionOverlayRender();
-    scheduleMarkdownSlashMenuUpdate();
-    scheduleMarkdownInlineToolbarUpdate();
-  });
-
-  // -- Window resize listeners -----------------------------------------------
-
-  window.addEventListener("resize", scheduleMarkdownSelectionOverlayRender);
-  window.addEventListener("resize", scheduleMarkdownSlashMenuUpdate);
-  window.addEventListener("resize", scheduleMarkdownInlineToolbarUpdate);
-  window.addEventListener("resize", hideMarkdownBlockDragUi);
-
   // -- Assemble editor root --------------------------------------------------
 
   editorRoot.appendChild(toolbar);
@@ -1028,6 +1008,40 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
 // setMarkdownEditMode
 // ---------------------------------------------------------------------------
 
+function registerMarkdownGlobalListeners(): void {
+  // Clean up any previous listeners before re-registering
+  for (const cleanup of state.markdownGlobalListenerCleanups) cleanup();
+  state.markdownGlobalListenerCleanups = [];
+
+  const onSelectionChange = function () {
+    if (
+      !state.markdownEditorRoot ||
+      state.markdownEditorRoot.style.display !== "block"
+    ) {
+      return;
+    }
+    scheduleMarkdownSelectionSync();
+    scheduleMarkdownSelectionOverlayRender();
+    scheduleMarkdownSlashMenuUpdate();
+    scheduleMarkdownInlineToolbarUpdate();
+  };
+  document.addEventListener("selectionchange", onSelectionChange);
+  state.markdownGlobalListenerCleanups.push(
+    () => document.removeEventListener("selectionchange", onSelectionChange),
+  );
+
+  window.addEventListener("resize", scheduleMarkdownSelectionOverlayRender);
+  window.addEventListener("resize", scheduleMarkdownSlashMenuUpdate);
+  window.addEventListener("resize", scheduleMarkdownInlineToolbarUpdate);
+  window.addEventListener("resize", hideMarkdownBlockDragUi);
+  state.markdownGlobalListenerCleanups.push(
+    () => window.removeEventListener("resize", scheduleMarkdownSelectionOverlayRender),
+    () => window.removeEventListener("resize", scheduleMarkdownSlashMenuUpdate),
+    () => window.removeEventListener("resize", scheduleMarkdownInlineToolbarUpdate),
+    () => window.removeEventListener("resize", hideMarkdownBlockDragUi),
+  );
+}
+
 export function setMarkdownEditMode(enabled: boolean): void {
   const markdownBody = document.getElementById("markdown-body");
   if (!markdownBody || !isMarkdownPage()) {
@@ -1036,6 +1050,7 @@ export function setMarkdownEditMode(enabled: boolean): void {
 
   if (enabled) {
     ensureMarkdownEditor();
+    registerMarkdownGlobalListeners();
     setupMarkdownLexicalEditor();
     markdownBody.style.display = "none";
     if (state.markdownEditorRoot) {
@@ -1073,6 +1088,10 @@ export function setMarkdownEditMode(enabled: boolean): void {
     clearMarkdownSelectionOverlay();
     clearMarkdownSelectionSync();
     disposeMarkdownYjs();
+
+    // Remove global listeners registered by registerMarkdownGlobalListeners
+    for (const cleanup of state.markdownGlobalListenerCleanups) cleanup();
+    state.markdownGlobalListenerCleanups = [];
   }
 
   const nextUrl = new URL(window.location.href);

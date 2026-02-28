@@ -61,6 +61,9 @@ export const state = {
   // MDX blocks
   markdownMdxBlocksRoot: null as HTMLElement | null,
 
+  // Global listener cleanups
+  markdownGlobalListenerCleanups: [] as Array<() => void>,
+
   // Lexical
   markdownLexicalApi: null as any,
   markdownLexicalSetupPromise: null as Promise<void> | null,
