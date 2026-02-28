@@ -1,0 +1,31 @@
+/**
+ * Bridge Coordinator
+ *
+ * Entry point for the studio bridge ESM modules.
+ * Reads config from window.__VF_BRIDGE_CONFIG__, initializes all modules,
+ * and exposes debug internals when configured.
+ */
+
+import { initConfig, getConfig } from "./bridge-config.ts";
+import { parseMdxImportMap, extractRawBlocksForEditor } from "./bridge-markdown-core.ts";
+import { getMdxBlockOpenUiState } from "./bridge-block-drag.ts";
+import { init } from "./bridge-init.ts";
+
+// Initialize config from the global injected by the server
+initConfig();
+
+const config = getConfig();
+
+// Expose debug internals when configured
+if (config.debugExposeInternals && typeof window !== "undefined") {
+  (window as any).__VF_STUDIO_BRIDGE_DEBUG = {
+    parseMdxImportMap: parseMdxImportMap,
+    extractRawBlocksForEditor: extractRawBlocksForEditor,
+    getMdxBlockOpenUiState: getMdxBlockOpenUiState,
+  };
+}
+
+// Run init unless debug skip is set
+if (!config.debugSkipInit) {
+  init();
+}

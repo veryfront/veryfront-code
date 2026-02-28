@@ -352,7 +352,8 @@
     ],
     "exclude": [
       "dist/",
-      "coverage/"
+      "coverage/",
+      "src/studio/bridge/"
     ],
     "rules": {
       "tags": [

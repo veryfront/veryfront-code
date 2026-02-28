@@ -51,9 +51,9 @@ describe("html/dev-scripts", () => {
   describe("getStudioScripts", () => {
     it("should include projectId and pageId", () => {
       const scripts = getStudioScripts({ projectId: "proj1", pageId: "page1" });
-      assertEquals(scripts.includes("projectId=proj1"), true);
-      assertEquals(scripts.includes("pageId=page1"), true);
-      assertEquals(scripts.includes("studio-bridge.js"), true);
+      assertEquals(scripts.includes('"projectId":"proj1"'), true);
+      assertEquals(scripts.includes('"pageId":"page1"'), true);
+      assertEquals(scripts.includes("bridge-coordinator.js"), true);
     });
 
     it("should include nonce when provided", () => {

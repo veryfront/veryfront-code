@@ -4,4 +4,4 @@
  * @module server/handlers/studio
  */
 
-export { StudioEndpointsHandler } from "./endpoints.handler.ts";
+export { StudioBridgeModulesHandler } from "./bridge-modules.handler.ts";
