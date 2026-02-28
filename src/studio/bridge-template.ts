@@ -4100,7 +4100,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     const inlineToolbar = document.createElement('div');
     inlineToolbar.className = 'vf-markdown-editor__inline-toolbar';
     inlineToolbar.setAttribute(DATA_VF_IGNORE, 'true');
-    inlineToolbar.style.position = 'relative';
 
     function createInlineButton(label, format, handler) {
       var btn = document.createElement('button');
