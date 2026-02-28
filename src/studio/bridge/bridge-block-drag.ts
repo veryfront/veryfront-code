@@ -5,9 +5,10 @@
  * and all helpers that operate on top-level editor blocks.
  */
 
-import { state } from "./bridge-state.ts";
+import { editorState as state } from "./bridge-editor-state.ts";
 import { getConfig, isMdxPage } from "./bridge-config.ts";
 import { DATA_VF_IGNORE } from "./bridge-constants.ts";
+import { btn, el } from "./bridge-dom-helpers.ts";
 import { openFilePathInStudio } from "./bridge-markdown-core.ts";
 import {
   scheduleMarkdownSelectionOverlayRender,
@@ -158,19 +159,9 @@ export function removeMarkdownDragGhost(): void {
 
 export function createMarkdownDragGhost(block: Element): HTMLElement {
   const typeInfo = getMarkdownBlockTypeInfo(block);
-  const ghost = document.createElement("div");
-  ghost.className = "vf-markdown-editor__block-drag-ghost";
-  ghost.setAttribute(DATA_VF_IGNORE, "true");
-
-  const title = document.createElement("span");
-  title.className = "vf-markdown-editor__block-drag-ghost-title";
-  title.setAttribute(DATA_VF_IGNORE, "true");
-  title.textContent = "Moving " + typeInfo.label;
-
-  const text = document.createElement("span");
-  text.className = "vf-markdown-editor__block-drag-ghost-text";
-  text.setAttribute(DATA_VF_IGNORE, "true");
-  text.textContent = getMarkdownBlockPreviewText(block);
+  const ghost = el("div", "vf-markdown-editor__block-drag-ghost");
+  const title = el("span", "vf-markdown-editor__block-drag-ghost-title", "Moving " + typeInfo.label);
+  const text = el("span", "vf-markdown-editor__block-drag-ghost-text", getMarkdownBlockPreviewText(block));
 
   ghost.appendChild(title);
   ghost.appendChild(text);
@@ -250,28 +241,15 @@ export function setMarkdownMdxBlocks(blocks: any[]): void {
       continue;
     }
 
-    const item = document.createElement("div");
-    item.className = "vf-markdown-editor__mdx-block";
-    item.setAttribute(DATA_VF_IGNORE, "true");
+    const item = el("div", "vf-markdown-editor__mdx-block");
 
-    const label = document.createElement("div");
-    label.className = "vf-markdown-editor__mdx-block-label";
-    label.setAttribute(DATA_VF_IGNORE, "true");
     const safeLine = Number.isFinite(block.lineNumber)
       ? Math.max(1, Math.trunc(block.lineNumber))
       : 1;
-    label.textContent = block.label + " (line " + String(safeLine) + ")";
+    const label = el("div", "vf-markdown-editor__mdx-block-label", block.label + " (line " + String(safeLine) + ")");
     const openUiState = getMdxBlockOpenUiState(block);
 
-    const openButton = document.createElement("button");
-    openButton.type = "button";
-    openButton.className = "vf-markdown-editor__mdx-open";
-    openButton.setAttribute(DATA_VF_IGNORE, "true");
-    openButton.textContent = openUiState.buttonLabel;
-    if (openUiState.showUnresolvedNote) {
-      openButton.title = "Component import could not be resolved. Opening current MDX source.";
-    }
-    openButton.addEventListener("click", function () {
+    const openButton = btn("vf-markdown-editor__mdx-open", openUiState.buttonLabel, function () {
       const targetFile = typeof block.filePath === "string" && block.filePath
         ? block.filePath
         : PAGE_PATH;
@@ -284,13 +262,13 @@ export function setMarkdownMdxBlocks(blocks: any[]): void {
       openFilePathInStudio(targetFile, targetLine, targetSymbol);
     });
 
+    if (openUiState.showUnresolvedNote) {
+      openButton.title = "Component import could not be resolved. Opening current MDX source.";
+    }
+
     item.appendChild(label);
     if (openUiState.showUnresolvedNote) {
-      const fallbackNote = document.createElement("span");
-      fallbackNote.className = "vf-markdown-editor__mdx-note";
-      fallbackNote.setAttribute(DATA_VF_IGNORE, "true");
-      fallbackNote.textContent = "Unresolved import";
-      item.appendChild(fallbackNote);
+      item.appendChild(el("span", "vf-markdown-editor__mdx-note", "Unresolved import"));
     }
     item.appendChild(openButton);
     state.markdownMdxBlocksRoot.appendChild(item);

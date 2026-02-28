@@ -10,9 +10,9 @@
  * All cross-module calls must remain in function bodies (never at module top-level).
  */
 
+import { editorState as state } from "./bridge-editor-state.ts";
 import {
   LEXICAL_YJS_ORIGIN,
-  state,
   type PresenceUser,
   type RemoteSelection,
 } from "./bridge-state.ts";

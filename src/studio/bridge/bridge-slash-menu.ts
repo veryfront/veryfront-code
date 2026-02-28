@@ -5,8 +5,10 @@
  * keyboard navigation, and command application.
  */
 
-import { MARKDOWN_SLASH_COMMANDS, state } from "./bridge-state.ts";
+import { editorState as state } from "./bridge-editor-state.ts";
+import { MARKDOWN_SLASH_COMMANDS } from "./bridge-state.ts";
 import { DATA_VF_IGNORE } from "./bridge-constants.ts";
+import { el } from "./bridge-dom-helpers.ts";
 import {
   composeMarkdownContent,
   restoreRawBlocksFromEditor,
@@ -162,45 +164,28 @@ export function renderMarkdownSlashMenu(): void {
   state.markdownSlashMenuRoot.style.left = left + "px";
   state.markdownSlashMenuRoot.style.top = top + "px";
 
-  const sectionHeader = document.createElement("div");
-  sectionHeader.className = "vf-markdown-editor__slash-section";
-  sectionHeader.textContent = "Basic blocks";
-  state.markdownSlashMenuRoot.appendChild(sectionHeader);
+  state.markdownSlashMenuRoot.appendChild(
+    el("div", "vf-markdown-editor__slash-section", "Basic blocks"),
+  );
 
-  state.markdownSlashMenuCommands.forEach(function (command: any, index: number) {
-    const item = document.createElement("button");
+  state.markdownSlashMenuCommands.forEach(function (command, index: number) {
+    const item = el("button", "vf-markdown-editor__slash-item") as HTMLButtonElement;
     item.type = "button";
-    item.className = "vf-markdown-editor__slash-item";
     item.setAttribute(
       "data-active",
       index === state.markdownSlashMenuActiveIndex ? "true" : "false",
     );
-    item.setAttribute(DATA_VF_IGNORE, "true");
-    item.addEventListener("mousedown", function (event: MouseEvent) {
-      event.preventDefault();
-    });
-    item.addEventListener("click", function (event: MouseEvent) {
+    item.addEventListener("mousedown", function (event) { event.preventDefault(); });
+    item.addEventListener("click", function (event) {
       event.preventDefault();
       state.markdownSlashMenuActiveIndex = index;
       applyMarkdownSlashCommand(state.markdownSlashMenuActiveIndex);
     });
 
-    const icon = document.createElement("span");
-    icon.className = "vf-markdown-editor__slash-icon";
-    icon.textContent = command.icon || "";
-
-    const title = document.createElement("span");
-    title.className = "vf-markdown-editor__slash-item-title";
-    title.textContent = command.label;
-
-    item.appendChild(icon);
-    item.appendChild(title);
-
+    item.appendChild(el("span", "vf-markdown-editor__slash-icon", command.icon || ""));
+    item.appendChild(el("span", "vf-markdown-editor__slash-item-title", command.label));
     if (command.shortcut) {
-      const shortcut = document.createElement("span");
-      shortcut.className = "vf-markdown-editor__slash-shortcut";
-      shortcut.textContent = command.shortcut;
-      item.appendChild(shortcut);
+      item.appendChild(el("span", "vf-markdown-editor__slash-shortcut", command.shortcut));
     }
 
     state.markdownSlashMenuRoot!.appendChild(item);
@@ -210,11 +195,8 @@ export function renderMarkdownSlashMenu(): void {
   footer.className = "vf-markdown-editor__slash-footer";
   const footerLabel = document.createElement("span");
   footerLabel.textContent = "Close menu";
-  const footerKey = document.createElement("span");
-  footerKey.className = "vf-markdown-editor__slash-footer-key";
-  footerKey.textContent = "esc";
   footer.appendChild(footerLabel);
-  footer.appendChild(footerKey);
+  footer.appendChild(el("span", "vf-markdown-editor__slash-footer-key", "esc"));
   state.markdownSlashMenuRoot.appendChild(footer);
 
   state.markdownSlashMenuRoot.style.display = "block";

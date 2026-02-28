@@ -10,9 +10,10 @@
  * All cross-module calls must remain in function bodies (never at module top-level).
  */
 
-import { state } from "./bridge-state.ts";
+import { editorState as state } from "./bridge-editor-state.ts";
 import { getConfig, isMarkdownPage } from "./bridge-config.ts";
 import { DATA_VF_IGNORE } from "./bridge-constants.ts";
+import { btn, el } from "./bridge-dom-helpers.ts";
 
 import {
   composeMarkdownContent,
@@ -491,45 +492,20 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
     return state.markdownEditorRoot;
   }
 
-  const editorRoot = document.createElement("div");
-  editorRoot.className = "vf-markdown-editor";
-  editorRoot.setAttribute(DATA_VF_IGNORE, "true");
+  const editorRoot = el("div", "vf-markdown-editor");
 
   // -- Toolbar ---------------------------------------------------------------
 
-  const toolbar = document.createElement("div");
-  toolbar.className = "vf-markdown-editor__toolbar";
-  toolbar.setAttribute(DATA_VF_IGNORE, "true");
+  const toolbar = el("div", "vf-markdown-editor__toolbar");
+  const title = el("div", "vf-markdown-editor__title", getConfig().pagePath || "Untitled");
+  const actions = el("div", "vf-markdown-editor__actions");
 
-  const title = document.createElement("div");
-  title.className = "vf-markdown-editor__title";
-  title.setAttribute(DATA_VF_IGNORE, "true");
-  title.textContent = getConfig().pagePath || "Untitled";
-
-  const actions = document.createElement("div");
-  actions.className = "vf-markdown-editor__actions";
-  actions.setAttribute(DATA_VF_IGNORE, "true");
-
-  const status = document.createElement("div");
-  status.className = "vf-markdown-editor__status";
-  status.setAttribute(DATA_VF_IGNORE, "true");
-  status.textContent = "";
+  const status = el("div", "vf-markdown-editor__status");
   status.setAttribute("data-state", "");
 
-  const presence = document.createElement("div");
-  presence.className = "vf-markdown-editor__presence";
-  presence.setAttribute(DATA_VF_IGNORE, "true");
-
-  const selections = document.createElement("div");
-  selections.className = "vf-markdown-editor__selections";
-  selections.setAttribute(DATA_VF_IGNORE, "true");
-
-  const exitButton = document.createElement("button");
-  exitButton.type = "button";
-  exitButton.className = "vf-markdown-editor__exit";
-  exitButton.setAttribute(DATA_VF_IGNORE, "true");
-  exitButton.textContent = "Done";
-  exitButton.addEventListener("click", function () {
+  const presence = el("div", "vf-markdown-editor__presence");
+  const selections = el("div", "vf-markdown-editor__selections");
+  const exitButton = btn("vf-markdown-editor__exit", "Done", function () {
     setMarkdownEditMode(false);
   });
 
@@ -543,15 +519,11 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
 
   // -- MDX blocks bar --------------------------------------------------------
 
-  const mdxBlocks = document.createElement("div");
-  mdxBlocks.className = "vf-markdown-editor__mdx-blocks";
-  mdxBlocks.setAttribute(DATA_VF_IGNORE, "true");
+  const mdxBlocks = el("div", "vf-markdown-editor__mdx-blocks");
 
   // -- Surface (contenteditable) ---------------------------------------------
 
-  const surface = document.createElement("div");
-  surface.className = "vf-markdown-editor__surface markdown-body";
-  surface.setAttribute(DATA_VF_IGNORE, "true");
+  const surface = el("div", "vf-markdown-editor__surface markdown-body");
   surface.setAttribute("contenteditable", "true");
   surface.setAttribute("aria-label", "Markdown editor");
   surface.addEventListener("keyup", scheduleMarkdownSelectionSync);
@@ -597,27 +569,19 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
 
   // -- Surface wrap ----------------------------------------------------------
 
-  const surfaceWrap = document.createElement("div");
-  surfaceWrap.className = "vf-markdown-editor__surface-wrap";
-  surfaceWrap.setAttribute(DATA_VF_IGNORE, "true");
+  const surfaceWrap = el("div", "vf-markdown-editor__surface-wrap");
 
   // -- Selection overlay -----------------------------------------------------
 
-  const selectionOverlay = document.createElement("div");
-  selectionOverlay.className = "vf-markdown-editor__selection-overlay";
-  selectionOverlay.setAttribute(DATA_VF_IGNORE, "true");
+  const selectionOverlay = el("div", "vf-markdown-editor__selection-overlay");
 
   // -- Slash menu ------------------------------------------------------------
 
-  const slashMenu = document.createElement("div");
-  slashMenu.className = "vf-markdown-editor__slash-menu";
-  slashMenu.setAttribute(DATA_VF_IGNORE, "true");
+  const slashMenu = el("div", "vf-markdown-editor__slash-menu");
 
   // -- Inline toolbar --------------------------------------------------------
 
-  const inlineToolbar = document.createElement("div");
-  inlineToolbar.className = "vf-markdown-editor__inline-toolbar";
-  inlineToolbar.setAttribute(DATA_VF_IGNORE, "true");
+  const inlineToolbar = el("div", "vf-markdown-editor__inline-toolbar");
 
   // Local helpers for inline buttons / separators
   function createInlineButton(
@@ -625,37 +589,22 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
     format: string | null,
     handler: (() => void) | null,
   ): HTMLButtonElement {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "vf-markdown-editor__inline-button";
-    btn.setAttribute(DATA_VF_IGNORE, "true");
-    btn.textContent = label;
-    if (format) {
-      btn.setAttribute("data-format", format);
-    }
-    btn.addEventListener("mousedown", function (event: MouseEvent) {
+    const button = btn("vf-markdown-editor__inline-button", label, function (event) {
       event.preventDefault();
+      if (handler) handler();
     });
-    btn.addEventListener("click", function (event: MouseEvent) {
-      event.preventDefault();
-      if (handler) {
-        handler();
-      }
-    });
-    return btn;
+    if (format) button.setAttribute("data-format", format);
+    button.addEventListener("mousedown", function (event) { event.preventDefault(); });
+    return button;
   }
 
   function createSeparator(): HTMLDivElement {
-    const sep = document.createElement("div");
-    sep.className = "vf-markdown-editor__inline-separator";
-    return sep;
+    return el("div", "vf-markdown-editor__inline-separator");
   }
 
   // -- Block dropdown --------------------------------------------------------
 
-  const blockDropdown = document.createElement("div");
-  blockDropdown.className = "vf-markdown-editor__block-dropdown";
-  blockDropdown.setAttribute(DATA_VF_IGNORE, "true");
+  const blockDropdown = el("div", "vf-markdown-editor__block-dropdown");
 
   const blockTypes = [
     { type: "paragraph", label: "Paragraph" },
@@ -667,44 +616,33 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
     { type: "quote", label: "Quote" },
   ];
   blockTypes.forEach(function (bt) {
-    const opt = document.createElement("button");
-    opt.type = "button";
-    opt.className = "vf-markdown-editor__block-option";
-    opt.setAttribute(DATA_VF_IGNORE, "true");
-    opt.setAttribute("data-block-type", bt.type);
-    opt.textContent = bt.label;
-    opt.addEventListener("mousedown", function (event: MouseEvent) {
-      event.preventDefault();
-    });
-    opt.addEventListener("click", function (event: MouseEvent) {
+    const opt = btn("vf-markdown-editor__block-option", bt.label, function (event) {
       event.preventDefault();
       setMarkdownBlockType(bt.type);
       blockDropdown.style.display = "none";
       scheduleMarkdownInlineToolbarUpdate();
     });
+    opt.setAttribute("data-block-type", bt.type);
+    opt.addEventListener("mousedown", function (event) { event.preventDefault(); });
     blockDropdown.appendChild(opt);
   });
 
   // -- Block trigger (pilcrow) -----------------------------------------------
 
-  const blockTrigger = document.createElement("button");
-  blockTrigger.type = "button";
-  blockTrigger.className = "vf-markdown-editor__block-trigger";
-  blockTrigger.setAttribute(DATA_VF_IGNORE, "true");
-  blockTrigger.textContent = String.fromCharCode(182); // ¶
-  blockTrigger.addEventListener("mousedown", function (event: MouseEvent) {
-    event.preventDefault();
-  });
-  blockTrigger.addEventListener("click", function (event: MouseEvent) {
-    event.preventDefault();
-    const isOpen = blockDropdown.style.display === "block";
-    blockDropdown.style.display = isOpen ? "none" : "block";
-  });
+  const blockTrigger = btn(
+    "vf-markdown-editor__block-trigger",
+    String.fromCharCode(182), // ¶
+    function (event) {
+      event.preventDefault();
+      const isOpen = blockDropdown.style.display === "block";
+      blockDropdown.style.display = isOpen ? "none" : "block";
+    },
+  );
+  blockTrigger.addEventListener("mousedown", function (event) { event.preventDefault(); });
 
   // -- Inline toolbar rows ---------------------------------------------------
 
-  const row1 = document.createElement("div");
-  row1.className = "vf-markdown-editor__inline-row";
+  const row1 = el("div", "vf-markdown-editor__inline-row");
   row1.appendChild(blockTrigger);
   row1.appendChild(createSeparator());
   row1.appendChild(
@@ -723,8 +661,7 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
     }),
   );
 
-  const row2 = document.createElement("div");
-  row2.className = "vf-markdown-editor__inline-row";
+  const row2 = el("div", "vf-markdown-editor__inline-row");
   row2.appendChild(
     createInlineButton(String.fromCodePoint(128279), null, function () {
       insertMarkdownLink();
@@ -776,11 +713,7 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
 
   // -- Block drag handle -----------------------------------------------------
 
-  const blockDragHandle = document.createElement("button");
-  blockDragHandle.type = "button";
-  blockDragHandle.className = "vf-markdown-editor__block-handle";
-  blockDragHandle.setAttribute(DATA_VF_IGNORE, "true");
-  blockDragHandle.textContent = "::";
+  const blockDragHandle = btn("vf-markdown-editor__block-handle", "::", function () {});
   blockDragHandle.draggable = true;
   blockDragHandle.setAttribute("data-dragging", "false");
   blockDragHandle.addEventListener("dragstart", function (event: DragEvent) {
@@ -834,13 +767,8 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
 
   // -- Block drop indicator / label ------------------------------------------
 
-  const blockDropIndicator = document.createElement("div");
-  blockDropIndicator.className = "vf-markdown-editor__block-drop-indicator";
-  blockDropIndicator.setAttribute(DATA_VF_IGNORE, "true");
-
-  const blockDropLabel = document.createElement("div");
-  blockDropLabel.className = "vf-markdown-editor__block-drop-label";
-  blockDropLabel.setAttribute(DATA_VF_IGNORE, "true");
+  const blockDropIndicator = el("div", "vf-markdown-editor__block-drop-indicator");
+  const blockDropLabel = el("div", "vf-markdown-editor__block-drop-label");
 
   // -- Surface wrap assembly -------------------------------------------------
 
@@ -849,9 +777,7 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
 
   // -- Textarea (fallback) ---------------------------------------------------
 
-  const textarea = document.createElement("textarea");
-  textarea.className = "vf-markdown-editor__textarea";
-  textarea.setAttribute(DATA_VF_IGNORE, "true");
+  const textarea = el("textarea", "vf-markdown-editor__textarea");
   textarea.setAttribute("aria-label", "Markdown editor");
   textarea.spellcheck = false;
   textarea.addEventListener("input", function () {
@@ -1087,12 +1013,7 @@ export function ensureMarkdownEditButton(): void {
     return;
   }
 
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "vf-markdown-edit-button";
-  button.textContent = "Edit";
-  button.setAttribute(DATA_VF_IGNORE, "true");
-  button.addEventListener("click", function () {
+  const button = btn("vf-markdown-edit-button", "Edit", function () {
     setMarkdownEditMode(true);
   });
 

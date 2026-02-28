@@ -6,7 +6,7 @@
  * Y.js awareness; and selection overlay rendering for remote cursors.
  */
 
-import { state } from "./bridge-state.ts";
+import { editorState as state } from "./bridge-editor-state.ts";
 import { DATA_VF_IGNORE } from "./bridge-constants.ts";
 
 // ---------------------------------------------------------------------------

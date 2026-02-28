@@ -5,7 +5,7 @@
  * underline, code, link insertion, and block-type switching.
  */
 
-import { state } from "./bridge-state.ts";
+import { editorState as state } from "./bridge-editor-state.ts";
 
 // ---------------------------------------------------------------------------
 // hideMarkdownInlineToolbar

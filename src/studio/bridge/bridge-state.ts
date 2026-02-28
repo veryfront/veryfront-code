@@ -1,8 +1,8 @@
 /**
  * Bridge Shared State
  *
- * Single mutable state object shared across all bridge modules.
- * All former IIFE `let` variables live here.
+ * Bridge infrastructure state (inspector, console, screenshot).
+ * Editor state lives in bridge-editor-state.ts.
  */
 
 // ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ export interface LexicalApi {
 }
 
 // ---------------------------------------------------------------------------
-// State
+// Bridge infrastructure state
 // ---------------------------------------------------------------------------
 
 export const state = {
@@ -87,87 +87,6 @@ export const state = {
   hoverOverlay: null as HTMLElement | null,
   selectionOverlay: null as HTMLElement | null,
 
-  // Markdown editor DOM
-  markdownEditorRoot: null as HTMLElement | null,
-  markdownEditorSurface: null as HTMLElement | null,
-  markdownEditorTextarea: null as HTMLTextAreaElement | null,
-  markdownEditButton: null as HTMLButtonElement | null,
-  markdownFileId: null as string | null,
-
-  // Markdown timers
-  markdownSyncTimer: null as ReturnType<typeof setTimeout> | null,
-  markdownSelectionSyncTimer: null as ReturnType<typeof setTimeout> | null,
-
-  // Markdown persist
-  markdownPersistStatus: null as HTMLElement | null,
-
-  // Markdown presence & selections
-  markdownPresenceRoot: null as HTMLElement | null,
-  markdownSelectionsRoot: null as HTMLElement | null,
-  markdownSelectionOverlayRoot: null as HTMLElement | null,
-  markdownOverlaySelections: [] as RemoteSelection[],
-  markdownSelectionOverlayRenderFrame: null as number | null,
-
-  // Slash menu
-  markdownSlashMenuRoot: null as HTMLElement | null,
-  markdownSlashMenuTimer: null as ReturnType<typeof setTimeout> | null,
-  markdownSlashMenuContext: null as SlashMenuContext | null,
-  markdownSlashMenuCommands: [] as SlashMenuCommand[],
-  markdownSlashMenuActiveIndex: 0,
-
-  // Inline toolbar
-  markdownInlineToolbarRoot: null as HTMLElement | null,
-  markdownInlineToolbarFrame: null as number | null,
-
-  // Block drag
-  markdownBlockDragHandle: null as HTMLElement | null,
-  markdownBlockDropIndicator: null as HTMLElement | null,
-  markdownBlockDropLabel: null as HTMLElement | null,
-  markdownBlockDragGhost: null as HTMLElement | null,
-  markdownBlockDragSourceIndex: -1,
-  markdownBlockDropSlotIndex: -1,
-  markdownBlockHandleHoverIndex: -1,
-  markdownBlockDragActive: false,
-
-  // MDX blocks
-  markdownMdxBlocksRoot: null as HTMLElement | null,
-
-  // Global listener cleanups
-  markdownGlobalListenerCleanups: [] as Array<() => void>,
-
-  // Lexical
-  markdownLexicalApi: null as LexicalApi | null,
-  markdownLexicalSetupPromise: null as Promise<void> | null,
-
-  // Markdown content
-  markdownCurrentContent: "",
-  markdownCurrentEditorContent: "",
-  markdownLexicalRenderedContent: null as string | null,
-  markdownApplyingRemoteUpdate: false,
-  markdownFrontmatter: "",
-  markdownRawBlocks: [] as string[],
-  markdownRawBlockTokenPrefix: "VF_RAW_BLOCK",
-  markdownLatestMdxBlocks: [] as MdxBlock[],
-  markdownLatestMdxImportMap: {} as Record<string, MdxImportEntry>,
-  markdownLatestPresenceUsers: [] as PresenceUser[],
-  markdownLatestSelections: [] as RemoteSelection[],
-  markdownHasUnsavedChanges: false,
-  markdownSaveInProgress: false,
-
-  // Yjs (dynamically imported — typed structurally)
-  markdownYDoc: null as { getText(name: string): unknown; destroy(): void } | null,
-  markdownYProvider: null as {
-    on(event: string, cb: (...args: unknown[]) => void): void;
-    disconnect(): void;
-    destroy(): void;
-    awareness: unknown;
-  } | null,
-  markdownYText: null as { length: number } | null,
-  markdownYjsConnected: false,
-  markdownYjsSetupId: 0,
-  markdownYjsY: null as unknown,
-  markdownPendingSelection: null as { start: number; end: number } | null,
-
   // Console
   originalConsole: {} as Record<string, (...args: unknown[]) => void>,
   logCounter: 0,
@@ -178,29 +97,10 @@ export const state = {
 };
 
 // ---------------------------------------------------------------------------
-// Persist status (lives here to avoid circular imports between core ↔ editor)
+// Re-exports from editor state (for modules that import from bridge-state)
 // ---------------------------------------------------------------------------
 
-export function setMarkdownPersistStatus(status: string): void {
-  if (!state.markdownPersistStatus) {
-    return;
-  }
-
-  const nextStatus = status === "saving" || status === "saved" || status === "error"
-    ? status
-    : "saved";
-
-  state.markdownPersistStatus.setAttribute("data-state", nextStatus);
-  if (nextStatus === "saving") {
-    state.markdownPersistStatus.textContent = "Saving...";
-    return;
-  }
-  if (nextStatus === "error") {
-    state.markdownPersistStatus.textContent = "Save failed";
-    return;
-  }
-  state.markdownPersistStatus.textContent = "Saved";
-}
+export { editorState, setMarkdownPersistStatus } from "./bridge-editor-state.ts";
 
 export const LEXICAL_YJS_ORIGIN = "lexical-yjs-binding";
 
@@ -217,7 +117,7 @@ export const CONSOLE_METHODS = [
 
 export const DOM_IGNORE_TAGS = ["SCRIPT", "STYLE", "LINK", "META", "NOSCRIPT"];
 
-export const MARKDOWN_SLASH_COMMANDS = [
+export const MARKDOWN_SLASH_COMMANDS: SlashMenuCommand[] = [
   {
     id: "text",
     label: "Text",

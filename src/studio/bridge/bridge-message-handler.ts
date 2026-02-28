@@ -4,7 +4,8 @@
  * Dispatches incoming Studio messages to the appropriate bridge functions.
  */
 
-import { setMarkdownPersistStatus, state } from "./bridge-state.ts";
+import { editorState, setMarkdownPersistStatus } from "./bridge-editor-state.ts";
+import { state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
 import { isFromStudio, postToStudio } from "./bridge-messaging.ts";
 import {
@@ -80,16 +81,19 @@ export function handleStudioMessage(event: MessageEvent): void {
       if (!isMarkdownPage()) {
         return;
       }
-      if (message.fileId && state.markdownFileId && message.fileId !== state.markdownFileId) {
+      if (
+        message.fileId && editorState.markdownFileId &&
+        message.fileId !== editorState.markdownFileId
+      ) {
         return;
       }
-      if (state.markdownSaveInProgress) {
+      if (editorState.markdownSaveInProgress) {
         setMarkdownPersistStatus(message.status || "saved");
         if (message.status === "saved") {
-          state.markdownSaveInProgress = false;
-          state.markdownHasUnsavedChanges = false;
+          editorState.markdownSaveInProgress = false;
+          editorState.markdownHasUnsavedChanges = false;
         } else if (message.status === "error") {
-          state.markdownSaveInProgress = false;
+          editorState.markdownSaveInProgress = false;
           // Keep markdownHasUnsavedChanges = true so user can retry
         }
       }

@@ -10,12 +10,8 @@
  * function bodies (never at module top-level).
  */
 
-import {
-  setMarkdownPersistStatus,
-  state,
-  type MdxBlock,
-  type MdxImportEntry,
-} from "./bridge-state.ts";
+import { editorState as state, setMarkdownPersistStatus } from "./bridge-editor-state.ts";
+import type { MdxBlock, MdxImportEntry } from "./bridge-state.ts";
 import { getConfig, isMdxPage } from "./bridge-config.ts";
 import { getEditorCallbacks } from "./bridge-editor-callbacks.ts";
 import { syncLocalChangeToYText } from "./bridge-markdown-yjs.ts";
