@@ -545,6 +545,22 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         color: #0081f8;
       }
 
+      .vf-markdown-editor__inline-button[data-format='bold'] {
+        font-weight: 700;
+      }
+
+      .vf-markdown-editor__inline-button[data-format='italic'] {
+        font-style: italic;
+      }
+
+      .vf-markdown-editor__inline-button[data-format='strikethrough'] {
+        text-decoration: line-through;
+      }
+
+      .vf-markdown-editor__inline-button[data-format='underline'] {
+        text-decoration: underline;
+      }
+
       .vf-markdown-editor__block-trigger {
         border: 0;
         border-radius: 6px;
@@ -2308,6 +2324,11 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     markdownSlashMenuRoot.appendChild(footer);
 
     markdownSlashMenuRoot.style.display = 'block';
+
+    var activeItem = markdownSlashMenuRoot.querySelector('.vf-markdown-editor__slash-item[data-active="true"]');
+    if (activeItem) {
+      activeItem.scrollIntoView({ block: 'nearest' });
+    }
   }
 
   function updateMarkdownSlashMenu() {
@@ -2519,24 +2540,36 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       state.code = selection.hasFormat('code');
 
       var anchorNode = selection.anchor.getNode();
-      var element = anchorNode.getKey() === 'root'
-        ? anchorNode
-        : anchorNode.getTopLevelElementOrThrow();
-      var elementType = element.getType();
-      if (elementType === 'heading') {
-        state.blockType = element.getTag();
-      } else if (elementType === 'list') {
-        state.blockType = element.getListType() === 'number' ? 'number' : 'bullet';
-      } else if (elementType === 'listitem') {
-        var parent = element.getParent();
-        if (parent && parent.getType() === 'list') {
-          state.blockType = parent.getListType() === 'number' ? 'number' : 'bullet';
-        }
-      } else if (elementType === 'quote') {
-        state.blockType = 'quote';
-      } else {
-        state.blockType = 'paragraph';
+      var element = anchorNode;
+      if (element.getType() === 'text') {
+        element = element.getParent();
       }
+      if (!element) {
+        state.blockType = 'paragraph';
+        return;
+      }
+
+      var node = element;
+      while (node) {
+        var nodeType = node.getType();
+        if (nodeType === 'heading') {
+          state.blockType = node.getTag();
+          return;
+        }
+        if (nodeType === 'quote') {
+          state.blockType = 'quote';
+          return;
+        }
+        if (nodeType === 'list') {
+          state.blockType = node.getListType() === 'number' ? 'number' : 'bullet';
+          return;
+        }
+        if (nodeType === 'root') {
+          break;
+        }
+        node = node.getParent();
+      }
+      state.blockType = 'paragraph';
     });
     return state;
   }
@@ -4103,6 +4136,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       { type: 'h1', label: 'Heading 1' },
       { type: 'h2', label: 'Heading 2' },
       { type: 'h3', label: 'Heading 3' },
+      { type: 'bullet', label: 'Bulleted list' },
+      { type: 'number', label: 'Numbered list' },
       { type: 'quote', label: 'Quote' }
     ];
     blockTypes.forEach(function(bt) {
@@ -4161,6 +4196,14 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         blockDropdown.style.display = 'none';
       }
     });
+
+    document.addEventListener('keydown', function(event) {
+      if (event.key === 'Escape' && blockDropdown.style.display === 'block') {
+        event.preventDefault();
+        event.stopPropagation();
+        blockDropdown.style.display = 'none';
+      }
+    }, true);
 
     const blockDragHandle = document.createElement('button');
     blockDragHandle.type = 'button';
