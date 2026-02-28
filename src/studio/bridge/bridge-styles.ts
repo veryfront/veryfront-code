@@ -462,10 +462,6 @@ const OVERLAY_CSS = `
         text-decoration: line-through;
       }
 
-      .vf-markdown-editor__inline-button[data-format='underline'] {
-        text-decoration: underline;
-      }
-
       /* ------------------------------------------------------------------ */
       /* Block type trigger                                                  */
       /* ------------------------------------------------------------------ */
@@ -692,6 +688,12 @@ const OVERLAY_CSS = `
 
       .vf-markdown-editor__surface [data-lexical-editor] {
         outline: none;
+      }
+
+      .vf-markdown-editor__surface s,
+      .vf-markdown-editor__surface del,
+      .vf-markdown-editor__surface [style*='line-through'] {
+        text-decoration: line-through;
       }
 
       .vf-markdown-editor__surface p:empty::before {

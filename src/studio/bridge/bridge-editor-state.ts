@@ -113,6 +113,8 @@ export const editorState = {
   markdownFrontmatter: "",
   markdownRawBlocks: [] as string[],
   markdownRawBlockTokenPrefix: "VF_RAW_BLOCK",
+  markdownEditorToRenderedMap: [] as number[],
+  markdownRenderedToEditorMap: [] as number[],
   markdownLatestMdxBlocks: [] as MdxBlock[],
   markdownLatestMdxImportMap: {} as Record<string, MdxImportEntry>,
   markdownLatestPresenceUsers: [] as PresenceUser[],

@@ -33,6 +33,7 @@ import {
 } from "./bridge-markdown-yjs.ts";
 
 import {
+  buildEditorRenderedMaps,
   clearMarkdownSelectionOverlay,
   clearMarkdownSelectionSync,
   scheduleMarkdownSelectionOverlayRender,
@@ -133,13 +134,21 @@ export function setupMarkdownLexicalEditor(): void {
         }
 
         let nextContent = "";
+        let renderedText = "";
         update.editorState.read(function () {
           nextContent = markdownModule.$convertToMarkdownString(
             markdownModule.TRANSFORMERS,
             undefined,
             true,
           );
+          renderedText = lexicalModule.$getRoot().getTextContent();
         });
+
+        // Rebuild editor↔rendered offset maps after every edit
+        const maps = buildEditorRenderedMaps(nextContent, renderedText);
+        state.markdownEditorToRenderedMap = maps.editorToRendered;
+        state.markdownRenderedToEditorMap = maps.renderedToEditor;
+
         const restoredBody = restoreRawBlocksFromEditor(nextContent);
         const fullContent = composeMarkdownContent(restoredBody);
 
@@ -307,6 +316,14 @@ export function applyMarkdownContent(content: unknown): void {
         },
         { discrete: true },
       );
+
+      // Build editor↔rendered offset maps from committed state
+      api.editor.getEditorState().read(function () {
+        const renderedText = api.lexicalModule.$getRoot().getTextContent();
+        const maps = buildEditorRenderedMaps(editorContent, renderedText);
+        state.markdownEditorToRenderedMap = maps.editorToRendered;
+        state.markdownRenderedToEditorMap = maps.renderedToEditor;
+      });
     } finally {
       state.markdownApplyingRemoteUpdate = false;
     }
@@ -1016,6 +1033,8 @@ export function setMarkdownEditMode(enabled: boolean): void {
     hideMarkdownInlineToolbar();
     hideMarkdownBlockDragUi();
     state.markdownOverlaySelections = [];
+    state.markdownEditorToRenderedMap = [];
+    state.markdownRenderedToEditorMap = [];
     clearMarkdownSelectionOverlay();
     clearMarkdownSelectionSync();
     disposeMarkdownYjs();

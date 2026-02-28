@@ -199,14 +199,112 @@ export function bodyOffsetToEditorOffset(
 }
 
 export function editorOffsetToSourceOffset(
-  editorOffset: number,
+  renderedOffset: number,
   bias?: "start" | "end",
 ): number {
   const frontmatterLength = typeof state.markdownFrontmatter === "string"
     ? state.markdownFrontmatter.length
     : 0;
+  // Convert rendered offset → editor offset first
+  const editorOffset = renderedOffsetToEditorOffset(renderedOffset);
   const bodyOffset = editorOffsetToBodyOffset(editorOffset, bias);
   return Math.max(0, frontmatterLength + bodyOffset);
+}
+
+// ---------------------------------------------------------------------------
+// Editor ↔ Rendered offset mapping
+// ---------------------------------------------------------------------------
+
+/**
+ * Build bidirectional offset maps between the markdown editor content
+ * (source text fed to Lexical) and the rendered plain text (what Lexical
+ * displays in the DOM).
+ *
+ * Uses greedy alignment: every character in renderedText is expected to
+ * appear in editorContent in the same order. Extra characters in
+ * editorContent are markdown syntax (e.g. `# `, `**`, `~~`, `[`, `](url)`).
+ */
+export function buildEditorRenderedMaps(
+  editorContent: string,
+  renderedText: string,
+): { editorToRendered: number[]; renderedToEditor: number[] } {
+  const e2r: number[] = new Array(editorContent.length + 1);
+  const r2e: number[] = new Array(renderedText.length + 1);
+
+  let ri = 0;
+  for (let si = 0; si < editorContent.length; si++) {
+    if (ri < renderedText.length && editorContent[si] === renderedText[ri]) {
+      e2r[si] = ri;
+      r2e[ri] = si;
+      ri++;
+    } else {
+      // Try advancing rendered pointer past extra block separators
+      // (Lexical's getTextContent() inserts \n\n between block elements,
+      // but the markdown source may only have \n between e.g. list items)
+      if (ri < renderedText.length && renderedText[ri] === "\n") {
+        let tempRi = ri;
+        while (tempRi < renderedText.length && renderedText[tempRi] === "\n") {
+          tempRi++;
+        }
+        if (
+          tempRi < renderedText.length &&
+          editorContent[si] === renderedText[tempRi]
+        ) {
+          for (let k = ri; k < tempRi; k++) {
+            if (r2e[k] === undefined) r2e[k] = si;
+          }
+          ri = tempRi;
+          e2r[si] = ri;
+          r2e[ri] = si;
+          ri++;
+          continue;
+        }
+      }
+      // Syntax character — maps to the current rendered position
+      e2r[si] = ri;
+    }
+  }
+
+  // End-of-string sentinels
+  e2r[editorContent.length] = Math.min(ri, renderedText.length);
+  r2e[renderedText.length] = editorContent.length;
+
+  // Fill any remaining unmatched rendered positions
+  for (let r = ri; r < renderedText.length; r++) {
+    if (r2e[r] === undefined) {
+      r2e[r] = editorContent.length;
+    }
+  }
+
+  // Fill gaps in r2e (shouldn't happen normally, but defensive)
+  let lastSrc = 0;
+  for (let r = 0; r <= renderedText.length; r++) {
+    if (r2e[r] !== undefined) {
+      lastSrc = r2e[r]!;
+    } else {
+      r2e[r] = lastSrc;
+    }
+  }
+
+  return { editorToRendered: e2r, renderedToEditor: r2e };
+}
+
+function editorOffsetToRenderedOffset(editorOffset: number): number {
+  const map = state.markdownEditorToRenderedMap;
+  if (!map || map.length === 0) {
+    return editorOffset;
+  }
+  const idx = Math.max(0, Math.min(map.length - 1, Math.trunc(editorOffset || 0)));
+  return map[idx] ?? editorOffset;
+}
+
+function renderedOffsetToEditorOffset(renderedOffset: number): number {
+  const map = state.markdownRenderedToEditorMap;
+  if (!map || map.length === 0) {
+    return renderedOffset;
+  }
+  const idx = Math.max(0, Math.min(map.length - 1, Math.trunc(renderedOffset || 0)));
+  return map[idx] ?? renderedOffset;
 }
 
 export function sourceSelectionToEditorRange(
@@ -230,9 +328,13 @@ export function sourceSelectionToEditorRange(
   const editorStart = bodyOffsetToEditorOffset(bodyStart, "start");
   const editorEnd = bodyOffsetToEditorOffset(bodyEnd, "end");
 
+  // Convert editor (markdown) offsets → rendered (DOM text) offsets
+  const renderedStart = editorOffsetToRenderedOffset(editorStart);
+  const renderedEnd = editorOffsetToRenderedOffset(editorEnd);
+
   return {
-    start: Math.max(0, Math.min(editorStart, editorEnd)),
-    end: Math.max(0, Math.max(editorStart, editorEnd)),
+    start: Math.max(0, Math.min(renderedStart, renderedEnd)),
+    end: Math.max(0, Math.max(renderedStart, renderedEnd)),
   };
 }
 
