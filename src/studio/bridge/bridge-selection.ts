@@ -238,6 +238,28 @@ export function buildEditorRenderedMaps(
       r2e[ri] = si;
       ri++;
     } else {
+      // Try advancing rendered pointer past extra block separators
+      // (Lexical's getTextContent() inserts \n\n between block elements,
+      // but the markdown source may only have \n between e.g. list items)
+      if (ri < renderedText.length && renderedText[ri] === "\n") {
+        let tempRi = ri;
+        while (tempRi < renderedText.length && renderedText[tempRi] === "\n") {
+          tempRi++;
+        }
+        if (
+          tempRi < renderedText.length &&
+          editorContent[si] === renderedText[tempRi]
+        ) {
+          for (let k = ri; k < tempRi; k++) {
+            if (r2e[k] === undefined) r2e[k] = si;
+          }
+          ri = tempRi;
+          e2r[si] = ri;
+          r2e[ri] = si;
+          ri++;
+          continue;
+        }
+      }
       // Syntax character — maps to the current rendered position
       e2r[si] = ri;
     }
