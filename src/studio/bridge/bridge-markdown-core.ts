@@ -326,7 +326,7 @@ export function postMarkdownEditorReady(): void {
   getEditorCallbacks()?.onEditorReady(state.markdownFileId, getConfig().pagePath);
 }
 
-export function scheduleMarkdownSync(content: string): void {
+export function scheduleMarkdownSync(_content: string): void {
   if (!state.markdownFileId) {
     return;
   }
@@ -337,7 +337,7 @@ export function scheduleMarkdownSync(content: string): void {
     getEditorCallbacks()?.onContentChange(
       state.markdownFileId,
       getConfig().pagePath,
-      content,
+      state.markdownCurrentContent,
     );
   }, 120);
 }
@@ -609,11 +609,15 @@ export function saveMarkdownContent(): void {
   if (!state.markdownHasUnsavedChanges) {
     return;
   }
+  if (state.markdownSaveInProgress) {
+    return;
+  }
   const cb = getEditorCallbacks();
   if (!cb) {
     return;
   }
   state.markdownSaveInProgress = true;
+  state.markdownSaveRequestedContent = state.markdownCurrentContent;
   setMarkdownPersistStatus("saving");
   if (state.markdownSyncTimer) {
     clearTimeout(state.markdownSyncTimer);
@@ -628,6 +632,7 @@ export function saveMarkdownContent(): void {
     );
   } catch (err) {
     state.markdownSaveInProgress = false;
+    state.markdownSaveRequestedContent = null;
     setMarkdownPersistStatus("error");
     console.error("[StudioBridge] Save failed:", err);
   }

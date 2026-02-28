@@ -110,6 +110,8 @@ export const editorState = {
   markdownCurrentEditorContent: "",
   markdownLexicalRenderedContent: null as string | null,
   markdownApplyingRemoteUpdate: false,
+  markdownRemoteUpdateToken: 0,
+  markdownPendingLocalReconcile: false,
   markdownLastRemoteContent: null as string | null,
   markdownFrontmatter: "",
   markdownRawBlocks: [] as string[],
@@ -122,6 +124,7 @@ export const editorState = {
   markdownLatestSelections: [] as RemoteSelection[],
   markdownHasUnsavedChanges: false,
   markdownSaveInProgress: false,
+  markdownSaveRequestedContent: null as string | null,
 
   // Yjs (dynamically imported — typed structurally)
   markdownYDoc: null as {
