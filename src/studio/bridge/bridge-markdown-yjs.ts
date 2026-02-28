@@ -100,6 +100,12 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
       const WebsocketProvider = modules[1].WebsocketProvider;
       state.markdownYjsY = Y as unknown as import("./bridge-editor-state.ts").YjsModule;
 
+      console.debug("[StudioBridge] Yjs setup:", {
+        wsUrl: config.wsUrl,
+        guid: config.guid,
+        fileId: config.fileId,
+      });
+
       const doc = new Y.Doc({ guid: config.guid });
       // Cookie auth: authToken cookie on .veryfront.com is sent automatically
       // with the WebSocket upgrade request. No explicit token param needed.
@@ -115,12 +121,23 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
 
       // Filter non-binary messages to prevent y-websocket parse errors
       provider.on("status", (event: { status: string }) => {
-        console.debug("[StudioBridge] Yjs status:", event.status);
-        if (event.status === "connected" && provider.ws) {
+        console.debug("[StudioBridge] Yjs status:", event.status, {
+          hasWs: !!provider.ws,
+          wsReadyState: provider.ws?.readyState,
+        });
+        if (event.status !== "connected") {
+          state.markdownYjsConnected = false;
+          return;
+        }
+        if (provider.ws) {
           const ws = provider.ws;
           const origOnMessage = ws.onmessage;
           ws.onmessage = function (wsEvent: MessageEvent) {
             if (typeof wsEvent.data === "string") {
+              console.debug(
+                "[StudioBridge] Yjs filtered string message:",
+                (wsEvent.data as string).slice(0, 120),
+              );
               return;
             }
             if (origOnMessage) {
@@ -247,19 +264,27 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
       let ytextObserverRegistered = false;
 
       provider.on("sync", (synced: boolean) => {
-        if (synced && !state.markdownYjsConnected) {
+        console.debug("[StudioBridge] Yjs sync:", {
+          synced,
+          ytextLength: ytext.length,
+          contentPreview: ytext.toString().slice(0, 80),
+        });
+        if (!synced) {
+          state.markdownYjsConnected = false;
+          return;
+        }
+        if (!state.markdownYjsConnected) {
           state.markdownYjsConnected = true;
 
           const ytextContent = ytext.toString();
           if (
             state.markdownHasUnsavedChanges &&
-            state.markdownCurrentContent &&
             state.markdownCurrentContent !== ytextContent
           ) {
             // User made actual edits before sync completed - push to Y.Text
             syncLocalChangeToYText(state.markdownCurrentContent);
-          } else if (ytextContent) {
-            // No local edits or same content - seed editor from Y.Text
+          } else {
+            // No conflicting local edits - seed editor from Y.Text (including empty content)
             applyMarkdownContent(ytextContent);
           }
 
@@ -281,11 +306,18 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
           if (!ytextObserverRegistered) {
             ytextObserverRegistered = true;
             ytext.observe((event: any) => {
-              if (event.transaction.origin === LEXICAL_YJS_ORIGIN) {
+              const origin = event.transaction.origin;
+              if (origin === LEXICAL_YJS_ORIGIN) {
                 return;
               }
               const fullContent = ytext.toString();
-              if (fullContent === state.markdownCurrentContent) {
+              const contentMatch = fullContent === state.markdownCurrentContent;
+              console.debug("[StudioBridge] Yjs Y.Text observer:", {
+                origin: String(origin),
+                contentMatch,
+                ytextLength: fullContent.length,
+              });
+              if (contentMatch) {
                 return;
               }
               applyMarkdownContent(fullContent);
@@ -368,6 +400,7 @@ export function disposeMarkdownYjs(): void {
   state.markdownYjsSetupId++;
 
   if (state.markdownYProvider) {
+    state.markdownYProvider.awareness.setLocalStateField("selection", null);
     state.markdownYProvider.disconnect();
     state.markdownYProvider.destroy();
     state.markdownYProvider = null;
@@ -380,4 +413,7 @@ export function disposeMarkdownYjs(): void {
   state.markdownYText = null;
   state.markdownYjsConnected = false;
   state.markdownYjsY = null;
+  state.markdownPendingSelection = null;
+  setMarkdownPresence([]);
+  setMarkdownSelections([]);
 }

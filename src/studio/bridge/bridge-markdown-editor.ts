@@ -313,9 +313,11 @@ export function applyMarkdownContent(content: unknown): void {
       }
     }
 
+    state.markdownLastRemoteContent = content;
     state.markdownApplyingRemoteUpdate = true;
     state.markdownLexicalRenderedContent = content;
     const api = state.markdownLexicalApi;
+    const remoteContentSnapshot = content;
     api.editor.update(
       function () {
         const lexicalModule = api.lexicalModule;
@@ -343,12 +345,15 @@ export function applyMarkdownContent(content: unknown): void {
       state.markdownRenderedToEditorMap = maps.renderedToEditor;
     });
 
-    // Reset flag after all synchronous Lexical reconciliation completes
-    // (avoids race where secondary updates from list normalization etc.
-    // are mistakenly treated as local changes and echoed back to Yjs)
-    queueMicrotask(function () {
+    // Reset flags after all synchronous Lexical reconciliation completes.
+    // setTimeout(0) is more reliable than queueMicrotask for catching
+    // secondary updates from list normalization, etc.
+    setTimeout(function () {
       state.markdownApplyingRemoteUpdate = false;
-    });
+      if (state.markdownLastRemoteContent === remoteContentSnapshot) {
+        state.markdownLastRemoteContent = null;
+      }
+    }, 0);
 
     // Restore selection to the same offset (clamped to new content length)
     if (savedSelectionOffset >= 0 && state.markdownEditorSurface) {

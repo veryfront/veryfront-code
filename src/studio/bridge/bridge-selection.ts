@@ -447,6 +447,12 @@ export function scheduleMarkdownSelectionSync(): void {
 }
 
 export function clearMarkdownSelectionSync(): void {
+  if (state.markdownSelectionSyncTimer) {
+    clearTimeout(state.markdownSelectionSyncTimer);
+    state.markdownSelectionSyncTimer = null;
+  }
+  state.markdownPendingSelection = null;
+
   if (state.markdownYProvider) {
     state.markdownYProvider.awareness.setLocalStateField("selection", null);
   }

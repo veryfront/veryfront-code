@@ -17,6 +17,7 @@ import {
   showSelectionOverlay,
 } from "./bridge-inspector.ts";
 import { captureMultipleSections, captureScreenshot } from "./bridge-screenshot.ts";
+import { applyMarkdownContent } from "./bridge-markdown-editor.ts";
 import { replaceYTextContent, writeToYText } from "./bridge-markdown-yjs.ts";
 
 export function handleStudioMessage(event: MessageEvent): void {
@@ -112,6 +113,27 @@ export function handleStudioMessage(event: MessageEvent): void {
           position: typeof message.position === "number" ? message.position : 0,
           origin: "agent-write",
         });
+      }
+      return;
+    }
+
+    case "contentChanged": {
+      if (!isMarkdownPage()) return;
+      if (
+        message.fileId && editorState.markdownFileId &&
+        message.fileId !== editorState.markdownFileId
+      ) {
+        return;
+      }
+
+      const content = typeof message.content === "string" ? message.content : null;
+      const isEditMode = !!editorState.markdownEditorRoot &&
+        editorState.markdownEditorRoot.style.display === "block";
+
+      if (isEditMode && content !== null) {
+        applyMarkdownContent(content);
+      } else {
+        window.location.reload();
       }
       return;
     }

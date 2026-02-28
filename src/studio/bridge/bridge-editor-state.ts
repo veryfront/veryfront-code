@@ -110,6 +110,7 @@ export const editorState = {
   markdownCurrentEditorContent: "",
   markdownLexicalRenderedContent: null as string | null,
   markdownApplyingRemoteUpdate: false,
+  markdownLastRemoteContent: null as string | null,
   markdownFrontmatter: "",
   markdownRawBlocks: [] as string[],
   markdownRawBlockTokenPrefix: "VF_RAW_BLOCK",
