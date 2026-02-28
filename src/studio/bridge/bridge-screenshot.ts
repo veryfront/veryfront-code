@@ -17,8 +17,7 @@ function loadHtml2Canvas(): Promise<void> {
 
   state.html2canvasPromise = new Promise<void>((resolve, reject) => {
     const script = document.createElement("script");
-    script.src =
-      "https://cdn.jsdelivr.net/npm/html2canvas-pro@2.0.0/dist/html2canvas-pro.min.js";
+    script.src = "https://cdn.jsdelivr.net/npm/html2canvas-pro@2.0.0/dist/html2canvas-pro.min.js";
     script.onload = () => {
       state.html2canvasLoaded = true;
       resolve();

@@ -6,17 +6,6 @@
  */
 
 import { state } from "./bridge-state.ts";
-import { DATA_VF_IGNORE } from "./bridge-constants.ts";
-
-// ---------------------------------------------------------------------------
-// Helper: create a separator element
-// ---------------------------------------------------------------------------
-
-function createSeparator(): HTMLDivElement {
-  const sep = document.createElement("div");
-  sep.className = "vf-markdown-editor__inline-separator";
-  return sep;
-}
 
 // ---------------------------------------------------------------------------
 // hideMarkdownInlineToolbar
@@ -27,10 +16,9 @@ export function hideMarkdownInlineToolbar(): void {
     return;
   }
   state.markdownInlineToolbarRoot.style.display = "none";
-  const blockDropdown =
-    state.markdownInlineToolbarRoot.querySelector<HTMLElement>(
-      ".vf-markdown-editor__block-dropdown",
-    );
+  const blockDropdown = state.markdownInlineToolbarRoot.querySelector<HTMLElement>(
+    ".vf-markdown-editor__block-dropdown",
+  );
   if (blockDropdown) {
     blockDropdown.style.display = "none";
   }
@@ -73,8 +61,7 @@ export function insertMarkdownLink(): void {
     return;
   }
   state.markdownLexicalApi.editor.update(function () {
-    const selection =
-      state.markdownLexicalApi.lexicalModule.$getSelection();
+    const selection = state.markdownLexicalApi.lexicalModule.$getSelection();
     if (
       !selection ||
       !state.markdownLexicalApi.lexicalModule.$isRangeSelection(selection)
@@ -204,8 +191,7 @@ export function getMarkdownToolbarState(): ToolbarState {
         return;
       }
       if (nodeType === "list") {
-        toolbarState.blockType =
-          node.getListType() === "number" ? "number" : "bullet";
+        toolbarState.blockType = node.getListType() === "number" ? "number" : "bullet";
         return;
       }
       if (nodeType === "root") {
@@ -257,10 +243,9 @@ export function updateMarkdownInlineToolbar(): void {
   }
 
   const toolbarState = getMarkdownToolbarState();
-  const buttons =
-    state.markdownInlineToolbarRoot.querySelectorAll<HTMLElement>(
-      ".vf-markdown-editor__inline-button[data-format]",
-    );
+  const buttons = state.markdownInlineToolbarRoot.querySelectorAll<HTMLElement>(
+    ".vf-markdown-editor__inline-button[data-format]",
+  );
   for (let i = 0; i < buttons.length; i++) {
     const btn = buttons[i];
     const fmt = btn.getAttribute("data-format");
@@ -271,10 +256,9 @@ export function updateMarkdownInlineToolbar(): void {
     }
   }
 
-  const blockTrigger =
-    state.markdownInlineToolbarRoot.querySelector<HTMLElement>(
-      ".vf-markdown-editor__block-trigger",
-    );
+  const blockTrigger = state.markdownInlineToolbarRoot.querySelector<HTMLElement>(
+    ".vf-markdown-editor__block-trigger",
+  );
   if (blockTrigger) {
     const blockLabels: Record<string, string> = {
       paragraph: "\u00B6",
@@ -285,14 +269,12 @@ export function updateMarkdownInlineToolbar(): void {
       bullet: "\u2022",
       number: "1.",
     };
-    blockTrigger.textContent =
-      blockLabels[toolbarState.blockType] || "\u00B6";
+    blockTrigger.textContent = blockLabels[toolbarState.blockType] || "\u00B6";
   }
 
-  const blockDropdown =
-    state.markdownInlineToolbarRoot.querySelector<HTMLElement>(
-      ".vf-markdown-editor__block-dropdown",
-    );
+  const blockDropdown = state.markdownInlineToolbarRoot.querySelector<HTMLElement>(
+    ".vf-markdown-editor__block-dropdown",
+  );
   if (blockDropdown) {
     const options = blockDropdown.querySelectorAll<HTMLElement>(
       ".vf-markdown-editor__block-option",

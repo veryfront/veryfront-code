@@ -4,18 +4,18 @@
  * Overlays, DOM tree building, inspect mode, and mutation observer.
  */
 
-import { state, DOM_IGNORE_TAGS } from "./bridge-state.ts";
+import { DOM_IGNORE_TAGS, state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
 import {
-  DATA_VF_ID,
-  DATA_VF_SELECTOR,
-  DATA_VF_TEXT,
-  DATA_VF_IGNORE,
+  DATA_NODE_COLUMN,
+  DATA_NODE_END_COLUMN,
+  DATA_NODE_END_LINE,
   DATA_NODE_ID,
   DATA_NODE_LINE,
-  DATA_NODE_COLUMN,
-  DATA_NODE_END_LINE,
-  DATA_NODE_END_COLUMN,
+  DATA_VF_ID,
+  DATA_VF_IGNORE,
+  DATA_VF_SELECTOR,
+  DATA_VF_TEXT,
 } from "./bridge-constants.ts";
 import { postToStudio } from "./bridge-messaging.ts";
 import { debounce } from "./bridge-utils.ts";
@@ -126,8 +126,7 @@ export function buildNavigatorTree(root: Element): any {
       return children;
     }
 
-    let id =
-      el.getAttribute(DATA_VF_ID) ||
+    let id = el.getAttribute(DATA_VF_ID) ||
       el.getAttribute(DATA_NODE_ID) ||
       el.getAttribute(DATA_VF_SELECTOR);
     if (!id) {
@@ -254,8 +253,7 @@ export function showSelectionOverlay(nodeId: string | null): void {
 }
 
 export function scrollToElement(nodeId: string): void {
-  const el =
-    document.querySelector("[" + DATA_VF_ID + '="' + nodeId + '"]') ||
+  const el = document.querySelector("[" + DATA_VF_ID + '="' + nodeId + '"]') ||
     document.querySelector("[" + DATA_NODE_ID + '="' + nodeId + '"]') ||
     document.querySelector("[" + DATA_VF_SELECTOR + '*="' + nodeId + '"]');
 
@@ -265,8 +263,8 @@ export function scrollToElement(nodeId: string): void {
 // --- Inspect mode ---
 
 export function setupInspectMode(): void {
-  const INSPECTABLE_SELECTOR =
-    "[" + DATA_VF_ID + "], [" + DATA_VF_SELECTOR + "], [" + DATA_NODE_ID + "]";
+  const INSPECTABLE_SELECTOR = "[" + DATA_VF_ID + "], [" + DATA_VF_SELECTOR + "], [" +
+    DATA_NODE_ID + "]";
 
   function getElementId(el: Element): string | null {
     return (

@@ -68,14 +68,12 @@ export function getMarkdownEditorSelection(): { start: number; end: number } | n
   }
 
   if (state.markdownEditorTextarea) {
-    const start =
-      typeof state.markdownEditorTextarea.selectionStart === "number"
-        ? state.markdownEditorTextarea.selectionStart
-        : 0;
-    const end =
-      typeof state.markdownEditorTextarea.selectionEnd === "number"
-        ? state.markdownEditorTextarea.selectionEnd
-        : start;
+    const start = typeof state.markdownEditorTextarea.selectionStart === "number"
+      ? state.markdownEditorTextarea.selectionStart
+      : 0;
+    const end = typeof state.markdownEditorTextarea.selectionEnd === "number"
+      ? state.markdownEditorTextarea.selectionEnd
+      : start;
 
     return {
       start: Math.max(0, Math.min(start, end)),
@@ -109,11 +107,10 @@ export function escapeRegexText(value: unknown): string {
 }
 
 export function getMarkdownRawBlockTokenPattern(): RegExp {
-  const prefix =
-    typeof state.markdownRawBlockTokenPrefix === "string" &&
-    state.markdownRawBlockTokenPrefix
-      ? state.markdownRawBlockTokenPrefix
-      : "VF_RAW_BLOCK";
+  const prefix = typeof state.markdownRawBlockTokenPrefix === "string" &&
+      state.markdownRawBlockTokenPrefix
+    ? state.markdownRawBlockTokenPrefix
+    : "VF_RAW_BLOCK";
   const escapedPrefix = escapeRegexText(prefix);
   return new RegExp("\\[\\[" + escapedPrefix + "_(\\d+)\\]\\]", "g");
 }
@@ -122,10 +119,9 @@ export function editorOffsetToBodyOffset(
   editorOffset: number,
   bias?: "start" | "end",
 ): number {
-  const editorContent =
-    typeof state.markdownCurrentEditorContent === "string"
-      ? state.markdownCurrentEditorContent
-      : "";
+  const editorContent = typeof state.markdownCurrentEditorContent === "string"
+    ? state.markdownCurrentEditorContent
+    : "";
   const maxOffset = editorContent.length;
   const safeOffset = Math.max(
     0,
@@ -165,10 +161,9 @@ export function bodyOffsetToEditorOffset(
   bodyOffset: number,
   bias?: "start" | "end",
 ): number {
-  const editorContent =
-    typeof state.markdownCurrentEditorContent === "string"
-      ? state.markdownCurrentEditorContent
-      : "";
+  const editorContent = typeof state.markdownCurrentEditorContent === "string"
+    ? state.markdownCurrentEditorContent
+    : "";
   const safeBodyOffset = Math.max(0, Math.trunc(bodyOffset || 0));
   const tokenPattern = getMarkdownRawBlockTokenPattern();
   let diffBefore = 0;
@@ -207,10 +202,9 @@ export function editorOffsetToSourceOffset(
   editorOffset: number,
   bias?: "start" | "end",
 ): number {
-  const frontmatterLength =
-    typeof state.markdownFrontmatter === "string"
-      ? state.markdownFrontmatter.length
-      : 0;
+  const frontmatterLength = typeof state.markdownFrontmatter === "string"
+    ? state.markdownFrontmatter.length
+    : 0;
   const bodyOffset = editorOffsetToBodyOffset(editorOffset, bias);
   return Math.max(0, frontmatterLength + bodyOffset);
 }
@@ -219,10 +213,9 @@ export function sourceSelectionToEditorRange(
   start: number,
   end: number,
 ): { start: number; end: number } | null {
-  const frontmatterLength =
-    typeof state.markdownFrontmatter === "string"
-      ? state.markdownFrontmatter.length
-      : 0;
+  const frontmatterLength = typeof state.markdownFrontmatter === "string"
+    ? state.markdownFrontmatter.length
+    : 0;
   const safeStart = Math.max(0, Math.trunc(start || 0));
   const safeEnd = Math.max(0, Math.trunc(end || 0));
   const sourceStart = Math.min(safeStart, safeEnd);
@@ -379,9 +372,7 @@ export function resolveMarkdownTextPoint(
   }
 
   if (lastTextNode) {
-    const textLength = lastTextNode.textContent
-      ? lastTextNode.textContent.length
-      : 0;
+    const textLength = lastTextNode.textContent ? lastTextNode.textContent.length : 0;
     return { node: lastTextNode, offset: textLength };
   }
 
@@ -493,14 +484,12 @@ export function renderMarkdownSelectionOverlay(): void {
       continue;
     }
 
-    const color =
-      typeof selection.color === "string" && selection.color
-        ? selection.color
-        : "#6b7280";
-    const name =
-      typeof selection.name === "string" && selection.name
-        ? selection.name
-        : "Anonymous";
+    const color = typeof selection.color === "string" && selection.color
+      ? selection.color
+      : "#6b7280";
+    const name = typeof selection.name === "string" && selection.name
+      ? selection.name
+      : "Anonymous";
     let labelAnchor: { left: number; top: number } | null = null;
 
     if (selection.start === selection.end) {

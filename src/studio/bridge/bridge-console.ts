@@ -4,7 +4,7 @@
  * Intercepts console methods and runtime errors, forwarding them to Studio.
  */
 
-import { state, CONSOLE_METHODS } from "./bridge-state.ts";
+import { CONSOLE_METHODS, state } from "./bridge-state.ts";
 import { postToStudio } from "./bridge-messaging.ts";
 import { hideOverlay } from "./bridge-inspector.ts";
 
@@ -23,8 +23,9 @@ export function setupConsoleCapture(): void {
           }
           if (arg === undefined) return { __isUndefined: true };
           if (arg === null) return null;
-          if (typeof arg === "function")
+          if (typeof arg === "function") {
             return { __isFunction: true, name: arg.name || "anonymous" };
+          }
           if (typeof arg === "symbol") return { __isSymbol: true, description: arg.description };
           if (typeof arg === "object") return JSON.parse(JSON.stringify(arg));
           return arg;

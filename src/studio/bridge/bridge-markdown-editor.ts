@@ -11,59 +11,56 @@ import { getConfig, isMarkdownPage } from "./bridge-config.ts";
 import { DATA_VF_IGNORE } from "./bridge-constants.ts";
 
 import {
-  handleMarkdownLocalChange,
-  saveMarkdownContent,
-  postMarkdownEditorReady,
-  parseMdxImportMap,
+  composeMarkdownContent,
   extractMarkdownParts,
   extractRawBlocksForEditor,
+  handleMarkdownLocalChange,
+  parseMdxImportMap,
+  postMarkdownEditorReady,
   restoreRawBlocksFromEditor,
-  composeMarkdownContent,
+  saveMarkdownContent,
 } from "./bridge-markdown-core.ts";
 
-import {
-  setupMarkdownYjsConnection,
-  disposeMarkdownYjs,
-} from "./bridge-markdown-yjs.ts";
+import { disposeMarkdownYjs, setupMarkdownYjsConnection } from "./bridge-markdown-yjs.ts";
 
 import {
-  scheduleMarkdownSelectionSync,
-  clearMarkdownSelectionSync,
   clearMarkdownSelectionOverlay,
+  clearMarkdownSelectionSync,
   scheduleMarkdownSelectionOverlayRender,
+  scheduleMarkdownSelectionSync,
   sourceSelectionToEditorRange,
 } from "./bridge-selection.ts";
 
 import {
+  handleMarkdownSlashMenuKeydown,
   hideMarkdownSlashMenu,
   scheduleMarkdownSlashMenuUpdate,
-  handleMarkdownSlashMenuKeydown,
 } from "./bridge-slash-menu.ts";
 
 import {
   hideMarkdownInlineToolbar,
-  scheduleMarkdownInlineToolbarUpdate,
-  toggleMarkdownInlineFormat,
   insertMarkdownLink,
+  scheduleMarkdownInlineToolbarUpdate,
   setMarkdownBlockType,
+  toggleMarkdownInlineFormat,
 } from "./bridge-inline-toolbar.ts";
 
 import {
-  getMarkdownTopLevelBlocks,
-  hideMarkdownBlockDragHandle,
-  hideMarkdownBlockDropIndicator,
-  hideMarkdownBlockDragUi,
+  autoScrollMarkdownSurfaceDuringDrag,
   createMarkdownDragGhost,
-  removeMarkdownDragGhost,
-  positionMarkdownBlockDragHandle,
-  refreshMarkdownBlockDragHandlePosition,
   getMarkdownBlockHoverIndexFromPointer,
   getMarkdownDropSlotIndexFromPointer,
-  autoScrollMarkdownSurfaceDuringDrag,
-  showMarkdownBlockDropIndicator,
-  moveMarkdownLexicalBlock,
+  getMarkdownTopLevelBlocks,
+  hideMarkdownBlockDragHandle,
+  hideMarkdownBlockDragUi,
+  hideMarkdownBlockDropIndicator,
   moveMarkdownCurrentBlockByDelta,
+  moveMarkdownLexicalBlock,
+  positionMarkdownBlockDragHandle,
+  refreshMarkdownBlockDragHandlePosition,
+  removeMarkdownDragGhost,
   setMarkdownMdxBlocks,
+  showMarkdownBlockDropIndicator,
 } from "./bridge-block-drag.ts";
 
 // ---------------------------------------------------------------------------
@@ -268,9 +265,7 @@ export function applyMarkdownContent(content: unknown): void {
   const parts = extractMarkdownParts(content);
   const extracted = extractRawBlocksForEditor(parts.body, mdxImportMap);
   const editorContent = extracted.editorBody;
-  const mdxBlocks = Array.isArray(extracted.mdxBlocks)
-    ? extracted.mdxBlocks
-    : [];
+  const mdxBlocks = Array.isArray(extracted.mdxBlocks) ? extracted.mdxBlocks : [];
   state.markdownFrontmatter = parts.frontmatter;
   state.markdownRawBlocks = extracted.rawBlocks;
   state.markdownRawBlockTokenPrefix = extracted.tokenPrefix;
@@ -352,10 +347,9 @@ export function setMarkdownPersistStatus(status: string): void {
     return;
   }
 
-  const nextStatus =
-    status === "saving" || status === "saved" || status === "error"
-      ? status
-      : "saved";
+  const nextStatus = status === "saving" || status === "saved" || status === "error"
+    ? status
+    : "saved";
 
   state.markdownPersistStatus.setAttribute("data-state", nextStatus);
   if (nextStatus === "saving") {
@@ -417,8 +411,7 @@ export function setMarkdownPresence(users: any[]): void {
     pill.setAttribute("data-agent", user.isAgent ? "true" : "false");
     pill.textContent = user.isCurrentUser ? "You" : user.name;
 
-    const color =
-      typeof user.color === "string" && user.color ? user.color : "#6b7280";
+    const color = typeof user.color === "string" && user.color ? user.color : "#6b7280";
     pill.style.borderLeftColor = color;
 
     state.markdownPresenceRoot.appendChild(pill);
@@ -428,8 +421,7 @@ export function setMarkdownPresence(users: any[]): void {
     const extra = document.createElement("div");
     extra.className = "vf-markdown-editor__presence-pill";
     extra.setAttribute(DATA_VF_IGNORE, "true");
-    extra.textContent =
-      "+" + String(uniqueUsers.length - visibleUsers.length);
+    extra.textContent = "+" + String(uniqueUsers.length - visibleUsers.length);
     state.markdownPresenceRoot.appendChild(extra);
   }
 }
@@ -439,9 +431,7 @@ export function setMarkdownPresence(users: any[]): void {
 // ---------------------------------------------------------------------------
 
 export function setMarkdownSelections(selections: any[]): void {
-  state.markdownLatestSelections = Array.isArray(selections)
-    ? selections
-    : [];
+  state.markdownLatestSelections = Array.isArray(selections) ? selections : [];
   if (!state.markdownSelectionsRoot) {
     return;
   }
@@ -477,19 +467,15 @@ export function setMarkdownSelections(selections: any[]): void {
     const pill = document.createElement("div");
     pill.className = "vf-markdown-editor__selection-pill";
     pill.setAttribute(DATA_VF_IGNORE, "true");
-    const color =
-      typeof selection.color === "string" && selection.color
-        ? selection.color
-        : "#6b7280";
+    const color = typeof selection.color === "string" && selection.color
+      ? selection.color
+      : "#6b7280";
     const displayName = selection.isCurrentUser ? "You" : selection.name;
     pill.style.borderLeftColor = color;
 
     const start = Math.max(0, Math.trunc(selection.start));
     const end = Math.max(0, Math.trunc(selection.end));
-    const rangeLabel =
-      start === end
-        ? "@" + String(start)
-        : String(start) + "-" + String(end);
+    const rangeLabel = start === end ? "@" + String(start) : String(start) + "-" + String(end);
     pill.textContent = displayName + " " + rangeLabel;
     state.markdownSelectionsRoot.appendChild(pill);
 
@@ -510,8 +496,7 @@ export function setMarkdownSelections(selections: any[]): void {
     const extra = document.createElement("div");
     extra.className = "vf-markdown-editor__selection-pill";
     extra.setAttribute(DATA_VF_IGNORE, "true");
-    extra.textContent =
-      "+" + String(selections.length - visibleSelections.length);
+    extra.textContent = "+" + String(selections.length - visibleSelections.length);
     state.markdownSelectionsRoot.appendChild(extra);
   }
 
@@ -965,10 +950,9 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
     event.preventDefault();
 
     const fallbackSlot = getMarkdownDropSlotIndexFromPointer(event.clientY);
-    const slotIndex =
-      state.markdownBlockDropSlotIndex >= 0
-        ? state.markdownBlockDropSlotIndex
-        : fallbackSlot;
+    const slotIndex = state.markdownBlockDropSlotIndex >= 0
+      ? state.markdownBlockDropSlotIndex
+      : fallbackSlot;
     const sourceIndex = state.markdownBlockDragSourceIndex;
     hideMarkdownBlockDragUi();
     if (sourceIndex < 0 || slotIndex < 0) {
@@ -1127,8 +1111,7 @@ export function setupMarkdownEditor(params: URLSearchParams): void {
     return;
   }
 
-  state.markdownFileId =
-    params.get("vf_file_id") || getConfig().pageId || null;
+  state.markdownFileId = params.get("vf_file_id") || getConfig().pageId || null;
   ensureMarkdownEditButton();
 
   if (params.get("edit") === "true") {

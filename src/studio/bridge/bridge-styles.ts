@@ -834,16 +834,19 @@ const OVERLAY_CSS = `
 `;
 
 export function injectOverlayStyles(): void {
-  if (document.getElementById('vf-overlay-styles')) return;
-  const style = document.createElement('style');
-  style.id = 'vf-overlay-styles';
+  if (document.getElementById("vf-overlay-styles")) return;
+  const style = document.createElement("style");
+  style.id = "vf-overlay-styles";
   style.textContent = OVERLAY_CSS;
   try {
     document.head.appendChild(style);
     if (!style.sheet) {
-      console.warn('[StudioBridge] Inline style injection may be blocked by CSP (style-src).');
+      console.warn("[StudioBridge] Inline style injection may be blocked by CSP (style-src).");
     }
   } catch (error) {
-    console.warn('[StudioBridge] Failed to inject bridge styles. This may be caused by CSP style-src restrictions.', error);
+    console.warn(
+      "[StudioBridge] Failed to inject bridge styles. This may be caused by CSP style-src restrictions.",
+      error,
+    );
   }
 }

@@ -6,17 +6,17 @@
 
 import { state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
-import { postToStudio, isFromStudio } from "./bridge-messaging.ts";
+import { isFromStudio, postToStudio } from "./bridge-messaging.ts";
 import {
   hideOverlay,
-  showSelectionOverlay,
-  showHoverOverlay,
+  isMarkdownPage,
   scrollToElement,
   setColorMode,
-  isMarkdownPage,
+  showHoverOverlay,
+  showSelectionOverlay,
 } from "./bridge-inspector.ts";
 import { setMarkdownPersistStatus } from "./bridge-markdown-editor.ts";
-import { captureScreenshot, captureMultipleSections } from "./bridge-screenshot.ts";
+import { captureMultipleSections, captureScreenshot } from "./bridge-screenshot.ts";
 
 export function handleStudioMessage(event: MessageEvent): void {
   if (!isFromStudio(event)) return;

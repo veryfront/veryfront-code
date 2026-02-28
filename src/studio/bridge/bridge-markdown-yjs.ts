@@ -6,7 +6,7 @@
  * and remote change observation.
  */
 
-import { state, LEXICAL_YJS_ORIGIN } from "./bridge-state.ts";
+import { LEXICAL_YJS_ORIGIN, state } from "./bridge-state.ts";
 import { computeTextDiff } from "./bridge-markdown-core.ts";
 import {
   applyMarkdownContent,

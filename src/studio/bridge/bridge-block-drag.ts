@@ -23,7 +23,9 @@ import { isMdxPage } from "./bridge-inspector.ts";
 //   import { scheduleMarkdownSelectionSync, scheduleMarkdownSelectionOverlayRender,
 //            scheduleMarkdownSlashMenuUpdate, scheduleMarkdownInlineToolbarUpdate } from "./bridge-markdown-scheduling.ts";
 
-let _openFilePathInStudio: ((filePath: string, lineNumber: number, symbolName: string) => void) | null = null;
+let _openFilePathInStudio:
+  | ((filePath: string, lineNumber: number, symbolName: string) => void)
+  | null = null;
 let _scheduleMarkdownSelectionSync: (() => void) | null = null;
 let _scheduleMarkdownSelectionOverlayRender: (() => void) | null = null;
 let _scheduleMarkdownSlashMenuUpdate: (() => void) | null = null;
@@ -115,8 +117,9 @@ export function getMarkdownBlockElementFromNode(node: Node | null): Element | nu
     return null;
   }
 
-  let current: Element | null =
-    node.nodeType === Node.ELEMENT_NODE ? (node as Element) : (node as Node).parentElement;
+  let current: Element | null = node.nodeType === Node.ELEMENT_NODE
+    ? (node as Element)
+    : (node as Node).parentElement;
   while (current && current.parentElement !== state.markdownEditorSurface) {
     current = current.parentElement;
   }
@@ -312,15 +315,15 @@ export function setMarkdownMdxBlocks(blocks: any[]): void {
       openButton.title = "Component import could not be resolved. Opening current MDX source.";
     }
     openButton.addEventListener("click", function () {
-      const targetFile =
-        typeof block.filePath === "string" && block.filePath ? block.filePath : PAGE_PATH;
+      const targetFile = typeof block.filePath === "string" && block.filePath
+        ? block.filePath
+        : PAGE_PATH;
       const targetLine = targetFile === PAGE_PATH ? safeLine : 1;
-      const targetSymbol =
-        targetFile === PAGE_PATH
-          ? ""
-          : typeof block.symbolName === "string"
-            ? block.symbolName
-            : "";
+      const targetSymbol = targetFile === PAGE_PATH
+        ? ""
+        : typeof block.symbolName === "string"
+        ? block.symbolName
+        : "";
       if (_openFilePathInStudio) {
         _openFilePathInStudio(targetFile, targetLine, targetSymbol);
       }
@@ -524,16 +527,16 @@ export function showMarkdownBlockDropIndicator(slotIndex: number): void {
   state.markdownBlockDropIndicator.style.display = "block";
   state.markdownBlockDropSlotIndex = safeSlot;
 
-  const dropType =
-    safeSlot >= blocks.length
-      ? { label: "end of document", color: "#0284c7" }
-      : getMarkdownBlockTypeInfo(blocks[safeSlot]!);
+  const dropType = safeSlot >= blocks.length
+    ? { label: "end of document", color: "#0284c7" }
+    : getMarkdownBlockTypeInfo(blocks[safeSlot]!);
   state.markdownBlockDropIndicator.style.background = dropType.color;
   state.markdownBlockDropIndicator.style.boxShadow = "0 1px 6px " + dropType.color;
 
   if (state.markdownBlockDropLabel) {
-    state.markdownBlockDropLabel.textContent =
-      safeSlot >= blocks.length ? "Drop at end" : "Drop before " + dropType.label;
+    state.markdownBlockDropLabel.textContent = safeSlot >= blocks.length
+      ? "Drop at end"
+      : "Drop before " + dropType.label;
     state.markdownBlockDropLabel.style.left = Math.max(8, surfaceRect.left + 8) + "px";
     state.markdownBlockDropLabel.style.top = Math.max(8, top - 26) + "px";
     state.markdownBlockDropLabel.style.borderColor = dropType.color;

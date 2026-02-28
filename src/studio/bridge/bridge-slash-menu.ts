@@ -5,22 +5,19 @@
  * keyboard navigation, and command application.
  */
 
-import { state, MARKDOWN_SLASH_COMMANDS } from "./bridge-state.ts";
+import { MARKDOWN_SLASH_COMMANDS, state } from "./bridge-state.ts";
 import { DATA_VF_IGNORE } from "./bridge-constants.ts";
 import {
   composeMarkdownContent,
   restoreRawBlocksFromEditor,
   scheduleMarkdownSync,
 } from "./bridge-markdown-core.ts";
+import { applyMarkdownContent, focusMarkdownEditor } from "./bridge-markdown-editor.ts";
 import {
-  applyMarkdownContent,
-  focusMarkdownEditor,
-} from "./bridge-markdown-editor.ts";
-import {
-  setMarkdownEditorSelection,
   getMarkdownEditorSelection,
-  scheduleMarkdownSelectionSync,
   scheduleMarkdownSelectionOverlayRender,
+  scheduleMarkdownSelectionSync,
+  setMarkdownEditorSelection,
 } from "./bridge-selection.ts";
 
 // ---------------------------------------------------------------------------
@@ -114,10 +111,9 @@ export function applyMarkdownSlashCommand(index: number): boolean {
     return false;
   }
 
-  const editorContent =
-    typeof state.markdownCurrentEditorContent === "string"
-      ? state.markdownCurrentEditorContent
-      : "";
+  const editorContent = typeof state.markdownCurrentEditorContent === "string"
+    ? state.markdownCurrentEditorContent
+    : "";
   const before = editorContent.slice(0, state.markdownSlashMenuContext.lineStart);
   const after = editorContent.slice(state.markdownSlashMenuContext.caret);
   const nextEditorContent = before + insert.text + after;
@@ -254,10 +250,9 @@ export function updateMarkdownSlashMenu(): void {
   }
 
   const caret = selection.start;
-  const editorContent =
-    typeof state.markdownCurrentEditorContent === "string"
-      ? state.markdownCurrentEditorContent
-      : "";
+  const editorContent = typeof state.markdownCurrentEditorContent === "string"
+    ? state.markdownCurrentEditorContent
+    : "";
   const lineStart = editorContent.lastIndexOf("\n", Math.max(0, caret - 1)) + 1;
   const line = editorContent.slice(lineStart, caret);
   const match = line.match(/^(\s*)\/([a-z0-9-]*)$/i);
@@ -338,8 +333,8 @@ export function handleMarkdownSlashMenuKeydown(event: KeyboardEvent): boolean {
 
   if (event.key === "ArrowDown") {
     event.preventDefault();
-    state.markdownSlashMenuActiveIndex =
-      (state.markdownSlashMenuActiveIndex + 1) % state.markdownSlashMenuCommands.length;
+    state.markdownSlashMenuActiveIndex = (state.markdownSlashMenuActiveIndex + 1) %
+      state.markdownSlashMenuCommands.length;
     renderMarkdownSlashMenu();
     return true;
   }

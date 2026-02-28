@@ -12,9 +12,9 @@ import { registerEditorCallbacks } from "./bridge-editor-callbacks.ts";
 import { injectOverlayStyles } from "./bridge-styles.ts";
 import {
   createOverlay,
+  setColorMode,
   setupInspectMode,
   setupMutationObserver,
-  setColorMode,
 } from "./bridge-inspector.ts";
 import { setupConsoleCapture, setupErrorHandling } from "./bridge-console.ts";
 import { setupMarkdownEditor } from "./bridge-markdown-editor.ts";

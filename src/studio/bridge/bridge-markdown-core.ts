@@ -6,7 +6,7 @@
  * editor sync scheduling, and text diffing.
  */
 
-import { state, LEXICAL_YJS_ORIGIN } from "./bridge-state.ts";
+import { state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
 import { getEditorCallbacks } from "./bridge-editor-callbacks.ts";
 import { syncLocalChangeToYText } from "./bridge-markdown-yjs.ts";
@@ -458,11 +458,10 @@ export function extractRawBlocksForEditor(
   const source = typeof body === "string" ? body : "";
   const rawBlocks: string[] = [];
   const mdxBlocks: MdxBlock[] = [];
-  const tokenPrefix =
-    "VF_RAW_BLOCK_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+  const tokenPrefix = "VF_RAW_BLOCK_" + Date.now().toString(36) + "_" +
+    Math.random().toString(36).slice(2, 8);
   const trackMdxBlocks = isMdxPage();
-  const importMap =
-    mdxImportMap && typeof mdxImportMap === "object" ? mdxImportMap : {};
+  const importMap = mdxImportMap && typeof mdxImportMap === "object" ? mdxImportMap : {};
 
   const createToken = function (index: number): string {
     return "[[" + tokenPrefix + "_" + index + "]]";
@@ -480,8 +479,8 @@ export function extractRawBlocksForEditor(
 
     const trimmed = String(rawBlock || "").trimStart();
     const fence = String.fromCharCode(96, 96, 96);
-    const startsWithTsxFence =
-      trimmed.startsWith(fence + "tsx") || trimmed.startsWith(fence + "jsx");
+    const startsWithTsxFence = trimmed.startsWith(fence + "tsx") ||
+      trimmed.startsWith(fence + "jsx");
     const startsWithUpperTag = /^<\s*[A-Z]/.test(trimmed);
     const hasTsxProps = trimmed.indexOf("{") >= 0 && trimmed.indexOf("}") >= 0;
 
@@ -489,42 +488,33 @@ export function extractRawBlocksForEditor(
       return;
     }
 
-    const label = startsWithTsxFence
-      ? "TSX block"
-      : "JSX " + getMdxComponentName(trimmed);
+    const label = startsWithTsxFence ? "TSX block" : "JSX " + getMdxComponentName(trimmed);
     const componentName = getMdxComponentName(trimmed);
     const componentNamePattern = /^[A-Z][\w$]*(?:\.[A-Z][\w$]*)*$/;
-    const normalizedComponentName = componentNamePattern.test(componentName)
-      ? componentName
-      : "";
-    const componentParts = normalizedComponentName
-      ? normalizedComponentName.split(".")
-      : [];
+    const normalizedComponentName = componentNamePattern.test(componentName) ? componentName : "";
+    const componentParts = normalizedComponentName ? normalizedComponentName.split(".") : [];
     const namespaceName = componentParts.length > 0 ? componentParts[0] : "";
-    const fallbackSymbol =
-      componentParts.length > 0 ? componentParts[componentParts.length - 1] : "";
+    const fallbackSymbol = componentParts.length > 0
+      ? componentParts[componentParts.length - 1]
+      : "";
     const directEntry = normalizedComponentName
       ? (importMap as Record<string, any>)[normalizedComponentName]
       : null;
-    const namespaceEntry =
-      !directEntry && namespaceName
-        ? (importMap as Record<string, any>)[namespaceName]
-        : null;
+    const namespaceEntry = !directEntry && namespaceName
+      ? (importMap as Record<string, any>)[namespaceName]
+      : null;
     const importEntry = directEntry || namespaceEntry || null;
-    const entryPath =
-      importEntry && typeof importEntry.filePath === "string"
-        ? importEntry.filePath
-        : typeof importEntry === "string"
-          ? importEntry
-          : "";
-    const entrySymbol =
-      importEntry && typeof importEntry.symbolName === "string"
-        ? importEntry.symbolName
-        : "";
-    const entryKind =
-      importEntry && typeof importEntry.importKind === "string"
-        ? importEntry.importKind
-        : "";
+    const entryPath = importEntry && typeof importEntry.filePath === "string"
+      ? importEntry.filePath
+      : typeof importEntry === "string"
+      ? importEntry
+      : "";
+    const entrySymbol = importEntry && typeof importEntry.symbolName === "string"
+      ? importEntry.symbolName
+      : "";
+    const entryKind = importEntry && typeof importEntry.importKind === "string"
+      ? importEntry.importKind
+      : "";
     const componentPath = entryPath || "";
     let componentSymbol = fallbackSymbol;
     if (entrySymbol) {

@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { setConfigForTest } from "./bridge-config.ts";
-import { parseMdxImportMap, extractRawBlocksForEditor } from "./bridge-markdown-core.ts";
+import { extractRawBlocksForEditor, parseMdxImportMap } from "./bridge-markdown-core.ts";
 import { getMdxBlockOpenUiState } from "./bridge-block-drag.ts";
 
 function setupConfig(pagePath = "docs/guide/page.mdx") {
