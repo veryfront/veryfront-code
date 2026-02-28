@@ -33,6 +33,7 @@ import {
 } from "./bridge-markdown-yjs.ts";
 
 import {
+  buildEditorRenderedMaps,
   clearMarkdownSelectionOverlay,
   clearMarkdownSelectionSync,
   scheduleMarkdownSelectionOverlayRender,
@@ -133,13 +134,21 @@ export function setupMarkdownLexicalEditor(): void {
         }
 
         let nextContent = "";
+        let renderedText = "";
         update.editorState.read(function () {
           nextContent = markdownModule.$convertToMarkdownString(
             markdownModule.TRANSFORMERS,
             undefined,
             true,
           );
+          renderedText = lexicalModule.$getRoot().getTextContent();
         });
+
+        // Rebuild editor↔rendered offset maps after every edit
+        const maps = buildEditorRenderedMaps(nextContent, renderedText);
+        state.markdownEditorToRenderedMap = maps.editorToRendered;
+        state.markdownRenderedToEditorMap = maps.renderedToEditor;
+
         const restoredBody = restoreRawBlocksFromEditor(nextContent);
         const fullContent = composeMarkdownContent(restoredBody);
 
@@ -304,6 +313,12 @@ export function applyMarkdownContent(content: unknown): void {
           if (root.getChildrenSize() === 0) {
             root.append(lexicalModule.$createParagraphNode());
           }
+
+          // Build editor↔rendered offset maps after conversion
+          const renderedText = root.getTextContent();
+          const maps = buildEditorRenderedMaps(editorContent, renderedText);
+          state.markdownEditorToRenderedMap = maps.editorToRendered;
+          state.markdownRenderedToEditorMap = maps.renderedToEditor;
         },
         { discrete: true },
       );
