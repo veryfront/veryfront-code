@@ -107,7 +107,11 @@ export interface LexicalListModule {
 
 export interface LexicalMarkdownModule {
   TRANSFORMERS: unknown[];
-  $convertToMarkdownString(transformers: unknown[], node?: unknown, shouldPreserve?: boolean): string;
+  $convertToMarkdownString(
+    transformers: unknown[],
+    node?: unknown,
+    shouldPreserve?: boolean,
+  ): string;
   $convertFromMarkdownString(
     markdown: string,
     transformers: unknown[],
