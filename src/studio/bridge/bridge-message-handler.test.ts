@@ -42,7 +42,9 @@ let reloadCallCount = 0;
 
 function resetState(pagePath = "test.md"): void {
   reloadCallCount = 0;
-  (globalThis as any).location.reload = () => { reloadCallCount++; };
+  (globalThis as any).location.reload = () => {
+    reloadCallCount++;
+  };
   setConfigForTest({ pagePath, pageId: "test-id", projectId: "proj-id" });
   editorState.markdownFileId = "file-123";
   editorState.markdownCurrentContent = "";
