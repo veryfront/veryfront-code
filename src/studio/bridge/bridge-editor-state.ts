@@ -118,8 +118,6 @@ export const editorState = {
   markdownLatestPresenceUsers: [] as PresenceUser[],
   markdownLatestSelections: [] as RemoteSelection[],
   markdownHasUnsavedChanges: false,
-  markdownSaveInProgress: false,
-  markdownSaveRequestedContent: null as string | null,
 
   // Yjs (dynamically imported — typed structurally)
   markdownYDoc: null as {

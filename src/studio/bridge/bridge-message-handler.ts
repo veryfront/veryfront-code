@@ -80,32 +80,6 @@ export function handleStudioMessage(event: MessageEvent): void {
       return;
 
     case "setMarkdownPersistState":
-      if (!isMarkdownPage()) {
-        return;
-      }
-      if (
-        message.fileId && editorState.markdownFileId &&
-        message.fileId !== editorState.markdownFileId
-      ) {
-        return;
-      }
-      if (editorState.markdownSaveInProgress) {
-        const status = message.status || "saved";
-        if (status === "saved") {
-          const requestedContent = editorState.markdownSaveRequestedContent;
-          editorState.markdownSaveInProgress = false;
-          editorState.markdownSaveRequestedContent = null;
-          if (
-            !(typeof requestedContent === "string" &&
-              editorState.markdownCurrentContent !== requestedContent)
-          ) {
-            editorState.markdownHasUnsavedChanges = false;
-          }
-        } else if (status === "error") {
-          editorState.markdownSaveInProgress = false;
-          editorState.markdownSaveRequestedContent = null;
-        }
-      }
       return;
 
     case "agentWriteMarkdown": {

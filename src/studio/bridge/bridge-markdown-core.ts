@@ -339,6 +339,7 @@ export function scheduleMarkdownSync(_content: string): void {
       getConfig().pagePath,
       state.markdownCurrentContent,
     );
+    state.markdownHasUnsavedChanges = false;
   }, 120);
 }
 
