@@ -13,6 +13,22 @@ import { DATA_VF_IGNORE } from "./bridge-constants.ts";
 // Offset helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Return the plain-text content of `root` as seen by `Range.toString()`.
+ * This produces 1 `\n` per block boundary, consistent with
+ * `getTextOffsetWithinRoot` which also uses `Range.toString().length`.
+ */
+export function getDomRenderedText(root: Node | null): string {
+  if (!root) return "";
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(root);
+    return range.toString();
+  } catch {
+    return "";
+  }
+}
+
 export function getTextOffsetWithinRoot(
   root: Node | null,
   targetNode: Node | null,
@@ -496,18 +512,38 @@ export function resolveMarkdownTextPoint(
   rawOffset: number,
 ): { node: Node; offset: number } {
   const offset = Math.max(0, Math.trunc(rawOffset || 0));
+  if (offset === 0) {
+    // Fast path: find the first text node and return offset 0
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const first = walker.nextNode();
+    return first
+      ? { node: first, offset: 0 }
+      : { node: root, offset: 0 };
+  }
+
+  // Walk text nodes and use Range.toString().length to measure cumulative
+  // offset in the same coordinate space as getTextOffsetWithinRoot.
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let remaining = offset;
+  const measureRange = document.createRange();
+  measureRange.setStart(root, 0);
   let lastTextNode: Node | null = null;
   let node = walker.nextNode();
 
   while (node) {
     lastTextNode = node;
     const textLength = node.textContent ? node.textContent.length : 0;
-    if (remaining <= textLength) {
-      return { node: node, offset: remaining };
+
+    // Measure cumulative Range.toString() offset through end of this node
+    measureRange.setEnd(node, textLength);
+    const cumulative = measureRange.toString().length;
+
+    if (cumulative >= offset) {
+      // Target falls within this node
+      const nodeStart = cumulative - textLength;
+      const localOffset = offset - nodeStart;
+      return { node: node, offset: Math.max(0, Math.min(localOffset, textLength)) };
     }
-    remaining -= textLength;
+
     node = walker.nextNode();
   }
 

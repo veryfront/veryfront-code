@@ -36,6 +36,7 @@ import {
   buildEditorRenderedMaps,
   clearMarkdownSelectionOverlay,
   clearMarkdownSelectionSync,
+  getDomRenderedText,
   getTextOffsetWithinRoot,
   scheduleMarkdownSelectionOverlayRender,
   scheduleMarkdownSelectionSync,
@@ -139,15 +140,17 @@ export function setupMarkdownLexicalEditor(): void {
         }
 
         let nextContent = "";
-        let renderedText = "";
         update.editorState.read(function () {
           nextContent = markdownModule.$convertToMarkdownString(
             markdownModule.TRANSFORMERS,
             undefined,
             true,
           );
-          renderedText = lexicalModule.$getRoot().getTextContent();
         });
+
+        // Use Range.toString() for rendered text — consistent with
+        // getTextOffsetWithinRoot (1 \n per block boundary).
+        const renderedText = getDomRenderedText(state.markdownEditorSurface);
 
         // Rebuild editor↔rendered offset maps after every edit
         const maps = buildEditorRenderedMaps(nextContent, renderedText);
@@ -349,13 +352,14 @@ export function applyMarkdownContent(content: unknown): void {
       { discrete: true },
     );
 
-    // Build editor↔rendered offset maps from committed state
-    api.editor.getEditorState().read(function () {
-      const renderedText = api.lexicalModule.$getRoot().getTextContent();
+    // Build editor↔rendered offset maps from committed DOM state.
+    // Use Range.toString() — consistent with getTextOffsetWithinRoot.
+    {
+      const renderedText = getDomRenderedText(state.markdownEditorSurface);
       const maps = buildEditorRenderedMaps(editorContent, renderedText);
       state.markdownEditorToRenderedMap = maps.editorToRendered;
       state.markdownRenderedToEditorMap = maps.renderedToEditor;
-    });
+    }
 
     // Reset flags after all synchronous Lexical reconciliation completes.
     // setTimeout(0) is more reliable than queueMicrotask for catching
@@ -376,7 +380,6 @@ export function applyMarkdownContent(content: unknown): void {
       state.markdownPendingLocalReconcile = false;
 
       let nextContent = "";
-      let renderedText = "";
       const reconcileApi = state.markdownLexicalApi;
       reconcileApi.editor.getEditorState().read(function () {
         nextContent = reconcileApi.markdownModule.$convertToMarkdownString(
@@ -384,9 +387,10 @@ export function applyMarkdownContent(content: unknown): void {
           undefined,
           true,
         );
-        renderedText = reconcileApi.lexicalModule.$getRoot().getTextContent();
       });
 
+      // Use Range.toString() — consistent with getTextOffsetWithinRoot.
+      const renderedText = getDomRenderedText(state.markdownEditorSurface);
       const maps = buildEditorRenderedMaps(nextContent, renderedText);
       state.markdownEditorToRenderedMap = maps.editorToRendered;
       state.markdownRenderedToEditorMap = maps.renderedToEditor;
