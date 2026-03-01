@@ -276,7 +276,6 @@ const OVERLAY_CSS = `
         z-index: 100006;
         display: none;
         flex-direction: column;
-        min-width: 200px;
         border: 1px solid oklch(0.84 0.0055 95.11);
         border-radius: 8px;
         background: oklch(1 0 0);

@@ -643,46 +643,44 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
     event.preventDefault();
   });
 
-  // -- Inline toolbar rows ---------------------------------------------------
+  // -- Inline toolbar row ----------------------------------------------------
 
-  const row1 = el("div", "vf-markdown-editor__inline-row");
-  row1.appendChild(blockTrigger);
-  row1.appendChild(createSeparator());
-  row1.appendChild(
+  const row = el("div", "vf-markdown-editor__inline-row");
+  row.appendChild(blockTrigger);
+  row.appendChild(createSeparator());
+  row.appendChild(
     createInlineButton("B", "bold", function () {
       toggleMarkdownInlineFormat("bold");
     }),
   );
-  row1.appendChild(
+  row.appendChild(
     createInlineButton("I", "italic", function () {
       toggleMarkdownInlineFormat("italic");
     }),
   );
-  row1.appendChild(
+  row.appendChild(
     createInlineButton("U", "underline", function () {
       toggleMarkdownInlineFormat("underline");
     }),
   );
-
-  const row2 = el("div", "vf-markdown-editor__inline-row");
-  row2.appendChild(
+  row.appendChild(createSeparator());
+  row.appendChild(
     createInlineButton(String.fromCodePoint(128279), null, function () {
       insertMarkdownLink();
     }),
   );
-  row2.appendChild(
+  row.appendChild(
     createInlineButton("S", "strikethrough", function () {
       toggleMarkdownInlineFormat("strikethrough");
     }),
   );
-  row2.appendChild(
+  row.appendChild(
     createInlineButton("</>", "code", function () {
       toggleMarkdownInlineFormat("code");
     }),
   );
 
-  inlineToolbar.appendChild(row1);
-  inlineToolbar.appendChild(row2);
+  inlineToolbar.appendChild(row);
   inlineToolbar.appendChild(blockDropdown);
 
   // -- Global listeners for block dropdown -----------------------------------
