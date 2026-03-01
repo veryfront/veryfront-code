@@ -13,11 +13,7 @@
 import { editorState as state } from "./bridge-editor-state.ts";
 import { LEXICAL_YJS_ORIGIN, type PresenceUser, type RemoteSelection } from "./bridge-state.ts";
 import { computeTextDiff } from "./bridge-markdown-core.ts";
-import {
-  applyMarkdownContent,
-  setMarkdownPresence,
-  setMarkdownSelections,
-} from "./bridge-markdown-editor.ts";
+import { applyMarkdownContent, updateMarkdownOverlaySelections } from "./bridge-markdown-editor.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -211,7 +207,7 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
           provider.awareness.getStates().entries(),
         ) as [number, Record<string, unknown>][];
 
-        // Sync presence users
+        // Sync presence users (stored for overlay name labels)
         const users: PresenceUser[] = [];
         for (const [clientId, st] of states) {
           const user = st.user as Record<string, unknown> | undefined;
@@ -226,9 +222,9 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
             isAgent: (user.isAgent as boolean) || false,
           });
         }
-        setMarkdownPresence(users);
+        state.markdownLatestPresenceUsers = users;
 
-        // Sync remote selections
+        // Sync remote selections → overlay cursors
         const selections: RemoteSelection[] = [];
         for (const [cId, st] of states) {
           const u = st.user as Record<string, unknown> | undefined;
@@ -263,7 +259,7 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
             });
           }
         }
-        setMarkdownSelections(selections);
+        updateMarkdownOverlaySelections(selections);
       }
 
       // ------------------------------------------------------------------
@@ -433,6 +429,6 @@ export function disposeMarkdownYjs(): void {
   state.markdownPendingSelection = null;
   state.markdownLastRemoteContent = null;
   state.markdownApplyingRemoteUpdate = false;
-  setMarkdownPresence([]);
-  setMarkdownSelections([]);
+  state.markdownLatestPresenceUsers = [];
+  updateMarkdownOverlaySelections([]);
 }

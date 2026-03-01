@@ -171,7 +171,7 @@ export const state = {
 // Re-exports from editor state (for modules that import from bridge-state)
 // ---------------------------------------------------------------------------
 
-export { editorState, setMarkdownPersistStatus } from "./bridge-editor-state.ts";
+export { editorState } from "./bridge-editor-state.ts";
 
 export const LEXICAL_YJS_ORIGIN = "lexical-yjs-binding";
 

@@ -2,8 +2,8 @@
  * Bridge Markdown Editor
  *
  * Markdown editor lifecycle: Lexical rich-text setup, DOM scaffolding
- * (toolbar, surface, inline toolbar, block drag, textarea fallback),
- * content application, presence/selection pills, and edit-mode toggling.
+ * (surface, inline toolbar, block drag, textarea fallback),
+ * content application, overlay selections, and edit-mode toggling.
  *
  * NOTE: This module participates in a circular import cycle with
  * bridge-markdown-core.ts and bridge-markdown-yjs.ts.
@@ -12,7 +12,6 @@
 
 import { editorState as state } from "./bridge-editor-state.ts";
 import { getConfig, isMarkdownPage } from "./bridge-config.ts";
-import { DATA_VF_IGNORE } from "./bridge-constants.ts";
 import { btn, el } from "./bridge-dom-helpers.ts";
 
 import {
@@ -23,14 +22,9 @@ import {
   parseMdxImportMap,
   postMarkdownEditorReady,
   restoreRawBlocksFromEditor,
-  saveMarkdownContent,
 } from "./bridge-markdown-core.ts";
 
-import {
-  disposeMarkdownYjs,
-  setupMarkdownYjsConnection,
-  writeToYText,
-} from "./bridge-markdown-yjs.ts";
+import { disposeMarkdownYjs, setupMarkdownYjsConnection } from "./bridge-markdown-yjs.ts";
 
 import {
   buildEditorRenderedMaps,
@@ -452,87 +446,25 @@ export function applyMarkdownContent(content: unknown): void {
 }
 
 // ---------------------------------------------------------------------------
-// setMarkdownPresence
+// updateMarkdownOverlaySelections
 // ---------------------------------------------------------------------------
 
-export function setMarkdownPresence(users: any[]): void {
-  state.markdownLatestPresenceUsers = Array.isArray(users) ? users : [];
-  if (!state.markdownPresenceRoot) {
-    return;
-  }
-
-  state.markdownPresenceRoot.textContent = "";
-  if (!Array.isArray(users) || users.length === 0) {
-    state.markdownPresenceRoot.style.display = "none";
-    return;
-  }
-
-  const seenIds: Record<string, boolean> = {};
-  const uniqueUsers = users.filter(function (user: any) {
-    if (!user || typeof user.name !== "string") {
-      return false;
-    }
-    const uniqueKey = user.id || user.name;
-    if (seenIds[uniqueKey]) {
-      return false;
-    }
-    seenIds[uniqueKey] = true;
-    return true;
-  });
-  const visibleUsers = uniqueUsers.slice(0, 4);
-
-  if (visibleUsers.length === 0) {
-    state.markdownPresenceRoot.style.display = "none";
-    return;
-  }
-
-  state.markdownPresenceRoot.style.display = "inline-flex";
-
-  for (const user of visibleUsers) {
-    const pill = document.createElement("div");
-    pill.className = "vf-markdown-editor__presence-pill";
-    pill.setAttribute(DATA_VF_IGNORE, "true");
-    pill.setAttribute(
-      "data-current",
-      user.isCurrentUser ? "true" : "false",
-    );
-    pill.setAttribute("data-agent", user.isAgent ? "true" : "false");
-    pill.textContent = user.isCurrentUser ? "You" : user.name;
-
-    const color = typeof user.color === "string" && user.color ? user.color : "#6b7280";
-    pill.style.borderLeftColor = color;
-
-    state.markdownPresenceRoot.appendChild(pill);
-  }
-
-  if (uniqueUsers.length > visibleUsers.length) {
-    const extra = document.createElement("div");
-    extra.className = "vf-markdown-editor__presence-pill";
-    extra.setAttribute(DATA_VF_IGNORE, "true");
-    extra.textContent = "+" + String(uniqueUsers.length - visibleUsers.length);
-    state.markdownPresenceRoot.appendChild(extra);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// setMarkdownSelections
-// ---------------------------------------------------------------------------
-
-export function setMarkdownSelections(selections: any[]): void {
+/**
+ * Rebuild overlay selections from the latest remote selections.
+ * Converts source offsets to editor (rendered) offsets and schedules
+ * the cursor overlay render. No toolbar pill DOM — overlays show
+ * cursors/highlights directly on the editor surface.
+ */
+export function updateMarkdownOverlaySelections(selections: any[]): void {
   state.markdownLatestSelections = Array.isArray(selections) ? selections : [];
-  if (!state.markdownSelectionsRoot) {
-    return;
-  }
-
-  state.markdownSelectionsRoot.textContent = "";
   state.markdownOverlaySelections = [];
+
   if (!Array.isArray(selections) || selections.length === 0) {
-    state.markdownSelectionsRoot.style.display = "none";
     clearMarkdownSelectionOverlay();
     return;
   }
 
-  const visibleSelections = selections
+  const validSelections = selections
     .filter(function (selection: any) {
       return (
         selection &&
@@ -540,32 +472,21 @@ export function setMarkdownSelections(selections: any[]): void {
         typeof selection.start === "number" &&
         typeof selection.end === "number"
       );
-    })
-    .slice(0, 4);
+    });
 
-  if (visibleSelections.length === 0) {
-    state.markdownSelectionsRoot.style.display = "none";
+  if (validSelections.length === 0) {
     clearMarkdownSelectionOverlay();
     return;
   }
 
-  state.markdownSelectionsRoot.style.display = "inline-flex";
-
-  for (const selection of visibleSelections) {
-    const pill = document.createElement("div");
-    pill.className = "vf-markdown-editor__selection-pill";
-    pill.setAttribute(DATA_VF_IGNORE, "true");
+  for (const selection of validSelections) {
     const color = typeof selection.color === "string" && selection.color
       ? selection.color
       : "#6b7280";
     const displayName = selection.isCurrentUser ? "You" : selection.name;
-    pill.style.borderLeftColor = color;
 
     const start = Math.max(0, Math.trunc(selection.start));
     const end = Math.max(0, Math.trunc(selection.end));
-    const rangeLabel = start === end ? "@" + String(start) : String(start) + "-" + String(end);
-    pill.textContent = displayName + " " + rangeLabel;
-    state.markdownSelectionsRoot.appendChild(pill);
 
     const editorRange = sourceSelectionToEditorRange(start, end);
     if (!editorRange) {
@@ -582,14 +503,6 @@ export function setMarkdownSelections(selections: any[]): void {
     });
   }
 
-  if (selections.length > visibleSelections.length) {
-    const extra = document.createElement("div");
-    extra.className = "vf-markdown-editor__selection-pill";
-    extra.setAttribute(DATA_VF_IGNORE, "true");
-    extra.textContent = "+" + String(selections.length - visibleSelections.length);
-    state.markdownSelectionsRoot.appendChild(extra);
-  }
-
   scheduleMarkdownSelectionOverlayRender();
 }
 
@@ -603,36 +516,6 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
   }
 
   const editorRoot = el("div", "vf-markdown-editor");
-
-  // -- Toolbar ---------------------------------------------------------------
-
-  const toolbar = el("div", "vf-markdown-editor__toolbar");
-  const title = el("div", "vf-markdown-editor__title", getConfig().pagePath || "Untitled");
-  const actions = el("div", "vf-markdown-editor__actions");
-
-  const status = el("div", "vf-markdown-editor__status");
-  status.setAttribute("data-state", "");
-
-  const presence = el("div", "vf-markdown-editor__presence");
-  const selections = el("div", "vf-markdown-editor__selections");
-
-  actions.appendChild(status);
-  actions.appendChild(presence);
-  actions.appendChild(selections);
-
-  // Debug button: write test content via Yjs (only visible when debugExposeInternals is on)
-  if (getConfig().debugExposeInternals) {
-    const debugBtn = btn("vf-markdown-editor__exit", "Yjs Write", function () {
-      const ok = writeToYText("\n\nHello from Yjs debug write!\n");
-      console.debug("[StudioBridge] Debug Yjs write:", ok ? "success" : "failed (not connected)");
-    });
-    debugBtn.style.fontSize = "10px";
-    debugBtn.style.opacity = "0.6";
-    actions.appendChild(debugBtn);
-  }
-
-  toolbar.appendChild(title);
-  toolbar.appendChild(actions);
 
   // -- MDX blocks bar --------------------------------------------------------
 
@@ -668,12 +551,6 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
       if (moved) {
         event.preventDefault();
       }
-    }
-  });
-  surface.addEventListener("keydown", function (event: KeyboardEvent) {
-    if ((event.metaKey || event.ctrlKey) && event.key === "s") {
-      event.preventDefault();
-      saveMarkdownContent();
     }
   });
   surface.addEventListener("scroll", scheduleMarkdownSelectionOverlayRender);
@@ -763,46 +640,44 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
     event.preventDefault();
   });
 
-  // -- Inline toolbar rows ---------------------------------------------------
+  // -- Inline toolbar row ----------------------------------------------------
 
-  const row1 = el("div", "vf-markdown-editor__inline-row");
-  row1.appendChild(blockTrigger);
-  row1.appendChild(createSeparator());
-  row1.appendChild(
+  const row = el("div", "vf-markdown-editor__inline-row");
+  row.appendChild(blockTrigger);
+  row.appendChild(createSeparator());
+  row.appendChild(
     createInlineButton("B", "bold", function () {
       toggleMarkdownInlineFormat("bold");
     }),
   );
-  row1.appendChild(
+  row.appendChild(
     createInlineButton("I", "italic", function () {
       toggleMarkdownInlineFormat("italic");
     }),
   );
-  row1.appendChild(
+  row.appendChild(
     createInlineButton("U", "underline", function () {
       toggleMarkdownInlineFormat("underline");
     }),
   );
-
-  const row2 = el("div", "vf-markdown-editor__inline-row");
-  row2.appendChild(
-    createInlineButton(String.fromCodePoint(128279), null, function () {
-      insertMarkdownLink();
-    }),
-  );
-  row2.appendChild(
+  row.appendChild(
     createInlineButton("S", "strikethrough", function () {
       toggleMarkdownInlineFormat("strikethrough");
     }),
   );
-  row2.appendChild(
+  row.appendChild(createSeparator());
+  row.appendChild(
+    createInlineButton(String.fromCodePoint(128279), null, function () {
+      insertMarkdownLink();
+    }),
+  );
+  row.appendChild(
     createInlineButton("</>", "code", function () {
       toggleMarkdownInlineFormat("code");
     }),
   );
 
-  inlineToolbar.appendChild(row1);
-  inlineToolbar.appendChild(row2);
+  inlineToolbar.appendChild(row);
   inlineToolbar.appendChild(blockDropdown);
 
   // -- Global listeners for block dropdown -----------------------------------
@@ -993,7 +868,6 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
 
   // -- Assemble editor root --------------------------------------------------
 
-  editorRoot.appendChild(toolbar);
   editorRoot.appendChild(mdxBlocks);
   editorRoot.appendChild(surfaceWrap);
   editorRoot.appendChild(textarea);
@@ -1009,9 +883,6 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
   state.markdownEditorRoot = editorRoot;
   state.markdownEditorSurface = surface;
   state.markdownEditorTextarea = textarea;
-  state.markdownPersistStatus = status;
-  state.markdownPresenceRoot = presence;
-  state.markdownSelectionsRoot = selections;
   state.markdownMdxBlocksRoot = mdxBlocks;
   state.markdownSelectionOverlayRoot = selectionOverlay;
   state.markdownSlashMenuRoot = slashMenu;
@@ -1020,8 +891,7 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
   state.markdownBlockDropIndicator = blockDropIndicator;
   state.markdownBlockDropLabel = blockDropLabel;
   setMarkdownMdxBlocks(state.markdownLatestMdxBlocks);
-  setMarkdownPresence(state.markdownLatestPresenceUsers);
-  setMarkdownSelections(state.markdownLatestSelections);
+  updateMarkdownOverlaySelections(state.markdownLatestSelections);
   setupMarkdownLexicalEditor();
   applyMarkdownContent(state.markdownCurrentContent);
 

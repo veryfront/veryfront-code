@@ -10,7 +10,7 @@
  * function bodies (never at module top-level).
  */
 
-import { editorState as state, setMarkdownPersistStatus } from "./bridge-editor-state.ts";
+import { editorState as state } from "./bridge-editor-state.ts";
 import type { MdxBlock, MdxImportEntry } from "./bridge-state.ts";
 import { getConfig, isMdxPage } from "./bridge-config.ts";
 import { getEditorCallbacks } from "./bridge-editor-callbacks.ts";
@@ -339,6 +339,7 @@ export function scheduleMarkdownSync(_content: string): void {
       getConfig().pagePath,
       state.markdownCurrentContent,
     );
+    state.markdownHasUnsavedChanges = false;
   }, 120);
 }
 
@@ -605,40 +606,4 @@ export function handleMarkdownLocalChange(
   }
   scheduleMarkdownSync(fullContent);
   scheduleMarkdownSelectionOverlayRender();
-}
-
-export function saveMarkdownContent(): void {
-  if (!state.markdownHasUnsavedChanges) {
-    return;
-  }
-  if (state.markdownSaveInProgress) {
-    return;
-  }
-  const cb = getEditorCallbacks();
-  if (!cb) {
-    return;
-  }
-  state.markdownSaveInProgress = true;
-  state.markdownSaveRequestedContent = state.markdownCurrentContent;
-  setMarkdownPersistStatus("saving");
-  if (state.markdownSyncTimer) {
-    clearTimeout(state.markdownSyncTimer);
-    state.markdownSyncTimer = null;
-  }
-  try {
-    cb.onContentChange(
-      state.markdownFileId,
-      getConfig().pagePath,
-      state.markdownCurrentContent,
-      true,
-    );
-  } catch (err) {
-    state.markdownSaveInProgress = false;
-    state.markdownSaveRequestedContent = null;
-    setMarkdownPersistStatus("error");
-    console.error("[StudioBridge] Save failed:", err);
-  }
-  // markdownHasUnsavedChanges is cleared by setMarkdownPersistState response
-  // from Studio, not here — avoids race where edits between save request
-  // and response would be incorrectly marked as saved.
 }

@@ -516,9 +516,7 @@ export function resolveMarkdownTextPoint(
     // Fast path: find the first text node and return offset 0
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const first = walker.nextNode();
-    return first
-      ? { node: first, offset: 0 }
-      : { node: root, offset: 0 };
+    return first ? { node: first, offset: 0 } : { node: root, offset: 0 };
   }
 
   // Walk text nodes and use Range.toString().length to measure cumulative
