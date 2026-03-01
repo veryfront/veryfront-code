@@ -24,10 +24,7 @@ import {
   restoreRawBlocksFromEditor,
 } from "./bridge-markdown-core.ts";
 
-import {
-  disposeMarkdownYjs,
-  setupMarkdownYjsConnection,
-} from "./bridge-markdown-yjs.ts";
+import { disposeMarkdownYjs, setupMarkdownYjsConnection } from "./bridge-markdown-yjs.ts";
 
 import {
   buildEditorRenderedMaps,

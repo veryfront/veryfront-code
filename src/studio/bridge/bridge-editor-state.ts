@@ -138,4 +138,3 @@ export const editorState = {
   markdownYjsY: null as YjsModule | null,
   markdownPendingSelection: null as { start: number; end: number } | null,
 };
-

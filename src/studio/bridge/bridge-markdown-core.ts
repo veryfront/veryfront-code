@@ -607,4 +607,3 @@ export function handleMarkdownLocalChange(
   scheduleMarkdownSync(fullContent);
   scheduleMarkdownSelectionOverlayRender();
 }
-
