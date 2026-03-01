@@ -465,6 +465,7 @@ const OVERLAY_CSS = `
         border: 1px solid oklch(0.6852 0.162 241.8 / 0.24);
         background: oklch(1 0 0 / 0.96);
         color: oklch(0.2768 0 0);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         font-size: 11px;
         font-weight: 600;
         line-height: 1.2;
