@@ -663,15 +663,15 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
       toggleMarkdownInlineFormat("underline");
     }),
   );
+  row.appendChild(
+    createInlineButton("S", "strikethrough", function () {
+      toggleMarkdownInlineFormat("strikethrough");
+    }),
+  );
   row.appendChild(createSeparator());
   row.appendChild(
     createInlineButton(String.fromCodePoint(128279), null, function () {
       insertMarkdownLink();
-    }),
-  );
-  row.appendChild(
-    createInlineButton("S", "strikethrough", function () {
-      toggleMarkdownInlineFormat("strikethrough");
     }),
   );
   row.appendChild(
