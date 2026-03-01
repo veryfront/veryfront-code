@@ -615,14 +615,6 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
 
   const presence = el("div", "vf-markdown-editor__presence");
   const selections = el("div", "vf-markdown-editor__selections");
-  // In Simple Mode the editor IS the experience — hide Done button.
-  // In Advanced Mode, show Done to return to preview.
-  const exitButton = btn("vf-markdown-editor__exit", "Done", function () {
-    setMarkdownEditMode(false);
-  });
-  if (getConfig().studioMode === "simple") {
-    exitButton.style.display = "none";
-  }
 
   actions.appendChild(status);
   actions.appendChild(presence);
@@ -638,8 +630,6 @@ export function ensureMarkdownEditor(): HTMLElement | undefined {
     debugBtn.style.opacity = "0.6";
     actions.appendChild(debugBtn);
   }
-
-  actions.appendChild(exitButton);
 
   toolbar.appendChild(title);
   toolbar.appendChild(actions);
@@ -1130,6 +1120,11 @@ export function setMarkdownEditMode(enabled: boolean): void {
     state.markdownGlobalListenerCleanups = [];
   }
 
+  // Update floating edit button label to reflect current mode
+  if (state.markdownEditButton) {
+    state.markdownEditButton.textContent = enabled ? "Done" : "Edit";
+  }
+
   const nextUrl = new URL(window.location.href);
   if (enabled) {
     nextUrl.searchParams.set("edit", "true");
@@ -1149,7 +1144,9 @@ export function ensureMarkdownEditButton(): void {
   }
 
   const button = btn("vf-markdown-edit-button", "Edit", function () {
-    setMarkdownEditMode(true);
+    const isEditing = state.markdownEditorRoot &&
+      state.markdownEditorRoot.style.display === "block";
+    setMarkdownEditMode(!isEditing);
   });
 
   document.body.appendChild(button);
