@@ -228,12 +228,29 @@ export function buildEditorRenderedMaps(
   editorContent: string,
   renderedText: string,
 ): { editorToRendered: number[]; renderedToEditor: number[] } {
+  // Lexical's getTextContent() appends trailing newlines after block nodes
+  // (e.g. paragraphs, headings) that don't exist in the markdown source from
+  // $convertToMarkdownString. Strip the excess trailing newlines so the
+  // greedy alignment doesn't leave unconsumed characters at the end.
+  let editorTrailing = 0;
+  for (let i = editorContent.length - 1; i >= 0 && editorContent[i] === "\n"; i--) {
+    editorTrailing++;
+  }
+  let renderedTrailing = 0;
+  for (let i = renderedText.length - 1; i >= 0 && renderedText[i] === "\n"; i--) {
+    renderedTrailing++;
+  }
+  const excessNewlines = Math.max(0, renderedTrailing - editorTrailing);
+  const trimmed = excessNewlines > 0
+    ? renderedText.slice(0, renderedText.length - excessNewlines)
+    : renderedText;
+
   const e2r: number[] = new Array(editorContent.length + 1);
-  const r2e: number[] = new Array(renderedText.length + 1);
+  const r2e: number[] = new Array(trimmed.length + 1);
 
   let ri = 0;
   for (let si = 0; si < editorContent.length; si++) {
-    if (ri < renderedText.length && editorContent[si] === renderedText[ri]) {
+    if (ri < trimmed.length && editorContent[si] === trimmed[ri]) {
       e2r[si] = ri;
       r2e[ri] = si;
       ri++;
@@ -241,14 +258,14 @@ export function buildEditorRenderedMaps(
       // Try advancing rendered pointer past extra block separators
       // (Lexical's getTextContent() inserts \n\n between block elements,
       // but the markdown source may only have \n between e.g. list items)
-      if (ri < renderedText.length && renderedText[ri] === "\n") {
+      if (ri < trimmed.length && trimmed[ri] === "\n") {
         let tempRi = ri;
-        while (tempRi < renderedText.length && renderedText[tempRi] === "\n") {
+        while (tempRi < trimmed.length && trimmed[tempRi] === "\n") {
           tempRi++;
         }
         if (
-          tempRi < renderedText.length &&
-          editorContent[si] === renderedText[tempRi]
+          tempRi < trimmed.length &&
+          editorContent[si] === trimmed[tempRi]
         ) {
           for (let k = ri; k < tempRi; k++) {
             if (r2e[k] === undefined) r2e[k] = si;
@@ -267,21 +284,21 @@ export function buildEditorRenderedMaps(
 
   // Warn when alignment didn't consume all rendered text — indicates a
   // mapping failure that will cause visible selection offset bugs.
-  if (ri < renderedText.length) {
+  if (ri < trimmed.length) {
     console.warn(
       "[StudioBridge] Offset mapping divergence: rendered text has",
-      renderedText.length - ri,
+      trimmed.length - ri,
       "unconsumed characters starting at index",
       ri,
     );
   }
 
   // End-of-string sentinels
-  e2r[editorContent.length] = Math.min(ri, renderedText.length);
-  r2e[renderedText.length] = editorContent.length;
+  e2r[editorContent.length] = Math.min(ri, trimmed.length);
+  r2e[trimmed.length] = editorContent.length;
 
   // Fill any remaining unmatched rendered positions
-  for (let r = ri; r < renderedText.length; r++) {
+  for (let r = ri; r < trimmed.length; r++) {
     if (r2e[r] === undefined) {
       r2e[r] = editorContent.length;
     }
@@ -289,7 +306,7 @@ export function buildEditorRenderedMaps(
 
   // Fill gaps in r2e (shouldn't happen normally, but defensive)
   let lastSrc = 0;
-  for (let r = 0; r <= renderedText.length; r++) {
+  for (let r = 0; r <= trimmed.length; r++) {
     if (r2e[r] !== undefined) {
       lastSrc = r2e[r]!;
     } else {
