@@ -4,7 +4,7 @@
  * Dispatches incoming Studio messages to the appropriate bridge functions.
  */
 
-import { editorState, setMarkdownPersistStatus } from "./bridge-editor-state.ts";
+import { editorState } from "./bridge-editor-state.ts";
 import { state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
 import { isFromStudio, postToStudio } from "./bridge-messaging.ts";
@@ -95,24 +95,15 @@ export function handleStudioMessage(event: MessageEvent): void {
           const requestedContent = editorState.markdownSaveRequestedContent;
           editorState.markdownSaveInProgress = false;
           editorState.markdownSaveRequestedContent = null;
-
-          // Only clear dirty state when current content still matches the request we saved.
           if (
-            typeof requestedContent === "string" &&
-            editorState.markdownCurrentContent !== requestedContent
+            !(typeof requestedContent === "string" &&
+              editorState.markdownCurrentContent !== requestedContent)
           ) {
-            setMarkdownPersistStatus("saving");
-          } else {
             editorState.markdownHasUnsavedChanges = false;
-            setMarkdownPersistStatus("saved");
           }
         } else if (status === "error") {
           editorState.markdownSaveInProgress = false;
           editorState.markdownSaveRequestedContent = null;
-          setMarkdownPersistStatus("error");
-          // Keep markdownHasUnsavedChanges = true so user can retry
-        } else {
-          setMarkdownPersistStatus(status);
         }
       }
       return;

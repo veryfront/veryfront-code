@@ -64,12 +64,7 @@ export const editorState = {
   markdownSyncTimer: null as ReturnType<typeof setTimeout> | null,
   markdownSelectionSyncTimer: null as ReturnType<typeof setTimeout> | null,
 
-  // Persist
-  markdownPersistStatus: null as HTMLElement | null,
-
-  // Presence & selections
-  markdownPresenceRoot: null as HTMLElement | null,
-  markdownSelectionsRoot: null as HTMLElement | null,
+  // Selection overlay
   markdownSelectionOverlayRoot: null as HTMLElement | null,
   markdownOverlaySelections: [] as RemoteSelection[],
   markdownSelectionOverlayRenderFrame: null as number | null,
@@ -146,27 +141,3 @@ export const editorState = {
   markdownPendingSelection: null as { start: number; end: number } | null,
 };
 
-// ---------------------------------------------------------------------------
-// Persist status (lives here with editor state, not bridge-state)
-// ---------------------------------------------------------------------------
-
-export function setMarkdownPersistStatus(status: string): void {
-  if (!editorState.markdownPersistStatus) {
-    return;
-  }
-
-  const nextStatus = status === "saving" || status === "saved" || status === "error"
-    ? status
-    : "saved";
-
-  editorState.markdownPersistStatus.setAttribute("data-state", nextStatus);
-  if (nextStatus === "saving") {
-    editorState.markdownPersistStatus.textContent = "Saving...";
-    return;
-  }
-  if (nextStatus === "error") {
-    editorState.markdownPersistStatus.textContent = "Save failed";
-    return;
-  }
-  editorState.markdownPersistStatus.textContent = "Saved";
-}

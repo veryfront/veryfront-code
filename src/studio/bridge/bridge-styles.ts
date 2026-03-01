@@ -88,132 +88,6 @@ const OVERLAY_CSS = `
         display: none;
       }
 
-      /* ------------------------------------------------------------------ */
-      /* Toolbar                                                             */
-      /* ------------------------------------------------------------------ */
-
-      .vf-markdown-editor__toolbar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 16px;
-        border-bottom: 1px solid oklch(0.9 0 0);
-        background: oklch(0.97 0 0 / 0.96);
-        backdrop-filter: blur(8px);
-        position: sticky;
-        top: 0;
-      }
-
-      .vf-markdown-editor__title {
-        font-size: 12px;
-        color: oklch(0.55 0.005 95.11);
-        font-weight: 500;
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-      }
-
-      .vf-markdown-editor__actions {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      .vf-markdown-editor__status {
-        font-size: 12px;
-        color: oklch(0.55 0.005 95.11);
-        transition: color 150ms ease;
-      }
-
-      .vf-markdown-editor__status[data-state='saving'] {
-        color: oklch(0.65 0.15 75);
-      }
-
-      .vf-markdown-editor__status[data-state='saved'] {
-        color: oklch(0.52 0.15 145);
-      }
-
-      .vf-markdown-editor__status[data-state='error'] {
-        color: oklch(0.55 0.22 27);
-      }
-
-      /* ------------------------------------------------------------------ */
-      /* Presence pills                                                      */
-      /* ------------------------------------------------------------------ */
-
-      .vf-markdown-editor__presence {
-        display: none;
-        align-items: center;
-        gap: 6px;
-      }
-
-      .vf-markdown-editor__presence-pill {
-        border: 1px solid oklch(0.84 0.0055 95.11);
-        border-left-width: 4px;
-        border-radius: 9999px;
-        padding: 2px 8px;
-        font-size: 11px;
-        font-weight: 500;
-        color: oklch(0.2768 0 0);
-        background: oklch(1 0 0);
-        transition: border-color 75ms ease;
-      }
-
-      .vf-markdown-editor__presence-pill[data-current='true'] {
-        font-weight: 600;
-      }
-
-      .vf-markdown-editor__presence-pill[data-agent='true'] {
-        font-style: italic;
-        background: oklch(0.96 0.02 280);
-        border-color: oklch(0.6852 0.162 241.8 / 0.3);
-      }
-
-      /* ------------------------------------------------------------------ */
-      /* Selection pills                                                     */
-      /* ------------------------------------------------------------------ */
-
-      .vf-markdown-editor__selections {
-        display: none;
-        align-items: center;
-        gap: 6px;
-      }
-
-      .vf-markdown-editor__selection-pill {
-        border: 1px solid oklch(0.84 0.0055 95.11);
-        border-left-width: 4px;
-        border-radius: 9999px;
-        padding: 2px 8px;
-        font-size: 11px;
-        font-weight: 500;
-        color: oklch(0.2768 0 0);
-        background: oklch(1 0 0);
-      }
-
-      /* ------------------------------------------------------------------ */
-      /* Toolbar buttons                                                     */
-      /* ------------------------------------------------------------------ */
-
-      .vf-markdown-editor__exit {
-        border: 1px solid oklch(0.84 0.0055 95.11);
-        border-radius: 6px;
-        background: oklch(1 0 0);
-        color: oklch(0.2768 0 0);
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-        font-size: 12px;
-        font-weight: 500;
-        padding: 6px 10px;
-        cursor: pointer;
-        transition: background 75ms ease;
-      }
-      .vf-markdown-editor__exit:hover {
-        background: oklch(0.93 0 0);
-      }
-      .vf-markdown-editor__exit:active {
-        transform: scale(0.98);
-      }
-
       .vf-markdown-editor__history {
         border: 1px solid oklch(0.84 0.0055 95.11);
         border-radius: 6px;
@@ -238,7 +112,7 @@ const OVERLAY_CSS = `
 
       .vf-markdown-editor__surface-wrap {
         position: relative;
-        height: calc(100vh - 52px);
+        height: 100vh;
       }
 
       .vf-markdown-editor__surface {
@@ -737,7 +611,7 @@ const OVERLAY_CSS = `
 
       .vf-markdown-editor__textarea {
         width: 100%;
-        height: calc(100vh - 52px);
+        height: 100vh;
         border: 0;
         outline: none;
         resize: none;
@@ -759,24 +633,6 @@ const OVERLAY_CSS = `
         background: oklch(0.2768 0 0);
       }
 
-      [data-theme='dark'] .vf-markdown-editor__toolbar {
-        border-bottom-color: oklch(0.3 0.01 220);
-        background: oklch(0.18 0.01 220 / 0.96);
-      }
-
-      [data-theme='dark'] .vf-markdown-editor__title {
-        color: oklch(0.5338 0.0046 106.55);
-      }
-
-      [data-theme='dark'] .vf-markdown-editor__exit {
-        background: oklch(0.3211 0 0);
-        border-color: oklch(0.42 0.0017 106.48);
-        color: oklch(0.9512 0.008 98.88);
-      }
-      [data-theme='dark'] .vf-markdown-editor__exit:hover {
-        background: oklch(0.25 0.01 220);
-      }
-
       [data-theme='dark'] .vf-markdown-editor__history {
         background: oklch(0.3211 0 0);
         border-color: oklch(0.42 0.0017 106.48);
@@ -784,39 +640,6 @@ const OVERLAY_CSS = `
       }
       [data-theme='dark'] .vf-markdown-editor__history:hover {
         background: oklch(0.25 0.01 220);
-      }
-
-      [data-theme='dark'] .vf-markdown-editor__status {
-        color: oklch(0.5338 0.0046 106.55);
-      }
-
-      [data-theme='dark'] .vf-markdown-editor__status[data-state='saving'] {
-        color: oklch(0.75 0.15 75);
-      }
-
-      [data-theme='dark'] .vf-markdown-editor__status[data-state='saved'] {
-        color: oklch(0.62 0.15 145);
-      }
-
-      [data-theme='dark'] .vf-markdown-editor__status[data-state='error'] {
-        color: oklch(0.65 0.2 25);
-      }
-
-      [data-theme='dark'] .vf-markdown-editor__presence-pill {
-        border-color: oklch(0.42 0.0017 106.48);
-        color: oklch(0.9512 0.008 98.88);
-        background: oklch(0.3211 0 0);
-      }
-
-      [data-theme='dark'] .vf-markdown-editor__presence-pill[data-agent='true'] {
-        background: oklch(0.25 0.03 280);
-        border-color: oklch(0.6852 0.162 241.8 / 0.3);
-      }
-
-      [data-theme='dark'] .vf-markdown-editor__selection-pill {
-        border-color: oklch(0.42 0.0017 106.48);
-        color: oklch(0.9512 0.008 98.88);
-        background: oklch(0.3211 0 0);
       }
 
       [data-theme='dark'] .vf-markdown-editor__textarea {
