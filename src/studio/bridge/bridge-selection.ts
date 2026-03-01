@@ -541,7 +541,7 @@ export function resolveMarkdownTextPoint(
       // Target falls within this node
       const nodeStart = cumulative - textLength;
       const localOffset = offset - nodeStart;
-      return { node: node, offset: Math.min(localOffset, textLength) };
+      return { node: node, offset: Math.max(0, Math.min(localOffset, textLength)) };
     }
 
     node = walker.nextNode();
