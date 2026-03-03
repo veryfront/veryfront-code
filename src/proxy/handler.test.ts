@@ -15,6 +15,14 @@ function createNotFoundResponse(): Response {
   return new Response("Not found", { status: 404 });
 }
 
+function createFakeJwt(userId: string): string {
+  const base64UrlEncode = (input: string): string =>
+    btoa(input).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const payload = base64UrlEncode(JSON.stringify({ userId }));
+  return `${header}.${payload}.fake-signature`;
+}
+
 function createHandler(port: number) {
   return createProxyHandler({
     config: {
@@ -255,7 +263,8 @@ describe("Proxy Handler", () => {
       }
     });
 
-    it("allows access to protected custom domain with auth token", async () => {
+    it("allows access to protected custom domain with auth token for project member", async () => {
+      const memberToken = createFakeJwt("user-123");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -266,6 +275,7 @@ describe("Proxy Handler", () => {
             id: "proj-123",
             slug: "protected-project",
             name: "Protected Project",
+            users: [{ id: "user-123" }],
             environments: [{
               id: "env-1",
               name: "production",
@@ -285,7 +295,7 @@ describe("Proxy Handler", () => {
         const req = new Request("http://protected.example.com/page", {
           headers: {
             host: "protected.example.com",
-            cookie: "authToken=user-auth-token",
+            cookie: `authToken=${memberToken}`,
           },
         });
 
@@ -294,6 +304,53 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.releaseId, "rel-123");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("returns 403 for protected custom domain when authenticated user is not a member", async () => {
+      const nonMemberToken = createFakeJwt("other-user");
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            users: [{ id: "user-123" }],
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://protected.example.com/page", {
+          headers: {
+            host: "protected.example.com",
+            cookie: `authToken=${nonMemberToken}`,
+          },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 403);
+        assertEquals(ctx.error?.message, "Access denied");
 
         await handler.close();
       } finally {
@@ -349,7 +406,8 @@ describe("Proxy Handler", () => {
       }
     });
 
-    it("allows access to protected veryfront domain with auth token", async () => {
+    it("allows access to protected veryfront domain with auth token for project member", async () => {
+      const memberToken = createFakeJwt("user-123");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -360,6 +418,7 @@ describe("Proxy Handler", () => {
             id: "proj-123",
             slug: "protected-project",
             name: "Protected Project",
+            users: [{ id: "user-123" }],
             environments: [{
               id: "env-1",
               name: "staging",
@@ -380,7 +439,7 @@ describe("Proxy Handler", () => {
           {
             headers: {
               host: "protected-project.staging.veryfront.com",
-              cookie: "authToken=user-auth-token",
+              cookie: `authToken=${memberToken}`,
             },
           },
         );
@@ -390,6 +449,55 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.releaseId, "rel-123");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("returns 403 for protected veryfront domain when authenticated user is not a member", async () => {
+      const nonMemberToken = createFakeJwt("other-user");
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            users: [{ id: "user-123" }],
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request(
+          "http://protected-project.staging.veryfront.com/page",
+          {
+            headers: {
+              host: "protected-project.staging.veryfront.com",
+              cookie: `authToken=${nonMemberToken}`,
+            },
+          },
+        );
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 403);
+        assertEquals(ctx.error?.message, "Access denied");
 
         await handler.close();
       } finally {
@@ -583,7 +691,8 @@ describe("Proxy Handler", () => {
       }
     });
 
-    it("allows access to protected preview domain with auth token", async () => {
+    it("allows access to protected preview domain with auth token for project member", async () => {
+      const memberToken = createFakeJwt("user-123");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -594,6 +703,7 @@ describe("Proxy Handler", () => {
             id: "proj-123",
             slug: "protected-project",
             name: "Protected Project",
+            users: [{ id: "user-123" }],
             environments: [{
               id: "env-1",
               name: "preview",
@@ -614,7 +724,7 @@ describe("Proxy Handler", () => {
           {
             headers: {
               host: "protected-project.preview.veryfront.com",
-              cookie: "authToken=user-auth-token",
+              cookie: `authToken=${memberToken}`,
             },
           },
         );
@@ -624,6 +734,55 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.environmentId, "env-1");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("returns 403 for protected preview domain when authenticated user is not a member", async () => {
+      const nonMemberToken = createFakeJwt("other-user");
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            users: [{ id: "user-123" }],
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request(
+          "http://protected-project.preview.veryfront.com/page",
+          {
+            headers: {
+              host: "protected-project.preview.veryfront.com",
+              cookie: `authToken=${nonMemberToken}`,
+            },
+          },
+        );
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 403);
+        assertEquals(ctx.error?.message, "Access denied");
 
         await handler.close();
       } finally {
