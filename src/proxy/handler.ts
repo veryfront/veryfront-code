@@ -448,11 +448,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         projectId = resolved.projectId;
         environmentId = resolved.environmentId;
 
-        logger?.info("Resolved preview project", {
-          projectSlug,
-          projectId,
-          environmentId,
-        });
+        if (projectId) {
+          logger?.info("Resolved preview project", {
+            projectSlug,
+            projectId,
+            environmentId,
+          });
+        }
       }
     }
 
