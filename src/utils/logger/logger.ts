@@ -88,6 +88,49 @@ type LoggerConfig = {
   format: LogFormat;
 };
 
+// ---- Config helpers (must be declared before the eager init below) ----
+
+const LOG_LEVEL_MAP: Record<string, LogLevel> = {
+  DEBUG: LogLevel.DEBUG,
+  INFO: LogLevel.INFO,
+  WARN: LogLevel.WARN,
+  ERROR: LogLevel.ERROR,
+};
+
+function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
+  if (!levelString) return undefined;
+  return LOG_LEVEL_MAP[levelString.toUpperCase()];
+}
+
+/**
+ * Determine the log level based on environment variables.
+ * Exported for testing purposes.
+ * @internal
+ */
+export function getDefaultLevel(
+  envLevel: string | undefined = getEnv("LOG_LEVEL"),
+  debugFlag: string | undefined = getEnv("VERYFRONT_DEBUG"),
+): LogLevel {
+  const parsedLevel = parseLogLevel(envLevel);
+  if (parsedLevel !== undefined) return parsedLevel;
+  if (debugFlag === "1" || debugFlag === "true") return LogLevel.DEBUG;
+  return LogLevel.INFO;
+}
+
+/**
+ * Determine log format from environment.
+ * Defaults to JSON in production for Grafana compatibility.
+ */
+function getDefaultFormat(
+  envFormat: string | undefined = getEnv("LOG_FORMAT"),
+  envMode: string | undefined = getEnv("NODE_ENV"),
+): LogFormat {
+  if (envFormat === "json" || envFormat === "text") return envFormat;
+  return envMode === "production" ? "json" : "text";
+}
+
+// ---- Eager config resolution ----
+
 /**
  * Eagerly resolved at module load time so the config is captured from
  * host process env vars BEFORE any per-request project env overlay is
@@ -116,18 +159,6 @@ export function __resetLoggerConfigForTests(): void {
 
 function resolveLoggerConfig(): LoggerConfig {
   return loggerConfig;
-}
-
-/**
- * Determine log format from environment.
- * Defaults to JSON in production for Grafana compatibility.
- */
-function getDefaultFormat(
-  envFormat: string | undefined = getEnv("LOG_FORMAT"),
-  envMode: string | undefined = getEnv("NODE_ENV"),
-): LogFormat {
-  if (envFormat === "json" || envFormat === "text") return envFormat;
-  return envMode === "production" ? "json" : "text";
 }
 
 /**
@@ -340,33 +371,6 @@ class ConsoleLogger implements Logger {
       throw error;
     }
   }
-}
-
-const LOG_LEVEL_MAP: Record<string, LogLevel> = {
-  DEBUG: LogLevel.DEBUG,
-  INFO: LogLevel.INFO,
-  WARN: LogLevel.WARN,
-  ERROR: LogLevel.ERROR,
-};
-
-function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
-  if (!levelString) return undefined;
-  return LOG_LEVEL_MAP[levelString.toUpperCase()];
-}
-
-/**
- * Determine the log level based on environment variables.
- * Exported for testing purposes.
- * @internal
- */
-export function getDefaultLevel(
-  envLevel: string | undefined = getEnv("LOG_LEVEL"),
-  debugFlag: string | undefined = getEnv("VERYFRONT_DEBUG"),
-): LogLevel {
-  const parsedLevel = parseLogLevel(envLevel);
-  if (parsedLevel !== undefined) return parsedLevel;
-  if (debugFlag === "1" || debugFlag === "true") return LogLevel.DEBUG;
-  return LogLevel.INFO;
 }
 
 function createLogger(prefix: string): ConsoleLogger {
