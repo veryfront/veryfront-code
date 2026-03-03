@@ -79,7 +79,7 @@ function dedupeFilesByPath(files: TemplateFile[]): TemplateFile[] {
 function createVeryfrontConfig(slug: string, template: InitTemplate): TemplateFile {
   const usesAppRouter = [
     "ai-agent",
-    "chat-with-your-docs",
+    "ai-rag-agent",
     "multi-agent-system",
     "agentic-workflow",
     "coding-agent",

@@ -122,5 +122,12 @@ export {
 } from "./composition/index.ts";
 
 export { agent } from "./factory.ts";
-export { type ChatHandlerOptions, createChatHandler } from "./chat-handler.ts";
+export {
+  type ChatHandlerBeforeStream,
+  type ChatHandlerBeforeStreamContext,
+  type ChatHandlerBeforeStreamResult,
+  type ChatHandlerMessageInput,
+  type ChatHandlerOptions,
+  createChatHandler,
+} from "./chat-handler.ts";
 export { AgentRuntime } from "./runtime/index.ts";

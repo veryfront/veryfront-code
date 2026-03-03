@@ -56,6 +56,7 @@ const chatRequestSchema = z.object({
 });
 
 type ParsedMessage = z.infer<typeof messageSchema>;
+type ParsedTextPart = z.infer<typeof textPartSchema>;
 
 // ---------------------------------------------------------------------------
 // Message transformation
@@ -117,9 +118,95 @@ function transformUIMessages(messages: ParsedMessage[]): Message[] {
   return result as unknown as Message[];
 }
 
+function isTextPart(part: unknown): part is ParsedTextPart {
+  return typeof part === "object" && part !== null && (part as { type?: string }).type === "text";
+}
+
+function extractLastUserText(messages: ParsedMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message || message.role !== "user") continue;
+
+    const text = message.parts
+      .filter(isTextPart)
+      .map((part) => part.text)
+      .join("\n")
+      .trim();
+
+    if (text.length > 0) return text;
+  }
+
+  return "";
+}
+
+function isResponseLike(value: unknown): value is Response {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as Response).status === "number" &&
+    typeof (value as Response).headers === "object" &&
+    typeof (value as Response).bodyUsed === "boolean"
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+export type ChatHandlerMessageInput = Omit<Message, "id"> & { id?: string };
+
+export interface ChatHandlerBeforeStreamContext {
+  request: Request;
+  messages: Message[];
+  context: Record<string, unknown>;
+  lastUserText: string;
+}
+
+export interface ChatHandlerBeforeStreamResult {
+  prepend?: ChatHandlerMessageInput[];
+  append?: ChatHandlerMessageInput[];
+  replaceMessages?: ChatHandlerMessageInput[];
+  context?: Record<string, unknown>;
+}
+
+export type ChatHandlerBeforeStream = (
+  input: ChatHandlerBeforeStreamContext,
+) =>
+  | void
+  | Response
+  | ChatHandlerBeforeStreamResult
+  | Promise<void | Response | ChatHandlerBeforeStreamResult>;
+
+function normalizeHookMessages(
+  messages: ChatHandlerMessageInput[] | undefined,
+  prefix: string,
+  idCounter: { value: number },
+): Message[] {
+  if (!messages || messages.length === 0) return [];
+
+  return messages.map((message) => ({
+    ...message,
+    id: message.id ?? `${prefix}_${idCounter.value++}`,
+  })) as Message[];
+}
+
+function applyBeforeStreamResult(
+  baseMessages: Message[],
+  result: ChatHandlerBeforeStreamResult | undefined,
+): Message[] {
+  if (!result) return baseMessages;
+
+  const idCounter = { value: 0 };
+  const coreMessages = result.replaceMessages
+    ? normalizeHookMessages(result.replaceMessages, "replace", idCounter)
+    : baseMessages;
+
+  return [
+    ...normalizeHookMessages(result.prepend, "prepend", idCounter),
+    ...coreMessages,
+    ...normalizeHookMessages(result.append, "append", idCounter),
+  ];
+}
 
 /** Options for `createChatHandler` — customize the context passed to the agent. */
 export interface ChatHandlerOptions {
@@ -129,6 +216,11 @@ export interface ChatHandlerOptions {
     | ((
       request: Request,
     ) => Record<string, unknown> | Promise<Record<string, unknown>>);
+  /**
+   * Hook to customize validated messages/context right before `agent.stream()`.
+   * Return `Response` to short-circuit (e.g. auth/rate limit).
+   */
+  beforeStream?: ChatHandlerBeforeStream;
 }
 
 /**
@@ -193,17 +285,33 @@ export function createChatHandler(
         return Response.json({ error: "Agent not found" }, { status: 404 });
       }
 
-      // Clear server-side memory before each request —
-      // the client (useChat) manages full conversation history
-      await agent.clearMemory();
-
       const context = typeof options?.context === "function"
         ? await options.context(request)
         : options?.context ?? { userId: "current-user" };
 
-      const result = await agent.stream({
-        messages: transformUIMessages(rawMessages),
+      const baseMessages = transformUIMessages(rawMessages);
+      const beforeStreamResult = await options?.beforeStream?.({
+        request,
+        messages: baseMessages,
         context,
+        lastUserText: extractLastUserText(rawMessages),
+      });
+
+      if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
+
+      let hookResult: ChatHandlerBeforeStreamResult | undefined;
+      if (beforeStreamResult) hookResult = beforeStreamResult;
+
+      const messages = applyBeforeStreamResult(baseMessages, hookResult);
+      const streamContext = hookResult?.context ?? context;
+
+      // Clear server-side memory before each request —
+      // the client (useChat) manages full conversation history
+      await agent.clearMemory();
+
+      const result = await agent.stream({
+        messages,
+        context: streamContext,
       });
 
       return result.toDataStreamResponse();

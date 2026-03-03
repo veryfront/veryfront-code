@@ -31,6 +31,8 @@ import { generateClientId } from "./utils.ts";
  */
 export function useChat(options: UseChatOptions): UseChatResult {
   const [messages, setMessages] = useState<UIMessage[]>(options.initialMessages ?? []);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -151,7 +153,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
       setError(null);
 
       try {
-        const allMessages = [...messages, userMessage];
+        const allMessages = [...messagesRef.current, userMessage];
 
         // If already in browser mode, skip fetch entirely
         if (inferenceMode === "browser") {
@@ -270,25 +272,26 @@ export function useChat(options: UseChatOptions): UseChatResult {
         abortControllerRef.current = null;
       }
     },
-    [messages, model, options, inferenceMode, doBrowserInference],
+    [model, options, inferenceMode, doBrowserInference],
   );
 
   /**
    * Reload last message
    */
   const reload = useCallback(async () => {
-    if (messages.length === 0) return;
+    const currentMessages = messagesRef.current;
+    if (currentMessages.length === 0) return;
 
-    const lastUserIndex = messages.findLastIndex((m) => m.role === "user");
+    const lastUserIndex = currentMessages.findLastIndex((m) => m.role === "user");
     if (lastUserIndex === -1) return;
 
-    const lastUserMessage = messages[lastUserIndex];
+    const lastUserMessage = currentMessages[lastUserIndex];
     const textPart = lastUserMessage?.parts.find((p) => p.type === "text");
     if (!textPart || !("text" in textPart)) return;
 
-    setMessages(messages.slice(0, lastUserIndex));
+    setMessages(currentMessages.slice(0, lastUserIndex));
     await sendMessage({ text: textPart.text });
-  }, [messages, sendMessage]);
+  }, [sendMessage]);
 
   /**
    * Stop generation

@@ -165,6 +165,15 @@ const COPY_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
   },
 ];
 
+const PAPERCLIP_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  {
+    type: "path",
+    props: {
+      d: "m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48",
+    },
+  },
+];
+
 const CHECK_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
   { type: "polyline", props: { points: "20 6 9 17 4 12" } },
 ];
@@ -221,6 +230,10 @@ export function RefreshCwIcon({ className }: IconProps): React.ReactElement {
 
 export function CopyIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, COPY_ICON_ELEMENTS);
+}
+
+export function PaperclipIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, PAPERCLIP_ICON_ELEMENTS);
 }
 
 export function CheckIcon({ className }: IconProps): React.ReactElement {

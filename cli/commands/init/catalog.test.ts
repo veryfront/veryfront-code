@@ -22,7 +22,7 @@ describe("catalog", () => {
       assertEquals(ids, [
         "minimal",
         "ai-agent",
-        "chat-with-your-docs",
+        "ai-rag-agent",
         "agentic-workflow",
         "multi-agent-system",
         "coding-agent",

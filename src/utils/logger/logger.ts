@@ -372,6 +372,33 @@ class ConsoleLogger implements Logger {
   }
 }
 
+const LOG_LEVEL_MAP: Record<string, LogLevel> = {
+  DEBUG: LogLevel.DEBUG,
+  INFO: LogLevel.INFO,
+  WARN: LogLevel.WARN,
+  ERROR: LogLevel.ERROR,
+};
+
+function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
+  if (!levelString) return undefined;
+  return LOG_LEVEL_MAP[levelString.toUpperCase()];
+}
+
+/**
+ * Determine the log level based on environment variables.
+ * Exported for testing purposes.
+ * @internal
+ */
+export function getDefaultLevel(
+  envLevel: string | undefined,
+  debugFlag: string | undefined,
+): LogLevel {
+  const parsedLevel = parseLogLevel(envLevel);
+  if (parsedLevel !== undefined) return parsedLevel;
+  if (debugFlag === "1" || debugFlag === "true") return LogLevel.DEBUG;
+  return LogLevel.INFO;
+}
+
 function createLogger(prefix: string): ConsoleLogger {
   return new ConsoleLogger(prefix);
 }

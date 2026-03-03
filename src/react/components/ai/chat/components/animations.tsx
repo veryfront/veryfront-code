@@ -30,3 +30,33 @@ export function Loader({
     </div>
   );
 }
+
+export function FadeIn({
+  children,
+  duration = 300,
+  className,
+}: {
+  children: React.ReactNode;
+  duration?: number;
+  className?: string;
+}): React.ReactElement {
+  const [mounted, setMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    const frame = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  return (
+    <div
+      className={className}
+      style={{
+        opacity: mounted ? 1 : 0,
+        transform: mounted ? "translateY(0)" : "translateY(8px)",
+        transition: `opacity ${duration}ms ease-out, transform ${duration}ms ease-out`,
+      }}
+    >
+      {children}
+    </div>
+  );
+}

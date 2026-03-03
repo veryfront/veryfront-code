@@ -14,7 +14,7 @@ The fastest path — one component, one hook, one API route:
 
 ```tsx
 // app/page.tsx
-'use client'
+"use client";
 import { Chat, useChat } from "veryfront/chat";
 
 export default function ChatPage() {
@@ -32,12 +32,32 @@ export const POST = createChatHandler("assistant");
 
 `createChatHandler` handles request validation, message transformation, and automatic browser fallback when no AI provider is available. The `Chat` component renders a full chat interface with input, message list, loading indicators, and scroll management.
 
+When you need RAG/auth preprocessing, use `beforeStream` without re-implementing the route internals:
+
+```ts
+import { createChatHandler } from "veryfront/agent";
+
+export const POST = createChatHandler("rag", {
+  beforeStream: async ({ lastUserText }) => {
+    const context = `Search results for: ${lastUserText}`;
+    return {
+      prepend: [
+        {
+          role: "system",
+          parts: [{ type: "text", text: context }],
+        },
+      ],
+    };
+  },
+});
+```
+
 ## useChat hook
 
 For custom UIs, use the hook directly:
 
 ```tsx
-'use client'
+"use client";
 import { useChat } from "veryfront/chat";
 
 export default function CustomChat() {
@@ -67,11 +87,9 @@ export default function CustomChat() {
 
       <form onSubmit={handleSubmit}>
         <input value={input} onChange={handleInputChange} />
-        {isLoading ? (
-          <button type="button" onClick={stop}>Stop</button>
-        ) : (
-          <button type="submit">Send</button>
-        )}
+        {isLoading
+          ? <button type="button" onClick={stop}>Stop</button>
+          : <button type="submit">Send</button>}
       </form>
     </div>
   );
@@ -80,18 +98,18 @@ export default function CustomChat() {
 
 ### useChat options
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `api` | `string` | URL of the chat API route |
-| `initialMessages` | `UIMessage[]` | Pre-populate the conversation |
-| `body` | `Record<string, unknown>` | Extra data sent with each request |
-| `headers` | `Record<string, string>` | Custom request headers |
-| `model` | `string` | Override model at runtime |
-| `systemPrompt` | `string` | System prompt for browser-side inference |
-| `browserFallback` | `boolean` | Enable browser fallback when server can't provide AI (default: `true`) |
-| `onFinish` | `(message) => void` | Called when the assistant finishes responding |
-| `onError` | `(error) => void` | Called on stream errors |
-| `onToolCall` | `(toolCall) => void` | Called when the agent calls a tool |
+| Property          | Type                      | Description                                                            |
+| ----------------- | ------------------------- | ---------------------------------------------------------------------- |
+| `api`             | `string`                  | URL of the chat API route                                              |
+| `initialMessages` | `UIMessage[]`             | Pre-populate the conversation                                          |
+| `body`            | `Record<string, unknown>` | Extra data sent with each request                                      |
+| `headers`         | `Record<string, string>`  | Custom request headers                                                 |
+| `model`           | `string`                  | Override model at runtime                                              |
+| `systemPrompt`    | `string`                  | System prompt for browser-side inference                               |
+| `browserFallback` | `boolean`                 | Enable browser fallback when server can't provide AI (default: `true`) |
+| `onFinish`        | `(message) => void`       | Called when the assistant finishes responding                          |
+| `onError`         | `(error) => void`         | Called on stream errors                                                |
+| `onToolCall`      | `(toolCall) => void`      | Called when the agent calls a tool                                     |
 
 ## Rendering tool calls
 
@@ -112,25 +130,25 @@ When an agent calls a tool, the message contains a tool part. Render it with `re
     }
     return null;
   }}
-/>
+/>;
 ```
 
 Tool parts have a `state` property:
 
-| State | Description |
-|-------|-------------|
-| `"input-streaming"` | Model is generating the tool call arguments |
-| `"input-available"` | Arguments ready, tool executing |
-| `"output-streaming"` | Tool result streaming back |
-| `"output-available"` | Tool call complete |
-| `"output-error"` | Tool execution failed |
+| State                | Description                                 |
+| -------------------- | ------------------------------------------- |
+| `"input-streaming"`  | Model is generating the tool call arguments |
+| `"input-available"`  | Arguments ready, tool executing             |
+| `"output-streaming"` | Tool result streaming back                  |
+| `"output-available"` | Tool call complete                          |
+| `"output-error"`     | Tool execution failed                       |
 
 ## useAgent hook
 
 For direct agent invocation (without the chat protocol), use `useAgent`:
 
 ```tsx
-'use client'
+"use client";
 import { useAgent } from "veryfront/chat";
 
 export default function AgentPanel() {
@@ -156,7 +174,7 @@ export default function AgentPanel() {
 For simple text completion without conversation context:
 
 ```tsx
-'use client'
+"use client";
 import { useCompletion } from "veryfront/chat";
 
 export default function Autocomplete() {
@@ -180,35 +198,33 @@ export default function Autocomplete() {
 `useChat` automatically detects where inference is running and exposes `inferenceMode` for your UI to adapt. When no API key is configured, the framework falls back through cloud → server-local → browser inference automatically.
 
 ```tsx
-'use client'
+"use client";
 import { Chat, useChat } from "veryfront/chat";
 
 export default function ChatPage() {
   const chat = useChat({ api: "/api/chat" });
 
-  return (
-    <Chat {...chat} inferenceMode={chat.inferenceMode} browserStatus={chat.browserStatus} />
-  );
+  return <Chat {...chat} inferenceMode={chat.inferenceMode} browserStatus={chat.browserStatus} />;
 }
 ```
 
 The `Chat` component renders `InferenceBadge` and `UpgradeCTA` automatically when `inferenceMode` and `browserStatus` are passed as props.
 
-| `inferenceMode` | Description |
-|-----------------|-------------|
-| `"cloud"` | Using a cloud provider (OpenAI, Anthropic, Google) |
-| `"server-local"` | Running SmolLM2 locally via ONNX Runtime |
-| `"browser"` | Running SmolLM2 in a browser Web Worker |
+| `inferenceMode`  | Description                                        |
+| ---------------- | -------------------------------------------------- |
+| `"cloud"`        | Using a cloud provider (OpenAI, Anthropic, Google) |
+| `"server-local"` | Running SmolLM2 locally via ONNX Runtime           |
+| `"browser"`      | Running SmolLM2 in a browser Web Worker            |
 
-| `browserStatus` | Description |
-|-----------------|-------------|
-| `null` | Not using browser fallback |
-| `"idle"` | Browser fallback detected, not yet started |
-| `"loading-runtime"` | Loading transformers.js from CDN |
-| `"downloading-model"` | Downloading model weights |
-| `"ready"` | Model loaded, ready to generate |
-| `"generating"` | Actively generating a response |
-| `"error"` | Browser inference failed |
+| `browserStatus`       | Description                                |
+| --------------------- | ------------------------------------------ |
+| `null`                | Not using browser fallback                 |
+| `"idle"`              | Browser fallback detected, not yet started |
+| `"loading-runtime"`   | Loading transformers.js from CDN           |
+| `"downloading-model"` | Downloading model weights                  |
+| `"ready"`             | Model loaded, ready to generate            |
+| `"generating"`        | Actively generating a response             |
+| `"error"`             | Browser inference failed                   |
 
 To disable browser fallback:
 
@@ -230,7 +246,7 @@ Customize the `Chat` component with a theme object:
     button: "bg-blue-600 text-white rounded",
     loading: "text-gray-400 animate-pulse",
   }}
-/>
+/>;
 ```
 
 ## Next

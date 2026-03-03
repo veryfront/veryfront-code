@@ -20,9 +20,20 @@ export {
   ChatHeader,
   ChatInput,
   ChatMessages,
+  extractSourcesFromParts,
+  FadeIn,
+  InlineCitation,
   ModelSelector,
+  Sources,
 } from "./chat.tsx";
-export type { ChatProps, ModelOption, ModelSelectorProps } from "./chat.tsx";
+export type {
+  ChatProps,
+  InlineCitationProps,
+  ModelOption,
+  ModelSelectorProps,
+  Source,
+  SourcesProps,
+} from "./chat.tsx";
 
 export { AgentCard } from "./agent-card.tsx";
 export type { AgentCardProps } from "./agent-card.tsx";

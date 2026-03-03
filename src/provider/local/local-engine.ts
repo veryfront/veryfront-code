@@ -52,7 +52,7 @@ let transformersModule: TransformersModule | null = null;
  * Lazily import @huggingface/transformers.
  * Only loads when actually needed, keeping startup fast when API keys are present.
  */
-async function getTransformers(): Promise<TransformersModule> {
+export async function getTransformers(): Promise<TransformersModule> {
   if (transformersModule) return transformersModule;
 
   if (isLocalAIDisabled()) {

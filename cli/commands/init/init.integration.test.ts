@@ -93,11 +93,11 @@ describe("init command integration", () => {
       assertEquals(statResult.isDirectory, true);
     });
 
-    it("should use chat-with-your-docs template when specified", async () => {
+    it("should use ai-rag-agent template when specified", async () => {
       const result = await runInitCommand([
         projectName,
         "-t",
-        "chat-with-your-docs",
+        "ai-rag-agent",
         "--skip-install",
       ]);
 

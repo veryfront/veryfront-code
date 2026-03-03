@@ -17,6 +17,9 @@ export const InputBox = React.forwardRef<
   HTMLInputElement | HTMLTextAreaElement,
   InputBoxProps
 >(({ className, value, onChange, onSubmit, multiline, ...props }, ref) => {
+  const internalRef = React.useRef<HTMLTextAreaElement>(null);
+  const textareaRef = (ref as React.RefObject<HTMLTextAreaElement>) || internalRef;
+
   const handleKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
   ): void => {
@@ -25,18 +28,27 @@ export const InputBox = React.forwardRef<
     onSubmit();
   };
 
+  // Auto-resize textarea to fit content
+  React.useEffect(() => {
+    const el = textareaRef.current;
+    if (!el || !multiline) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 200) + "px";
+  }, [value, multiline, textareaRef]);
+
   if (multiline) {
     return (
       <textarea
         // deno-lint-ignore no-explicit-any
-        ref={ref as any}
+        ref={textareaRef as any}
         className={className}
+        style={{ resize: "none" }}
         value={value}
         onChange={onChange}
         onKeyDown={handleKeyDown}
         data-input-box=""
         data-multiline="true"
-        rows={3}
+        rows={1}
         {...(props as React.TextareaHTMLAttributes<HTMLTextAreaElement>)}
       />
     );

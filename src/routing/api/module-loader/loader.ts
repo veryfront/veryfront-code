@@ -18,6 +18,137 @@ import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfron
 
 const logger = serverLogger.component("api");
 
+/** Node.js built-in module names — shared across the CJS shim, esbuild externals, and Deno rewrites. */
+const NODE_BUILTINS = [
+  "assert",
+  "buffer",
+  "child_process",
+  "cluster",
+  "console",
+  "constants",
+  "crypto",
+  "dgram",
+  "dns",
+  "events",
+  "fs",
+  "http",
+  "http2",
+  "https",
+  "module",
+  "net",
+  "os",
+  "path",
+  "perf_hooks",
+  "process",
+  "querystring",
+  "readline",
+  "stream",
+  "string_decoder",
+  "timers",
+  "tls",
+  "tty",
+  "url",
+  "util",
+  "v8",
+  "vm",
+  "worker_threads",
+  "zlib",
+] as const;
+
+async function readProjectDependencies(
+  projectDir: string,
+  fs: FileSystem,
+): Promise<Map<string, string>> {
+  try {
+    const content = await fs.readTextFile(pathHelper.join(projectDir, "package.json"));
+    const pkg = JSON.parse(content) as { dependencies?: Record<string, string> };
+    return new Map(Object.entries(pkg.dependencies ?? {}));
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * Generates a CJS module loader shim for compiled Deno binaries.
+ *
+ * In compiled binaries, `createRequire()` can resolve module paths and load
+ * built-in modules (fs, path, etc.), but cannot load CJS files from disk
+ * (loadMaybeCjs fails with "path not found"). This shim works around that
+ * limitation by using `Deno.readTextFileSync` to read CJS files and
+ * `new Function` to evaluate them in a proper CJS wrapper with require,
+ * exports, module, __filename, and __dirname bindings.
+ */
+function generateCompiledBinaryRequireShim(escapedProjectDir: string): string {
+  const builtinSet = JSON.stringify(NODE_BUILTINS);
+
+  return `
+import { createRequire as __vf_createRequire } from "node:module";
+import { dirname as __vf_dirname, resolve as __vf_resolve } from "node:path";
+var __vf_builtinRequire = __vf_createRequire("${escapedProjectDir}/package.json");
+var __vf_builtinSet = new Set(${builtinSet});
+var __vf_cache = Object.create(null);
+function __vf_loadCjs(id, parentDir) {
+  if (id.startsWith("node:")) return __vf_builtinRequire(id);
+  if (__vf_builtinSet.has(id)) return __vf_builtinRequire(id);
+  var slashIdx = id.indexOf("/");
+  if (slashIdx > 0 && __vf_builtinSet.has(id.slice(0, slashIdx))) return __vf_builtinRequire(id);
+  var resolved;
+  if (id.startsWith(".") || id.startsWith("/")) {
+    resolved = __vf_resolve(parentDir, id);
+    if (!resolved.match(/\\.[a-zA-Z0-9]+$/)) {
+      var exts = [".js", ".cjs", ".json", "/index.js", "/index.cjs", "/index.json"];
+      for (var i = 0; i < exts.length; i++) {
+        try { Deno.statSync(resolved + exts[i]); resolved += exts[i]; break; } catch {}
+      }
+    }
+  } else {
+    resolved = __vf_builtinRequire.resolve(id);
+  }
+  if (resolved in __vf_cache) return __vf_cache[resolved];
+  var code = Deno.readTextFileSync(resolved);
+  if (resolved.endsWith(".json")) {
+    var json = JSON.parse(code);
+    __vf_cache[resolved] = json;
+    return json;
+  }
+  var mod = { exports: {} };
+  __vf_cache[resolved] = mod.exports;
+  var dir = __vf_dirname(resolved);
+  var childReq = function(childId) { return __vf_loadCjs(childId, dir); };
+  childReq.resolve = function(childId) {
+    if (childId.startsWith(".") || childId.startsWith("/")) return __vf_resolve(dir, childId);
+    return __vf_builtinRequire.resolve(childId);
+  };
+  childReq.ensure = function(mods, cb) { cb(); };
+  var fn = new Function("exports", "require", "module", "__filename", "__dirname", "global", "globalThis", "Worker", code);
+  fn(mod.exports, childReq, mod, resolved, dir, globalThis, globalThis, undefined);
+  __vf_cache[resolved] = mod.exports;
+  return mod.exports;
+}
+function __vf_interopDefault(m) { return m && m.__esModule && m.default !== undefined ? m.default : m; }
+var require = function(id) { return __vf_loadCjs(id, "${escapedProjectDir}"); };
+require.resolve = function(id) { return __vf_builtinRequire.resolve(id); };
+require.ensure = function(mods, cb) { cb(); };
+`.trim();
+}
+
+function resolveExportEntry(entry: unknown): string | undefined {
+  if (typeof entry === "string") return entry;
+  if (entry && typeof entry === "object") {
+    const obj = entry as Record<string, unknown>;
+    // Prefer import > default > first string value
+    for (const key of ["import", "default"]) {
+      const val = obj[key];
+      if (typeof val === "string") return val;
+      if (val && typeof val === "object") {
+        const nested = val as Record<string, unknown>;
+        if (typeof nested.default === "string") return nested.default;
+      }
+    }
+  }
+  return undefined;
+}
+
 const FILE_EXTENSIONS: string[] = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs"];
 
 const EXT_TO_LOADER: Record<string, "tsx" | "jsx" | "ts" | "js" | "json"> = {
@@ -274,7 +405,45 @@ function loadAndTranspileModule(
       const allowedHosts = await loadSecurityConfig(projectDir, adapter);
       validateHTTPImports(source, allowedHosts);
 
+      const allDeps = await readProjectDependencies(projectDir, fs);
+
+      // Filter out framework-managed packages from user deps. These are already
+      // handled by the framework's own external/rewrite logic and should not be
+      // treated as user npm packages.
+      const frameworkPackages = new Set(["ai", "zod", "veryfront", "react", "react-dom", "path"]);
+      const frameworkPrefixes = ["@ai-sdk/", "@opentelemetry/", "node:", "veryfront/"];
+      const userDeps = new Map<string, string>();
+      for (const [name, version] of allDeps) {
+        if (frameworkPackages.has(name)) continue;
+        if (frameworkPrefixes.some((p) => name.startsWith(p))) continue;
+        userDeps.set(name, version);
+      }
+
+      // Always externalize user npm dependencies. The bundled handler is loaded
+      // from a temp file and user deps are resolved at runtime:
+      //   - Node.js: via file:// URLs pointing to node_modules
+      //   - Deno (compiled or not): via createRequire or npm: specifiers
+      // Bundling CJS deps inline (especially complex ones like pdf-parse/pdf.js)
+      // breaks their internal global state management during esbuild's CJS→ESM
+      // conversion.
+      const userExternals: string[] = [];
+      for (const name of userDeps.keys()) {
+        userExternals.push(name, `${name}/*`);
+      }
+
       const { build } = await import("esbuild");
+
+      // Many npm packages use CJS require() for Node built-ins (e.g. require('fs')).
+      // When esbuild bundles CJS into ESM output, these become __require() shims that
+      // fail at runtime. Inject a createRequire-based shim so require() works in ESM.
+      // Use projectDir as the resolve base so require() finds the project's node_modules.
+      const escapedProjectDir = projectDir.replace(/\\/g, "\\\\");
+      const requireShim = isDeno && isCompiledBinary()
+        ? generateCompiledBinaryRequireShim(escapedProjectDir)
+        : [
+          'import { createRequire as __vf_createRequire } from "node:module";',
+          `var require = __vf_createRequire("${escapedProjectDir}/package.json");`,
+        ].join("\n");
 
       const result: BuildResult = await build({
         bundle: true,
@@ -285,6 +454,7 @@ function loadAndTranspileModule(
         jsx: "automatic",
         jsxImportSource: "react",
         resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+        banner: { js: requireShim },
         external: [
           "ai",
           "ai/*",
@@ -292,10 +462,11 @@ function loadAndTranspileModule(
           "@ai-sdk/*",
           "zod",
           "node:*",
+          ...NODE_BUILTINS,
           "veryfront",
           "veryfront/*",
           "@opentelemetry/*",
-          "path",
+          ...userExternals,
         ],
         stdin: {
           contents: source,
@@ -324,7 +495,7 @@ function loadAndTranspileModule(
       const js = result.outputFiles?.[0]?.text ?? "export {}";
       logger.debug(`transpiled size ${js.length} bytes`);
 
-      return loadModuleFromCode(js, projectDir, fs);
+      return loadModuleFromCode(js, projectDir, fs, userDeps);
     },
     { "api.modulePath": modulePath, "api.projectDir": projectDir },
   );
@@ -357,11 +528,12 @@ async function loadModuleFromCode(
   code: string,
   projectDir: string,
   fs: FileSystem,
+  userDeps: Map<string, string> = new Map(),
 ): Promise<APIRoute> {
   const tempDir = await fs.makeTempDir({ prefix: "vf-api-" });
   const tempFile = pathHelper.join(tempDir, "handler.mjs");
 
-  const transformedCode = await rewriteExternalImports(code, projectDir, fs);
+  const transformedCode = await rewriteExternalImports(code, projectDir, fs, userDeps);
 
   // In compiled Deno binaries, external modules loaded from temp files cannot
   // resolve "veryfront" since the source is embedded in the binary's virtual FS.
@@ -389,6 +561,9 @@ async function loadModuleFromCode(
         await fs.writeTextFile(pathHelper.join(tempDir, shimName), shimCode);
       }
     }
+
+    // Note: user npm dependencies are externalized and loaded at runtime via
+    // a custom CJS loader (see generateCompiledBinaryRequireShim), no shims needed.
   }
 
   await fs.writeTextFile(tempFile, transformedCode);
@@ -408,6 +583,7 @@ async function rewriteExternalImports(
   code: string,
   projectDir: string,
   fs: FileSystem,
+  userDeps: Map<string, string> = new Map(),
 ): Promise<string> {
   let transformed = code;
 
@@ -426,10 +602,7 @@ async function rewriteExternalImports(
           let entryPoint: string | undefined;
 
           if (pkgJson.exports) {
-            const dotExport = pkgJson.exports["."];
-            if (typeof dotExport === "string") entryPoint = dotExport;
-            else if (dotExport?.import) entryPoint = dotExport.import;
-            else if (dotExport?.default) entryPoint = dotExport.default;
+            entryPoint = resolveExportEntry(pkgJson.exports["."]);
           }
 
           entryPoint ||= pkgJson.module || pkgJson.main || "index.js";
@@ -452,27 +625,53 @@ async function rewriteExternalImports(
         "@ai-sdk/provider-utils",
       ];
 
+      for (const name of userDeps.keys()) {
+        if (!externalPackagesToResolve.includes(name)) {
+          externalPackagesToResolve.push(name);
+        }
+      }
+
       for (const pkg of externalPackagesToResolve) {
         const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-        const staticImportRegex = new RegExp(`from\\s*["']${escapedPkg}["']`, "g");
-        const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
+        // Match both exact imports (from "pkg") and subpath imports (from "pkg/sub")
+        const staticImportRegex = new RegExp(`from\\s*["']${escapedPkg}(/[^"']*)?["']`, "g");
+        const dynamicImportRegex = new RegExp(
+          `import\\s*\\(\\s*["']${escapedPkg}(/[^"']*)?["']\\s*\\)`,
+          "g",
+        );
 
         const needsStatic = staticImportRegex.test(transformed);
+        staticImportRegex.lastIndex = 0;
         const needsDynamic = dynamicImportRegex.test(transformed);
+        dynamicImportRegex.lastIndex = 0;
         if (!needsStatic && !needsDynamic) continue;
 
+        const packageDir = pathToFileURL(pathHelper.join(projectDir, "node_modules", pkg)).href;
         const resolvedUrl = await resolvePackageToFileUrl(pkg);
-        if (!resolvedUrl) continue;
 
         if (needsStatic) {
-          transformed = transformed.replace(staticImportRegex, `from "${resolvedUrl}"`);
-          logger.debug(`Resolved ${pkg} -> ${resolvedUrl}`);
+          transformed = transformed.replace(staticImportRegex, (_, subpath) => {
+            if (subpath) {
+              const subUrl = `${packageDir}${subpath}`;
+              logger.debug(`Resolved ${pkg}${subpath} -> ${subUrl}`);
+              return `from "${subUrl}"`;
+            }
+            if (!resolvedUrl) return `from "${pkg}"`;
+            logger.debug(`Resolved ${pkg} -> ${resolvedUrl}`);
+            return `from "${resolvedUrl}"`;
+          });
         }
 
         if (needsDynamic) {
-          transformed = transformed.replace(dynamicImportRegex, `import("${resolvedUrl}")`);
-          logger.debug(`Resolved dynamic import ${pkg} -> ${resolvedUrl}`);
+          transformed = transformed.replace(dynamicImportRegex, (_, subpath) => {
+            if (subpath) {
+              const subUrl = `${packageDir}${subpath}`;
+              return `import("${subUrl}")`;
+            }
+            if (!resolvedUrl) return `import("${pkg}")`;
+            return `import("${resolvedUrl}")`;
+          });
         }
       }
 
@@ -574,6 +773,98 @@ async function rewriteExternalImports(
 
     for (const { pattern, replacement } of rewrites) {
       transformed = transformed.replace(pattern, replacement);
+    }
+
+    // Rewrite bare Node.js built-in imports to node: prefix for Deno compatibility.
+    // npm packages often use require('fs') / from "fs" without the node: prefix.
+    for (const mod of NODE_BUILTINS) {
+      const escaped = mod.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      transformed = transformed.replace(
+        new RegExp(`from\\s+["']${escaped}["']`, "g"),
+        `from "node:${mod}"`,
+      );
+      transformed = transformed.replace(
+        new RegExp(`import\\s*\\(\\s*["']${escaped}["']\\s*\\)`, "g"),
+        `import("node:${mod}")`,
+      );
+    }
+
+    // Rewrite user-installed npm dependencies.
+    // In non-compiled Deno: use npm: specifiers (resolved by Deno's npm support).
+    // In compiled binaries: use the createRequire-based `require` shim (already
+    // injected by the esbuild banner) to load CJS packages from node_modules,
+    // since npm: specifiers only work for packages embedded at compile time.
+    if (isCompiledBinary()) {
+      for (const name of userDeps.keys()) {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        // Default imports: import foo from "pkg" → const foo = __vf_interopDefault(require("pkg"))
+        // interopDefault unwraps .default for ESM packages transpiled to CJS
+        transformed = transformed.replace(
+          new RegExp(`import\\s+(\\w+)\\s+from\\s+["']${escaped}["']`, "g"),
+          (_, localName) => `const ${localName} = __vf_interopDefault(require("${name}"))`,
+        );
+        // Named imports: import { a, b } from "pkg" → const { a, b } = require("pkg")
+        transformed = transformed.replace(
+          new RegExp(`import\\s+(\\{[^}]+\\})\\s+from\\s+["']${escaped}["']`, "g"),
+          (_, bindings) => `const ${bindings} = require("${name}")`,
+        );
+        // Namespace imports: import * as foo from "pkg" → const foo = require("pkg")
+        transformed = transformed.replace(
+          new RegExp(`import\\s+\\*\\s+as\\s+(\\w+)\\s+from\\s+["']${escaped}["']`, "g"),
+          (_, localName) => `const ${localName} = require("${name}")`,
+        );
+        // Mixed imports: import foo, { bar } from "pkg"
+        transformed = transformed.replace(
+          new RegExp(
+            `import\\s+(\\w+)\\s*,\\s*(\\{[^}]+\\})\\s+from\\s+["']${escaped}["']`,
+            "g",
+          ),
+          (_, defaultName, bindings) => {
+            const tmp = `__vf_tmp_${defaultName}`;
+            return `const ${tmp} = require("${name}"); const ${defaultName} = __vf_interopDefault(${tmp}); const ${bindings} = ${tmp}`;
+          },
+        );
+        // Subpath static imports: from "pkg/sub" → require("pkg/sub")
+        transformed = transformed.replace(
+          new RegExp(
+            `import\\s+(\\w+|\\*\\s+as\\s+\\w+|\\{[^}]+\\})\\s+from\\s+["']${escaped}(/[^"']+)["']`,
+            "g",
+          ),
+          (_, binding, subpath) => {
+            const name_ = binding.startsWith("*") ? binding.replace(/\*\s+as\s+/, "") : binding;
+            return `const ${name_} = require("${name}${subpath}")`;
+          },
+        );
+        // Dynamic imports: import("pkg") → Promise.resolve(require("pkg"))
+        transformed = transformed.replace(
+          new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']*)?["']\\s*\\)`, "g"),
+          (_, subpath) => `Promise.resolve(require("${name}${subpath || ""}"))`,
+        );
+      }
+    } else {
+      for (const [name, version] of userDeps) {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        // Resolve exact installed version from node_modules (falls back to range)
+        let resolvedVersion = version;
+        try {
+          const pkgPath = pathHelper.join(projectDir, "node_modules", name, "package.json");
+          const pkgContent = await fs.readTextFile(pkgPath);
+          const pkg = JSON.parse(pkgContent) as { version?: string };
+          if (pkg.version) resolvedVersion = pkg.version;
+        } catch {
+          // Fall back to declared range
+        }
+        // Static: from "pkg" and from "pkg/sub"
+        transformed = transformed.replace(
+          new RegExp(`from\\s+["']${escaped}(/[^"']*)?["']`, "g"),
+          (_, subpath) => `from "npm:${name}@${resolvedVersion}${subpath || ""}"`,
+        );
+        // Dynamic: import("pkg") and import("pkg/sub")
+        transformed = transformed.replace(
+          new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']*)?["']\\s*\\)`, "g"),
+          (_, subpath) => `import("npm:${name}@${resolvedVersion}${subpath || ""}")`,
+        );
+      }
     }
 
     // In compiled binaries, "veryfront" resolves to embedded source that can't be

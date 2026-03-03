@@ -28,7 +28,16 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
   // the React hooks (useWorkflowStart, useWorkflowList, useWorkflow, useApproval).
   const workflowReact = `${base}/workflow/react/index.js${ssr}`;
 
+  // veryfront/react is a barrel that re-exports all browser-side modules.
+  const react = `${base}/react/public.js${ssr}`;
+
+  // Map veryfront/embedding to the React hooks submodule for SSR.
+  // The full embedding/index.ts imports heavy server-side code (vectorStore, documentStore,
+  // AI SDK) that fails to transform. SSR only needs the React hook (useDocuments).
+  const embedding = `${base}/embedding/react/index.js${ssr}`;
+
   return {
+    "veryfront/react": react,
     "veryfront/head": head,
     "veryfront/router": router,
     "veryfront/context": context,
@@ -36,6 +45,7 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
     "veryfront/markdown": markdown,
     "veryfront/chat": chat,
     "veryfront/mdx": mdx,
+    "veryfront/embedding": embedding,
     "veryfront/workflow": workflowReact,
     "veryfront/react/head": head,
     "veryfront/react/router": router,

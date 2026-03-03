@@ -23,6 +23,7 @@
     "./chat": "./src/chat/index.ts",
     "./markdown": "./src/markdown/index.ts",
     "./mdx": "./src/mdx/index.ts",
+    "./react": "./src/react/public.ts",
     "./agent": "./src/agent/index.ts",
     "./tool": "./src/tool/index.ts",
     "./workflow": "./src/workflow/index.ts",
@@ -39,6 +40,7 @@
     "./fs": "./src/fs/index.ts",
     "./integrations": "./src/integrations/index.ts",
     "./sandbox": "./src/sandbox/index.ts",
+    "./embedding": "./src/embedding/index.ts",
     "./cli": "./cli/main.ts"
   },
   "imports": {
@@ -58,6 +60,7 @@
     "veryfront/react/components/ai": "./src/react/components/ai/index.ts",
     "veryfront/components/ai": "./src/react/components/ai/index.ts",
     "veryfront/sandbox": "./src/sandbox/index.ts",
+    "veryfront/embedding": "./src/embedding/index.ts",
     "veryfront/agent/react": "./src/agent/react/index.ts",
     "veryfront/agent/testing": "./src/agent/testing/index.ts",
     "veryfront/agent/middleware": "./src/agent/middleware/index.ts",
@@ -141,6 +144,8 @@
     "#veryfront/testing/deno-compat": "./src/testing/deno-compat.ts",
     "#veryfront/testing/utils": "./src/testing/utils.ts",
     "#veryfront/sandbox": "./src/sandbox/index.ts",
+    "#veryfront/embedding": "./src/embedding/index.ts",
+    "#veryfront/embedding/react/index.ts": "./src/embedding/react/index.ts",
     "#veryfront/tool": "./src/tool/index.ts",
     "#veryfront/tool/schema": "./src/tool/schema/index.ts",
     "#veryfront/transforms": "./src/transforms/index.ts",
@@ -255,7 +260,10 @@
     "@babel/parser": "npm:@babel/parser@7.26.3",
     "@babel/traverse": "npm:@babel/traverse@7.26.3",
     "@babel/generator": "npm:@babel/generator@7.26.3",
-    "@babel/types": "npm:@babel/types@7.26.3"
+    "@babel/types": "npm:@babel/types@7.26.3",
+    "@huggingface/transformers": "npm:@huggingface/transformers@3.8.1",
+    "@langchain/textsplitters": "npm:@langchain/textsplitters@0.1.0",
+    "@langchain/core": "npm:@langchain/core@0.3.1"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
@@ -298,7 +306,7 @@
     "lint": "DENO_NO_PACKAGE_JSON=1 deno lint src/ cli/",
     "fmt": "deno fmt src/ cli/",
     "fmt:check": "deno fmt --check src/ cli/",
-    "typecheck": "deno check src/index.ts cli/main.ts src/server/index.ts src/routing/api/index.ts src/rendering/index.ts src/platform/index.ts src/platform/adapters/index.ts src/build/index.ts src/build/production-build/index.ts src/transforms/index.ts src/config/index.ts src/utils/index.ts src/data/index.ts src/security/index.ts src/middleware/index.ts src/server/handlers/dev/index.ts src/server/handlers/request/api/index.ts src/rendering/cache/index.ts src/rendering/cache/stores/index.ts src/rendering/rsc/actions/index.ts src/html/index.ts src/modules/index.ts src/proxy/main.ts src/chat/index.ts src/markdown/index.ts src/mdx/index.ts src/fs/index.ts src/oauth/index.ts src/agent/index.ts src/tool/index.ts src/workflow/index.ts src/prompt/index.ts src/resource/index.ts src/mcp/index.ts src/provider/index.ts",
+    "typecheck": "deno check src/index.ts cli/main.ts src/server/index.ts src/routing/api/index.ts src/rendering/index.ts src/platform/index.ts src/platform/adapters/index.ts src/build/index.ts src/build/production-build/index.ts src/transforms/index.ts src/config/index.ts src/utils/index.ts src/data/index.ts src/security/index.ts src/middleware/index.ts src/server/handlers/dev/index.ts src/server/handlers/request/api/index.ts src/rendering/cache/index.ts src/rendering/cache/stores/index.ts src/rendering/rsc/actions/index.ts src/html/index.ts src/modules/index.ts src/proxy/main.ts src/chat/index.ts src/markdown/index.ts src/mdx/index.ts src/fs/index.ts src/oauth/index.ts src/agent/index.ts src/tool/index.ts src/workflow/index.ts src/prompt/index.ts src/resource/index.ts src/mcp/index.ts src/provider/index.ts src/embedding/index.ts",
     "verify": "deno fmt --check src/ cli/ && DENO_NO_PACKAGE_JSON=1 deno lint src/ cli/ && deno task lint:style && deno task lint:cli-boundary && deno task lint:wildcard-exports && deno task lint:barrel-jsdoc && deno task docs:validate && deno task typecheck && deno task test && deno task test:e2e:binary",
     "verify:quick": "deno fmt --check src/ cli/ && DENO_NO_PACKAGE_JSON=1 deno lint src/ cli/ && deno task lint:style && deno task lint:cli-boundary && deno task lint:wildcard-exports && deno task lint:barrel-jsdoc && deno task docs:validate && deno task typecheck",
     "docs": "rm -rf docs/reference && deno run --allow-read --allow-write --allow-run scripts/docs/generate-api-reference.ts",

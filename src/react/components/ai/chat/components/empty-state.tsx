@@ -20,18 +20,18 @@ export function Suggestion({
       type="button"
       onClick={() => onClick?.(suggestion)}
       className={cn(
-        "group flex items-start gap-3 rounded-xl border border-border bg-background p-4 text-left text-sm text-foreground transition-all hover:bg-muted hover:border-muted-foreground/20",
+        "group flex items-center gap-2 rounded-full border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2.5 text-left text-sm text-neutral-700 dark:text-neutral-300 transition-all hover:bg-neutral-50 dark:hover:bg-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-600",
         className,
       )}
     >
       {icon
         ? (
-          <span className="shrink-0 text-muted-foreground transition-colors group-hover:text-foreground">
+          <span className="shrink-0 text-neutral-400 transition-colors group-hover:text-neutral-600 dark:group-hover:text-neutral-300">
             {icon}
           </span>
         )
         : null}
-      <span className="line-clamp-2">{suggestion}</span>
+      <span className="line-clamp-1">{suggestion}</span>
     </button>
   );
 }
@@ -49,7 +49,7 @@ export function Suggestions({
 }: SuggestionsProps): React.ReactElement {
   const containerClassName = layout === "horizontal"
     ? "flex gap-2 overflow-x-auto pb-2 scrollbar-hide"
-    : "grid grid-cols-2 gap-3 max-w-2xl mx-auto";
+    : "flex flex-wrap justify-center gap-2 max-w-2xl mx-auto";
 
   return <div className={cn(containerClassName, className)}>{children}</div>;
 }
@@ -71,10 +71,10 @@ export function ConversationEmptyState({
 }: ConversationEmptyStateProps): React.ReactElement {
   return (
     <div className={cn("flex flex-col items-center justify-center text-center", className)}>
-      {icon ? <div className="mb-4 text-muted-foreground">{icon}</div> : null}
-      <h1 className="text-3xl font-semibold text-foreground">{title}</h1>
+      {icon ? <div className="mb-4 text-neutral-300 dark:text-neutral-600">{icon}</div> : null}
+      <h1 className="text-2xl font-medium text-neutral-800 dark:text-neutral-200">{title}</h1>
       {description
-        ? <p className="mt-2 max-w-md text-base text-muted-foreground">{description}</p>
+        ? <p className="mt-2 max-w-md text-sm text-neutral-500 dark:text-neutral-400">{description}</p>
         : null}
       {children}
     </div>
