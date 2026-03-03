@@ -2,6 +2,7 @@ import * as React from "react";
 import { cn } from "./theme.ts";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
+import { RichCodeBlock } from "./chat/components/code-block.tsx";
 
 export interface MarkdownProps {
   /** Markdown content to render */
@@ -150,11 +151,7 @@ function CodeBlock({
     return <MermaidDiagram code={code} />;
   }
 
-  return (
-    <pre className="my-4 p-4 bg-neutral-900 dark:bg-neutral-950 rounded-lg overflow-auto">
-      <code className={language ? `language-${language} hljs` : "hljs"}>{code}</code>
-    </pre>
-  );
+  return <RichCodeBlock language={language} code={code} />;
 }
 
 function FallbackMarkdown({

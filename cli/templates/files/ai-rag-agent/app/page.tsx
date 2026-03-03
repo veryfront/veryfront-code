@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Chat, useChat } from 'veryfront/chat'
+import { ChatWithSidebar, useChat } from 'veryfront/chat'
 
 interface Doc { id: string; title: string; source: string }
 
@@ -60,12 +60,16 @@ export default function DocsChat(): JSX.Element {
   }
 
   return (
-    <Chat
+    <ChatWithSidebar
       {...chat}
+      setMessages={chat.setMessages}
+      storageKey="rag-threads"
+      showSteps
       className="flex-1 min-h-0"
       placeholder="Ask about your docs..."
       renderTool={() => null}
       showSources
+      showExport
       emptyState={{ title: 'Docs Q&A', description: 'Upload documents and ask questions' }}
       suggestions={['What is this about?', 'Summarize the key points']}
       onSuggestionClick={(s) => { chat.setInput(s); }}
@@ -77,6 +81,12 @@ export default function DocsChat(): JSX.Element {
       attachAccept=".pdf,.docx,.csv,.txt,.md,.mdx"
       attachments={attachments}
       onRemoveAttachment={(id) => docs.remove(id)}
+      onFeedback={(messageId, feedback) => {
+        console.log(`Feedback: ${feedback} on message ${messageId}`)
+      }}
+      editMessage={chat.editMessage}
+      getBranches={chat.getBranches}
+      switchBranch={chat.switchBranch}
     />
   )
 }

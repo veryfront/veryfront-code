@@ -33,7 +33,7 @@ export const defaultChatTheme: ChatTheme = {
   container: "flex flex-col h-full overflow-hidden bg-white dark:bg-neutral-950",
   message: {
     user:
-      "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 rounded-3xl px-5 py-3 max-w-[80%]",
+      "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 rounded-[22px] px-5 py-3 max-w-[80%] shadow-sm",
     assistant:
       "text-neutral-800 dark:text-neutral-200 max-w-none",
     system:
@@ -45,7 +45,7 @@ export const defaultChatTheme: ChatTheme = {
     "flex-1 px-4 py-3 bg-transparent focus:outline-none dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 text-[15px] leading-normal",
   button:
     "size-9 shrink-0 mb-0.5 flex items-center justify-center rounded-full transition-all active:scale-95 bg-black text-white dark:bg-white dark:text-black disabled:bg-neutral-400 disabled:text-neutral-200 dark:disabled:bg-neutral-500 dark:disabled:text-neutral-300",
-  loading: "size-2 bg-neutral-400 dark:bg-neutral-500 rounded-full animate-pulse",
+  loading: "size-2 bg-neutral-300 dark:bg-neutral-600 rounded-full animate-pulse",
 };
 
 export interface AgentTheme {

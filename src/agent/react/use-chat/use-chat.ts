@@ -16,6 +16,7 @@ import { createError, ensureError, toError } from "#veryfront/errors/veryfront-e
 
 import { handleStreamingResponse } from "./streaming/index.ts";
 import type {
+  BranchInfo,
   BrowserInferenceStatus,
   InferenceMode,
   ToolOutput,
@@ -25,6 +26,17 @@ import type {
   UseChatResult,
 } from "./types.ts";
 import { generateClientId } from "./utils.ts";
+
+/** A snapshot of messages from a branch point onward */
+interface Branch {
+  messages: UIMessage[];
+}
+
+/** Tracks branches keyed by the message ID where the edit occurred */
+interface BranchState {
+  branches: Branch[];
+  currentIndex: number;
+}
 
 /**
  * useChat hook for managing chat state with veryfront stream events.
@@ -43,6 +55,9 @@ export function useChat(options: UseChatOptions): UseChatResult {
   const abortControllerRef = useRef<AbortController | null>(null);
   const browserInferenceActiveRef = useRef(false);
   const browserInferenceRejectRef = useRef<((reason: Error) => void) | null>(null);
+
+  // Branch tracking: keyed by the message ID at the edit point
+  const branchMapRef = useRef<Map<string, BranchState>>(new Map());
 
   // System prompt for browser fallback (from 503 response or options)
   const systemPromptRef = useRef<string>(
@@ -322,6 +337,87 @@ export function useChat(options: UseChatOptions): UseChatResult {
   }, []);
 
   /**
+   * Edit a previous user message and resubmit.
+   * Saves the current messages from the edit point as a branch so the user
+   * can navigate back to it via switchBranch.
+   */
+  const editMessage = useCallback(
+    async (messageId: string, newText: string) => {
+      const current = messagesRef.current;
+      const idx = current.findIndex((m) => m.id === messageId);
+      if (idx === -1) return;
+
+      // Save the current tail as a branch
+      const tail = current.slice(idx);
+      const existing = branchMapRef.current.get(messageId);
+      if (existing) {
+        // Only save if the current branch isn't already stored
+        const currentBranch = existing.branches[existing.currentIndex];
+        const sameAsCurrent = currentBranch && currentBranch.messages[0]?.id === tail[0]?.id;
+        if (!sameAsCurrent) {
+          existing.branches.push({ messages: tail });
+        }
+        existing.currentIndex = existing.branches.length;
+        existing.branches.push({ messages: [] }); // placeholder for new edit
+      } else {
+        branchMapRef.current.set(messageId, {
+          branches: [
+            { messages: tail }, // original
+            { messages: [] }, // placeholder for the new edit
+          ],
+          currentIndex: 1,
+        });
+      }
+
+      // Truncate messages before the edited message and resubmit
+      setMessages(current.slice(0, idx));
+      await sendMessage({ text: newText });
+
+      // Update the placeholder branch with actual messages
+      const state = branchMapRef.current.get(messageId);
+      if (state) {
+        state.branches[state.currentIndex] = {
+          messages: messagesRef.current.slice(idx),
+        };
+      }
+    },
+    [sendMessage],
+  );
+
+  /**
+   * Get branch info for a message.
+   */
+  const getBranches = useCallback((messageId: string): BranchInfo => {
+    const state = branchMapRef.current.get(messageId);
+    if (!state) return { current: 1, total: 1 };
+    return { current: state.currentIndex + 1, total: state.branches.length };
+  }, []);
+
+  /**
+   * Switch to a different branch at a given message.
+   * branchIndex is 0-based.
+   */
+  const switchBranch = useCallback((messageId: string, branchIndex: number) => {
+    const state = branchMapRef.current.get(messageId);
+    if (!state || branchIndex < 0 || branchIndex >= state.branches.length) return;
+
+    // Save current tail before switching
+    const current = messagesRef.current;
+    const idx = current.findIndex((m) => m.id === messageId);
+    if (idx !== -1) {
+      state.branches[state.currentIndex] = { messages: current.slice(idx) };
+    }
+
+    state.currentIndex = branchIndex;
+    const branch = state.branches[branchIndex];
+    if (!branch || branch.messages.length === 0) return;
+
+    // Rebuild: messages before edit point + branch messages
+    const prefix = idx !== -1 ? current.slice(0, idx) : current;
+    setMessages([...prefix, ...branch.messages]);
+  }, []);
+
+  /**
    * Handle input change
    */
   const handleInputChange = useCallback(
@@ -359,6 +455,9 @@ export function useChat(options: UseChatOptions): UseChatResult {
     setInput,
     setModel,
     sendMessage,
+    editMessage,
+    getBranches,
+    switchBranch,
     reload,
     stop,
     setMessages,

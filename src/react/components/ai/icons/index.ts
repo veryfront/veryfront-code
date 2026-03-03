@@ -239,3 +239,51 @@ export function PaperclipIcon({ className }: IconProps): React.ReactElement {
 export function CheckIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, CHECK_ICON_ELEMENTS);
 }
+
+const PLUS_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "line", props: { x1: "12", y1: "5", x2: "12", y2: "19" } },
+  { type: "line", props: { x1: "5", y1: "12", x2: "19", y2: "12" } },
+];
+
+const TRASH_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "polyline", props: { points: "3 6 5 6 21 6" } },
+  { type: "path", props: { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" } },
+];
+
+const PANEL_LEFT_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "rect", props: { width: "18", height: "18", x: "3", y: "3", rx: "2" } },
+  { type: "line", props: { x1: "9", y1: "3", x2: "9", y2: "21" } },
+];
+
+const PENCIL_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "path", props: { d: "M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" } },
+  { type: "path", props: { d: "m15 5 4 4" } },
+];
+
+export function PlusIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, PLUS_ICON_ELEMENTS);
+}
+
+export function TrashIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, TRASH_ICON_ELEMENTS);
+}
+
+export function PanelLeftIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, PANEL_LEFT_ICON_ELEMENTS);
+}
+
+export function PencilIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, PENCIL_ICON_ELEMENTS);
+}
+
+const SPARKLES_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "path", props: { d: "m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" } },
+  { type: "path", props: { d: "M5 3v4" } },
+  { type: "path", props: { d: "M19 17v4" } },
+  { type: "path", props: { d: "M3 5h4" } },
+  { type: "path", props: { d: "M17 19h4" } },
+];
+
+export function SparklesIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, SPARKLES_ICON_ELEMENTS);
+}

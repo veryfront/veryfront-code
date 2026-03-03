@@ -29,7 +29,7 @@ export function ReasoningCard({
       <button
         type="button"
         onClick={() => setIsOpen((open) => !open)}
-        className="flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground"
+        className="flex w-full items-center gap-2 text-neutral-400 dark:text-neutral-500 text-sm transition-colors hover:text-neutral-600 dark:hover:text-neutral-300"
       >
         <BrainIcon className="size-4" />
         {label}
@@ -40,7 +40,7 @@ export function ReasoningCard({
 
       {isOpen
         ? (
-          <div className="mt-4 text-sm text-muted-foreground border-l-2 border-muted pl-4 ml-2">
+          <div className="mt-4 text-sm text-neutral-500 dark:text-neutral-400 border-l-2 border-neutral-200 dark:border-neutral-700 pl-4 ml-2">
             <Markdown className="text-sm">{text}</Markdown>
           </div>
         )

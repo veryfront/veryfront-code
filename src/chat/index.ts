@@ -57,18 +57,50 @@
 // ---------------------------------------------------------------------------
 
 export {
+  AttachmentPill,
+  BranchPicker,
   Chat,
   ChatComponents,
   ChatFooter,
   ChatHeader,
   ChatInput,
   ChatMessages,
+  downloadMarkdown,
+  DropZoneOverlay,
+  exportAsMarkdown,
+  InferenceBadge,
+  MessageActions,
+  MessageEditForm,
+  MessageFeedback,
   ModelSelector,
+  RichCodeBlock,
+  StepIndicator,
+  UpgradeCTA,
+  ChatSidebar,
+  ChatWithSidebar,
+  useThreads,
 } from "#veryfront/react/components/ai/chat.tsx";
 export type {
+  AttachmentInfo,
+  AttachmentPillProps,
+  BranchPickerProps,
   ChatProps,
+  ChatSidebarProps,
+  ChatWithSidebarProps,
+  CodeBlockProps,
+  DropZoneOverlayProps,
+  FeedbackValue,
+  InferenceBadgeProps,
+  MessageActionsProps,
+  MessageEditFormProps,
+  MessageFeedbackProps,
   ModelOption,
   ModelSelectorProps,
+  StepIndicatorProps,
+  Thread,
+  UpgradeCTAProps,
+  UseThreadsOptions,
+  UseThreadsResult,
 } from "#veryfront/react/components/ai/chat.tsx";
 
 export { Message, StreamingMessage } from "#veryfront/react/components/ai/message.tsx";
@@ -96,11 +128,13 @@ export type { AgentTheme, ChatTheme } from "#veryfront/react/components/ai/theme
 
 export { useChat } from "#veryfront/agent/react/use-chat/index.ts";
 export type {
+  BranchInfo,
   BrowserInferenceStatus,
   DynamicToolUIPart,
   InferenceMode,
   OnToolCallArg,
   ReasoningUIPart,
+  StepUIPart,
   TextUIPart,
   ToolOutput,
   ToolResultUIPart,

@@ -41,7 +41,8 @@ export function isReasoningPart(
 export type PartGroup =
   | { type: "text"; content: string }
   | { type: "tool"; tool: ToolUIPart | DynamicToolUIPart }
-  | { type: "reasoning"; text: string; isStreaming: boolean };
+  | { type: "reasoning"; text: string; isStreaming: boolean }
+  | { type: "step"; stepIndex: number; isComplete: boolean };
 
 /**
  * Group consecutive parts for ordered rendering
@@ -81,6 +82,16 @@ export function groupPartsInOrder(parts: UIMessagePart[]): PartGroup[] {
         text: part.text,
         isStreaming: part.state === "streaming",
       });
+      continue;
+    }
+
+    if (part.type === "step-start" || part.type === "step-end") {
+      groups.push({
+        type: "step",
+        stepIndex: (part as { stepIndex: number }).stepIndex,
+        isComplete: part.type === "step-end",
+      });
+      continue;
     }
     // Skip other non-renderable parts
   }

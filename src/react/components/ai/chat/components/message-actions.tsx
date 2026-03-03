@@ -2,14 +2,20 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { CheckIcon, CopyIcon } from "../../icons/index.ts";
 
+const ACTION_BUTTON =
+  "inline-flex items-center justify-center size-7 text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-md transition-all";
+
 export interface MessageActionsProps {
   content: string;
   className?: string;
+  /** When provided, renders an edit button that calls this handler */
+  onEdit?: (content: string) => void;
 }
 
 export function MessageActions({
   content,
   className,
+  onEdit,
 }: MessageActionsProps): React.ReactElement {
   const [copied, setCopied] = React.useState(false);
 
@@ -39,15 +45,28 @@ export function MessageActions({
   }, [content, fallbackCopy, setCopiedWithTimeout]);
 
   return (
-    <div className={cn("flex items-center gap-1 mt-1 opacity-0 group-hover/msg:opacity-100 transition-opacity", className)}>
+    <div className={cn("flex items-center gap-0.5 mt-1.5 opacity-0 group-hover/msg:opacity-100 transition-all duration-200", className)}>
       <button
         type="button"
         onClick={handleCopy}
-        className="inline-flex items-center justify-center size-7 text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors"
+        className={ACTION_BUTTON}
         title={copied ? "Copied!" : "Copy to clipboard"}
       >
         {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
       </button>
+      {onEdit && (
+        <button
+          type="button"
+          onClick={() => onEdit(content)}
+          className={ACTION_BUTTON}
+          title="Edit message"
+        >
+          <svg className="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+            <path d="m15 5 4 4" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
