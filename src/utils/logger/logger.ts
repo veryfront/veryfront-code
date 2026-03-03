@@ -143,19 +143,18 @@ let loggerConfig: LoggerConfig = {
 };
 
 /**
- * Reset the cached logger configuration by re-reading from environment.
- * This is only intended for testing purposes to ensure fresh config evaluation.
- *
- * IMPORTANT: Set environment variables BEFORE calling this function so the
- * new config captures the updated values.
- * @internal
+ * Re-read logger configuration from environment variables.
+ * Call after loading .env files so the logger picks up any overrides.
  */
-export function __resetLoggerConfigForTests(): void {
+export function refreshLoggerConfig(): void {
   loggerConfig = {
     level: getDefaultLevel(),
     format: getDefaultFormat(),
   };
 }
+
+/** @internal Alias kept for tests. */
+export const __resetLoggerConfigForTests = refreshLoggerConfig;
 
 function resolveLoggerConfig(): LoggerConfig {
   return loggerConfig;

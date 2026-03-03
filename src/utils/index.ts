@@ -18,6 +18,7 @@ export {
   agentLogger,
   bundlerLogger,
   logger,
+  refreshLoggerConfig,
   rendererLogger,
   serverLogger,
 } from "./logger/index.ts";

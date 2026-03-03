@@ -9,6 +9,7 @@ export {
   __registerTraceContextGetter,
   __resetLoggerConfigForTests,
   __resetTraceContextGetterForTests,
+  refreshLoggerConfig,
   agentLogger,
   bundlerLogger,
   cliLogger,
