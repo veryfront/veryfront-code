@@ -424,29 +424,35 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           targetEnvName: parsedDomain.environment,
         });
       } else if (projectSlug && scope === "preview" && token) {
-        // For preview mode, we need projectId to fetch project metadata (e.g., layout config)
-        // but we don't need releaseId since preview uses branch-based content
-        const lookupResult = await lookupProjectByDomain(
-          projectSlug,
-          config.apiBaseUrl,
+        // Preview uses branch-based content (no releaseId needed), but must
+        // still enforce the environment's `protected` flag like other scopes.
+        const resolved = await resolveReleaseAndProtection(
+          req,
           token,
-          logger,
+          userToken,
+          projectSlug,
+          (env) => env.name.toLowerCase() === "preview",
+          { projectSlug },
         );
 
-        if (lookupResult) {
-          projectId = lookupResult.id;
-
-          // Find preview environment for env var resolution
-          const previewEnv = lookupResult.environments?.find(
-            (env) => env.name.toLowerCase() === "preview",
+        if ("error" in resolved) {
+          return makeErrorContext(
+            base,
+            resolved.error.status,
+            resolved.error.message,
+            token,
+            resolved.error.redirectUrl,
           );
-          environmentId = previewEnv?.id;
-
-          logger?.info("Resolved preview project", {
-            projectSlug,
-            projectId,
-          });
         }
+
+        projectId = resolved.projectId;
+        environmentId = resolved.environmentId;
+
+        logger?.info("Resolved preview project", {
+          projectSlug,
+          projectId,
+          environmentId,
+        });
       }
     }
 
