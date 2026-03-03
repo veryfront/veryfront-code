@@ -11,6 +11,7 @@ import {
   serverLogger,
 } from "./logger.ts";
 import { type RequestContext, runWithRequestContextAsync } from "./request-context.ts";
+import { runWithProjectEnv } from "../../server/project-env/storage.ts";
 import { VERSION } from "../version.ts";
 
 function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
@@ -30,8 +31,8 @@ function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
 }
 
 function withJsonLogFormat<T>(fn: () => T): T {
-  __resetLoggerConfigForTests();
   Deno.env.set("LOG_FORMAT", "json");
+  __resetLoggerConfigForTests();
 
   try {
     return fn();
@@ -250,9 +251,9 @@ describe("logger", () => {
     });
 
     it("should render [component] tag in text output", () => {
-      __resetLoggerConfigForTests();
       Deno.env.set("LOG_FORMAT", "text");
       Deno.env.set("NO_COLOR", "1");
+      __resetLoggerConfigForTests();
 
       const { getOutput, restore } = captureConsoleLog();
 
@@ -472,6 +473,54 @@ describe("logger", () => {
           const entry = JSON.parse(getOutput()) as LogEntry;
           assertEquals(entry.requestId, "camel");
           assertEquals(entry.request_id, "snake");
+        });
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("project env overlay isolation", () => {
+    it("should output JSON even when project env overlay is active", () => {
+      // This reproduces the production bug: during SSR, the project env overlay
+      // blocks getEnv() from reading host-level LOG_FORMAT/NODE_ENV, which caused
+      // the logger to fall back to "text" format instead of "json".
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          // Simulate an SSR request with a project env overlay active
+          runWithProjectEnv({ SOME_PROJECT_VAR: "value" }, () => {
+            const base = getBaseLogger("SERVER");
+            base.info("SSR render log", { project_id: "test-project-123" });
+
+            // Must be valid JSON, not logfmt text
+            const entry = JSON.parse(getOutput()) as LogEntry;
+            assertEquals(entry.level, "info");
+            assertEquals(entry.message, "SSR render log");
+            assertEquals(entry.project_id, "test-project-123");
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("should not change log format when project env sets LOG_FORMAT", () => {
+      // Even if a project's env overlay contains LOG_FORMAT, the logger should
+      // use the host-level config captured at startup, not the project's value.
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          runWithProjectEnv({ LOG_FORMAT: "text" }, () => {
+            const base = getBaseLogger("SERVER");
+            base.info("Should still be JSON");
+
+            const entry = JSON.parse(getOutput()) as LogEntry;
+            assertEquals(entry.level, "info");
+            assertEquals(entry.message, "Should still be JSON");
+          });
         });
       } finally {
         restore();

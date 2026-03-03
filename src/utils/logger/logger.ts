@@ -88,52 +88,34 @@ type LoggerConfig = {
   format: LogFormat;
 };
 
-let cachedConfig: LoggerConfig | null = null;
-let cachedEnvLevel: string | undefined;
-let cachedDebugFlag: string | undefined;
-let cachedEnvFormat: string | undefined;
-let cachedEnvMode: string | undefined;
+/**
+ * Eagerly resolved at module load time so the config is captured from
+ * host process env vars BEFORE any per-request project env overlay is
+ * active. The project overlay blocks access to host env (for security),
+ * which would cause the logger to fall back to "text" format during SSR.
+ */
+let loggerConfig: LoggerConfig = {
+  level: getDefaultLevel(),
+  format: getDefaultFormat(),
+};
 
 /**
- * Reset the cached logger configuration.
+ * Reset the cached logger configuration by re-reading from environment.
  * This is only intended for testing purposes to ensure fresh config evaluation.
+ *
+ * IMPORTANT: Set environment variables BEFORE calling this function so the
+ * new config captures the updated values.
  * @internal
  */
 export function __resetLoggerConfigForTests(): void {
-  cachedConfig = null;
-  cachedEnvLevel = undefined;
-  cachedDebugFlag = undefined;
-  cachedEnvFormat = undefined;
-  cachedEnvMode = undefined;
+  loggerConfig = {
+    level: getDefaultLevel(),
+    format: getDefaultFormat(),
+  };
 }
 
 function resolveLoggerConfig(): LoggerConfig {
-  const envLevel = getEnv("LOG_LEVEL");
-  const debugFlag = getEnv("VERYFRONT_DEBUG");
-  const envFormat = getEnv("LOG_FORMAT");
-  const envMode = getEnv("NODE_ENV");
-
-  if (
-    cachedConfig &&
-    envLevel === cachedEnvLevel &&
-    debugFlag === cachedDebugFlag &&
-    envFormat === cachedEnvFormat &&
-    envMode === cachedEnvMode
-  ) {
-    return cachedConfig;
-  }
-
-  cachedEnvLevel = envLevel;
-  cachedDebugFlag = debugFlag;
-  cachedEnvFormat = envFormat;
-  cachedEnvMode = envMode;
-
-  cachedConfig = {
-    level: getDefaultLevel(envLevel, debugFlag),
-    format: getDefaultFormat(envFormat, envMode),
-  };
-
-  return cachedConfig;
+  return loggerConfig;
 }
 
 /**

@@ -622,7 +622,7 @@ export class ReadOperations {
     cacheKey: string,
     shouldCache: boolean,
   ): Promise<string> {
-    logger.info("API_FETCH_START - fetching draft from API", {
+    logger.debug("API_FETCH_START - fetching draft from API", {
       path: normalizedPath,
       apiPath,
       cacheKey,
@@ -630,7 +630,7 @@ export class ReadOperations {
 
     const content = await this.client.getFileContent(apiPath);
 
-    logger.info("API_FETCH_DONE - got content from API", {
+    logger.debug("API_FETCH_DONE - got content from API", {
       path: normalizedPath,
       contentLength: content.length,
       preview: previewText(content).replace(/\n/g, "\\n"),

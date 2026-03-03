@@ -96,7 +96,7 @@ export function endRequestMetrics(
 
   recordContentNetworkFetch(req.networkMs, req.isPreviewMode ?? false);
 
-  logger.info("REQUEST_SUMMARY", {
+  logger.debug("REQUEST_SUMMARY", {
     ...requestContext,
     durationMs,
     networkMs: req.networkMs,
