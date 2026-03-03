@@ -154,7 +154,12 @@ function extractUserIdFromToken(token: string): string | undefined {
   try {
     const payload = token.split(".")[1];
     if (!payload) return undefined;
-    const decoded = JSON.parse(atob(payload));
+    // JWT payloads are base64url-encoded: normalize to standard base64 before decoding
+    let base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const remainder = base64.length % 4;
+    if (remainder === 2) base64 += "==";
+    else if (remainder === 3) base64 += "=";
+    const decoded = JSON.parse(atob(base64));
     return decoded?.userId;
   } catch {
     return undefined;
@@ -288,6 +293,16 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     }
 
     const userId = extractUserIdFromToken(userToken);
+    if (!userId) {
+      // Malformed token — treat as unauthenticated so user can re-sign-in
+      const redirectUrl = makeAuthRedirectUrl(req);
+      logger?.info("Could not extract userId from token", {
+        ...logContext,
+        environmentName: matchingEnv.name,
+        redirectUrl,
+      });
+      return { status: 302, message: "Authentication required", redirectUrl };
+    }
     if (!isProjectMember(users, userId)) {
       logger?.info("User is not a member of the project", {
         ...logContext,

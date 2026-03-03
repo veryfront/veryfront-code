@@ -16,8 +16,10 @@ function createNotFoundResponse(): Response {
 }
 
 function createFakeJwt(userId: string): string {
-  const header = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-  const payload = btoa(JSON.stringify({ userId }));
+  const base64UrlEncode = (input: string): string =>
+    btoa(input).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const payload = base64UrlEncode(JSON.stringify({ userId }));
   return `${header}.${payload}.fake-signature`;
 }
 
