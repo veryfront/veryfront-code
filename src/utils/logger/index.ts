@@ -9,7 +9,6 @@ export {
   __registerTraceContextGetter,
   __resetLoggerConfigForTests,
   __resetTraceContextGetterForTests,
-  refreshLoggerConfig,
   agentLogger,
   bundlerLogger,
   cliLogger,
@@ -22,6 +21,7 @@ export {
   logger,
   LogLevel,
   proxyLogger,
+  refreshLoggerConfig,
   rendererLogger,
   serverLogger,
 } from "./logger.ts";
