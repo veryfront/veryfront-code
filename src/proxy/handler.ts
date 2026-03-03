@@ -25,6 +25,7 @@ interface DomainLookupResult {
   id: string;
   slug: string;
   name: string;
+  users?: Array<{ id: string }>;
   environments?: Array<{
     id: string;
     name: string;
@@ -149,6 +150,25 @@ function extractUserToken(cookieHeader: string): string | undefined {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
+function extractUserIdFromToken(token: string): string | undefined {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return undefined;
+    const decoded = JSON.parse(atob(payload));
+    return decoded?.userId;
+  } catch {
+    return undefined;
+  }
+}
+
+function isProjectMember(
+  users: Array<{ id: string }> | undefined,
+  userId: string | undefined,
+): boolean {
+  if (!users || !userId) return false;
+  return users.some((u) => u.id === userId);
+}
+
 export function createProxyHandler(options: ProxyHandlerOptions) {
   const { config, cache, logger } = options;
   const localProjects = config.localProjects ?? {};
@@ -248,6 +268,38 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnPath)}`;
   }
 
+  function checkProtectedAccess(
+    req: Request,
+    matchingEnv: NonNullable<DomainLookupResult["environments"]>[number] | undefined,
+    userToken: string | undefined,
+    users: DomainLookupResult["users"],
+    logContext: Record<string, unknown>,
+  ): { status: number; message: string; redirectUrl?: string } | null {
+    if (!matchingEnv?.protected) return null;
+
+    if (!userToken) {
+      const redirectUrl = makeAuthRedirectUrl(req);
+      logger?.info("Protected environment requires authentication", {
+        ...logContext,
+        environmentName: matchingEnv.name,
+        redirectUrl,
+      });
+      return { status: 302, message: "Authentication required", redirectUrl };
+    }
+
+    const userId = extractUserIdFromToken(userToken);
+    if (!isProjectMember(users, userId)) {
+      logger?.info("User is not a member of the project", {
+        ...logContext,
+        environmentName: matchingEnv.name,
+        userId,
+      });
+      return { status: 403, message: "Access denied" };
+    }
+
+    return null;
+  }
+
   async function resolveReleaseAndProtection(
     req: Request,
     token: string,
@@ -264,15 +316,14 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     const matchingEnv = lookupResult.environments?.find(envMatcher);
 
-    if (matchingEnv?.protected && !userToken) {
-      const redirectUrl = makeAuthRedirectUrl(req);
-      logger?.info("Protected environment requires authentication", {
-        ...logContext,
-        environmentName: matchingEnv.name,
-        redirectUrl,
-      });
-      return { error: { status: 302, message: "Authentication required", redirectUrl } };
-    }
+    const protectionError = checkProtectedAccess(
+      req,
+      matchingEnv,
+      userToken,
+      lookupResult.users,
+      logContext,
+    );
+    if (protectionError) return { error: protectionError };
 
     return {
       projectId: lookupResult.id,
@@ -373,14 +424,21 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         releaseId = matchingEnv?.active_release_id ?? undefined;
         environmentId = matchingEnv?.id;
 
-        if (matchingEnv?.protected && !userToken) {
-          const redirectUrl = makeAuthRedirectUrl(req);
-          logger?.info("Protected environment requires authentication", {
-            domain: host,
-            environmentName: matchingEnv.name,
-            redirectUrl,
-          });
-          return makeErrorContext(base, 302, "Authentication required", token, redirectUrl);
+        const protectionError = checkProtectedAccess(
+          req,
+          matchingEnv,
+          userToken,
+          lookupResult.users,
+          { domain: host },
+        );
+        if (protectionError) {
+          return makeErrorContext(
+            base,
+            protectionError.status,
+            protectionError.message,
+            token,
+            protectionError.redirectUrl,
+          );
         }
 
         logger?.info("Resolved custom domain to project", {
