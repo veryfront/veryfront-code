@@ -1,7 +1,7 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
-import { LogLevel } from "#veryfront/utils/logger/index.ts";
+import { __resetLoggerConfigForTests, LogLevel } from "#veryfront/utils/logger/index.ts";
 import { delay } from "#std/async";
 
 function importFresh(): Promise<typeof import("#veryfront/utils/logger/index.ts")> {
@@ -62,6 +62,7 @@ describe("Logger", () => {
       try {
         setEnv("LOG_LEVEL", "DEBUG");
         deleteEnv("VERYFRONT_DEBUG");
+        __resetLoggerConfigForTests();
         const { logger } = await importSharedLogger(`ts=${Date.now()}`);
 
         messages.length = 0;
@@ -77,6 +78,7 @@ describe("Logger", () => {
       } finally {
         restoreEnv("VERYFRONT_DEBUG", prevVF);
         restoreEnv("LOG_LEVEL", prevLV);
+        __resetLoggerConfigForTests();
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -100,6 +102,7 @@ describe("Logger", () => {
       try {
         setEnv("VERYFRONT_DEBUG", "true");
         setEnv("LOG_LEVEL", "INFO");
+        __resetLoggerConfigForTests();
         const { logger } = await importFresh();
 
         logger.debug("d");
@@ -110,6 +113,7 @@ describe("Logger", () => {
       } finally {
         restoreEnv("VERYFRONT_DEBUG", prevVF);
         restoreEnv("LOG_LEVEL", prevLV);
+        __resetLoggerConfigForTests();
         console.debug = orig.debug;
         console.log = orig.log;
       }
@@ -134,6 +138,7 @@ describe("Logger", () => {
       try {
         setEnv("LOG_LEVEL", "WARN");
         deleteEnv("VERYFRONT_DEBUG");
+        __resetLoggerConfigForTests();
         const { logger } = await importSharedLogger(`ts=${Date.now()}-warn`);
 
         messages.length = 0;
@@ -149,6 +154,7 @@ describe("Logger", () => {
       } finally {
         restoreEnv("VERYFRONT_DEBUG", prevVF);
         restoreEnv("LOG_LEVEL", prevLV);
+        __resetLoggerConfigForTests();
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -183,6 +189,7 @@ describe("Logger", () => {
       try {
         setEnv("VERYFRONT_DEBUG", "0");
         setEnv("LOG_LEVEL", "ERROR");
+        __resetLoggerConfigForTests();
         const { logger } = await importSharedLogger(`ts=${Date.now()}`);
 
         logger.debug("d");
@@ -197,6 +204,7 @@ describe("Logger", () => {
       } finally {
         restoreEnv("VERYFRONT_DEBUG", prevVF);
         restoreEnv("LOG_LEVEL", prevLV);
+        __resetLoggerConfigForTests();
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -223,6 +231,7 @@ describe("Logger", () => {
       try {
         setEnv("LOG_LEVEL", "INVALID");
         deleteEnv("VERYFRONT_DEBUG");
+        __resetLoggerConfigForTests();
         const { logger } = await importSharedLogger(`ts=${Date.now()}-invalid`);
 
         messages.length = 0;
@@ -234,6 +243,7 @@ describe("Logger", () => {
       } finally {
         restoreEnv("VERYFRONT_DEBUG", prevVF);
         restoreEnv("LOG_LEVEL", prevLV);
+        __resetLoggerConfigForTests();
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -270,6 +280,7 @@ describe("Logger", () => {
       } finally {
         restoreEnv("LOG_LEVEL", prevLogLevel);
         restoreEnv("VERYFRONT_DEBUG", prevDebug);
+        __resetLoggerConfigForTests();
       }
     });
   });
@@ -330,6 +341,7 @@ describe("Logger", () => {
       try {
         setEnv("VERYFRONT_DEBUG", "true");
         setEnv("LOG_LEVEL", "INFO");
+        __resetLoggerConfigForTests();
         const mod = await importFresh();
         const instances = [
           mod.cliLogger,
@@ -353,6 +365,7 @@ describe("Logger", () => {
       } finally {
         restoreEnv("VERYFRONT_DEBUG", prevVF);
         restoreEnv("LOG_LEVEL", prevLV);
+        __resetLoggerConfigForTests();
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -387,6 +400,7 @@ describe("Logger", () => {
       try {
         setEnv("VERYFRONT_DEBUG", "true");
         setEnv("LOG_LEVEL", "DEBUG");
+        __resetLoggerConfigForTests();
         const mod = await importFresh();
         const instances = [
           mod.logger,
@@ -411,6 +425,7 @@ describe("Logger", () => {
       } finally {
         restoreEnv("VERYFRONT_DEBUG", prevVF);
         restoreEnv("LOG_LEVEL", prevLV);
+        __resetLoggerConfigForTests();
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -431,6 +446,7 @@ describe("Logger", () => {
       try {
         setEnv("VERYFRONT_DEBUG", "true");
         setEnv("LOG_LEVEL", "DEBUG");
+        __resetLoggerConfigForTests();
         const { logger } = await importSharedLogger(`ts=${Date.now()}`);
 
         messages.length = 0;
@@ -440,6 +456,7 @@ describe("Logger", () => {
       } finally {
         restoreEnv("VERYFRONT_DEBUG", prevVF);
         restoreEnv("LOG_LEVEL", prevLV);
+        __resetLoggerConfigForTests();
         console.debug = orig.debug;
       }
     });
@@ -455,6 +472,7 @@ describe("Logger", () => {
       try {
         setEnv("LOG_LEVEL", "INFO");
         setEnv("LOG_FORMAT", "text");
+        __resetLoggerConfigForTests();
         const mod = await importSharedLogger(`ts=${Date.now()}-prefix`);
 
         messages.length = 0;
@@ -464,6 +482,7 @@ describe("Logger", () => {
       } finally {
         restoreEnv("LOG_LEVEL", prevLV);
         restoreEnv("LOG_FORMAT", prevFmt);
+        __resetLoggerConfigForTests();
         console.log = orig.log;
       }
     });
@@ -489,6 +508,7 @@ describe("Logger", () => {
 
       try {
         setEnv("LOG_LEVEL", "DEBUG");
+        __resetLoggerConfigForTests();
         const { logger } = await importSharedLogger(`ts=${Date.now()}-time`);
 
         messages.length = 0;
@@ -503,6 +523,7 @@ describe("Logger", () => {
       } finally {
         restoreEnv("VERYFRONT_DEBUG", prevVF);
         restoreEnv("LOG_LEVEL", prevLV);
+        __resetLoggerConfigForTests();
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -529,6 +550,7 @@ describe("Logger", () => {
 
       try {
         setEnv("LOG_LEVEL", "ERROR");
+        __resetLoggerConfigForTests();
         const { logger } = await importSharedLogger(`ts=${Date.now()}-time-error`);
 
         messages.length = 0;
@@ -549,6 +571,7 @@ describe("Logger", () => {
       } finally {
         restoreEnv("VERYFRONT_DEBUG", prevVF);
         restoreEnv("LOG_LEVEL", prevLV);
+        __resetLoggerConfigForTests();
         console.debug = orig.debug;
         console.log = orig.log;
         console.warn = orig.warn;
@@ -592,6 +615,7 @@ describe("Logger", () => {
       } finally {
         restoreEnv("VERYFRONT_DEBUG", prevVF);
         restoreEnv("LOG_LEVEL", prevLV);
+        __resetLoggerConfigForTests();
       }
     });
   });

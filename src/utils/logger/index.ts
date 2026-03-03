@@ -21,6 +21,7 @@ export {
   logger,
   LogLevel,
   proxyLogger,
+  refreshLoggerConfig,
   rendererLogger,
   serverLogger,
 } from "./logger.ts";

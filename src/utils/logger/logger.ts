@@ -88,52 +88,33 @@ type LoggerConfig = {
   format: LogFormat;
 };
 
-let cachedConfig: LoggerConfig | null = null;
-let cachedEnvLevel: string | undefined;
-let cachedDebugFlag: string | undefined;
-let cachedEnvFormat: string | undefined;
-let cachedEnvMode: string | undefined;
+// ---- Config helpers (must be declared before the eager init below) ----
 
-/**
- * Reset the cached logger configuration.
- * This is only intended for testing purposes to ensure fresh config evaluation.
- * @internal
- */
-export function __resetLoggerConfigForTests(): void {
-  cachedConfig = null;
-  cachedEnvLevel = undefined;
-  cachedDebugFlag = undefined;
-  cachedEnvFormat = undefined;
-  cachedEnvMode = undefined;
+const LOG_LEVEL_MAP: Record<string, LogLevel> = {
+  DEBUG: LogLevel.DEBUG,
+  INFO: LogLevel.INFO,
+  WARN: LogLevel.WARN,
+  ERROR: LogLevel.ERROR,
+};
+
+function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
+  if (!levelString) return undefined;
+  return LOG_LEVEL_MAP[levelString.toUpperCase()];
 }
 
-function resolveLoggerConfig(): LoggerConfig {
-  const envLevel = getEnv("LOG_LEVEL");
-  const debugFlag = getEnv("VERYFRONT_DEBUG");
-  const envFormat = getEnv("LOG_FORMAT");
-  const envMode = getEnv("NODE_ENV");
-
-  if (
-    cachedConfig &&
-    envLevel === cachedEnvLevel &&
-    debugFlag === cachedDebugFlag &&
-    envFormat === cachedEnvFormat &&
-    envMode === cachedEnvMode
-  ) {
-    return cachedConfig;
-  }
-
-  cachedEnvLevel = envLevel;
-  cachedDebugFlag = debugFlag;
-  cachedEnvFormat = envFormat;
-  cachedEnvMode = envMode;
-
-  cachedConfig = {
-    level: getDefaultLevel(envLevel, debugFlag),
-    format: getDefaultFormat(envFormat, envMode),
-  };
-
-  return cachedConfig;
+/**
+ * Determine the log level based on environment variables.
+ * Exported for testing purposes.
+ * @internal
+ */
+export function getDefaultLevel(
+  envLevel: string | undefined = getEnv("LOG_LEVEL"),
+  debugFlag: string | undefined = getEnv("VERYFRONT_DEBUG"),
+): LogLevel {
+  const parsedLevel = parseLogLevel(envLevel);
+  if (parsedLevel !== undefined) return parsedLevel;
+  if (debugFlag === "1" || debugFlag === "true") return LogLevel.DEBUG;
+  return LogLevel.INFO;
 }
 
 /**
@@ -146,6 +127,37 @@ function getDefaultFormat(
 ): LogFormat {
   if (envFormat === "json" || envFormat === "text") return envFormat;
   return envMode === "production" ? "json" : "text";
+}
+
+// ---- Eager config resolution ----
+
+/**
+ * Eagerly resolved at module load time so the config is captured from
+ * host process env vars BEFORE any per-request project env overlay is
+ * active. The project overlay blocks access to host env (for security),
+ * which would cause the logger to fall back to "text" format during SSR.
+ */
+let loggerConfig: LoggerConfig = {
+  level: getDefaultLevel(),
+  format: getDefaultFormat(),
+};
+
+/**
+ * Re-read logger configuration from environment variables.
+ * Call after loading .env files so the logger picks up any overrides.
+ */
+export function refreshLoggerConfig(): void {
+  loggerConfig = {
+    level: getDefaultLevel(),
+    format: getDefaultFormat(),
+  };
+}
+
+/** @internal Alias kept for tests. */
+export const __resetLoggerConfigForTests = refreshLoggerConfig;
+
+function resolveLoggerConfig(): LoggerConfig {
+  return loggerConfig;
 }
 
 /**
@@ -358,33 +370,6 @@ class ConsoleLogger implements Logger {
       throw error;
     }
   }
-}
-
-const LOG_LEVEL_MAP: Record<string, LogLevel> = {
-  DEBUG: LogLevel.DEBUG,
-  INFO: LogLevel.INFO,
-  WARN: LogLevel.WARN,
-  ERROR: LogLevel.ERROR,
-};
-
-function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
-  if (!levelString) return undefined;
-  return LOG_LEVEL_MAP[levelString.toUpperCase()];
-}
-
-/**
- * Determine the log level based on environment variables.
- * Exported for testing purposes.
- * @internal
- */
-export function getDefaultLevel(
-  envLevel: string | undefined = getEnv("LOG_LEVEL"),
-  debugFlag: string | undefined = getEnv("VERYFRONT_DEBUG"),
-): LogLevel {
-  const parsedLevel = parseLogLevel(envLevel);
-  if (parsedLevel !== undefined) return parsedLevel;
-  if (debugFlag === "1" || debugFlag === "true") return LogLevel.DEBUG;
-  return LogLevel.INFO;
 }
 
 function createLogger(prefix: string): ConsoleLogger {
