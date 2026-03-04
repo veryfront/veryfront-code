@@ -62,8 +62,8 @@ describe("plugins", () => {
 
       assertEquals(el.properties["data-node-file"], "docs/intro.md");
       assertEquals(el.properties["data-node-name"], "h1");
-      assertEquals(el.properties["data-node-line"], 3);
-      assertEquals(el.properties["data-node-column"], 0);
+      assertEquals(el.properties["data-node-line"], "3");
+      assertEquals(el.properties["data-node-column"], "0");
     });
 
     it("skips elements without position", () => {

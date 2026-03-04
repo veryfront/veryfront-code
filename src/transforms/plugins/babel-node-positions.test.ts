@@ -16,6 +16,17 @@ describe("babel-node-positions", () => {
       assertEquals(result.includes("data-node-column="), true);
     });
 
+    it("injects data-node-id with sequential numbering", () => {
+      const source = `export default function Page() {
+  return <div><span>A</span><span>B</span></div>;
+}`;
+      const result = injectNodePositions(source, { filePath: "app/page.tsx" });
+
+      assertEquals(result.includes('data-node-id="node-0"'), true);
+      assertEquals(result.includes('data-node-id="node-1"'), true);
+      assertEquals(result.includes('data-node-id="node-2"'), true);
+    });
+
     it("injects on custom components", () => {
       const source = `import { Button } from "./button";
 export default function Page() {

@@ -76,6 +76,7 @@ export function compileMarkdownRuntime(
   filePath?: string,
   _target: CompilationTarget = "server",
   _baseUrl?: string,
+  studioEmbed?: boolean,
 ): Promise<MdxRuntimeBundle> {
   return withSpan(
     "transforms.compileMarkdownRuntime",
@@ -88,15 +89,20 @@ export function compileMarkdownRuntime(
 
         const headings: ExtractedHeading[] = [];
 
-        const result = await unified()
+        const pipeline = unified()
           .use(remarkParse)
           .use(remarkGfm)
           .use(remarkFrontmatter)
           .use(remarkExtractHeadings, headings)
           .use(remarkRehype, { allowDangerousHtml: true })
           .use(rehypeStarryNight)
-          .use(rehypeSlug)
-          .use(rehypeNodePositions, { filePath })
+          .use(rehypeSlug);
+
+        if (studioEmbed && filePath) {
+          pipeline.use(rehypeNodePositions, { filePath });
+        }
+
+        const result = await pipeline
           .use(rehypeStringify, { allowDangerousHtml: true })
           .process(body);
         const html = String(result);

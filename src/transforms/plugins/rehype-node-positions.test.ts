@@ -44,8 +44,8 @@ describe("rehype-node-positions", () => {
 
       assertEquals(el.properties["data-node-file"], "docs/intro.md");
       assertEquals(el.properties["data-node-name"], "h1");
-      assertEquals(el.properties["data-node-line"], 3);
-      assertEquals(el.properties["data-node-column"], 0); // column - 1
+      assertEquals(el.properties["data-node-line"], "3");
+      assertEquals(el.properties["data-node-column"], "0"); // column - 1
     });
 
     it("converts column to 0-based", () => {
@@ -54,7 +54,7 @@ describe("rehype-node-positions", () => {
 
       runPlugin(tree, { filePath: "test.md" });
 
-      assertEquals(el.properties["data-node-column"], 4);
+      assertEquals(el.properties["data-node-column"], "4");
     });
 
     it("skips elements without position", () => {
@@ -80,7 +80,7 @@ describe("rehype-node-positions", () => {
 
       assertEquals(el.properties["data-node-file"], undefined);
       assertEquals(el.properties["data-node-name"], "p");
-      assertEquals(el.properties["data-node-line"], 1);
+      assertEquals(el.properties["data-node-line"], "1");
     });
 
     it("initializes properties if missing", () => {
@@ -119,9 +119,9 @@ describe("rehype-node-positions", () => {
       runPlugin(tree, { filePath: "test.md" });
 
       assertEquals(outer.properties["data-node-name"], "div");
-      assertEquals(outer.properties["data-node-line"], 4);
+      assertEquals(outer.properties["data-node-line"], "4");
       assertEquals(inner.properties["data-node-name"], "span");
-      assertEquals(inner.properties["data-node-line"], 5);
+      assertEquals(inner.properties["data-node-line"], "5");
     });
   });
 

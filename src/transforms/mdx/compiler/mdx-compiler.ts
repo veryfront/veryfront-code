@@ -20,6 +20,7 @@ export function compileMDXRuntime(
   filePath?: string,
   target: CompilationTarget = "server",
   baseUrl?: string,
+  studioEmbed?: boolean,
 ): Promise<MdxRuntimeBundle> {
   return withSpan(
     "transforms.compileMDXRuntime",
@@ -30,7 +31,7 @@ export function compileMDXRuntime(
         const remarkPlugins = (await getRemarkPlugins()) as unknown as PluggableList;
         const rehypePlugins = (await getRehypePlugins()) as unknown as PluggableList;
 
-        if (filePath) {
+        if (studioEmbed && filePath) {
           rehypePlugins.push([rehypeNodePositions, { filePath }] as unknown as Pluggable);
         }
 

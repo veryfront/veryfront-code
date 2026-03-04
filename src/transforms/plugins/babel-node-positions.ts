@@ -138,6 +138,8 @@ export function injectNodePositions(source: string, options: TransformOptions): 
       plugins: ["typescript", "jsx"],
     });
 
+    let nodeCounter = 0;
+
     traverse(ast as t.Node, {
       JSXElement: {
         enter(path: BabelNodePath<t.JSXElement>) {
@@ -151,7 +153,9 @@ export function injectNodePositions(source: string, options: TransformOptions): 
           const loc = openingElement.loc;
           if (!loc) return;
 
+          const nodeId = `node-${nodeCounter++}`;
           openingElement.attributes.push(
+            t.jsxAttribute(t.jsxIdentifier("data-node-id"), t.stringLiteral(nodeId)),
             t.jsxAttribute(
               t.jsxIdentifier("data-node-file"),
               t.stringLiteral(options.filePath),
