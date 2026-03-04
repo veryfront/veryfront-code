@@ -1,6 +1,7 @@
 import type { Pluggable } from "unified";
 import { rendererLogger } from "#veryfront/utils";
 import { getRehypePlugins, getRemarkPlugins } from "../../plugins/plugin-loader.ts";
+import { rehypeNodePositions } from "../../plugins/rehype-node-positions.ts";
 import { extractFrontmatter } from "./frontmatter-extractor.ts";
 import { rewriteBodyImports, rewriteCompiledImports } from "./import-rewriter.ts";
 import type { CompilationMode, CompilationTarget, MdxRuntimeBundle } from "./types.ts";
@@ -28,6 +29,10 @@ export function compileMDXRuntime(
 
         const remarkPlugins = (await getRemarkPlugins()) as unknown as PluggableList;
         const rehypePlugins = (await getRehypePlugins()) as unknown as PluggableList;
+
+        if (filePath) {
+          rehypePlugins.push([rehypeNodePositions, { filePath }] as unknown as Pluggable);
+        }
 
         const { body: extractedBody, frontmatter: extractedFrontmatter } = extractFrontmatter(
           content,

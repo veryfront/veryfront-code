@@ -10,6 +10,7 @@ import { visit } from "unist-util-visit";
 import { toString } from "mdast-util-to-string";
 import type { Heading, Root as MdastRoot } from "mdast";
 import { rendererLogger } from "#veryfront/utils";
+import { rehypeNodePositions } from "../../plugins/rehype-node-positions.ts";
 import { extractFrontmatter } from "../../mdx/compiler/frontmatter-extractor.ts";
 import type {
   CompilationMode,
@@ -87,7 +88,7 @@ export function compileMarkdownRuntime(
 
         const headings: ExtractedHeading[] = [];
 
-        const processor = unified()
+        const result = await unified()
           .use(remarkParse)
           .use(remarkGfm)
           .use(remarkFrontmatter)
@@ -95,9 +96,9 @@ export function compileMarkdownRuntime(
           .use(remarkRehype, { allowDangerousHtml: true })
           .use(rehypeStarryNight)
           .use(rehypeSlug)
-          .use(rehypeStringify, { allowDangerousHtml: true });
-
-        const result = await processor.process(body);
+          .use(rehypeNodePositions, { filePath })
+          .use(rehypeStringify, { allowDangerousHtml: true })
+          .process(body);
         const html = String(result);
 
         logger.debug("Compiled markdown:", {
