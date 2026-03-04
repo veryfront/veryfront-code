@@ -81,6 +81,12 @@ openingElement.attributes.push(
 );
 ```
 
+### 2. Update rehype/remark transforms for MDX/markdown
+
+**Files:** `src/transforms/plugins/rehype-node-positions.ts`, `src/transforms/plugins/remark-node-id.ts`
+
+Same pattern — inject `data-node-id="file:line:col"` and `data-node-name` instead of the separate `data-node-line`, `data-node-column`, etc. attributes. `rehype-node-positions.ts` already receives `filePath` in its options.
+
 ### 3. Update bridge constants
 
 **File:** `src/studio/bridge/bridge-constants.ts`
@@ -194,11 +200,11 @@ The old `data-node-*` attributes are only consumed by the bridge — no external
 ## Scope
 
 - **DOM elements only** (`h1`, `div`, `p`, etc.) — no component-level tracking for now
-- **TSX/JSX files only** — MDX/markdown can follow later
+- **TSX/JSX files** — via `babel-node-positions.ts`
+- **MDX/markdown files** — via `rehype-node-positions.ts` and `remark-node-id.ts` (same `data-node-id="file:line:col"` + `data-node-name` format)
 
 ## Out of Scope
 
 - Component selection (e.g. selecting `<Button>` and resolving to its source file)
-- MDX/markdown source positions (rehype/remark plugins — follow-up)
 - Third-party library elements
 - Framework files (excluded by `isFrameworkFile` check)
