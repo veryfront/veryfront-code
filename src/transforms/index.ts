@@ -43,7 +43,6 @@ export {
 export {
   getRehypePlugins,
   getRemarkPlugins,
-  rehypeMdxComponents,
   rehypeNodePositions,
   remarkCodeBlocks,
   remarkMdxHeadings,

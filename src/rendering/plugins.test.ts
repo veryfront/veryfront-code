@@ -4,7 +4,6 @@ import { VFile } from "vfile";
 import {
   getRehypePlugins,
   getRemarkPlugins,
-  rehypeMdxComponents,
   rehypeNodePositions,
   remarkCodeBlocks,
   remarkMdxHeadings,
@@ -37,7 +36,6 @@ describe("plugins", () => {
       assertExists(remarkCodeBlocks);
       assertExists(remarkMdxImports);
       assertExists(rehypeNodePositions);
-      assertExists(rehypeMdxComponents);
       assertExists(getRemarkPlugins);
       assertExists(getRehypePlugins);
     });
@@ -182,25 +180,6 @@ describe("plugins", () => {
   describe("remarkMdxImports", () => {
     it("returns a function", () => {
       assertEquals(typeof remarkMdxImports(), "function");
-    });
-  });
-
-  describe("rehypeMdxComponents", () => {
-    it("returns a function", () => {
-      assertEquals(typeof rehypeMdxComponents(), "function");
-    });
-
-    it("tags mdx nodes with component name", () => {
-      const node: any = {
-        type: "mdxJsxFlowElement",
-        name: "MyX",
-        data: { hProperties: {} },
-      };
-
-      const tree: any = { type: "root", children: [node] };
-      runRehype(tree, [rehypeMdxComponents]);
-
-      assertEquals(node.data.hProperties["data-mdx-component"], "MyX");
     });
   });
 
