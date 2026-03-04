@@ -54,16 +54,13 @@ For MDX/markdown: `rehype-node-positions.ts` already injects `data-node-file` wh
 
 ### Target DOM output
 
-Add `data-node-file` and `data-node-name` to the existing attributes:
+Each element gets 4 attributes:
 
 ```html
 <h1 data-node-file="components/Welcome.tsx"
     data-node-name="h1"
-    data-node-id="node-3"
     data-node-line="5"
     data-node-column="4"
-    data-node-end-line="7"
-    data-node-end-column="10"
     class="font-display text-3xl font-semibold tracking-tight mb-3">
   Ready to Create
 </h1>
@@ -71,7 +68,10 @@ Add `data-node-file` and `data-node-name` to the existing attributes:
 
 - **`data-node-file`** — project-relative source file path
 - **`data-node-name`** — element or component name for display in Studio UI
-- **`data-node-id`**, **`data-node-line`**, **`data-node-column`**, etc. — unchanged
+- **`data-node-line`** — source line number
+- **`data-node-column`** — source column number
+
+Removed: `data-node-id` (meaningless counter), `data-node-end-line`, `data-node-end-column` (unused by bridge).
 
 ### 1. Normalize file paths to project-relative
 
@@ -97,8 +97,6 @@ const elementName = getElementName(openingElement);
 openingElement.attributes.push(
   t.jsxAttribute(t.jsxIdentifier("data-node-file"), t.stringLiteral(options.filePath)),
   t.jsxAttribute(t.jsxIdentifier("data-node-name"), t.stringLiteral(elementName)),
-  // existing attributes unchanged:
-  t.jsxAttribute(t.jsxIdentifier("data-node-id"), t.stringLiteral(nodeId)),
   t.jsxAttribute(t.jsxIdentifier("data-node-line"), t.stringLiteral(String(loc.start.line))),
   t.jsxAttribute(t.jsxIdentifier("data-node-column"), t.stringLiteral(String(loc.start.column))),
 );
@@ -142,7 +140,6 @@ Enhance the click handler to send node metadata alongside the ID:
 ```typescript
 postToStudio({
   action: "setSelectedNode",
-  id: id,
   node: {
     name: target.getAttribute(DATA_NODE_NAME) || target.tagName.toLowerCase(),
     type: getNodeType(target),
@@ -163,7 +160,6 @@ The `MessageFromRenderer` schema for `setSelectedNode` currently only accepts `{
 ```typescript
 z.object({
   action: z.literal("setSelectedNode"),
-  id: z.string(),
   node: z.object({
     name: z.string(),
     type: z.string(),
@@ -171,7 +167,7 @@ z.object({
     line: z.number(),
     column: z.number(),
     text: z.string(),
-  }).optional(),
+  }),
 }),
 ```
 
@@ -184,7 +180,6 @@ Source: components/Welcome.tsx line 5
 Compiled HTML (studio_embed=true):
   <h1 data-node-file="components/Welcome.tsx"
       data-node-name="h1"
-      data-node-id="node-3"
       data-node-line="5"
       data-node-column="4"
       class="...">
@@ -194,7 +189,6 @@ Compiled HTML (studio_embed=true):
 User clicks h1 in inspect mode:
   bridge → postToStudio({
     action: "setSelectedNode",
-    id: "node-3",
     node: {
       name: "h1",
       type: "element",

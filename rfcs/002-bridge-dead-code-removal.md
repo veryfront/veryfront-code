@@ -29,6 +29,16 @@ This means on every page load, a `MutationObserver` is set up that walks the ent
 **Used in:** `buildNavigatorTree` only — to detect text nodes and read `textContent`
 **Dies with:** `buildNavigatorTree` removal
 
+### `data-node-id` (meaningless counter)
+
+**Injected by:** `babel-node-positions.ts` — assigns `node-1`, `node-2`, etc.
+**Read by:** Bridge inspector uses it as an element identifier, but it carries no semantic meaning. RFC 001 replaces it with `data-node-file` + `data-node-name` + `data-node-line` + `data-node-column`.
+
+### `data-node-end-line` / `data-node-end-column`
+
+**Injected by:** `babel-node-positions.ts`
+**Read by:** Nothing in the bridge. Only `data-node-line` and `data-node-column` are used.
+
 ### `data-node-start` / `data-node-end` (byte offsets)
 
 **Injected by:** `remark-node-id.ts` (properties `data-node-start`, `data-node-end`)
@@ -56,6 +66,10 @@ This means on every page load, a `MutationObserver` is set up that walks the ent
 | `mutationObserver` | `bridge-inspector.ts` | Dead |
 | `lastTreeSignature` | `bridge-state.ts` | Dead |
 | `treeUpdated` schema | `studio.schema.ts` | No consumer (confirm with Studio team — confirmed) |
+| `DATA_NODE_ID` constant | `bridge-constants.ts` | Meaningless counter, replaced by file/name/line/column (RFC 001) |
+| `DATA_NODE_END_LINE/COLUMN` constants | `bridge-constants.ts` | Never read by bridge |
+| `data-node-id` injection | `babel-node-positions.ts` | Remove `node-N` counter and attribute injection |
+| `data-node-end-line/column` injection | `babel-node-positions.ts` | End positions never read by bridge |
 | `data-node-start/end` | `remark-node-id.ts` | Byte offsets, never read by bridge |
 | `hasPositionAttribute` guard | `babel-node-positions.ts` | Checks for `data-vf-id` which is never set |
 
@@ -65,7 +79,6 @@ This means on every page load, a `MutationObserver` is set up that walks the ent
 |------|--------|
 | `DATA_VF_IGNORE` | Actively used — marks overlays, carets, selection highlights |
 | `DATA_VF_SELECTOR` | Runtime fallback ID for untransformed elements |
-| `DATA_NODE_ID` | Used by inspect mode + transforms |
 | `DATA_NODE_LINE/COLUMN` | Used by inspect mode + transforms |
 
 ## Impact
