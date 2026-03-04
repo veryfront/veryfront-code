@@ -10,8 +10,10 @@ import {
   DATA_NODE_COLUMN,
   DATA_NODE_END_COLUMN,
   DATA_NODE_END_LINE,
+  DATA_NODE_FILE,
   DATA_NODE_ID,
   DATA_NODE_LINE,
+  DATA_NODE_NAME,
   DATA_VF_ID,
   DATA_VF_IGNORE,
   DATA_VF_SELECTOR,
@@ -293,7 +295,18 @@ export function setupInspectMode(): void {
       const id = getElementId(target);
       state.selectedNodeId = id;
       showSelectionOverlay(id);
-      postToStudio({ action: "setSelectedNode", id: id });
+      postToStudio({
+        action: "setSelectedNode",
+        id: id,
+        node: {
+          name: target.getAttribute(DATA_NODE_NAME) || target.tagName.toLowerCase(),
+          type: getNodeType(target),
+          file: target.getAttribute(DATA_NODE_FILE) || getConfig().pagePath,
+          line: parseInt(target.getAttribute(DATA_NODE_LINE) || "0", 10),
+          column: parseInt(target.getAttribute(DATA_NODE_COLUMN) || "0", 10),
+          text: target.textContent?.trim().slice(0, 200) || "",
+        },
+      });
     },
     true,
   );

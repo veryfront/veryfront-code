@@ -399,7 +399,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           const studioEmbed = url.searchParams.get("studio_embed") === "true";
           const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
           if (studioEmbed && !isFrameworkFile && isJsxFile) {
-            source = injectNodePositions(source, { filePath: sourceFile });
+            const relativeFilePath = sourceFile.startsWith(projectDir)
+              ? sourceFile.slice(projectDir.length).replace(/^\/+/, "")
+              : sourceFile;
+            source = injectNodePositions(source, { filePath: relativeFilePath });
           }
 
           logger.debug("SSR mode check", {

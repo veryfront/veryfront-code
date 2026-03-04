@@ -15,9 +15,9 @@ type HProperties = Record<string, unknown>;
 type NodeData = { hProperties?: HProperties } & Record<string, unknown>;
 
 export function remarkAddNodeId(
-  options: { prefix?: string; includePosition?: boolean } = {},
+  options: { prefix?: string; includePosition?: boolean; filePath?: string } = {},
 ): (tree: Root, file: VFile) => void {
-  const { prefix = "node", includePosition = true } = options;
+  const { prefix = "node", includePosition = true, filePath } = options;
 
   return (tree: Root, file: VFile): void => {
     let nodeId = 0;
@@ -52,6 +52,10 @@ export function remarkAddNodeId(
         hProperties["data-node-column"] = start.column;
         hProperties["data-node-end-line"] = end.line;
         hProperties["data-node-end-column"] = end.column;
+      }
+
+      if (filePath) {
+        hProperties["data-node-file"] = filePath;
       }
 
       nodeMap.set(nodeId, {

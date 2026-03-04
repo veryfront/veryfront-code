@@ -32,31 +32,25 @@ export function rehypeNodePositions(
       if (!node.position) return;
 
       const attributes = node.attributes ?? (node.attributes = []);
-      const { start, end } = node.position;
+      const { start } = node.position;
+
+      if (options.filePath) {
+        attributes.push({
+          type: "mdxJsxAttribute",
+          name: "data-node-file",
+          value: options.filePath,
+        });
+      }
 
       attributes.push(
+        {
+          type: "mdxJsxAttribute",
+          name: "data-node-name",
+          value: node.name || "unknown",
+        },
         { type: "mdxJsxAttribute", name: "data-node-line", value: String(start.line) },
         { type: "mdxJsxAttribute", name: "data-node-column", value: String(start.column - 1) },
       );
-
-      if (end) {
-        attributes.push(
-          { type: "mdxJsxAttribute", name: "data-node-end-line", value: String(end.line) },
-          {
-            type: "mdxJsxAttribute",
-            name: "data-node-end-column",
-            value: String(end.column - 1),
-          },
-        );
-      }
-
-      if (!options.filePath) return;
-
-      attributes.push({
-        type: "mdxJsxAttribute",
-        name: "data-node-file",
-        value: options.filePath,
-      });
     });
   };
 }
@@ -69,17 +63,13 @@ function addPositionAttributes(
   const { position } = node;
   if (!position) return;
 
-  const { start, end } = position;
-
-  properties["data-node-line"] = start.line;
-  properties["data-node-column"] = start.column - 1; // Convert to 0-based
-
-  if (end) {
-    properties["data-node-end-line"] = end.line;
-    properties["data-node-end-column"] = end.column - 1; // Convert to 0-based
-  }
+  const { start } = position;
 
   if (filePath) {
     properties["data-node-file"] = filePath;
   }
+
+  properties["data-node-name"] = node.tagName;
+  properties["data-node-line"] = start.line;
+  properties["data-node-column"] = start.column - 1; // Convert to 0-based
 }
