@@ -1,13 +1,8 @@
 import { isBun as IS_BUN, isDeno as IS_DENO } from "./runtime.ts";
+import { dynamicImport } from "./dynamic-import.ts";
 
 const nodeProcess = (globalThis as { process?: typeof import("node:process") }).process;
 const hasNodeProcess = !!nodeProcess?.versions?.node;
-
-// Dynamic import helper to avoid static analysis by bundlers
-// This prevents Bun from trying to resolve node:child_process at compile time
-const dynamicImport = new Function("specifier", "return import(specifier)") as <T>(
-  specifier: string,
-) => Promise<T>;
 
 function isWindowsPlatform(): boolean {
   if (IS_DENO) return Deno.build.os === "windows";

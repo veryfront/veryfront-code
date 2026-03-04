@@ -83,6 +83,12 @@ export {
   waitForKeypress,
 } from "./stdin.ts";
 
+// Compat: dynamic import helper (hides specifiers from static analysis / deno compile)
+export { dynamicImport } from "./dynamic-import.ts";
+
+// Compat: opaque dynamic imports (heavy optional deps excluded from deno compile)
+export { importClaudeAgentSDK, importTransformers } from "./opaque-deps.ts";
+
 // Compat: path
 export {
   basename,

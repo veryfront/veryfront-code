@@ -13,6 +13,7 @@
 
 import { serverLogger } from "#veryfront/utils";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { importTransformers } from "#veryfront/compat/opaque-deps.ts";
 import { DEFAULT_LOCAL_MODEL, type ModelInfo, resolveLocalModel } from "./model-catalog.ts";
 import { isLocalAIDisabled } from "./env.ts";
 
@@ -66,7 +67,7 @@ async function getTransformers(): Promise<TransformersModule> {
   logger.info("Loading @huggingface/transformers...");
 
   try {
-    transformersModule = await import("@huggingface/transformers");
+    transformersModule = await importTransformers();
   } catch {
     throw toError(
       createError({
