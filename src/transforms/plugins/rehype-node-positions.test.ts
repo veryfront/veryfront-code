@@ -134,7 +134,11 @@ describe("rehype-node-positions", () => {
 
       const attrs = node.attributes;
       assertEquals(attrs.length, 4);
-      assertEquals(attrs[0], { type: "mdxJsxAttribute", name: "data-node-file", value: "docs/page.mdx" });
+      assertEquals(attrs[0], {
+        type: "mdxJsxAttribute",
+        name: "data-node-file",
+        value: "docs/page.mdx",
+      });
       assertEquals(attrs[1], { type: "mdxJsxAttribute", name: "data-node-name", value: "Button" });
       assertEquals(attrs[2], { type: "mdxJsxAttribute", name: "data-node-line", value: "7" });
       assertEquals(attrs[3], { type: "mdxJsxAttribute", name: "data-node-column", value: "0" });
