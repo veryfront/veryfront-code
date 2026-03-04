@@ -8,6 +8,8 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
+import { cwd } from "#veryfront/compat/process.ts";
+import { importClaudeAgentSDK } from "#veryfront/compat/opaque-deps.ts";
 import type { ClaudeCodeMode, ClaudeCodeResult } from "./types.ts";
 
 const logger = baseLogger.component("agent-sdk");
@@ -92,13 +94,13 @@ export async function executeAgent(
 
   try {
     // Dynamic import — only loads SDK when actually used
-    const { query } = await import("@anthropic-ai/claude-agent-sdk");
+    const { query } = await importClaudeAgentSDK();
 
     if (config.debug) {
       logger.info("Starting task:", task);
       logger.info("Config:", {
         model: config.model || DEFAULT_MODEL,
-        cwd: config.cwd || Deno.cwd(),
+        cwd: config.cwd || cwd(),
         maxTurns: config.maxTurns,
         mode: config.mode,
       });
@@ -108,7 +110,7 @@ export async function executeAgent(
       prompt: task,
       options: {
         model: config.model || DEFAULT_MODEL,
-        cwd: config.cwd || Deno.cwd(),
+        cwd: config.cwd || cwd(),
         maxTurns: config.maxTurns,
         maxBudgetUsd: config.maxBudgetUsd,
         permissionMode: resolvePermissionMode(config.mode),

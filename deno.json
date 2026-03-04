@@ -239,7 +239,6 @@
     "@ai-sdk/openai": "npm:@ai-sdk/openai@3.0.28",
     "@ai-sdk/anthropic": "npm:@ai-sdk/anthropic@3.0.43",
     "@ai-sdk/google": "npm:@ai-sdk/google@3.0.29",
-    "@anthropic-ai/claude-agent-sdk": "npm:@anthropic-ai/claude-agent-sdk@0.2.37",
     "tailwindcss": "https://esm.sh/tailwindcss@4.1.8",
     "tailwindcss/plugin": "https://esm.sh/tailwindcss@4.1.8/plugin",
     "tailwindcss/defaultTheme": "https://esm.sh/tailwindcss@4.1.8/defaultTheme",
@@ -256,8 +255,7 @@
     "@babel/parser": "npm:@babel/parser@7.26.3",
     "@babel/traverse": "npm:@babel/traverse@7.26.3",
     "@babel/generator": "npm:@babel/generator@7.26.3",
-    "@babel/types": "npm:@babel/types@7.26.3",
-    "@huggingface/transformers": "npm:@huggingface/transformers@3.4.2"
+    "@babel/types": "npm:@babel/types@7.26.3"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
@@ -391,7 +389,7 @@
   "allowScripts": {
     "allow": [
       "npm:sharp@0.33.5",
-      "npm:onnxruntime-node@1.20.1"
+      "npm:onnxruntime-node@1.21.0"
     ],
     "deny": [
       "npm:esbuild@0.20.2",
