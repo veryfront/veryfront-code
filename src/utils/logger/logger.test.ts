@@ -44,29 +44,27 @@ function withJsonLogFormat<T>(fn: () => T): T {
 
 describe("logger", () => {
   describe("getDefaultLevel", () => {
-    // Note: These tests pass explicit values to bypass the default parameter mechanism.
-    // When testing with undefined values (to test reading from env), we need to
-    // temporarily clear the environment variables.
+    // Note: Pass explicit values to avoid reading process env in parallel tests.
 
     it("should return DEBUG for LOG_LEVEL=DEBUG", () => {
-      assertEquals(getDefaultLevel("DEBUG", undefined), LogLevel.DEBUG);
+      assertEquals(getDefaultLevel("DEBUG", ""), LogLevel.DEBUG);
     });
 
     it("should return INFO for LOG_LEVEL=INFO", () => {
-      assertEquals(getDefaultLevel("INFO", undefined), LogLevel.INFO);
+      assertEquals(getDefaultLevel("INFO", ""), LogLevel.INFO);
     });
 
     it("should return WARN for LOG_LEVEL=WARN", () => {
-      assertEquals(getDefaultLevel("WARN", undefined), LogLevel.WARN);
+      assertEquals(getDefaultLevel("WARN", ""), LogLevel.WARN);
     });
 
     it("should return ERROR for LOG_LEVEL=ERROR", () => {
-      assertEquals(getDefaultLevel("ERROR", undefined), LogLevel.ERROR);
+      assertEquals(getDefaultLevel("ERROR", ""), LogLevel.ERROR);
     });
 
     it("should be case-insensitive for LOG_LEVEL", () => {
-      assertEquals(getDefaultLevel("debug", undefined), LogLevel.DEBUG);
-      assertEquals(getDefaultLevel("Info", undefined), LogLevel.INFO);
+      assertEquals(getDefaultLevel("debug", ""), LogLevel.DEBUG);
+      assertEquals(getDefaultLevel("Info", ""), LogLevel.INFO);
     });
 
     it("should return DEBUG when VERYFRONT_DEBUG=1", () => {
@@ -90,7 +88,7 @@ describe("logger", () => {
     });
 
     it("should return INFO for invalid LOG_LEVEL without debug flag", () => {
-      assertEquals(getDefaultLevel("INVALID", undefined), LogLevel.INFO);
+      assertEquals(getDefaultLevel("INVALID", ""), LogLevel.INFO);
     });
   });
 

@@ -132,6 +132,8 @@
     "#veryfront/resource": "./src/resource/index.ts",
     "#veryfront/routing": "./src/routing/index.ts",
     "#veryfront/security": "./src/security/index.ts",
+    "#veryfront/skill": "./src/skill/index.ts",
+    "#veryfront/skill/": "./src/skill/",
     "#veryfront/server": "./src/server/index.ts",
     "#veryfront/server/project-env": "./src/server/project-env/index.ts",
     "#veryfront/testing": "./src/testing/index.ts",

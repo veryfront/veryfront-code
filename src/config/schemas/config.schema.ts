@@ -397,6 +397,18 @@ export const veryfrontConfigSchema = z
           })
           .partial()
           .optional(),
+        skills: z
+          .object({
+            discovery: z
+              .object({
+                enabled: z.boolean().optional(),
+                paths: z.array(z.string()).optional(),
+              })
+              .partial()
+              .optional(),
+          })
+          .partial()
+          .optional(),
         mcp: z
           .object({
             enabled: z.boolean().optional(),

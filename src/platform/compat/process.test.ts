@@ -542,5 +542,36 @@ describe("Process Compat", () => {
       assertEquals(result.stdout, undefined);
       assertEquals(result.stderr, undefined);
     });
+
+    it("should terminate commands that exceed timeout", async () => {
+      const result = await runCommand("deno", {
+        args: ["eval", "await new Promise((r) => setTimeout(r, 1000));"],
+        capture: true,
+        timeoutMs: 50,
+      });
+      assertEquals(result.success, false);
+      assertEquals(result.code, 124);
+      assertExists(result.stderr);
+      assertEquals(result.stderr.includes("timed out"), true);
+    });
+
+    it("should force kill commands that ignore SIGTERM", async () => {
+      const startedAt = Date.now();
+      const result = await runCommand("deno", {
+        args: [
+          "eval",
+          "Deno.addSignalListener('SIGTERM', () => {}); await new Promise(() => {});",
+        ],
+        capture: true,
+        timeoutMs: 50,
+      });
+      const elapsedMs = Date.now() - startedAt;
+
+      assertEquals(result.success, false);
+      assertEquals(result.code, 124);
+      assertExists(result.stderr);
+      assertEquals(result.stderr.includes("timed out"), true);
+      assertEquals(elapsedMs < 3_000, true);
+    });
   });
 });

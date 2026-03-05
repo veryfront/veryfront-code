@@ -58,6 +58,16 @@ export interface AgentConfig {
   };
   /** Restrict runtime model overrides to these "provider/model" strings. */
   allowedModels?: ModelString[];
+  /**
+   * Enable skills for this agent.
+   * - true: include all discovered skills from skills/ directory
+   * - string[]: include only specific skill IDs
+   *
+   * Discovery happens at startup via discoverAll().
+   * This controls which skills appear in the agent's prompt
+   * and registers the skill tools.
+   */
+  skills?: true | string[];
 }
 
 // Import for use in AgentMiddleware

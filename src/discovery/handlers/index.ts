@@ -10,3 +10,4 @@ export { resourceHandler } from "./resource-handler.ts";
 export { promptHandler } from "./prompt-handler.ts";
 export { workflowHandler } from "./workflow-handler.ts";
 export { taskHandler } from "./task-handler.ts";
+export { discoverSkills } from "./skill-handler.ts";

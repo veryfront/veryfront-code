@@ -42,6 +42,7 @@ Learn Veryfront from the ground up — pages, routing, AI agents, and production
 | [Middleware](./middleware.md) | CORS, rate limiting, logging, and custom middleware pipelines. |
 | [OAuth](./oauth.md) | OAuth 2.0 with 37 pre-configured providers. |
 | [MCP Server](./mcp-server.md) | Expose tools, prompts, and resources over Model Context Protocol. |
+| [Sandbox](./sandbox.md) | Run isolated commands and file operations in ephemeral sandbox sessions. |
 | [Integrations](../integrations.md) | Config-driven integration tools with OAuth, token management, and API execution for 37+ services. |
 
 ## Production

@@ -8,6 +8,7 @@
 import { detectPlatform } from "#veryfront/platform/core-platform.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import type {
   DiscoveryConfig,
   DiscoveryHandler,
@@ -18,12 +19,14 @@ import { importModule } from "./transpiler.ts";
 import { findTypeScriptFiles } from "./file-discovery.ts";
 import {
   agentHandler,
+  discoverSkills,
   promptHandler,
   resourceHandler,
   taskHandler,
   toolHandler,
   workflowHandler,
 } from "./handlers/index.ts";
+import { join } from "#veryfront/compat/path";
 
 const logger = agentLogger.component("discovery");
 
@@ -87,6 +90,7 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
   const result: DiscoveryResult = {
     tools: new Map(),
     agents: new Map(),
+    skills: new Map(),
     resources: new Map(),
     prompts: new Map(),
     workflows: new Map(),
@@ -122,6 +126,26 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
   // Discover tasks
   for (const dir of config.taskDirs ?? ["tasks"]) {
     await discoverItems(`${baseDir}/${dir}`, result, context, taskHandler, config.verbose);
+  }
+
+  // Discover skills (parallel path — markdown-based, not TypeScript import)
+  for (const dir of config.skillDirs ?? ["skills"]) {
+    const skillResult = await discoverSkills(
+      join(baseDir, dir),
+      context,
+      config.verbose,
+    );
+    for (const [id, skill] of skillResult.skills) {
+      if (result.skills.has(id)) {
+        logger.warn(`Duplicate skill "${id}" across discovery roots; keeping first registration`);
+        continue;
+      }
+      registerSkill(id, skill);
+      result.skills.set(id, skill);
+    }
+    result.errors.push(
+      ...skillResult.errors.map((e) => ({ file: e.file, error: e.error })),
+    );
   }
 
   return result;

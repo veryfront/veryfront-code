@@ -278,10 +278,12 @@ export class DevServer {
 
   private buildDiscoveryConfig(): DiscoveryConfig {
     const ai = this.appConfig?.ai;
+    const skillDiscoveryEnabled = ai?.skills?.discovery?.enabled ?? true;
     return {
       baseDir: this.options.projectDir,
       toolDirs: ai?.tools?.discovery?.paths ?? ["tools"],
       agentDirs: ai?.agents?.discovery?.paths ?? ["agents"],
+      skillDirs: skillDiscoveryEnabled ? (ai?.skills?.discovery?.paths ?? ["skills"]) : [],
       resourceDirs: ["resources"],
       promptDirs: ["prompts"],
       workflowDirs: ["workflows"],
@@ -294,12 +296,13 @@ export class DevServer {
     try {
       const config = this.buildDiscoveryConfig();
       const result = await discoverAll(config);
-      const total = result.tools.size + result.agents.size + result.workflows.size +
-        result.prompts.size + result.resources.size;
+      const total = result.tools.size + result.agents.size + result.skills.size +
+        result.workflows.size + result.prompts.size + result.resources.size;
       if (total > 0) {
         logger.debug(
           `[Discovery] Registered ${result.tools.size} tools, ${result.agents.size} agents, ` +
-            `${result.workflows.size} workflows, ${result.prompts.size} prompts, ${result.resources.size} resources`,
+            `${result.skills.size} skills, ${result.workflows.size} workflows, ` +
+            `${result.prompts.size} prompts, ${result.resources.size} resources`,
         );
       }
     } catch (error) {
@@ -402,7 +405,9 @@ export class DevServer {
       const config = this.buildDiscoveryConfig();
       const result = await discoverAll(config);
       logger.info(
-        `[HMR] Re-discovered AI primitives: ${result.tools.size} tools, ${result.agents.size} agents, ${result.workflows.size} workflows`,
+        `[HMR] Re-discovered: ${result.tools.size} tools, ${result.agents.size} agents, ` +
+          `${result.skills.size} skills, ${result.workflows.size} workflows, ` +
+          `${result.prompts.size} prompts, ${result.resources.size} resources`,
       );
     } catch (error) {
       hmrLog.warn("AI re-discovery failed:", error);
@@ -425,9 +430,11 @@ export class DevServer {
 
     const debounceMs = this.options.fileWatcherDebounceMs ?? 100;
     const ai = this.appConfig?.ai;
+    const skillDiscoveryEnabled = ai?.skills?.discovery?.enabled ?? true;
     const aiDirNames = [
       ...(ai?.tools?.discovery?.paths ?? ["tools"]),
       ...(ai?.agents?.discovery?.paths ?? ["agents"]),
+      ...(skillDiscoveryEnabled ? (ai?.skills?.discovery?.paths ?? ["skills"]) : []),
       "resources",
       "prompts",
       "workflows",

@@ -565,6 +565,61 @@ export interface CommandOptions {
   inherit?: boolean;
   /** Use shell to run the command (needed for .cmd files on Windows) */
   shell?: boolean;
+  /** Kill the command if it exceeds this duration (milliseconds) */
+  timeoutMs?: number;
+}
+
+const COMMAND_TIMEOUT_EXIT_CODE = 124;
+const FORCE_KILL_GRACE_MS = 250;
+
+function createTimeoutResult(
+  timeoutMs: number,
+  stdout?: string,
+  stderr?: string,
+): CommandResult {
+  return {
+    success: false,
+    code: COMMAND_TIMEOUT_EXIT_CODE,
+    stdout,
+    stderr: `${stderr ?? ""}\nCommand timed out after ${timeoutMs}ms`.trim(),
+  };
+}
+
+function createProcessTimeout(
+  timeoutMs: number | undefined,
+  terminate: () => void,
+  forceTerminate: () => void,
+): { hasTimedOut: () => boolean; clear: () => void } {
+  let timedOut = false;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let forceKillId: ReturnType<typeof setTimeout> | undefined;
+
+  if (timeoutMs && timeoutMs > 0) {
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      try {
+        terminate();
+      } catch {
+        // Best-effort terminate.
+      }
+
+      forceKillId = setTimeout(() => {
+        try {
+          forceTerminate();
+        } catch {
+          // Best-effort force terminate.
+        }
+      }, FORCE_KILL_GRACE_MS);
+    }, timeoutMs);
+  }
+
+  return {
+    hasTimedOut: () => timedOut,
+    clear: () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (forceKillId) clearTimeout(forceKillId);
+    },
+  };
 }
 
 async function readStreamToString(stream: ReadableStream<Uint8Array>): Promise<string> {
@@ -603,8 +658,16 @@ export async function runCommand(
   cmd: string,
   options: CommandOptions = {},
 ): Promise<CommandResult> {
-  const { args = [], cwd: cmdCwd, env: cmdEnv, capture = false, inherit = false, shell = false } =
-    options;
+  const {
+    args = [],
+    cwd: cmdCwd,
+    env: cmdEnv,
+    capture = false,
+    inherit = false,
+    shell = false,
+    timeoutMs,
+  } = options;
+  const effectiveTimeoutMs = timeoutMs && timeoutMs > 0 ? Math.floor(timeoutMs) : undefined;
 
   // Determine stdio mode: inherit > capture > null
   const stdioMode = inherit ? "inherit" : capture ? "piped" : "null";
@@ -619,15 +682,31 @@ export async function runCommand(
       stderr: stdioMode,
     });
 
-    const output = await command.output();
-    const decoder = new TextDecoder();
+    const child = command.spawn();
+    const timeout = createProcessTimeout(
+      effectiveTimeoutMs,
+      () => child.kill("SIGTERM"),
+      () => child.kill("SIGKILL"),
+    );
 
-    return {
-      success: output.success,
-      code: output.code,
-      stdout: capture ? decoder.decode(output.stdout) : undefined,
-      stderr: capture ? decoder.decode(output.stderr) : undefined,
-    };
+    try {
+      const [status, stdout, stderr] = await Promise.all([
+        child.status,
+        capture && child.stdout ? readStreamToString(child.stdout) : Promise.resolve(undefined),
+        capture && child.stderr ? readStreamToString(child.stderr) : Promise.resolve(undefined),
+      ]);
+
+      if (timeout.hasTimedOut()) return createTimeoutResult(effectiveTimeoutMs!, stdout, stderr);
+
+      return {
+        success: status.success,
+        code: status.code,
+        stdout,
+        stderr,
+      };
+    } finally {
+      timeout.clear();
+    }
   }
 
   if (IS_BUN) {
@@ -643,6 +722,7 @@ export async function runCommand(
           exited: Promise<number>;
           stdout: ReadableStream<Uint8Array> | null;
           stderr: ReadableStream<Uint8Array> | null;
+          kill?: (signal?: string | number) => void;
         };
       };
     };
@@ -666,17 +746,25 @@ export async function runCommand(
       stderr: bunStdio,
     });
 
-    const code = await proc.exited;
+    const timeout = createProcessTimeout(
+      effectiveTimeoutMs,
+      () => proc.kill?.("SIGTERM"),
+      () => proc.kill?.("SIGKILL"),
+    );
 
-    let stdout: string | undefined;
-    let stderr: string | undefined;
+    try {
+      const [code, stdout, stderr] = await Promise.all([
+        proc.exited,
+        capture && proc.stdout ? readStreamToString(proc.stdout) : Promise.resolve(undefined),
+        capture && proc.stderr ? readStreamToString(proc.stderr) : Promise.resolve(undefined),
+      ]);
 
-    if (capture) {
-      stdout = proc.stdout ? await readStreamToString(proc.stdout) : undefined;
-      stderr = proc.stderr ? await readStreamToString(proc.stderr) : undefined;
+      if (timeout.hasTimedOut()) return createTimeoutResult(effectiveTimeoutMs!, stdout, stderr);
+
+      return { success: code === 0, code, stdout, stderr };
+    } finally {
+      timeout.clear();
     }
-
-    return { success: code === 0, code, stdout, stderr };
   }
 
   if (!hasNodeProcess) return { success: false, code: 1 };
@@ -704,6 +792,11 @@ export async function runCommand(
     let stdout = "";
     let stderr = "";
     const decoder = new TextDecoder();
+    const timeout = createProcessTimeout(
+      effectiveTimeoutMs,
+      () => child.kill("SIGTERM"),
+      () => child.kill("SIGKILL"),
+    );
 
     if (capture) {
       child.stdout?.on("data", (data: Uint8Array) => {
@@ -715,6 +808,19 @@ export async function runCommand(
     }
 
     child.on("close", (code) => {
+      timeout.clear();
+
+      if (timeout.hasTimedOut()) {
+        resolve(
+          createTimeoutResult(
+            effectiveTimeoutMs!,
+            capture ? stdout : undefined,
+            capture ? stderr : undefined,
+          ),
+        );
+        return;
+      }
+
       resolve({
         success: code === 0,
         code: code ?? 1,
@@ -724,6 +830,7 @@ export async function runCommand(
     });
 
     child.on("error", () => {
+      timeout.clear();
       resolve({ success: false, code: 1 });
     });
   });

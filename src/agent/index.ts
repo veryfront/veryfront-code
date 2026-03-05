@@ -29,8 +29,23 @@
  * const assistant = agent({
  *   model: "openai/gpt-4o",
  *   system: "You are a helpful assistant.",
- *   tools: [searchTool],
+ *   tools: { search: searchTool },
  *   memory: { type: "conversation", maxMessages: 50 },
+ * });
+ * ```
+ *
+ * @example Agent with skills
+ * ```ts
+ * import { agent } from "veryfront/agent";
+ *
+ * const assistant = agent({
+ *   model: "openai/gpt-4o",
+ *   system: "You are a support engineer. Use skills when relevant.",
+ *   skills: ["incident-response", "repo-maintainer"], // or `true` for all discovered skills
+ *   tools: {
+ *     Read: true,
+ *     "github:list-issues": true,
+ *   },
  * });
  * ```
  *

@@ -33,6 +33,15 @@ my-app/
     data-pipeline.ts
   resources/            # MCP resource definitions (auto-discovered)
     docs.ts
+  skills/               # Skill packs (auto-discovered from SKILL.md)
+    incident-response/
+      SKILL.md
+      references/
+        runbook.md
+      scripts/
+        triage.sh
+      assets/
+        checklist.txt
   components/           # Shared React components
     Header.tsx
   lib/                  # Shared utilities
@@ -67,7 +76,9 @@ See [Pages & Routing](./pages-and-routing.md) for the full routing system.
 
 ## Auto-discovered directories
 
-These directories are scanned automatically at startup. Every file with a default export is registered.
+These directories are scanned automatically at startup.
+For TypeScript-based primitives, files with a default export are registered.
+For skills, directories containing `SKILL.md` are registered.
 
 | Directory | Purpose | Import |
 |-----------|---------|--------|
@@ -76,8 +87,11 @@ These directories are scanned automatically at startup. Every file with a defaul
 | `prompts/` | Prompt templates | `veryfront/prompt` |
 | `workflows/` | Multi-step workflow DAGs | `veryfront/workflow` |
 | `resources/` | MCP-exposable resources | `veryfront/resource` |
+| `skills/` | Skill packs for agent skill tools | Enabled via `agent({ skills: ... })` |
 
-The filename becomes the ID. `agents/assistant.ts` registers as `"assistant"` and can be retrieved with `getAgent("assistant")`.
+The filename becomes the ID for TypeScript primitives. For example, `agents/assistant.ts` registers as `"assistant"` and can be retrieved with `getAgent("assistant")`.
+
+For skills, the directory name is the skill ID. For example, `skills/incident-response/SKILL.md` registers as `"incident-response"`.
 
 ### Customizing discovery paths
 
@@ -89,6 +103,11 @@ import { defineConfig } from "veryfront";
 export default defineConfig({
   directories: {
     app: "src/app",
+  },
+  ai: {
+    tools: { discovery: { paths: ["tools"] } },
+    agents: { discovery: { paths: ["agents"] } },
+    skills: { discovery: { paths: ["skills", "internal/skills"] } },
   },
 });
 ```

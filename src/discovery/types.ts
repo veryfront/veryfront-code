@@ -9,6 +9,7 @@ import type { Agent } from "#veryfront/agent";
 import type { Resource } from "#veryfront/resource";
 import type { Prompt } from "#veryfront/prompt";
 import type { Workflow } from "#veryfront/workflow";
+import type { Skill } from "#veryfront/skill";
 import type { TaskDefinition } from "#veryfront/task/types.ts";
 import type { Platform } from "#veryfront/platform/core-platform.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -33,6 +34,7 @@ export interface DiscoveryConfig {
   baseDir: string;
   toolDirs?: string[];
   agentDirs?: string[];
+  skillDirs?: string[];
   resourceDirs?: string[];
   promptDirs?: string[];
   workflowDirs?: string[];
@@ -47,6 +49,7 @@ export interface DiscoveryConfig {
 export interface DiscoveryResult {
   tools: Map<string, Tool>;
   agents: Map<string, Agent>;
+  skills: Map<string, Skill>;
   resources: Map<string, Resource>;
   prompts: Map<string, Prompt>;
   workflows: Map<string, Workflow>;

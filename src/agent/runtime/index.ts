@@ -56,8 +56,15 @@ import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE } from "./constants.ts";
 import { generateMessageId, sendSSE } from "./sse-utils.ts";
 import { getAvailableTools, isDynamicTool, parseToolArgs } from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
+import { filterToolsForSkill, isToolAllowedBySkill } from "#veryfront/skill/allowed-tools.ts";
 
 const logger = serverLogger.component("agent");
+const LOAD_SKILL_TOOL_ID = "load-skill";
+
+function getSkillActivationRequiredError(toolName: string): string {
+  return `Tool "${toolName}" cannot run before load-skill succeeds in the same step. ` +
+    `Call "${LOAD_SKILL_TOOL_ID}" first to establish the active skill context.`;
+}
 
 /**
  * Detect whether the resolved model is local inference.
@@ -241,11 +248,21 @@ export class AgentRuntime {
         );
       }
 
+      // Request-scoped skill policy (not class-level mutable state)
+      let activeSkillPolicy: string[] | undefined;
+
       for (let step = 0; step < maxSteps; step++) {
         this.status = "thinking";
         addSpanEvent(loopSpan, "step_start", { step });
 
-        const tools = isLocal ? [] : getAvailableTools(this.config.tools);
+        let tools = isLocal ? [] : getAvailableTools(this.config.tools, {
+          includeSkillTools: Boolean(this.config.skills),
+        });
+
+        // Layer 1: Filter tools based on active skill policy (planning-time)
+        if (activeSkillPolicy) {
+          tools = filterToolsForSkill(tools, activeSkillPolicy);
+        }
 
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
@@ -308,6 +325,9 @@ export class AgentRuntime {
 
         this.status = "tool_execution";
         addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
+        let mustLoadSkillFirst = !activeSkillPolicy &&
+          Boolean(this.config.skills) &&
+          response.toolCalls.some((tc) => tc.toolName === LOAD_SKILL_TOOL_ID);
 
         for (const tc of response.toolCalls) {
           const toolCall: ToolCall = {
@@ -320,6 +340,54 @@ export class AgentRuntime {
           await withSpan("agent.tool_execute", async (toolSpan) => {
             setSpanAttributes(toolSpan, { "tool.name": tc.toolName, "tool.id": tc.toolCallId });
 
+            if (mustLoadSkillFirst && tc.toolName !== LOAD_SKILL_TOOL_ID) {
+              const errorMsg = getSkillActivationRequiredError(tc.toolName);
+              toolCall.status = "error";
+              toolCall.error = errorMsg;
+
+              const errorMessage: Message = {
+                id: `tool_error_${tc.toolCallId}`,
+                role: "tool",
+                parts: [{
+                  type: "tool-result",
+                  toolCallId: tc.toolCallId,
+                  toolName: tc.toolName,
+                  result: { error: errorMsg },
+                }],
+                timestamp: Date.now(),
+              };
+              currentMessages.push(errorMessage);
+              await this.memory.add(errorMessage);
+              toolCalls.push(toolCall);
+              return;
+            }
+
+            // Layer 2: Check tool allowed by active skill policy (execution-time)
+            if (activeSkillPolicy && !isToolAllowedBySkill(tc.toolName, activeSkillPolicy)) {
+              const errorMsg =
+                `Tool "${tc.toolName}" is not allowed by the active skill policy. Allowed: ${
+                  activeSkillPolicy.join(", ")
+                }`;
+              toolCall.status = "error";
+              toolCall.error = errorMsg;
+
+              const errorMessage: Message = {
+                id: `tool_error_${tc.toolCallId}`,
+                role: "tool",
+                parts: [{
+                  type: "tool-result",
+                  toolCallId: tc.toolCallId,
+                  toolName: tc.toolName,
+                  result: { error: errorMsg },
+                }],
+                timestamp: Date.now(),
+              };
+              currentMessages.push(errorMessage);
+              await this.memory.add(errorMessage);
+              toolCalls.push(toolCall);
+              return;
+            }
+
             try {
               toolCall.status = "executing";
               const startTime = Date.now();
@@ -329,6 +397,13 @@ export class AgentRuntime {
               toolCall.status = "completed";
               toolCall.result = result;
               toolCall.executionTime = Date.now() - startTime;
+
+              // Track skill policy from load-skill results
+              if (tc.toolName === LOAD_SKILL_TOOL_ID && result && typeof result === "object") {
+                const skillResult = result as { allowedTools?: string[] };
+                activeSkillPolicy = skillResult.allowedTools;
+                mustLoadSkillFirst = false;
+              }
 
               const toolResultMessage: Message = {
                 id: `tool_${tc.toolCallId}`,
@@ -425,10 +500,21 @@ export class AgentRuntime {
       );
     }
 
+    // Request-scoped skill policy (not class-level mutable state)
+    let activeSkillPolicy: string[] | undefined;
+
     for (let step = 0; step < maxSteps; step++) {
       sendSSE(controller, encoder, { type: "step-start" });
 
-      const tools = isLocalStreaming ? [] : getAvailableTools(this.config.tools);
+      let tools = isLocalStreaming ? [] : getAvailableTools(this.config.tools, {
+        includeSkillTools: Boolean(this.config.skills),
+      });
+
+      // Layer 1: Filter tools based on active skill policy (planning-time)
+      if (activeSkillPolicy) {
+        tools = filterToolsForSkill(tools, activeSkillPolicy);
+      }
+
       const result = streamText({
         model: languageModel,
         system: systemPrompt,
@@ -478,8 +564,12 @@ export class AgentRuntime {
       }
 
       this.status = "tool_execution";
+      const streamedToolCalls = Array.from(state.toolCalls.values());
+      let mustLoadSkillFirst = !activeSkillPolicy &&
+        Boolean(this.config.skills) &&
+        streamedToolCalls.some((tc) => tc.name === LOAD_SKILL_TOOL_ID);
 
-      for (const tc of state.toolCalls.values()) {
+      for (const tc of streamedToolCalls) {
         const { args, error: argError } = parseToolArgs(tc.arguments);
         const toolCall: ToolCall = { id: tc.id, name: tc.name, args, status: "pending" };
 
@@ -508,6 +598,34 @@ export class AgentRuntime {
           continue;
         }
 
+        if (mustLoadSkillFirst && tc.name !== LOAD_SKILL_TOOL_ID) {
+          await this.recordToolError(
+            toolCall,
+            getSkillActivationRequiredError(tc.name),
+            controller,
+            encoder,
+            currentMessages,
+            toolCalls,
+          );
+          continue;
+        }
+
+        // Layer 2: Check tool allowed by active skill policy (execution-time)
+        if (activeSkillPolicy && !isToolAllowedBySkill(tc.name, activeSkillPolicy)) {
+          const errorMsg = `Tool "${tc.name}" is not allowed by the active skill policy. Allowed: ${
+            activeSkillPolicy.join(", ")
+          }`;
+          await this.recordToolError(
+            toolCall,
+            errorMsg,
+            controller,
+            encoder,
+            currentMessages,
+            toolCalls,
+          );
+          continue;
+        }
+
         try {
           toolCall.status = "executing";
           const startTime = Date.now();
@@ -523,6 +641,13 @@ export class AgentRuntime {
           toolCall.result = result;
           toolCall.executionTime = Date.now() - startTime;
           toolCalls.push(toolCall);
+
+          // Track skill policy from load-skill results
+          if (tc.name === LOAD_SKILL_TOOL_ID && result && typeof result === "object") {
+            const skillResult = result as { allowedTools?: string[] };
+            activeSkillPolicy = skillResult.allowedTools;
+            mustLoadSkillFirst = false;
+          }
 
           const dynamic = isDynamicTool(tc.name);
           sendSSE(controller, encoder, {

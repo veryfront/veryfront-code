@@ -51,8 +51,24 @@ const searchTool = tool({
 const assistant = agent({
   model: "openai/gpt-4o",
   system: "You are a helpful assistant.",
-  tools: [searchTool],
+  tools: { search: searchTool },
   memory: { type: "conversation", maxMessages: 50 },
+});
+```
+
+### Agent with skills
+
+```ts
+import { agent } from "veryfront/agent";
+
+const assistant = agent({
+  model: "openai/gpt-4o",
+  system: "You are a support engineer. Use skills when relevant.",
+  skills: ["incident-response", "repo-maintainer"], // or `true` for all discovered skills
+  tools: {
+    Read: true,
+    "github:list-issues": true,
+  },
 });
 ```
 
@@ -111,6 +127,7 @@ Create an agent
 | `edge?` | `EdgeConfig` | Edge runtime configuration |
 | `multimodal?` | <code>&#123; vision?: boolean; audio?: boolean &#125;</code> | Enable vision and/or audio |
 | `allowedModels?` | `ModelString[]` | Restrict runtime model overrides to these "provider/model" strings. |
+| `skills?` | `true \| string[]` | Enable skills for this agent. |
 
 **Returns:** `Agent`
 
