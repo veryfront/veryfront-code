@@ -154,6 +154,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
                 <TabSwitcher activeTab={activeTab} onTabChange={setActiveTab} className="py-0" />
               </div>
             )}
+            {showTabs && <div className="size-8 shrink-0" />}
           </div>
           <Chat
             messages={messages}
