@@ -45,7 +45,7 @@ export function AttachmentPill({
 
   return (
     <span
-      className="relative inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-lg bg-neutral-200/60 dark:bg-neutral-700/60 text-xs text-neutral-700 dark:text-neutral-300"
+      className="relative inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-lg bg-[var(--accent)] text-xs text-[var(--card-foreground)]"
       onMouseEnter={() => setShowPreview(true)}
       onMouseLeave={() => setShowPreview(false)}
     >
@@ -62,7 +62,7 @@ export function AttachmentPill({
       <span className="truncate max-w-[120px]">{attachment.name}</span>
 
       {attachment.size != null && (
-        <span className="text-[10px] text-neutral-400 dark:text-neutral-500 shrink-0">
+        <span className="text-[10px] text-[var(--input-placeholder)] shrink-0">
           {formatSize(attachment.size)}
         </span>
       )}
@@ -76,7 +76,7 @@ export function AttachmentPill({
             type="button"
             onClick={() => onRemove(attachment.id)}
             aria-label={`Remove ${attachment.name}`}
-            className="size-4 shrink-0 flex items-center justify-center rounded-full hover:bg-neutral-300 dark:hover:bg-neutral-600 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors"
+            className="size-4 shrink-0 flex items-center justify-center rounded-full hover:bg-[var(--accent)] text-[var(--input-placeholder)] hover:text-[var(--foreground)] transition-colors"
           >
             <svg
               className="size-3"
@@ -95,11 +95,11 @@ export function AttachmentPill({
       {/* Hover preview */}
       {showPreview && attachment.preview && (
         <div className="absolute bottom-full left-0 mb-2 z-50 w-64 pointer-events-none">
-          <div className="bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl shadow-lg p-3 text-left">
-            <p className="text-[10px] font-medium text-neutral-500 dark:text-neutral-400 uppercase mb-1">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-lg p-3 text-left">
+            <p className="text-[10px] font-medium text-[var(--muted-foreground)] uppercase mb-1">
               Preview
             </p>
-            <p className="text-xs text-neutral-600 dark:text-neutral-300 line-clamp-4 whitespace-pre-wrap">
+            <p className="text-xs text-[var(--card-foreground)] line-clamp-4 whitespace-pre-wrap">
               {attachment.preview}
             </p>
           </div>

@@ -16,7 +16,7 @@ export function DropZoneOverlay({
     <div
       className={cn(
         "absolute inset-0 z-50 flex flex-col items-center justify-center gap-3",
-        "bg-white/80 dark:bg-neutral-950/80 backdrop-blur-sm",
+        "bg-[var(--background)]/80 backdrop-blur-sm",
         "border-2 border-dashed border-emerald-500 rounded-2xl",
         "pointer-events-none",
       )}
@@ -35,11 +35,11 @@ export function DropZoneOverlay({
         <line x1="12" y1="3" x2="12" y2="15" />
       </svg>
       <div className="text-center">
-        <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+        <p className="text-sm font-medium text-[var(--card-foreground)]">
           Drop files here
         </p>
         {accept && (
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+          <p className="text-xs text-[var(--muted-foreground)] mt-1">
             {accept.replace(/\./g, "").toUpperCase().replace(/,/g, ", ")}
           </p>
         )}

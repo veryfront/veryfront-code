@@ -38,20 +38,20 @@ export function UploadsPanel({
         {uploads.length === 0
           ? (
             <div className="flex flex-col items-center justify-center h-full text-center">
-              <div className="mb-4 flex items-center justify-center size-14 rounded-2xl bg-neutral-100 dark:bg-neutral-800/80 text-neutral-400 dark:text-neutral-500">
+              <div className="mb-4 flex items-center justify-center size-14 rounded-2xl bg-[var(--accent)] text-[var(--input-placeholder)]">
                 <FileTextIcon className="size-7" />
               </div>
-              <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+              <p className="text-sm font-medium text-[var(--card-foreground)]">
                 No files uploaded
               </p>
-              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+              <p className="mt-1 text-xs text-[var(--muted-foreground)]">
                 Upload files to start asking questions
               </p>
               {onAttach && (
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="mt-4 px-4 py-2 text-sm font-medium rounded-lg bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors"
+                  className="mt-4 px-4 py-2 text-sm font-medium rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 transition-colors"
                 >
                   Upload Files
                 </button>
@@ -63,17 +63,17 @@ export function UploadsPanel({
               {uploads.map((doc) => (
                 <div
                   key={doc.id}
-                  className="flex items-center gap-3 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-3 group"
+                  className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 py-3 group"
                 >
-                  <div className="shrink-0 size-9 rounded-lg bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center text-neutral-400 dark:text-neutral-500">
+                  <div className="shrink-0 size-9 rounded-lg bg-[var(--accent)] flex items-center justify-center text-[var(--input-placeholder)]">
                     <FileTextIcon className="size-4" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300 truncate">
+                    <p className="text-sm font-medium text-[var(--card-foreground)] truncate">
                       {doc.name}
                     </p>
                     {doc.size != null && (
-                      <p className="text-xs text-neutral-400 dark:text-neutral-500">
+                      <p className="text-xs text-[var(--input-placeholder)]">
                         {formatFileSize(doc.size)}
                       </p>
                     )}
@@ -82,7 +82,7 @@ export function UploadsPanel({
                     <button
                       type="button"
                       onClick={() => onRemoveUpload(doc.id)}
-                      className="shrink-0 p-1.5 rounded-md text-neutral-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors opacity-0 group-hover:opacity-100"
+                      className="shrink-0 p-1.5 rounded-md text-[var(--muted-foreground)] hover:text-[var(--destructive)] hover:bg-[var(--destructive)]/10 transition-colors opacity-0 group-hover:opacity-100"
                       aria-label={`Remove ${doc.name}`}
                     >
                       <TrashIcon className="size-4" />
@@ -94,7 +94,7 @@ export function UploadsPanel({
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-neutral-300 dark:border-neutral-600 px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800/60 hover:border-neutral-400 dark:hover:border-neutral-500 transition-all"
+                  className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--input-border)] px-4 py-3 text-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:border-[var(--input-border)] transition-all"
                 >
                   Upload more files
                 </button>

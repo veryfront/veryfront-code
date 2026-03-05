@@ -21,9 +21,9 @@ export const Sources = React.forwardRef<HTMLDivElement, SourcesProps>(
     return (
       <div
         ref={ref}
-        className={cn("mt-3 pt-3 border-t border-neutral-200 dark:border-neutral-800", className)}
+        className={cn("mt-3 pt-3 border-t border-[var(--border)]", className)}
       >
-        <p className="text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-2">Sources</p>
+        <p className="text-xs font-medium text-[var(--muted-foreground)] mb-2">Sources</p>
         <div className="flex flex-wrap gap-1.5">
           {sources.map((source, index) => (
             <SourcePill
@@ -58,12 +58,12 @@ function SourcePill({ source, index, onClick }: SourcePillProps): React.ReactEle
         onMouseLeave={() => setShowPreview(false)}
         className={cn(
           "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs",
-          "bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300",
-          "hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors",
+          "bg-[var(--accent)] text-[var(--card-foreground)]",
+          "hover:bg-[var(--accent)] transition-colors",
           onClick ? "cursor-pointer" : "cursor-default",
         )}
       >
-        <span className="flex items-center justify-center size-4 rounded bg-neutral-200 dark:bg-neutral-700 text-[10px] font-medium text-neutral-600 dark:text-neutral-300">
+        <span className="flex items-center justify-center size-4 rounded bg-[var(--border)] text-[10px] font-medium text-[var(--card-foreground)]">
           {index + 1}
         </span>
         <span className="truncate max-w-[160px]">{source.title}</span>
@@ -86,8 +86,8 @@ function SourcePill({ source, index, onClick }: SourcePillProps): React.ReactEle
       {/* Hover preview */}
       {showPreview && source.snippet && (
         <div className="absolute bottom-full left-0 mb-2 z-50 w-60 pointer-events-none">
-          <div className="bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl shadow-lg p-2.5 text-left">
-            <p className="text-xs text-neutral-600 dark:text-neutral-300 line-clamp-3 leading-relaxed">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-lg p-2.5 text-left">
+            <p className="text-xs text-[var(--card-foreground)] line-clamp-3 leading-relaxed">
               {source.snippet.slice(0, 150)}
               {source.snippet.length > 150 ? "..." : ""}
             </p>

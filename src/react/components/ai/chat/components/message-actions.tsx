@@ -3,7 +3,7 @@ import { cn } from "../../theme.ts";
 import { CheckIcon, CopyIcon } from "../../icons/index.ts";
 
 const ACTION_BUTTON =
-  "inline-flex items-center justify-center size-7 text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-md transition-all";
+  "inline-flex items-center justify-center size-7 text-[var(--input-placeholder)] hover:text-[var(--foreground)] hover:bg-[var(--accent)] rounded-md transition-all";
 
 export interface MessageActionsProps {
   content: string;

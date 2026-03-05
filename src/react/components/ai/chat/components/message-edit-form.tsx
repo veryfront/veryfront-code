@@ -58,10 +58,10 @@ export function MessageEditForm({
         rows={1}
         className={cn(
           "w-full resize-none rounded-xl px-4 py-3 text-[15px] leading-relaxed",
-          "bg-neutral-50 dark:bg-neutral-900",
-          "border border-neutral-200 dark:border-neutral-700",
-          "focus:outline-none focus:border-neutral-400 dark:focus:border-neutral-500",
-          "text-neutral-900 dark:text-neutral-100",
+          "bg-[var(--accent)]",
+          "border border-[var(--border)]",
+          "focus:outline-none focus-visible:border-[var(--ring)]",
+          "text-[var(--foreground)]",
         )}
       />
       <div className="flex items-center gap-2 mt-2">
@@ -74,8 +74,8 @@ export function MessageEditForm({
           disabled={!content.trim()}
           className={cn(
             "px-3 py-1.5 text-xs font-medium rounded-lg transition-colors",
-            "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900",
-            "hover:bg-neutral-700 dark:hover:bg-neutral-200",
+            "bg-[var(--primary)] text-[var(--primary-foreground)]",
+            "hover:bg-[var(--primary)]/90",
             "disabled:opacity-40 disabled:cursor-not-allowed",
           )}
         >
@@ -84,7 +84,7 @@ export function MessageEditForm({
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1.5 text-xs font-medium rounded-lg text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+          className="px-3 py-1.5 text-xs font-medium rounded-lg text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors"
         >
           Cancel
         </button>

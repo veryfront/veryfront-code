@@ -11,7 +11,7 @@ import * as React from "react";
 import { ChatContainer } from "../../../../primitives/index.ts";
 import type { UIMessage } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
-import { cn, defaultChatTheme, mergeThemes } from "../../theme.ts";
+import { cn, defaultChatTheme, generateTokenCSS, mergeThemes } from "../../theme.ts";
 import type { ModelOption } from "../../model-selector.tsx";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
@@ -97,6 +97,7 @@ export const ChatRoot = React.forwardRef<HTMLDivElement, ChatRootProps>(
     ref,
   ) {
     const theme = React.useMemo(() => mergeThemes(defaultChatTheme, userTheme), [userTheme]);
+    const tokenCSS = React.useMemo(() => generateTokenCSS(), []);
     const [isAtBottom, _setIsAtBottom] = React.useState(true);
     const scrollAreaRef = React.useRef<HTMLDivElement>(null);
 
@@ -163,8 +164,10 @@ export const ChatRoot = React.forwardRef<HTMLDivElement, ChatRootProps>(
 
     return (
       <ChatContextProvider value={contextValue}>
+        <style dangerouslySetInnerHTML={{ __html: tokenCSS }} />
         <ChatContainer
           ref={ref}
+          data-vf-chat=""
           className={cn(theme.container, "relative", className)}
           style={{ maxHeight, ...style }}
           {...containerProps}

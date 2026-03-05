@@ -87,8 +87,8 @@ function ThreadItem({
       className={cn(
         "group/thread flex items-center gap-2.5 px-3 py-2.5 rounded-xl cursor-pointer transition-all",
         isActive
-          ? "bg-neutral-200/80 dark:bg-neutral-700/60 text-neutral-900 dark:text-neutral-100 shadow-sm"
-          : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-200",
+          ? "bg-[var(--accent)] text-[var(--tab-active-foreground)] shadow-sm"
+          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
       )}
       onClick={!editing ? onSelect : undefined}
       onDoubleClick={handleDoubleClick}
@@ -105,7 +105,7 @@ function ThreadItem({
               if (e.key === "Enter") commitRename();
               if (e.key === "Escape") setEditing(false);
             }}
-            className="flex-1 min-w-0 bg-transparent text-sm outline-none border-b border-neutral-300 dark:border-neutral-600"
+            className="flex-1 min-w-0 bg-transparent text-sm outline-none border-b border-[var(--input-border)]"
           />
         )
         : (
@@ -120,7 +120,7 @@ function ThreadItem({
             e.stopPropagation();
             onDelete();
           }}
-          className="shrink-0 opacity-0 group-hover/thread:opacity-100 p-0.5 text-neutral-400 hover:text-red-500 dark:text-neutral-500 dark:hover:text-red-400 transition-all rounded"
+          className="shrink-0 opacity-0 group-hover/thread:opacity-100 p-0.5 text-[var(--muted-foreground)] hover:text-[var(--destructive)] transition-all rounded"
           aria-label="Delete thread"
         >
           <TrashIcon className="size-3.5" />
@@ -150,16 +150,16 @@ export function ChatSidebar({
   return (
     <div
       className={cn(
-        "flex flex-col h-full bg-neutral-50/80 dark:bg-neutral-900/80 shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl",
+        "flex flex-col h-full bg-[var(--sidebar-background)] border-r border-[var(--sidebar-border)] shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl",
         className,
       )}
-      style={{ width: 260, borderRight: "1px solid #d4d4d4" }}
+      style={{ width: 260 }}
     >
       <div className="flex-1 overflow-y-auto px-2 pt-3 pb-3 space-y-4">
         {hasThreads
           ? Array.from(grouped.entries()).map(([label, items]) => (
             <div key={label}>
-              <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
+              <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--input-placeholder)]">
                 {label}
               </div>
               <div className="space-y-1">
@@ -179,7 +179,7 @@ export function ChatSidebar({
             </div>
           ))
           : (
-            <div className="flex flex-col items-center justify-center py-12 text-neutral-400 dark:text-neutral-500">
+            <div className="flex flex-col items-center justify-center py-12 text-[var(--input-placeholder)]">
               <MessageSquareIcon className="size-8 mb-3 opacity-40" />
               <p className="text-xs">No conversations yet</p>
             </div>

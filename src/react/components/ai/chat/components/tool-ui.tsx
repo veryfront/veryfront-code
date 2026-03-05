@@ -67,14 +67,14 @@ function formatJsonWithHighlight(obj: unknown): React.ReactNode {
   const highlighted = escaped
     .replace(
       /&quot;([^&]*)&quot;:/g,
-      '<span class="text-green-600 dark:text-green-400">&quot;$1&quot;</span>:',
+      '<span class="text-green-600">&quot;$1&quot;</span>:',
     )
     .replace(
       /: &quot;([^&]*)&quot;/g,
-      ': <span class="text-amber-600 dark:text-amber-400">&quot;$1&quot;</span>',
+      ': <span class="text-amber-600">&quot;$1&quot;</span>',
     )
-    .replace(/: (\d+)/g, ': <span class="text-blue-600 dark:text-blue-400">$1</span>')
-    .replace(/: (true|false)/g, ': <span class="text-purple-600 dark:text-purple-400">$1</span>');
+    .replace(/: (\d+)/g, ': <span class="text-blue-600">$1</span>')
+    .replace(/: (true|false)/g, ': <span class="text-purple-600">$1</span>');
 
   return (
     <pre
@@ -97,11 +97,11 @@ function renderOutputAsTable(output: unknown): React.ReactNode | null {
     <div className="overflow-x-auto">
       <table className="min-w-full text-sm">
         <thead>
-          <tr className="border-b border-neutral-200 dark:border-neutral-700">
+          <tr className="border-b border-[var(--border)]">
             {keys.map((key) => (
               <th
                 key={key}
-                className="px-4 py-2 text-left font-semibold text-neutral-900 dark:text-neutral-100"
+                className="px-4 py-2 text-left font-semibold text-[var(--foreground)]"
               >
                 {key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
               </th>
@@ -113,9 +113,9 @@ function renderOutputAsTable(output: unknown): React.ReactNode | null {
             const record = row as Record<string, unknown> | null;
 
             return (
-              <tr key={i} className="border-b border-neutral-100 dark:border-neutral-800">
+              <tr key={i} className="border-b border-[var(--border)]">
                 {keys.map((key) => (
-                  <td key={key} className="px-4 py-2 text-neutral-700 dark:text-neutral-300">
+                  <td key={key} className="px-4 py-2 text-[var(--card-foreground)]">
                     {String(record?.[key] ?? "")}
                   </td>
                 ))}

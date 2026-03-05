@@ -32,7 +32,7 @@ export const ReasoningCard = React.forwardRef<HTMLDivElement, ReasoningCardProps
             userToggledRef.current = true;
             setIsOpen((open) => !open);
           }}
-          className="flex w-full items-center gap-2 text-neutral-400 dark:text-neutral-500 text-sm transition-colors hover:text-neutral-600 dark:hover:text-neutral-300"
+          className="flex w-full items-center gap-2 text-[var(--input-placeholder)] text-sm transition-colors hover:text-[var(--foreground)]"
         >
           <BrainIcon className="size-4" />
           {label}
@@ -43,7 +43,7 @@ export const ReasoningCard = React.forwardRef<HTMLDivElement, ReasoningCardProps
 
         {isOpen
           ? (
-            <div className="mt-4 text-sm text-neutral-500 dark:text-neutral-400 border-l-2 border-neutral-200 dark:border-neutral-700 pl-4 ml-2">
+            <div className="mt-4 text-sm text-[var(--muted-foreground)] border-l-2 border-[var(--border)] pl-4 ml-2">
               <Markdown className="text-sm">{text}</Markdown>
             </div>
           )

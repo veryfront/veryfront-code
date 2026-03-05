@@ -23,7 +23,7 @@ export const MessageFeedback = React.forwardRef<HTMLDivElement, MessageFeedbackP
             BUTTON_BASE,
             feedback === "positive"
               ? "text-emerald-500 bg-emerald-500/10"
-              : "text-neutral-400 hover:text-emerald-500 dark:text-neutral-500 dark:hover:text-emerald-400 hover:bg-neutral-100 dark:hover:bg-neutral-800",
+              : "text-[var(--input-placeholder)] hover:text-emerald-500 hover:bg-[var(--accent)]",
           )}
           title="Helpful"
         >
@@ -47,7 +47,7 @@ export const MessageFeedback = React.forwardRef<HTMLDivElement, MessageFeedbackP
             BUTTON_BASE,
             feedback === "negative"
               ? "text-red-500 bg-red-500/10"
-              : "text-neutral-400 hover:text-red-500 dark:text-neutral-500 dark:hover:text-red-400 hover:bg-neutral-100 dark:hover:bg-neutral-800",
+              : "text-[var(--input-placeholder)] hover:text-[var(--destructive)] hover:bg-[var(--accent)]",
           )}
           title="Not helpful"
         >

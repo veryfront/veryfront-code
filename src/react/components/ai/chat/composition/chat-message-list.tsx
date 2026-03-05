@@ -158,7 +158,7 @@ export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListP
               <ModelAvatar model={model} />
               {browserStatus === "downloading-model" || browserStatus === "loading-runtime"
                 ? (
-                  <div className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400 py-2.5">
+                  <div className="flex items-center gap-2 text-xs text-[var(--muted-foreground)] py-2.5">
                     <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
                     <span>
                       {browserStatus === "downloading-model"

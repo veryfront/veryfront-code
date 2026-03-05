@@ -91,7 +91,7 @@ function MermaidDiagram({ code }: { code: string }): React.ReactElement {
 
   if (!isBrowserEnvironment()) {
     return (
-      <pre className="my-4 p-4 bg-neutral-100 dark:bg-neutral-800 rounded-lg overflow-auto">
+      <pre className="my-4 p-4 bg-[var(--accent)] rounded-lg overflow-auto">
         <code>{code}</code>
       </pre>
     );
@@ -99,7 +99,7 @@ function MermaidDiagram({ code }: { code: string }): React.ReactElement {
 
   if (error) {
     return (
-      <div className="my-4 p-4 bg-red-50 dark:bg-red-900/20 rounded-lg text-red-600 dark:text-red-400 text-sm">
+      <div className="my-4 p-4 bg-red-50 rounded-lg text-red-600 text-sm">
         <p className="font-medium">Mermaid Error</p>
         <p>{error}</p>
         <pre className="mt-2 text-xs overflow-auto">{code}</pre>
@@ -109,8 +109,8 @@ function MermaidDiagram({ code }: { code: string }): React.ReactElement {
 
   if (!svg) {
     return (
-      <div className="my-4 p-4 bg-neutral-100 dark:bg-neutral-800 rounded-lg animate-pulse">
-        <div className="h-32 flex items-center justify-center text-neutral-400">
+      <div className="my-4 p-4 bg-[var(--accent)] rounded-lg animate-pulse">
+        <div className="h-32 flex items-center justify-center text-[var(--muted-foreground)]">
           Loading diagram...
         </div>
       </div>
@@ -141,7 +141,7 @@ function CodeBlock({
 
   if (inline) {
     return (
-      <code className="bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-sm font-mono">
+      <code className="bg-[var(--accent)] px-1.5 py-0.5 rounded text-sm font-mono">
         {code}
       </code>
     );
@@ -159,7 +159,7 @@ function FallbackMarkdown({
   className,
 }: Pick<MarkdownProps, "children" | "className">): React.ReactElement {
   return (
-    <div className={cn("prose prose-sm dark:prose-invert max-w-none", className)}>
+    <div className={cn("prose prose-sm max-w-none", className)}>
       <p className="whitespace-pre-wrap">{children}</p>
     </div>
   );
@@ -205,7 +205,7 @@ export function Markdown({
   }
 
   return (
-    <div className={cn("prose prose-sm dark:prose-invert max-w-none", className)}>
+    <div className={cn("prose prose-sm max-w-none", className)}>
       <ReactMarkdown
         remarkPlugins={remarkGfm ? [remarkGfm] : []}
         rehypePlugins={rehypeHighlight ? [rehypeHighlight] : []}
@@ -232,7 +232,7 @@ export function Markdown({
           table(props: any) {
             return (
               <div className="my-4 overflow-auto">
-                <table className="min-w-full divide-y divide-neutral-200 dark:divide-neutral-700">
+                <table className="min-w-full divide-y divide-[var(--border)]">
                   {props.children}
                 </table>
               </div>
@@ -243,7 +243,7 @@ export function Markdown({
             return (
               <a
                 href={props.href}
-                className="text-blue-600 dark:text-blue-400 hover:underline"
+                className="text-blue-600 hover:underline"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -254,7 +254,7 @@ export function Markdown({
           // deno-lint-ignore no-explicit-any
           blockquote(props: any) {
             return (
-              <blockquote className="border-l-4 border-neutral-300 dark:border-neutral-600 pl-4 my-4 text-neutral-600 dark:text-neutral-400 italic">
+              <blockquote className="border-l-4 border-[var(--border)] pl-4 my-4 text-[var(--card-foreground)] italic">
                 {props.children}
               </blockquote>
             );

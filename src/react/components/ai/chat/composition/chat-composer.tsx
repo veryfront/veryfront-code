@@ -80,7 +80,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
     return (
       <div
         ref={ref}
-        className={cn("flex-shrink-0 bg-white dark:bg-neutral-950 pb-6 pt-2", className)}
+        className={cn("flex-shrink-0 bg-[var(--card)] pb-6 pt-2", className)}
       >
         {children}
         <form
@@ -100,7 +100,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
               />
             </div>
           )}
-          <div className="rounded-2xl border border-neutral-200/80 dark:border-neutral-700/80 bg-white dark:bg-neutral-900 focus-within:border-neutral-300 dark:focus-within:border-neutral-600 focus-within:shadow-md transition-all shadow-sm">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--card)] focus-within:border-[var(--input-border)] focus-within:shadow-md transition-all shadow-sm">
             {attachments && attachments.length > 0 && (
               <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
                 {attachments.map((file) => (
@@ -140,7 +140,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="size-8 flex items-center justify-center rounded-full text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-neutral-200/60 dark:hover:bg-neutral-700/60 transition-colors shrink-0"
+                    className="size-8 flex items-center justify-center rounded-full text-[var(--input-placeholder)] hover:text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors shrink-0"
                     aria-label="Attach file"
                   >
                     <PaperclipIcon className="size-[18px]" />
@@ -159,7 +159,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                 <button
                   type="button"
                   onClick={() => downloadMarkdown(messages)}
-                  className="size-8 flex items-center justify-center rounded-full text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-neutral-200/60 dark:hover:bg-neutral-700/60 transition-colors shrink-0"
+                  className="size-8 flex items-center justify-center rounded-full text-[var(--input-placeholder)] hover:text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors shrink-0"
                   aria-label="Export conversation"
                   title="Export as Markdown"
                 >

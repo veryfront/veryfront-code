@@ -17,14 +17,14 @@ export function BranchPicker({
   if (total <= 1) return null;
 
   return (
-    <div className="inline-flex items-center gap-1 text-xs text-neutral-400 dark:text-neutral-500">
+    <div className="inline-flex items-center gap-1 text-xs text-[var(--input-placeholder)]">
       <button
         type="button"
         onClick={onPrev}
         disabled={current <= 1}
         className={cn(
           "size-5 flex items-center justify-center rounded transition-colors",
-          "hover:bg-neutral-100 dark:hover:bg-neutral-800",
+          "hover:bg-[var(--accent)]",
           "disabled:opacity-30 disabled:cursor-not-allowed",
         )}
         aria-label="Previous variant"
@@ -48,7 +48,7 @@ export function BranchPicker({
         disabled={current >= total}
         className={cn(
           "size-5 flex items-center justify-center rounded transition-colors",
-          "hover:bg-neutral-100 dark:hover:bg-neutral-800",
+          "hover:bg-[var(--accent)]",
           "disabled:opacity-30 disabled:cursor-not-allowed",
         )}
         aria-label="Next variant"

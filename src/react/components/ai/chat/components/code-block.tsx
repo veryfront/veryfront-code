@@ -32,7 +32,7 @@ export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
       return (
         <code
           className={cn(
-            "bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-sm font-mono",
+            "bg-[var(--accent)] px-1.5 py-0.5 rounded text-sm font-mono",
             className,
           )}
         >
@@ -45,16 +45,16 @@ export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
       <div
         ref={ref}
         className={cn(
-          "my-4 rounded-xl overflow-hidden border border-neutral-200 dark:border-neutral-800",
+          "my-4 rounded-xl overflow-hidden border border-[var(--border)]",
           className,
         )}
       >
-        <div className="flex items-center justify-between px-4 py-2 bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 text-xs">
+        <div className="flex items-center justify-between px-4 py-2 bg-[var(--accent)] text-[var(--muted-foreground)] text-xs">
           <span className="font-mono font-medium">{language || "text"}</span>
           <button
             type="button"
             onClick={handleCopy}
-            className="inline-flex items-center gap-1.5 text-neutral-400 dark:text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors"
+            className="inline-flex items-center gap-1.5 text-[var(--input-placeholder)] hover:text-[var(--foreground)] transition-colors"
           >
             {copied
               ? (
@@ -71,7 +71,7 @@ export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
               )}
           </button>
         </div>
-        <pre className="p-4 bg-neutral-50 dark:bg-neutral-900 overflow-auto text-sm">
+        <pre className="p-4 bg-[var(--accent)] overflow-auto text-sm">
         <code className={language ? `language-${language} hljs` : "hljs"}>{code}</code>
         </pre>
       </div>

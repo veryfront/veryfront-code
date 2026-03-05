@@ -24,7 +24,7 @@ export function TabSwitcher({
       <div
         role="tablist"
         aria-label="Chat view"
-        className="inline-flex rounded-full border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800/60 p-0.5"
+        className="inline-flex rounded-full border border-[var(--border)] bg-[var(--tab-background)] p-0.5"
       >
         {TABS.map((tab) => (
           <button
@@ -44,8 +44,8 @@ export function TabSwitcher({
             className={cn(
               "px-5 py-1.5 text-sm font-medium rounded-full transition-all",
               activeTab === tab.value
-                ? "bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 shadow-sm"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300",
+                ? "bg-[var(--tab-active-background)] text-[var(--tab-active-foreground)] shadow-sm"
+                : "text-[var(--tab-foreground)] hover:text-[var(--foreground)]",
             )}
           >
             {tab.label}

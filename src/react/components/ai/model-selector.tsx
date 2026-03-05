@@ -174,21 +174,21 @@ export function ModelSelector({
         className={cn(
           "w-full text-left px-3 py-2 text-sm transition-colors rounded-lg cursor-pointer",
           isActive
-            ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100"
-            : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100",
-          isFocused && !isActive && "bg-neutral-50 dark:bg-neutral-800/50",
+            ? "bg-[var(--accent)] text-[var(--foreground)]"
+            : "text-[var(--card-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+          isFocused && !isActive && "bg-[var(--accent)]",
         )}
       >
         <div className="flex items-center gap-2">
           <span className="font-medium">{model.label}</span>
           {model.badge && (
-            <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
+            <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-[var(--accent)] text-[var(--foreground)]">
               {model.badge}
             </span>
           )}
         </div>
         {model.description && (
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+          <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
             {model.description}
           </p>
         )}
@@ -201,9 +201,9 @@ export function ModelSelector({
   const dropdownContent = groups
     ? Array.from(groups.entries()).map(([provider, items], groupIndex) => (
       <div key={provider || "__ungrouped"} role="group" aria-label={provider || undefined}>
-        {groupIndex > 0 && <div className="h-px bg-neutral-100 dark:bg-neutral-800 my-1" />}
+        {groupIndex > 0 && <div className="h-px bg-[var(--border)] my-1" />}
         {provider && (
-          <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
+          <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--input-placeholder)]">
             {provider}
           </div>
         )}
@@ -226,11 +226,11 @@ export function ModelSelector({
         aria-controls={open ? listboxId : undefined}
         className={cn(
           "inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full",
-          "border border-neutral-200 dark:border-neutral-700",
-          "bg-white dark:bg-neutral-800",
-          "text-neutral-600 dark:text-neutral-400",
-          "hover:bg-neutral-50 dark:hover:bg-neutral-750 hover:text-neutral-800 dark:hover:text-neutral-200",
-          "focus:outline-none focus:ring-2 focus:ring-neutral-200 dark:focus:ring-neutral-700",
+          "border border-[var(--border)]",
+          "bg-[var(--card)]",
+          "text-[var(--card-foreground)]",
+          "hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
           "transition-all disabled:opacity-50 disabled:cursor-not-allowed",
         )}
       >
@@ -244,7 +244,7 @@ export function ModelSelector({
           id={listboxId}
           role="listbox"
           aria-label="Select model"
-          className="min-w-[220px] max-h-[320px] overflow-auto rounded-xl border border-neutral-200/80 dark:border-neutral-700/80 bg-white dark:bg-neutral-900 shadow-xl p-1"
+          className="min-w-[220px] max-h-[320px] overflow-auto rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-xl p-1"
           style={{
             position: "fixed",
             top: pos.top,

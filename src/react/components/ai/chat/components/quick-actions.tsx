@@ -46,8 +46,7 @@ export function QuickActions({
 }: QuickActionsProps): React.ReactElement {
   return (
     <div
-      className={cn("w-full max-w-2xl mx-auto px-4", className)}
-      style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.75rem" }}
+      className={cn("w-full max-w-2xl mx-auto px-4 grid grid-cols-3 gap-3", className)}
     >
       {actions.map((action) => {
         const icon = action.icon ?? defaultIconMap[action.id];
@@ -56,15 +55,14 @@ export function QuickActions({
             key={action.id}
             type="button"
             onClick={() => onActionClick?.(action)}
-            className="flex flex-col items-center justify-center rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 p-4 text-center transition-all hover:bg-neutral-50 dark:hover:bg-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-600 hover:shadow-sm"
-            style={{ minHeight: 88 }}
+            className="flex flex-col items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 text-center transition-all hover:bg-[var(--accent)] hover:border-[var(--input-border)] hover:shadow-sm min-h-[88px]"
           >
             {icon && (
-              <span className="flex items-center justify-center size-8 rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 mb-2">
+              <span className="flex items-center justify-center size-8 rounded-lg bg-[var(--accent)] text-[var(--muted-foreground)] mb-2">
                 {icon}
               </span>
             )}
-            <span className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+            <span className="text-sm font-medium text-[var(--card-foreground)]">
               {action.label}
             </span>
           </button>

@@ -20,13 +20,13 @@ export function Suggestion({
       type="button"
       onClick={() => onClick?.(suggestion)}
       className={cn(
-        "group flex items-center gap-2 rounded-full border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2.5 text-left text-sm text-neutral-600 dark:text-neutral-400 transition-all hover:bg-neutral-50 dark:hover:bg-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-600 hover:text-neutral-900 dark:hover:text-neutral-100 hover:shadow-sm",
+        "group flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)] px-4 py-2.5 text-left text-sm text-[var(--card-foreground)] transition-all hover:bg-[var(--accent)] hover:border-[var(--input-border)] hover:text-[var(--foreground)] hover:shadow-sm",
         className,
       )}
     >
       {icon
         ? (
-          <span className="shrink-0 text-neutral-400 transition-colors group-hover:text-neutral-600 dark:group-hover:text-neutral-300">
+          <span className="shrink-0 text-[var(--input-placeholder)] transition-colors group-hover:text-[var(--foreground)]">
             {icon}
           </span>
         )
@@ -73,17 +73,17 @@ export function ConversationEmptyState({
     <div className={cn("flex flex-col items-center justify-center text-center", className)}>
       {icon
         ? (
-          <div className="mb-6 flex items-center justify-center size-14 rounded-2xl bg-neutral-100 dark:bg-neutral-800/80 text-neutral-400 dark:text-neutral-500">
+          <div className="mb-6 flex items-center justify-center size-14 rounded-2xl bg-[var(--accent)] text-[var(--muted-foreground)]">
             {icon}
           </div>
         )
         : null}
-      <h1 className="text-3xl font-semibold text-neutral-800 dark:text-neutral-200 tracking-tight">
+      <h1 className="text-3xl font-semibold text-[var(--foreground)] tracking-tight">
         {title}
       </h1>
       {description
         ? (
-          <p className="mt-3 max-w-md text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed">
+          <p className="mt-3 max-w-md text-sm text-[var(--muted-foreground)] leading-relaxed">
             {description}
           </p>
         )
