@@ -43,18 +43,27 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
     const sidebarOpen = isControlled ? controlledOpen : internalOpen;
     const toggleSidebar = isControlled ? controlledToggle! : () => setInternalOpen((prev) => !prev);
 
-    // Sync current messages to active thread on change
+    // Keep refs in sync so callbacks always read current values
     const activeId = threadsHook.activeThreadId;
+    const activeIdRef = React.useRef(activeId);
+    activeIdRef.current = activeId;
+    const messagesRef = React.useRef(messages);
+    messagesRef.current = messages;
+    const threadsHookRef = React.useRef(threadsHook);
+    threadsHookRef.current = threadsHook;
+
+    // Sync current messages to active thread on change
     const prevMessagesRef = React.useRef(messages);
     React.useEffect(() => {
-      if (!activeId || messages === prevMessagesRef.current) return;
+      const currentActiveId = activeIdRef.current;
+      if (!currentActiveId || messages === prevMessagesRef.current) return;
       prevMessagesRef.current = messages;
 
       if (messages.length > 0) {
-        threadsHook.updateThread(activeId, { messages });
+        threadsHookRef.current.updateThread(currentActiveId, { messages });
 
         // Auto-title from first user message
-        const activeThread = threadsHook.threads.find((t) => t.id === activeId);
+        const activeThread = threadsHookRef.current.threads.find((t) => t.id === currentActiveId);
         if (activeThread?.title === "New Chat") {
           const firstUserMsg = messages.find((m) => m.role === "user");
           if (firstUserMsg) {
@@ -64,7 +73,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
               .join("")
               .trim();
             if (text) {
-              threadsHook.renameThread(activeId, text.slice(0, 30));
+              threadsHookRef.current.renameThread(currentActiveId, text.slice(0, 30));
             }
           }
         }
@@ -74,25 +83,27 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
 
     const handleSelectThread = React.useCallback(
       (id: string) => {
-        if (activeId && messages.length > 0) {
-          threadsHook.updateThread(activeId, { messages });
+        const currentActiveId = activeIdRef.current;
+        if (currentActiveId && messagesRef.current.length > 0) {
+          threadsHookRef.current.updateThread(currentActiveId, { messages: messagesRef.current });
         }
-        threadsHook.selectThread(id);
-        const thread = threadsHook.threads.find((t) => t.id === id);
+        threadsHookRef.current.selectThread(id);
+        const thread = threadsHookRef.current.threads.find((t) => t.id === id);
         if (thread && setMessages) {
           setMessages(thread.messages);
         }
       },
-      [activeId, messages, threadsHook, setMessages],
+      [setMessages],
     );
 
     const handleNewThread = React.useCallback(() => {
-      if (activeId && messages.length > 0) {
-        threadsHook.updateThread(activeId, { messages });
+      const currentActiveId = activeIdRef.current;
+      if (currentActiveId && messagesRef.current.length > 0) {
+        threadsHookRef.current.updateThread(currentActiveId, { messages: messagesRef.current });
       }
-      threadsHook.createThread();
+      threadsHookRef.current.createThread();
       if (setMessages) setMessages([]);
-    }, [activeId, messages, threadsHook, setMessages]);
+    }, [setMessages]);
 
     if (!showSidebar) {
       return (
@@ -116,8 +127,8 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
             onSelectThread={handleSelectThread}
             onNewThread={handleNewThread}
             onDeleteThread={(id) => {
-              threadsHook.deleteThread(id);
-              const next = threadsHook.threads.find((t) => t.id !== id);
+              threadsHookRef.current.deleteThread(id);
+              const next = threadsHookRef.current.threads.find((t) => t.id !== id);
               if (next && setMessages) setMessages(next.messages);
             }}
             onRenameThread={threadsHook.renameThread}

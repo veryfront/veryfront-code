@@ -237,7 +237,8 @@ function computeBM25(
 
   const N = candidates.length;
   const docTokens = candidates.map((e) => tokenize(e.text));
-  const avgDl = docTokens.reduce((sum, t) => sum + t.length, 0) / N;
+  const totalTokens = docTokens.reduce((sum, t) => sum + t.length, 0);
+  const avgDl = totalTokens === 0 ? 1 : totalTokens / N;
 
   // Document frequency per query term
   const df = new Map<string, number>();

@@ -46,12 +46,17 @@ export async function handleStreamingResponse(
   const getBuildParts = (): UIMessagePart[] =>
     buildCurrentParts(state.textBlocks, state.reasoningBlocks, state.toolCalls, state.steps);
 
+  let buffer = "";
+
   while (true) {
     const { done, value } = await reader.read();
-    if (done) return;
+    if (done) break;
 
-    const chunk = decoder.decode(value, { stream: true });
-    for (const line of chunk.split("\n")) {
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? ""; // last element may be incomplete
+
+    for (const line of lines) {
       if (!line.startsWith("data: ") || !line.trim()) continue;
 
       const data = line.slice(6);
@@ -61,6 +66,16 @@ export async function handleStreamingResponse(
       } catch {
         // Skip invalid JSON
       }
+    }
+  }
+
+  // Process any remaining buffered data
+  if (buffer.startsWith("data: ") && buffer.trim()) {
+    try {
+      const parsed = JSON.parse(buffer.slice(6)) as Record<string, unknown>;
+      processEvent(parsed, state, callbacks, getBuildParts);
+    } catch {
+      // Skip invalid JSON
     }
   }
 }

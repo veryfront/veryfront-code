@@ -11,7 +11,7 @@
  * - browser: Server can't run ONNX (compiled binary), falls back to browser Worker
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 import { handleStreamingResponse } from "./streaming/index.ts";
@@ -66,6 +66,13 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
   // Track pending tool outputs for addToolOutput
   const pendingToolOutputsRef = useRef<Map<string, ToolOutput>>(new Map());
+
+  // Abort in-flight request on unmount
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   /**
    * Add tool output to pending tool-call parts.
@@ -169,19 +176,24 @@ export function useChat(options: UseChatOptions): UseChatResult {
    * Send a message and stream assistant updates.
    */
   const sendMessage = useCallback(
-    async (message: { text: string }) => {
+    async (message: { text: string; baseMessages?: UIMessage[] }) => {
+      // Abort any in-flight request before starting a new one
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+
       const userMessage: UIMessage = {
         id: generateClientId("msg"),
         role: "user",
         parts: [{ type: "text", text: message.text }],
       };
 
-      setMessages((prev) => [...prev, userMessage]);
+      const base = message.baseMessages ?? messagesRef.current;
+      setMessages([...base, userMessage]);
       setIsLoading(true);
       setError(null);
 
       try {
-        const allMessages = [...messagesRef.current, userMessage];
+        const allMessages = [...base, userMessage];
 
         // If already in browser mode, skip fetch entirely
         if (inferenceMode === "browser") {
@@ -328,8 +340,8 @@ export function useChat(options: UseChatOptions): UseChatResult {
     const textPart = lastUserMessage?.parts.find((p) => p.type === "text");
     if (!textPart || !("text" in textPart)) return;
 
-    setMessages(currentMessages.slice(0, lastUserIndex));
-    await sendMessage({ text: textPart.text });
+    const base = currentMessages.slice(0, lastUserIndex);
+    await sendMessage({ text: textPart.text, baseMessages: base });
   }, [sendMessage]);
 
   /**
@@ -394,8 +406,8 @@ export function useChat(options: UseChatOptions): UseChatResult {
       }
 
       // Truncate messages before the edited message and resubmit
-      setMessages(current.slice(0, idx));
-      await sendMessage({ text: newText });
+      const base = current.slice(0, idx);
+      await sendMessage({ text: newText, baseMessages: base });
 
       // Update the placeholder branch with actual messages
       const state = branchMapRef.current.get(messageId);
@@ -463,7 +475,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
       if (!text) return;
 
       setInput("");
-      await sendMessage({ text: input });
+      await sendMessage({ text });
     },
     [input, isLoading, sendMessage],
   );
