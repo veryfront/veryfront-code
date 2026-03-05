@@ -49,6 +49,7 @@ export function QuickActions({
       className={cn("flex items-center gap-1.5", className)}
     >
       {actions.map((action) => {
+        const icon = action.icon ?? defaultIconMap[action.id];
         return (
           <button
             key={action.id}
@@ -56,6 +57,7 @@ export function QuickActions({
             onClick={() => onActionClick?.(action)}
             className="inline-flex items-center gap-1 rounded-full bg-[var(--muted)] px-4 py-2 text-sm font-medium text-[var(--foreground)] transition-all hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
           >
+            {icon ? <span className="shrink-0">{icon}</span> : null}
             {action.label}
           </button>
         );
