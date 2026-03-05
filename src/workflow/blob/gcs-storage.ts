@@ -3,6 +3,31 @@ import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 
 const logger = baseLogger.component("gcs-blob-storage");
 
+function base64url(str: string): string {
+  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64urlFromBytes(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function importPKCS8Key(pem: string): Promise<CryptoKey> {
+  const pemBody = pem
+    .replace(/-----BEGIN PRIVATE KEY-----/, "")
+    .replace(/-----END PRIVATE KEY-----/, "")
+    .replace(/\s/g, "");
+  const binaryDer = Uint8Array.from(atob(pemBody), (c) => c.charCodeAt(0));
+  return crypto.subtle.importKey(
+    "pkcs8",
+    binaryDer,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+}
+
 export interface GCSBlobStorageConfig {
   /** Google Cloud Project ID */
   projectId: string;
@@ -25,10 +50,21 @@ export class GCSBlobStorage implements BlobStorage {
   constructor(config: GCSBlobStorageConfig) {
     this.config = config;
 
+    let sa: Record<string, unknown>;
     try {
-      JSON.parse(this.config.serviceAccountKey);
+      sa = JSON.parse(this.config.serviceAccountKey);
     } catch {
       throw new Error("GCSBlobStorage: serviceAccountKey must be a valid JSON string.");
+    }
+
+    if (typeof sa.private_key !== "string" || !sa.private_key.includes("BEGIN PRIVATE KEY")) {
+      throw new Error(
+        "GCSBlobStorage: serviceAccountKey must contain a valid private_key field (PKCS8 PEM).",
+      );
+    }
+
+    if (typeof sa.client_email !== "string" || !sa.client_email) {
+      throw new Error("GCSBlobStorage: serviceAccountKey must contain a valid client_email field.");
     }
   }
 
@@ -49,8 +85,8 @@ export class GCSBlobStorage implements BlobStorage {
     const iat = Math.floor(now / 1000);
     const exp = iat + 3600;
 
-    const jwtHeader = btoa(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-    const jwtClaimSet = btoa(
+    const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+    const claims = base64url(
       JSON.stringify({
         iss: sa.client_email,
         scope,
@@ -60,12 +96,15 @@ export class GCSBlobStorage implements BlobStorage {
       }),
     );
 
-    logger.warn(
-      "[GCSBlobStorage] JWT signing requires djwt library - using placeholder (not for production)",
+    const signingInput = `${header}.${claims}`;
+    const privateKey = await importPKCS8Key(sa.private_key);
+    const signatureBytes = await crypto.subtle.sign(
+      "RSASSA-PKCS1-v1_5",
+      privateKey,
+      new TextEncoder().encode(signingInput),
     );
-
-    const signature = "PLACEHOLDER_SIGNATURE";
-    const jwt = `${jwtHeader}.${jwtClaimSet}.${signature}`;
+    const signature = base64urlFromBytes(new Uint8Array(signatureBytes));
+    const jwt = `${signingInput}.${signature}`;
 
     const response = await fetch(tokenEndpoint, {
       method: "POST",
