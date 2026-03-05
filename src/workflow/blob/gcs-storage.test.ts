@@ -18,8 +18,9 @@ async function generateTestServiceAccountKey(): Promise<string> {
   const privateKeyBase64 = btoa(
     String.fromCharCode(...new Uint8Array(privateKeyDer)),
   );
-  const pem =
-    `-----BEGIN PRIVATE KEY-----\n${privateKeyBase64.match(/.{1,64}/g)!.join("\n")}\n-----END PRIVATE KEY-----`;
+  const pem = `-----BEGIN PRIVATE KEY-----\n${
+    privateKeyBase64.match(/.{1,64}/g)!.join("\n")
+  }\n-----END PRIVATE KEY-----`;
 
   return JSON.stringify({
     type: "service_account",
@@ -94,8 +95,9 @@ Deno.test("GCSBlobStorage signs JWT with RS256 using Web Crypto", async () => {
 
   const privateKeyDer = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
   const privateKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(privateKeyDer)));
-  const pem =
-    `-----BEGIN PRIVATE KEY-----\n${privateKeyBase64.match(/.{1,64}/g)!.join("\n")}\n-----END PRIVATE KEY-----`;
+  const pem = `-----BEGIN PRIVATE KEY-----\n${
+    privateKeyBase64.match(/.{1,64}/g)!.join("\n")
+  }\n-----END PRIVATE KEY-----`;
 
   const saKey = JSON.stringify({
     type: "service_account",
@@ -131,11 +133,7 @@ Deno.test("GCSBlobStorage signs JWT with RS256 using Web Crypto", async () => {
     // Trigger getAccessToken by calling put (which calls getAccessToken internally)
     // Use a mock that returns after token fetch
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.href
-        : input.url;
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url === "https://oauth2.googleapis.com/token") {
         const body = new URLSearchParams(init?.body as string);
         capturedJwt = body.get("assertion") ?? "";
