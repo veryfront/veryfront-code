@@ -39,6 +39,29 @@ interface BranchState {
   baseMessages: UIMessage[];
 }
 
+export function isLatestRequest(activeRequestId: number, requestId: number): boolean {
+  return activeRequestId === requestId;
+}
+
+export function resolveBranchKey(
+  messageId: string,
+  branchMap: Map<string, BranchState>,
+  branchKeyByMessageId: Map<string, string>,
+): string | undefined {
+  return branchKeyByMessageId.get(messageId) ??
+    (branchMap.has(messageId) ? messageId : undefined);
+}
+
+export function findBranchUserMessageIndex(
+  messages: UIMessage[],
+  branchKey: string,
+  branchKeyByMessageId: Map<string, string>,
+): number {
+  return messages.findIndex((m) =>
+    m.role === "user" && branchKeyByMessageId.get(m.id) === branchKey
+  );
+}
+
 /**
  * useChat hook for managing chat state with veryfront stream events.
  */
@@ -324,7 +347,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
         options.onError?.(nextError);
       } finally {
         // Only the latest request can clear loading/abort state.
-        if (requestIdRef.current === requestId) {
+        if (isLatestRequest(requestIdRef.current, requestId)) {
           setIsLoading(false);
           abortControllerRef.current = null;
         }
@@ -440,8 +463,11 @@ export function useChat(options: UseChatOptions): UseChatResult {
    * Get branch info for a message.
    */
   const getBranches = useCallback((messageId: string): BranchInfo => {
-    const branchKey = branchKeyByMessageIdRef.current.get(messageId) ??
-      (branchMapRef.current.has(messageId) ? messageId : undefined);
+    const branchKey = resolveBranchKey(
+      messageId,
+      branchMapRef.current,
+      branchKeyByMessageIdRef.current,
+    );
     if (!branchKey) return { current: 1, total: 1 };
 
     const state = branchMapRef.current.get(branchKey);
@@ -454,8 +480,11 @@ export function useChat(options: UseChatOptions): UseChatResult {
    * branchIndex is 0-based.
    */
   const switchBranch = useCallback((messageId: string, branchIndex: number) => {
-    const branchKey = branchKeyByMessageIdRef.current.get(messageId) ??
-      (branchMapRef.current.has(messageId) ? messageId : undefined);
+    const branchKey = resolveBranchKey(
+      messageId,
+      branchMapRef.current,
+      branchKeyByMessageIdRef.current,
+    );
     if (!branchKey) return;
 
     const state = branchMapRef.current.get(branchKey);
@@ -463,8 +492,10 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
     // Save currently visible tail before switching away.
     const current = messagesRef.current;
-    const idx = current.findIndex((m) =>
-      m.role === "user" && branchKeyByMessageIdRef.current.get(m.id) === branchKey
+    const idx = findBranchUserMessageIndex(
+      current,
+      branchKey,
+      branchKeyByMessageIdRef.current,
     );
     if (idx !== -1) {
       state.branches[state.currentIndex] = { messages: current.slice(idx) };

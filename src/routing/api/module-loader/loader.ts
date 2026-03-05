@@ -150,7 +150,7 @@ function resolveExportEntry(entry: unknown): string | undefined {
   return undefined;
 }
 
-function toCjsDestructureBindings(bindings: string): string {
+export function toCjsDestructureBindings(bindings: string): string {
   const inner = bindings.trim().replace(/^\{\s*/, "").replace(/\s*\}$/, "");
   if (!inner) return "{}";
 

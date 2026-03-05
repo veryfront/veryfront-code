@@ -1,7 +1,7 @@
 import { assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
-import { loadHandlerModule } from "./loader.ts";
+import { loadHandlerModule, toCjsDestructureBindings } from "./loader.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
@@ -244,5 +244,20 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     });
 
     assertEquals(typeof route?.GET, "function");
+  });
+
+  it("converts aliased named imports to valid CJS destructuring", () => {
+    assertEquals(
+      toCjsDestructureBindings("{ parse as parsePdf, version }"),
+      "{ parse: parsePdf, version }",
+    );
+    assertEquals(
+      toCjsDestructureBindings("{ default as foo, bar as baz }"),
+      "{ default: foo, bar: baz }",
+    );
+    assertEquals(
+      toCjsDestructureBindings("{ foo, bar }"),
+      "{ foo, bar }",
+    );
   });
 });
