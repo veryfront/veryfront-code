@@ -287,10 +287,10 @@ async function runRelease() {
 	// 2.6 Update templates
 	await updateTemplates(newVersion);
 
-	// 3. Build npm package (for local verification only, CI will rebuild)
+	// 3. Verify distributable artifacts locally (CI will rebuild on publish)
 	if (!args["no-build"]) {
-		console.log("\n📦 Building npm package...");
-		await runCommand(["deno", "task", "build:npm"]);
+		console.log("\n📦 Verifying distribution artifacts (binary + npm package)...");
+		await runCommand(["deno", "task", "verify:dist"]);
 	}
 
 	// 4. Git commit, tag, and push (CI will handle npm publish + binary upload)

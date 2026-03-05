@@ -37,11 +37,11 @@ const candidatesPath = join(
 );
 
 console.log("[prebundle-client-scripts] Bundling client router...");
-const routerBundle = await generateClientModule();
+const routerBundle = await generateClientModule({ forceSourceBundle: true });
 
 console.log("[prebundle-client-scripts] Bundling client prefetch...");
 // deno-lint-ignore no-explicit-any
-const prefetchBundle = await generatePrefetchScript(null as any);
+const prefetchBundle = await generatePrefetchScript(null as any, { forceSourceBundle: true });
 
 const output = `/**
  * Embedded templates for production builds
