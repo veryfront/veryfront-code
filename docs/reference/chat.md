@@ -48,7 +48,7 @@ import {
   DropZoneOverlay,
   TabSwitcher,
   QuickActions,
-  DocsPanel,
+  UploadsPanel,
   ChatSidebar,
   ModelSelector,
   ChatWithSidebar,
@@ -114,11 +114,11 @@ Full-featured chat UI. Composes `ChatRoot`, `ChatMessageList`, `ChatComposer`, `
 | `getBranches` | `(messageId) => BranchInfo` | — | Get branch info. |
 | `switchBranch` | `(messageId, index) => void` | — | Switch branch. |
 | `showSteps` | `boolean` | `false` | Show step indicators. |
-| `showTabs` | `boolean` | `false` | Show Chat/Docs tabs. |
+| `showTabs` | `boolean` | `false` | Show Chat/Uploads tabs. |
 | `activeTab` | `ChatTab` | — | Controlled tab. |
 | `onTabChange` | `(tab: ChatTab) => void` | — | Tab change handler. |
-| `documents` | `DocFile[]` | — | Docs tab content. |
-| `onRemoveDocument` | `(id: string) => void` | — | Remove document. |
+| `uploads` | `UploadedFile[]` | — | Uploads tab content. |
+| `onRemoveUpload` | `(id: string) => void` | — | Remove upload. |
 | `quickActions` | `QuickAction[]` | — | Quick action cards. |
 | `onQuickAction` | `(action) => void` | — | Quick action handler. |
 | `enableVoice` | `boolean` | `false` | Enable voice input. |
@@ -370,9 +370,9 @@ Input area state. Provided by Composer components.
 | `UpgradeCTA` | Upgrade prompt for local mode. |
 | `AttachmentPill` | File attachment chip. |
 | `DropZoneOverlay` | Drag-and-drop overlay. |
-| `TabSwitcher` | Chat/Docs tab bar. |
+| `TabSwitcher` | Chat/Uploads tab bar. |
 | `QuickActions` | Quick action card grid. |
-| `DocsPanel` | Document management panel. |
+| `UploadsPanel` | Upload management panel. |
 | `ChatSidebar` | Thread list sidebar. |
 | `ModelSelector` | Model picker dropdown. |
 | `RichCodeBlock` | Syntax-highlighted code block with copy. |
@@ -474,9 +474,9 @@ Multi-conversation thread management with localStorage persistence.
 | `Source` | Source citation. |
 | `ModelOption` | Model selector option. |
 | `ChatTheme` | Theme configuration. |
-| `ChatTab` | `"chat" \| "docs"`. |
+| `ChatTab` | `"chat" \| "uploads"`. |
 | `QuickAction` | Quick action definition. |
-| `DocFile` | Document file info. |
+| `UploadedFile` | Uploaded file info. |
 | `Thread` | Conversation thread. |
 
 ## Related

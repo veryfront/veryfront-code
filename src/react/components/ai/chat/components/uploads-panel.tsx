@@ -2,16 +2,16 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { FileTextIcon, TrashIcon } from "../../icons/index.ts";
 
-export interface DocFile {
+export interface UploadedFile {
   id: string;
   name: string;
   size?: number;
   type?: string;
 }
 
-export interface DocsPanelProps {
-  documents?: DocFile[];
-  onRemoveDocument?: (id: string) => void;
+export interface UploadsPanelProps {
+  uploads?: UploadedFile[];
+  onRemoveUpload?: (id: string) => void;
   onAttach?: (files: FileList) => void;
   attachAccept?: string;
   className?: string;
@@ -23,29 +23,29 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function DocsPanel({
-  documents = [],
-  onRemoveDocument,
+export function UploadsPanel({
+  uploads = [],
+  onRemoveUpload,
   onAttach,
   attachAccept,
   className,
-}: DocsPanelProps): React.ReactElement {
+}: UploadsPanelProps): React.ReactElement {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   return (
     <div className={cn("flex flex-col h-full", className)}>
       <div className="flex-1 overflow-y-auto px-4 py-4">
-        {documents.length === 0
+        {uploads.length === 0
           ? (
             <div className="flex flex-col items-center justify-center h-full text-center">
               <div className="mb-4 flex items-center justify-center size-14 rounded-2xl bg-neutral-100 dark:bg-neutral-800/80 text-neutral-400 dark:text-neutral-500">
                 <FileTextIcon className="size-7" />
               </div>
               <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                No documents uploaded
+                No files uploaded
               </p>
               <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                Upload documents to start asking questions
+                Upload files to start asking questions
               </p>
               {onAttach && (
                 <button
@@ -53,14 +53,14 @@ export function DocsPanel({
                   onClick={() => fileInputRef.current?.click()}
                   className="mt-4 px-4 py-2 text-sm font-medium rounded-lg bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors"
                 >
-                  Upload Documents
+                  Upload Files
                 </button>
               )}
             </div>
           )
           : (
             <div className="max-w-2xl mx-auto space-y-2">
-              {documents.map((doc) => (
+              {uploads.map((doc) => (
                 <div
                   key={doc.id}
                   className="flex items-center gap-3 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-3 group"
@@ -78,10 +78,10 @@ export function DocsPanel({
                       </p>
                     )}
                   </div>
-                  {onRemoveDocument && (
+                  {onRemoveUpload && (
                     <button
                       type="button"
-                      onClick={() => onRemoveDocument(doc.id)}
+                      onClick={() => onRemoveUpload(doc.id)}
                       className="shrink-0 p-1.5 rounded-md text-neutral-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors opacity-0 group-hover:opacity-100"
                       aria-label={`Remove ${doc.name}`}
                     >
@@ -96,7 +96,7 @@ export function DocsPanel({
                   onClick={() => fileInputRef.current?.click()}
                   className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-neutral-300 dark:border-neutral-600 px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800/60 hover:border-neutral-400 dark:hover:border-neutral-500 transition-all"
                 >
-                  Upload more documents
+                  Upload more files
                 </button>
               )}
             </div>
@@ -108,7 +108,7 @@ export function DocsPanel({
           type="file"
           accept={attachAccept}
           multiple
-          aria-label="Upload document"
+          aria-label="Upload file"
           onChange={(e) => {
             if (e.target.files?.length) onAttach(e.target.files);
             e.target.value = "";

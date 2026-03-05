@@ -1,6 +1,6 @@
-import { documentStore } from "veryfront/embedding";
+import { uploadStore } from "veryfront/embedding";
 
-export const store = documentStore({
+export const store = uploadStore({
   model: "openai/text-embedding-3-small",
   storagePath: "data/index.json",
   contentDir: "content",

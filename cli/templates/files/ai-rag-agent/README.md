@@ -78,15 +78,15 @@ flowchart LR
 ## Structure
 
 ```
-store.ts                        Document store config (embedding model, storage path)
+store.ts                        Upload store config (embedding model, storage path)
 agents/rag.ts                   Q&A agent with citation instructions
 content/
   getting-started.md            Sample document
   architecture.md               Sample document
 app/
   api/chat/route.ts             Chat API endpoint
-  api/documents/route.ts        Upload (POST) and list (GET) documents
-  api/documents/[id]/route.ts   Delete document
+  api/uploads/route.ts           Upload (POST) and list (GET) uploads
+  api/uploads/[id]/route.ts     Delete upload
   page.tsx                      Chat UI with document upload panel
   layout.tsx                    Root layout with header
 ```
@@ -96,13 +96,13 @@ app/
 | What | Framework | Template code |
 |------|-----------|---------------|
 | Chat UI + streaming | `Chat`, `useChat` | `page.tsx` |
-| Document management | `useDocuments` hook | `page.tsx` |
+| Upload management | `useUploads` hook | `page.tsx` |
 | Source display | `showSources` prop on `Chat` | `page.tsx` |
-| Document API routes | `createDocumentHandler` | 1-line per route file |
+| Upload API routes | `createUploadHandler` | 1-line per route file |
 | Chat API route | `createChatHandler` | 1 line in `route.ts` |
 | Agent definition | `agent()` | Config object in `agents/rag.ts` |
 | RAG retrieval | `beforeStream` hook | Context injection in `api/chat/route.ts` |
-| Vector store | `documentStore()` | Config in `store.ts` |
+| Vector store | `uploadStore()` | Config in `store.ts` |
 
 ## Adding documents
 

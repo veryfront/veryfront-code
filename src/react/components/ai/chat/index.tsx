@@ -60,7 +60,7 @@ import type { Source } from "./components/sources.tsx";
 import type { AttachmentInfo } from "./components/attachment-pill.tsx";
 import type { FeedbackValue } from "./components/message-feedback.tsx";
 import type { ChatTab } from "./components/tab-switcher.tsx";
-import type { DocFile } from "./components/docs-panel.tsx";
+import type { UploadedFile } from "./components/uploads-panel.tsx";
 import type { QuickAction } from "./components/quick-actions.tsx";
 
 // Composition imports (used in the Chat preset)
@@ -73,7 +73,7 @@ import { ErrorBanner } from "./composition/error-banner.tsx";
 import { Message } from "./composition/message.tsx";
 import { DropZoneOverlay } from "./components/drop-zone.tsx";
 import { TabSwitcher } from "./components/tab-switcher.tsx";
-import { DocsPanel } from "./components/docs-panel.tsx";
+import { UploadsPanel } from "./components/uploads-panel.tsx";
 import { InferenceBadge } from "./components/inference-badge.tsx";
 import { UpgradeCTA } from "./components/upgrade-cta.tsx";
 import { QuickActions as QuickActionsComponent } from "./components/quick-actions.tsx";
@@ -122,7 +122,7 @@ export {
   QuickActions,
   type QuickActionsProps,
 } from "./components/quick-actions.tsx";
-export { type DocFile, DocsPanel, type DocsPanelProps } from "./components/docs-panel.tsx";
+export { type UploadedFile, UploadsPanel, type UploadsPanelProps } from "./components/uploads-panel.tsx";
 
 // Re-exports — hooks
 export {
@@ -233,8 +233,8 @@ export interface ChatProps {
   showTabs?: boolean;
   activeTab?: ChatTab;
   onTabChange?: (tab: ChatTab) => void;
-  documents?: DocFile[];
-  onRemoveDocument?: (id: string) => void;
+  uploads?: UploadedFile[];
+  onRemoveUpload?: (id: string) => void;
   quickActions?: QuickAction[];
   onQuickAction?: (action: QuickAction) => void;
   enableVoice?: boolean;
@@ -295,8 +295,8 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     showTabs = false,
     activeTab: controlledTab,
     onTabChange: controlledTabChange,
-    documents,
-    onRemoveDocument,
+    uploads,
+    onRemoveUpload,
     quickActions,
     onQuickAction,
     children,
@@ -362,7 +362,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
   }, [onVoice, enableVoice, voice.isSupported, voice.toggle, setInput]);
 
   const isEmpty = messages.length === 0;
-  const isDocsTab = showTabs && currentTab === "docs";
+  const isDocsTab = showTabs && currentTab === "uploads";
 
   const dragProps = dropHandler
     ? {
@@ -407,9 +407,9 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
 
       {isDocsTab
         ? (
-          <DocsPanel
-            documents={documents}
-            onRemoveDocument={onRemoveDocument}
+          <UploadsPanel
+            uploads={uploads}
+            onRemoveUpload={onRemoveUpload}
             onAttach={onAttach}
             attachAccept={attachAccept}
             className="flex-1 min-h-0"

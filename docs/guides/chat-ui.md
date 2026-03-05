@@ -317,14 +317,14 @@ function App() {
 }
 ```
 
-### Tabs (Chat/Docs)
+### Tabs (Chat/Uploads)
 
 ```tsx
 <Chat
   {...chat}
   showTabs
-  documents={docs}
-  onRemoveDocument={(id) => removeDoc(id)}
+  uploads={docs}
+  onRemoveUpload={(id) => removeDoc(id)}
 />
 ```
 

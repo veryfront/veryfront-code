@@ -1,5 +1,5 @@
 /**
- * Embedding — RAG primitives for document chunking, embedding, and similarity search.
+ * Embedding — RAG primitives for chunking, embedding, and similarity search.
  *
  * Provides a facade over AI SDK (embeddings, similarity) and LangChain
  * (text splitting) behind veryfront's own API.
@@ -8,10 +8,10 @@
  *
  * @example
  * ```ts
- * import { documentStore, createDocumentHandler } from "veryfront/embedding";
+ * import { uploadStore, createUploadHandler } from "veryfront/embedding";
  *
- * const store = documentStore({ model: "openai/text-embedding-3-small" });
- * export const { POST, GET, DELETE } = createDocumentHandler(store);
+ * const store = uploadStore({ model: "openai/text-embedding-3-small" });
+ * export const { POST, GET, DELETE } = createUploadHandler(store);
  * ```
  */
 
@@ -19,11 +19,11 @@ export { embedding } from "./embedding.ts";
 export { chunk } from "./chunk.ts";
 export { cosineSimilarity as similarity } from "ai";
 export { vectorStore } from "./vector-store.ts";
-export { documentStore } from "./document-store.ts";
-export { createDocumentHandler } from "./document-handler.ts";
-export { loadDocument } from "./document-loader.ts";
-export { useDocuments } from "./react/use-documents.ts";
-export type { UseDocumentsOptions, UseDocumentsResult } from "./react/use-documents.ts";
+export { uploadStore } from "./upload-store.ts";
+export { createUploadHandler } from "./upload-handler.ts";
+export { loadUpload } from "./upload-loader.ts";
+export { useUploads } from "./react/use-uploads.ts";
+export type { UseUploadsOptions, UseUploadsResult } from "./react/use-uploads.ts";
 export {
   clearEmbeddingProviders,
   registerEmbeddingProvider,
@@ -31,12 +31,12 @@ export {
 } from "./resolve.ts";
 export type {
   ChunkOptions,
-  DocumentMeta,
-  DocumentSearchOptions,
-  DocumentSearchResult,
-  DocumentStore,
-  DocumentStoreConfig,
-  DocumentStoreData,
+  UploadMeta,
+  UploadSearchOptions,
+  UploadSearchResult,
+  UploadStore,
+  UploadStoreConfig,
+  UploadStoreData,
   Embedding,
   EmbeddingConfig,
   SearchOptions,

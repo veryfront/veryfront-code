@@ -1,7 +1,7 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 
-export type ChatTab = "chat" | "docs";
+export type ChatTab = "chat" | "uploads";
 
 export interface TabSwitcherProps {
   activeTab: ChatTab;
@@ -11,7 +11,7 @@ export interface TabSwitcherProps {
 
 const TABS: { value: ChatTab; label: string }[] = [
   { value: "chat", label: "Chat" },
-  { value: "docs", label: "Docs" },
+  { value: "uploads", label: "Uploads" },
 ];
 
 export function TabSwitcher({
@@ -37,7 +37,7 @@ export function TabSwitcher({
             onKeyDown={(e) => {
               if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
                 e.preventDefault();
-                const next = tab.value === "chat" ? "docs" : "chat";
+                const next = tab.value === "chat" ? "uploads" : "chat";
                 onTabChange(next);
               }
             }}

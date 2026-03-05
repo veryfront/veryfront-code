@@ -110,7 +110,7 @@ export {
   ChatWithSidebar,
   ConversationEmptyState,
   ConversationScrollButton,
-  DocsPanel,
+  UploadsPanel,
   downloadMarkdown,
   DropZoneOverlay,
   exportAsMarkdown,
@@ -150,8 +150,8 @@ export type {
   ChatWithSidebarProps,
   ConversationEmptyStateProps,
   ConversationScrollButtonProps,
-  DocFile,
-  DocsPanelProps,
+  UploadedFile,
+  UploadsPanelProps,
   DropZoneOverlayProps,
   FeedbackValue,
   InferenceBadgeProps,
@@ -259,7 +259,7 @@ export type {
 } from "#veryfront/agent/react/use-voice-input.ts";
 
 // ---------------------------------------------------------------------------
-// Documents (veryfront/embedding)
+// Uploads (veryfront/embedding)
 // ---------------------------------------------------------------------------
-export { useDocuments } from "#veryfront/embedding/react/index.ts";
-export type { UseDocumentsOptions, UseDocumentsResult } from "#veryfront/embedding/react/index.ts";
+export { useUploads } from "#veryfront/embedding/react/index.ts";
+export type { UseUploadsOptions, UseUploadsResult } from "#veryfront/embedding/react/index.ts";

@@ -1,5 +1,5 @@
-import type { DocumentStore } from "./types.ts";
-import { loadDocument } from "./document-loader.ts";
+import type { UploadStore } from "./types.ts";
+import { loadUpload } from "./upload-loader.ts";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
@@ -33,42 +33,42 @@ function mimeForType(type: string): string {
   return Object.entries(MIME_TO_TYPE).find(([, v]) => v === type)?.[0] ?? "text/plain";
 }
 
-interface DocumentHandlerConfig {
+interface UploadHandlerConfig {
   maxFileSize?: number;
 }
 
 /**
- * Creates HTTP route handlers for document upload, listing, and deletion.
+ * Creates HTTP route handlers for upload, listing, and deletion.
  *
  * **Important:** These handlers do not include authentication or authorization.
  * Add your own auth middleware before exposing them in production.
  *
  * Returns `{ POST, GET, DELETE }` handlers compatible with file-based routing.
  * POST accepts multipart form data with a `file` field, extracts text via
- * `loadDocument`, and ingests into the provided document store. GET returns
- * the document list. DELETE removes a document by ID from route params.
+ * `loadUpload`, and ingests into the provided upload store. GET returns
+ * the upload list. DELETE removes an upload by ID from route params.
  *
  * @example
  * ```ts
- * // app/api/documents/route.ts
- * import { createDocumentHandler } from "veryfront/embedding";
+ * // app/api/uploads/route.ts
+ * import { createUploadHandler } from "veryfront/embedding";
  * import { store } from "../../../lib/store.ts";
  *
- * export const { POST, GET } = createDocumentHandler(store);
+ * export const { POST, GET } = createUploadHandler(store);
  * ```
  *
  * @example
  * ```ts
- * // app/api/documents/[id]/route.ts
- * import { createDocumentHandler } from "veryfront/embedding";
+ * // app/api/uploads/[id]/route.ts
+ * import { createUploadHandler } from "veryfront/embedding";
  * import { store } from "../../../../lib/store.ts";
  *
- * export const { DELETE } = createDocumentHandler(store);
+ * export const { DELETE } = createUploadHandler(store);
  * ```
  */
-export function createDocumentHandler(
-  store: DocumentStore,
-  config?: DocumentHandlerConfig,
+export function createUploadHandler(
+  store: UploadStore,
+  config?: UploadHandlerConfig,
 ) {
   const maxSize = config?.maxFileSize ?? MAX_FILE_SIZE;
 
@@ -97,7 +97,7 @@ export function createDocumentHandler(
       }
 
       const buffer = await file.arrayBuffer();
-      const text = await loadDocument(buffer, mimeForType(fileType));
+      const text = await loadUpload(buffer, mimeForType(fileType));
       if (!text.trim()) {
         return Response.json(
           { error: "No text could be extracted from file" },
@@ -115,7 +115,7 @@ export function createDocumentHandler(
 
       return Response.json({
         success: true,
-        document: { id, title: file.name, type: fileType },
+        upload: { id, title: file.name, type: fileType },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Upload failed";
@@ -125,11 +125,11 @@ export function createDocumentHandler(
 
   async function GET(): Promise<Response> {
     try {
-      const documents = await store.listDocuments();
-      return Response.json({ documents });
+      const uploads = await store.listUploads();
+      return Response.json({ uploads });
     } catch (error) {
-      console.error("Document list failed:", error);
-      return Response.json({ error: "Failed to list documents" }, { status: 500 });
+      console.error("Upload list failed:", error);
+      return Response.json({ error: "Failed to list uploads" }, { status: 500 });
     }
   }
 
@@ -140,12 +140,12 @@ export function createDocumentHandler(
     try {
       const id = context.params.id;
       if (!id) {
-        return Response.json({ error: "Missing document ID" }, { status: 400 });
+        return Response.json({ error: "Missing upload ID" }, { status: 400 });
       }
-      await store.removeDocument(id);
+      await store.removeUpload(id);
       return Response.json({ success: true });
     } catch (error) {
-      console.error("Document delete failed:", error);
+      console.error("Upload delete failed:", error);
       return Response.json({ error: "Delete failed" }, { status: 500 });
     }
   }

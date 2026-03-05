@@ -45,10 +45,10 @@ export interface VectorStore {
 }
 
 // ---------------------------------------------------------------------------
-// Document Store
+// Upload Store
 // ---------------------------------------------------------------------------
 
-export interface DocumentMeta {
+export interface UploadMeta {
   id: string;
   title: string;
   source: string;
@@ -58,18 +58,18 @@ export interface DocumentMeta {
 
 export interface StoredChunk {
   id: string;
-  documentId: string;
+  uploadId: string;
   text: string;
   embedding: number[]; // [] = not yet embedded
   index: number;
 }
 
-export interface DocumentStoreData {
-  documents: DocumentMeta[];
+export interface UploadStoreData {
+  uploads: UploadMeta[];
   chunks: StoredChunk[];
 }
 
-export interface DocumentStoreConfig {
+export interface UploadStoreConfig {
   model: string;
   storagePath?: string; // default "data/index.json"
   contentDir?: string; // optional auto-index dir
@@ -80,24 +80,24 @@ export interface DocumentStoreConfig {
   batchSize?: number;
 }
 
-export interface DocumentSearchResult {
+export interface UploadSearchResult {
   text: string;
   score: number;
-  documentId: string;
+  uploadId: string;
   title: string;
   source: string;
   type: string;
 }
 
-export interface DocumentSearchOptions {
+export interface UploadSearchOptions {
   topK?: number; // default 5
   threshold?: number; // minimum similarity score
 }
 
-export interface DocumentStore {
+export interface UploadStore {
   ingest(title: string, text: string, meta?: { source?: string; type?: string }): Promise<string>;
-  search(query: string, options?: DocumentSearchOptions): Promise<DocumentSearchResult[]>;
-  listDocuments(): Promise<DocumentMeta[]>;
-  removeDocument(id: string): Promise<void>;
+  search(query: string, options?: UploadSearchOptions): Promise<UploadSearchResult[]>;
+  listUploads(): Promise<UploadMeta[]>;
+  removeUpload(id: string): Promise<void>;
   indexContentDir(): Promise<void>;
 }

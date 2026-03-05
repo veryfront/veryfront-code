@@ -5,8 +5,8 @@ import { ChatWithSidebar, useChat, type QuickAction } from 'veryfront/chat'
 
 interface Doc { id: string; title: string; source: string }
 
-function useDocuments(api: string) {
-  const [documents, setDocuments] = useState<Doc[]>([])
+function useUploads(api: string) {
+  const [uploads, setUploads] = useState<Doc[]>([])
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -15,7 +15,7 @@ function useDocuments(api: string) {
       const res = await fetch(api)
       if (res.ok) {
         const data = await res.json()
-        setDocuments(Array.isArray(data) ? data : data.documents ?? [])
+        setUploads(Array.isArray(data) ? data : data.uploads ?? [])
       }
     } catch { /* ignore */ }
   }, [api])
@@ -40,14 +40,14 @@ function useDocuments(api: string) {
     await refresh()
   }, [api, refresh])
 
-  return { documents, uploading, error, upload, remove }
+  return { uploads, uploading, error, upload, remove }
 }
 
 export default function DocsChat() {
   const chat = useChat({ api: '/api/chat' })
-  const docs = useDocuments('/api/documents')
+  const docs = useUploads('/api/uploads')
 
-  const uploads = docs.documents.filter((d) => d.source.startsWith('upload:'))
+  const uploads = docs.uploads.filter((d) => d.source.startsWith('upload:'))
 
   const attachments = uploads.map((d) => ({
     id: d.id,
@@ -81,8 +81,8 @@ export default function DocsChat() {
       storageKey="rag-threads"
       showSteps
       showTabs
-      documents={docFiles}
-      onRemoveDocument={(id) => docs.remove(id)}
+      uploads={docFiles}
+      onRemoveUpload={(id) => docs.remove(id)}
       quickActions={quickActions}
       onQuickAction={handleQuickAction}
       models={[
@@ -96,7 +96,7 @@ export default function DocsChat() {
       renderTool={() => null}
       showSources
       showExport
-      emptyState={{ title: 'Docs Q&A', description: 'Upload documents and ask questions' }}
+      emptyState={{ title: 'Docs Q&A', description: 'Upload files and ask questions' }}
       onAttach={(files) => {
         for (const file of Array.from(files)) {
           docs.upload(file)

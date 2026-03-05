@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 /**
- * Extracts plain text from various document formats.
+ * Extracts plain text from various upload formats.
  *
  * Supports: plain text, markdown, CSV, PDF, and DOCX.
  * PDF extraction requires `pdf-parse` as a project dependency — if missing,
@@ -10,10 +10,10 @@ import { isDeno } from "#veryfront/platform/compat/runtime.ts";
  *
  * @example
  * ```ts
- * const text = await loadDocument(buffer, "application/pdf");
+ * const text = await loadUpload(buffer, "application/pdf");
  * ```
  */
-export async function loadDocument(buffer: ArrayBuffer, mimeType: string): Promise<string> {
+export async function loadUpload(buffer: ArrayBuffer, mimeType: string): Promise<string> {
   switch (mimeType) {
     case "text/plain":
     case "text/markdown":

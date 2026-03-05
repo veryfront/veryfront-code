@@ -1,38 +1,38 @@
 /**
- * useDocuments Hook
+ * useUploads Hook
  *
- * Manages document upload, deletion, and listing for RAG applications.
- * Pairs with `createDocumentHandler` on the server side.
+ * Manages upload, deletion, and listing for RAG applications.
+ * Pairs with `createUploadHandler` on the server side.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DocumentMeta } from "../types.ts";
+import type { UploadMeta } from "../types.ts";
 
-export interface UseDocumentsOptions {
-  /** API endpoint, e.g. "/api/documents" */
+export interface UseUploadsOptions {
+  /** API endpoint, e.g. "/api/uploads" */
   api: string;
 }
 
-export interface UseDocumentsResult {
-  /** All documents from the server */
-  documents: DocumentMeta[];
+export interface UseUploadsResult {
+  /** All uploads from the server */
+  uploads: UploadMeta[];
   /** True while an upload is in progress */
   uploading: boolean;
   /** User-facing error message, cleared on next action */
   error: string | null;
   /** Upload a file (multipart POST) */
   upload: (file: File) => Promise<void>;
-  /** Delete a document by ID */
+  /** Delete an upload by ID */
   remove: (id: string) => Promise<void>;
-  /** Re-fetch the document list */
+  /** Re-fetch the upload list */
   refresh: () => Promise<void>;
 }
 
 /**
- * useDocuments hook for managing RAG document lifecycle.
+ * useUploads hook for managing RAG upload lifecycle.
  */
-export function useDocuments(options: UseDocumentsOptions): UseDocumentsResult {
-  const [documents, setDocuments] = useState<DocumentMeta[]>([]);
+export function useUploads(options: UseUploadsOptions): UseUploadsResult {
+  const [uploads, setUploads] = useState<UploadMeta[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -42,9 +42,9 @@ export function useDocuments(options: UseDocumentsOptions): UseDocumentsResult {
       const res = await fetch(options.api);
       if (!res.ok) return;
       const data = await res.json();
-      setDocuments(data.documents ?? []);
+      setUploads(data.uploads ?? []);
     } catch {
-      setError("Failed to load documents");
+      setError("Failed to load uploads");
     }
   }, [options.api]);
 
@@ -89,11 +89,11 @@ export function useDocuments(options: UseDocumentsOptions): UseDocumentsResult {
         await fetch(`${options.api}/${id}`, { method: "DELETE" });
         await refresh();
       } catch {
-        setError("Failed to delete document");
+        setError("Failed to delete upload");
       }
     },
     [options.api, refresh],
   );
 
-  return { documents, uploading, error, upload, remove, refresh };
+  return { uploads, uploading, error, upload, remove, refresh };
 }

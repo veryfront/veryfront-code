@@ -4,20 +4,20 @@ import { dirname, extname, join } from "#veryfront/platform/compat/path/basic-op
 import { embedding } from "./embedding.ts";
 import { chunk } from "./chunk.ts";
 import type {
-  DocumentMeta,
-  DocumentSearchOptions,
-  DocumentSearchResult,
-  DocumentStore,
-  DocumentStoreConfig,
-  DocumentStoreData,
+  UploadMeta,
+  UploadSearchOptions,
+  UploadSearchResult,
+  UploadStore,
+  UploadStoreConfig,
+  UploadStoreData,
   StoredChunk,
 } from "./types.ts";
 
 /**
- * Creates a persistent document store with lazy embedding and similarity search.
+ * Creates a persistent upload store with lazy embedding and similarity search.
  *
- * Combines document management, chunking, embedding, and vector search into
- * a single factory. Documents are chunked on ingest; embeddings are generated
+ * Combines upload management, chunking, embedding, and vector search into
+ * a single factory. Uploads are chunked on ingest; embeddings are generated
  * lazily on the first search call to avoid blocking uploads on AI API calls.
  *
  * Persistence is JSON-file-based (via the platform fs adapter), making it
@@ -25,9 +25,9 @@ import type {
  *
  * @example
  * ```ts
- * import { documentStore } from "veryfront/embedding";
+ * import { uploadStore } from "veryfront/embedding";
  *
- * const store = documentStore({
+ * const store = uploadStore({
  *   model: "openai/text-embedding-3-small",
  *   storagePath: "data/index.json",
  *   contentDir: "content",
@@ -37,7 +37,7 @@ import type {
  * const results = await store.search("query", { topK: 5, threshold: 0.7 });
  * ```
  */
-export function documentStore(config: DocumentStoreConfig): DocumentStore {
+export function uploadStore(config: UploadStoreConfig): UploadStore {
   const storagePath = config.storagePath ?? "data/index.json";
   const contentDir = config.contentDir;
   const contentExtensions = new Set(config.contentExtensions ?? [".md", ".mdx", ".txt"]);
@@ -52,7 +52,7 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
     mutex = result.then(
       () => {},
       (err) => {
-        console.error("[document-store] Lock operation failed:", err);
+        console.error("[upload-store] Lock operation failed:", err);
       },
     );
     return result;
@@ -65,26 +65,26 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
     batchSize: config.batchSize,
   });
 
-  async function load(): Promise<DocumentStoreData> {
+  async function load(): Promise<UploadStoreData> {
     try {
       const data = await readTextFile(storagePath);
       const parsed = JSON.parse(data);
-      if (!parsed || !Array.isArray(parsed.documents) || !Array.isArray(parsed.chunks)) {
-        console.warn("[document-store] Corrupted store file, resetting:", storagePath);
-        return { documents: [], chunks: [] };
+      if (!parsed || !Array.isArray(parsed.uploads) || !Array.isArray(parsed.chunks)) {
+        console.warn("[upload-store] Corrupted store file, resetting:", storagePath);
+        return { uploads: [], chunks: [] };
       }
-      return parsed as DocumentStoreData;
+      return parsed as UploadStoreData;
     } catch (err) {
       // File not found is expected on first run; anything else is worth logging
       if (err instanceof Deno.errors.NotFound || (err as { code?: string }).code === "ENOENT") {
-        return { documents: [], chunks: [] };
+        return { uploads: [], chunks: [] };
       }
-      console.warn("[document-store] Failed to load store, resetting:", err);
-      return { documents: [], chunks: [] };
+      console.warn("[upload-store] Failed to load store, resetting:", err);
+      return { uploads: [], chunks: [] };
     }
   }
 
-  async function save(data: DocumentStoreData): Promise<void> {
+  async function save(data: UploadStoreData): Promise<void> {
     const dir = dirname(storagePath);
     if (dir && dir !== ".") {
       await mkdir(dir, { recursive: true });
@@ -100,7 +100,7 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
     }
   }
 
-  async function ensureEmbeddings(data: DocumentStoreData): Promise<boolean> {
+  async function ensureEmbeddings(data: UploadStoreData): Promise<boolean> {
     const unembedded = data.chunks.filter((c) => c.embedding.length === 0);
     if (unembedded.length === 0) return false;
 
@@ -136,21 +136,21 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
     ): Promise<string> {
       return withLock(async () => {
         const data = await load();
-        const documentId = crypto.randomUUID();
+        const uploadId = crypto.randomUUID();
 
         if (text.length > MAX_TEXT_LENGTH) {
           throw new Error(
-            `Document text exceeds ${MAX_TEXT_LENGTH / 1024 / 1024} MB limit`,
+            `Upload text exceeds ${MAX_TEXT_LENGTH / 1024 / 1024} MB limit`,
           );
         }
 
         const chunks = await chunk(text, chunkOptions);
         if (chunks.length === 0) {
-          throw new Error("Document contains no extractable text");
+          throw new Error("Upload contains no extractable text");
         }
 
-        const doc: DocumentMeta = {
-          id: documentId,
+        const doc: UploadMeta = {
+          id: uploadId,
           title,
           source: meta?.source ?? "",
           type: meta?.type ?? "",
@@ -159,24 +159,24 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
 
         const chunkRecords: StoredChunk[] = chunks.map((text, i) => ({
           id: crypto.randomUUID(),
-          documentId,
+          uploadId,
           text,
           embedding: [], // filled lazily on first search
           index: i,
         }));
 
-        data.documents.push(doc);
+        data.uploads.push(doc);
         data.chunks.push(...chunkRecords);
         await save(data);
 
-        return documentId;
+        return uploadId;
       });
     },
 
     async search(
       query: string,
-      options?: DocumentSearchOptions,
-    ): Promise<DocumentSearchResult[]> {
+      options?: UploadSearchOptions,
+    ): Promise<UploadSearchResult[]> {
       return withLock(async () => {
         const data = await load();
         if (data.chunks.length === 0) return [];
@@ -188,14 +188,14 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
         const topK = options?.topK ?? 5;
         const threshold = options?.threshold;
 
-        const docMap = new Map(data.documents.map((d) => [d.id, d]));
+        const docMap = new Map(data.uploads.map((d) => [d.id, d]));
 
         const scored = data.chunks.map((c) => {
-          const doc = docMap.get(c.documentId);
+          const doc = docMap.get(c.uploadId);
           return {
             text: c.text,
             score: cosineSimilarity(queryEmbedding, c.embedding),
-            documentId: c.documentId,
+            uploadId: c.uploadId,
             title: doc?.title ?? "Unknown",
             source: doc?.source ?? "",
             type: doc?.type ?? "",
@@ -212,18 +212,18 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
       });
     },
 
-    async listDocuments(): Promise<DocumentMeta[]> {
+    async listUploads(): Promise<UploadMeta[]> {
       return withLock(async () => {
         const data = await load();
-        return data.documents;
+        return data.uploads;
       });
     },
 
-    async removeDocument(id: string): Promise<void> {
+    async removeUpload(id: string): Promise<void> {
       return withLock(async () => {
         const data = await load();
-        data.documents = data.documents.filter((d) => d.id !== id);
-        data.chunks = data.chunks.filter((c) => c.documentId !== id);
+        data.uploads = data.uploads.filter((d) => d.id !== id);
+        data.chunks = data.chunks.filter((c) => c.uploadId !== id);
         await save(data);
       });
     },
@@ -233,7 +233,7 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
 
       return withLock(async () => {
         const data = await load();
-        const indexedSources = new Set(data.documents.map((d) => d.source));
+        const indexedSources = new Set(data.uploads.map((d) => d.source));
 
         const files = await listContentFiles(contentDir);
         const newFiles = files.filter((f) => !indexedSources.has(f));
@@ -244,7 +244,7 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
           if (!content?.trim()) continue;
           if (content.length > MAX_TEXT_LENGTH) {
             console.warn(
-              `[document-store] Skipping ${file}: exceeds ${
+              `[upload-store] Skipping ${file}: exceeds ${
                 MAX_TEXT_LENGTH / 1024 / 1024
               } MB text limit`,
             );
@@ -254,14 +254,14 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
           const title = file.startsWith(contentDir + "/")
             ? file.slice(contentDir.length + 1).replace(/\.[^.]+$/, "")
             : file.replace(/\.[^.]+$/, "");
-          const documentId = crypto.randomUUID();
+          const uploadId = crypto.randomUUID();
           const type = extname(file).slice(1);
 
           const chunks = await chunk(content, chunkOptions);
           if (chunks.length === 0) continue;
 
-          data.documents.push({
-            id: documentId,
+          data.uploads.push({
+            id: uploadId,
             title,
             source: file,
             type,
@@ -271,7 +271,7 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
           data.chunks.push(
             ...chunks.map((text, i) => ({
               id: crypto.randomUUID(),
-              documentId,
+              uploadId,
               text,
               embedding: [] as number[],
               index: i,
