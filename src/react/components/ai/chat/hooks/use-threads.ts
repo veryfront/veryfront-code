@@ -89,10 +89,8 @@ export function useThreads(options?: UseThreadsOptions): UseThreadsResult {
     }
 
     if (loaded.length === 0) {
-      const first = createEmptyThread();
-      saveThread(storageKey, first);
-      saveIndex(storageKey, { ids: [first.id] });
-      return [first];
+      // Return empty array during SSR/first render; create thread in useEffect
+      return [];
     }
 
     // Sort by updatedAt desc
@@ -103,6 +101,17 @@ export function useThreads(options?: UseThreadsOptions): UseThreadsResult {
   const [activeThreadId, setActiveThreadId] = React.useState<string | null>(
     () => threads[0]?.id ?? null,
   );
+
+  // Create initial thread on client only to avoid SSR hydration mismatch
+  React.useEffect(() => {
+    if (threads.length > 0) return;
+    const first = createEmptyThread();
+    saveThread(storageKey, first);
+    saveIndex(storageKey, { ids: [first.id] });
+    setThreads([first]);
+    setActiveThreadId(first.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Debounced persist — clear on unmount to avoid stale writes
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout>>(undefined);

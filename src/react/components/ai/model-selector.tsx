@@ -3,6 +3,8 @@
  *
  * Opens downward from the trigger using fixed positioning
  * so it never affects the surrounding layout.
+ *
+ * Implements WAI-ARIA listbox pattern with full keyboard navigation.
  */
 
 import * as React from "react";
@@ -62,8 +64,10 @@ export function ModelSelector({
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
   const [pos, setPos] = React.useState<{ top: number; right: number } | null>(null);
+  const [focusedIndex, setFocusedIndex] = React.useState(-1);
 
   const selected = models.find((m) => m.value === value) ?? models[0];
+  const listboxId = React.useId();
 
   // Measure trigger and position dropdown below it, right-aligned
   React.useEffect(() => {
@@ -73,7 +77,10 @@ export function ModelSelector({
       top: r.bottom + 6,
       right: globalThis.innerWidth - r.right,
     });
-  }, [open]);
+    // Focus the selected item when opening
+    const selectedIdx = models.findIndex((m) => m.value === (value ?? selected?.value));
+    setFocusedIndex(selectedIdx >= 0 ? selectedIdx : 0);
+  }, [open, models, value, selected?.value]);
 
   // Close on outside click
   React.useEffect(() => {
@@ -94,17 +101,54 @@ export function ModelSelector({
     return () => document.removeEventListener("mousedown", handleMouseDown);
   }, [open]);
 
-  // Close on Escape
+  // Keyboard navigation
   React.useEffect(() => {
     if (!open) return;
 
     function handleKeyDown(e: KeyboardEvent): void {
-      if (e.key === "Escape") setOpen(false);
+      switch (e.key) {
+        case "Escape":
+          setOpen(false);
+          triggerRef.current?.focus();
+          break;
+        case "ArrowDown":
+          e.preventDefault();
+          setFocusedIndex((prev) => (prev + 1) % models.length);
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          setFocusedIndex((prev) => (prev - 1 + models.length) % models.length);
+          break;
+        case "Home":
+          e.preventDefault();
+          setFocusedIndex(0);
+          break;
+        case "End":
+          e.preventDefault();
+          setFocusedIndex(models.length - 1);
+          break;
+        case "Enter":
+        case " ":
+          e.preventDefault();
+          if (focusedIndex >= 0 && focusedIndex < models.length) {
+            onChange(models[focusedIndex]!.value);
+            setOpen(false);
+            triggerRef.current?.focus();
+          }
+          break;
+      }
     }
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open]);
+  }, [open, focusedIndex, models, onChange]);
+
+  // Scroll focused item into view
+  React.useEffect(() => {
+    if (!open || focusedIndex < 0) return;
+    const option = dropdownRef.current?.querySelector(`[data-index="${focusedIndex}"]`);
+    option?.scrollIntoView({ block: "nearest" });
+  }, [open, focusedIndex]);
 
   const hasGroups = models.some((m) => m.provider);
   const groups = hasGroups ? groupByProvider(models) : null;
@@ -112,21 +156,27 @@ export function ModelSelector({
   function handleSelect(model: ModelOption): void {
     onChange(model.value);
     setOpen(false);
+    triggerRef.current?.focus();
   }
 
-  function renderItem(model: ModelOption): React.ReactElement {
+  function renderItem(model: ModelOption, flatIndex: number): React.ReactElement {
     const isActive = model.value === (value ?? selected?.value);
+    const isFocused = flatIndex === focusedIndex;
 
     return (
-      <button
+      <div
         key={model.value}
-        type="button"
+        role="option"
+        aria-selected={isActive}
+        data-index={flatIndex}
         onClick={() => handleSelect(model)}
+        onMouseEnter={() => setFocusedIndex(flatIndex)}
         className={cn(
-          "w-full text-left px-3 py-2 text-sm transition-colors rounded-lg",
+          "w-full text-left px-3 py-2 text-sm transition-colors rounded-lg cursor-pointer",
           isActive
             ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100"
             : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100",
+          isFocused && !isActive && "bg-neutral-50 dark:bg-neutral-800/50",
         )}
       >
         <div className="flex items-center gap-2">
@@ -142,23 +192,27 @@ export function ModelSelector({
             {model.description}
           </p>
         )}
-      </button>
+      </div>
     );
   }
 
+  // Build flat index mapping for grouped layout
+  let flatIndex = 0;
   const dropdownContent = groups
     ? Array.from(groups.entries()).map(([provider, items], groupIndex) => (
-      <div key={provider || "__ungrouped"}>
+      <div key={provider || "__ungrouped"} role="group" aria-label={provider || undefined}>
         {groupIndex > 0 && <div className="h-px bg-neutral-100 dark:bg-neutral-800 my-1" />}
         {provider && (
           <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
             {provider}
           </div>
         )}
-        {items.map(renderItem)}
+        {items.map((item) =>
+          renderItem(item, flatIndex++)
+        )}
       </div>
     ))
-    : models.map(renderItem);
+    : models.map((item) => renderItem(item, flatIndex++));
 
   return (
     <div className={cn("inline-block", className)}>
@@ -167,6 +221,9 @@ export function ModelSelector({
         type="button"
         onClick={() => !disabled && setOpen((prev) => !prev)}
         disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
         className={cn(
           "inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full",
           "border border-neutral-200 dark:border-neutral-700",
@@ -184,6 +241,9 @@ export function ModelSelector({
       {open && pos && (
         <div
           ref={dropdownRef}
+          id={listboxId}
+          role="listbox"
+          aria-label="Select model"
           className="min-w-[220px] max-h-[320px] overflow-auto rounded-xl border border-neutral-200/80 dark:border-neutral-700/80 bg-white dark:bg-neutral-900 shadow-xl p-1"
           style={{
             position: "fixed",
