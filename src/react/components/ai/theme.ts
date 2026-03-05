@@ -221,7 +221,9 @@ export function cn(...inputs: ClassValue[]): string {
 
 import { cva } from "class-variance-authority";
 
-export const messageVariants = cva("", {
+type CvaReturn = ReturnType<typeof cva>;
+
+export const messageVariants: CvaReturn = cva("", {
   variants: {
     role: {
       user:
@@ -237,7 +239,7 @@ export const messageVariants = cva("", {
   },
 });
 
-export const chatButtonVariants = cva(
+export const chatButtonVariants: CvaReturn = cva(
   [
     "inline-flex items-center justify-center gap-2 whitespace-nowrap",
     "font-medium rounded-full transition-all duration-150",
@@ -271,7 +273,7 @@ export const chatButtonVariants = cva(
   },
 );
 
-export const chatContainerVariants = cva("flex flex-col overflow-hidden", {
+export const chatContainerVariants: CvaReturn = cva("flex flex-col overflow-hidden", {
   variants: {
     variant: {
       default: "h-full bg-[var(--background)]",
