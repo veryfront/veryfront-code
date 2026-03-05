@@ -104,22 +104,77 @@ export type {
 
 // Chat — Sub-components
 export {
+  AttachmentPill,
+  BranchPicker,
+  ChatSidebar,
+  ChatWithSidebar,
+  ConversationEmptyState,
+  ConversationScrollButton,
+  DocsPanel,
+  downloadMarkdown,
+  DropZoneOverlay,
+  exportAsMarkdown,
   extractSourcesFromParts,
   FadeIn,
+  getTextContent,
+  groupPartsInOrder,
+  InferenceBadge,
   InlineCitation,
+  isReasoningPart,
+  isToolPart,
+  Loader,
+  MessageActions,
+  MessageEditForm,
+  MessageFeedback,
   ModelSelector,
+  QuickActions,
+  ReasoningCard,
+  RichCodeBlock,
+  Shimmer,
   Sources,
+  StepIndicator,
+  Suggestion,
+  Suggestions,
+  TabSwitcher,
+  ToolCallCard,
+  ToolStatusBadge,
+  UpgradeCTA,
+  useThreads,
 } from "./components/ai/chat.tsx";
 export type {
+  AttachmentInfo,
+  AttachmentPillProps,
+  BranchPickerProps,
+  ChatSidebarProps,
+  ChatTab,
+  ChatWithSidebarProps,
+  ConversationEmptyStateProps,
+  ConversationScrollButtonProps,
+  DocFile,
+  DocsPanelProps,
+  DropZoneOverlayProps,
+  FeedbackValue,
+  InferenceBadgeProps,
   InlineCitationProps,
+  MessageActionsProps,
+  MessageEditFormProps,
+  MessageFeedbackProps,
   ModelOption,
   ModelSelectorProps,
+  PartGroup,
+  QuickAction,
+  QuickActionsProps,
   Source,
   SourcesProps,
+  StepIndicatorProps,
+  SuggestionProps,
+  SuggestionsProps,
+  TabSwitcherProps,
+  Thread,
+  UpgradeCTAProps,
+  UseThreadsOptions,
+  UseThreadsResult,
 } from "./components/ai/chat.tsx";
-
-export { ChatWithSidebar } from "./components/ai/chat.tsx";
-export type { ChatWithSidebarProps } from "./components/ai/chat.tsx";
 
 // Standalone message components
 export { Message as StandaloneMessage, StreamingMessage } from "./components/ai/message.tsx";
@@ -133,11 +188,16 @@ export type { AIErrorBoundaryProps } from "./components/ai/error-boundary.tsx";
 
 // Theme utilities
 export type { AgentTheme, ChatTheme } from "./components/ai/theme.ts";
-export { cva, type VariantProps } from "./components/ai/theme.ts";
 export {
   chatButtonVariants,
   chatContainerVariants,
+  cn,
+  cva,
+  defaultAgentTheme,
+  defaultChatTheme,
+  mergeThemes,
   messageVariants,
+  type VariantProps,
 } from "./components/ai/theme.ts";
 export {
   ColorModeProvider,
@@ -147,16 +207,25 @@ export {
   useColorMode,
 } from "./components/ai/color-mode.tsx";
 
+// Design tokens
+export { chatTokens, getChatTokensCSS } from "./components/ai/chat-tokens.ts";
+export {
+  ChatStyleProvider,
+  type ChatStyleProviderProps,
+} from "./components/ai/chat-style-provider.tsx";
+
 // ---------------------------------------------------------------------------
 // Chat — hooks (veryfront/chat)
 // ---------------------------------------------------------------------------
 export { useChat } from "#veryfront/agent/react/use-chat/index.ts";
 export type {
+  BranchInfo,
   BrowserInferenceStatus,
   DynamicToolUIPart,
   InferenceMode,
   OnToolCallArg,
   ReasoningUIPart,
+  StepUIPart,
   TextUIPart,
   ToolOutput,
   ToolResultUIPart,

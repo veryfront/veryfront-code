@@ -89,6 +89,7 @@ export default function DocsChat() {
         { value: 'anthropic/claude-sonnet-4-20250514', label: 'Claude Sonnet 4', provider: 'Anthropic' },
         { value: 'openai/gpt-4o', label: 'GPT-4o', provider: 'OpenAI' },
         { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini', provider: 'OpenAI', badge: 'Fast' },
+        { value: 'openai/gpt-5.2', label: 'GPT-5.2', provider: 'OpenAI' },
       ]}
       className="flex-1 min-h-0"
       placeholder="Start with describing your idea..."
