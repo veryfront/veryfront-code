@@ -68,7 +68,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
               .join("")
               .trim();
             if (text) {
-              threadsHook.renameThread(activeId, text.slice(0, 50));
+              threadsHook.renameThread(activeId, text.slice(0, 30));
             }
           }
         }
@@ -99,7 +99,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
     }, [activeId, messages, threadsHook, setMessages]);
 
     if (!showSidebar) {
-      return <Chat ref={ref} messages={messages} className={className} {...chatProps} />;
+      return <Chat ref={ref} messages={messages} model={model} className={className} {...chatProps} />;
     }
 
     return (
@@ -132,10 +132,10 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
             <button
               type="button"
               onClick={handleNewThread}
-              className="p-2 rounded-lg text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
-              aria-label="New chat"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
             >
-              <PlusIcon className="size-5" />
+              <PlusIcon className="size-4" />
+              <span>New Chat</span>
             </button>
             {models && models.length > 0 && modelChangeHandler && (
               <>
@@ -148,7 +148,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
               </>
             )}
           </div>
-          <Chat messages={messages} className="flex-1 min-h-0" {...chatProps} />
+          <Chat messages={messages} model={model} className="flex-1 min-h-0" {...chatProps} />
         </div>
       </div>
     );

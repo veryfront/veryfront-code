@@ -1,7 +1,7 @@
 import { documentStore } from "veryfront/embedding";
 
 export const store = documentStore({
-  model: "local/qwen3-embedding-0.6b",
+  model: "openai/text-embedding-3-small",
   storagePath: "data/index.json",
   contentDir: "content",
 });

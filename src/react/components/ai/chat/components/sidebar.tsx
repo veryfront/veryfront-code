@@ -150,28 +150,19 @@ export function ChatSidebar({
   return (
     <div
       className={cn(
-        "flex flex-col w-[280px] h-full border-r border-neutral-200/80 dark:border-neutral-800 bg-neutral-50/80 dark:bg-neutral-900/80 shrink-0",
+        "flex flex-col h-full bg-neutral-50/80 dark:bg-neutral-900/80 shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl",
         className,
       )}
+      style={{ width: 260, borderRight: "1px solid #d4d4d4" }}
     >
-      <div className="p-3">
-        <button
-          type="button"
-          onClick={onNewThread}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 hover:bg-neutral-700 dark:hover:bg-neutral-200 transition-colors shadow-sm"
-        >
-          <PlusIcon className="size-4" />
-          <span>New Chat</span>
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-4">
+      <div className="flex-1 overflow-y-auto px-2 pt-3 pb-3 space-y-4">
         {hasThreads
           ? Array.from(grouped.entries()).map(([label, items]) => (
             <div key={label}>
               <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
                 {label}
               </div>
-              <div className="space-y-0.5">
+              <div className="space-y-1">
                 {items.map((thread) => (
                   <ThreadItem
                     key={thread.id}

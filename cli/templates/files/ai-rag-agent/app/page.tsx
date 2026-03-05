@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { ChatWithSidebar, useChat } from 'veryfront/chat'
+import { useState, useEffect, useCallback } from 'react'
+import { ChatWithSidebar, useChat, type QuickAction } from 'veryfront/chat'
 
 interface Doc { id: string; title: string; source: string }
 
@@ -59,20 +59,44 @@ export default function DocsChat(): JSX.Element {
     attachments.push({ id: '__uploading', name: 'Uploading...', status: 'uploading' as const })
   }
 
+  const quickActions: QuickAction[] = [
+    { id: 'ask-question', label: 'Ask Question', prompt: 'I have a question about this document: ' },
+    { id: 'extract-insights', label: 'Extract Insights', prompt: 'Extract the key insights from the uploaded documents.' },
+    { id: 'find-sources', label: 'Find Sources', prompt: 'Find relevant sources and references in the documents for: ' },
+  ]
+
+  const handleQuickAction = useCallback((action: QuickAction) => {
+    if (action.prompt) chat.setInput(action.prompt)
+  }, [chat])
+
+  const docFiles = uploads.map((d) => ({
+    id: d.id,
+    name: d.title,
+  }))
+
   return (
     <ChatWithSidebar
       {...chat}
       setMessages={chat.setMessages}
       storageKey="rag-threads"
       showSteps
+      showTabs
+      documents={docFiles}
+      onRemoveDocument={(id) => docs.remove(id)}
+      quickActions={quickActions}
+      onQuickAction={handleQuickAction}
+      models={[
+        { value: 'anthropic/claude-sonnet-4-20250514', label: 'Claude Sonnet 4', provider: 'Anthropic' },
+        { value: 'openai/gpt-4o', label: 'GPT-4o', provider: 'OpenAI' },
+        { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini', provider: 'OpenAI', badge: 'Fast' },
+        { value: 'openai/gpt-5.2', label: 'GPT-5.2', provider: 'OpenAI' },
+      ]}
       className="flex-1 min-h-0"
-      placeholder="Ask about your docs..."
+      placeholder="Start with describing your idea..."
       renderTool={() => null}
       showSources
       showExport
       emptyState={{ title: 'Docs Q&A', description: 'Upload documents and ask questions' }}
-      suggestions={['What is this about?', 'Summarize the key points']}
-      onSuggestionClick={(s) => { chat.setInput(s); }}
       onAttach={(files) => {
         for (const file of Array.from(files)) {
           docs.upload(file)

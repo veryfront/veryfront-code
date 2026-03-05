@@ -118,18 +118,19 @@ export function useChat(options: UseChatOptions): UseChatResult {
                 hasAddedMessage = true;
                 setMessages((prev) => [
                   ...prev,
-                  { id: messageId, role: "assistant", parts },
+                  { id: messageId, role: "assistant", parts, metadata: { model: model ?? "browser" } },
                 ]);
                 return;
               }
               setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, parts } : m)));
             },
             onMessage: (assistantMessage: UIMessage) => {
+              const withMeta = { ...assistantMessage, metadata: { ...assistantMessage.metadata, model: model ?? "browser" } };
               setMessages((prev) => {
-                if (!hasAddedMessage) return [...prev, assistantMessage];
-                return prev.map((m) => m.id === assistantMessage.id ? assistantMessage : m);
+                if (!hasAddedMessage) return [...prev, withMeta];
+                return prev.map((m) => m.id === assistantMessage.id ? { ...withMeta, metadata: { ...m.metadata, ...withMeta.metadata } } : m);
               });
-              options.onFinish?.(assistantMessage);
+              options.onFinish?.(withMeta);
               browserInferenceRejectRef.current = null;
               resolve();
             },
@@ -231,11 +232,12 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
         await handleStreamingResponse(response.body, {
           onMessage: (assistantMessage) => {
+            const withMeta = { ...assistantMessage, metadata: { ...assistantMessage.metadata, model } };
             setMessages((prev) => {
-              if (!hasAddedStreamingMessage) return [...prev, assistantMessage];
-              return prev.map((m) => (m.id === currentMessageId ? assistantMessage : m));
+              if (!hasAddedStreamingMessage) return [...prev, withMeta];
+              return prev.map((m) => (m.id === currentMessageId ? { ...withMeta, metadata: { ...m.metadata, ...withMeta.metadata } } : m));
             });
-            options.onFinish?.(assistantMessage);
+            options.onFinish?.(withMeta);
           },
           onData: (eventData) => {
             setData(eventData);
@@ -266,7 +268,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
             if (!hasAddedStreamingMessage) {
               hasAddedStreamingMessage = true;
-              setMessages((prev) => [...prev, { id, role: "assistant", parts }]);
+              setMessages((prev) => [...prev, { id, role: "assistant", parts, metadata: { model } }]);
               return;
             }
 

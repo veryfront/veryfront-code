@@ -279,6 +279,26 @@ const FRAMEWORK_SAFELIST = [
   "hover:bg-muted",
   // Markdown
   "group",
+  // Model avatars (chat/index.tsx ModelAvatar)
+  "mt-1",
+  "bg-[#d97757]",
+  "bg-[#000000]",
+  "dark:bg-[#ffffff]",
+  "dark:text-black",
+  "from-violet-500",
+  "to-fuchsia-500",
+  "bg-gradient-to-br",
+  "border-neutral-300",
+  "dark:border-neutral-700",
+  // Tab switcher (chat/components/tab-switcher.tsx)
+  "py-1.5",
+  "px-5",
+  "hover:text-neutral-700",
+  "dark:hover:text-neutral-300",
+  // Docs panel
+  "py-6",
+  "gap-4",
+  "size-5",
 ] as const;
 
 /** De-duplicated set of framework candidates, computed once. */

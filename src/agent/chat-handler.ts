@@ -38,11 +38,24 @@ const dynamicToolPartSchema = z
   })
   .passthrough();
 
+const stepPartSchema = z.object({
+  type: z.enum(["step-start", "step-end"]),
+  stepIndex: z.number().optional(),
+}).passthrough();
+
+const reasoningPartSchema = z.object({
+  type: z.literal("reasoning"),
+  text: z.string(),
+  state: z.string().optional(),
+}).passthrough();
+
 const partSchema = z.union([
   textPartSchema,
   toolCallPartSchema,
   toolResultPartSchema,
   dynamicToolPartSchema,
+  stepPartSchema,
+  reasoningPartSchema,
 ]);
 
 const messageSchema = z.object({
@@ -53,6 +66,7 @@ const messageSchema = z.object({
 
 const chatRequestSchema = z.object({
   messages: z.array(messageSchema).min(1).max(100),
+  model: z.string().optional(),
 });
 
 type ParsedMessage = z.infer<typeof messageSchema>;
@@ -279,7 +293,7 @@ export function createChatHandler(
 
     try {
       const body = await request.json();
-      const { messages: rawMessages } = chatRequestSchema.parse(body);
+      const { messages: rawMessages, model: requestModel } = chatRequestSchema.parse(body);
 
       if (!agent) {
         return Response.json({ error: "Agent not found" }, { status: 404 });
@@ -312,6 +326,7 @@ export function createChatHandler(
       const result = await agent.stream({
         messages,
         context: streamContext,
+        ...(requestModel ? { model: requestModel } : {}),
       });
 
       return result.toDataStreamResponse();

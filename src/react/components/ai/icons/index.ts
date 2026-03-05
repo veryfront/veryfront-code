@@ -287,3 +287,34 @@ const SPARKLES_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
 export function SparklesIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, SPARKLES_ICON_ELEMENTS);
 }
+
+const CODE_BRACKETS_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "polyline", props: { points: "16 18 22 12 16 6" } },
+  { type: "polyline", props: { points: "8 6 2 12 8 18" } },
+];
+
+const TARGET_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "circle", props: { cx: "12", cy: "12", r: "10" } },
+  { type: "circle", props: { cx: "12", cy: "12", r: "6" } },
+  { type: "circle", props: { cx: "12", cy: "12", r: "2" } },
+];
+
+const FILE_TEXT_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "path", props: { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" } },
+  { type: "polyline", props: { points: "14 2 14 8 20 8" } },
+  { type: "line", props: { x1: "16", y1: "13", x2: "8", y2: "13" } },
+  { type: "line", props: { x1: "16", y1: "17", x2: "8", y2: "17" } },
+  { type: "polyline", props: { points: "10 9 9 9 8 9" } },
+];
+
+export function CodeBracketsIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, CODE_BRACKETS_ICON_ELEMENTS);
+}
+
+export function TargetIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, TARGET_ICON_ELEMENTS);
+}
+
+export function FileTextIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, FILE_TEXT_ICON_ELEMENTS);
+}

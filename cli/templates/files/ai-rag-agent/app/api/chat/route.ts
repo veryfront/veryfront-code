@@ -35,8 +35,8 @@ export const POST = createChatHandler("rag", {
           },
         ],
       };
-    } catch {
-      // Retrieval failed — continue without extra context.
+    } catch (e) {
+      console.error("[RAG] Retrieval failed:", e);
       return;
     }
   },
