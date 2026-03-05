@@ -49,7 +49,7 @@ export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
           className,
         )}
       >
-        <div className="flex items-center justify-between px-4 py-2 bg-[var(--accent)] text-[var(--muted-foreground)] text-xs">
+        <div className="flex items-center justify-between px-4 py-2 text-[var(--muted-foreground)] text-xs">
           <span className="font-mono font-medium">{language || "text"}</span>
           <button
             type="button"
@@ -71,7 +71,7 @@ export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
               )}
           </button>
         </div>
-        <pre className="p-4 bg-[var(--accent)] text-[var(--foreground)] overflow-auto text-sm">
+        <pre className="p-4 text-[var(--foreground)] overflow-auto text-sm">
         <code className={language ? `language-${language}` : undefined}>{code}</code>
         </pre>
       </div>

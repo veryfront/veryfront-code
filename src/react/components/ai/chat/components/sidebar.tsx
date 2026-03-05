@@ -88,8 +88,8 @@ function ThreadItem({
       className={cn(
         "group/thread flex items-center gap-2.5 px-3 py-2.5 rounded-xl cursor-pointer transition-all",
         isActive
-          ? "bg-[var(--accent)] text-[var(--tab-active-foreground)] shadow-sm"
-          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+          ? "bg-[var(--foreground)]/[0.05] text-[var(--foreground)]"
+          : "text-[var(--muted-foreground)] hover:bg-[var(--foreground)]/[0.03] hover:text-[var(--foreground)]",
       )}
       onClick={!editing ? onSelect : undefined}
       onDoubleClick={handleDoubleClick}
@@ -152,7 +152,7 @@ export function ChatSidebar({
   return (
     <div
       className={cn(
-        "flex flex-col h-full bg-[var(--sidebar-background)] shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl",
+        "flex flex-col h-full shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl max-sm:bg-[var(--background)]",
         className,
       )}
       style={{ width: 240 }}
