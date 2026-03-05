@@ -4,10 +4,16 @@ function useNodePath(): boolean {
   return !isDeno && hasNodePath;
 }
 
+/** Normalize backslashes to forward slashes (for Deno on Windows). */
+function normSep(p: string): string {
+  return p.includes("\\") ? p.replace(/\\/g, "/") : p;
+}
+
 export function join(...paths: string[]): string {
   if (useNodePath()) return nodePath!.join(...paths);
 
   const joined = paths
+    .map(normSep)
     .filter((p) => p.length > 0)
     .join("/")
     .replace(/\/+/g, "/")
@@ -19,10 +25,11 @@ export function join(...paths: string[]): string {
 export function dirname(path: string): string {
   if (useNodePath()) return nodePath!.dirname(path);
 
-  const lastSlash = path.lastIndexOf("/");
+  const p = normSep(path);
+  const lastSlash = p.lastIndexOf("/");
   if (lastSlash === -1) return ".";
   if (lastSlash === 0) return "/";
-  return path.slice(0, lastSlash);
+  return p.slice(0, lastSlash);
 }
 
 export function basename(path: string, ext?: string): string {
@@ -31,7 +38,7 @@ export function basename(path: string, ext?: string): string {
     return ext === undefined ? nodePath!.basename(path) : nodePath!.basename(path, ext);
   }
 
-  let normalizedPath = path;
+  let normalizedPath = normSep(path);
   while (normalizedPath.length > 1 && normalizedPath.endsWith("/")) {
     normalizedPath = normalizedPath.slice(0, -1);
   }

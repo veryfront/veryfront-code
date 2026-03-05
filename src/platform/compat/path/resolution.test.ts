@@ -19,6 +19,24 @@ describe("platform/compat/path/resolution", () => {
     it("should use last absolute path", () => {
       assertEquals(resolve("/first", "/second"), "/second");
     });
+
+    it("should handle Windows drive-letter paths", () => {
+      assertEquals(
+        resolve("D:/a/project/src/build", "..", "..", ".."),
+        "D:/a",
+      );
+    });
+
+    it("should handle Windows backslash paths", () => {
+      assertEquals(
+        resolve("D:\\a\\project\\src\\build", "..", "..", ".."),
+        "D:/a",
+      );
+    });
+
+    it("should preserve drive letter when resolving to root", () => {
+      assertEquals(resolve("D:/a", ".."), "D:/");
+    });
   });
 
   describe("isAbsolute", () => {
@@ -32,6 +50,11 @@ describe("platform/compat/path/resolution", () => {
 
     it("should return false for dot-relative paths", () => {
       assertEquals(isAbsolute("./file"), false);
+    });
+
+    it("should return true for Windows drive-letter paths", () => {
+      assertEquals(isAbsolute("D:/a/project"), true);
+      assertEquals(isAbsolute("C:\\Users\\test"), true);
     });
   });
 
@@ -72,6 +95,14 @@ describe("platform/compat/path/resolution", () => {
 
     it("should handle relative parent traversal", () => {
       assertEquals(normalize("../foo"), "../foo");
+    });
+
+    it("should normalize Windows backslash paths", () => {
+      assertEquals(normalize("D:\\a\\project\\src\\..\\lib"), "D:/a/project/lib");
+    });
+
+    it("should preserve Windows drive letter", () => {
+      assertEquals(normalize("D:/"), "D:/");
     });
   });
 });
