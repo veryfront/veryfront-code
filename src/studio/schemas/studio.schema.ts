@@ -103,7 +103,15 @@ export const MessageFromRendererSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("setSelectedNode"),
-    id: z.string(),
+    id: z.string().nullable(),
+    node: z.object({
+      name: z.string(),
+      type: z.string(),
+      file: z.string(),
+      line: z.number(),
+      column: z.number(),
+      text: z.string(),
+    }).optional(),
   }),
   z.object({
     action: z.literal("errorPageLoaded"),

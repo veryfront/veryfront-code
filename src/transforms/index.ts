@@ -43,9 +43,7 @@ export {
 export {
   getRehypePlugins,
   getRemarkPlugins,
-  rehypeMdxComponents,
-  rehypePreserveNodeIds,
-  remarkAddNodeId,
+  rehypeNodePositions,
   remarkCodeBlocks,
   remarkMdxHeadings,
   remarkMdxImports,

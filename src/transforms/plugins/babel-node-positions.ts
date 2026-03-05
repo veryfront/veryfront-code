@@ -128,8 +128,9 @@ function hasPositionAttribute(attributes: (t.JSXAttribute | t.JSXSpreadAttribute
  * Transform TSX source to inject position data attributes into JSX elements.
  * This enables Studio Navigator to map rendered elements back to source positions.
  */
-export function injectNodePositions(source: string, _options: TransformOptions): string {
+export function injectNodePositions(source: string, options: TransformOptions): string {
   if (!source.trim()) return source;
+  if (!options.filePath) return source;
 
   try {
     const ast = parser.parse(source, {
@@ -153,9 +154,13 @@ export function injectNodePositions(source: string, _options: TransformOptions):
           if (!loc) return;
 
           const nodeId = `node-${nodeCounter++}`;
-
           openingElement.attributes.push(
             t.jsxAttribute(t.jsxIdentifier("data-node-id"), t.stringLiteral(nodeId)),
+            t.jsxAttribute(
+              t.jsxIdentifier("data-node-file"),
+              t.stringLiteral(options.filePath),
+            ),
+            t.jsxAttribute(t.jsxIdentifier("data-node-name"), t.stringLiteral(elementName)),
             t.jsxAttribute(
               t.jsxIdentifier("data-node-line"),
               t.stringLiteral(String(loc.start.line)),
@@ -163,19 +168,6 @@ export function injectNodePositions(source: string, _options: TransformOptions):
             t.jsxAttribute(
               t.jsxIdentifier("data-node-column"),
               t.stringLiteral(String(loc.start.column)),
-            ),
-          );
-
-          if (!loc.end) return;
-
-          openingElement.attributes.push(
-            t.jsxAttribute(
-              t.jsxIdentifier("data-node-end-line"),
-              t.stringLiteral(String(loc.end.line)),
-            ),
-            t.jsxAttribute(
-              t.jsxIdentifier("data-node-end-column"),
-              t.stringLiteral(String(loc.end.column)),
             ),
           );
         },

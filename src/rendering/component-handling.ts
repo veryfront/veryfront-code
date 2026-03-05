@@ -60,8 +60,11 @@ export async function handleComponentPage(
     logger.debug(`Loading TSX/JSX file: ${pageInfo.entity.path}`);
 
     const rawFileContent = await adapter.fs.readFile(pageInfo.entity.path);
+    const normalizedPath = pageInfo.entity.path.startsWith(projectDir)
+      ? pageInfo.entity.path.slice(projectDir.length).replace(/^\/+/, "")
+      : pageInfo.entity.path;
     const fileContent = options?.studioEmbed
-      ? injectNodePositions(rawFileContent, { filePath: pageInfo.entity.path })
+      ? injectNodePositions(rawFileContent, { filePath: normalizedPath })
       : rawFileContent;
 
     const clientModuleCode = options?.cachedClientModule ??
