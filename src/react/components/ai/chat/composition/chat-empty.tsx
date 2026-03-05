@@ -6,7 +6,6 @@
 
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { MessageSquareIcon } from "../../icons/index.ts";
 import { ConversationEmptyState, Suggestion, Suggestions } from "../components/empty-state.tsx";
 import { type QuickAction, QuickActions } from "../components/quick-actions.tsx";
 
@@ -47,12 +46,12 @@ export const ChatEmpty = React.forwardRef<HTMLDivElement, ChatEmptyProps>(
       >
         <div className="flex-1" />
         <ConversationEmptyState
-          icon={icon ?? <MessageSquareIcon className="size-8" />}
+          icon={icon}
           title={title}
           description={description}
         />
         {showSuggestions && (
-          <div className="w-full max-w-2xl mt-8 mb-8">
+          <div className="w-full max-w-2xl mt-6">
             <Suggestions layout="grid">
               {suggestions?.map((suggestion) => (
                 <Suggestion
@@ -65,7 +64,7 @@ export const ChatEmpty = React.forwardRef<HTMLDivElement, ChatEmptyProps>(
           </div>
         )}
         {showQuickActions && (
-          <div className="mb-6">
+          <div className="mt-4">
             <QuickActions actions={quickActions} onActionClick={onQuickAction} />
           </div>
         )}

@@ -174,15 +174,15 @@ export function ModelSelector({
         className={cn(
           "w-full text-left px-3 py-2 text-sm transition-all rounded-lg cursor-pointer",
           isActive
-            ? "bg-[var(--accent)] text-[var(--foreground)]"
-            : "text-[var(--card-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-          isFocused && !isActive && "bg-[var(--accent)]",
+            ? "bg-[var(--foreground)]/[0.05] text-[var(--foreground)]"
+            : "text-[var(--card-foreground)] hover:bg-[var(--foreground)]/[0.05] hover:text-[var(--foreground)]",
+          isFocused && !isActive && "bg-[var(--foreground)]/[0.05]",
         )}
       >
         <div className="flex items-center gap-2">
           <span className="font-medium">{model.label}</span>
           {model.badge && (
-            <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-[var(--accent)] text-[var(--foreground)]">
+            <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-[var(--foreground)]/[0.07] text-[var(--muted-foreground)]">
               {model.badge}
             </span>
           )}
@@ -229,7 +229,7 @@ export function ModelSelector({
           "border border-[var(--border)]",
           "bg-[var(--card)]",
           "text-[var(--card-foreground)]",
-          "hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+          "hover:bg-[var(--foreground)]/[0.05] hover:text-[var(--foreground)]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
           "transition-all disabled:opacity-50 disabled:cursor-not-allowed",
         )}

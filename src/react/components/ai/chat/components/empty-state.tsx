@@ -73,12 +73,12 @@ export function ConversationEmptyState({
     <div className={cn("flex flex-col items-center justify-center text-center", className)}>
       {icon
         ? (
-          <div className="mb-5 flex items-center justify-center size-16 rounded-full bg-[var(--card)] text-[var(--foreground)]">
+          <div className="mb-4 text-[var(--muted-foreground)]">
             {icon}
           </div>
         )
         : null}
-      <h1 className="text-3xl font-normal text-[var(--foreground)] tracking-tight">
+      <h1 className="text-2xl font-medium text-[var(--foreground)] tracking-tight">
         {title}
       </h1>
       {description

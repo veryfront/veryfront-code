@@ -268,8 +268,12 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
       }
     }, [messages, updateThread]);
 
+    const setInput = chat.setInput;
+    const stopChat = chat.stop;
+
     const handleSelectThread = React.useCallback(
       (id: string) => {
+        stopChat?.();
         const currentActiveId = activeIdRef.current;
         if (currentActiveId && messagesRef.current.length > 0) {
           updateThread(currentActiveId, { messages: messagesRef.current });
@@ -277,18 +281,21 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
         selectThread(id);
         const thread = threadsRef.current.find((t) => t.id === id);
         setMessages(thread?.messages ?? []);
+        setInput?.("");
       },
-      [selectThread, updateThread, setMessages],
+      [selectThread, updateThread, setMessages, setInput, stopChat],
     );
 
     const handleNewThread = React.useCallback(() => {
+      stopChat?.();
       const currentActiveId = activeIdRef.current;
       if (currentActiveId && messagesRef.current.length > 0) {
         updateThread(currentActiveId, { messages: messagesRef.current });
       }
       const nextThread = createThread();
       setMessages(nextThread.messages);
-    }, [createThread, updateThread, setMessages]);
+      setInput?.("");
+    }, [createThread, updateThread, setMessages, setInput, stopChat]);
 
     if (!showSidebar) {
       return (

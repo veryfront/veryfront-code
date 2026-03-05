@@ -38,13 +38,10 @@ export function UploadsPanel({
         {uploads.length === 0
           ? (
             <div className="flex flex-col items-center justify-center h-full text-center">
-              <div className="mb-4 flex items-center justify-center size-16 rounded-full bg-[var(--card)] text-[var(--foreground)]">
-                <FileTextIcon className="size-7" />
-              </div>
-              <p className="text-sm font-medium text-[var(--card-foreground)]">
+              <h1 className="text-2xl font-medium text-[var(--foreground)] tracking-tight">
                 No files uploaded
-              </p>
-              <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+              </h1>
+              <p className="mt-2 max-w-sm text-sm text-[var(--muted-foreground)] leading-relaxed">
                 Upload files to start asking questions
               </p>
               {onAttach && (
