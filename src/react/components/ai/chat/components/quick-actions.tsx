@@ -16,9 +16,9 @@ export interface QuickActionsProps {
 }
 
 const defaultIconMap: Record<string, React.ReactNode> = {
-  "ask-question": <CodeBracketsIcon className="size-5" />,
-  "extract-insights": <TargetIcon className="size-5" />,
-  "find-sources": <FileTextIcon className="size-5" />,
+  "ask-question": <CodeBracketsIcon className="size-4" />,
+  "extract-insights": <TargetIcon className="size-4" />,
+  "find-sources": <FileTextIcon className="size-4" />,
 };
 
 const defaultActions: QuickAction[] = [
@@ -46,25 +46,17 @@ export function QuickActions({
 }: QuickActionsProps): React.ReactElement {
   return (
     <div
-      className={cn("w-full max-w-2xl mx-auto px-4 grid grid-cols-3 gap-3", className)}
+      className={cn("flex items-center gap-1.5", className)}
     >
       {actions.map((action) => {
-        const icon = action.icon ?? defaultIconMap[action.id];
         return (
           <button
             key={action.id}
             type="button"
             onClick={() => onActionClick?.(action)}
-            className="flex flex-col items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 text-center transition-all hover:bg-[var(--accent)] hover:border-[var(--input-border)] hover:shadow-sm min-h-[88px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
+            className="inline-flex items-center gap-1 rounded-full bg-[var(--muted)] px-4 py-2 text-sm font-medium text-[var(--foreground)] transition-all hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
           >
-            {icon && (
-              <span className="flex items-center justify-center size-8 rounded-lg bg-[var(--accent)] text-[var(--muted-foreground)] mb-2">
-                {icon}
-              </span>
-            )}
-            <span className="text-sm font-medium text-[var(--card-foreground)]">
-              {action.label}
-            </span>
+            {action.label}
           </button>
         );
       })}

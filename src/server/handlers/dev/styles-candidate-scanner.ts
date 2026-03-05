@@ -8,7 +8,17 @@
  * @module server/handlers/dev/styles-candidate-scanner
  */
 
+import { extractCandidates } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { serverLogger } from "#veryfront/utils";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import type { HandlerContext } from "../types.ts";
 import { FRAMEWORK_CANDIDATES } from "./framework-candidates.generated.ts";
+
+const logger = serverLogger.component("styles-candidate-scanner");
+
+const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
+const SKIP_DIRS = new Set(["node_modules", ".cache", ".git", "dist", "build", ".vscode"]);
 
 /** De-duplicated set of framework candidates, computed once at import time. */
 const frameworkCandidates = new Set<string>(FRAMEWORK_CANDIDATES);

@@ -47,12 +47,12 @@ export const ChatEmpty = React.forwardRef<HTMLDivElement, ChatEmptyProps>(
       >
         <div className="flex-1" />
         <ConversationEmptyState
-          icon={icon ?? <MessageSquareIcon className="size-10" />}
+          icon={icon ?? <MessageSquareIcon className="size-8" />}
           title={title}
           description={description}
         />
         {showSuggestions && (
-          <div className="w-full max-w-2xl mt-6 mb-8">
+          <div className="w-full max-w-2xl mt-8 mb-8">
             <Suggestions layout="grid">
               {suggestions?.map((suggestion) => (
                 <Suggestion
@@ -65,7 +65,7 @@ export const ChatEmpty = React.forwardRef<HTMLDivElement, ChatEmptyProps>(
           </div>
         )}
         {showQuickActions && (
-          <div className="mb-4">
+          <div className="mb-6">
             <QuickActions actions={quickActions} onActionClick={onQuickAction} />
           </div>
         )}

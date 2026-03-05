@@ -20,7 +20,7 @@ export function Suggestion({
       type="button"
       onClick={() => onClick?.(suggestion)}
       className={cn(
-        "group flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)] px-4 py-2.5 text-left text-sm text-[var(--card-foreground)] transition-all hover:bg-[var(--accent)] hover:border-[var(--input-border)] hover:text-[var(--foreground)] hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
+        "group flex items-center gap-2 rounded-full border border-[var(--border)] px-4 py-2 text-left text-sm text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:border-[var(--input-border)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
         className,
       )}
     >
@@ -73,17 +73,17 @@ export function ConversationEmptyState({
     <div className={cn("flex flex-col items-center justify-center text-center", className)}>
       {icon
         ? (
-          <div className="mb-6 flex items-center justify-center size-14 rounded-2xl bg-[var(--accent)] text-[var(--muted-foreground)]">
+          <div className="mb-5 flex items-center justify-center size-16 rounded-full bg-[var(--card)] text-[var(--foreground)]">
             {icon}
           </div>
         )
         : null}
-      <h1 className="text-3xl font-semibold text-[var(--foreground)] tracking-tight">
+      <h1 className="text-3xl font-normal text-[var(--foreground)] tracking-tight">
         {title}
       </h1>
       {description
         ? (
-          <p className="mt-3 max-w-md text-sm text-[var(--muted-foreground)] leading-relaxed">
+          <p className="mt-2 max-w-sm text-sm text-[var(--muted-foreground)] leading-relaxed">
             {description}
           </p>
         )

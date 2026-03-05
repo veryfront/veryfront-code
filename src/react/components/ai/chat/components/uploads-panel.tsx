@@ -38,7 +38,7 @@ export function UploadsPanel({
         {uploads.length === 0
           ? (
             <div className="flex flex-col items-center justify-center h-full text-center">
-              <div className="mb-4 flex items-center justify-center size-14 rounded-2xl bg-[var(--accent)] text-[var(--input-placeholder)]">
+              <div className="mb-4 flex items-center justify-center size-16 rounded-full bg-[var(--card)] text-[var(--foreground)]">
                 <FileTextIcon className="size-7" />
               </div>
               <p className="text-sm font-medium text-[var(--card-foreground)]">
@@ -65,7 +65,7 @@ export function UploadsPanel({
                   key={doc.id}
                   className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 py-3 group"
                 >
-                  <div className="shrink-0 size-9 rounded-lg bg-[var(--accent)] flex items-center justify-center text-[var(--input-placeholder)]">
+                  <div className="shrink-0 size-9 rounded-full bg-[var(--card)] flex items-center justify-center text-[var(--foreground)]">
                     <FileTextIcon className="size-4" />
                   </div>
                   <div className="flex-1 min-w-0">

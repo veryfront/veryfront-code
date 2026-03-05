@@ -46,9 +46,9 @@ export const TOKENS_LIGHT = {
   "--tab-foreground": "oklch(0.7025 0 0)",
   "--tab-active-background": "oklch(0.9422 0.0081 98.88)",
   "--tab-active-foreground": "oklch(0.2768 0 0)",
-  "--sidebar-background": "oklch(0.97 0 0)",
+  "--sidebar-background": "oklch(0.9512 0.008 98.88)",
   "--sidebar-foreground": "oklch(0.07 0 0)",
-  "--sidebar-border": "oklch(0.9 0 0)",
+  "--sidebar-border": "oklch(0.9 0.006 98.88)",
 } as const;
 
 /**
@@ -107,7 +107,9 @@ export function generateTokenCSS(): string {
   const dark = tokensToCSS(TOKENS_DARK);
 
   return [
-    `[data-vf-chat]{${light}}`,
+    `@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');`,
+    `[data-vf-chat]{font-family:'Inter',ui-sans-serif,system-ui,sans-serif;${light}}`,
+    `[data-vf-chat] button{cursor:pointer;}`,
     `@media(prefers-color-scheme:dark){[data-vf-chat]:not([data-vf-theme]){${dark}}}`,
     `.dark [data-vf-chat]:not([data-vf-theme]),[data-theme="dark"] [data-vf-chat]:not([data-vf-theme]){${dark}}`,
   ].join("");
@@ -149,9 +151,9 @@ export const defaultChatTheme: ChatTheme = {
       "bg-[var(--card)] text-[var(--card-foreground)] rounded-xl px-3 py-2 text-sm font-mono border border-[var(--border)]",
   },
   input:
-    "flex-1 px-4 py-3 bg-transparent focus:outline-none text-[var(--foreground)] placeholder:text-[var(--input-placeholder)] text-[15px] leading-normal",
+    "w-full bg-transparent border-none focus:outline-none focus:ring-0 text-[var(--foreground)] placeholder:text-[var(--input-placeholder)] text-[15px] leading-normal",
   button:
-    "size-9 shrink-0 mb-0.5 flex items-center justify-center rounded-full transition-all active:scale-95 bg-[var(--primary)] text-[var(--primary-foreground)] disabled:opacity-40",
+    "size-9 shrink-0 flex items-center justify-center rounded-full transition-all bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 active:scale-95 disabled:opacity-40",
   loading: "size-2 bg-[var(--border)] rounded-full animate-pulse",
 };
 

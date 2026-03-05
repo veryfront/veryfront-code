@@ -243,6 +243,8 @@ export interface ChatProps {
   onQuickAction?: (action: QuickAction) => void;
   enableVoice?: boolean;
   onVoice?: () => void;
+  /** @internal Hide the built-in TabSwitcher when rendered externally */
+  hideTabSwitcher?: boolean;
   children?: React.ReactNode;
 }
 
@@ -303,6 +305,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     onRemoveUpload,
     quickActions,
     onQuickAction,
+    hideTabSwitcher = false,
     children,
   },
   ref,
@@ -407,7 +410,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     >
       {dropHandler && <DropZoneOverlay visible={dragOver} accept={attachAccept} />}
 
-      {showTabs && <TabSwitcher activeTab={currentTab} onTabChange={handleTabChange} />}
+      {showTabs && !hideTabSwitcher && <TabSwitcher activeTab={currentTab} onTabChange={handleTabChange} />}
 
       {isDocsTab
         ? (
@@ -480,14 +483,10 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
           messages={messages}
         >
           {inferenceMode && inferenceMode !== "cloud" && (
-            <div className="max-w-2xl mx-auto">
-              <InferenceBadge inferenceMode={inferenceMode} browserStatus={browserStatus} />
-            </div>
+            <InferenceBadge inferenceMode={inferenceMode} browserStatus={browserStatus} />
           )}
           {isEmpty && quickActions && quickActions.length > 0 && (
-            <div className="mb-4">
-              <QuickActionsComponent actions={quickActions} onActionClick={onQuickAction} />
-            </div>
+            <QuickActionsComponent actions={quickActions} onActionClick={onQuickAction} />
           )}
         </ChatComposer>
       )}

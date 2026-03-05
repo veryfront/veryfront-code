@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { MessageSquareIcon, TrashIcon } from "../../icons/index.ts";
+import { MessageSquareIcon, PlusIcon, TrashIcon } from "../../icons/index.ts";
 import type { Thread } from "../hooks/use-threads.ts";
 
 export interface ChatSidebarProps {
@@ -9,6 +9,7 @@ export interface ChatSidebarProps {
   onSelectThread: (id: string) => void;
   onDeleteThread: (id: string) => void;
   onRenameThread?: (id: string, title: string) => void;
+  onNewThread?: () => void;
   className?: string;
   isOpen?: boolean;
 }
@@ -136,6 +137,7 @@ export function ChatSidebar({
   onSelectThread,
   onDeleteThread,
   onRenameThread,
+  onNewThread,
   className,
   isOpen = true,
 }: ChatSidebarProps): React.ReactElement | null {
@@ -150,12 +152,24 @@ export function ChatSidebar({
   return (
     <div
       className={cn(
-        "flex flex-col h-full bg-[var(--sidebar-background)] border-r border-[var(--sidebar-border)] shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl",
+        "flex flex-col h-full bg-[var(--sidebar-background)] shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl",
         className,
       )}
-      style={{ width: 260 }}
+      style={{ width: 240 }}
     >
-      <div className="flex-1 overflow-y-auto px-2 pt-3 pb-3 space-y-4">
+      {onNewThread && (
+        <div className="px-3 pt-4 pb-1">
+          <button
+            type="button"
+            onClick={onNewThread}
+            className="w-full inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-full text-sm font-medium text-[var(--foreground)] bg-[var(--card)] hover:opacity-80 transition-all"
+          >
+            <PlusIcon className="size-4" />
+            <span>New Chat</span>
+          </button>
+        </div>
+      )}
+      <div className="flex-1 overflow-y-auto px-2 pt-2 pb-3 space-y-4">
         {hasThreads
           ? Array.from(grouped.entries()).map(([label, items]) => (
             <div key={label}>
@@ -179,9 +193,8 @@ export function ChatSidebar({
             </div>
           ))
           : (
-            <div className="flex flex-col items-center justify-center py-12 text-[var(--input-placeholder)]">
-              <MessageSquareIcon className="size-8 mb-3 opacity-40" />
-              <p className="text-xs">No conversations yet</p>
+            <div className="flex flex-col items-center justify-center h-full px-4 text-center text-[var(--muted-foreground)]">
+              <p className="text-sm">No chats yet</p>
             </div>
           )}
       </div>

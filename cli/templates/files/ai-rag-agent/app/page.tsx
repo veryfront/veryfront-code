@@ -92,11 +92,11 @@ export default function DocsChat() {
         { value: 'openai/gpt-5.2', label: 'GPT-5.2', provider: 'OpenAI' },
       ]}
       className="flex-1 min-h-0"
-      placeholder="Start with describing your idea..."
+      placeholder="Ask anything about your documents..."
       renderTool={() => null}
       showSources
       showExport
-      emptyState={{ title: 'Docs Q&A', description: 'Upload files and ask questions' }}
+      emptyState={{ title: 'Docs Agent', description: 'Upload files and ask questions' }}
       onAttach={(files) => {
         for (const file of Array.from(files)) {
           docs.upload(file)

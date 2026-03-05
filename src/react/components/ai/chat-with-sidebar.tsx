@@ -1,10 +1,10 @@
 import * as React from "react";
-import { cn } from "./theme.ts";
+import { cn, generateTokenCSS } from "./theme.ts";
 import { Chat, type ChatProps } from "./chat/index.tsx";
 import { ChatSidebar } from "./chat/components/sidebar.tsx";
+import { TabSwitcher, type ChatTab } from "./chat/components/tab-switcher.tsx";
 import { useThreads } from "./chat/hooks/use-threads.ts";
-import { PanelLeftIcon, PlusIcon } from "./icons/index.ts";
-import { ModelSelector } from "./model-selector.tsx";
+import { PanelLeftIcon } from "./icons/index.ts";
 
 export interface ChatWithSidebarProps extends ChatProps {
   /** localStorage key prefix for thread persistence */
@@ -37,7 +37,9 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
     ref,
   ): React.ReactElement {
     const threadsHook = useThreads({ storageKey });
-    const [internalOpen, setInternalOpen] = React.useState(true);
+    const [internalOpen, setInternalOpen] = React.useState(false);
+    const [activeTab, setActiveTab] = React.useState<ChatTab>("chat");
+    const showTabs = chatProps.showTabs ?? false;
 
     const isControlled = controlledOpen !== undefined;
     const sidebarOpen = isControlled ? controlledOpen : internalOpen;
@@ -118,8 +120,11 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
       );
     }
 
+    const tokenCSS = React.useMemo(() => generateTokenCSS(), []);
+
     return (
-      <div ref={ref} className={cn("flex h-full", className)}>
+      <div ref={ref} className={cn("flex h-full bg-[var(--background)]", className)} data-vf-chat="">
+        <style dangerouslySetInnerHTML={{ __html: tokenCSS }} />
         {sidebarOpen && (
           <ChatSidebar
             threads={threadsHook.threads}
@@ -131,35 +136,23 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
               if (next && setMessages) setMessages(next.messages);
             }}
             onRenameThread={threadsHook.renameThread}
+            onNewThread={handleNewThread}
           />
         )}
         <div className="flex-1 min-w-0 flex flex-col">
-          <div className="flex items-center gap-1 px-3 py-2 shrink-0 border-b border-[var(--border)]">
+          <div className="flex items-center px-3 pt-4 pb-1 shrink-0">
             <button
               type="button"
               onClick={toggleSidebar}
-              className="size-9 inline-flex items-center justify-center rounded-full text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
+              className="size-8 inline-flex items-center justify-center rounded-full text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
               aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
             >
-              <PanelLeftIcon className="size-5" />
+              <PanelLeftIcon className="size-[18px]" />
             </button>
-            <button
-              type="button"
-              onClick={handleNewThread}
-              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-sm font-medium text-[var(--foreground)] hover:bg-[var(--foreground)]/5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
-            >
-              <PlusIcon className="size-4" />
-              <span>New Chat</span>
-            </button>
-            {models && models.length > 0 && onModelChange && (
-              <>
-                <div className="flex-1" />
-                <ModelSelector
-                  models={models}
-                  value={model}
-                  onChange={onModelChange}
-                />
-              </>
+            {showTabs && (
+              <div className="flex-1 flex justify-center">
+                <TabSwitcher activeTab={activeTab} onTabChange={setActiveTab} className="py-0" />
+              </div>
             )}
           </div>
           <Chat
@@ -167,6 +160,9 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
             model={model}
             onModelChange={onModelChange}
             className="flex-1 min-h-0"
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            hideTabSwitcher
             {...chatProps}
           />
         </div>
