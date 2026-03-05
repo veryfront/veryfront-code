@@ -127,4 +127,17 @@ export {
 // Adjacent components
 // ---------------------------------------------------------------------------
 export { type ModelOption, ModelSelector, type ModelSelectorProps } from "./model-selector.tsx";
-export { ChatWithSidebar, type ChatWithSidebarProps } from "./chat-with-sidebar.tsx";
+export {
+  ChatWithSidebar,
+  type ChatWithSidebarAttachmentConfig,
+  type ChatWithSidebarChatController,
+  type ChatWithSidebarFeatureConfig,
+  type ChatWithSidebarGroupedProps,
+  type ChatWithSidebarMessageConfig,
+  type ChatWithSidebarModelConfig,
+  type ChatWithSidebarProps,
+  type ChatWithSidebarQuickActionsConfig,
+  type ChatWithSidebarSidebarConfig,
+  type ChatWithSidebarTabsConfig,
+  type ChatWithSidebarVoiceConfig,
+} from "./chat-with-sidebar.tsx";

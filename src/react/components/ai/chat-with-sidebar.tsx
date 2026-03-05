@@ -6,53 +6,239 @@ import { type ChatTab, TabSwitcher } from "./chat/components/tab-switcher.tsx";
 import { useThreads } from "./chat/hooks/use-threads.ts";
 import { PanelLeftIcon } from "./icons/index.ts";
 
-export interface ChatWithSidebarProps extends ChatProps {
-  /** localStorage key prefix for thread persistence */
-  storageKey?: string;
-  /** Controlled sidebar open state */
-  sidebarOpen?: boolean;
-  /** Called when sidebar toggles */
-  onSidebarToggle?: () => void;
-  /** Show sidebar (default: true) */
-  showSidebar?: boolean;
-  /** Set messages externally (needed for thread switching) */
-  setMessages?: (messages: ChatProps["messages"]) => void;
+type ChatMessageSetter = (messages: ChatProps["messages"]) => void;
+type ChatWithSidebarPassthroughProps = Omit<
+  ChatProps,
+  "messages" | "model" | "onModelChange" | "activeTab" | "onTabChange" | "className"
+>;
+type TabChangeHandler = NonNullable<ChatProps["onTabChange"]>;
+
+export interface ChatWithSidebarChatController {
+  messages: ChatProps["messages"];
+  input: ChatProps["input"];
+  onChange: ChatProps["onChange"];
+  onSubmit?: ChatProps["onSubmit"];
+  stop?: ChatProps["stop"];
+  reload?: ChatProps["reload"];
+  setInput?: ChatProps["setInput"];
+  isLoading?: ChatProps["isLoading"];
+  error?: ChatProps["error"];
+  model?: ChatProps["model"];
+  onModelChange?: ChatProps["onModelChange"];
+  inferenceMode?: ChatProps["inferenceMode"];
+  browserStatus?: ChatProps["browserStatus"];
+  editMessage?: ChatProps["editMessage"];
+  getBranches?: ChatProps["getBranches"];
+  switchBranch?: ChatProps["switchBranch"];
+  setMessages: ChatMessageSetter;
 }
+
+interface ChatWithSidebarSidebarBaseConfig {
+  storageKey?: string;
+  visible?: boolean;
+}
+
+export type ChatWithSidebarSidebarConfig =
+  | (ChatWithSidebarSidebarBaseConfig & {
+    open: boolean;
+    onToggle: () => void;
+  })
+  | (ChatWithSidebarSidebarBaseConfig & {
+    open?: undefined;
+    onToggle?: () => void;
+  });
+
+export interface ChatWithSidebarModelConfig {
+  options?: ChatProps["models"];
+}
+
+export interface ChatWithSidebarAttachmentConfig {
+  accept?: ChatProps["attachAccept"];
+  items?: ChatProps["attachments"];
+  uploads?: ChatProps["uploads"];
+  onAttach?: ChatProps["onAttach"];
+  onDrop?: ChatProps["onDrop"];
+  onRemoveItem?: ChatProps["onRemoveAttachment"];
+  onRemoveUpload?: ChatProps["onRemoveUpload"];
+}
+
+export interface ChatWithSidebarQuickActionsConfig {
+  suggestions?: ChatProps["suggestions"];
+  onSuggestionClick?: ChatProps["onSuggestionClick"];
+  actions?: ChatProps["quickActions"];
+  onAction?: ChatProps["onQuickAction"];
+}
+
+export interface ChatWithSidebarMessageConfig {
+  render?: ChatProps["renderMessage"];
+  renderTool?: ChatProps["renderTool"];
+  onFeedback?: ChatProps["onFeedback"];
+  onSourceClick?: ChatProps["onSourceClick"];
+}
+
+export interface ChatWithSidebarFeatureConfig {
+  steps?: ChatProps["showSteps"];
+  tabs?: ChatProps["showTabs"];
+  sources?: ChatProps["showSources"];
+  export?: ChatProps["showExport"];
+  scrollButton?: ChatProps["showScrollButton"];
+  messageActions?: ChatProps["showMessageActions"];
+}
+
+export type ChatWithSidebarTabsConfig =
+  | {
+    active: ChatProps["activeTab"];
+    onChange: TabChangeHandler;
+  }
+  | {
+    active?: undefined;
+    onChange?: TabChangeHandler;
+  };
+
+export interface ChatWithSidebarVoiceConfig {
+  enabled?: ChatProps["enableVoice"];
+  onVoice?: ChatProps["onVoice"];
+}
+
+export interface ChatWithSidebarGroupedProps {
+  chat: ChatWithSidebarChatController;
+  sidebar?: ChatWithSidebarSidebarConfig;
+  models?: ChatWithSidebarModelConfig;
+  attachments?: ChatWithSidebarAttachmentConfig;
+  quickActions?: ChatWithSidebarQuickActionsConfig;
+  message?: ChatWithSidebarMessageConfig;
+  features?: ChatWithSidebarFeatureConfig;
+  tabs?: ChatWithSidebarTabsConfig;
+  voice?: ChatWithSidebarVoiceConfig;
+  className?: string;
+  maxHeight?: ChatProps["maxHeight"];
+  theme?: ChatProps["theme"];
+  placeholder?: ChatProps["placeholder"];
+  emptyState?: ChatProps["emptyState"];
+  children?: ChatProps["children"];
+}
+
+export type ChatWithSidebarProps = ChatWithSidebarGroupedProps;
 
 export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarProps>(
   function ChatWithSidebar(
     {
-      storageKey,
-      sidebarOpen: controlledOpen,
-      onSidebarToggle: controlledToggle,
-      showSidebar = true,
-      setMessages,
-      className,
-      messages,
+      chat,
+      sidebar,
       models,
-      model,
-      onModelChange,
-      ...chatProps
+      attachments,
+      quickActions,
+      message,
+      features,
+      tabs,
+      voice,
+      className,
+      maxHeight,
+      theme,
+      placeholder,
+      emptyState,
+      children,
     },
     ref,
   ): React.ReactElement {
-    const threadsHook = useThreads({ storageKey });
+    const storageKey = sidebar?.storageKey;
+    const controlledOpen = sidebar?.open;
+    const onSidebarToggle = sidebar?.onToggle;
+    const showSidebar = sidebar?.visible ?? true;
+    const setMessages = chat.setMessages;
+    const messages = chat.messages;
+    const model = chat.model;
+    const onModelChange = chat.onModelChange;
+    const controlledTab = tabs?.active;
+    const chatProps: ChatWithSidebarPassthroughProps = {
+      input: chat.input,
+      onChange: chat.onChange,
+      onSubmit: chat.onSubmit,
+      stop: chat.stop,
+      reload: chat.reload,
+      setInput: chat.setInput,
+      isLoading: chat.isLoading,
+      error: chat.error,
+      placeholder,
+      maxHeight,
+      theme,
+      renderMessage: message?.render,
+      renderTool: message?.renderTool,
+      suggestions: quickActions?.suggestions,
+      onSuggestionClick: quickActions?.onSuggestionClick,
+      emptyState,
+      showScrollButton: features?.scrollButton,
+      showMessageActions: features?.messageActions,
+      models: models?.options,
+      inferenceMode: chat.inferenceMode,
+      browserStatus: chat.browserStatus,
+      showSources: features?.sources,
+      onSourceClick: message?.onSourceClick,
+      onAttach: attachments?.onAttach,
+      onDrop: attachments?.onDrop,
+      attachAccept: attachments?.accept,
+      attachments: attachments?.items,
+      onRemoveAttachment: attachments?.onRemoveItem,
+      showExport: features?.export,
+      onFeedback: message?.onFeedback,
+      editMessage: chat.editMessage,
+      getBranches: chat.getBranches,
+      switchBranch: chat.switchBranch,
+      showSteps: features?.steps,
+      showTabs: features?.tabs,
+      uploads: attachments?.uploads,
+      onRemoveUpload: attachments?.onRemoveUpload,
+      quickActions: quickActions?.actions,
+      onQuickAction: quickActions?.onAction,
+      enableVoice: voice?.enabled,
+      onVoice: voice?.onVoice,
+      children,
+    };
+
+    const {
+      activeThreadId,
+      createThread,
+      deleteThread,
+      renameThread,
+      selectThread,
+      threads,
+      updateThread,
+    } = useThreads({ storageKey });
     const [internalOpen, setInternalOpen] = React.useState(false);
-    const [activeTab, setActiveTab] = React.useState<ChatTab>("chat");
+    const [internalTab, setInternalTab] = React.useState<ChatTab>("chat");
     const showTabs = chatProps.showTabs ?? false;
 
-    const isControlled = controlledOpen !== undefined;
-    const sidebarOpen = isControlled ? controlledOpen : internalOpen;
-    const toggleSidebar = isControlled ? controlledToggle! : () => setInternalOpen((prev) => !prev);
+    const isSidebarControlled = controlledOpen !== undefined;
+    const sidebarOpen = isSidebarControlled ? controlledOpen : internalOpen;
+    const toggleSidebar = React.useCallback(() => {
+      if (isSidebarControlled) {
+        onSidebarToggle?.();
+        return;
+      }
+
+      setInternalOpen((prev) => {
+        const next = !prev;
+        onSidebarToggle?.();
+        return next;
+      });
+    }, [isSidebarControlled, onSidebarToggle]);
+
+    const isTabControlled = controlledTab !== undefined;
+    const activeTab = controlledTab ?? internalTab;
+    const handleTabChange = React.useCallback((tab: ChatTab) => {
+      if (!isTabControlled) {
+        setInternalTab(tab);
+      }
+      tabs?.onChange?.(tab);
+    }, [isTabControlled, tabs]);
 
     // Keep refs in sync so callbacks always read current values
-    const activeId = threadsHook.activeThreadId;
-    const activeIdRef = React.useRef(activeId);
-    activeIdRef.current = activeId;
+    const activeIdRef = React.useRef(activeThreadId);
+    activeIdRef.current = activeThreadId;
     const messagesRef = React.useRef(messages);
     messagesRef.current = messages;
-    const threadsHookRef = React.useRef(threadsHook);
-    threadsHookRef.current = threadsHook;
+    const threadsRef = React.useRef(threads);
+    threadsRef.current = threads;
 
     // Sync current messages to active thread on change
     const prevMessagesRef = React.useRef(messages);
@@ -62,10 +248,10 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
       prevMessagesRef.current = messages;
 
       if (messages.length > 0) {
-        threadsHookRef.current.updateThread(currentActiveId, { messages });
+        updateThread(currentActiveId, { messages });
 
         // Auto-title from first user message
-        const activeThread = threadsHookRef.current.threads.find((t) => t.id === currentActiveId);
+        const activeThread = threadsRef.current.find((t) => t.id === currentActiveId);
         if (activeThread?.title === "New Chat") {
           const firstUserMsg = messages.find((m) => m.role === "user");
           if (firstUserMsg) {
@@ -75,37 +261,34 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
               .join("")
               .trim();
             if (text) {
-              threadsHookRef.current.renameThread(currentActiveId, text.slice(0, 30));
+              renameThread(currentActiveId, text.slice(0, 30));
             }
           }
         }
       }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [messages]);
+    }, [messages, renameThread, updateThread]);
 
     const handleSelectThread = React.useCallback(
       (id: string) => {
         const currentActiveId = activeIdRef.current;
         if (currentActiveId && messagesRef.current.length > 0) {
-          threadsHookRef.current.updateThread(currentActiveId, { messages: messagesRef.current });
+          updateThread(currentActiveId, { messages: messagesRef.current });
         }
-        threadsHookRef.current.selectThread(id);
-        const thread = threadsHookRef.current.threads.find((t) => t.id === id);
-        if (thread && setMessages) {
-          setMessages(thread.messages);
-        }
+        selectThread(id);
+        const thread = threadsRef.current.find((t) => t.id === id);
+        setMessages(thread?.messages ?? []);
       },
-      [setMessages],
+      [selectThread, updateThread, setMessages],
     );
 
     const handleNewThread = React.useCallback(() => {
       const currentActiveId = activeIdRef.current;
       if (currentActiveId && messagesRef.current.length > 0) {
-        threadsHookRef.current.updateThread(currentActiveId, { messages: messagesRef.current });
+        updateThread(currentActiveId, { messages: messagesRef.current });
       }
-      threadsHookRef.current.createThread();
-      if (setMessages) setMessages([]);
-    }, [setMessages]);
+      const nextThread = createThread();
+      setMessages(nextThread.messages);
+    }, [createThread, updateThread, setMessages]);
 
     if (!showSidebar) {
       return (
@@ -131,15 +314,15 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
         <style dangerouslySetInnerHTML={{ __html: tokenCSS }} />
         {sidebarOpen && (
           <ChatSidebar
-            threads={threadsHook.threads}
-            activeThreadId={threadsHook.activeThreadId}
+            threads={threads}
+            activeThreadId={activeThreadId}
             onSelectThread={handleSelectThread}
             onDeleteThread={(id) => {
-              threadsHookRef.current.deleteThread(id);
-              const next = threadsHookRef.current.threads.find((t) => t.id !== id);
-              if (next && setMessages) setMessages(next.messages);
+              deleteThread(id);
+              const next = threadsRef.current.find((t) => t.id !== id);
+              setMessages(next?.messages ?? []);
             }}
-            onRenameThread={threadsHook.renameThread}
+            onRenameThread={renameThread}
             onNewThread={handleNewThread}
           />
         )}
@@ -155,7 +338,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
             </button>
             {showTabs && (
               <div className="flex-1 flex justify-center">
-                <TabSwitcher activeTab={activeTab} onTabChange={setActiveTab} className="py-0" />
+                <TabSwitcher activeTab={activeTab} onTabChange={handleTabChange} className="py-0" />
               </div>
             )}
             {showTabs && <div className="size-8 shrink-0" />}
@@ -166,7 +349,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
             onModelChange={onModelChange}
             className="flex-1 min-h-0"
             activeTab={activeTab}
-            onTabChange={setActiveTab}
+            onTabChange={handleTabChange}
             hideTabSwitcher
             {...chatProps}
           />

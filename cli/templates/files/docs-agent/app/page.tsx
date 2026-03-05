@@ -76,41 +76,42 @@ export default function DocsChat() {
 
   return (
     <ChatWithSidebar
-      {...chat}
-      setMessages={chat.setMessages}
-      storageKey="rag-threads"
-      showSteps
-      showTabs
-      uploads={docFiles}
-      onRemoveUpload={(id) => docs.remove(id)}
-      quickActions={quickActions}
-      onQuickAction={handleQuickAction}
-      models={[
-        { value: 'anthropic/claude-sonnet-4-20250514', label: 'Claude Sonnet 4', provider: 'Anthropic' },
-        { value: 'openai/gpt-4o', label: 'GPT-4o', provider: 'OpenAI' },
-        { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini', provider: 'OpenAI', badge: 'Fast' },
-        { value: 'openai/gpt-5.2', label: 'GPT-5.2', provider: 'OpenAI' },
-      ]}
+      chat={chat}
+      sidebar={{ storageKey: 'rag-threads' }}
+      features={{ steps: true, tabs: true, sources: true, export: true }}
+      models={{
+        options: [
+          { value: 'anthropic/claude-sonnet-4-20250514', label: 'Claude Sonnet 4', provider: 'Anthropic' },
+          { value: 'openai/gpt-4o', label: 'GPT-4o', provider: 'OpenAI' },
+          { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini', provider: 'OpenAI', badge: 'Fast' },
+          { value: 'openai/gpt-5.2', label: 'GPT-5.2', provider: 'OpenAI' },
+        ],
+      }}
+      attachments={{
+        uploads: docFiles,
+        onRemoveUpload: (id) => docs.remove(id),
+        onAttach: (files) => {
+          for (const file of Array.from(files)) {
+            docs.upload(file)
+          }
+        },
+        accept: '.pdf,.docx,.csv,.txt,.md,.mdx',
+        items: attachments,
+        onRemoveItem: (id) => docs.remove(id),
+      }}
+      quickActions={{
+        actions: quickActions,
+        onAction: handleQuickAction,
+      }}
+      message={{
+        renderTool: () => null,
+        onFeedback: (messageId, feedback) => {
+          console.log(`Feedback: ${feedback} on message ${messageId}`)
+        },
+      }}
       className="flex-1 min-h-0"
       placeholder="Ask anything about your documents..."
-      renderTool={() => null}
-      showSources
-      showExport
       emptyState={{ title: 'Docs Agent', description: 'Upload files and ask questions' }}
-      onAttach={(files) => {
-        for (const file of Array.from(files)) {
-          docs.upload(file)
-        }
-      }}
-      attachAccept=".pdf,.docx,.csv,.txt,.md,.mdx"
-      attachments={attachments}
-      onRemoveAttachment={(id) => docs.remove(id)}
-      onFeedback={(messageId, feedback) => {
-        console.log(`Feedback: ${feedback} on message ${messageId}`)
-      }}
-      editMessage={chat.editMessage}
-      getBranches={chat.getBranches}
-      switchBranch={chat.switchBranch}
     />
   )
 }

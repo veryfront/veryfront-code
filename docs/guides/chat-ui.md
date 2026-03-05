@@ -70,27 +70,28 @@ export default function CustomLayout() {
 
   return (
     <Chat.Root {...chat}>
-
       {/* Custom header */}
       <header className="border-b p-4">
         <h1>AI Assistant</h1>
       </header>
 
       {/* Message area */}
-      {isEmpty ? (
-        <Chat.Empty
-          title="What can I help with?"
-          suggestions={["Explain React hooks", "Write a regex"]}
-          onSuggestionClick={(s) => chat.setInput(s)}
-        />
-      ) : (
-        <Chat.MessageList
-          messages={chat.messages}
-          isLoading={chat.isLoading}
-          showMessageActions
-          showSources
-        />
-      )}
+      {isEmpty
+        ? (
+          <Chat.Empty
+            title="What can I help with?"
+            suggestions={["Explain React hooks", "Write a regex"]}
+            onSuggestionClick={(s) => chat.setInput(s)}
+          />
+        )
+        : (
+          <Chat.MessageList
+            messages={chat.messages}
+            isLoading={chat.isLoading}
+            showMessageActions
+            showSources
+          />
+        )}
 
       {/* Input area */}
       <Chat.Composer {...chat} />
@@ -101,14 +102,14 @@ export default function CustomLayout() {
 
 Available composition components:
 
-| Component | Description |
-|-----------|-------------|
-| `Chat.Root` | Context provider + container. Wraps all other pieces. |
-| `Chat.MessageList` | Renders messages with auto-scroll, editing, branching. |
-| `Chat.Composer` | Input area with attachments, model selector, voice, submit. |
-| `Chat.Empty` | Empty state with icon, title, suggestions. |
-| `Chat.If` | Conditional rendering helper that reads chat context. |
-| `Chat.ErrorBanner` | Error display with retry button. |
+| Component          | Description                                                 |
+| ------------------ | ----------------------------------------------------------- |
+| `Chat.Root`        | Context provider + container. Wraps all other pieces.       |
+| `Chat.MessageList` | Renders messages with auto-scroll, editing, branching.      |
+| `Chat.Composer`    | Input area with attachments, model selector, voice, submit. |
+| `Chat.Empty`       | Empty state with icon, title, suggestions.                  |
+| `Chat.If`          | Conditional rendering helper that reads chat context.       |
+| `Chat.ErrorBanner` | Error display with retry button.                            |
 
 ## Per-message control (compound)
 
@@ -136,14 +137,14 @@ function CustomMessage({ msg }) {
 
 When `Message.Root` is nested inside `Chat.Root`, it automatically picks up callbacks (editMessage, getBranches, switchBranch, onFeedback) from context. You can also pass them as props to override.
 
-| Sub-component | Description |
-|---------------|-------------|
-| `Message.Root` | Wraps a `UIMessage` and provides `MessageContext`. |
-| `Message.Avatar` | Model avatar (Claude, OpenAI, or default). Hidden for user messages. |
-| `Message.Content` | Renders text (markdown), reasoning, tool calls, steps, sources. |
-| `Message.Actions` | Copy and edit buttons (appears on hover). |
-| `Message.Feedback` | Thumbs up/down feedback buttons. |
-| `Message.BranchPicker` | Branch navigation (prev/next variant). |
+| Sub-component          | Description                                                          |
+| ---------------------- | -------------------------------------------------------------------- |
+| `Message.Root`         | Wraps a `UIMessage` and provides `MessageContext`.                   |
+| `Message.Avatar`       | Model avatar (Claude, OpenAI, or default). Hidden for user messages. |
+| `Message.Content`      | Renders text (markdown), reasoning, tool calls, steps, sources.      |
+| `Message.Actions`      | Copy and edit buttons (appears on hover).                            |
+| `Message.Feedback`     | Thumbs up/down feedback buttons.                                     |
+| `Message.BranchPicker` | Branch navigation (prev/next variant).                               |
 
 ## useChat hook
 
@@ -223,7 +224,7 @@ When an agent calls a tool, the message contains a tool part. Render it with `re
     }
     return null;
   }}
-/>
+/>;
 ```
 
 Tool parts have a `state` property:
@@ -247,7 +248,7 @@ Tool parts have a `state` property:
   attachAccept=".pdf,.docx,.txt"
   attachments={uploadedFiles}
   onRemoveAttachment={(id) => removeFile(id)}
-/>
+/>;
 ```
 
 ### Model selector
@@ -261,7 +262,7 @@ Tool parts have a `state` property:
   ]}
   model={chat.model}
   onModelChange={chat.setModel}
-/>
+/>;
 ```
 
 ### Message editing & branching
@@ -272,7 +273,7 @@ Tool parts have a `state` property:
   editMessage={chat.editMessage}
   getBranches={chat.getBranches}
   switchBranch={chat.switchBranch}
-/>
+/>;
 ```
 
 ### Sidebar with threads
@@ -284,9 +285,8 @@ function App() {
   const chat = useChat({ api: "/api/chat" });
   return (
     <ChatWithSidebar
-      {...chat}
-      storageKey="my-app"
-      setMessages={chat.setMessages}
+      chat={chat}
+      sidebar={{ storageKey: "my-app" }}
     />
   );
 }
@@ -300,7 +300,7 @@ function App() {
   showTabs
   uploads={docs}
   onRemoveUpload={(id) => removeDoc(id)}
-/>
+/>;
 ```
 
 ## useAgent hook
@@ -364,9 +364,7 @@ import { Chat, useChat } from "veryfront/chat";
 export default function ChatPage() {
   const chat = useChat({ api: "/api/chat" });
 
-  return (
-    <Chat {...chat} />
-  );
+  return <Chat {...chat} />;
 }
 ```
 
@@ -406,19 +404,19 @@ Customize the `Chat` component with a theme object:
     button: "bg-blue-600 text-white rounded",
     loading: "text-gray-400 animate-pulse",
   }}
-/>
+/>;
 ```
 
 ## Contexts
 
 The compound system uses React contexts for shared state. These are set up automatically by `Chat` and `Chat.Root`.
 
-| Context | Hook | Description |
-|---------|------|-------------|
-| `ChatContext` | `useChatContext()` | Root state: messages, loading, input, model, etc. |
-| `MessageContext` | `useMessageContext()` | Per-message state: parts, text, actions, feedback. |
-| `ComposerContext` | `useComposerContext()` | Input area: value, attachments, submit, voice. |
-| `ThreadListContext` | `useThreadListContext()` | Multi-conversation navigation. |
+| Context             | Hook                     | Description                                        |
+| ------------------- | ------------------------ | -------------------------------------------------- |
+| `ChatContext`       | `useChatContext()`       | Root state: messages, loading, input, model, etc.  |
+| `MessageContext`    | `useMessageContext()`    | Per-message state: parts, text, actions, feedback. |
+| `ComposerContext`   | `useComposerContext()`   | Input area: value, attachments, submit, voice.     |
+| `ThreadListContext` | `useThreadListContext()` | Multi-conversation navigation.                     |
 
 ## Next
 
