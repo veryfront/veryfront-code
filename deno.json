@@ -255,7 +255,10 @@
     "@babel/parser": "npm:@babel/parser@7.26.3",
     "@babel/traverse": "npm:@babel/traverse@7.26.3",
     "@babel/generator": "npm:@babel/generator@7.26.3",
-    "@babel/types": "npm:@babel/types@7.26.3"
+    "@babel/types": "npm:@babel/types@7.26.3",
+    "class-variance-authority": "npm:class-variance-authority@0.7.1",
+    "clsx": "npm:clsx@2.1.1",
+    "tailwind-merge": "npm:tailwind-merge@2.6.0"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
