@@ -31,5 +31,11 @@ export interface TextBlock {
   order: number | null;
 }
 
+export interface OrderedStep {
+  index: number;
+  isComplete: boolean;
+  order: number;
+}
+
 export type OrderedToolCall = StreamingToolCall & { order: number };
 export type OrderedReasoning = StreamingReasoning & { order: number };

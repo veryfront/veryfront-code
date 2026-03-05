@@ -7,11 +7,13 @@
 
 export { useChat } from "./use-chat.ts";
 export type {
+  BranchInfo,
   BrowserInferenceStatus,
   DynamicToolUIPart,
   InferenceMode,
   OnToolCallArg,
   ReasoningUIPart,
+  StepUIPart,
   TextUIPart,
   ToolOutput,
   ToolResultUIPart,

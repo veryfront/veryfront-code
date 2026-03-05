@@ -11,6 +11,14 @@ export async function createPackageJson(
 ): Promise<void> {
   const fs = createFileSystem();
 
+  // Read any existing package.json (e.g. from template) to merge dependencies
+  let templateDeps: Record<string, string> = {};
+  const pkgPath = join(projectDir, "package.json");
+  if (await fs.exists(pkgPath)) {
+    const existing = JSON.parse(await fs.readTextFile(pkgPath));
+    templateDeps = existing.dependencies ?? {};
+  }
+
   const dirName = projectDir.split(/[/\\]/).pop();
   const packageJson = {
     name: projectName ?? dirName ?? "veryfront-project",
@@ -25,6 +33,7 @@ export async function createPackageJson(
       onlyBuiltDependencies: ["esbuild", "veryfront"],
     },
     dependencies: {
+      ...templateDeps,
       react: `^${DEFAULT_INIT_REACT_VERSION}`,
       "react-dom": `^${DEFAULT_INIT_REACT_VERSION}`,
       veryfront: `^${VERSION}`,

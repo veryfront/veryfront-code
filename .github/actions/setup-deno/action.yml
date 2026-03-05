@@ -16,6 +16,10 @@ runs:
         cache: true
         cache-hash: ${{ hashFiles('deno.json') }}
 
+    - name: Generate template manifest
+      shell: bash
+      run: deno run -A scripts/build/generate-templates-manifest.ts && deno fmt cli/templates/manifest.json
+
     - name: Warm esm.sh cache
       if: inputs.warm-cache == 'true'
       shell: bash

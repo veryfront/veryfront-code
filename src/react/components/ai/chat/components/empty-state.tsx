@@ -20,18 +20,18 @@ export function Suggestion({
       type="button"
       onClick={() => onClick?.(suggestion)}
       className={cn(
-        "group flex items-start gap-3 rounded-xl border border-border bg-background p-4 text-left text-sm text-foreground transition-all hover:bg-muted hover:border-muted-foreground/20",
+        "group flex items-center gap-2 rounded-full border border-[var(--border)] px-4 py-2 text-left text-sm text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:border-[var(--input-border)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
         className,
       )}
     >
       {icon
         ? (
-          <span className="shrink-0 text-muted-foreground transition-colors group-hover:text-foreground">
+          <span className="shrink-0 text-[var(--input-placeholder)] transition-colors group-hover:text-[var(--foreground)]">
             {icon}
           </span>
         )
         : null}
-      <span className="line-clamp-2">{suggestion}</span>
+      <span className="line-clamp-1">{suggestion}</span>
     </button>
   );
 }
@@ -49,7 +49,7 @@ export function Suggestions({
 }: SuggestionsProps): React.ReactElement {
   const containerClassName = layout === "horizontal"
     ? "flex gap-2 overflow-x-auto pb-2 scrollbar-hide"
-    : "grid grid-cols-2 gap-3 max-w-2xl mx-auto";
+    : "flex flex-wrap justify-center gap-2 max-w-2xl mx-auto";
 
   return <div className={cn(containerClassName, className)}>{children}</div>;
 }
@@ -71,10 +71,22 @@ export function ConversationEmptyState({
 }: ConversationEmptyStateProps): React.ReactElement {
   return (
     <div className={cn("flex flex-col items-center justify-center text-center", className)}>
-      {icon ? <div className="mb-4 text-muted-foreground">{icon}</div> : null}
-      <h1 className="text-3xl font-semibold text-foreground">{title}</h1>
+      {icon
+        ? (
+          <div className="mb-4 text-[var(--muted-foreground)]">
+            {icon}
+          </div>
+        )
+        : null}
+      <h1 className="text-2xl font-medium text-[var(--foreground)] tracking-tight">
+        {title}
+      </h1>
       {description
-        ? <p className="mt-2 max-w-md text-base text-muted-foreground">{description}</p>
+        ? (
+          <p className="mt-2 max-w-sm text-sm text-[var(--muted-foreground)] leading-relaxed">
+            {description}
+          </p>
+        )
         : null}
       {children}
     </div>
@@ -99,7 +111,7 @@ export function ConversationScrollButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-border bg-background p-2 shadow-lg transition-all hover:bg-muted",
+        "absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-[var(--border)] bg-[var(--card)] p-2 shadow-lg transition-all hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
         className,
       )}
     >

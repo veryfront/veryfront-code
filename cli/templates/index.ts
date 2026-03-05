@@ -50,7 +50,7 @@ const OPENAI_KEY_CONFIG = {
 
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
   "ai-agent": { envVars: [OPENAI_KEY_CONFIG] },
-  "chat-with-your-docs": { envVars: [OPENAI_KEY_CONFIG] },
+  "docs-agent": { envVars: [OPENAI_KEY_CONFIG] },
   "multi-agent-system": { envVars: [OPENAI_KEY_CONFIG] },
   "agentic-workflow": { envVars: [OPENAI_KEY_CONFIG] },
   "coding-agent": { envVars: [OPENAI_KEY_CONFIG] },
@@ -59,7 +59,7 @@ export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
 
 const DIRECTORY_BASED_TEMPLATES: TemplateName[] = [
   "ai-agent",
-  "chat-with-your-docs",
+  "docs-agent",
   "multi-agent-system",
   "agentic-workflow",
   "coding-agent",

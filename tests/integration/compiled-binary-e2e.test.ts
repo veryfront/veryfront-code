@@ -102,8 +102,8 @@ async function ensureBinaryCompiled(): Promise<void> {
   if (forceFresh) console.log("🗑️  Force fresh build (VERYFRONT_BINARY_FRESH=1)");
   if (binaryExists) await Deno.remove(BINARY_PATH);
 
-  // Prepare framework sources for embedding in binary
-  console.log("📦 Preparing framework sources...");
+  // Run the same pre-build pipeline used by distribution builds
+  console.log("📦 Preparing build artifacts...");
   const prepareResult = await new Deno.Command("deno", {
     args: ["run", "--allow-all", "scripts/build/prepare-framework-sources.ts"],
     stdout: "inherit",

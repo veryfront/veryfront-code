@@ -8,7 +8,7 @@ export const initHelp: CommandHelp = {
     {
       flag: "-t, --template <name>",
       description:
-        "Project template (minimal | ai-agent | chat-with-your-docs | agentic-workflow | multi-agent-system | coding-agent | saas-starter)",
+        "Project template (minimal | ai-agent | docs-agent | agentic-workflow | multi-agent-system | coding-agent | saas-starter)",
     },
     {
       flag: "--integrations <list>",
@@ -39,7 +39,7 @@ export const initHelp: CommandHelp = {
     "veryfront init                              # Interactive wizard",
     "veryfront init my-app",
     "veryfront init my-app --template ai-agent",
-    "veryfront init my-rag --template chat-with-your-docs",
+    "veryfront init my-rag --template docs-agent",
     "veryfront init my-pipeline --template agentic-workflow",
     "veryfront init my-app --deploy              # Create and deploy",
     "veryfront init --config project.json        # From config file",

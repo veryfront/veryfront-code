@@ -1,7 +1,6 @@
 import {
   computeIntegrity,
   createLockfileManager,
-  getDenoStdNodeBase,
   HTTP_MODULE_FETCH_TIMEOUT_MS,
   HTTP_NETWORK_CONNECT_TIMEOUT,
   type LockfileManager,
@@ -27,26 +26,8 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
   return {
     name: "vf-api-http-fetch",
     setup(build): void {
-      const stdNodeBase = getDenoStdNodeBase();
       const resolvedUrls: string[] = [];
       const nodeMapped: Array<{ from: string; to: string }> = [];
-
-      function mapNodeCore(spec: string): string | null {
-        if (spec.startsWith("node:")) {
-          return `${stdNodeBase}/${spec.slice(5)}.ts`;
-        }
-
-        switch (spec) {
-          case "buffer":
-            return `${stdNodeBase}/buffer.ts`;
-          case "path":
-            return `${stdNodeBase}/path.ts`;
-          case "fs":
-            return `${stdNodeBase}/fs.ts`;
-          default:
-            return null;
-        }
-      }
 
       async function fetchWithTimeout(url: string): Promise<Response> {
         const controller = new AbortController();
@@ -75,13 +56,18 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         return { path: reactUrl, namespace: "http-url" };
       });
 
-      build.onResolve({ filter: /^(node:|buffer$|path$|fs$)/ }, (args) => {
-        const mapped = mapNodeCore(args.path);
-        if (!mapped) return undefined;
+      // Node.js built-in modules — mark as external so they resolve at runtime
+      // via Deno's node: compat layer or Node.js itself. Post-processing in
+      // rewriteExternalImports converts bare names to node: prefix for Deno.
+      const nodeBuiltinPattern =
+        /^(node:|assert$|buffer$|child_process$|cluster$|crypto$|dgram$|dns$|events$|fs$|http$|http2$|https$|net$|os$|path$|perf_hooks$|querystring$|readline$|stream$|string_decoder$|tls$|tty$|url$|util$|v8$|vm$|worker_threads$|zlib$)/;
 
-        nodeMapped.push({ from: args.path, to: mapped });
-        logger.debug(`[http] map '${args.path}' -> '${mapped}'`);
-        return { path: mapped, namespace: "http-url" };
+      build.onResolve({ filter: nodeBuiltinPattern }, (args) => {
+        nodeMapped.push({
+          from: args.path,
+          to: args.path.startsWith("node:") ? args.path : `node:${args.path}`,
+        });
+        return { path: args.path, external: true };
       });
 
       build.onResolve({ filter: /.*/ }, (args) => {

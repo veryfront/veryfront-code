@@ -8,9 +8,10 @@
  * @module agent/chat-handler.test
  */
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createChatHandler } from "./chat-handler.ts";
+import { registerAgent } from "./composition/index.ts";
 
 describe("createChatHandler", () => {
   // The handler calls extractRequest first. If that fails, it throws
@@ -92,5 +93,194 @@ describe("createChatHandler", () => {
       Error,
       "Invalid handler argument",
     );
+  });
+
+  it("should run beforeStream and allow message/context customization", async () => {
+    const agentId = `hook-agent-${crypto.randomUUID()}`;
+    let clearMemoryCalls = 0;
+    let streamMessages: Array<{ id: string; role: string; parts: unknown[] }> = [];
+    let streamContext: Record<string, unknown> | undefined;
+
+    const fakeAgent = {
+      id: agentId,
+      config: { model: "openai/gpt-4o", system: "Hook test bot" },
+      clearMemory: async () => {
+        clearMemoryCalls++;
+      },
+      stream: async (
+        input: {
+          messages?: Array<{ id: string; role: string; parts: unknown[] }>;
+          context?: Record<string, unknown>;
+        },
+      ) => {
+        streamMessages = input.messages ?? [];
+        streamContext = input.context;
+        return {
+          toDataStreamResponse: () => new Response("ok", { status: 200 }),
+        };
+      },
+    };
+
+    // deno-lint-ignore no-explicit-any
+    registerAgent(agentId, fakeAgent as any);
+
+    const handler = createChatHandler(agentId, {
+      context: { tenant: "acme" },
+      beforeStream: ({ lastUserText, context }) => {
+        assertEquals(lastUserText, "Where are the docs?");
+        assertEquals(context.tenant, "acme");
+
+        return {
+          prepend: [
+            {
+              role: "system",
+              parts: [{ type: "text", text: `Context: ${lastUserText}` }],
+            },
+          ],
+          context: { ...context, rag: true },
+        };
+      },
+    });
+
+    const request = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          {
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "Where are the docs?" }],
+          },
+        ],
+      }),
+    });
+
+    const response = await handler(request);
+    assertEquals(response.status, 200);
+    assertEquals(clearMemoryCalls, 1);
+
+    assertEquals(streamMessages.length, 2);
+    assertEquals(streamMessages[0]?.role, "system");
+    assertEquals(
+      (streamMessages[0]?.parts[0] as { text?: string }).text,
+      "Context: Where are the docs?",
+    );
+    assertStringIncludes(streamMessages[0]?.id ?? "", "prepend_");
+    assertEquals(streamMessages[1]?.role, "user");
+    assertEquals(streamContext?.tenant, "acme");
+    assertEquals(streamContext?.rag, true);
+  });
+
+  it("should allow beforeStream to short-circuit with a Response", async () => {
+    const agentId = `hook-short-circuit-${crypto.randomUUID()}`;
+    let clearMemoryCalls = 0;
+    let streamCalls = 0;
+
+    const fakeAgent = {
+      id: agentId,
+      config: { model: "openai/gpt-4o", system: "Short-circuit bot" },
+      clearMemory: async () => {
+        clearMemoryCalls++;
+      },
+      stream: async () => {
+        streamCalls++;
+        return {
+          toDataStreamResponse: () => new Response("ok", { status: 200 }),
+        };
+      },
+    };
+
+    // deno-lint-ignore no-explicit-any
+    registerAgent(agentId, fakeAgent as any);
+
+    const handler = createChatHandler(agentId, {
+      beforeStream: () => Response.json({ error: "Unauthorized" }, { status: 401 }),
+    });
+
+    const request = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          {
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          },
+        ],
+      }),
+    });
+
+    const response = await handler(request);
+    const body = await response.json();
+
+    assertEquals(response.status, 401);
+    assertEquals(body.error, "Unauthorized");
+    assertEquals(clearMemoryCalls, 0);
+    assertEquals(streamCalls, 0);
+  });
+
+  it("should allow beforeStream to replace and append messages", async () => {
+    const agentId = `hook-replace-${crypto.randomUUID()}`;
+    let streamMessages: Array<{ id: string; role: string; parts: unknown[] }> = [];
+
+    const fakeAgent = {
+      id: agentId,
+      config: { model: "openai/gpt-4o", system: "Replace test bot" },
+      clearMemory: async () => {},
+      stream: async (
+        input: { messages?: Array<{ id: string; role: string; parts: unknown[] }> },
+      ) => {
+        streamMessages = input.messages ?? [];
+        return {
+          toDataStreamResponse: () => new Response("ok", { status: 200 }),
+        };
+      },
+    };
+
+    // deno-lint-ignore no-explicit-any
+    registerAgent(agentId, fakeAgent as any);
+
+    const handler = createChatHandler(agentId, {
+      beforeStream: () => ({
+        replaceMessages: [
+          {
+            id: "replacement-user",
+            role: "user",
+            parts: [{ type: "text", text: "replacement" }],
+          },
+        ],
+        append: [
+          {
+            role: "system",
+            parts: [{ type: "text", text: "tail" }],
+          },
+        ],
+      }),
+    });
+
+    const request = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          {
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "original" }],
+          },
+        ],
+      }),
+    });
+
+    const response = await handler(request);
+    assertEquals(response.status, 200);
+
+    assertEquals(streamMessages.length, 2);
+    assertEquals(streamMessages[0]?.id, "replacement-user");
+    assertEquals((streamMessages[0]?.parts[0] as { text?: string }).text, "replacement");
+    assertEquals(streamMessages[1]?.role, "system");
+    assertStringIncludes(streamMessages[1]?.id ?? "", "append_");
   });
 });

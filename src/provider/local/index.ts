@@ -18,13 +18,22 @@
 
 export { createLocalModel } from "./ai-sdk-adapter.ts";
 export { isLocalAIDisabled } from "./env.ts";
+export { createLocalEmbeddingModel } from "./local-embedding-adapter.ts";
+export { embedTexts } from "./local-embedding-engine.ts";
 export {
   generate,
   generateStream,
+  getTransformers,
   isModelLoaded,
   preloadModel,
   verifyLocalRuntime,
 } from "./local-engine.ts";
 export type { ChatMessage, GenerateOptions } from "./local-engine.ts";
-export { DEFAULT_LOCAL_MODEL, getLocalModelIds, resolveLocalModel } from "./model-catalog.ts";
+export {
+  DEFAULT_LOCAL_EMBEDDING_MODEL,
+  DEFAULT_LOCAL_MODEL,
+  getLocalModelIds,
+  resolveLocalEmbeddingModel,
+  resolveLocalModel,
+} from "./model-catalog.ts";
 export type { ModelInfo } from "./model-catalog.ts";

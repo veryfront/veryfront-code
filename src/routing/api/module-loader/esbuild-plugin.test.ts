@@ -137,6 +137,102 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       assertEquals(nodeFilter.test("fs"), true);
     });
 
+    it("should return external: true for bare Node builtins", () => {
+      const plugin = createHTTPPlugin([]);
+
+      const resolvers: Array<{
+        filter: RegExp;
+        fn: (args: OnResolveArgs) => unknown;
+      }> = [];
+
+      const mockBuild = createMockBuild(
+        (opts, fn) => {
+          resolvers.push({ filter: opts.filter, fn });
+        },
+        () => {},
+      );
+
+      plugin.setup(mockBuild);
+
+      // Find the Node builtin resolver (3rd registered)
+      const nodeResolver = resolvers[2];
+      assertExists(nodeResolver);
+
+      const bareBuiltins = ["fs", "http", "crypto", "path", "buffer", "stream", "url", "util"];
+      for (const name of bareBuiltins) {
+        const result = nodeResolver.fn({
+          path: name,
+          importer: "",
+          namespace: "",
+          resolveDir: "",
+          kind: "import-statement",
+          pluginData: undefined,
+        }) as { path: string; external: boolean };
+
+        assertEquals(result.external, true, `Expected ${name} to be marked external`);
+        assertEquals(result.path, name, `Expected path to be "${name}"`);
+      }
+    });
+
+    it("should return external: true for node:-prefixed imports", () => {
+      const plugin = createHTTPPlugin([]);
+
+      const resolvers: Array<{
+        filter: RegExp;
+        fn: (args: OnResolveArgs) => unknown;
+      }> = [];
+
+      const mockBuild = createMockBuild(
+        (opts, fn) => {
+          resolvers.push({ filter: opts.filter, fn });
+        },
+        () => {},
+      );
+
+      plugin.setup(mockBuild);
+
+      const nodeResolver = resolvers[2];
+      assertExists(nodeResolver);
+
+      const prefixedBuiltins = ["node:fs", "node:path", "node:crypto", "node:http"];
+      for (const name of prefixedBuiltins) {
+        const result = nodeResolver.fn({
+          path: name,
+          importer: "",
+          namespace: "",
+          resolveDir: "",
+          kind: "import-statement",
+          pluginData: undefined,
+        }) as { path: string; external: boolean };
+
+        assertEquals(result.external, true, `Expected ${name} to be marked external`);
+        assertEquals(result.path, name, `Expected path to be "${name}"`);
+      }
+    });
+
+    it("should not match non-builtin module names", () => {
+      const plugin = createHTTPPlugin([]);
+
+      const resolveFilters: RegExp[] = [];
+      const mockBuild = createMockBuild(
+        (opts) => {
+          resolveFilters.push(opts.filter);
+        },
+        () => {},
+      );
+
+      plugin.setup(mockBuild);
+
+      const nodeFilter = resolveFilters[2];
+      assertExists(nodeFilter);
+
+      // These should NOT match the Node builtin pattern
+      assertEquals(nodeFilter.test("pdf-parse"), false);
+      assertEquals(nodeFilter.test("lodash"), false);
+      assertEquals(nodeFilter.test("express"), false);
+      assertEquals(nodeFilter.test("fsevents"), false); // starts with "fs" but is not "fs"
+    });
+
     it("should resolve HTTP URLs to http-url namespace", () => {
       const plugin = createHTTPPlugin([]);
 

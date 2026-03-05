@@ -28,17 +28,16 @@ export function UpgradeCTA({ inferenceMode }: UpgradeCTAProps): React.ReactEleme
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto mt-4 px-4 py-3 bg-blue-50 dark:bg-blue-900/20 rounded-xl text-sm text-blue-700 dark:text-blue-300 flex items-start gap-3">
+    <div className="w-full max-w-2xl mx-auto mt-4 px-4 py-3 bg-[var(--accent)] rounded-xl text-sm text-[var(--foreground)] flex items-start gap-3">
       <span className="flex-1">
         Using a lightweight local model. Add an API key to your{" "}
-        <code className="px-1 py-0.5 bg-blue-100 dark:bg-blue-900/40 rounded text-xs">.env</code>
-        {" "}
+        <code className="px-1 py-0.5 bg-[var(--border)] rounded text-xs">.env</code>{" "}
         for GPT-4o or Claude.
       </span>
       <button
         type="button"
         onClick={handleDismiss}
-        className="text-blue-400 hover:text-blue-600 dark:hover:text-blue-200 transition-colors flex-shrink-0"
+        className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-all flex-shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
         aria-label="Dismiss"
       >
         <svg

@@ -38,11 +38,24 @@ const dynamicToolPartSchema = z
   })
   .passthrough();
 
+const stepPartSchema = z.object({
+  type: z.enum(["step-start", "step-end"]),
+  stepIndex: z.number().optional(),
+}).passthrough();
+
+const reasoningPartSchema = z.object({
+  type: z.literal("reasoning"),
+  text: z.string(),
+  state: z.string().optional(),
+}).passthrough();
+
 const partSchema = z.union([
   textPartSchema,
   toolCallPartSchema,
   toolResultPartSchema,
   dynamicToolPartSchema,
+  stepPartSchema,
+  reasoningPartSchema,
 ]);
 
 const messageSchema = z.object({
@@ -53,9 +66,11 @@ const messageSchema = z.object({
 
 const chatRequestSchema = z.object({
   messages: z.array(messageSchema).min(1).max(100),
+  model: z.string().optional(),
 });
 
 type ParsedMessage = z.infer<typeof messageSchema>;
+type ParsedTextPart = z.infer<typeof textPartSchema>;
 
 // ---------------------------------------------------------------------------
 // Message transformation
@@ -117,9 +132,95 @@ function transformUIMessages(messages: ParsedMessage[]): Message[] {
   return result as unknown as Message[];
 }
 
+function isTextPart(part: unknown): part is ParsedTextPart {
+  return typeof part === "object" && part !== null && (part as { type?: string }).type === "text";
+}
+
+function extractLastUserText(messages: ParsedMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message || message.role !== "user") continue;
+
+    const text = message.parts
+      .filter(isTextPart)
+      .map((part) => part.text)
+      .join("\n")
+      .trim();
+
+    if (text.length > 0) return text;
+  }
+
+  return "";
+}
+
+function isResponseLike(value: unknown): value is Response {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as Response).status === "number" &&
+    typeof (value as Response).headers === "object" &&
+    typeof (value as Response).bodyUsed === "boolean"
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+export type ChatHandlerMessageInput = Omit<Message, "id"> & { id?: string };
+
+export interface ChatHandlerBeforeStreamContext {
+  request: Request;
+  messages: Message[];
+  context: Record<string, unknown>;
+  lastUserText: string;
+}
+
+export interface ChatHandlerBeforeStreamResult {
+  prepend?: ChatHandlerMessageInput[];
+  append?: ChatHandlerMessageInput[];
+  replaceMessages?: ChatHandlerMessageInput[];
+  context?: Record<string, unknown>;
+}
+
+export type ChatHandlerBeforeStream = (
+  input: ChatHandlerBeforeStreamContext,
+) =>
+  | void
+  | Response
+  | ChatHandlerBeforeStreamResult
+  | Promise<void | Response | ChatHandlerBeforeStreamResult>;
+
+function normalizeHookMessages(
+  messages: ChatHandlerMessageInput[] | undefined,
+  prefix: string,
+  idCounter: { value: number },
+): Message[] {
+  if (!messages || messages.length === 0) return [];
+
+  return messages.map((message) => ({
+    ...message,
+    id: message.id ?? `${prefix}_${idCounter.value++}`,
+  })) as Message[];
+}
+
+function applyBeforeStreamResult(
+  baseMessages: Message[],
+  result: ChatHandlerBeforeStreamResult | undefined,
+): Message[] {
+  if (!result) return baseMessages;
+
+  const idCounter = { value: 0 };
+  const coreMessages = result.replaceMessages
+    ? normalizeHookMessages(result.replaceMessages, "replace", idCounter)
+    : baseMessages;
+
+  return [
+    ...normalizeHookMessages(result.prepend, "prepend", idCounter),
+    ...coreMessages,
+    ...normalizeHookMessages(result.append, "append", idCounter),
+  ];
+}
 
 /** Options for `createChatHandler` — customize the context passed to the agent. */
 export interface ChatHandlerOptions {
@@ -129,6 +230,11 @@ export interface ChatHandlerOptions {
     | ((
       request: Request,
     ) => Record<string, unknown> | Promise<Record<string, unknown>>);
+  /**
+   * Hook to customize validated messages/context right before `agent.stream()`.
+   * Return `Response` to short-circuit (e.g. auth/rate limit).
+   */
+  beforeStream?: ChatHandlerBeforeStream;
 }
 
 /**
@@ -187,30 +293,50 @@ export function createChatHandler(
 
     try {
       const body = await request.json();
-      const { messages: rawMessages } = chatRequestSchema.parse(body);
+      const { messages: rawMessages, model: requestModel } = chatRequestSchema.parse(body);
 
       if (!agent) {
         return Response.json({ error: "Agent not found" }, { status: 404 });
       }
 
-      // Clear server-side memory before each request —
-      // the client (useChat) manages full conversation history
-      await agent.clearMemory();
-
       const context = typeof options?.context === "function"
         ? await options.context(request)
         : options?.context ?? { userId: "current-user" };
 
-      const result = await agent.stream({
-        messages: transformUIMessages(rawMessages),
+      const baseMessages = transformUIMessages(rawMessages);
+      const beforeStreamResult = await options?.beforeStream?.({
+        request,
+        messages: baseMessages,
         context,
+        lastUserText: extractLastUserText(rawMessages),
+      });
+
+      if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
+
+      let hookResult: ChatHandlerBeforeStreamResult | undefined;
+      if (beforeStreamResult) hookResult = beforeStreamResult;
+
+      const messages = applyBeforeStreamResult(baseMessages, hookResult);
+      const streamContext = hookResult?.context ?? context;
+
+      // Clear server-side memory before each request —
+      // the client (useChat) manages full conversation history
+      await agent.clearMemory();
+
+      const result = await agent.stream({
+        messages,
+        context: streamContext,
+        ...(requestModel ? { model: requestModel } : {}),
       });
 
       return result.toDataStreamResponse();
     } catch (error) {
       if (error instanceof z.ZodError) {
         return Response.json(
-          { error: "Invalid request", details: error.errors },
+          {
+            error: "Invalid request",
+            details: error.errors.map((e) => ({ path: e.path, message: e.message })),
+          },
           { status: 400 },
         );
       }
@@ -218,25 +344,24 @@ export function createChatHandler(
       // Detect structured "no_ai_available" errors from local engine
       const vfError = fromError(error);
       if (vfError?.type === "no_ai_available") {
-        // Resolve the agent's system prompt so the browser can use it for inference
-        const systemConfig = agent?.config?.system;
-        let systemPrompt = "You are a helpful AI assistant.";
-        if (typeof systemConfig === "string") {
-          systemPrompt = systemConfig;
-        } else if (typeof systemConfig === "function") {
-          try {
-            systemPrompt = await systemConfig();
-          } catch {
-            // Fall back to default
-          }
+        let systemPrompt: string | undefined;
+        try {
+          systemPrompt = agent
+            ? typeof agent.config.system === "string"
+              ? agent.config.system
+              : typeof agent.config.system === "function"
+              ? await agent.config.system()
+              : undefined
+            : undefined;
+        } catch {
+          // If system prompt resolution fails, continue without it
         }
-
         return Response.json(
           {
             code: "NO_AI_AVAILABLE",
             fallback: "browser",
             model: DEFAULT_LOCAL_MODEL,
-            systemPrompt,
+            ...(systemPrompt ? { systemPrompt } : {}),
           },
           { status: 503 },
         );
