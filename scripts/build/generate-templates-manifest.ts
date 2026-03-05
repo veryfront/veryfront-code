@@ -101,7 +101,7 @@ async function generateManifest(): Promise<TemplateManifest> {
 
 const manifest = await generateManifest();
 const outputPath = "./cli/templates/manifest.json";
-await Deno.writeTextFile(outputPath, JSON.stringify(manifest, null, 2));
+await Deno.writeTextFile(outputPath, JSON.stringify(manifest, null, 2) + "\n");
 
 const templateCount = Object.keys(manifest.templates).length;
 const fileCount = Object.values(manifest.templates).reduce(

@@ -28,18 +28,14 @@ describe("build/production-build/templates", () => {
   });
 
   describe("CLIENT_ROUTER_BUNDLE", () => {
-    it("should be a non-empty string with router code", () => {
-      assertEquals(typeof CLIENT_ROUTER_BUNDLE, "string");
-      assertEquals((CLIENT_ROUTER_BUNDLE as string).length > 0, true);
-      assertEquals((CLIENT_ROUTER_BUNDLE as string).includes("VeryfrontRouter"), true);
+    it("should be undefined by default (placeholder)", () => {
+      assertEquals(CLIENT_ROUTER_BUNDLE, undefined);
     });
   });
 
   describe("CLIENT_PREFETCH_BUNDLE", () => {
-    it("should be a non-empty string with prefetch code", () => {
-      assertEquals(typeof CLIENT_PREFETCH_BUNDLE, "string");
-      assertEquals((CLIENT_PREFETCH_BUNDLE as string).length > 0, true);
-      assertEquals((CLIENT_PREFETCH_BUNDLE as string).includes("PrefetchManager"), true);
+    it("should be undefined by default (placeholder)", () => {
+      assertEquals(CLIENT_PREFETCH_BUNDLE, undefined);
     });
   });
 });

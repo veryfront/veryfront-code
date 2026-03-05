@@ -18,7 +18,7 @@ runs:
 
     - name: Generate template manifest
       shell: bash
-      run: deno run -A scripts/build/generate-templates-manifest.ts
+      run: deno run -A scripts/build/generate-templates-manifest.ts && deno fmt cli/templates/manifest.json
 
     - name: Warm esm.sh cache
       if: inputs.warm-cache == 'true'
