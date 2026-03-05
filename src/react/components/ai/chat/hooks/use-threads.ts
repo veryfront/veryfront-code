@@ -105,7 +105,7 @@ export function useThreads(options?: UseThreadsOptions): UseThreadsResult {
   );
 
   // Debounced persist
-  const saveTimerRef = React.useRef<ReturnType<typeof setTimeout>>();
+  const saveTimerRef = React.useRef<ReturnType<typeof setTimeout>>(undefined);
   const persistThreads = React.useCallback(
     (updated: Thread[]) => {
       clearTimeout(saveTimerRef.current);
@@ -156,9 +156,7 @@ export function useThreads(options?: UseThreadsOptions): UseThreadsResult {
 
         persistThreads(next);
         // If we deleted the active thread, switch to the first one
-        setActiveThreadId((current) =>
-          current === id ? (next[0]?.id ?? null) : current
-        );
+        setActiveThreadId((current) => current === id ? (next[0]?.id ?? null) : current);
         return next;
       });
     },

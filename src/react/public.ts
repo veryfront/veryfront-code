@@ -39,15 +39,60 @@ export { MDXProvider, useMDXComponents } from "./components/MDXProvider.tsx";
 export type { MDXProviderProps } from "./components/MDXProvider.tsx";
 
 // ---------------------------------------------------------------------------
-// Chat — components (veryfront/chat)
+// Chat — Core preset + compound
 // ---------------------------------------------------------------------------
 export {
   Chat,
   ChatComponents,
-  ChatFooter,
-  ChatHeader,
-  ChatInput,
-  ChatMessages,
+} from "./components/ai/chat.tsx";
+export type { ChatProps } from "./components/ai/chat.tsx";
+
+// Chat — Composition building blocks
+export {
+  ChatComposer,
+  ChatEmpty,
+  ChatIf,
+  ChatMessageList,
+  ChatRoot,
+  ErrorBanner,
+  Message,
+  ModelAvatar,
+} from "./components/ai/chat.tsx";
+export type {
+  ChatComposerProps,
+  ChatEmptyProps,
+  ChatIfProps,
+  ChatMessageListProps,
+  ChatRootProps,
+  ErrorBannerProps,
+  MessageRootProps,
+  ModelAvatarProps,
+} from "./components/ai/chat.tsx";
+
+// Chat — Contexts
+export {
+  ChatContextProvider,
+  ComposerContextProvider,
+  MessageContextProvider,
+  ThreadListContextProvider,
+  useChatContext,
+  useChatContextOptional,
+  useComposerContext,
+  useComposerContextOptional,
+  useMessageContext,
+  useMessageContextOptional,
+  useThreadListContext,
+  useThreadListContextOptional,
+} from "./components/ai/chat.tsx";
+export type {
+  ChatContextValue,
+  ComposerContextValue,
+  MessageContextValue,
+  ThreadListContextValue,
+} from "./components/ai/chat.tsx";
+
+// Chat — Sub-components
+export {
   extractSourcesFromParts,
   FadeIn,
   InlineCitation,
@@ -55,7 +100,6 @@ export {
   Sources,
 } from "./components/ai/chat.tsx";
 export type {
-  ChatProps,
   InlineCitationProps,
   ModelOption,
   ModelSelectorProps,
@@ -63,7 +107,11 @@ export type {
   SourcesProps,
 } from "./components/ai/chat.tsx";
 
-export { Message, StreamingMessage } from "./components/ai/message.tsx";
+export { ChatWithSidebar } from "./components/ai/chat.tsx";
+export type { ChatWithSidebarProps } from "./components/ai/chat.tsx";
+
+// Standalone message components
+export { Message as StandaloneMessage, StreamingMessage } from "./components/ai/message.tsx";
 export type { MessageProps, StreamingMessageProps } from "./components/ai/message.tsx";
 
 export { AgentCard } from "./components/ai/agent-card.tsx";
@@ -72,7 +120,21 @@ export type { AgentCardProps } from "./components/ai/agent-card.tsx";
 export { AIErrorBoundary, useAIErrorHandler } from "./components/ai/error-boundary.tsx";
 export type { AIErrorBoundaryProps } from "./components/ai/error-boundary.tsx";
 
+// Theme utilities
 export type { AgentTheme, ChatTheme } from "./components/ai/theme.ts";
+export { cva, type VariantProps } from "./components/ai/theme.ts";
+export {
+  chatButtonVariants,
+  chatContainerVariants,
+  messageVariants,
+} from "./components/ai/theme.ts";
+export {
+  ColorModeProvider,
+  type ColorModeProviderProps,
+  ColorModeScript,
+  ColorModeToggle,
+  useColorMode,
+} from "./components/ai/color-mode.tsx";
 
 // ---------------------------------------------------------------------------
 // Chat — hooks (veryfront/chat)

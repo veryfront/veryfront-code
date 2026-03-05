@@ -32,20 +32,16 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
       models,
       model,
       onModelChange,
-      setModel,
       ...chatProps
     },
     ref,
   ): React.ReactElement {
-    const modelChangeHandler = onModelChange ?? (setModel as ((model: string) => void) | undefined);
     const threadsHook = useThreads({ storageKey });
     const [internalOpen, setInternalOpen] = React.useState(true);
 
     const isControlled = controlledOpen !== undefined;
     const sidebarOpen = isControlled ? controlledOpen : internalOpen;
-    const toggleSidebar = isControlled
-      ? controlledToggle!
-      : () => setInternalOpen((prev) => !prev);
+    const toggleSidebar = isControlled ? controlledToggle! : () => setInternalOpen((prev) => !prev);
 
     // Sync current messages to active thread on change
     const activeId = threadsHook.activeThreadId;
@@ -73,7 +69,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
           }
         }
       }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [messages]);
 
     const handleSelectThread = React.useCallback(
@@ -99,7 +95,16 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
     }, [activeId, messages, threadsHook, setMessages]);
 
     if (!showSidebar) {
-      return <Chat ref={ref} messages={messages} model={model} className={className} {...chatProps} />;
+      return (
+        <Chat
+          ref={ref}
+          messages={messages}
+          model={model}
+          onModelChange={onModelChange}
+          className={className}
+          {...chatProps}
+        />
+      );
     }
 
     return (
@@ -119,7 +124,6 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
           />
         )}
         <div className="flex-1 min-w-0 flex flex-col">
-          {/* Header bar with toggle — always outside the sidebar */}
           <div className="flex items-center gap-1 px-3 py-2 shrink-0 border-b border-neutral-100 dark:border-neutral-800/60">
             <button
               type="button"
@@ -137,18 +141,24 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
               <PlusIcon className="size-4" />
               <span>New Chat</span>
             </button>
-            {models && models.length > 0 && modelChangeHandler && (
+            {models && models.length > 0 && onModelChange && (
               <>
                 <div className="flex-1" />
                 <ModelSelector
                   models={models}
                   value={model}
-                  onChange={modelChangeHandler}
+                  onChange={onModelChange}
                 />
               </>
             )}
           </div>
-          <Chat messages={messages} model={model} className="flex-1 min-h-0" {...chatProps} />
+          <Chat
+            messages={messages}
+            model={model}
+            onModelChange={onModelChange}
+            className="flex-1 min-h-0"
+            {...chatProps}
+          />
         </div>
       </div>
     );

@@ -4,6 +4,10 @@
  * Provides default theme and utilities for customization.
  */
 
+import { type ClassValue, clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
+export { cva, type VariantProps } from "class-variance-authority";
+
 export interface ChatTheme {
   /** Container styles */
   container?: string;
@@ -34,10 +38,8 @@ export const defaultChatTheme: ChatTheme = {
   message: {
     user:
       "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 rounded-[22px] px-5 py-3 max-w-[80%] shadow-sm",
-    assistant:
-      "text-neutral-800 dark:text-neutral-200 max-w-none",
-    system:
-      "text-neutral-500 dark:text-neutral-400 text-sm mx-auto text-center py-2",
+    assistant: "text-neutral-800 dark:text-neutral-200 max-w-none",
+    system: "text-neutral-500 dark:text-neutral-400 text-sm mx-auto text-center py-2",
     tool:
       "bg-neutral-50 dark:bg-neutral-900 text-neutral-600 dark:text-neutral-300 rounded-xl px-3 py-2 text-sm font-mono border border-neutral-200 dark:border-neutral-800",
   },
@@ -115,9 +117,70 @@ export function mergeThemes<T>(
 }
 
 /**
- * Utility to combine class names
- * (Simple version - in production use 'clsx' or 'cn' from shadcn)
+ * Utility to combine and merge Tailwind class names.
+ * Combines clsx (conditional classes) with tailwind-merge (deduplication).
  */
-export function cn(...classes: (string | undefined | null | false)[]): string {
-  return classes.filter(Boolean).join(" ");
+export function cn(...inputs: ClassValue[]): string {
+  return twMerge(clsx(inputs));
 }
+
+// ---------------------------------------------------------------------------
+// CVA Variant Definitions
+// ---------------------------------------------------------------------------
+
+import { cva } from "class-variance-authority";
+
+export const messageVariants = cva("", {
+  variants: {
+    role: {
+      user:
+        "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 rounded-[22px] px-5 py-3 max-w-[80%] shadow-sm",
+      assistant: "text-neutral-800 dark:text-neutral-200 max-w-none",
+      system: "text-neutral-500 dark:text-neutral-400 text-sm mx-auto text-center py-2",
+      tool:
+        "bg-neutral-50 dark:bg-neutral-900 text-neutral-600 dark:text-neutral-300 rounded-xl px-3 py-2 text-sm font-mono border border-neutral-200 dark:border-neutral-800",
+    },
+  },
+  defaultVariants: {
+    role: "assistant",
+  },
+});
+
+export const chatButtonVariants = cva(
+  "shrink-0 flex items-center justify-center rounded-full transition-all active:scale-95",
+  {
+    variants: {
+      variant: {
+        primary:
+          "bg-black text-white dark:bg-white dark:text-black disabled:bg-neutral-400 disabled:text-neutral-200 dark:disabled:bg-neutral-500 dark:disabled:text-neutral-300",
+        ghost:
+          "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-neutral-200/60 dark:hover:bg-neutral-700/60",
+        outline:
+          "border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800",
+      },
+      size: {
+        sm: "size-7",
+        md: "size-8",
+        lg: "size-9",
+      },
+    },
+    defaultVariants: {
+      variant: "primary",
+      size: "lg",
+    },
+  },
+);
+
+export const chatContainerVariants = cva("flex flex-col overflow-hidden", {
+  variants: {
+    variant: {
+      default: "h-full bg-white dark:bg-neutral-950",
+      embedded: "h-full bg-transparent",
+      floating:
+        "h-[600px] w-[400px] rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl",
+    },
+  },
+  defaultVariants: {
+    variant: "default",
+  },
+});

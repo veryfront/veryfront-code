@@ -78,9 +78,15 @@ export function ConversationEmptyState({
           </div>
         )
         : null}
-      <h1 className="text-3xl font-semibold text-neutral-800 dark:text-neutral-200 tracking-tight">{title}</h1>
+      <h1 className="text-3xl font-semibold text-neutral-800 dark:text-neutral-200 tracking-tight">
+        {title}
+      </h1>
       {description
-        ? <p className="mt-3 max-w-md text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed">{description}</p>
+        ? (
+          <p className="mt-3 max-w-md text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed">
+            {description}
+          </p>
+        )
         : null}
       {children}
     </div>

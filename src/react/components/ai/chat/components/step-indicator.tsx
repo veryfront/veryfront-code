@@ -14,7 +14,12 @@ export function StepIndicator({
   className,
 }: StepIndicatorProps): React.ReactElement {
   return (
-    <div className={cn("flex items-center gap-3 py-3 text-xs text-neutral-400 dark:text-neutral-500", className)}>
+    <div
+      className={cn(
+        "flex items-center gap-3 py-3 text-xs text-neutral-400 dark:text-neutral-500",
+        className,
+      )}
+    >
       <div className="flex-1 h-px bg-neutral-200/60 dark:bg-neutral-700/60" />
       <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-neutral-100/80 dark:bg-neutral-800/80">
         {isComplete

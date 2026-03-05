@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { MessageSquareIcon, PlusIcon, TrashIcon } from "../../icons/index.ts";
+import { MessageSquareIcon, TrashIcon } from "../../icons/index.ts";
 import type { Thread } from "../hooks/use-threads.ts";
 
 export interface ChatSidebarProps {
@@ -135,7 +135,7 @@ export function ChatSidebar({
   threads,
   activeThreadId,
   onSelectThread,
-  onNewThread,
+  onNewThread: _onNewThread,
   onDeleteThread,
   onRenameThread,
   className,
@@ -170,7 +170,9 @@ export function ChatSidebar({
                     isActive={thread.id === activeThreadId}
                     onSelect={() => onSelectThread(thread.id)}
                     onDelete={() => onDeleteThread(thread.id)}
-                    onRename={onRenameThread ? (title) => onRenameThread(thread.id, title) : undefined}
+                    onRename={onRenameThread
+                      ? (title) => onRenameThread(thread.id, title)
+                      : undefined}
                   />
                 ))}
               </div>

@@ -41,8 +41,12 @@ export function DocsPanel({
               <div className="mb-4 flex items-center justify-center size-14 rounded-2xl bg-neutral-100 dark:bg-neutral-800/80 text-neutral-400 dark:text-neutral-500">
                 <FileTextIcon className="size-7" />
               </div>
-              <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300">No documents uploaded</p>
-              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">Upload documents to start asking questions</p>
+              <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                No documents uploaded
+              </p>
+              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                Upload documents to start asking questions
+              </p>
               {onAttach && (
                 <button
                   type="button"
@@ -65,9 +69,13 @@ export function DocsPanel({
                     <FileTextIcon className="size-4" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300 truncate">{doc.name}</p>
+                    <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300 truncate">
+                      {doc.name}
+                    </p>
                     {doc.size != null && (
-                      <p className="text-xs text-neutral-400 dark:text-neutral-500">{formatFileSize(doc.size)}</p>
+                      <p className="text-xs text-neutral-400 dark:text-neutral-500">
+                        {formatFileSize(doc.size)}
+                      </p>
                     )}
                   </div>
                   {onRemoveDocument && (
@@ -104,7 +112,17 @@ export function DocsPanel({
             if (e.target.files?.length) onAttach(e.target.files);
             e.target.value = "";
           }}
-          style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap", border: 0 }}
+          style={{
+            position: "absolute",
+            width: 1,
+            height: 1,
+            padding: 0,
+            margin: -1,
+            overflow: "hidden",
+            clip: "rect(0,0,0,0)",
+            whiteSpace: "nowrap",
+            border: 0,
+          }}
         />
       )}
     </div>

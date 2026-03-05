@@ -14,29 +14,31 @@ export interface SourcesProps {
   onSourceClick?: (source: Source, index: number) => void;
 }
 
-export function Sources({
-  sources,
-  className,
-  onSourceClick,
-}: SourcesProps): React.ReactElement | null {
-  if (sources.length === 0) return null;
+export const Sources = React.forwardRef<HTMLDivElement, SourcesProps>(
+  function Sources({ sources, className, onSourceClick }, ref) {
+    if (sources.length === 0) return null;
 
-  return (
-    <div className={cn("mt-3 pt-3 border-t border-neutral-200 dark:border-neutral-800", className)}>
-      <p className="text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-2">Sources</p>
-      <div className="flex flex-wrap gap-1.5">
-        {sources.map((source, index) => (
-          <SourcePill
-            key={`${source.title}-${index}`}
-            source={source}
-            index={index}
-            onClick={onSourceClick ? () => onSourceClick(source, index) : undefined}
-          />
-        ))}
+    return (
+      <div
+        ref={ref}
+        className={cn("mt-3 pt-3 border-t border-neutral-200 dark:border-neutral-800", className)}
+      >
+        <p className="text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-2">Sources</p>
+        <div className="flex flex-wrap gap-1.5">
+          {sources.map((source, index) => (
+            <SourcePill
+              key={`${source.title}-${index}`}
+              source={source}
+              index={index}
+              onClick={onSourceClick ? () => onSourceClick(source, index) : undefined}
+            />
+          ))}
+        </div>
       </div>
-    </div>
-  );
-}
+    );
+  },
+);
+Sources.displayName = "Sources";
 
 interface SourcePillProps {
   source: Source;
@@ -86,7 +88,8 @@ function SourcePill({ source, index, onClick }: SourcePillProps): React.ReactEle
         <div className="absolute bottom-full left-0 mb-2 z-50 w-60 pointer-events-none">
           <div className="bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl shadow-lg p-2.5 text-left">
             <p className="text-xs text-neutral-600 dark:text-neutral-300 line-clamp-3 leading-relaxed">
-              {source.snippet.slice(0, 150)}{source.snippet.length > 150 ? "..." : ""}
+              {source.snippet.slice(0, 150)}
+              {source.snippet.length > 150 ? "..." : ""}
             </p>
           </div>
         </div>

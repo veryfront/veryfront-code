@@ -30,7 +30,9 @@ export function exportAsMarkdown(messages: UIMessage[]): string {
         textParts.push(part.text);
       } else if (part.type === "reasoning") {
         textParts.push(`> *Thinking:* ${part.text}`);
-      } else if (part.type.startsWith("tool-") && part.type !== "tool-result" && "toolName" in part) {
+      } else if (
+        part.type.startsWith("tool-") && part.type !== "tool-result" && "toolName" in part
+      ) {
         const name = (part as { toolName: string }).toolName;
         const state = (part as { state?: string }).state ?? "";
         toolSummaries.push(`> Tool: **${name}** (${state})`);

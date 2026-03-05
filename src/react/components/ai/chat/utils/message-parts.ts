@@ -120,7 +120,11 @@ export function extractSourcesFromParts(parts: UIMessagePart[]): Source[] {
       if (!doc || typeof doc !== "object") continue;
       const d = doc as Record<string, unknown>;
       sources.push({
-        title: typeof d.title === "string" ? d.title : typeof d.name === "string" ? d.name : "Source",
+        title: typeof d.title === "string"
+          ? d.title
+          : typeof d.name === "string"
+          ? d.name
+          : "Source",
         url: typeof d.url === "string" ? d.url : undefined,
         score: typeof d.score === "number" ? d.score : undefined,
         snippet: typeof d.snippet === "string"

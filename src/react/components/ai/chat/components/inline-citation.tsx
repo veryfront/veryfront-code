@@ -16,7 +16,7 @@ export function InlineCitation({
   onClick,
 }: InlineCitationProps): React.ReactElement {
   const [showCard, setShowCard] = React.useState(false);
-  const timerRef = React.useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = React.useRef<ReturnType<typeof setTimeout>>(undefined);
   const buttonRef = React.useRef<HTMLButtonElement>(null);
   const [cardStyle, setCardStyle] = React.useState<React.CSSProperties>({});
 
@@ -29,7 +29,10 @@ export function InlineCitation({
         const rect = el.getBoundingClientRect();
         setCardStyle({
           position: "fixed",
-          left: Math.max(8, Math.min(rect.left + rect.width / 2 - 160, globalThis.innerWidth - 328)),
+          left: Math.max(
+            8,
+            Math.min(rect.left + rect.width / 2 - 160, globalThis.innerWidth - 328),
+          ),
           bottom: globalThis.innerHeight - rect.top + 8,
           zIndex: 9999,
         });
@@ -86,7 +89,15 @@ export function InlineCitation({
                 </p>
                 {source.url && (
                   <p className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate mt-0.5 flex items-center gap-1">
-                    <svg className="size-2.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      className="size-2.5 shrink-0"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
                       <polyline points="15 3 21 3 21 9" />
                       <line x1="10" y1="14" x2="21" y2="3" />

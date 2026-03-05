@@ -45,7 +45,10 @@ export function QuickActions({
   className,
 }: QuickActionsProps): React.ReactElement {
   return (
-    <div className={cn("w-full max-w-2xl mx-auto px-4", className)} style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.75rem" }}>
+    <div
+      className={cn("w-full max-w-2xl mx-auto px-4", className)}
+      style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.75rem" }}
+    >
       {actions.map((action) => {
         const icon = action.icon ?? defaultIconMap[action.id];
         return (

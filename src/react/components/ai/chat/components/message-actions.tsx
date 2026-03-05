@@ -12,61 +12,74 @@ export interface MessageActionsProps {
   onEdit?: (content: string) => void;
 }
 
-export function MessageActions({
-  content,
-  className,
-  onEdit,
-}: MessageActionsProps): React.ReactElement {
-  const [copied, setCopied] = React.useState(false);
+export const MessageActions = React.forwardRef<HTMLDivElement, MessageActionsProps>(
+  function MessageActions({ content, className, onEdit }, ref) {
+    const [copied, setCopied] = React.useState(false);
 
-  const setCopiedWithTimeout = React.useCallback((): void => {
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, []);
+    const setCopiedWithTimeout = React.useCallback((): void => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }, []);
 
-  const fallbackCopy = React.useCallback((): void => {
-    const textarea = document.createElement("textarea");
-    textarea.value = content;
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    document.body.removeChild(textarea);
-  }, [content]);
+    const fallbackCopy = React.useCallback((): void => {
+      const textarea = document.createElement("textarea");
+      textarea.value = content;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }, [content]);
 
-  const handleCopy = React.useCallback(async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(content);
-    } catch {
-      // Fallback for older browsers
-      fallbackCopy();
-    } finally {
-      setCopiedWithTimeout();
-    }
-  }, [content, fallbackCopy, setCopiedWithTimeout]);
+    const handleCopy = React.useCallback(async (): Promise<void> => {
+      try {
+        await navigator.clipboard.writeText(content);
+      } catch {
+        // Fallback for older browsers
+        fallbackCopy();
+      } finally {
+        setCopiedWithTimeout();
+      }
+    }, [content, fallbackCopy, setCopiedWithTimeout]);
 
-  return (
-    <div className={cn("flex items-center gap-0.5 mt-1.5 opacity-0 group-hover/msg:opacity-100 transition-all duration-200", className)}>
-      <button
-        type="button"
-        onClick={handleCopy}
-        className={ACTION_BUTTON}
-        title={copied ? "Copied!" : "Copy to clipboard"}
+    return (
+      <div
+        ref={ref}
+        className={cn(
+          "flex items-center gap-0.5 mt-1.5 opacity-0 group-hover/msg:opacity-100 transition-all duration-200",
+          className,
+        )}
       >
-        {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-      </button>
-      {onEdit && (
         <button
           type="button"
-          onClick={() => onEdit(content)}
+          onClick={handleCopy}
           className={ACTION_BUTTON}
-          title="Edit message"
+          title={copied ? "Copied!" : "Copy to clipboard"}
         >
-          <svg className="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-            <path d="m15 5 4 4" />
-          </svg>
+          {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
         </button>
-      )}
-    </div>
-  );
-}
+        {onEdit && (
+          <button
+            type="button"
+            onClick={() => onEdit(content)}
+            className={ACTION_BUTTON}
+            title="Edit message"
+          >
+            <svg
+              className="size-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+              <path d="m15 5 4 4" />
+            </svg>
+          </button>
+        )}
+      </div>
+    );
+  },
+);
+MessageActions.displayName = "MessageActions";

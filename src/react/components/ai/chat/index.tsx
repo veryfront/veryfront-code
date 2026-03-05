@@ -1,11 +1,50 @@
+/**
+ * Chat UI Component System
+ *
+ * Provides a full-featured chat interface via the `Chat` preset component,
+ * along with composable building blocks for custom layouts.
+ *
+ * @example Quick start (preset)
+ * ```tsx
+ * import { Chat, useChat } from "veryfront/chat";
+ *
+ * export default function Page() {
+ *   const chat = useChat({ api: "/api/chat" });
+ *   return (
+ *     <Chat
+ *       messages={chat.messages}
+ *       input={chat.input}
+ *       onChange={chat.handleInputChange}
+ *       onSubmit={chat.handleSubmit}
+ *     />
+ *   );
+ * }
+ * ```
+ *
+ * @example Custom layout (composition)
+ * ```tsx
+ * <Chat.Root messages={messages} input={input}>
+ *   <Chat.Empty title="Ask anything" />
+ *   <Chat.MessageList messages={messages} />
+ *   <Chat.Composer input={input} onChange={onChange} />
+ * </Chat.Root>
+ * ```
+ *
+ * @example Per-message control (compound)
+ * ```tsx
+ * import { Message } from "veryfront/chat";
+ *
+ * <Message.Root message={msg}>
+ *   <Message.Avatar />
+ *   <Message.Content />
+ *   <Message.Actions />
+ * </Message.Root>
+ * ```
+ *
+ * @module ai/react/components/chat
+ */
+
 import * as React from "react";
-import {
-  ChatContainer,
-  InputBox,
-  MessageItem,
-  MessageList,
-  SubmitButton,
-} from "../../../primitives/index.ts";
 import { useVoiceInput } from "#veryfront/agent/react";
 import type {
   BranchInfo,
@@ -15,14 +54,33 @@ import type {
   ToolUIPart,
   UIMessage,
 } from "#veryfront/agent/react";
-import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "../theme.ts";
-import { Markdown } from "../markdown.tsx";
-import { MessageSquareIcon, PaperclipIcon, RefreshCwIcon, SparklesIcon } from "../icons/index.ts";
-import { type ModelOption, ModelSelector } from "../model-selector.tsx";
+import { type ChatTheme, defaultChatTheme, mergeThemes } from "../theme.ts";
+import type { ModelOption } from "../model-selector.tsx";
+import type { Source } from "./components/sources.tsx";
+import type { AttachmentInfo } from "./components/attachment-pill.tsx";
+import type { FeedbackValue } from "./components/message-feedback.tsx";
+import type { ChatTab } from "./components/tab-switcher.tsx";
+import type { DocFile } from "./components/docs-panel.tsx";
+import type { QuickAction } from "./components/quick-actions.tsx";
+
+// Composition imports (used in the Chat preset)
+import { ChatRoot } from "./composition/chat-root.tsx";
+import { ChatComposer } from "./composition/chat-composer.tsx";
+import { ChatMessageList } from "./composition/chat-message-list.tsx";
+import { ChatEmpty } from "./composition/chat-empty.tsx";
+import { ChatIf } from "./composition/chat-if.tsx";
+import { ErrorBanner } from "./composition/error-banner.tsx";
+import { Message } from "./composition/message.tsx";
 import { DropZoneOverlay } from "./components/drop-zone.tsx";
-import { type ChatTab, TabSwitcher } from "./components/tab-switcher.tsx";
-import { type QuickAction, QuickActions } from "./components/quick-actions.tsx";
-import { type DocFile, DocsPanel } from "./components/docs-panel.tsx";
+import { TabSwitcher } from "./components/tab-switcher.tsx";
+import { DocsPanel } from "./components/docs-panel.tsx";
+import { InferenceBadge } from "./components/inference-badge.tsx";
+import { UpgradeCTA } from "./components/upgrade-cta.tsx";
+import { QuickActions as QuickActionsComponent } from "./components/quick-actions.tsx";
+
+// ---------------------------------------------------------------------------
+// Re-exports — sub-components
+// ---------------------------------------------------------------------------
 
 export { FadeIn, Loader, Shimmer } from "./components/animations.tsx";
 export { ReasoningCard } from "./components/reasoning.tsx";
@@ -43,23 +101,38 @@ export { DropZoneOverlay, type DropZoneOverlayProps } from "./components/drop-zo
 export { ToolCallCard, ToolStatusBadge } from "./components/tool-ui.tsx";
 export { InferenceBadge, type InferenceBadgeProps } from "./components/inference-badge.tsx";
 export { UpgradeCTA, type UpgradeCTAProps } from "./components/upgrade-cta.tsx";
-export { Sources, type Source, type SourcesProps } from "./components/sources.tsx";
+export { type Source, Sources, type SourcesProps } from "./components/sources.tsx";
 export { InlineCitation, type InlineCitationProps } from "./components/inline-citation.tsx";
-export { MessageFeedback, type FeedbackValue, type MessageFeedbackProps } from "./components/message-feedback.tsx";
-export { AttachmentPill, type AttachmentInfo, type AttachmentPillProps } from "./components/attachment-pill.tsx";
-export { RichCodeBlock, type CodeBlockProps } from "./components/code-block.tsx";
+export {
+  type FeedbackValue,
+  MessageFeedback,
+  type MessageFeedbackProps,
+} from "./components/message-feedback.tsx";
+export {
+  type AttachmentInfo,
+  AttachmentPill,
+  type AttachmentPillProps,
+} from "./components/attachment-pill.tsx";
+export { type CodeBlockProps, RichCodeBlock } from "./components/code-block.tsx";
 export { StepIndicator, type StepIndicatorProps } from "./components/step-indicator.tsx";
 export { ChatSidebar, type ChatSidebarProps } from "./components/sidebar.tsx";
-export { TabSwitcher, type ChatTab, type TabSwitcherProps } from "./components/tab-switcher.tsx";
-export { QuickActions, type QuickAction, type QuickActionsProps } from "./components/quick-actions.tsx";
-export { DocsPanel, type DocFile, type DocsPanelProps } from "./components/docs-panel.tsx";
+export { type ChatTab, TabSwitcher, type TabSwitcherProps } from "./components/tab-switcher.tsx";
 export {
-  useThreads,
+  type QuickAction,
+  QuickActions,
+  type QuickActionsProps,
+} from "./components/quick-actions.tsx";
+export { type DocFile, DocsPanel, type DocsPanelProps } from "./components/docs-panel.tsx";
+
+// Re-exports — hooks
+export {
   type Thread,
+  useThreads,
   type UseThreadsOptions,
   type UseThreadsResult,
 } from "./hooks/use-threads.ts";
 
+// Re-exports — utils
 export {
   extractSourcesFromParts,
   getTextContent,
@@ -70,43 +143,57 @@ export {
 } from "./utils/message-parts.ts";
 export { downloadMarkdown, exportAsMarkdown } from "./utils/export.ts";
 
-export { ChatFooter, ChatHeader, ChatInput, ChatMessages } from "./composition/api.tsx";
+// Re-exports — composition
+export {
+  ChatComposer,
+  type ChatComposerProps,
+  ChatEmpty,
+  type ChatEmptyProps,
+  ChatIf,
+  type ChatIfProps,
+  ChatMessageList,
+  type ChatMessageListProps,
+  ChatRoot,
+  type ChatRootProps,
+  ErrorBanner,
+  type ErrorBannerProps,
+  Message,
+  type MessageRootProps,
+  ModelAvatar,
+  type ModelAvatarProps,
+} from "./composition/api.tsx";
 
-import { ChatFooter, ChatHeader, ChatInput, ChatMessages } from "./composition/api.tsx";
-import {
-  ConversationEmptyState,
-  ConversationScrollButton,
-  Suggestion,
-  Suggestions,
-} from "./components/empty-state.tsx";
-import { MessageActions } from "./components/message-actions.tsx";
-import { ReasoningCard } from "./components/reasoning.tsx";
-import { ToolCallCard } from "./components/tool-ui.tsx";
-import { InferenceBadge } from "./components/inference-badge.tsx";
-import { UpgradeCTA } from "./components/upgrade-cta.tsx";
-import { Sources } from "./components/sources.tsx";
-import type { Source } from "./components/sources.tsx";
-import { extractSourcesFromParts, getTextContent, groupPartsInOrder } from "./utils/message-parts.ts";
-import { MessageEditForm } from "./components/message-edit-form.tsx";
-import { BranchPicker } from "./components/branch-picker.tsx";
-import { MessageFeedback } from "./components/message-feedback.tsx";
-import type { FeedbackValue } from "./components/message-feedback.tsx";
-import { StepIndicator } from "./components/step-indicator.tsx";
-import { AttachmentPill } from "./components/attachment-pill.tsx";
-import type { AttachmentInfo } from "./components/attachment-pill.tsx";
-import { downloadMarkdown } from "./utils/export.ts";
+// Re-exports — contexts
+export {
+  ChatContextProvider,
+  type ChatContextValue,
+  ComposerContextProvider,
+  type ComposerContextValue,
+  MessageContextProvider,
+  type MessageContextValue,
+  ThreadListContextProvider,
+  type ThreadListContextValue,
+  useChatContext,
+  useChatContextOptional,
+  useComposerContext,
+  useComposerContextOptional,
+  useMessageContext,
+  useMessageContextOptional,
+  useThreadListContext,
+  useThreadListContextOptional,
+} from "./contexts/index.ts";
+
+// ---------------------------------------------------------------------------
+// ChatProps — Preset interface
+// ---------------------------------------------------------------------------
 
 export interface ChatProps {
   messages: UIMessage[];
   input: string;
-  onChange?: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
-  handleInputChange?: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
-  onSubmit?: (e: React.FormEvent) => void | Promise<void>;
-  handleSubmit?: (e: React.FormEvent) => void | Promise<void>;
+  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  onSubmit?: (e?: React.FormEvent) => void | Promise<void>;
   stop?: () => void;
   reload?: () => void;
-  enableVoice?: boolean;
-  onVoice?: () => void;
   setInput?: (value: string) => void;
   isLoading?: boolean;
   error?: Error | null;
@@ -116,7 +203,6 @@ export interface ChatProps {
   theme?: Partial<ChatTheme>;
   renderMessage?: (message: UIMessage) => React.ReactNode;
   renderTool?: (tool: ToolUIPart | DynamicToolUIPart) => React.ReactNode;
-  multiline?: boolean;
   suggestions?: string[];
   onSuggestionClick?: (suggestion: string) => void;
   emptyState?: {
@@ -126,95 +212,50 @@ export interface ChatProps {
   };
   showScrollButton?: boolean;
   showMessageActions?: boolean;
-  /** Available models for runtime switching */
   models?: ModelOption[];
-  /** Currently selected model */
   model?: string;
-  /** Called when user changes model */
   onModelChange?: (model: string) => void;
-  /** Alias for onModelChange (matches useChat's setModel) */
-  setModel?: (model: string | undefined) => void;
-  /** Where inference is currently happening */
   inferenceMode?: InferenceMode;
-  /** Browser-side model loading/inference status */
   browserStatus?: BrowserInferenceStatus | null;
-  /** Show source documents extracted from tool results */
   showSources?: boolean;
-  /** Called when user clicks a source */
   onSourceClick?: (source: Source, index: number) => void;
-  /** Called when user attaches files — renders a paperclip button in the input area */
   onAttach?: (files: FileList) => void;
-  /** Called when user drops files on the chat area (defaults to onAttach) */
   onDrop?: (files: FileList) => void;
-  /** Accepted file types for attachment (e.g. ".pdf,.docx,.txt") */
   attachAccept?: string;
-  /** Currently attached files shown as pills above the input */
   attachments?: AttachmentInfo[];
-  /** Called when user removes an attachment */
   onRemoveAttachment?: (id: string) => void;
-  /** Show export/download button for conversation */
   showExport?: boolean;
-  /** Called when user gives feedback on a message */
   onFeedback?: (messageId: string, feedback: FeedbackValue) => void;
-  /** Edit a user message and resubmit (from useChat) */
   editMessage?: (messageId: string, newText: string) => Promise<void>;
-  /** Get branch info for a message (from useChat) */
   getBranches?: (messageId: string) => BranchInfo;
-  /** Switch to a different branch at a message (from useChat) */
   switchBranch?: (messageId: string, branchIndex: number) => void;
-  /** Show step indicators for multi-step agent reasoning */
   showSteps?: boolean;
-  /** Show Chat/Docs tab switcher */
   showTabs?: boolean;
-  /** Active tab when tabs are shown (controlled) */
   activeTab?: ChatTab;
-  /** Called when user switches tabs */
   onTabChange?: (tab: ChatTab) => void;
-  /** Documents shown in the Docs tab */
   documents?: DocFile[];
-  /** Called when user removes a document from the Docs tab */
   onRemoveDocument?: (id: string) => void;
-  /** Quick action cards shown above input in empty state */
   quickActions?: QuickAction[];
-  /** Called when user clicks a quick action card */
   onQuickAction?: (action: QuickAction) => void;
+  enableVoice?: boolean;
+  onVoice?: () => void;
+  children?: React.ReactNode;
 }
 
-function ModelAvatar({ model, className }: { model?: string; className?: string }): React.ReactElement {
-  const m = (model ?? "").toLowerCase();
-  if (m.includes("anthropic") || m.includes("claude")) {
-    return (
-      <div className={cn("mt-1 shrink-0 size-8 rounded-full bg-[#d97757] flex items-center justify-center shadow-sm", className)}>
-        <svg className="size-4 text-white" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M16.5 2.4L12 21.6l-1.9-8.1L2.4 12l19.2-4.5L13.5 9l3-6.6z" />
-        </svg>
-      </div>
-    );
-  }
-  if (m.includes("openai") || m.includes("gpt") || m.includes("o1") || m.includes("o3") || m.includes("o4")) {
-    return (
-      <div className={cn("mt-1 shrink-0 size-8 rounded-full bg-[#000000] dark:bg-[#ffffff] flex items-center justify-center shadow-sm", className)}>
-        <svg className="size-4 text-white dark:text-black" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.998 5.998 0 0 0-3.998 2.9 6.048 6.048 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855l-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023l-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.795.795 0 0 0-.393.681zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z" />
-        </svg>
-      </div>
-    );
-  }
-  return (
-    <div className={cn("mt-1 shrink-0 size-8 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center shadow-sm", className)}>
-      <SparklesIcon className="size-4 text-white" />
-    </div>
-  );
-}
+// ---------------------------------------------------------------------------
+// Chat — Preset component
+//
+// Composes ChatRoot, ChatMessageList, ChatComposer, ChatEmpty, etc. into a
+// full-featured chat UI with sensible defaults. For custom layouts, use the
+// building blocks directly.
+// ---------------------------------------------------------------------------
 
 export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
   {
     messages,
     input,
     onChange,
-    handleInputChange,
     onSubmit,
-    handleSubmit,
     stop,
     reload,
     enableVoice = false,
@@ -228,7 +269,6 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     theme: userTheme,
     renderMessage,
     renderTool,
-    multiline = false,
     suggestions,
     onSuggestionClick,
     emptyState,
@@ -237,7 +277,6 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     models,
     model,
     onModelChange,
-    setModel,
     inferenceMode,
     browserStatus,
     showSources = false,
@@ -260,23 +299,11 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     onRemoveDocument,
     quickActions,
     onQuickAction,
+    children,
   },
   ref,
 ): React.ReactElement {
   const theme = mergeThemes(defaultChatTheme, userTheme);
-  const messagesEndRef = React.useRef<HTMLDivElement>(null);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-
-  // --- Feedback state ---
-  const [feedbackMap, setFeedbackMap] = React.useState<Record<string, FeedbackValue>>({});
-  const handleFeedback = React.useCallback((msgId: string, value: FeedbackValue) => {
-    setFeedbackMap((prev) => ({ ...prev, [msgId]: value }));
-    onFeedback?.(msgId, value);
-  }, [onFeedback]);
-
-  const inputChangeHandler = onChange ?? handleInputChange ?? (() => {});
-  const submitHandler = onSubmit ?? handleSubmit;
-  const modelChangeHandler = onModelChange ?? (setModel as ((model: string) => void) | undefined);
 
   // --- Drag-and-drop ---
   const dropHandler = onDrop ?? onAttach;
@@ -302,24 +329,25 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     e.stopPropagation();
   }, []);
 
-  const handleFileDrop = React.useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounter.current = 0;
-    setDragOver(false);
-    if (e.dataTransfer.files.length > 0 && dropHandler) {
-      dropHandler(e.dataTransfer.files);
-    }
-  }, [dropHandler]);
+  const handleFileDrop = React.useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter.current = 0;
+      setDragOver(false);
+      if (e.dataTransfer.files.length > 0 && dropHandler) {
+        dropHandler(e.dataTransfer.files);
+      }
+    },
+    [dropHandler],
+  );
 
   // --- Tab state ---
   const [internalTab, setInternalTab] = React.useState<ChatTab>("chat");
   const currentTab = controlledTab ?? internalTab;
   const handleTabChange = controlledTabChange ?? setInternalTab;
 
-  // --- Message editing ---
-  const [editingMessageId, setEditingMessageId] = React.useState<string | null>(null);
-
+  // --- Voice ---
   const voice = useVoiceInput({
     onTranscript: (transcript, isFinal) => {
       if (!isFinal || !setInput) return;
@@ -333,16 +361,8 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     return undefined;
   }, [onVoice, enableVoice, voice.isSupported, voice.toggle, setInput]);
 
-  // Auto-scroll to bottom only when a new message is added (not on every
-  // streaming delta). This prevents the view from jumping to the bottom
-  // while the user is scrolled up reading earlier messages.
-  const messageCount = messages.length;
-  React.useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messageCount]);
-
   const isEmpty = messages.length === 0;
-  const showSuggestions = (suggestions?.length ?? 0) > 0;
+  const isDocsTab = showTabs && currentTab === "docs";
 
   const dragProps = dropHandler
     ? {
@@ -354,10 +374,38 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     : {};
 
   return (
-    <ChatContainer ref={ref} className={cn(theme.container, "relative", className)} style={{ maxHeight }} {...dragProps}>
+    <ChatRoot
+      ref={ref}
+      messages={messages}
+      input={input}
+      isLoading={isLoading}
+      error={error}
+      setInput={setInput}
+      onSubmit={onSubmit}
+      onStop={stop}
+      onReload={reload}
+      model={model}
+      models={models}
+      onModelChange={onModelChange}
+      attachments={attachments}
+      onAttach={onAttach}
+      onRemoveAttachment={onRemoveAttachment}
+      editMessage={editMessage}
+      getBranches={getBranches}
+      switchBranch={switchBranch}
+      onFeedback={onFeedback}
+      showSources={showSources}
+      onSourceClick={onSourceClick}
+      theme={userTheme}
+      maxHeight={maxHeight}
+      className={className}
+      {...dragProps}
+    >
       {dropHandler && <DropZoneOverlay visible={dragOver} accept={attachAccept} />}
+
       {showTabs && <TabSwitcher activeTab={currentTab} onTabChange={handleTabChange} />}
-      {showTabs && currentTab === "docs"
+
+      {isDocsTab
         ? (
           <DocsPanel
             documents={documents}
@@ -367,308 +415,95 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
             className="flex-1 min-h-0"
           />
         )
+        : isEmpty
+        ? (
+          <ChatEmpty
+            icon={emptyState?.icon}
+            title={emptyState?.title}
+            description={emptyState?.description}
+            suggestions={suggestions}
+            onSuggestionClick={onSuggestionClick}
+          >
+            {inferenceMode && inferenceMode !== "cloud" && (
+              <UpgradeCTA inferenceMode={inferenceMode} />
+            )}
+          </ChatEmpty>
+        )
         : (
-      <MessageList className="flex-1 min-h-0 overflow-y-auto relative">
-        {isEmpty
-          ? (
-            <div className="flex flex-col items-center justify-center h-full px-4">
-              <div className="flex-1" />
-              <ConversationEmptyState
-                icon={emptyState?.icon ?? <MessageSquareIcon className="size-10" />}
-                title={emptyState?.title ?? "What can I help with?"}
-                description={emptyState?.description}
-              />
-              {showSuggestions && (
-                <div className="w-full max-w-2xl mt-6 mb-8">
-                  <Suggestions layout="grid">
-                    {suggestions?.map((suggestion) => (
-                      <Suggestion
-                        key={suggestion}
-                        suggestion={suggestion}
-                        onClick={onSuggestionClick}
-                      />
-                    ))}
-                  </Suggestions>
-                </div>
-              )}
-              {inferenceMode && inferenceMode !== "cloud" && (
-                <UpgradeCTA inferenceMode={inferenceMode} />
-              )}
-              <div className="flex-1" />
-            </div>
-          )
-          : (
-            <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-              {messages.map((msg) => {
-                if (renderMessage) {
-                  return <React.Fragment key={msg.id}>{renderMessage(msg)}</React.Fragment>;
-                }
-
-                if (msg.role === "user") {
-                  const content = getTextContent(msg);
-                  const isEditing = editingMessageId === msg.id;
-                  const branches = getBranches?.(msg.id);
-                  const hasBranches = branches && branches.total > 1;
-
-                  return (
-                    <MessageItem key={msg.id} role={msg.role} className={cn("flex flex-col items-end", "group/msg")}>
-                      {isEditing
-                        ? (
-                          <div className="w-full max-w-md">
-                            <MessageEditForm
-                              initialContent={content}
-                              onSave={(text) => {
-                                setEditingMessageId(null);
-                                editMessage?.(msg.id, text);
-                              }}
-                              onCancel={() => setEditingMessageId(null)}
-                            />
-                          </div>
-                        )
-                        : (
-                          <div className={theme.message?.[msg.role] ?? theme.message?.user}>
-                            <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{content}</p>
-                          </div>
-                        )}
-                      {!isEditing && (
-                        <div className="flex items-center gap-2 mt-1">
-                          {hasBranches && (
-                            <BranchPicker
-                              current={branches.current}
-                              total={branches.total}
-                              onPrev={() => switchBranch?.(msg.id, branches.current - 2)}
-                              onNext={() => switchBranch?.(msg.id, branches.current)}
-                            />
-                          )}
-                          {editMessage && (
-                            <MessageActions
-                              content={content}
-                              onEdit={() => setEditingMessageId(msg.id)}
-                            />
-                          )}
-                        </div>
-                      )}
-                    </MessageItem>
-                  );
-                }
-
-                const partGroups = groupPartsInOrder(msg.parts);
-                const stepCount = partGroups.filter((g) => g.type === "step").length;
-                const textContent = getTextContent(msg);
-                const messageSources = showSources ? extractSourcesFromParts(msg.parts) : [];
-
-                return (
-                  <MessageItem key={msg.id} role={msg.role} className={cn("flex items-start gap-3", "justify-start", "group/msg")}>
-                    <ModelAvatar model={(msg.metadata?.model as string) || undefined} />
-                    <div className={cn(theme.message?.[msg.role] ?? theme.message?.assistant, "flex-1 min-w-0")}>
-                      {partGroups.map((group, index) => {
-                        if (group.type === "text") {
-                          return (
-                            <Markdown key={`text-${index}`} className="text-[15px] leading-7">
-                              {group.content}
-                            </Markdown>
-                          );
-                        }
-
-                        if (group.type === "reasoning") {
-                          return (
-                            <ReasoningCard
-                              key={`reasoning-${index}`}
-                              text={group.text}
-                              isStreaming={group.isStreaming}
-                            />
-                          );
-                        }
-
-                        if (group.type === "step") {
-                          return showSteps && stepCount > 1
-                            ? <StepIndicator key={`step-${group.stepIndex}`} stepIndex={group.stepIndex} isComplete={group.isComplete} />
-                            : null;
-                        }
-
-                        return (
-                          <div key={group.tool.toolCallId} className="my-3">
-                            {renderTool
-                              ? renderTool(group.tool)
-                              : <ToolCallCard tool={group.tool} />}
-                          </div>
-                        );
-                      })}
-
-                      {(showMessageActions || onFeedback) && textContent && (
-                        <div className="flex items-center gap-1 mt-1">
-                          {showMessageActions && <MessageActions content={textContent} />}
-                          {onFeedback && (
-                            <MessageFeedback
-                              messageId={msg.id}
-                              feedback={feedbackMap[msg.id]}
-                              onFeedback={handleFeedback}
-                            />
-                          )}
-                        </div>
-                      )}
-
-                      {messageSources.length > 0 && (
-                        <Sources sources={messageSources} onSourceClick={onSourceClick} />
-                      )}
-                    </div>
-                  </MessageItem>
-                );
-              })}
-
-              {isLoading && (
-                <div className="flex items-start gap-3">
-                  <ModelAvatar model={model} />
-                  {browserStatus === "downloading-model" || browserStatus === "loading-runtime"
-                    ? (
-                      <div className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400 py-2.5">
-                        <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
-                        <span>
-                          {browserStatus === "downloading-model"
-                            ? "Downloading model..."
-                            : "Loading AI..."}
-                        </span>
-                      </div>
-                    )
-                    : (
-                      <div className="flex gap-1.5 items-center py-3">
-                        <span className={cn(theme.loading)} />
-                        <span className={cn(theme.loading)} style={{ animationDelay: "0.15s" }} />
-                        <span className={cn(theme.loading)} style={{ animationDelay: "0.3s" }} />
-                      </div>
-                    )}
-                </div>
-              )}
-
-              <div ref={messagesEndRef} />
-            </div>
-          )}
-
-        {showScrollButton && (
-          <ConversationScrollButton
-            onClick={() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })}
+          <ChatMessageList
+            messages={messages}
+            isLoading={isLoading}
+            theme={theme}
+            renderMessage={renderMessage}
+            renderTool={renderTool}
+            model={model}
+            showMessageActions={showMessageActions}
+            showSources={showSources}
+            showSteps={showSteps}
+            showScrollButton={showScrollButton}
+            onSourceClick={onSourceClick}
+            inferenceMode={inferenceMode}
+            browserStatus={browserStatus}
+            editMessage={editMessage}
+            getBranches={getBranches}
+            switchBranch={switchBranch}
+            onFeedback={onFeedback}
           />
         )}
-      </MessageList>
-        )}
 
-      {error && (
-        <div className="max-w-2xl mx-auto px-4 pb-2">
-          <div className="px-4 py-3 bg-red-50 dark:bg-red-900/20 rounded-2xl text-red-600 dark:text-red-400 text-sm flex items-center justify-between gap-3 border border-red-100 dark:border-red-900/30">
-            <span>{error.message}</span>
-            {reload && (
-              <button
-                type="button"
-                onClick={reload}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/40 hover:bg-red-200 dark:hover:bg-red-900/60 rounded-full transition-colors"
-              >
-                <RefreshCwIcon className="size-3" />
-                Retry
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+      {error && <ErrorBanner error={error} onRetry={reload} />}
 
-      <div className={cn("flex-shrink-0 bg-white dark:bg-neutral-950 pb-6 pt-2", showTabs && currentTab === "docs" && "hidden")}>
-        {inferenceMode && inferenceMode !== "cloud" && (
-          <div className="max-w-2xl mx-auto">
-            <InferenceBadge inferenceMode={inferenceMode} browserStatus={browserStatus} />
-          </div>
-        )}
-        {isEmpty && quickActions && quickActions.length > 0 && (
-          <div className="mb-4">
-            <QuickActions actions={quickActions} onActionClick={onQuickAction} />
-          </div>
-        )}
-        <form onSubmit={submitHandler} className="max-w-2xl mx-auto px-4">
-          {models && models.length > 0 && modelChangeHandler && (
-            <div className="mb-2">
-              <ModelSelector
-                models={models}
-                value={model}
-                onChange={modelChangeHandler}
-                disabled={isLoading}
-              />
+      {!isDocsTab && (
+        <ChatComposer
+          input={voice.isListening ? voice.transcript || input : input}
+          onChange={onChange}
+          onSubmit={onSubmit}
+          isLoading={isLoading}
+          placeholder={voice.isListening ? "Listening..." : placeholder}
+          theme={theme}
+          stop={voice.isListening ? undefined : stop}
+          onVoice={voiceHandler}
+          isListening={voice.isListening}
+          transcript={voice.transcript}
+          models={models}
+          model={model}
+          onModelChange={onModelChange}
+          onAttach={onAttach}
+          attachAccept={attachAccept}
+          attachments={attachments}
+          onRemoveAttachment={onRemoveAttachment}
+          showExport={showExport}
+          messages={messages}
+        >
+          {inferenceMode && inferenceMode !== "cloud" && (
+            <div className="max-w-2xl mx-auto">
+              <InferenceBadge inferenceMode={inferenceMode} browserStatus={browserStatus} />
             </div>
           )}
-          <div className="rounded-2xl border border-neutral-200/80 dark:border-neutral-700/80 bg-white dark:bg-neutral-900 focus-within:border-neutral-300 dark:focus-within:border-neutral-600 focus-within:shadow-md transition-all shadow-sm">
-            {attachments && attachments.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
-                {attachments.map((file) => (
-                  <AttachmentPill key={file.id} attachment={file} onRemove={onRemoveAttachment} />
-                ))}
-              </div>
-            )}
-            <div className="flex items-end gap-2 px-3 py-2">
-              {onAttach && (
-                <>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept={attachAccept}
-                    multiple
-                    onChange={(e) => {
-                      if (e.target.files?.length) onAttach(e.target.files);
-                      e.target.value = "";
-                    }}
-                    style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap", border: 0 }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="size-8 flex items-center justify-center rounded-full text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-neutral-200/60 dark:hover:bg-neutral-700/60 transition-colors shrink-0"
-                    aria-label="Attach file"
-                  >
-                    <PaperclipIcon className="size-[18px]" />
-                  </button>
-                </>
-              )}
-              <InputBox
-                value={voice.isListening ? voice.transcript || input : input}
-                onChange={inputChangeHandler}
-                placeholder={voice.isListening ? "Listening..." : placeholder}
-                disabled={isLoading || voice.isListening}
-                multiline
-                className={theme.input}
-                rows={3}
-              />
-              {showExport && messages.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => downloadMarkdown(messages)}
-                  className="size-8 flex items-center justify-center rounded-full text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-neutral-200/60 dark:hover:bg-neutral-700/60 transition-colors shrink-0"
-                  aria-label="Export conversation"
-                  title="Export as Markdown"
-                >
-                  <svg className="size-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                </button>
-              )}
-              <SubmitButton
-                isLoading={isLoading || voice.isListening}
-                hasInput={!!input.trim()}
-                onStop={voice.isListening ? voice.stop : stop}
-                onVoice={voiceHandler}
-                disabled={!input.trim()}
-                className={theme.button}
-              />
+          {isEmpty && quickActions && quickActions.length > 0 && (
+            <div className="mb-4">
+              <QuickActionsComponent actions={quickActions} onActionClick={onQuickAction} />
             </div>
-          </div>
-        </form>
-      </div>
-    </ChatContainer>
+          )}
+        </ChatComposer>
+      )}
+
+      {children}
+    </ChatRoot>
   );
 });
-
 Chat.displayName = "Chat";
 
+// ---------------------------------------------------------------------------
+// ChatComponents — Compound API via Object.assign
+// ---------------------------------------------------------------------------
+
 export const ChatComponents = Object.assign(Chat, {
-  Header: ChatHeader,
-  Messages: ChatMessages,
-  Input: ChatInput,
-  Footer: ChatFooter,
+  Root: ChatRoot,
+  MessageList: ChatMessageList,
+  Composer: ChatComposer,
+  Empty: ChatEmpty,
+  If: ChatIf,
+  Message: Message,
+  ErrorBanner: ErrorBanner,
 });

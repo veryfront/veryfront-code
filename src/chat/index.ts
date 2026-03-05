@@ -3,83 +3,141 @@
  *
  * @module chat
  *
- * @example Basic chat
+ * @example Basic chat (preset)
  * ```tsx
  * import { Chat, useChat } from "veryfront/chat";
  *
  * export default function Page() {
  *   const chat = useChat({ api: "/api/chat" });
- *   return <Chat {...chat} />;
+ *   return (
+ *     <Chat
+ *       messages={chat.messages}
+ *       input={chat.input}
+ *       onChange={chat.handleInputChange}
+ *       onSubmit={chat.handleSubmit}
+ *     />
+ *   );
  * }
  * ```
  *
- * @example Custom layout
+ * @example Custom layout (composition)
  * ```tsx
- * import { ChatMessages, ChatInput, useChat } from "veryfront/chat";
+ * import { Chat, useChat } from "veryfront/chat";
  *
  * export default function Page() {
  *   const chat = useChat({ api: "/api/chat" });
  *   return (
- *     <div>
- *       <ChatMessages messages={chat.messages} />
- *       <ChatInput value={chat.input} onChange={chat.setInput} onSubmit={chat.submit} />
- *     </div>
+ *     <Chat.Root messages={chat.messages} input={chat.input}>
+ *       <Chat.Empty title="Ask me anything" />
+ *       <Chat.MessageList messages={chat.messages} />
+ *       <Chat.Composer input={chat.input} onChange={chat.handleInputChange} onSubmit={chat.handleSubmit} />
+ *     </Chat.Root>
  *   );
  * }
  * ```
  *
- * @example Agent card with tool calls
+ * @example Per-message control (compound)
  * ```tsx
- * import { AgentCard, useAgent } from "veryfront/chat";
+ * import { Message } from "veryfront/chat";
  *
- * function AgentUI() {
- *   const agent = useAgent({ agent: "assistant" });
- *   return (
- *     <AgentCard
- *       status={agent.status}
- *       messages={agent.messages}
- *       toolCalls={agent.toolCalls}
- *     />
- *   );
- * }
+ * <Message.Root message={msg}>
+ *   <Message.Avatar />
+ *   <Message.Content />
+ *   <Message.Actions />
+ * </Message.Root>
  * ```
  */
 
 // veryfront/chat — Chat UI components + hooks
 //
 // Merges components/ai (UI) and agent/react (hooks) into a single
-// product-oriented import path. Uses selective re-exports from
-// individual source files to avoid leaking theme internals
-// (cn, defaultChatTheme, defaultAgentTheme, mergeThemes).
+// product-oriented import path.
 
 // ---------------------------------------------------------------------------
-// Components
+// Core preset + compound
+// ---------------------------------------------------------------------------
+
+export {
+  Chat,
+  ChatComponents,
+} from "#veryfront/react/components/ai/chat.tsx";
+export type { ChatProps } from "#veryfront/react/components/ai/chat.tsx";
+
+// ---------------------------------------------------------------------------
+// Composition building blocks
+// ---------------------------------------------------------------------------
+
+export {
+  ChatComposer,
+  ChatEmpty,
+  ChatIf,
+  ChatMessageList,
+  ChatRoot,
+  ErrorBanner,
+  Message,
+  ModelAvatar,
+} from "#veryfront/react/components/ai/chat.tsx";
+export type {
+  ChatComposerProps,
+  ChatEmptyProps,
+  ChatIfProps,
+  ChatMessageListProps,
+  ChatRootProps,
+  ErrorBannerProps,
+  MessageRootProps,
+  ModelAvatarProps,
+} from "#veryfront/react/components/ai/chat.tsx";
+
+// ---------------------------------------------------------------------------
+// Contexts
+// ---------------------------------------------------------------------------
+
+export {
+  ChatContextProvider,
+  ComposerContextProvider,
+  MessageContextProvider,
+  ThreadListContextProvider,
+  useChatContext,
+  useChatContextOptional,
+  useComposerContext,
+  useComposerContextOptional,
+  useMessageContext,
+  useMessageContextOptional,
+  useThreadListContext,
+  useThreadListContextOptional,
+} from "#veryfront/react/components/ai/chat.tsx";
+export type {
+  ChatContextValue,
+  ComposerContextValue,
+  MessageContextValue,
+  ThreadListContextValue,
+} from "#veryfront/react/components/ai/chat.tsx";
+
+// ---------------------------------------------------------------------------
+// Sub-components
 // ---------------------------------------------------------------------------
 
 export {
   AttachmentPill,
   BranchPicker,
-  Chat,
-  ChatComponents,
-  ChatFooter,
-  ChatHeader,
-  ChatInput,
-  ChatMessages,
+  ChatSidebar,
   downloadMarkdown,
   DropZoneOverlay,
   exportAsMarkdown,
+  extractSourcesFromParts,
   InferenceBadge,
+  InlineCitation,
   MessageActions,
   MessageEditForm,
   MessageFeedback,
   ModelSelector,
+  QuickActions,
   RichCodeBlock,
   StepIndicator,
+  ToolCallCard,
   UpgradeCTA,
-  ChatSidebar,
   ChatWithSidebar,
   TabSwitcher,
-  QuickActions,
   DocsPanel,
   useThreads,
 } from "#veryfront/react/components/ai/chat.tsx";
@@ -87,7 +145,6 @@ export type {
   AttachmentInfo,
   AttachmentPillProps,
   BranchPickerProps,
-  ChatProps,
   ChatSidebarProps,
   ChatTab,
   ChatWithSidebarProps,
@@ -97,6 +154,7 @@ export type {
   DropZoneOverlayProps,
   FeedbackValue,
   InferenceBadgeProps,
+  InlineCitationProps,
   MessageActionsProps,
   MessageEditFormProps,
   MessageFeedbackProps,
@@ -112,7 +170,8 @@ export type {
   UseThreadsResult,
 } from "#veryfront/react/components/ai/chat.tsx";
 
-export { Message, StreamingMessage } from "#veryfront/react/components/ai/message.tsx";
+// Message (standalone bubble, not the chat compound)
+export { Message as StandaloneMessage, StreamingMessage } from "#veryfront/react/components/ai/message.tsx";
 export type {
   MessageProps,
   StreamingMessageProps,
@@ -127,8 +186,7 @@ export {
 } from "#veryfront/react/components/ai/error-boundary.tsx";
 export type { AIErrorBoundaryProps } from "#veryfront/react/components/ai/error-boundary.tsx";
 
-// Types only from theme — excludes cn, defaultChatTheme,
-// defaultAgentTheme, mergeThemes
+// Types only from theme
 export type { AgentTheme, ChatTheme } from "#veryfront/react/components/ai/theme.ts";
 
 // ---------------------------------------------------------------------------
@@ -175,4 +233,3 @@ export type {
   UseVoiceInputOptions,
   UseVoiceInputResult,
 } from "#veryfront/agent/react/use-voice-input.ts";
-

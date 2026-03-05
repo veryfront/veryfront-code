@@ -247,7 +247,10 @@ const PLUS_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
 
 const TRASH_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
   { type: "polyline", props: { points: "3 6 5 6 21 6" } },
-  { type: "path", props: { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" } },
+  {
+    type: "path",
+    props: { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" },
+  },
 ];
 
 const PANEL_LEFT_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
@@ -277,7 +280,12 @@ export function PencilIcon({ className }: IconProps): React.ReactElement {
 }
 
 const SPARKLES_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
-  { type: "path", props: { d: "m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" } },
+  {
+    type: "path",
+    props: {
+      d: "m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z",
+    },
+  },
   { type: "path", props: { d: "M5 3v4" } },
   { type: "path", props: { d: "M19 17v4" } },
   { type: "path", props: { d: "M3 5h4" } },

@@ -138,7 +138,9 @@ export function ModelSelector({
           )}
         </div>
         {model.description && (
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">{model.description}</p>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+            {model.description}
+          </p>
         )}
       </button>
     );
@@ -147,9 +149,7 @@ export function ModelSelector({
   const dropdownContent = groups
     ? Array.from(groups.entries()).map(([provider, items], groupIndex) => (
       <div key={provider || "__ungrouped"}>
-        {groupIndex > 0 && (
-          <div className="h-px bg-neutral-100 dark:bg-neutral-800 my-1" />
-        )}
+        {groupIndex > 0 && <div className="h-px bg-neutral-100 dark:bg-neutral-800 my-1" />}
         {provider && (
           <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
             {provider}
