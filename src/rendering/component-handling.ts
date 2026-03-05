@@ -9,7 +9,6 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, PageBundle } from "#veryfront/types";
 import { createError, getErrorMessage, toError } from "#veryfront/errors/veryfront-error.ts";
 import { getProjectReact } from "#veryfront/react";
-import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import { buildComponentCacheKey } from "#veryfront/cache/keys.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
@@ -50,6 +49,8 @@ export async function handleComponentPage(
     projectId?: string;
     /** Enable node position injection for Studio Navigator */
     studioEmbed?: boolean;
+    /** Request mode ("preview" | "production") for studio features */
+    mode?: string;
     /** Content source ID for cache isolation (branch name or release ID) */
     contentSourceId?: string;
     /** React version for transforms (from project config) */
@@ -59,13 +60,10 @@ export async function handleComponentPage(
   try {
     logger.debug(`Loading TSX/JSX file: ${pageInfo.entity.path}`);
 
-    const rawFileContent = await adapter.fs.readFile(pageInfo.entity.path);
-    const normalizedPath = pageInfo.entity.path.startsWith(projectDir)
-      ? pageInfo.entity.path.slice(projectDir.length).replace(/^\/+/, "")
-      : pageInfo.entity.path;
-    const fileContent = options?.studioEmbed
-      ? injectNodePositions(rawFileContent, { filePath: normalizedPath })
-      : rawFileContent;
+    // Node positions are injected by the SSR module loader (for all files
+    // including this entry point) when dev mode is enabled — no need to
+    // inject here to avoid double-injection which shifts positions.
+    const fileContent = await adapter.fs.readFile(pageInfo.entity.path);
 
     const clientModuleCode = options?.cachedClientModule ??
       (await bundleComponentForClient(

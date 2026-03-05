@@ -162,6 +162,7 @@ export class PageRenderer {
                   moduleServerUrl: this.moduleServerUrl,
                   projectId: options?.projectId,
                   studioEmbed: options?.studioEmbed,
+                  mode: this.mode,
                   contentSourceId: options?.contentSourceId,
                 },
               ),

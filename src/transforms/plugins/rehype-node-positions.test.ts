@@ -46,6 +46,7 @@ describe("rehype-node-positions", () => {
       assertEquals(el.properties["data-node-name"], "h1");
       assertEquals(el.properties["data-node-line"], "3");
       assertEquals(el.properties["data-node-column"], "0"); // column - 1
+      assertEquals(el.properties["data-node-source"], "md");
     });
 
     it("converts column to 0-based", () => {
@@ -245,8 +246,11 @@ describe("rehype-node-positions", () => {
       runPlugin(tree, { filePath: "docs/page.mdx" });
 
       assertEquals(el.properties["data-node-name"], "h1");
+      assertEquals(el.properties["data-node-source"], "md");
       const nameAttr = mdx.attributes.find((a: Any) => a.name === "data-node-name");
       assertEquals(nameAttr?.value, "Alert");
+      const sourceAttr = mdx.attributes.find((a: Any) => a.name === "data-node-source");
+      assertEquals(sourceAttr, undefined);
     });
 
     it("ignores unrelated node types", () => {

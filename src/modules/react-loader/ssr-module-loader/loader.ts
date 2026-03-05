@@ -53,6 +53,7 @@ import { SSRDependencyValidator } from "./ssr-dependency-validator.ts";
 import { preflightLocalImports } from "./preflight-imports.ts";
 import { resolveVfModuleImports } from "./vf-module-resolver.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
+import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
@@ -344,7 +345,16 @@ export class SSRModuleLoader {
       );
     }
 
-    const code = source ?? (await this.options.adapter.fs.readFile(filePath));
+    let code = source ?? (await this.options.adapter.fs.readFile(filePath));
+
+    // Inject node positions for JSX files in dev mode
+    if (this.options.dev && /\.(tsx|jsx)$/i.test(filePath)) {
+      const relativeFilePath = filePath.startsWith(this.options.projectDir)
+        ? filePath.slice(this.options.projectDir.length).replace(/^\/+/, "")
+        : filePath;
+      code = injectNodePositions(code, { filePath: relativeFilePath });
+    }
+
     const contentHash = await this.cache.hashContentAsync(code);
     const contentCacheKey = this.cache.getCacheKey(`${filePath}:${contentHash}`);
     const filePathCacheKey = this.cache.getCacheKey(filePath);

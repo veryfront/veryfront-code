@@ -144,6 +144,8 @@ export interface ModuleServerOptions {
   allowedImportDirs?: string[];
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Request mode ("preview" | "production") for studio features like node positions */
+  mode?: string;
 }
 
 /** Serve transformed module at /_vf_modules/* path */
@@ -397,8 +399,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
 
           const studioEmbed = url.searchParams.get("studio_embed") === "true";
+          const shouldInjectPositions = dev || options.mode === "preview";
           const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
-          if (studioEmbed && !isFrameworkFile && isJsxFile) {
+          if (shouldInjectPositions && !isFrameworkFile && isJsxFile) {
             const relativeFilePath = sourceFile.startsWith(projectDir)
               ? sourceFile.slice(projectDir.length).replace(/^\/+/, "")
               : sourceFile;

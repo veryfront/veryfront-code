@@ -16,3 +16,4 @@ export const DATA_NODE_LINE = "data-node-line";
 export const DATA_NODE_COLUMN = "data-node-column";
 export const DATA_NODE_END_LINE = "data-node-end-line";
 export const DATA_NODE_END_COLUMN = "data-node-end-column";
+export const DATA_NODE_SOURCE = "data-node-source";
