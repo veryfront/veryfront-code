@@ -13,6 +13,8 @@ export interface LoadComponentOptions {
   contentSourceId?: string;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Request mode ("preview" | "production") for studio features */
+  mode?: string;
 }
 
 export interface ComponentSource {

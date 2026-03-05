@@ -35,6 +35,7 @@ export function loadComponentFromSource(
           dev,
           contentSourceId: options?.contentSourceId,
           reactVersion: options?.reactVersion,
+          mode: options?.mode,
         });
 
         return loader.loadModule(filePath, source);

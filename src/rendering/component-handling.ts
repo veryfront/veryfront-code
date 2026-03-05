@@ -89,6 +89,7 @@ export async function handleComponentPage(
         ssr: true,
         contentSourceId: options?.contentSourceId,
         reactVersion: options?.reactVersion,
+        mode: options?.mode,
       },
     );
 

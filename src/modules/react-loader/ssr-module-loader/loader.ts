@@ -347,8 +347,9 @@ export class SSRModuleLoader {
 
     let code = source ?? (await this.options.adapter.fs.readFile(filePath));
 
-    // Inject node positions for JSX files in dev mode
-    if (this.options.dev && /\.(tsx|jsx)$/i.test(filePath)) {
+    // Inject node positions for JSX files in dev or preview mode
+    const shouldInjectPositions = this.options.dev || this.options.mode === "preview";
+    if (shouldInjectPositions && /\.(tsx|jsx)$/i.test(filePath)) {
       const relativeFilePath = filePath.startsWith(this.options.projectDir)
         ? filePath.slice(this.options.projectDir.length).replace(/^\/+/, "")
         : filePath;
