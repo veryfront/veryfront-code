@@ -1,5 +1,11 @@
 import { cosineSimilarity } from "ai";
-import { mkdir, readDir, readTextFile, writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import {
+  isNotFoundError,
+  mkdir,
+  readDir,
+  readTextFile,
+  writeTextFile,
+} from "#veryfront/platform/compat/fs.ts";
 import { dirname, extname, join } from "#veryfront/platform/compat/path/basic-operations.ts";
 import { embedding } from "./embedding.ts";
 import { chunk } from "./chunk.ts";
@@ -76,7 +82,7 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
       return parsed as UploadStoreData;
     } catch (err) {
       // File not found is expected on first run; anything else is worth logging
-      if (err instanceof Deno.errors.NotFound || (err as { code?: string }).code === "ENOENT") {
+      if (isNotFoundError(err)) {
         return { uploads: [], chunks: [] };
       }
       console.warn("[upload-store] Failed to load store, resetting:", err);
@@ -89,14 +95,20 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
     if (dir && dir !== ".") {
       await mkdir(dir, { recursive: true });
     }
+    const payload = JSON.stringify(data, null, 2);
     // Atomic write: write to temp file then rename to prevent corruption on crash
     const tmpPath = storagePath + ".tmp";
-    await writeTextFile(tmpPath, JSON.stringify(data, null, 2));
+    await writeTextFile(tmpPath, payload);
     try {
-      await Deno.rename(tmpPath, storagePath);
+      if (typeof Deno !== "undefined") {
+        await Deno.rename(tmpPath, storagePath);
+      } else {
+        const fs = await import("node:fs/promises");
+        await fs.rename(tmpPath, storagePath);
+      }
     } catch {
       // Fallback for environments where rename isn't available
-      await writeTextFile(storagePath, JSON.stringify(data, null, 2));
+      await writeTextFile(storagePath, payload);
     }
   }
 

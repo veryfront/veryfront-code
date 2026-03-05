@@ -150,6 +150,23 @@ function resolveExportEntry(entry: unknown): string | undefined {
   return undefined;
 }
 
+function toCjsDestructureBindings(bindings: string): string {
+  const inner = bindings.trim().replace(/^\{\s*/, "").replace(/\s*\}$/, "");
+  if (!inner) return "{}";
+
+  const converted = inner
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const aliasMatch = part.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+      if (aliasMatch) return `${aliasMatch[1]}: ${aliasMatch[2]}`;
+      return part;
+    });
+
+  return `{ ${converted.join(", ")} }`;
+}
+
 const FILE_EXTENSIONS: string[] = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs"];
 
 const EXT_TO_LOADER: Record<string, "tsx" | "jsx" | "ts" | "js" | "json"> = {
@@ -807,7 +824,7 @@ async function rewriteExternalImports(
         // Named imports: import { a, b } from "pkg" → const { a, b } = require("pkg")
         transformed = transformed.replace(
           new RegExp(`import\\s+(\\{[^}]+\\})\\s+from\\s+["']${escaped}["']`, "g"),
-          (_, bindings) => `const ${bindings} = require("${name}")`,
+          (_, bindings) => `const ${toCjsDestructureBindings(bindings)} = require("${name}")`,
         );
         // Namespace imports: import * as foo from "pkg" → const foo = require("pkg")
         transformed = transformed.replace(
@@ -822,7 +839,9 @@ async function rewriteExternalImports(
           ),
           (_, defaultName, bindings) => {
             const tmp = `__vf_tmp_${defaultName}`;
-            return `const ${tmp} = require("${name}"); const ${defaultName} = __vf_interopDefault(${tmp}); const ${bindings} = ${tmp}`;
+            return `const ${tmp} = require("${name}"); const ${defaultName} = __vf_interopDefault(${tmp}); const ${
+              toCjsDestructureBindings(bindings)
+            } = ${tmp}`;
           },
         );
         // Subpath static imports: from "pkg/sub" → require("pkg/sub")
@@ -832,7 +851,15 @@ async function rewriteExternalImports(
             "g",
           ),
           (_, binding, subpath) => {
-            const name_ = binding.startsWith("*") ? binding.replace(/\*\s+as\s+/, "") : binding;
+            const trimmedBinding = String(binding).trim();
+            if (trimmedBinding.startsWith("{")) {
+              return `const ${
+                toCjsDestructureBindings(trimmedBinding)
+              } = require("${name}${subpath}")`;
+            }
+            const name_ = trimmedBinding.startsWith("*")
+              ? trimmedBinding.replace(/\*\s+as\s+/, "")
+              : trimmedBinding;
             return `const ${name_} = require("${name}${subpath}")`;
           },
         );

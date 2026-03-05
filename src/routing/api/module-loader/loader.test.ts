@@ -33,7 +33,7 @@ const adapter: RuntimeAdapter = {
           name: entry.name,
           isFile: entry.isFile,
           isDirectory: entry.isDirectory,
-          isSymlink: "isSymlink" in entry ? entry.isSymlink : false,
+          isSymlink: false,
         };
       }
     },

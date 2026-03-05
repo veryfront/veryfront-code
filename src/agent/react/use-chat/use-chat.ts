@@ -36,6 +36,7 @@ interface Branch {
 interface BranchState {
   branches: Branch[];
   currentIndex: number;
+  baseMessages: UIMessage[];
 }
 
 /**
@@ -53,11 +54,13 @@ export function useChat(options: UseChatOptions): UseChatResult {
   const [inferenceMode, setInferenceMode] = useState<InferenceMode>("cloud");
   const [browserStatus, setBrowserStatus] = useState<BrowserInferenceStatus | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const requestIdRef = useRef(0);
   const browserInferenceActiveRef = useRef(false);
   const browserInferenceRejectRef = useRef<((reason: Error) => void) | null>(null);
 
   // Branch tracking: keyed by the message ID at the edit point
   const branchMapRef = useRef<Map<string, BranchState>>(new Map());
+  const branchKeyByMessageIdRef = useRef<Map<string, string>>(new Map());
 
   // System prompt for browser fallback (from 503 response or options)
   const systemPromptRef = useRef<string>(
@@ -176,13 +179,14 @@ export function useChat(options: UseChatOptions): UseChatResult {
    * Send a message and stream assistant updates.
    */
   const sendMessage = useCallback(
-    async (message: { text: string; baseMessages?: UIMessage[] }) => {
+    async (message: { text: string; baseMessages?: UIMessage[]; userMessageId?: string }) => {
       // Abort any in-flight request before starting a new one
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
+      const requestId = ++requestIdRef.current;
 
       const userMessage: UIMessage = {
-        id: generateClientId("msg"),
+        id: message.userMessageId ?? generateClientId("msg"),
         role: "user",
         parts: [{ type: "text", text: message.text }],
       };
@@ -319,8 +323,11 @@ export function useChat(options: UseChatOptions): UseChatResult {
         setError(nextError);
         options.onError?.(nextError);
       } finally {
-        setIsLoading(false);
-        abortControllerRef.current = null;
+        // Only the latest request can clear loading/abort state.
+        if (requestIdRef.current === requestId) {
+          setIsLoading(false);
+          abortControllerRef.current = null;
+        }
       }
     },
     [model, options, inferenceMode, doBrowserInference],
@@ -383,38 +390,47 @@ export function useChat(options: UseChatOptions): UseChatResult {
       const idx = current.findIndex((m) => m.id === messageId);
       if (idx === -1) return;
 
-      // Save the current tail as a branch
+      const branchKey = branchKeyByMessageIdRef.current.get(messageId) ?? messageId;
       const tail = current.slice(idx);
-      const existing = branchMapRef.current.get(messageId);
-      if (existing) {
-        // Only save if the current branch isn't already stored
-        const currentBranch = existing.branches[existing.currentIndex];
-        const sameAsCurrent = currentBranch && currentBranch.messages[0]?.id === tail[0]?.id;
-        if (!sameAsCurrent) {
-          existing.branches.push({ messages: tail });
-        }
-        existing.currentIndex = existing.branches.length;
-        existing.branches.push({ messages: [] }); // placeholder for new edit
+
+      let state = branchMapRef.current.get(branchKey);
+      if (state) {
+        // Persist the currently visible branch before creating a new edit branch.
+        state.baseMessages = current.slice(0, idx);
+        state.branches[state.currentIndex] = { messages: tail };
+        state.branches.push({ messages: [] }); // placeholder for the new edit branch
+        state.currentIndex = state.branches.length - 1;
       } else {
-        branchMapRef.current.set(messageId, {
+        state = {
           branches: [
             { messages: tail }, // original
             { messages: [] }, // placeholder for the new edit
           ],
           currentIndex: 1,
-        });
+          baseMessages: current.slice(0, idx),
+        };
+        branchMapRef.current.set(branchKey, state);
       }
 
-      // Truncate messages before the edited message and resubmit
-      const base = current.slice(0, idx);
-      await sendMessage({ text: newText, baseMessages: base });
+      const newUserMessageId = generateClientId("msg");
+      await sendMessage({
+        text: newText,
+        baseMessages: state.baseMessages,
+        userMessageId: newUserMessageId,
+      });
 
-      // Update the placeholder branch with actual messages
-      const state = branchMapRef.current.get(messageId);
+      // Update the placeholder with the newly generated branch and sync ID mappings.
+      state = branchMapRef.current.get(branchKey);
       if (state) {
         state.branches[state.currentIndex] = {
-          messages: messagesRef.current.slice(idx),
+          messages: messagesRef.current.slice(state.baseMessages.length),
         };
+        for (const branch of state.branches) {
+          const firstMessageId = branch.messages[0]?.id;
+          if (firstMessageId) {
+            branchKeyByMessageIdRef.current.set(firstMessageId, branchKey);
+          }
+        }
       }
     },
     [sendMessage],
@@ -424,7 +440,11 @@ export function useChat(options: UseChatOptions): UseChatResult {
    * Get branch info for a message.
    */
   const getBranches = useCallback((messageId: string): BranchInfo => {
-    const state = branchMapRef.current.get(messageId);
+    const branchKey = branchKeyByMessageIdRef.current.get(messageId) ??
+      (branchMapRef.current.has(messageId) ? messageId : undefined);
+    if (!branchKey) return { current: 1, total: 1 };
+
+    const state = branchMapRef.current.get(branchKey);
     if (!state) return { current: 1, total: 1 };
     return { current: state.currentIndex + 1, total: state.branches.length };
   }, []);
@@ -434,12 +454,18 @@ export function useChat(options: UseChatOptions): UseChatResult {
    * branchIndex is 0-based.
    */
   const switchBranch = useCallback((messageId: string, branchIndex: number) => {
-    const state = branchMapRef.current.get(messageId);
+    const branchKey = branchKeyByMessageIdRef.current.get(messageId) ??
+      (branchMapRef.current.has(messageId) ? messageId : undefined);
+    if (!branchKey) return;
+
+    const state = branchMapRef.current.get(branchKey);
     if (!state || branchIndex < 0 || branchIndex >= state.branches.length) return;
 
-    // Save current tail before switching
+    // Save currently visible tail before switching away.
     const current = messagesRef.current;
-    const idx = current.findIndex((m) => m.id === messageId);
+    const idx = current.findIndex((m) =>
+      m.role === "user" && branchKeyByMessageIdRef.current.get(m.id) === branchKey
+    );
     if (idx !== -1) {
       state.branches[state.currentIndex] = { messages: current.slice(idx) };
     }
@@ -448,9 +474,13 @@ export function useChat(options: UseChatOptions): UseChatResult {
     const branch = state.branches[branchIndex];
     if (!branch || branch.messages.length === 0) return;
 
-    // Rebuild: messages before edit point + branch messages
-    const prefix = idx !== -1 ? current.slice(0, idx) : current;
-    setMessages([...prefix, ...branch.messages]);
+    const firstMessageId = branch.messages[0]?.id;
+    if (firstMessageId) {
+      branchKeyByMessageIdRef.current.set(firstMessageId, branchKey);
+    }
+
+    // Rebuild from stable prefix captured at edit point.
+    setMessages([...state.baseMessages, ...branch.messages]);
   }, []);
 
   /**
