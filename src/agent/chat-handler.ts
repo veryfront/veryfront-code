@@ -344,13 +344,18 @@ export function createChatHandler(
       // Detect structured "no_ai_available" errors from local engine
       const vfError = fromError(error);
       if (vfError?.type === "no_ai_available") {
-        const systemPrompt = agent
-          ? typeof agent.config.system === "string"
-            ? agent.config.system
-            : typeof agent.config.system === "function"
-            ? await agent.config.system()
-            : undefined
-          : undefined;
+        let systemPrompt: string | undefined;
+        try {
+          systemPrompt = agent
+            ? typeof agent.config.system === "string"
+              ? agent.config.system
+              : typeof agent.config.system === "function"
+              ? await agent.config.system()
+              : undefined
+            : undefined;
+        } catch {
+          // If system prompt resolution fails, continue without it
+        }
         return Response.json(
           {
             code: "NO_AI_AVAILABLE",
