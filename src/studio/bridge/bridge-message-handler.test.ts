@@ -57,11 +57,14 @@ function resetState(pagePath = "test.md"): void {
   editorState.markdownLexicalRenderedContent = null;
 }
 
+// Fake parent window reference so isFromStudio accepts the event
+const fakeParentWindow = {} as Window;
+
 function makeEvent(data: Record<string, unknown>): MessageEvent {
   return {
     data,
     origin: "https://veryfront.com",
-    source: null,
+    source: fakeParentWindow,
     ports: [],
   } as unknown as MessageEvent;
 }
