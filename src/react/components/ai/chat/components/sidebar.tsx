@@ -7,7 +7,6 @@ export interface ChatSidebarProps {
   threads: Thread[];
   activeThreadId: string | null;
   onSelectThread: (id: string) => void;
-  onNewThread: () => void;
   onDeleteThread: (id: string) => void;
   onRenameThread?: (id: string, title: string) => void;
   className?: string;
@@ -135,7 +134,6 @@ export function ChatSidebar({
   threads,
   activeThreadId,
   onSelectThread,
-  onNewThread: _onNewThread,
   onDeleteThread,
   onRenameThread,
   className,

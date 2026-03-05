@@ -125,7 +125,6 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
             threads={threadsHook.threads}
             activeThreadId={threadsHook.activeThreadId}
             onSelectThread={handleSelectThread}
-            onNewThread={handleNewThread}
             onDeleteThread={(id) => {
               threadsHookRef.current.deleteThread(id);
               const next = threadsHookRef.current.threads.find((t) => t.id !== id);
