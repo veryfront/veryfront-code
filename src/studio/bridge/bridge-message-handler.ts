@@ -31,6 +31,11 @@ export function handleStudioMessage(event: MessageEvent): void {
   switch (message.action) {
     case "routeChange":
       if (message.url) {
+        if (state.selectedNodeId) {
+          state.selectedNodeId = null;
+          hideOverlay(state.selectionOverlay);
+          postToStudio({ action: "setSelectedNode", id: null });
+        }
         postToStudio({
           action: "onPageTransitionStart",
           url: message.url,
