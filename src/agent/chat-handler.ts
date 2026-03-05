@@ -349,8 +349,8 @@ export function createChatHandler(
         } else if (typeof systemConfig === "function") {
           try {
             systemPrompt = await systemConfig();
-          } catch {
-            // Fall back to default
+          } catch (promptError) {
+            console.warn("[chat-handler] Failed to resolve agent system prompt:", promptError);
           }
         }
 

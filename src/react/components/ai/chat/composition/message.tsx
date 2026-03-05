@@ -19,12 +19,7 @@
  */
 
 import * as React from "react";
-import type {
-  BranchInfo,
-  DynamicToolUIPart,
-  ToolUIPart,
-  UIMessage,
-} from "#veryfront/agent/react";
+import type { BranchInfo, DynamicToolUIPart, ToolUIPart, UIMessage } from "#veryfront/agent/react";
 import { cn } from "../../theme.ts";
 import { Markdown } from "../../markdown.tsx";
 import { MessageItem } from "../../../../primitives/index.ts";
@@ -114,7 +109,9 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
           : undefined,
         onCopy,
         onEdit: editMessage
-          ? (content: string) => { editMessage(message.id, content); }
+          ? (content: string) => {
+            editMessage(message.id, content);
+          }
           : undefined,
         onFeedback: onFeedbackProp
           ? (value: FeedbackValue) => onFeedbackProp(message.id, value)
@@ -123,6 +120,7 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
       }),
       [
         message,
+        message.id,
         role,
         isStreaming,
         parts,
@@ -320,7 +318,7 @@ MessageBranchPicker.displayName = "Message.BranchPicker";
 // Message — compound export
 // ---------------------------------------------------------------------------
 
-export type { MessageContextValue, MessageContentProps as MessageCompoundContentProps };
+export type { MessageContentProps as MessageCompoundContentProps, MessageContextValue };
 
 export const Message = Object.assign(MessageRoot, {
   Root: MessageRoot,

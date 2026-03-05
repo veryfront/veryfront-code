@@ -71,7 +71,7 @@ export function ModelSelector({
     const r = triggerRef.current.getBoundingClientRect();
     setPos({
       top: r.bottom + 6,
-      right: window.innerWidth - r.right,
+      right: globalThis.innerWidth - r.right,
     });
   }, [open]);
 

@@ -1,7 +1,21 @@
-// veryfront/react — All browser-side components, hooks, and utilities.
-//
-// Convenience barrel that aggregates every browser-only export path.
-// Individual paths (veryfront/head, veryfront/chat, etc.) continue to work.
+/**
+ * All browser-side components, hooks, and utilities.
+ *
+ * Convenience barrel that aggregates every browser-only export path.
+ * Individual paths (veryfront/head, veryfront/chat, etc.) continue to work.
+ *
+ * @module react
+ *
+ * @example
+ * ```tsx
+ * import { Chat, useChat } from "veryfront/react";
+ *
+ * export default function Page() {
+ *   const chat = useChat({ api: "/api/chat" });
+ *   return <Chat messages={chat.messages} input={chat.input} onChange={chat.handleInputChange} onSubmit={chat.handleSubmit} />;
+ * }
+ * ```
+ */
 
 // ---------------------------------------------------------------------------
 // Head (veryfront/head)
@@ -41,10 +55,7 @@ export type { MDXProviderProps } from "./components/MDXProvider.tsx";
 // ---------------------------------------------------------------------------
 // Chat — Core preset + compound
 // ---------------------------------------------------------------------------
-export {
-  Chat,
-  ChatComponents,
-} from "./components/ai/chat.tsx";
+export { Chat, ChatComponents } from "./components/ai/chat.tsx";
 export type { ChatProps } from "./components/ai/chat.tsx";
 
 // Chat — Composition building blocks

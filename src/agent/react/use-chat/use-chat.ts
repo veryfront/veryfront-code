@@ -85,7 +85,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
           return {
             ...part,
-            state: output.state ?? "output-available",
+            state: output.state ?? (output.errorText ? "output-error" : "output-available"),
             output: output.output,
             errorText: output.errorText,
           };
@@ -118,17 +118,29 @@ export function useChat(options: UseChatOptions): UseChatResult {
                 hasAddedMessage = true;
                 setMessages((prev) => [
                   ...prev,
-                  { id: messageId, role: "assistant", parts, metadata: { model: model ?? "browser" } },
+                  {
+                    id: messageId,
+                    role: "assistant",
+                    parts,
+                    metadata: { model: model ?? "browser" },
+                  },
                 ]);
                 return;
               }
               setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, parts } : m)));
             },
             onMessage: (assistantMessage: UIMessage) => {
-              const withMeta = { ...assistantMessage, metadata: { ...assistantMessage.metadata, model: model ?? "browser" } };
+              const withMeta = {
+                ...assistantMessage,
+                metadata: { ...assistantMessage.metadata, model: model ?? "browser" },
+              };
               setMessages((prev) => {
                 if (!hasAddedMessage) return [...prev, withMeta];
-                return prev.map((m) => m.id === assistantMessage.id ? { ...withMeta, metadata: { ...m.metadata, ...withMeta.metadata } } : m);
+                return prev.map((m) =>
+                  m.id === assistantMessage.id
+                    ? { ...withMeta, metadata: { ...m.metadata, ...withMeta.metadata } }
+                    : m
+                );
               });
               options.onFinish?.(withMeta);
               browserInferenceRejectRef.current = null;
@@ -228,14 +240,22 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
         const streamingMessageId = generateClientId("msg");
         let hasAddedStreamingMessage = false;
-        let currentMessageId = streamingMessageId;
+        const currentMessageIdRef = { current: streamingMessageId };
 
         await handleStreamingResponse(response.body, {
           onMessage: (assistantMessage) => {
-            const withMeta = { ...assistantMessage, metadata: { ...assistantMessage.metadata, model } };
+            const withMeta = {
+              ...assistantMessage,
+              metadata: { ...assistantMessage.metadata, model },
+            };
             setMessages((prev) => {
               if (!hasAddedStreamingMessage) return [...prev, withMeta];
-              return prev.map((m) => (m.id === currentMessageId ? { ...withMeta, metadata: { ...m.metadata, ...withMeta.metadata } } : m));
+              return prev.map((
+                m,
+              ) => (m.id === currentMessageIdRef.current
+                ? { ...withMeta, metadata: { ...m.metadata, ...withMeta.metadata } }
+                : m)
+              );
             });
             options.onFinish?.(withMeta);
           },
@@ -256,9 +276,9 @@ export function useChat(options: UseChatOptions): UseChatResult {
           onUpdate: (parts, messageId) => {
             const id = messageId ?? streamingMessageId;
 
-            if (messageId && messageId !== currentMessageId) {
-              const oldId = currentMessageId;
-              currentMessageId = messageId;
+            if (messageId && messageId !== currentMessageIdRef.current) {
+              const oldId = currentMessageIdRef.current;
+              currentMessageIdRef.current = messageId;
 
               if (hasAddedStreamingMessage) {
                 setMessages((prev) => prev.map((m) => (m.id === oldId ? { ...m, id, parts } : m)));
@@ -268,12 +288,14 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
             if (!hasAddedStreamingMessage) {
               hasAddedStreamingMessage = true;
-              setMessages((prev) => [...prev, { id, role: "assistant", parts, metadata: { model } }]);
+              setMessages((
+                prev,
+              ) => [...prev, { id, role: "assistant", parts, metadata: { model } }]);
               return;
             }
 
             setMessages((prev) =>
-              prev.map((m) => (m.id === currentMessageId ? { ...m, parts } : m))
+              prev.map((m) => (m.id === currentMessageIdRef.current ? { ...m, parts } : m))
             );
           },
           onToolCall: options.onToolCall,

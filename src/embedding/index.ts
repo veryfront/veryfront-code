@@ -5,6 +5,14 @@
  * (text splitting) behind veryfront's own API.
  *
  * @module embedding
+ *
+ * @example
+ * ```ts
+ * import { documentStore, createDocumentHandler } from "veryfront/embedding";
+ *
+ * const store = documentStore({ model: "openai/text-embedding-3-small" });
+ * export const { POST, GET, DELETE } = createDocumentHandler(store);
+ * ```
  */
 
 export { embedding } from "./embedding.ts";

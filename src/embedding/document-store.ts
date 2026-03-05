@@ -43,11 +43,18 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
   const contentExtensions = new Set(config.contentExtensions ?? [".md", ".mdx", ".txt"]);
   const chunkOptions = config.chunkOptions;
 
+  const MAX_TEXT_LENGTH = 5 * 1024 * 1024; // 5 MB text limit per document
+
   // Serialize all load→modify→save operations to prevent concurrent overwrites.
   let mutex: Promise<void> = Promise.resolve();
   function withLock<T>(fn: () => Promise<T>): Promise<T> {
     const result = mutex.then(fn);
-    mutex = result.then(() => {}, () => {});
+    mutex = result.then(
+      () => {},
+      (err) => {
+        console.error("[document-store] Lock operation failed:", err);
+      },
+    );
     return result;
   }
 
@@ -61,8 +68,18 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
   async function load(): Promise<DocumentStoreData> {
     try {
       const data = await readTextFile(storagePath);
-      return JSON.parse(data) as DocumentStoreData;
-    } catch {
+      const parsed = JSON.parse(data);
+      if (!parsed || !Array.isArray(parsed.documents) || !Array.isArray(parsed.chunks)) {
+        console.warn("[document-store] Corrupted store file, resetting:", storagePath);
+        return { documents: [], chunks: [] };
+      }
+      return parsed as DocumentStoreData;
+    } catch (err) {
+      // File not found is expected on first run; anything else is worth logging
+      if (err instanceof Deno.errors.NotFound || (err as { code?: string }).code === "ENOENT") {
+        return { documents: [], chunks: [] };
+      }
+      console.warn("[document-store] Failed to load store, resetting:", err);
       return { documents: [], chunks: [] };
     }
   }
@@ -112,6 +129,12 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
       return withLock(async () => {
         const data = await load();
         const documentId = crypto.randomUUID();
+
+        if (text.length > MAX_TEXT_LENGTH) {
+          throw new Error(
+            `Document text exceeds ${MAX_TEXT_LENGTH / 1024 / 1024} MB limit`,
+          );
+        }
 
         const chunks = await chunk(text, chunkOptions);
         if (chunks.length === 0) {
@@ -210,7 +233,9 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
           const content = await readTextFile(file);
           if (!content?.trim()) continue;
 
-          const title = file.replace(new RegExp(`^${contentDir}/`), "").replace(/\.[^.]+$/, "");
+          const title = file.startsWith(contentDir + "/")
+            ? file.slice(contentDir.length + 1).replace(/\.[^.]+$/, "")
+            : file.replace(/\.[^.]+$/, "");
           const documentId = crypto.randomUUID();
           const type = extname(file).slice(1);
 

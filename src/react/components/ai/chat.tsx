@@ -7,11 +7,7 @@
 // ---------------------------------------------------------------------------
 // Core preset + compound
 // ---------------------------------------------------------------------------
-export {
-  Chat,
-  ChatComponents,
-  type ChatProps,
-} from "./chat/index.tsx";
+export { Chat, ChatComponents, type ChatProps } from "./chat/index.tsx";
 
 // ---------------------------------------------------------------------------
 // Composition building blocks

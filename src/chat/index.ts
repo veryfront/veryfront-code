@@ -57,10 +57,7 @@
 // Core preset + compound
 // ---------------------------------------------------------------------------
 
-export {
-  Chat,
-  ChatComponents,
-} from "#veryfront/react/components/ai/chat.tsx";
+export { Chat, ChatComponents } from "#veryfront/react/components/ai/chat.tsx";
 export type { ChatProps } from "#veryfront/react/components/ai/chat.tsx";
 
 // ---------------------------------------------------------------------------
@@ -121,24 +118,34 @@ export {
   AttachmentPill,
   BranchPicker,
   ChatSidebar,
+  ChatWithSidebar,
+  DocsPanel,
   downloadMarkdown,
   DropZoneOverlay,
   exportAsMarkdown,
   extractSourcesFromParts,
+  FadeIn,
+  getTextContent,
+  groupPartsInOrder,
   InferenceBadge,
   InlineCitation,
+  isReasoningPart,
+  isToolPart,
+  Loader,
   MessageActions,
   MessageEditForm,
   MessageFeedback,
   ModelSelector,
   QuickActions,
+  ReasoningCard,
   RichCodeBlock,
+  Shimmer,
+  Sources,
   StepIndicator,
-  ToolCallCard,
-  UpgradeCTA,
-  ChatWithSidebar,
   TabSwitcher,
-  DocsPanel,
+  ToolCallCard,
+  ToolStatusBadge,
+  UpgradeCTA,
   useThreads,
 } from "#veryfront/react/components/ai/chat.tsx";
 export type {
@@ -160,8 +167,11 @@ export type {
   MessageFeedbackProps,
   ModelOption,
   ModelSelectorProps,
+  PartGroup,
   QuickAction,
   QuickActionsProps,
+  Source,
+  SourcesProps,
   StepIndicatorProps,
   TabSwitcherProps,
   Thread,
@@ -171,7 +181,10 @@ export type {
 } from "#veryfront/react/components/ai/chat.tsx";
 
 // Message (standalone bubble, not the chat compound)
-export { Message as StandaloneMessage, StreamingMessage } from "#veryfront/react/components/ai/message.tsx";
+export {
+  Message as StandaloneMessage,
+  StreamingMessage,
+} from "#veryfront/react/components/ai/message.tsx";
 export type {
   MessageProps,
   StreamingMessageProps,

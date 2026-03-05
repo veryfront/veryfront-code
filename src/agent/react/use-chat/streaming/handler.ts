@@ -1,7 +1,13 @@
 import type { ToolUIPart, UIMessagePart } from "../types.ts";
 import { createAssistantMessage, generateClientId } from "../utils.ts";
 import { buildCurrentParts } from "./parts-builder.ts";
-import type { OrderedReasoning, OrderedStep, OrderedToolCall, StreamingCallbacks, TextBlock } from "./types.ts";
+import type {
+  OrderedReasoning,
+  OrderedStep,
+  OrderedToolCall,
+  StreamingCallbacks,
+  TextBlock,
+} from "./types.ts";
 
 interface StreamingState {
   textBlocks: Map<string, TextBlock>;

@@ -41,11 +41,7 @@ export { ChatStyleProvider, type ChatStyleProviderProps } from "./chat-style-pro
 // ---------------------------------------------------------------------------
 // Chat — Core preset + compound
 // ---------------------------------------------------------------------------
-export {
-  Chat,
-  ChatComponents,
-  type ChatProps,
-} from "./chat.tsx";
+export { Chat, ChatComponents, type ChatProps } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
 // Chat — Composition building blocks
@@ -102,8 +98,8 @@ export {
   type ModelOption,
   ModelSelector,
   type ModelSelectorProps,
-  Sources,
   type Source,
+  Sources,
   type SourcesProps,
 } from "./chat.tsx";
 
@@ -121,7 +117,7 @@ export type { AgentCardProps } from "./agent-card.tsx";
 // ---------------------------------------------------------------------------
 // Message (standalone bubble component — not the chat compound)
 // ---------------------------------------------------------------------------
-export { Message, StreamingMessage } from "./message.tsx";
+export { Message as StandaloneMessage, StreamingMessage } from "./message.tsx";
 export type { MessageProps, StreamingMessageProps } from "./message.tsx";
 
 // ---------------------------------------------------------------------------
