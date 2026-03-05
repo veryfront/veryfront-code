@@ -501,5 +501,9 @@ export function useChat(options: UseChatOptions): UseChatResult {
     data,
     handleInputChange,
     handleSubmit,
+    // Aliases that match ChatProps / ChatWithSidebarProps so users can spread {...chat}
+    onChange: handleInputChange,
+    onSubmit: handleSubmit,
+    onModelChange: setModel,
   };
 }

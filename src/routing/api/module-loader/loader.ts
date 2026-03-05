@@ -78,13 +78,14 @@ async function readProjectDependencies(
  * `new Function` to evaluate them in a proper CJS wrapper with require,
  * exports, module, __filename, and __dirname bindings.
  */
-function generateCompiledBinaryRequireShim(escapedProjectDir: string): string {
+function generateCompiledBinaryRequireShim(projectDir: string): string {
   const builtinSet = JSON.stringify(NODE_BUILTINS);
+  const safeProjectDir = JSON.stringify(projectDir + "/package.json");
 
   return `
 import { createRequire as __vf_createRequire } from "node:module";
 import { dirname as __vf_dirname, resolve as __vf_resolve } from "node:path";
-var __vf_builtinRequire = __vf_createRequire("${escapedProjectDir}/package.json");
+var __vf_builtinRequire = __vf_createRequire(${safeProjectDir});
 var __vf_builtinSet = new Set(${builtinSet});
 var __vf_cache = Object.create(null);
 function __vf_loadCjs(id, parentDir) {
@@ -126,7 +127,7 @@ function __vf_loadCjs(id, parentDir) {
   return mod.exports;
 }
 function __vf_interopDefault(m) { return m && m.__esModule && m.default !== undefined ? m.default : m; }
-var require = function(id) { return __vf_loadCjs(id, "${escapedProjectDir}"); };
+var require = function(id) { return __vf_loadCjs(id, ${JSON.stringify(projectDir)}); };
 require.resolve = function(id) { return __vf_builtinRequire.resolve(id); };
 require.ensure = function(mods, cb) { cb(); };
 `.trim();
@@ -437,12 +438,12 @@ function loadAndTranspileModule(
       // When esbuild bundles CJS into ESM output, these become __require() shims that
       // fail at runtime. Inject a createRequire-based shim so require() works in ESM.
       // Use projectDir as the resolve base so require() finds the project's node_modules.
-      const escapedProjectDir = projectDir.replace(/\\/g, "\\\\");
+      const safeProjectDir = JSON.stringify(projectDir + "/package.json");
       const requireShim = isDeno && isCompiledBinary()
-        ? generateCompiledBinaryRequireShim(escapedProjectDir)
+        ? generateCompiledBinaryRequireShim(projectDir)
         : [
           'import { createRequire as __vf_createRequire } from "node:module";',
-          `var require = __vf_createRequire("${escapedProjectDir}/package.json");`,
+          `var require = __vf_createRequire(${safeProjectDir});`,
         ].join("\n");
 
       const result: BuildResult = await build({

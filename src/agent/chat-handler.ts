@@ -344,25 +344,11 @@ export function createChatHandler(
       // Detect structured "no_ai_available" errors from local engine
       const vfError = fromError(error);
       if (vfError?.type === "no_ai_available") {
-        // Resolve the agent's system prompt so the browser can use it for inference
-        const systemConfig = agent?.config?.system;
-        let systemPrompt = "You are a helpful AI assistant.";
-        if (typeof systemConfig === "string") {
-          systemPrompt = systemConfig;
-        } else if (typeof systemConfig === "function") {
-          try {
-            systemPrompt = await systemConfig();
-          } catch (promptError) {
-            console.warn("[chat-handler] Failed to resolve agent system prompt:", promptError);
-          }
-        }
-
         return Response.json(
           {
             code: "NO_AI_AVAILABLE",
             fallback: "browser",
             model: DEFAULT_LOCAL_MODEL,
-            systemPrompt,
           },
           { status: 503 },
         );

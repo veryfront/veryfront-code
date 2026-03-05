@@ -410,6 +410,9 @@ Main chat hook. Returns:
 | `stop` | `() => void` | Cancel active stream. |
 | `handleInputChange` | `ChangeEventHandler` | Bind to input onChange. |
 | `handleSubmit` | `FormEventHandler` | Bind to form onSubmit. |
+| `onChange` | `ChangeEventHandler` | Alias for `handleInputChange` — matches `ChatProps`. |
+| `onSubmit` | `FormEventHandler` | Alias for `handleSubmit` — matches `ChatProps`. |
+| `onModelChange` | `(model: string) => void` | Alias for `setModel` — matches `ChatProps`. |
 | `addToolOutput` | `(output) => void` | Provide tool call result. |
 
 See [Chat UI guide](../guides/chat-ui.md) for full documentation.

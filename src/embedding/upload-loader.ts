@@ -59,7 +59,13 @@ function parseCSVLine(line: string): string[] {
   for (let i = 0; i < line.length; i++) {
     const char = line[i]!;
     if (char === '"') {
-      inQuotes = !inQuotes;
+      // RFC 4180: doubled quote inside a quoted field is a literal quote
+      if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+        current += '"';
+        i++; // skip the second quote
+      } else {
+        inQuotes = !inQuotes;
+      }
     } else if (char === "," && !inQuotes) {
       values.push(current.trim());
       current = "";

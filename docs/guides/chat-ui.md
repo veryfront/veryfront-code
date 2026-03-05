@@ -23,17 +23,7 @@ import { Chat, useChat } from "veryfront/chat";
 
 export default function ChatPage() {
   const chat = useChat({ api: "/api/chat" });
-  return (
-    <Chat
-      messages={chat.messages}
-      input={chat.input}
-      onChange={chat.handleInputChange}
-      onSubmit={chat.handleSubmit}
-      isLoading={chat.isLoading}
-      stop={chat.stop}
-      placeholder="Ask me anything..."
-    />
-  );
+  return <Chat {...chat} placeholder="Ask me anything..." />;
 }
 ```
 
@@ -79,14 +69,8 @@ export default function CustomLayout() {
   const isEmpty = chat.messages.length === 0;
 
   return (
-    <Chat.Root
-      messages={chat.messages}
-      input={chat.input}
-      setInput={chat.setInput}
-      onSubmit={chat.handleSubmit}
-      onStop={chat.stop}
-      isLoading={chat.isLoading}
-    >
+    <Chat.Root {...chat}>
+
       {/* Custom header */}
       <header className="border-b p-4">
         <h1>AI Assistant</h1>
@@ -109,13 +93,7 @@ export default function CustomLayout() {
       )}
 
       {/* Input area */}
-      <Chat.Composer
-        input={chat.input}
-        onChange={chat.handleInputChange}
-        onSubmit={chat.handleSubmit}
-        isLoading={chat.isLoading}
-        stop={chat.stop}
-      />
+      <Chat.Composer {...chat} />
     </Chat.Root>
   );
 }
@@ -181,8 +159,8 @@ export default function CustomChat() {
     input,
     isLoading,
     error,
-    handleInputChange,
-    handleSubmit,
+    onChange,
+    onSubmit,
     reload,
     stop,
   } = useChat({ api: "/api/chat" });
@@ -200,8 +178,8 @@ export default function CustomChat() {
 
       {error && <p className="error">{error.message}</p>}
 
-      <form onSubmit={handleSubmit}>
-        <input value={input} onChange={handleInputChange} />
+      <form onSubmit={onSubmit}>
+        <input value={input} onChange={onChange} />
         {isLoading
           ? <button type="button" onClick={stop}>Stop</button>
           : <button type="submit">Send</button>}
@@ -232,10 +210,7 @@ When an agent calls a tool, the message contains a tool part. Render it with `re
 
 ```tsx
 <Chat
-  messages={chat.messages}
-  input={chat.input}
-  onChange={chat.handleInputChange}
-  onSubmit={chat.handleSubmit}
+  {...chat}
   renderTool={(toolCall) => {
     if (toolCall.toolName === "getWeather") {
       return (
@@ -390,14 +365,7 @@ export default function ChatPage() {
   const chat = useChat({ api: "/api/chat" });
 
   return (
-    <Chat
-      messages={chat.messages}
-      input={chat.input}
-      onChange={chat.handleInputChange}
-      onSubmit={chat.handleSubmit}
-      inferenceMode={chat.inferenceMode}
-      browserStatus={chat.browserStatus}
-    />
+    <Chat {...chat} />
   );
 }
 ```

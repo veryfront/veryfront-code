@@ -150,4 +150,10 @@ export interface UseChatResult {
   data?: unknown;
   handleInputChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
   handleSubmit: (e: React.FormEvent) => Promise<void>;
+  /** Alias for `handleInputChange` — matches `ChatProps.onChange` for easy spreading */
+  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  /** Alias for `handleSubmit` — matches `ChatProps.onSubmit` for easy spreading */
+  onSubmit: (e: React.FormEvent) => Promise<void>;
+  /** Alias for `setModel` — matches `ChatProps.onModelChange` for easy spreading */
+  onModelChange: (model: string | undefined) => void;
 }
