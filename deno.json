@@ -279,10 +279,10 @@
   },
   "tasks": {
     "setup": "deno run --allow-all scripts/setup.ts",
-    "start": "deno run --allow-all cli/main.ts",
+    "start": "deno run -A scripts/build/generate-templates-manifest.ts && deno run --allow-all cli/main.ts",
     "start:headless": "deno run --allow-all cli/main.ts --headless",
     "proxy": "deno run --allow-all cli/main.ts serve --mode=proxy",
-    "dev": "deno run --allow-all cli/main.ts dev",
+    "dev": "deno run -A scripts/build/generate-templates-manifest.ts && deno run --allow-all cli/main.ts dev",
     "production": "deno run --allow-all cli/main.ts serve --mode=production",
     "build": "deno run -A scripts/build/generate-integrations-module.ts && deno run -A scripts/build/generate-templates-manifest.ts && deno run -A scripts/build/generate-dev-ui-manifest.ts && deno run -A scripts/build/prepare-framework-sources.ts && deno run -A scripts/build/prebundle-client-scripts.ts && deno run -A scripts/build/prebundle-bridge.ts && deno compile --allow-all --include src/platform/polyfills --include src/proxy/main.ts --include dist/framework-src --output ./bin/veryfront cli/main.ts",
     "build:npm": "deno run -A scripts/build/generate-integrations-module.ts && deno run -A scripts/build/build-npm-dnt.ts",
