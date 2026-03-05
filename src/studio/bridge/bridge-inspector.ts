@@ -217,7 +217,16 @@ export function setupMutationObserver(): void {
     const hasRelevantChanges = mutations.some(
       (m) => m.type === "childList" || m.type === "characterData",
     );
-    if (hasRelevantChanges) debouncedTreeUpdate();
+    if (!hasRelevantChanges) return;
+
+    // Deselect if the selected element was removed from the DOM
+    if (state.selectedNodeId && !findElementById(state.selectedNodeId)) {
+      state.selectedNodeId = null;
+      hideOverlay(state.selectionOverlay);
+      postToStudio({ action: "setSelectedNode", id: null });
+    }
+
+    debouncedTreeUpdate();
   });
 
   mutationObserver.observe(root, { childList: true, characterData: true, subtree: true });
