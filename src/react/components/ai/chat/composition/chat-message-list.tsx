@@ -153,7 +153,7 @@ export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListP
             );
           })}
 
-          {isLoading && (
+          {isLoading && messages[messages.length - 1]?.role !== "assistant" && (
             <div className="flex items-start gap-3">
               <ModelAvatar model={model} />
               {browserStatus === "downloading-model" || browserStatus === "loading-runtime"

@@ -71,8 +71,8 @@ export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
               )}
           </button>
         </div>
-        <pre className="p-4 bg-[var(--accent)] overflow-auto text-sm">
-        <code className={language ? `language-${language} hljs` : "hljs"}>{code}</code>
+        <pre className="p-4 bg-[var(--accent)] text-[var(--foreground)] overflow-auto text-sm">
+        <code className={language ? `language-${language}` : undefined}>{code}</code>
         </pre>
       </div>
     );

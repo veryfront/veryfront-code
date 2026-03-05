@@ -1,7 +1,7 @@
 /**
  * ModelSelector - Dropdown for switching models at runtime
  *
- * Opens downward from the trigger using fixed positioning
+ * Opens upward from the trigger using fixed positioning
  * so it never affects the surrounding layout.
  *
  * Implements WAI-ARIA listbox pattern with full keyboard navigation.
@@ -63,18 +63,18 @@ export function ModelSelector({
   const [open, setOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
-  const [pos, setPos] = React.useState<{ top: number; right: number } | null>(null);
+  const [pos, setPos] = React.useState<{ bottom: number; right: number } | null>(null);
   const [focusedIndex, setFocusedIndex] = React.useState(-1);
 
   const selected = models.find((m) => m.value === value) ?? models[0];
   const listboxId = React.useId();
 
-  // Measure trigger and position dropdown below it, right-aligned
+  // Measure trigger and position dropdown above it, right-aligned
   React.useEffect(() => {
     if (!open || !triggerRef.current) return;
     const r = triggerRef.current.getBoundingClientRect();
     setPos({
-      top: r.bottom + 6,
+      bottom: globalThis.innerHeight - r.top + 6,
       right: globalThis.innerWidth - r.right,
     });
     // Focus the selected item when opening
@@ -235,7 +235,9 @@ export function ModelSelector({
         )}
       >
         <span>{selected?.label ?? "Select model"}</span>
-        <ChevronDownIcon className={cn("size-3 transition-transform", open && "rotate-180")} />
+        <ChevronDownIcon
+          className={cn("size-3 transition-transform rotate-180", open && "rotate-0")}
+        />
       </button>
 
       {open && pos && (
@@ -247,7 +249,7 @@ export function ModelSelector({
           className="min-w-[220px] max-h-[320px] overflow-auto rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-xl p-1"
           style={{
             position: "fixed",
-            top: pos.top,
+            bottom: pos.bottom,
             right: pos.right,
             zIndex: 9999,
           }}

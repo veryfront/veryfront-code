@@ -248,10 +248,10 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
       prevMessagesRef.current = messages;
 
       if (messages.length > 0) {
-        updateThread(currentActiveId, { messages });
-
-        // Auto-title from first user message
+        // Auto-title from first user message — combine with message sync
+        // into a single updateThread call to avoid racing setThreads batches
         const activeThread = threadsRef.current.find((t) => t.id === currentActiveId);
+        let title: string | undefined;
         if (activeThread?.title === "New Chat") {
           const firstUserMsg = messages.find((m) => m.role === "user");
           if (firstUserMsg) {
@@ -260,13 +260,13 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
               .map((p) => (p as { text: string }).text)
               .join("")
               .trim();
-            if (text) {
-              renameThread(currentActiveId, text.slice(0, 30));
-            }
+            if (text) title = text.slice(0, 30);
           }
         }
+
+        updateThread(currentActiveId, title ? { messages, title } : { messages });
       }
-    }, [messages, renameThread, updateThread]);
+    }, [messages, updateThread]);
 
     const handleSelectThread = React.useCallback(
       (id: string) => {

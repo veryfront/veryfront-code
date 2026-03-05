@@ -18,12 +18,16 @@ export async function loadUpload(buffer: ArrayBuffer, mimeType: string): Promise
     return extractCSV(buffer);
   }
 
-  // Plain text formats — no extraction needed
-  if (mimeType.startsWith("text/")) {
+  // Plain text and markdown — no extraction needed
+  if (
+    mimeType === "text/plain" ||
+    mimeType === "text/markdown" ||
+    mimeType === "text/mdx"
+  ) {
     return new TextDecoder().decode(buffer);
   }
 
-  // Everything else (PDF, DOCX, XLSX, PPTX, etc.) → kreuzberg
+  // Everything else (PDF, DOCX, XLSX, PPTX, HTML, XML, etc.) → kreuzberg
   const { extractBytes } = await importKreuzberg();
   const result = await extractBytes(new Uint8Array(buffer), mimeType);
   return result.content;

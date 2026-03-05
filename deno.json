@@ -39,6 +39,7 @@
     "./fs": "./src/fs/index.ts",
     "./integrations": "./src/integrations/index.ts",
     "./sandbox": "./src/sandbox/index.ts",
+    "./embedding": "./src/embedding/index.ts",
     "./cli": "./cli/main.ts"
   },
   "imports": {
@@ -58,6 +59,7 @@
     "veryfront/react/components/ai": "./src/react/components/ai/index.ts",
     "veryfront/components/ai": "./src/react/components/ai/index.ts",
     "veryfront/sandbox": "./src/sandbox/index.ts",
+    "veryfront/embedding": "./src/embedding/index.ts",
     "veryfront/agent/react": "./src/agent/react/index.ts",
     "veryfront/agent/testing": "./src/agent/testing/index.ts",
     "veryfront/agent/middleware": "./src/agent/middleware/index.ts",

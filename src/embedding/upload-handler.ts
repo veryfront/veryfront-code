@@ -18,6 +18,9 @@ const MIME_TO_TYPE: Record<string, string> = {
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
   "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/msword": "doc",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.ms-powerpoint": "ppt",
 };
 
 const EXT_TO_TYPE: Record<string, string> = {
@@ -35,6 +38,9 @@ const EXT_TO_TYPE: Record<string, string> = {
   docx: "docx",
   xlsx: "xlsx",
   pptx: "pptx",
+  doc: "doc",
+  xls: "xls",
+  ppt: "ppt",
 };
 
 function inferType(file: File): string | null {
