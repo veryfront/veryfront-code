@@ -28,7 +28,7 @@ A chatbot that answers questions from your own documents using Retrieval-Augment
 
 ## Architecture
 
-RAG grounds LLM responses in your documents through three pipelines — **Ingestion**, **Query**, and **RAG** — orchestrated around a shared vector store and an agent that decides when to retrieve context.
+RAG grounds LLM responses in your documents through three pipelines — **Ingestion**, **Query**, and **RAG** — orchestrated around a shared vector store.
 
 ```mermaid
 flowchart LR
@@ -39,11 +39,11 @@ flowchart LR
     end
 
     subgraph QueryFlow["Query Pipeline"]
-        Q["Query"] --> QP["Query\nPreprocessing\n(Optional)"] --> QE["Query\nEmbedding"] --> SS["Similarity\nSearch"]
+        Q["Query"] --> QE["Query\nEmbedding"] --> SS["Similarity\nSearch"]
     end
 
     subgraph RAGFlow["RAG Pipeline"]
-        AG["Agent"] --> TC["Tool Call:\nSearch"] --> RET["Retrieval"] --> AUG["Augmentation"] --> GEN["Generation"]
+        BF["beforeStream\nHook"] --> RET["Retrieval"] --> AUG["Augmentation"] --> AG["Agent"] --> GEN["Generation"]
     end
 
     EMB(("Embedding\nModel"))
@@ -54,14 +54,13 @@ flowchart LR
     ChatUI_L --> D
     ChatUI_L --> Q
 
-    QP -.- GEN_LLM
     QE -.- EMB
     DE -.- EMB
 
     SS --> VS
     ING --> VS
 
-    Q --> AG
+    Q --> BF
     VS --> RET
     AG -.- GEN_LLM
     GEN -.- GEN_LLM
@@ -74,14 +73,13 @@ flowchart LR
 
 **Query** — The user's query is embedded into the same vector space as the documents, then compared against all stored chunks using cosine similarity to find the top-*k* most relevant results.
 
-**RAG** — An agent receives the query and decides whether to search (not all queries need documents). It can call the search tool multiple times, refining queries based on initial results. Retrieved chunks are assembled into context, and the generative model produces a cited response streamed back to the user.
+**RAG** — The `beforeStream` hook in the chat route intercepts each message before it reaches the agent. It searches the document store for relevant chunks, assembles them into context, and prepends them as a system message. The agent then generates a cited response streamed back to the user.
 
 ## Structure
 
 ```
 store.ts                        Document store config (embedding model, storage path)
 agents/rag.ts                   Q&A agent with citation instructions
-tools/search-docs.ts            Semantic search over indexed documents
 content/
   getting-started.md            Sample document
   architecture.md               Sample document
@@ -103,7 +101,7 @@ app/
 | Document API routes | `createDocumentHandler` | 1-line per route file |
 | Chat API route | `createChatHandler` | 1 line in `route.ts` |
 | Agent definition | `agent()` | Config object in `agents/rag.ts` |
-| Tool definition | `tool()` | Config + execute in `tools/search-docs.ts` |
+| RAG retrieval | `beforeStream` hook | Context injection in `api/chat/route.ts` |
 | Vector store | `documentStore()` | Config in `store.ts` |
 
 ## Adding documents

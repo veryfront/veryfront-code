@@ -267,7 +267,7 @@ Tool parts have a `state` property:
 
 ```tsx
 <Chat
-  {...chatProps}
+  {...chat}
   onAttach={(files) => handleUpload(files)}
   attachAccept=".pdf,.docx,.txt"
   attachments={uploadedFiles}
@@ -279,7 +279,7 @@ Tool parts have a `state` property:
 
 ```tsx
 <Chat
-  {...chatProps}
+  {...chat}
   models={[
     { value: "anthropic/claude-sonnet-4-5-20250929", label: "Claude Sonnet" },
     { value: "openai/gpt-4o", label: "GPT-4o" },
@@ -293,7 +293,7 @@ Tool parts have a `state` property:
 
 ```tsx
 <Chat
-  {...chatProps}
+  {...chat}
   editMessage={chat.editMessage}
   getBranches={chat.getBranches}
   switchBranch={chat.switchBranch}
@@ -309,7 +309,7 @@ function App() {
   const chat = useChat({ api: "/api/chat" });
   return (
     <ChatWithSidebar
-      {...chatProps}
+      {...chat}
       storageKey="my-app"
       setMessages={chat.setMessages}
     />
@@ -321,7 +321,7 @@ function App() {
 
 ```tsx
 <Chat
-  {...chatProps}
+  {...chat}
   showTabs
   documents={docs}
   onRemoveDocument={(id) => removeDoc(id)}
@@ -430,7 +430,7 @@ Customize the `Chat` component with a theme object:
 
 ```tsx
 <Chat
-  {...chatProps}
+  {...chat}
   theme={{
     container: "bg-gray-50 rounded-lg",
     input: "border-gray-300 focus:border-blue-500",

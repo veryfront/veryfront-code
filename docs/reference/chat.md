@@ -381,12 +381,38 @@ Input area state. Provided by Composer components.
 | `Shimmer` | Shimmer placeholder animation. |
 | `StandaloneMessage` | Standalone message bubble (outside chat compound). |
 | `StreamingMessage` | Streaming message with live updates. |
+| `ConversationEmptyState` | Empty state shown when no messages exist. |
+| `ConversationScrollButton` | Scroll-to-bottom floating button. |
+| `Suggestion` | Single suggestion chip. |
+| `Suggestions` | Suggestion chip container. |
 
 ## Hooks
 
 ### `useChat`
 
-Main chat hook. See [Chat UI guide](../guides/chat-ui.md) for full documentation.
+Main chat hook. Returns:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `messages` | `UIMessage[]` | Current message list. |
+| `input` | `string` | Current input value. |
+| `isLoading` | `boolean` | Whether a response is streaming. |
+| `error` | `Error \| null` | Last error, if any. |
+| `model` | `string \| undefined` | Current model ID. |
+| `setInput` | `(value: string) => void` | Update input. |
+| `setModel` | `(model: string) => void` | Switch model. |
+| `setMessages` | `SetState<UIMessage[]>` | Replace message list. |
+| `sendMessage` | `(msg) => Promise<void>` | Send a message. |
+| `editMessage` | `(id, text) => Promise<void>` | Edit and resubmit. |
+| `getBranches` | `(id) => BranchInfo` | Get branch info for a message. |
+| `switchBranch` | `(id, index) => void` | Switch to a branch. |
+| `reload` | `() => Promise<void>` | Regenerate last response. |
+| `stop` | `() => void` | Cancel active stream. |
+| `handleInputChange` | `ChangeEventHandler` | Bind to input onChange. |
+| `handleSubmit` | `FormEventHandler` | Bind to form onSubmit. |
+| `addToolOutput` | `(output) => void` | Provide tool call result. |
+
+See [Chat UI guide](../guides/chat-ui.md) for full documentation.
 
 ### `useAgent`
 
