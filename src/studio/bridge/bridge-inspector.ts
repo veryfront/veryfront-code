@@ -12,6 +12,7 @@ import {
   DATA_NODE_ID,
   DATA_NODE_LINE,
   DATA_NODE_NAME,
+  DATA_NODE_SOURCE,
   DATA_VF_ID,
   DATA_VF_IGNORE,
   DATA_VF_SELECTOR,
@@ -97,18 +98,10 @@ function isValidElement(el: Element): boolean {
 }
 
 function getNodeType(el: Element): string {
-  const tagName = el.tagName.toLowerCase();
-
   const vfId = el.getAttribute(DATA_VF_ID) || "";
   if (vfId && /^[A-Z]/.test(vfId)) return "component";
   if (el.hasAttribute(DATA_VF_TEXT)) return "text";
-
-  if (
-    ["h1", "h2", "h3", "h4", "h5", "h6", "p", "blockquote", "ul", "ol", "li", "pre", "code"]
-      .includes(tagName)
-  ) {
-    return "markdown";
-  }
+  if (el.getAttribute(DATA_NODE_SOURCE) === "md") return "markdown";
 
   return "element";
 }

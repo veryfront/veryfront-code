@@ -42,6 +42,7 @@ export function rehypeNodePositions(
         props["data-node-name"] = el.tagName;
         props["data-node-line"] = String(start.line);
         props["data-node-column"] = String(start.column - 1);
+        props["data-node-source"] = "md";
         return;
       }
 

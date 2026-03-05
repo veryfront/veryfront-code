@@ -34,6 +34,7 @@ export function handleModuleServer(
           releaseId: ctx.releaseId ?? null,
           allowedImportDirs: ctx.config?.security?.allowedImportDirs,
           reactVersion,
+          mode: ctx.requestContext?.mode,
         });
 
         const response = createResponseBuilder(ctx)
