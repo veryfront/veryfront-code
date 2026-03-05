@@ -54,7 +54,7 @@ async function readTextFile(path: string): Promise<string> {
 }
 
 const moduleDir = dirname(fromFileUrl(import.meta.url));
-const packageRoot = join(moduleDir, "..", "..", "..");
+const packageRoot = resolve(join(moduleDir, "..", "..", ".."));
 const vfSrcPrefix = "@vf-src/";
 const moduleExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".cjs", ".cts"] as const;
 const externalSpecifier = /^(std\/|@std\/|node:|deno:|https?:)/;
