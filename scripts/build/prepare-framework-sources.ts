@@ -34,6 +34,7 @@ const FRAMEWORK_DIRS = [
   "mdx",
   "agent",
   "workflow",
+  "embedding",
 ];
 
 // Extensions to process

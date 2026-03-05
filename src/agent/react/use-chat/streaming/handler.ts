@@ -1,16 +1,24 @@
 import type { ToolUIPart, UIMessagePart } from "../types.ts";
 import { createAssistantMessage, generateClientId } from "../utils.ts";
 import { buildCurrentParts } from "./parts-builder.ts";
-import type { OrderedReasoning, OrderedToolCall, StreamingCallbacks, TextBlock } from "./types.ts";
+import type {
+  OrderedReasoning,
+  OrderedStep,
+  OrderedToolCall,
+  StreamingCallbacks,
+  TextBlock,
+} from "./types.ts";
 
 interface StreamingState {
   textBlocks: Map<string, TextBlock>;
   toolCalls: Map<string, OrderedToolCall>;
   reasoningBlocks: Map<string, OrderedReasoning>;
+  steps: Map<number, OrderedStep>;
   messageParts: UIMessagePart[];
   currentTextId: string;
   messageId: string;
   partOrderCounter: number;
+  currentStep: number;
 }
 
 function createStreamingState(): StreamingState {
@@ -18,10 +26,12 @@ function createStreamingState(): StreamingState {
     textBlocks: new Map(),
     toolCalls: new Map(),
     reasoningBlocks: new Map(),
+    steps: new Map(),
     messageParts: [],
     currentTextId: "",
     messageId: "",
     partOrderCounter: 0,
+    currentStep: 0,
   };
 }
 
@@ -34,14 +44,19 @@ export async function handleStreamingResponse(
   const state = createStreamingState();
 
   const getBuildParts = (): UIMessagePart[] =>
-    buildCurrentParts(state.textBlocks, state.reasoningBlocks, state.toolCalls);
+    buildCurrentParts(state.textBlocks, state.reasoningBlocks, state.toolCalls, state.steps);
+
+  let buffer = "";
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) return;
+    if (done) break;
 
-    const chunk = decoder.decode(value, { stream: true });
-    for (const line of chunk.split("\n")) {
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? ""; // last element may be incomplete
+
+    for (const line of lines) {
       if (!line.startsWith("data: ") || !line.trim()) continue;
 
       const data = line.slice(6);
@@ -51,6 +66,16 @@ export async function handleStreamingResponse(
       } catch {
         // Skip invalid JSON
       }
+    }
+  }
+
+  // Process any remaining buffered data
+  if (buffer.startsWith("data: ") && buffer.trim()) {
+    try {
+      const parsed = JSON.parse(buffer.slice(6)) as Record<string, unknown>;
+      processEvent(parsed, state, callbacks, getBuildParts);
+    } catch {
+      // Skip invalid JSON
     }
   }
 }
@@ -69,7 +94,11 @@ function processEvent(
       return;
 
     case "step-start":
+      handleStepStart(parsed, state, callbacks.onUpdate, getBuildParts);
+      return;
+
     case "step-end":
+      handleStepEnd(parsed, state, callbacks.onUpdate, getBuildParts);
       return;
 
     case "text-start":
@@ -348,6 +377,38 @@ function handleReasoningEnd(
     state: "done",
   });
 
+  onUpdate?.(getBuildParts(), state.messageId);
+}
+
+function handleStepStart(
+  _parsed: Record<string, unknown>,
+  state: StreamingState,
+  onUpdate: StreamingCallbacks["onUpdate"],
+  getBuildParts: () => UIMessagePart[],
+): void {
+  const stepIndex = state.currentStep;
+  const step: OrderedStep = {
+    index: stepIndex,
+    isComplete: false,
+    order: state.partOrderCounter++,
+  };
+  state.steps.set(stepIndex, step);
+  onUpdate?.(getBuildParts(), state.messageId);
+}
+
+function handleStepEnd(
+  _parsed: Record<string, unknown>,
+  state: StreamingState,
+  onUpdate: StreamingCallbacks["onUpdate"],
+  getBuildParts: () => UIMessagePart[],
+): void {
+  const step = state.steps.get(state.currentStep);
+  if (step) {
+    step.isComplete = true;
+    // Add a step-end order entry so the UI can render a completion marker
+    step.order = state.partOrderCounter++;
+  }
+  state.currentStep++;
   onUpdate?.(getBuildParts(), state.messageId);
 }
 

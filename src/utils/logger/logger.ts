@@ -90,12 +90,12 @@ type LoggerConfig = {
 
 // ---- Config helpers (must be declared before the eager init below) ----
 
-const LOG_LEVEL_MAP: Record<string, LogLevel> = {
+const LOG_LEVEL_MAP: Readonly<Record<string, LogLevel>> = {
   DEBUG: LogLevel.DEBUG,
   INFO: LogLevel.INFO,
   WARN: LogLevel.WARN,
   ERROR: LogLevel.ERROR,
-};
+} as const;
 
 function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
   if (!levelString) return undefined;

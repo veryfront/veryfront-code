@@ -11,11 +11,12 @@
  * - browser: Server can't run ONNX (compiled binary), falls back to browser Worker
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 import { handleStreamingResponse } from "./streaming/index.ts";
 import type {
+  BranchInfo,
   BrowserInferenceStatus,
   InferenceMode,
   ToolOutput,
@@ -26,11 +27,48 @@ import type {
 } from "./types.ts";
 import { generateClientId } from "./utils.ts";
 
+/** A snapshot of messages from a branch point onward */
+interface Branch {
+  messages: UIMessage[];
+}
+
+/** Tracks branches keyed by the message ID where the edit occurred */
+interface BranchState {
+  branches: Branch[];
+  currentIndex: number;
+  baseMessages: UIMessage[];
+}
+
+export function isLatestRequest(activeRequestId: number, requestId: number): boolean {
+  return activeRequestId === requestId;
+}
+
+export function resolveBranchKey(
+  messageId: string,
+  branchMap: Map<string, BranchState>,
+  branchKeyByMessageId: Map<string, string>,
+): string | undefined {
+  return branchKeyByMessageId.get(messageId) ??
+    (branchMap.has(messageId) ? messageId : undefined);
+}
+
+export function findBranchUserMessageIndex(
+  messages: UIMessage[],
+  branchKey: string,
+  branchKeyByMessageId: Map<string, string>,
+): number {
+  return messages.findIndex((m) =>
+    m.role === "user" && branchKeyByMessageId.get(m.id) === branchKey
+  );
+}
+
 /**
  * useChat hook for managing chat state with veryfront stream events.
  */
 export function useChat(options: UseChatOptions): UseChatResult {
   const [messages, setMessages] = useState<UIMessage[]>(options.initialMessages ?? []);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -39,8 +77,13 @@ export function useChat(options: UseChatOptions): UseChatResult {
   const [inferenceMode, setInferenceMode] = useState<InferenceMode>("cloud");
   const [browserStatus, setBrowserStatus] = useState<BrowserInferenceStatus | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const requestIdRef = useRef(0);
   const browserInferenceActiveRef = useRef(false);
   const browserInferenceRejectRef = useRef<((reason: Error) => void) | null>(null);
+
+  // Branch tracking: keyed by the message ID at the edit point
+  const branchMapRef = useRef<Map<string, BranchState>>(new Map());
+  const branchKeyByMessageIdRef = useRef<Map<string, string>>(new Map());
 
   // System prompt for browser fallback (from 503 response or options)
   const systemPromptRef = useRef<string>(
@@ -49,6 +92,13 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
   // Track pending tool outputs for addToolOutput
   const pendingToolOutputsRef = useRef<Map<string, ToolOutput>>(new Map());
+
+  // Abort in-flight request on unmount
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   /**
    * Add tool output to pending tool-call parts.
@@ -68,7 +118,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
           return {
             ...part,
-            state: output.state ?? "output-available",
+            state: output.state ?? (output.errorText ? "output-error" : "output-available"),
             output: output.output,
             errorText: output.errorText,
           };
@@ -101,18 +151,31 @@ export function useChat(options: UseChatOptions): UseChatResult {
                 hasAddedMessage = true;
                 setMessages((prev) => [
                   ...prev,
-                  { id: messageId, role: "assistant", parts },
+                  {
+                    id: messageId,
+                    role: "assistant",
+                    parts,
+                    metadata: { model: model ?? "browser" },
+                  },
                 ]);
                 return;
               }
               setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, parts } : m)));
             },
             onMessage: (assistantMessage: UIMessage) => {
+              const withMeta = {
+                ...assistantMessage,
+                metadata: { ...assistantMessage.metadata, model: model ?? "browser" },
+              };
               setMessages((prev) => {
-                if (!hasAddedMessage) return [...prev, assistantMessage];
-                return prev.map((m) => m.id === assistantMessage.id ? assistantMessage : m);
+                if (!hasAddedMessage) return [...prev, withMeta];
+                return prev.map((m) =>
+                  m.id === assistantMessage.id
+                    ? { ...withMeta, metadata: { ...m.metadata, ...withMeta.metadata } }
+                    : m
+                );
               });
-              options.onFinish?.(assistantMessage);
+              options.onFinish?.(withMeta);
               browserInferenceRejectRef.current = null;
               resolve();
             },
@@ -139,19 +202,25 @@ export function useChat(options: UseChatOptions): UseChatResult {
    * Send a message and stream assistant updates.
    */
   const sendMessage = useCallback(
-    async (message: { text: string }) => {
+    async (message: { text: string; baseMessages?: UIMessage[]; userMessageId?: string }) => {
+      // Abort any in-flight request before starting a new one
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+      const requestId = ++requestIdRef.current;
+
       const userMessage: UIMessage = {
-        id: generateClientId("msg"),
+        id: message.userMessageId ?? generateClientId("msg"),
         role: "user",
         parts: [{ type: "text", text: message.text }],
       };
 
-      setMessages((prev) => [...prev, userMessage]);
+      const base = message.baseMessages ?? messagesRef.current;
+      setMessages([...base, userMessage]);
       setIsLoading(true);
       setError(null);
 
       try {
-        const allMessages = [...messages, userMessage];
+        const allMessages = [...base, userMessage];
 
         // If already in browser mode, skip fetch entirely
         if (inferenceMode === "browser") {
@@ -210,15 +279,24 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
         const streamingMessageId = generateClientId("msg");
         let hasAddedStreamingMessage = false;
-        let currentMessageId = streamingMessageId;
+        const currentMessageIdRef = { current: streamingMessageId };
 
         await handleStreamingResponse(response.body, {
           onMessage: (assistantMessage) => {
+            const withMeta = {
+              ...assistantMessage,
+              metadata: { ...assistantMessage.metadata, model },
+            };
             setMessages((prev) => {
-              if (!hasAddedStreamingMessage) return [...prev, assistantMessage];
-              return prev.map((m) => (m.id === currentMessageId ? assistantMessage : m));
+              if (!hasAddedStreamingMessage) return [...prev, withMeta];
+              return prev.map((
+                m,
+              ) => (m.id === currentMessageIdRef.current
+                ? { ...withMeta, metadata: { ...m.metadata, ...withMeta.metadata } }
+                : m)
+              );
             });
-            options.onFinish?.(assistantMessage);
+            options.onFinish?.(withMeta);
           },
           onData: (eventData) => {
             setData(eventData);
@@ -237,9 +315,9 @@ export function useChat(options: UseChatOptions): UseChatResult {
           onUpdate: (parts, messageId) => {
             const id = messageId ?? streamingMessageId;
 
-            if (messageId && messageId !== currentMessageId) {
-              const oldId = currentMessageId;
-              currentMessageId = messageId;
+            if (messageId && messageId !== currentMessageIdRef.current) {
+              const oldId = currentMessageIdRef.current;
+              currentMessageIdRef.current = messageId;
 
               if (hasAddedStreamingMessage) {
                 setMessages((prev) => prev.map((m) => (m.id === oldId ? { ...m, id, parts } : m)));
@@ -249,12 +327,14 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
             if (!hasAddedStreamingMessage) {
               hasAddedStreamingMessage = true;
-              setMessages((prev) => [...prev, { id, role: "assistant", parts }]);
+              setMessages((
+                prev,
+              ) => [...prev, { id, role: "assistant", parts, metadata: { model } }]);
               return;
             }
 
             setMessages((prev) =>
-              prev.map((m) => (m.id === currentMessageId ? { ...m, parts } : m))
+              prev.map((m) => (m.id === currentMessageIdRef.current ? { ...m, parts } : m))
             );
           },
           onToolCall: options.onToolCall,
@@ -266,29 +346,33 @@ export function useChat(options: UseChatOptions): UseChatResult {
         setError(nextError);
         options.onError?.(nextError);
       } finally {
-        setIsLoading(false);
-        abortControllerRef.current = null;
+        // Only the latest request can clear loading/abort state.
+        if (isLatestRequest(requestIdRef.current, requestId)) {
+          setIsLoading(false);
+          abortControllerRef.current = null;
+        }
       }
     },
-    [messages, model, options, inferenceMode, doBrowserInference],
+    [model, options, inferenceMode, doBrowserInference],
   );
 
   /**
    * Reload last message
    */
   const reload = useCallback(async () => {
-    if (messages.length === 0) return;
+    const currentMessages = messagesRef.current;
+    if (currentMessages.length === 0) return;
 
-    const lastUserIndex = messages.findLastIndex((m) => m.role === "user");
+    const lastUserIndex = currentMessages.findLastIndex((m) => m.role === "user");
     if (lastUserIndex === -1) return;
 
-    const lastUserMessage = messages[lastUserIndex];
+    const lastUserMessage = currentMessages[lastUserIndex];
     const textPart = lastUserMessage?.parts.find((p) => p.type === "text");
     if (!textPart || !("text" in textPart)) return;
 
-    setMessages(messages.slice(0, lastUserIndex));
-    await sendMessage({ text: textPart.text });
-  }, [messages, sendMessage]);
+    const base = currentMessages.slice(0, lastUserIndex);
+    await sendMessage({ text: textPart.text, baseMessages: base });
+  }, [sendMessage]);
 
   /**
    * Stop generation
@@ -319,6 +403,118 @@ export function useChat(options: UseChatOptions): UseChatResult {
   }, []);
 
   /**
+   * Edit a previous user message and resubmit.
+   * Saves the current messages from the edit point as a branch so the user
+   * can navigate back to it via switchBranch.
+   */
+  const editMessage = useCallback(
+    async (messageId: string, newText: string) => {
+      const current = messagesRef.current;
+      const idx = current.findIndex((m) => m.id === messageId);
+      if (idx === -1) return;
+
+      const branchKey = branchKeyByMessageIdRef.current.get(messageId) ?? messageId;
+      const tail = current.slice(idx);
+
+      let state = branchMapRef.current.get(branchKey);
+      if (state) {
+        // Persist the currently visible branch before creating a new edit branch.
+        state.baseMessages = current.slice(0, idx);
+        state.branches[state.currentIndex] = { messages: tail };
+        state.branches.push({ messages: [] }); // placeholder for the new edit branch
+        state.currentIndex = state.branches.length - 1;
+      } else {
+        state = {
+          branches: [
+            { messages: tail }, // original
+            { messages: [] }, // placeholder for the new edit
+          ],
+          currentIndex: 1,
+          baseMessages: current.slice(0, idx),
+        };
+        branchMapRef.current.set(branchKey, state);
+      }
+
+      const newUserMessageId = generateClientId("msg");
+      await sendMessage({
+        text: newText,
+        baseMessages: state.baseMessages,
+        userMessageId: newUserMessageId,
+      });
+
+      // Update the placeholder with the newly generated branch and sync ID mappings.
+      state = branchMapRef.current.get(branchKey);
+      if (state) {
+        state.branches[state.currentIndex] = {
+          messages: messagesRef.current.slice(state.baseMessages.length),
+        };
+        for (const branch of state.branches) {
+          const firstMessageId = branch.messages[0]?.id;
+          if (firstMessageId) {
+            branchKeyByMessageIdRef.current.set(firstMessageId, branchKey);
+          }
+        }
+      }
+    },
+    [sendMessage],
+  );
+
+  /**
+   * Get branch info for a message.
+   */
+  const getBranches = useCallback((messageId: string): BranchInfo => {
+    const branchKey = resolveBranchKey(
+      messageId,
+      branchMapRef.current,
+      branchKeyByMessageIdRef.current,
+    );
+    if (!branchKey) return { current: 1, total: 1 };
+
+    const state = branchMapRef.current.get(branchKey);
+    if (!state) return { current: 1, total: 1 };
+    return { current: state.currentIndex + 1, total: state.branches.length };
+  }, []);
+
+  /**
+   * Switch to a different branch at a given message.
+   * branchIndex is 0-based.
+   */
+  const switchBranch = useCallback((messageId: string, branchIndex: number) => {
+    const branchKey = resolveBranchKey(
+      messageId,
+      branchMapRef.current,
+      branchKeyByMessageIdRef.current,
+    );
+    if (!branchKey) return;
+
+    const state = branchMapRef.current.get(branchKey);
+    if (!state || branchIndex < 0 || branchIndex >= state.branches.length) return;
+
+    // Save currently visible tail before switching away.
+    const current = messagesRef.current;
+    const idx = findBranchUserMessageIndex(
+      current,
+      branchKey,
+      branchKeyByMessageIdRef.current,
+    );
+    if (idx !== -1) {
+      state.branches[state.currentIndex] = { messages: current.slice(idx) };
+    }
+
+    state.currentIndex = branchIndex;
+    const branch = state.branches[branchIndex];
+    if (!branch || branch.messages.length === 0) return;
+
+    const firstMessageId = branch.messages[0]?.id;
+    if (firstMessageId) {
+      branchKeyByMessageIdRef.current.set(firstMessageId, branchKey);
+    }
+
+    // Rebuild from stable prefix captured at edit point.
+    setMessages([...state.baseMessages, ...branch.messages]);
+  }, []);
+
+  /**
    * Handle input change
    */
   const handleInputChange = useCallback(
@@ -340,7 +536,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
       if (!text) return;
 
       setInput("");
-      await sendMessage({ text: input });
+      await sendMessage({ text });
     },
     [input, isLoading, sendMessage],
   );
@@ -356,6 +552,9 @@ export function useChat(options: UseChatOptions): UseChatResult {
     setInput,
     setModel,
     sendMessage,
+    editMessage,
+    getBranches,
+    switchBranch,
     reload,
     stop,
     setMessages,
@@ -363,5 +562,9 @@ export function useChat(options: UseChatOptions): UseChatResult {
     data,
     handleInputChange,
     handleSubmit,
+    // Aliases that match ChatProps / ChatWithSidebarProps so users can spread {...chat}
+    onChange: handleInputChange,
+    onSubmit: handleSubmit,
+    onModelChange: setModel,
   };
 }

@@ -30,6 +30,10 @@ try {
   // Pre-bundled scripts not available (Deno development mode)
 }
 
+interface ClientScriptGenerationOptions {
+  forceSourceBundle?: boolean;
+}
+
 interface FileStatResult {
   isFile: boolean;
 }
@@ -93,12 +97,15 @@ export const hydrate = window.hydrate;
  * Generate client.js module for hydration
  * Uses pre-bundled version for npm builds, or bundles from source for Deno
  */
-export async function generateClientModule(): Promise<string> {
+export async function generateClientModule(
+  options?: ClientScriptGenerationOptions,
+): Promise<string> {
   try {
     return await loadClientScript(
       CLIENT_ROUTER_BUNDLE,
       "router",
       "../../rendering/client/router.ts",
+      options,
     );
   } catch (error) {
     logger.error("Failed to generate client runtime bundle", error);
@@ -110,8 +117,9 @@ function loadClientScript(
   preBundledScript: string | undefined,
   scriptName: string,
   sourceEntry: string,
+  options?: ClientScriptGenerationOptions,
 ): Promise<string> {
-  if (preBundledScript) {
+  if (preBundledScript && !options?.forceSourceBundle) {
     logger.debug(`Using pre-bundled client ${scriptName} script`);
     return Promise.resolve(preBundledScript);
   }
@@ -123,11 +131,15 @@ function loadClientScript(
  * Load and transform router script from source
  * Uses pre-bundled version for npm builds, or bundles from source for Deno
  */
-export async function generateRouterScript(_adapter: RuntimeAdapter): Promise<string> {
+export async function generateRouterScript(
+  _adapter: RuntimeAdapter,
+  options?: ClientScriptGenerationOptions,
+): Promise<string> {
   return loadClientScript(
     CLIENT_ROUTER_BUNDLE,
     "router",
     "../../rendering/client/router.ts",
+    options,
   );
 }
 
@@ -135,11 +147,15 @@ export async function generateRouterScript(_adapter: RuntimeAdapter): Promise<st
  * Generate prefetch script
  * Uses pre-bundled version for npm builds, or bundles from source for Deno
  */
-export async function generatePrefetchScript(_adapter: RuntimeAdapter): Promise<string> {
+export async function generatePrefetchScript(
+  _adapter: RuntimeAdapter,
+  options?: ClientScriptGenerationOptions,
+): Promise<string> {
   return loadClientScript(
     CLIENT_PREFETCH_BUNDLE,
     "prefetch",
     "../../rendering/client/prefetch.ts",
+    options,
   );
 }
 

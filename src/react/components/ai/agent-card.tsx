@@ -60,7 +60,7 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
 
           {tool.error
             ? (
-              <div className="mt-2 p-3 bg-red-50 dark:bg-red-900/20 text-red-900 dark:text-red-100 rounded-xl text-sm border border-red-200 dark:border-red-800">
+              <div className="mt-2 p-3 bg-red-50 text-red-900 rounded-xl text-sm border border-red-200">
                 Error: {tool.error}
               </div>
             )
@@ -90,7 +90,7 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
         {hasToolCalls
           ? (
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+              <h3 className="text-sm font-semibold text-[var(--card-foreground)]">
                 Tool Calls
               </h3>
               <div className="space-y-3">
@@ -107,7 +107,7 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
         {hasMessages
           ? (
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+              <h3 className="text-sm font-semibold text-[var(--card-foreground)]">
                 Messages
               </h3>
               <div className="space-y-2 max-h-96 overflow-y-auto">
@@ -119,12 +119,12 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
                   return (
                     <div
                       key={msg.id}
-                      className="text-sm p-3 rounded-xl bg-neutral-50 dark:bg-neutral-800"
+                      className="text-sm p-3 rounded-xl bg-[var(--accent)]"
                     >
-                      <span className="font-semibold capitalize text-neutral-900 dark:text-neutral-100">
+                      <span className="font-semibold capitalize text-[var(--foreground)]">
                         {msg.role}:
                       </span>
-                      <span className="text-neutral-600 dark:text-neutral-400 ml-1">
+                      <span className="text-[var(--card-foreground)] ml-1">
                         {text.substring(0, 200)}
                         {text.length > 200 ? "..." : ""}
                       </span>
@@ -145,18 +145,18 @@ AgentCard.displayName = "AgentCard";
 function getStatusColor(status: AgentStatus): string {
   switch (status) {
     case "idle":
-      return "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300";
+      return "bg-[var(--accent)] text-[var(--card-foreground)]";
     case "thinking":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300";
+      return "bg-blue-100 text-blue-700";
     case "tool_execution":
-      return "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300";
+      return "bg-violet-100 text-violet-700";
     case "streaming":
-      return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300";
+      return "bg-green-100 text-green-700";
     case "completed":
-      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300";
+      return "bg-emerald-100 text-emerald-700";
     case "error":
-      return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300";
+      return "bg-red-100 text-red-700";
     default:
-      return "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300";
+      return "bg-[var(--accent)] text-[var(--card-foreground)]";
   }
 }

@@ -78,8 +78,10 @@ describe("useChat streaming handler (veryfront protocol)", () => {
     assertEquals(result.messages.length, 1);
     assertEquals(msg.id, "msg-123");
     assertEquals(msg.role, "assistant");
-    assertEquals(msg.parts.length, 1);
-    assertEquals(msg.parts[0], { type: "text", text: "Hello World", state: "done" });
+    // parts: text + step-end (step events produce a step part)
+    const textParts = msg.parts.filter((p) => p.type === "text");
+    assertEquals(textParts.length, 1);
+    assertEquals(textParts[0], { type: "text", text: "Hello World", state: "done" });
     assertEquals(getTextContent(msg), "Hello World");
     assertEquals(result.updates.length > 0, true);
   });

@@ -2,64 +2,86 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { CheckIcon, CopyIcon } from "../../icons/index.ts";
 
+const ACTION_BUTTON =
+  "inline-flex items-center justify-center size-7 text-[var(--input-placeholder)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2";
+
 export interface MessageActionsProps {
   content: string;
   className?: string;
+  /** When provided, renders an edit button that calls this handler */
+  onEdit?: (content: string) => void;
 }
 
-export function MessageActions({
-  content,
-  className,
-}: MessageActionsProps): React.ReactElement {
-  const [copied, setCopied] = React.useState(false);
+export const MessageActions = React.forwardRef<HTMLDivElement, MessageActionsProps>(
+  function MessageActions({ content, className, onEdit }, ref) {
+    const [copied, setCopied] = React.useState(false);
 
-  const setCopiedWithTimeout = React.useCallback((): void => {
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, []);
+    const setCopiedWithTimeout = React.useCallback((): void => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }, []);
 
-  const fallbackCopy = React.useCallback((): void => {
-    const textarea = document.createElement("textarea");
-    textarea.value = content;
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    document.body.removeChild(textarea);
-  }, [content]);
+    const fallbackCopy = React.useCallback((): void => {
+      const textarea = document.createElement("textarea");
+      textarea.value = content;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }, [content]);
 
-  const handleCopy = React.useCallback(async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(content);
-    } catch {
-      // Fallback for older browsers
-      fallbackCopy();
-    } finally {
-      setCopiedWithTimeout();
-    }
-  }, [content, fallbackCopy, setCopiedWithTimeout]);
+    const handleCopy = React.useCallback(async (): Promise<void> => {
+      try {
+        await navigator.clipboard.writeText(content);
+      } catch {
+        // Fallback for older browsers
+        fallbackCopy();
+      } finally {
+        setCopiedWithTimeout();
+      }
+    }, [content, fallbackCopy, setCopiedWithTimeout]);
 
-  return (
-    <div className={cn("flex items-center gap-1 mt-2", className)}>
-      <button
-        type="button"
-        onClick={handleCopy}
-        className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
-        title={copied ? "Copied!" : "Copy to clipboard"}
+    return (
+      <div
+        ref={ref}
+        className={cn(
+          "flex items-center gap-0.5 mt-1.5 opacity-0 group-hover/msg:opacity-100 transition-all duration-200",
+          className,
+        )}
       >
-        {copied
-          ? (
-            <>
-              <CheckIcon className="size-3" />
-              <span>Copied</span>
-            </>
-          )
-          : (
-            <>
-              <CopyIcon className="size-3" />
-              <span>Copy</span>
-            </>
-          )}
-      </button>
-    </div>
-  );
-}
+        <button
+          type="button"
+          onClick={handleCopy}
+          className={ACTION_BUTTON}
+          title={copied ? "Copied!" : "Copy to clipboard"}
+          aria-label={copied ? "Copied!" : "Copy to clipboard"}
+        >
+          {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+        </button>
+        {onEdit && (
+          <button
+            type="button"
+            onClick={() => onEdit(content)}
+            className={ACTION_BUTTON}
+            title="Edit message"
+            aria-label="Edit message"
+          >
+            <svg
+              className="size-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+              <path d="m15 5 4 4" />
+            </svg>
+          </button>
+        )}
+      </div>
+    );
+  },
+);
+MessageActions.displayName = "MessageActions";

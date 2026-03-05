@@ -26,12 +26,13 @@ let veryfrontGlobalsInitialized = false;
 async function ensureVeryfrontGlobals(): Promise<void> {
   if (veryfrontGlobalsInitialized || !isDenoCompiled) return;
 
-  const [agentMod, toolMod, platformMod, promptMod, resourceMod] = await Promise.all([
+  const [agentMod, toolMod, platformMod, promptMod, resourceMod, embeddingMod] = await Promise.all([
     import("#veryfront/agent"),
     import("#veryfront/tool"),
     import("#veryfront/platform"),
     import("#veryfront/prompt"),
     import("#veryfront/resource"),
+    import("#veryfront/embedding"),
   ]);
 
   (globalThis as Record<string, unknown>).__VERYFRONT_MODULES__ = {
@@ -40,6 +41,7 @@ async function ensureVeryfrontGlobals(): Promise<void> {
     "veryfront/platform": platformMod,
     "veryfront/prompt": promptMod,
     "veryfront/resource": resourceMod,
+    "veryfront/embedding": embeddingMod,
   };
 
   veryfrontGlobalsInitialized = true;

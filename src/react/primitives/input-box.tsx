@@ -17,6 +17,9 @@ export const InputBox = React.forwardRef<
   HTMLInputElement | HTMLTextAreaElement,
   InputBoxProps
 >(({ className, value, onChange, onSubmit, multiline, ...props }, ref) => {
+  const internalRef = React.useRef<HTMLTextAreaElement>(null);
+  const textareaRef = (ref as React.RefObject<HTMLTextAreaElement>) || internalRef;
+
   const handleKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
   ): void => {
@@ -25,18 +28,29 @@ export const InputBox = React.forwardRef<
     onSubmit();
   };
 
+  // Auto-resize textarea to fit content
+  React.useEffect(() => {
+    const el = textareaRef.current;
+    if (!el || !multiline) return;
+    el.style.height = "auto";
+    if (value) {
+      el.style.height = Math.min(el.scrollHeight, 200) + "px";
+    }
+  }, [value, multiline, textareaRef]);
+
   if (multiline) {
     return (
       <textarea
         // deno-lint-ignore no-explicit-any
-        ref={ref as any}
+        ref={textareaRef as any}
         className={className}
+        style={{ resize: "none", border: "none", outline: "none" }}
         value={value}
         onChange={onChange}
         onKeyDown={handleKeyDown}
         data-input-box=""
         data-multiline="true"
-        rows={3}
+        rows={1}
         {...(props as React.TextareaHTMLAttributes<HTMLTextAreaElement>)}
       />
     );
@@ -74,8 +88,17 @@ export interface SubmitButtonProps extends React.ButtonHTMLAttributes<HTMLButton
 
 function SubmitIcon(): React.JSX.Element {
   return (
-    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+    <svg
+      className="size-5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="m5 12 7-7 7 7" />
+      <path d="M12 19V5" />
     </svg>
   );
 }

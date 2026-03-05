@@ -51,7 +51,7 @@ const EXAMPLES: ExampleInfo[] = [
   {
     name: "data-analyst",
     description: "RAG-powered data analyst with Sheets and Snowflake",
-    template: "chat-with-your-docs",
+    template: "ai-rag-agent",
     integrations: ["sheets", "snowflake", "notion"],
     features: ["Document search", "Chart generation", "Reports"],
     difficulty: "advanced",
@@ -89,7 +89,7 @@ const TEMPLATES: TemplateInfo[] = [
     recommended: true,
   },
   {
-    name: "chat-with-your-docs",
+    name: "ai-rag-agent",
     description: "Chat with your docs using retrieval-augmented generation",
     features: ["Document search", "Source citations", "File-based knowledge"],
   },
@@ -407,7 +407,7 @@ const createProjectInput = z.object({
   template: z
     .enum([
       "ai-agent",
-      "chat-with-your-docs",
+      "ai-rag-agent",
       "multi-agent-system",
       "agentic-workflow",
       "coding-agent",

@@ -23,10 +23,9 @@ if (!existsSync(distDir)) {
 console.log("🔨 Building Veryfront CLI binaries...");
 console.log(`   Version: ${version}\n`);
 
-// Generate manifests before building
-console.log("📝 Generating manifests...");
-execSync("deno run -A scripts/build/generate-templates-manifest.ts", { stdio: "inherit" });
-execSync("deno run -A scripts/build/generate-dev-ui-manifest.ts", { stdio: "inherit" });
+// Run the same pre-build pipeline used by deno task build/build:npm
+console.log("📝 Running build preparation...");
+execSync("deno task build:prepare", { stdio: "inherit" });
 console.log("");
 
 const targets = [
@@ -66,7 +65,7 @@ for (const { name, target, output } of targets) {
   try {
     console.log(`📦 Building ${name}...`);
     execSync(
-      `deno compile --allow-all --unstable-net --target ${target} --output ${outputPath} cli/main.ts`,
+      `deno compile --allow-all --unstable-net --target ${target} --include src/platform/polyfills --include src/proxy/main.ts --include dist/framework-src --output ${outputPath} cli/main.ts`,
       { stdio: "inherit" },
     );
 

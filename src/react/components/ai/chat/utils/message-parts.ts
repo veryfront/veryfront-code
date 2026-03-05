@@ -9,6 +9,7 @@ import type {
   UIMessage,
   UIMessagePart,
 } from "#veryfront/agent/react";
+import type { Source } from "../components/sources.tsx";
 
 /** Get text content from UIMessage parts */
 export function getTextContent(message: UIMessage): string {
@@ -40,7 +41,8 @@ export function isReasoningPart(
 export type PartGroup =
   | { type: "text"; content: string }
   | { type: "tool"; tool: ToolUIPart | DynamicToolUIPart }
-  | { type: "reasoning"; text: string; isStreaming: boolean };
+  | { type: "reasoning"; text: string; isStreaming: boolean }
+  | { type: "step"; stepIndex: number; isComplete: boolean };
 
 /**
  * Group consecutive parts for ordered rendering
@@ -80,10 +82,59 @@ export function groupPartsInOrder(parts: UIMessagePart[]): PartGroup[] {
         text: part.text,
         isStreaming: part.state === "streaming",
       });
+      continue;
+    }
+
+    if (part.type === "step-start" || part.type === "step-end") {
+      groups.push({
+        type: "step",
+        stepIndex: (part as { stepIndex: number }).stepIndex,
+        isComplete: part.type === "step-end",
+      });
+      continue;
     }
     // Skip other non-renderable parts
   }
 
   flushText();
   return groups;
+}
+
+/**
+ * Extract sources from tool result parts.
+ * Looks for `documents` arrays in tool outputs and maps them to Source[].
+ */
+export function extractSourcesFromParts(parts: UIMessagePart[]): Source[] {
+  const sources: Source[] = [];
+
+  for (const part of parts) {
+    if (part.type !== "tool-result") continue;
+
+    const result = (part as { result?: unknown }).result;
+    if (!result || typeof result !== "object") continue;
+
+    const docs = (result as Record<string, unknown>).documents;
+    if (!Array.isArray(docs)) continue;
+
+    for (const doc of docs) {
+      if (!doc || typeof doc !== "object") continue;
+      const d = doc as Record<string, unknown>;
+      sources.push({
+        title: typeof d.title === "string"
+          ? d.title
+          : typeof d.name === "string"
+          ? d.name
+          : "Source",
+        url: typeof d.url === "string" ? d.url : undefined,
+        score: typeof d.score === "number" ? d.score : undefined,
+        snippet: typeof d.snippet === "string"
+          ? d.snippet
+          : typeof d.content === "string"
+          ? d.content.slice(0, 200)
+          : undefined,
+      });
+    }
+  }
+
+  return sources;
 }

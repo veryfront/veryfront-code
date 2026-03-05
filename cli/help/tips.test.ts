@@ -41,7 +41,7 @@ describe("cli/help/tips", () => {
       for (
         const template of [
           "ai-agent",
-          "chat-with-your-docs",
+          "ai-rag-agent",
           "multi-agent-system",
           "agentic-workflow",
           "coding-agent",

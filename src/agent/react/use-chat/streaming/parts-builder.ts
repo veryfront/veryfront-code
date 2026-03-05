@@ -1,5 +1,5 @@
 import type { ToolUIPart, UIMessagePart } from "../types.ts";
-import type { OrderedReasoning, OrderedToolCall, TextBlock } from "./types.ts";
+import type { OrderedReasoning, OrderedStep, OrderedToolCall, TextBlock } from "./types.ts";
 
 interface OrderedPart {
   order: number;
@@ -10,12 +10,14 @@ export function buildCurrentParts(
   textBlocks: Map<string, TextBlock>,
   reasoningBlocks: Map<string, OrderedReasoning>,
   toolCalls: Map<string, OrderedToolCall>,
+  steps?: Map<number, OrderedStep>,
 ): UIMessagePart[] {
   const orderedParts: OrderedPart[] = [];
 
   addTextParts(orderedParts, textBlocks);
   addReasoningParts(orderedParts, reasoningBlocks);
   addToolParts(orderedParts, toolCalls);
+  if (steps) addStepParts(orderedParts, steps);
 
   orderedParts.sort((a, b) => a.order - b.order);
   return orderedParts.map(({ part }) => part);
@@ -70,5 +72,20 @@ function addToolParts(
       : ({ type: `tool-${tool.toolName}`, ...base } as ToolUIPart);
 
     orderedParts.push({ order: tool.order, part });
+  }
+}
+
+function addStepParts(
+  orderedParts: OrderedPart[],
+  steps: Map<number, OrderedStep>,
+): void {
+  for (const step of steps.values()) {
+    orderedParts.push({
+      order: step.order,
+      part: {
+        type: step.isComplete ? "step-end" : "step-start",
+        stepIndex: step.index,
+      },
+    });
   }
 }

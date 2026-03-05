@@ -198,9 +198,7 @@ jobs:
         with:
           deno-version: lts
 
-      - run: deno run -A scripts/build/generate-templates-manifest.ts
-      - run: deno run -A scripts/build/prepare-framework-sources.ts
-      - run: deno run -A scripts/build/prebundle-bridge.ts
+      - run: deno task build:prepare
 
       - name: Compile binary
         shell: bash

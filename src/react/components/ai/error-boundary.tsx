@@ -44,13 +44,13 @@ export class AIErrorBoundary extends React.Component<
 
     return (
       <div
-        className="border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 rounded-2xl p-6"
+        className="border border-[var(--destructive)]/20 bg-[var(--destructive)]/5 rounded-2xl p-6"
         role="alert"
       >
         <div className="flex items-start gap-4">
-          <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/40 flex items-center justify-center flex-shrink-0">
+          <div className="size-10 rounded-full bg-[var(--destructive)]/10 flex items-center justify-center flex-shrink-0">
             <svg
-              className="w-5 h-5 text-red-600 dark:text-red-400"
+              className="size-5 text-[var(--destructive)]"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -65,18 +65,18 @@ export class AIErrorBoundary extends React.Component<
           </div>
 
           <div className="flex-1 min-w-0">
-            <h3 className="text-base font-semibold text-red-900 dark:text-red-100">
+            <h3 className="text-base font-semibold text-[var(--foreground)]">
               {errorMessage ?? "An error occurred in the AI component"}
             </h3>
 
-            <p className="mt-1.5 text-sm text-red-700 dark:text-red-300 leading-relaxed">
+            <p className="mt-1.5 text-sm text-[var(--destructive)] leading-relaxed">
               {error.message}
             </p>
 
             <button
               type="button"
               onClick={this.reset}
-              className="mt-4 px-5 py-2.5 text-sm font-medium text-white bg-red-500 hover:bg-red-600 active:scale-[0.98] rounded-full transition-all"
+              className="mt-4 px-5 py-2.5 text-sm font-medium bg-[var(--destructive)] text-[var(--destructive-foreground)] hover:opacity-90 active:scale-[0.98] rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
             >
               Try Again
             </button>
