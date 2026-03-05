@@ -105,12 +105,12 @@ async function ensureBinaryCompiled(): Promise<void> {
   // Run the same pre-build pipeline used by distribution builds
   console.log("📦 Preparing build artifacts...");
   const prepareResult = await new Deno.Command("deno", {
-    args: ["task", "build:prepare"],
+    args: ["run", "--allow-all", "scripts/build/prepare-framework-sources.ts"],
     stdout: "inherit",
     stderr: "inherit",
   }).output();
 
-  if (!prepareResult.success) throw new Error("Failed to prepare build artifacts");
+  if (!prepareResult.success) throw new Error("Failed to prepare framework sources");
 
   console.log("📦 Compiling binary...");
   const result = await new Deno.Command("deno", {
