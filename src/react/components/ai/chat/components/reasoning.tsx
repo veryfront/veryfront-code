@@ -13,9 +13,10 @@ export type ReasoningCardProps = {
 export const ReasoningCard = React.forwardRef<HTMLDivElement, ReasoningCardProps>(
   function ReasoningCard({ text, isStreaming = false, className }, ref) {
     const [isOpen, setIsOpen] = React.useState(true);
+    const userToggledRef = React.useRef(false);
 
     React.useEffect(() => {
-      if (isStreaming || !isOpen) return;
+      if (isStreaming || !isOpen || userToggledRef.current) return;
 
       const timer = setTimeout(() => setIsOpen(false), 1000);
       return () => clearTimeout(timer);
@@ -27,7 +28,10 @@ export const ReasoningCard = React.forwardRef<HTMLDivElement, ReasoningCardProps
       <div ref={ref} className={cn("not-prose mb-4", className)}>
         <button
           type="button"
-          onClick={() => setIsOpen((open) => !open)}
+          onClick={() => {
+            userToggledRef.current = true;
+            setIsOpen((open) => !open);
+          }}
           className="flex w-full items-center gap-2 text-neutral-400 dark:text-neutral-500 text-sm transition-colors hover:text-neutral-600 dark:hover:text-neutral-300"
         >
           <BrainIcon className="size-4" />

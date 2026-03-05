@@ -40,6 +40,9 @@ interface DocumentHandlerConfig {
 /**
  * Creates HTTP route handlers for document upload, listing, and deletion.
  *
+ * **Important:** These handlers do not include authentication or authorization.
+ * Add your own auth middleware before exposing them in production.
+ *
  * Returns `{ POST, GET, DELETE }` handlers compatible with file-based routing.
  * POST accepts multipart form data with a `file` field, extracts text via
  * `loadDocument`, and ingests into the provided document store. GET returns
@@ -102,8 +105,11 @@ export function createDocumentHandler(
         );
       }
 
-      const id = await store.ingest(file.name, text, {
-        source: `upload:${file.name}`,
+      // Sanitize file name: strip path components, limit length
+      const safeName = file.name.replace(/[/\\]/g, "_").slice(0, 200);
+
+      const id = await store.ingest(safeName, text, {
+        source: `upload:${safeName}`,
         type: fileType,
       });
 
@@ -118,8 +124,13 @@ export function createDocumentHandler(
   }
 
   async function GET(): Promise<Response> {
-    const documents = await store.listDocuments();
-    return Response.json({ documents });
+    try {
+      const documents = await store.listDocuments();
+      return Response.json({ documents });
+    } catch (error) {
+      console.error("Document list failed:", error);
+      return Response.json({ error: "Failed to list documents" }, { status: 500 });
+    }
   }
 
   async function DELETE(

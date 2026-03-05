@@ -89,7 +89,15 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
     if (dir && dir !== ".") {
       await mkdir(dir, { recursive: true });
     }
-    await writeTextFile(storagePath, JSON.stringify(data, null, 2));
+    // Atomic write: write to temp file then rename to prevent corruption on crash
+    const tmpPath = storagePath + ".tmp";
+    await writeTextFile(tmpPath, JSON.stringify(data, null, 2));
+    try {
+      await Deno.rename(tmpPath, storagePath);
+    } catch {
+      // Fallback for environments where rename isn't available
+      await writeTextFile(storagePath, JSON.stringify(data, null, 2));
+    }
   }
 
   async function ensureEmbeddings(data: DocumentStoreData): Promise<boolean> {
@@ -205,8 +213,10 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
     },
 
     async listDocuments(): Promise<DocumentMeta[]> {
-      const data = await load();
-      return data.documents;
+      return withLock(async () => {
+        const data = await load();
+        return data.documents;
+      });
     },
 
     async removeDocument(id: string): Promise<void> {
@@ -232,6 +242,14 @@ export function documentStore(config: DocumentStoreConfig): DocumentStore {
         for (const file of newFiles) {
           const content = await readTextFile(file);
           if (!content?.trim()) continue;
+          if (content.length > MAX_TEXT_LENGTH) {
+            console.warn(
+              `[document-store] Skipping ${file}: exceeds ${
+                MAX_TEXT_LENGTH / 1024 / 1024
+              } MB text limit`,
+            );
+            continue;
+          }
 
           const title = file.startsWith(contentDir + "/")
             ? file.slice(contentDir.length + 1).replace(/\.[^.]+$/, "")

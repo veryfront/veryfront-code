@@ -303,7 +303,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
   },
   ref,
 ): React.ReactElement {
-  const theme = mergeThemes(defaultChatTheme, userTheme);
+  const theme = React.useMemo(() => mergeThemes(defaultChatTheme, userTheme), [userTheme]);
 
   // --- Drag-and-drop ---
   const dropHandler = onDrop ?? onAttach;

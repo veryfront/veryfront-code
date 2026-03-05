@@ -73,7 +73,7 @@ export function InlineCitation({
       {showCard && source && (
         <div
           style={cardStyle}
-          className="w-80 pointer-events-none animate-in fade-in duration-150"
+          className="w-80 animate-in fade-in duration-150"
           onMouseEnter={show}
           onMouseLeave={hide}
         >

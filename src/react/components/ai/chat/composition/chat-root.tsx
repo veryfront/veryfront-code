@@ -96,12 +96,15 @@ export const ChatRoot = React.forwardRef<HTMLDivElement, ChatRootProps>(
     },
     ref,
   ) {
-    const theme = mergeThemes(defaultChatTheme, userTheme);
+    const theme = React.useMemo(() => mergeThemes(defaultChatTheme, userTheme), [userTheme]);
     const [isAtBottom, _setIsAtBottom] = React.useState(true);
+    const scrollAreaRef = React.useRef<HTMLDivElement>(null);
 
     const scrollToBottom = React.useCallback(() => {
-      // Consumers can use this to scroll; the actual scroll target
-      // is in ChatMessageList which has its own messagesEndRef.
+      scrollAreaRef.current?.scrollTo({
+        top: scrollAreaRef.current.scrollHeight,
+        behavior: "smooth",
+      });
     }, []);
 
     const contextValue = React.useMemo<ChatContextValue>(

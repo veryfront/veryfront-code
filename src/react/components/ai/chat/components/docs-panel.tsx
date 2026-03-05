@@ -108,6 +108,7 @@ export function DocsPanel({
           type="file"
           accept={attachAccept}
           multiple
+          aria-label="Upload document"
           onChange={(e) => {
             if (e.target.files?.length) onAttach(e.target.files);
             e.target.value = "";

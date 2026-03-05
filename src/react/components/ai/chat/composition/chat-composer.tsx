@@ -83,7 +83,13 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
         className={cn("flex-shrink-0 bg-white dark:bg-neutral-950 pb-6 pt-2", className)}
       >
         {children}
-        <form onSubmit={onSubmit} className="max-w-2xl mx-auto px-4">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit?.(e);
+          }}
+          className="max-w-2xl mx-auto px-4"
+        >
           {models && models.length > 0 && onModelChange && (
             <div className="mb-2">
               <ModelSelector
@@ -114,6 +120,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                     type="file"
                     accept={attachAccept}
                     multiple
+                    aria-label="Upload file"
                     onChange={(e) => {
                       if (e.target.files?.length) onAttach(e.target.files);
                       e.target.value = "";

@@ -333,7 +333,10 @@ export function createChatHandler(
     } catch (error) {
       if (error instanceof z.ZodError) {
         return Response.json(
-          { error: "Invalid request", details: error.errors },
+          {
+            error: "Invalid request",
+            details: error.errors.map((e) => ({ path: e.path, message: e.message })),
+          },
           { status: 400 },
         );
       }

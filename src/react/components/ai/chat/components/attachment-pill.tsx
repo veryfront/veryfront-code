@@ -75,6 +75,7 @@ export function AttachmentPill({
           <button
             type="button"
             onClick={() => onRemove(attachment.id)}
+            aria-label={`Remove ${attachment.name}`}
             className="size-4 shrink-0 flex items-center justify-center rounded-full hover:bg-neutral-300 dark:hover:bg-neutral-600 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors"
           >
             <svg

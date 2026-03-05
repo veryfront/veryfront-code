@@ -141,7 +141,9 @@ export function ChatSidebar({
   className,
   isOpen = true,
 }: ChatSidebarProps): React.ReactElement | null {
-  const visibleThreads = threads.filter((t) => t.messages.length > 0);
+  const visibleThreads = React.useMemo(() => threads.filter((t) => t.messages.length > 0), [
+    threads,
+  ]);
   const grouped = React.useMemo(() => groupThreads(visibleThreads), [visibleThreads]);
   const hasThreads = visibleThreads.length > 0;
 

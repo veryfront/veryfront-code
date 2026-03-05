@@ -54,6 +54,7 @@ export const MessageActions = React.forwardRef<HTMLDivElement, MessageActionsPro
           onClick={handleCopy}
           className={ACTION_BUTTON}
           title={copied ? "Copied!" : "Copy to clipboard"}
+          aria-label={copied ? "Copied!" : "Copy to clipboard"}
         >
           {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
         </button>
@@ -63,6 +64,7 @@ export const MessageActions = React.forwardRef<HTMLDivElement, MessageActionsPro
             onClick={() => onEdit(content)}
             className={ACTION_BUTTON}
             title="Edit message"
+            aria-label="Edit message"
           >
             <svg
               className="size-3.5"

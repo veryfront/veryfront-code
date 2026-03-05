@@ -104,8 +104,9 @@ export function useThreads(options?: UseThreadsOptions): UseThreadsResult {
     () => threads[0]?.id ?? null,
   );
 
-  // Debounced persist
+  // Debounced persist — clear on unmount to avoid stale writes
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout>>(undefined);
+  React.useEffect(() => () => clearTimeout(saveTimerRef.current), []);
   const persistThreads = React.useCallback(
     (updated: Thread[]) => {
       clearTimeout(saveTimerRef.current);

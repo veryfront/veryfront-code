@@ -189,6 +189,8 @@ async function findZipEntry(
       const localExtraLength = readUint16LE(bytes, localHeaderOffset + 28);
       const dataStart = localHeaderOffset + 30 + localFileNameLength + localExtraLength;
 
+      if (dataStart + compressedSize > bytes.length) return null;
+
       const raw = bytes.subarray(dataStart, dataStart + compressedSize);
 
       if (compressionMethod === 0) {
