@@ -61,8 +61,8 @@ export async function handleComponentPage(
     logger.debug(`Loading TSX/JSX file: ${pageInfo.entity.path}`);
 
     // Node positions are injected by the SSR module loader (for all files
-    // including this entry point) when dev mode is enabled — no need to
-    // inject here to avoid double-injection which shifts positions.
+    // including this entry point) when dev || mode === "preview" — no need
+    // to inject here to avoid double-injection which shifts positions.
     const fileContent = await adapter.fs.readFile(pageInfo.entity.path);
 
     const clientModuleCode = options?.cachedClientModule ??
@@ -77,6 +77,7 @@ export async function handleComponentPage(
       ));
 
     const { loadComponentFromSource } = await import("#veryfront/modules/react-loader/index.ts");
+    const dev = options?.mode === "development";
     const PageComponent = await loadComponentFromSource(
       fileContent,
       pageInfo.entity.path,
@@ -84,7 +85,7 @@ export async function handleComponentPage(
       adapter,
       {
         projectId: options?.projectId ?? projectDir,
-        dev: true,
+        dev,
         moduleServerUrl: options?.moduleServerUrl,
         ssr: true,
         contentSourceId: options?.contentSourceId,
