@@ -289,6 +289,15 @@ Branch navigation (prev/next). Only rendered when multiple branches exist.
 
 ## Contexts
 
+Each context has a Provider (for custom wiring), a required hook (throws if missing), and an optional hook (returns `null` if missing):
+
+| Context | Provider | Required hook | Optional hook |
+|---------|----------|---------------|---------------|
+| Chat | `ChatContextProvider` | `useChatContext()` | `useChatContextOptional()` |
+| Message | `MessageContextProvider` | `useMessageContext()` | `useMessageContextOptional()` |
+| Composer | `ComposerContextProvider` | `useComposerContext()` | `useComposerContextOptional()` |
+| ThreadList | `ThreadListContextProvider` | `useThreadListContext()` | `useThreadListContextOptional()` |
+
 ### `ChatContextValue`
 
 Root-level shared state. Provided by `ChatRoot` / `Chat`.
@@ -355,6 +364,7 @@ Input area state. Provided by Composer components.
 | `InlineCitation` | Inline source reference. |
 | `ReasoningCard` | Collapsible reasoning display. |
 | `ToolCallCard` | Tool call visualization. |
+| `ToolStatusBadge` | Tool status pill (running, complete, error). |
 | `StepIndicator` | Multi-step progress dots. |
 | `InferenceBadge` | Inference mode indicator. |
 | `UpgradeCTA` | Upgrade prompt for local mode. |
@@ -365,6 +375,12 @@ Input area state. Provided by Composer components.
 | `DocsPanel` | Document management panel. |
 | `ChatSidebar` | Thread list sidebar. |
 | `ModelSelector` | Model picker dropdown. |
+| `RichCodeBlock` | Syntax-highlighted code block with copy. |
+| `FadeIn` | Fade-in animation wrapper. |
+| `Loader` | Three-dot loading animation. |
+| `Shimmer` | Shimmer placeholder animation. |
+| `StandaloneMessage` | Standalone message bubble (outside chat compound). |
+| `StreamingMessage` | Streaming message with live updates. |
 
 ## Hooks
 
