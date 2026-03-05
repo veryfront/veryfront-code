@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn, generateTokenCSS } from "./theme.ts";
 import { Chat, type ChatProps } from "./chat/index.tsx";
 import { ChatSidebar } from "./chat/components/sidebar.tsx";
-import { TabSwitcher, type ChatTab } from "./chat/components/tab-switcher.tsx";
+import { type ChatTab, TabSwitcher } from "./chat/components/tab-switcher.tsx";
 import { useThreads } from "./chat/hooks/use-threads.ts";
 import { PanelLeftIcon } from "./icons/index.ts";
 
@@ -123,7 +123,11 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
     const tokenCSS = React.useMemo(() => generateTokenCSS(), []);
 
     return (
-      <div ref={ref} className={cn("flex h-full bg-[var(--background)]", className)} data-vf-chat="">
+      <div
+        ref={ref}
+        className={cn("flex h-full bg-[var(--background)]", className)}
+        data-vf-chat=""
+      >
         <style dangerouslySetInnerHTML={{ __html: tokenCSS }} />
         {sidebarOpen && (
           <ChatSidebar

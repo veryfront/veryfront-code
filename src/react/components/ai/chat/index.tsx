@@ -410,7 +410,9 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     >
       {dropHandler && <DropZoneOverlay visible={dragOver} accept={attachAccept} />}
 
-      {showTabs && !hideTabSwitcher && <TabSwitcher activeTab={currentTab} onTabChange={handleTabChange} />}
+      {showTabs && !hideTabSwitcher && (
+        <TabSwitcher activeTab={currentTab} onTabChange={handleTabChange} />
+      )}
 
       {isDocsTab
         ? (
