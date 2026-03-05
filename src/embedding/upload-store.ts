@@ -4,13 +4,13 @@ import { dirname, extname, join } from "#veryfront/platform/compat/path/basic-op
 import { embedding } from "./embedding.ts";
 import { chunk } from "./chunk.ts";
 import type {
+  StoredChunk,
   UploadMeta,
   UploadSearchOptions,
   UploadSearchResult,
   UploadStore,
   UploadStoreConfig,
   UploadStoreData,
-  StoredChunk,
 } from "./types.ts";
 
 /**

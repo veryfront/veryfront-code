@@ -31,17 +31,17 @@ export {
 } from "./resolve.ts";
 export type {
   ChunkOptions,
+  Embedding,
+  EmbeddingConfig,
+  SearchOptions,
+  SearchResult,
+  StoredChunk,
   UploadMeta,
   UploadSearchOptions,
   UploadSearchResult,
   UploadStore,
   UploadStoreConfig,
   UploadStoreData,
-  Embedding,
-  EmbeddingConfig,
-  SearchOptions,
-  SearchResult,
-  StoredChunk,
   VectorStore,
   VectorStoreConfig,
 } from "./types.ts";

@@ -31,8 +31,7 @@ export function UpgradeCTA({ inferenceMode }: UpgradeCTAProps): React.ReactEleme
     <div className="w-full max-w-2xl mx-auto mt-4 px-4 py-3 bg-[var(--accent)] rounded-xl text-sm text-[var(--foreground)] flex items-start gap-3">
       <span className="flex-1">
         Using a lightweight local model. Add an API key to your{" "}
-        <code className="px-1 py-0.5 bg-[var(--border)] rounded text-xs">.env</code>
-        {" "}
+        <code className="px-1 py-0.5 bg-[var(--border)] rounded text-xs">.env</code>{" "}
         for GPT-4o or Claude.
       </span>
       <button

@@ -121,7 +121,6 @@ export {
   ChatWithSidebar,
   ConversationEmptyState,
   ConversationScrollButton,
-  UploadsPanel,
   downloadMarkdown,
   DropZoneOverlay,
   exportAsMarkdown,
@@ -150,6 +149,7 @@ export {
   ToolCallCard,
   ToolStatusBadge,
   UpgradeCTA,
+  UploadsPanel,
   useThreads,
 } from "#veryfront/react/components/ai/chat.tsx";
 export type {
@@ -162,8 +162,6 @@ export type {
   CodeBlockProps,
   ConversationEmptyStateProps,
   ConversationScrollButtonProps,
-  UploadedFile,
-  UploadsPanelProps,
   DropZoneOverlayProps,
   FeedbackValue,
   InferenceBadgeProps,
@@ -184,6 +182,8 @@ export type {
   TabSwitcherProps,
   Thread,
   UpgradeCTAProps,
+  UploadedFile,
+  UploadsPanelProps,
   UseThreadsOptions,
   UseThreadsResult,
 } from "#veryfront/react/components/ai/chat.tsx";

@@ -122,7 +122,11 @@ export {
   QuickActions,
   type QuickActionsProps,
 } from "./components/quick-actions.tsx";
-export { type UploadedFile, UploadsPanel, type UploadsPanelProps } from "./components/uploads-panel.tsx";
+export {
+  type UploadedFile,
+  UploadsPanel,
+  type UploadsPanelProps,
+} from "./components/uploads-panel.tsx";
 
 // Re-exports — hooks
 export {

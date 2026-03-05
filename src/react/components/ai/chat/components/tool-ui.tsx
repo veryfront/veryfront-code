@@ -174,16 +174,18 @@ export function ToolCallCard({
             </div>
           )}
 
-          {tool.output === undefined ? null : (
-            <div className="space-y-2 p-4 border-t border-[var(--border)]">
-              <h4 className="font-medium text-[var(--muted-foreground)] text-xs uppercase tracking-wide">
-                Result
-              </h4>
-              <div className="overflow-x-auto rounded-lg bg-[var(--accent)] text-[var(--foreground)]">
-                {tableOutput ?? <div className="p-3">{formatJsonWithHighlight(tool.output)}</div>}
+          {tool.output === undefined
+            ? null
+            : (
+              <div className="space-y-2 p-4 border-t border-[var(--border)]">
+                <h4 className="font-medium text-[var(--muted-foreground)] text-xs uppercase tracking-wide">
+                  Result
+                </h4>
+                <div className="overflow-x-auto rounded-lg bg-[var(--accent)] text-[var(--foreground)]">
+                  {tableOutput ?? <div className="p-3">{formatJsonWithHighlight(tool.output)}</div>}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
           {!tool.errorText ? null : (
             <div className="space-y-2 p-4 border-t border-[var(--border)]">

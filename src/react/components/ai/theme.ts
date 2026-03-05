@@ -164,15 +164,12 @@ export interface AgentTheme {
 }
 
 export const defaultAgentTheme: AgentTheme = {
-  container:
-    "border border-[var(--border)] rounded-2xl p-6 space-y-4 bg-[var(--card)]",
+  container: "border border-[var(--border)] rounded-2xl p-6 space-y-4 bg-[var(--card)]",
   status: "inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium",
   thinking:
     "bg-amber-500/10 rounded-xl px-4 py-3 italic text-[var(--foreground)] border border-amber-500/20",
-  tool:
-    "rounded-xl px-4 py-3 bg-blue-500/10 border border-blue-500/20",
-  toolResult:
-    "mt-2 p-3 bg-[var(--accent)] rounded-xl font-mono text-sm overflow-x-auto",
+  tool: "rounded-xl px-4 py-3 bg-blue-500/10 border border-blue-500/20",
+  toolResult: "mt-2 p-3 bg-[var(--accent)] rounded-xl font-mono text-sm overflow-x-auto",
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -251,8 +248,7 @@ export const chatButtonVariants = cva(
       variant: {
         primary:
           "bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 active:scale-95",
-        ghost:
-          "bg-transparent text-[var(--foreground)] hover:bg-[var(--foreground)]/5",
+        ghost: "bg-transparent text-[var(--foreground)] hover:bg-[var(--foreground)]/5",
         outline:
           "border border-[var(--border)] bg-transparent text-[var(--foreground)] hover:bg-[var(--foreground)]/5",
         "icon-ghost":

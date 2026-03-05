@@ -97,7 +97,6 @@ export {
   ChatWithSidebar,
   ConversationEmptyState,
   ConversationScrollButton,
-  UploadsPanel,
   downloadMarkdown,
   DropZoneOverlay,
   exportAsMarkdown,
@@ -126,6 +125,7 @@ export {
   ToolCallCard,
   ToolStatusBadge,
   UpgradeCTA,
+  UploadsPanel,
   useThreads,
 } from "./chat.tsx";
 export type {
@@ -137,8 +137,6 @@ export type {
   ChatWithSidebarProps,
   ConversationEmptyStateProps,
   ConversationScrollButtonProps,
-  UploadedFile,
-  UploadsPanelProps,
   DropZoneOverlayProps,
   FeedbackValue,
   InferenceBadgeProps,
@@ -159,6 +157,8 @@ export type {
   TabSwitcherProps,
   Thread,
   UpgradeCTAProps,
+  UploadedFile,
+  UploadsPanelProps,
   UseThreadsOptions,
   UseThreadsResult,
 } from "./chat.tsx";
