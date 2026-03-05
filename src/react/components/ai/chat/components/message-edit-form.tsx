@@ -73,10 +73,11 @@ export function MessageEditForm({
           }}
           disabled={!content.trim()}
           className={cn(
-            "px-3 py-1.5 text-xs font-medium rounded-lg transition-colors",
+            "px-3 py-1.5 text-xs font-medium rounded-full transition-all",
             "bg-[var(--primary)] text-[var(--primary-foreground)]",
-            "hover:bg-[var(--primary)]/90",
-            "disabled:opacity-40 disabled:cursor-not-allowed",
+            "hover:opacity-90",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
+            "disabled:opacity-50 disabled:pointer-events-none",
           )}
         >
           Save & Submit
@@ -84,7 +85,7 @@ export function MessageEditForm({
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1.5 text-xs font-medium rounded-lg text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors"
+          className="px-3 py-1.5 text-xs font-medium rounded-full text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
         >
           Cancel
         </button>

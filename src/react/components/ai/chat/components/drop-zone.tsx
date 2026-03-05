@@ -17,12 +17,12 @@ export function DropZoneOverlay({
       className={cn(
         "absolute inset-0 z-50 flex flex-col items-center justify-center gap-3",
         "bg-[var(--background)]/80 backdrop-blur-sm",
-        "border-2 border-dashed border-emerald-500 rounded-2xl",
+        "border-2 border-dashed border-[var(--success)] rounded-2xl",
         "pointer-events-none",
       )}
     >
       <svg
-        className="size-10 text-emerald-500"
+        className="size-10 text-[var(--success)]"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"

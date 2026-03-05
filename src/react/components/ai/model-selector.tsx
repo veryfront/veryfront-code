@@ -172,7 +172,7 @@ export function ModelSelector({
         onClick={() => handleSelect(model)}
         onMouseEnter={() => setFocusedIndex(flatIndex)}
         className={cn(
-          "w-full text-left px-3 py-2 text-sm transition-colors rounded-lg cursor-pointer",
+          "w-full text-left px-3 py-2 text-sm transition-all rounded-lg cursor-pointer",
           isActive
             ? "bg-[var(--accent)] text-[var(--foreground)]"
             : "text-[var(--card-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",

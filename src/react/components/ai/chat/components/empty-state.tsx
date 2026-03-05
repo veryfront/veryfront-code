@@ -20,7 +20,7 @@ export function Suggestion({
       type="button"
       onClick={() => onClick?.(suggestion)}
       className={cn(
-        "group flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)] px-4 py-2.5 text-left text-sm text-[var(--card-foreground)] transition-all hover:bg-[var(--accent)] hover:border-[var(--input-border)] hover:text-[var(--foreground)] hover:shadow-sm",
+        "group flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)] px-4 py-2.5 text-left text-sm text-[var(--card-foreground)] transition-all hover:bg-[var(--accent)] hover:border-[var(--input-border)] hover:text-[var(--foreground)] hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
         className,
       )}
     >
@@ -111,7 +111,7 @@ export function ConversationScrollButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-border bg-background p-2 shadow-lg transition-all hover:bg-muted",
+        "absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-[var(--border)] bg-[var(--card)] p-2 shadow-lg transition-all hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
         className,
       )}
     >

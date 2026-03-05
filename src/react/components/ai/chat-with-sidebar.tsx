@@ -138,7 +138,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
             <button
               type="button"
               onClick={toggleSidebar}
-              className="p-2 rounded-lg text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors"
+              className="size-9 inline-flex items-center justify-center rounded-full text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
               aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
             >
               <PanelLeftIcon className="size-5" />
@@ -146,7 +146,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
             <button
               type="button"
               onClick={handleNewThread}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-[var(--card-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors"
+              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-sm font-medium text-[var(--foreground)] hover:bg-[var(--foreground)]/5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
             >
               <PlusIcon className="size-4" />
               <span>New Chat</span>

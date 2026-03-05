@@ -23,9 +23,9 @@ export function BranchPicker({
         onClick={onPrev}
         disabled={current <= 1}
         className={cn(
-          "size-5 flex items-center justify-center rounded transition-colors",
-          "hover:bg-[var(--accent)]",
-          "disabled:opacity-30 disabled:cursor-not-allowed",
+          "size-5 flex items-center justify-center rounded-full transition-all",
+          "hover:bg-[var(--foreground)]/5",
+          "disabled:opacity-50 disabled:pointer-events-none",
         )}
         aria-label="Previous variant"
       >
@@ -47,9 +47,9 @@ export function BranchPicker({
         onClick={onNext}
         disabled={current >= total}
         className={cn(
-          "size-5 flex items-center justify-center rounded transition-colors",
-          "hover:bg-[var(--accent)]",
-          "disabled:opacity-30 disabled:cursor-not-allowed",
+          "size-5 flex items-center justify-center rounded-full transition-all",
+          "hover:bg-[var(--foreground)]/5",
+          "disabled:opacity-50 disabled:pointer-events-none",
         )}
         aria-label="Next variant"
       >

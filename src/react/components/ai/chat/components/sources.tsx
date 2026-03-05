@@ -57,7 +57,7 @@ function SourcePill({ source, index, onClick }: SourcePillProps): React.ReactEle
         onMouseEnter={() => setShowPreview(true)}
         onMouseLeave={() => setShowPreview(false)}
         className={cn(
-          "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs",
+          "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs",
           "bg-[var(--accent)] text-[var(--card-foreground)]",
           "hover:bg-[var(--accent)] transition-colors",
           onClick ? "cursor-pointer" : "cursor-default",

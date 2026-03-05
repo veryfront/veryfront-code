@@ -10,7 +10,7 @@ export interface MessageFeedbackProps {
   className?: string;
 }
 
-const BUTTON_BASE = "inline-flex items-center justify-center size-7 rounded-lg transition-colors";
+const BUTTON_BASE = "inline-flex items-center justify-center size-7 rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2";
 
 export const MessageFeedback = React.forwardRef<HTMLDivElement, MessageFeedbackProps>(
   function MessageFeedback({ messageId, feedback, onFeedback, className }, ref) {

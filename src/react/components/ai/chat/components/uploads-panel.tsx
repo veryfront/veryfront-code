@@ -51,7 +51,7 @@ export function UploadsPanel({
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="mt-4 px-4 py-2 text-sm font-medium rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 transition-colors"
+                  className="mt-4 px-4 py-2 text-sm font-medium rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
                 >
                   Upload Files
                 </button>
@@ -94,7 +94,7 @@ export function UploadsPanel({
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--input-border)] px-4 py-3 text-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:border-[var(--input-border)] transition-all"
+                  className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--input-border)] px-4 py-3 text-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:border-[var(--input-border)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
                 >
                   Upload more files
                 </button>

@@ -40,12 +40,12 @@ export function ModelAvatar(
     return (
       <div
         className={cn(
-          "mt-1 shrink-0 size-8 rounded-full bg-[#000000] dark:bg-[#ffffff] flex items-center justify-center shadow-sm",
+          "mt-1 shrink-0 size-8 rounded-full bg-[var(--foreground)] flex items-center justify-center shadow-sm",
           className,
         )}
       >
         <svg
-          className="size-4 text-white dark:text-black"
+          className="size-4 text-[var(--background)]"
           viewBox="0 0 24 24"
           fill="currentColor"
         >

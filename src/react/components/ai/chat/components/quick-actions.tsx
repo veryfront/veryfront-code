@@ -55,7 +55,7 @@ export function QuickActions({
             key={action.id}
             type="button"
             onClick={() => onActionClick?.(action)}
-            className="flex flex-col items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 text-center transition-all hover:bg-[var(--accent)] hover:border-[var(--input-border)] hover:shadow-sm min-h-[88px]"
+            className="flex flex-col items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 text-center transition-all hover:bg-[var(--accent)] hover:border-[var(--input-border)] hover:shadow-sm min-h-[88px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
           >
             {icon && (
               <span className="flex items-center justify-center size-8 rounded-lg bg-[var(--accent)] text-[var(--muted-foreground)] mb-2">

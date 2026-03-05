@@ -168,9 +168,9 @@ export const defaultAgentTheme: AgentTheme = {
     "border border-[var(--border)] rounded-2xl p-6 space-y-4 bg-[var(--card)]",
   status: "inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium",
   thinking:
-    "bg-amber-50 dark:bg-amber-900/20 rounded-xl px-4 py-3 italic text-[var(--foreground)] border border-amber-200 dark:border-amber-800",
+    "bg-amber-500/10 rounded-xl px-4 py-3 italic text-[var(--foreground)] border border-amber-500/20",
   tool:
-    "rounded-xl px-4 py-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800",
+    "rounded-xl px-4 py-3 bg-blue-500/10 border border-blue-500/20",
   toolResult:
     "mt-2 p-3 bg-[var(--accent)] rounded-xl font-mono text-sm overflow-x-auto",
 };
@@ -239,26 +239,36 @@ export const messageVariants = cva("", {
 });
 
 export const chatButtonVariants = cva(
-  "shrink-0 flex items-center justify-center rounded-full transition-all active:scale-95",
+  [
+    "inline-flex items-center justify-center gap-2 whitespace-nowrap",
+    "font-medium rounded-full transition-all duration-150",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
+    "disabled:pointer-events-none disabled:opacity-50",
+    "[&_svg]:shrink-0",
+  ],
   {
     variants: {
       variant: {
         primary:
-          "bg-[var(--primary)] text-[var(--primary-foreground)] disabled:opacity-40",
+          "bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 active:scale-95",
         ghost:
-          "text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)]",
+          "bg-transparent text-[var(--foreground)] hover:bg-[var(--foreground)]/5",
         outline:
-          "border border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--accent)]",
+          "border border-[var(--border)] bg-transparent text-[var(--foreground)] hover:bg-[var(--foreground)]/5",
+        "icon-ghost":
+          "bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 !p-0 !gap-0",
       },
       size: {
-        sm: "size-7",
-        md: "size-8",
-        lg: "size-9",
+        sm: "h-[38px] px-4 text-sm [&_svg]:size-4",
+        default: "h-[42px] px-5 text-base [&_svg]:size-5",
+        "icon-xs": "size-7 [&_svg]:size-4",
+        "icon-sm": "size-9 [&_svg]:size-5",
+        "icon-default": "size-10 [&_svg]:size-5",
       },
     },
     defaultVariants: {
       variant: "primary",
-      size: "lg",
+      size: "default",
     },
   },
 );
