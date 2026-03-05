@@ -1,4 +1,4 @@
-# AI RAG Agent
+# Docs Agent
 
 A chatbot that answers questions from your own documents using Retrieval-Augmented Generation (RAG).
 

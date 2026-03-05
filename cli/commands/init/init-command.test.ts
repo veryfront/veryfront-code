@@ -12,7 +12,7 @@ describe("InitCommand Types", () => {
   describe("InitTemplate", () => {
     const templates: InitTemplate[] = [
       "ai-agent",
-      "ai-rag-agent",
+      "docs-agent",
       "multi-agent-system",
       "agentic-workflow",
       "coding-agent",

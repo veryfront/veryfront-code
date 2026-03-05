@@ -21,9 +21,9 @@ export const TEMPLATES: readonly TemplateOption[] = [
   { id: "minimal", label: "Minimal", description: "Blank canvas, no extras" },
   { id: "ai-agent", label: "AI Agent", description: "Agent + chat UI + streaming" },
   {
-    id: "ai-rag-agent",
-    label: "AI RAG Agent",
-    description: "RAG with source citations",
+    id: "docs-agent",
+    label: "Docs Agent",
+    description: "Document Q&A with source citations",
   },
   {
     id: "agentic-workflow",
