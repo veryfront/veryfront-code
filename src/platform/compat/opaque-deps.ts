@@ -31,3 +31,28 @@ export function importTransformers(): Promise<any> {
 export function importClaudeAgentSDK(): Promise<any> {
   return dynamicImport(resolve("@anthropic-ai/claude-agent-sdk", "0.2.37"));
 }
+
+/**
+ * Lazily import kreuzberg document extraction.
+ *
+ * Unlike the other opaque deps above, kreuzberg is a core framework
+ * dependency that must work in compiled binaries. The Deno path uses
+ * a regular `import()` (not `dynamicImport`) so `deno compile` can
+ * trace and embed `@kreuzberg/wasm`. The Node/Bun path uses `dynamicImport`
+ * to resolve `@kreuzberg/node` from the project's node_modules at runtime.
+ */
+export async function importKreuzberg(): Promise<{
+  extractBytes: (
+    data: Uint8Array,
+    mimeType: string,
+  ) => Promise<{ content: string }>;
+}> {
+  if (isDeno) {
+    // Regular import — visible to deno compile, resolved via deno.json import map
+    const mod = await import("@kreuzberg/wasm");
+    await (mod as any).initWasm();
+    return mod as any;
+  }
+  // Opaque import — resolved from node_modules at runtime
+  return dynamicImport("@kreuzberg/node");
+}

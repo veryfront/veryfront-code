@@ -8,9 +8,16 @@ const MIME_TO_TYPE: Record<string, string> = {
   "text/markdown": "md",
   "text/mdx": "mdx",
   "text/csv": "csv",
+  "text/html": "html",
+  "text/xml": "xml",
   "application/csv": "csv",
   "application/pdf": "pdf",
+  "application/rtf": "rtf",
+  "application/json": "json",
+  "application/epub+zip": "epub",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
 };
 
 const EXT_TO_TYPE: Record<string, string> = {
@@ -18,8 +25,16 @@ const EXT_TO_TYPE: Record<string, string> = {
   md: "md",
   mdx: "mdx",
   csv: "csv",
+  html: "html",
+  htm: "html",
+  xml: "xml",
   pdf: "pdf",
+  rtf: "rtf",
+  json: "json",
+  epub: "epub",
   docx: "docx",
+  xlsx: "xlsx",
+  pptx: "pptx",
 };
 
 function inferType(file: File): string | null {

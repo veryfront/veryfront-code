@@ -258,7 +258,8 @@
     "@babel/types": "npm:@babel/types@7.26.3",
     "class-variance-authority": "npm:class-variance-authority@0.7.1",
     "clsx": "npm:clsx@2.1.1",
-    "tailwind-merge": "npm:tailwind-merge@2.6.0"
+    "tailwind-merge": "npm:tailwind-merge@2.6.0",
+    "@kreuzberg/wasm": "npm:@kreuzberg/wasm@4.4.2"
   },
   "compilerOptions": {
     "jsx": "react-jsx",

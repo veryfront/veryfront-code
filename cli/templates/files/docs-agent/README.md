@@ -6,7 +6,7 @@ A chatbot that answers questions from your own documents using Retrieval-Augment
 
 - Q&A agent with source citation
 - Embedding-based semantic search (OpenAI text-embedding-3-small)
-- Document upload supporting PDF, DOCX, CSV, TXT, and Markdown
+- Document upload supporting PDF, DOCX, XLSX, PPTX, CSV, HTML, RTF, EPUB, TXT, and Markdown
 - JSON-based vector store — no external database required
 - Sample content in `/content` directory auto-indexed on first search
 
@@ -69,7 +69,7 @@ flowchart LR
 
 ### Pipelines
 
-**Ingestion** — Documents are parsed into plain text (PDF via `pdf-parse`, DOCX via ZIP/XML, text formats directly), split into overlapping chunks (~1000 chars, 200 char overlap), and stored with their embeddings in `data/index.json`. Embeddings are generated lazily on first search to keep uploads fast.
+**Ingestion** — Documents are parsed into plain text via the built-in kreuzberg extraction engine (supporting PDF, DOCX, XLSX, PPTX, HTML, RTF, EPUB, and 76+ formats), split into overlapping chunks (~1000 chars, 200 char overlap), and stored with their embeddings in `data/index.json`. Embeddings are generated lazily on first search to keep uploads fast.
 
 **Query** — The user's query is embedded into the same vector space as the documents, then compared against all stored chunks using cosine similarity to find the top-*k* most relevant results.
 
@@ -107,17 +107,12 @@ app/
 ## Adding documents
 
 - Drop files into `content/` — they're indexed automatically on first search
-- Or use the upload panel in the UI for PDF, DOCX, CSV, TXT, and MD files
-
-## npm packages
-
-This template uses `pdf-parse` for PDF text extraction. Any npm package you install in your project works in API routes — the framework automatically detects your `package.json` dependencies and handles bundling.
+- Or use the upload panel in the UI for PDF, DOCX, XLSX, PPTX, CSV, HTML, RTF, EPUB, TXT, and MD files
 
 ## Production notes
 
 This is a starter template — not a production-ready setup. For production, consider:
 
 - **Vector store** — Replace the JSON store with pgvector, Pinecone, or Qdrant for datasets beyond ~10k chunks
-- **DOCX parser** — The built-in extractor handles basic documents; use the `mammoth` package for complex formatting
 - **Reranking** — Add a cross-encoder reranker (e.g. Cohere Rerank) after retrieval to improve precision
 - **Hybrid search** — Combine dense vectors with BM25 keyword matching for better recall

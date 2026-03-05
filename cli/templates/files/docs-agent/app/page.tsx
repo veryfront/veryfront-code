@@ -95,7 +95,7 @@ export default function DocsChat() {
             docs.upload(file)
           }
         },
-        accept: '.pdf,.docx,.csv,.txt,.md,.mdx',
+        accept: '.pdf,.docx,.xlsx,.pptx,.csv,.txt,.md,.mdx,.html,.rtf,.epub,.json,.xml',
         items: attachments,
         onRemoveItem: (id) => docs.remove(id),
       }}
