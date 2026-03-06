@@ -26,9 +26,7 @@ export function SkillBadge({ tool, className }: SkillBadgeProps): React.JSX.Elem
       : `Loading skill${skillId ? `: ${skillId}` : ""}...`;
   } else if (tool.toolName === "load-skill-reference") {
     const ref = input?.reference as string | undefined;
-    label = isComplete
-      ? `Reference: ${ref ?? "unknown"}`
-      : `Reading${ref ? `: ${ref}` : ""}...`;
+    label = isComplete ? `Reference: ${ref ?? "unknown"}` : `Reading${ref ? `: ${ref}` : ""}...`;
   } else {
     const script = input?.script as string | undefined;
     label = isComplete

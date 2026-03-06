@@ -49,8 +49,7 @@ src/integrations/_data.ts
 # Generated template manifest (rebuild with generate-templates-manifest.ts)
 cli/templates/manifest.json
 
-# Generated build artifacts (rebuild with `deno task build`)
-src/build/production-build/templates.ts
+# Generated build artifacts (rebuild with `deno task generate`)
 src/server/dev-ui/manifest.json
 src/server/handlers/dev/framework-candidates.generated.ts
 src/studio/bridge/bridge-bundle.generated.ts

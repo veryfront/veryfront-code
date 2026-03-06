@@ -87,7 +87,10 @@ export function createLoadSkillTool(): Tool {
         references,
         scripts,
         ...(scripts.length === 0 && references.length === 0
-          ? { note: "This skill has no scripts or reference files. Do NOT call execute-skill-script or load-skill-reference." }
+          ? {
+            note:
+              "This skill has no scripts or reference files. Do NOT call execute-skill-script or load-skill-reference.",
+          }
           : scripts.length === 0
           ? { note: "This skill has no scripts. Do NOT call execute-skill-script." }
           : references.length === 0
