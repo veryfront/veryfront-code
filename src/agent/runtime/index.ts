@@ -21,7 +21,7 @@ import {
   type MessagePart,
   type ToolCall,
 } from "../types.ts";
-import { ensureModelReady, resolveModel } from "#veryfront/provider";
+import { ensureModelReady, findAvailableCloudModel, resolveModel } from "#veryfront/provider";
 import { executeTool } from "#veryfront/tool";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
@@ -60,24 +60,35 @@ import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 const logger = serverLogger.component("agent");
 
 /**
- * Detect whether the resolved model is local inference.
- * Handles both explicit "local/*" requests and cloud->local auto-fallback.
+ * Auto-upgrade a local model string to a cloud provider when API keys are available.
+ *
+ * Returns the upgraded "provider/model" string, or the original string unchanged
+ * if no cloud provider is available. This keeps resolveModel as a pure resolver
+ * while the runtime owns the upgrade policy.
  */
-function isLocalInferenceModel(model: LanguageModel, requestedModel: string): boolean {
-  if (requestedModel.startsWith("local/")) return true;
+function maybeUpgradeLocalModel(modelString: string): string {
+  if (!modelString.startsWith("local/")) return modelString;
 
-  // LanguageModel is a union that includes string, so we need to narrow first
-  if (typeof model === "string") return model.startsWith("local/");
-
-  if ("provider" in model && model.provider === "local") return true;
-
-  if (
-    "modelId" in model && typeof model.modelId === "string" && model.modelId.startsWith("local/")
-  ) {
-    return true;
+  const cloud = findAvailableCloudModel();
+  if (cloud) {
+    logger.info(
+      `⚡ Cloud AI API key found — using "${cloud}" instead of local model.`,
+    );
+    return cloud;
   }
+  return modelString;
+}
 
-  return false;
+/**
+ * Check whether a resolved LanguageModel is a local inference model.
+ * Checks the model object properties rather than the requested string,
+ * because resolveModel may internally fall back from cloud to local.
+ */
+function isLocalModel(model: LanguageModel): boolean {
+  const m = model as Record<string, unknown>;
+  return !!m._isVfLocalModel ||
+    m.provider === "local" ||
+    (typeof m.modelId === "string" && m.modelId.startsWith("local/"));
 }
 
 export class AgentRuntime {
@@ -102,12 +113,12 @@ export class AgentRuntime {
     context?: Record<string, unknown>,
     modelOverride?: string,
   ): Promise<AgentResponse> {
-    const modelString = modelOverride || this.config.model;
+    const resolvedModelString = maybeUpgradeLocalModel(modelOverride || this.config.model);
 
     return withSpan("agent.generate", async (span) => {
       setSpanAttributes(span, {
         "agent.id": this.id,
-        "agent.model": modelString,
+        "agent.model": resolvedModelString,
       });
 
       const inputMessages = normalizeInput(input);
@@ -118,7 +129,7 @@ export class AgentRuntime {
 
       const agentContext: AgentContext = {
         agentId: this.id,
-        model: modelString,
+        model: resolvedModelString,
         input: inputMessages,
         data: context,
         platform: detectPlatform(),
@@ -127,7 +138,7 @@ export class AgentRuntime {
       const chain = new MiddlewareChain(this.config.middleware);
       return chain.execute(
         agentContext,
-        () => this.executeAgentLoop(systemPrompt, messages, modelString),
+        () => this.executeAgentLoop(systemPrompt, messages, resolvedModelString),
       );
     });
   }
@@ -145,8 +156,9 @@ export class AgentRuntime {
     },
     modelOverride?: string,
   ): Promise<ReadableStream<Uint8Array>> {
-    const modelString = modelOverride || this.config.model;
-    const requestedModel = modelString || this.config.model;
+    const requestedModel = modelOverride || this.config.model;
+    // Auto-upgrade local/* to a cloud provider when API keys are available.
+    const resolvedModelString = maybeUpgradeLocalModel(requestedModel);
 
     for (const msg of messages) await this.memory.add(msg);
 
@@ -160,7 +172,11 @@ export class AgentRuntime {
     // Resolve model BEFORE creating the ReadableStream — if this throws
     // (e.g., no_ai_available), the error propagates to the caller who can
     // return a proper error response (503) instead of a 200 with an error event.
-    const languageModel = resolveModel(requestedModel);
+    const languageModel = resolveModel(resolvedModelString);
+
+    // Determine inference mode from the resolved model object (not the string),
+    // because resolveModel may internally fall back from cloud to local.
+    const isLocal = isLocalModel(languageModel);
 
     // Eagerly verify the model runtime is available. For local models this
     // checks that @huggingface/transformers can be imported. Must happen
@@ -179,9 +195,7 @@ export class AgentRuntime {
           sendSSE(controller, encoder, {
             type: "data",
             data: {
-              inferenceMode: isLocalInferenceModel(languageModel, requestedModel)
-                ? "server-local"
-                : "cloud",
+              inferenceMode: isLocal ? "server-local" : "cloud",
             },
           });
           sendSSE(controller, encoder, { type: "text-start", id: textPartId });
@@ -194,7 +208,7 @@ export class AgentRuntime {
             callbacks,
             textPartId,
             toolContext,
-            modelString,
+            resolvedModelString,
             languageModel,
           );
 
@@ -232,7 +246,7 @@ export class AgentRuntime {
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
       // Local models can't reliably do function calling — skip tools gracefully.
-      const isLocal = isLocalInferenceModel(languageModel, requestedModel);
+      const isLocal = isLocalModel(languageModel);
       if (isLocal && this.config.tools) {
         logger.warn(
           `Agent "${this.id}" has tools configured but is using local model "${requestedModel}". ` +
@@ -416,7 +430,7 @@ export class AgentRuntime {
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     // Local models can't reliably do function calling — skip tools gracefully.
-    const isLocalStreaming = isLocalInferenceModel(languageModel, requestedModel);
+    const isLocalStreaming = isLocalModel(languageModel);
     if (isLocalStreaming && this.config.tools) {
       logger.warn(
         `Agent "${this.id}" has tools configured but is using local model "${requestedModel}". ` +
