@@ -246,6 +246,28 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(typeof route?.GET, "function");
   });
 
+  it("loads handler that imports veryfront/embedding", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "handler.ts");
+
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { createUploadHandler } from "veryfront/embedding";`,
+        `export const GET = () => new Response(typeof createUploadHandler);`,
+      ].join("\n"),
+    );
+
+    const route = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+
+    assertEquals(typeof route?.GET, "function");
+  });
+
   it("converts aliased named imports to valid CJS destructuring", () => {
     assertEquals(
       toCjsDestructureBindings("{ parse as parsePdf, version }"),
