@@ -192,11 +192,17 @@ export class AgentRuntime {
 
           const messageId = generateMessageId();
           sendSSE(controller, encoder, { type: "message-start", messageId });
+          // Report the effective model — when resolveModel falls back from
+          // cloud to local (e.g. missing API key), use the resolved object's
+          // modelId so the client avatar matches the actual provider.
+          const effectiveModel = isLocal && !resolvedModelString.startsWith("local/")
+            ? `local/${(languageModel as Record<string, unknown>).modelId ?? "unknown"}`
+            : resolvedModelString;
           sendSSE(controller, encoder, {
             type: "data",
             data: {
               inferenceMode: isLocal ? "server-local" : "cloud",
-              model: resolvedModelString,
+              model: effectiveModel,
             },
           });
           sendSSE(controller, encoder, { type: "text-start", id: textPartId });
