@@ -283,6 +283,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
         const currentMessageIdRef = { current: streamingMessageId };
         // Mutable local — updated by onData before onMessage/onUpdate use it.
         let serverModel: string | undefined = model;
+        setActiveModel(undefined);
 
         await handleStreamingResponse(response.body, {
           onMessage: (assistantMessage) => {
