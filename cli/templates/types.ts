@@ -25,6 +25,7 @@ export interface TemplateConfig {
 
 export type TemplateName =
   | "ai-agent"
+  | "contract-review-agent"
   | "docs-agent"
   | "multi-agent-system"
   | "agentic-workflow"

@@ -12,6 +12,7 @@ describe("InitCommand Types", () => {
   describe("InitTemplate", () => {
     const templates: InitTemplate[] = [
       "ai-agent",
+      "contract-review-agent",
       "docs-agent",
       "multi-agent-system",
       "agentic-workflow",

@@ -17,11 +17,12 @@ import {
 describe("catalog", () => {
   describe("TEMPLATES", () => {
     it("contains expected templates", () => {
-      assertEquals(TEMPLATES.length, 7);
+      assertEquals(TEMPLATES.length, 8);
       const ids = TEMPLATES.map((t) => t.id);
       assertEquals(ids, [
         "minimal",
         "ai-agent",
+        "contract-review-agent",
         "docs-agent",
         "agentic-workflow",
         "multi-agent-system",

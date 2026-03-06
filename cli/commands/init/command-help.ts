@@ -8,7 +8,7 @@ export const initHelp: CommandHelp = {
     {
       flag: "-t, --template <name>",
       description:
-        "Project template (minimal | ai-agent | docs-agent | agentic-workflow | multi-agent-system | coding-agent | saas-starter)",
+        "Project template (minimal | ai-agent | contract-review-agent | docs-agent | agentic-workflow | multi-agent-system | coding-agent | saas-starter)",
     },
     {
       flag: "--integrations <list>",

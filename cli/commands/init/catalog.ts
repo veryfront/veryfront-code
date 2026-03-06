@@ -21,6 +21,11 @@ export const TEMPLATES: readonly TemplateOption[] = [
   { id: "minimal", label: "Minimal", description: "Blank canvas, no extras" },
   { id: "ai-agent", label: "AI Agent", description: "Agent + chat UI + streaming" },
   {
+    id: "contract-review-agent",
+    label: "Contract Review",
+    description: "Upload contracts for clause-by-clause analysis + redlines",
+  },
+  {
     id: "docs-agent",
     label: "Docs Agent",
     description: "Document Q&A with source citations",

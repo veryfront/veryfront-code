@@ -2,6 +2,7 @@ import type { FeatureName, IntegrationName } from "../../templates/types.ts";
 
 export type InitTemplate =
   | "ai-agent"
+  | "contract-review-agent"
   | "docs-agent"
   | "multi-agent-system"
   | "agentic-workflow"

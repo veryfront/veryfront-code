@@ -97,6 +97,7 @@ export function createApp(config: AppConfig): App {
 
   state = setTemplates([
     { id: "ai-agent", name: "AI Chatbot", description: "Agent + chat UI + streaming" },
+    { id: "contract-review-agent", name: "Contract Review", description: "Upload contracts for clause-by-clause analysis + redlines" },
     { id: "docs-agent", name: "Docs Agent", description: "Document Q&A with source citations" },
     {
       id: "multi-agent-system",

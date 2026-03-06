@@ -48,8 +48,18 @@ const OPENAI_KEY_CONFIG = {
   docsUrl: "https://platform.openai.com/api-keys",
 } as const;
 
+const ANTHROPIC_KEY_CONFIG = {
+  name: "ANTHROPIC_API_KEY",
+  description: "Your Anthropic API key",
+  required: true,
+  sensitive: true,
+  placeholder: "sk-ant-...",
+  docsUrl: "https://console.anthropic.com/settings/keys",
+} as const;
+
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
   "ai-agent": { envVars: [OPENAI_KEY_CONFIG] },
+  "contract-review-agent": { envVars: [ANTHROPIC_KEY_CONFIG, OPENAI_KEY_CONFIG] },
   "docs-agent": { envVars: [OPENAI_KEY_CONFIG] },
   "multi-agent-system": { envVars: [OPENAI_KEY_CONFIG] },
   "agentic-workflow": { envVars: [OPENAI_KEY_CONFIG] },
@@ -59,6 +69,7 @@ export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
 
 const DIRECTORY_BASED_TEMPLATES: TemplateName[] = [
   "ai-agent",
+  "contract-review-agent",
   "docs-agent",
   "multi-agent-system",
   "agentic-workflow",
