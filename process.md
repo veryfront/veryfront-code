@@ -1,11 +1,11 @@
 # Refactoring Progress Tracker
 
 > Tracks per-module refactoring progress across sessions.
-> Last updated: 2026-03-06 18:15
+> Last updated: 2026-03-06 18:45
 
 ## Summary
 - Total modules: 54 (43 src + 11 cli)
-- Completed: 40 (Batches 1-8 done, all src/ modules complete)
+- Completed: 49 (ALL modules complete)
 - In progress: 0
 - Skipped: 5 (4 barrels + cli/templates)
 
@@ -107,19 +107,19 @@
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 45 | cli/test-utils/ | 1 | 0 | QUEUED | — | — | |
-| 46 | cli/sync/ | 3 | 2 | QUEUED | — | — | |
-| 47 | cli/auth/ | 6 | 6 | QUEUED | — | — | |
-| 48 | cli/shared/ | 8 | 3 | QUEUED | — | — | |
-| 49 | cli/utils/ | 8 | 5 | QUEUED | — | — | |
-| 50 | cli/help/ | 8 | 6 | QUEUED | — | — | |
-| 51 | cli/mcp/ | 15 | 13 | QUEUED | — | — | |
-| 52 | cli/ui/ | 16 | 12 | QUEUED | — | — | |
-| 53 | cli/app/ | 25 | 3 | QUEUED | — | — | |
+| 45 | cli/test-utils/ | 1 | 0 | MERGED | — | — | Spec only, already clean |
+| 46 | cli/sync/ | 3 | 2 | MERGED | — | — | Added readonly types, extracted named helper |
+| 47 | cli/auth/ | 6 | 6 | MERGED | — | — | Merged import, simplified ternary, canonical type |
+| 48 | cli/shared/ | 8 | 3 | MERGED | — | — | Removed duplicate getApiUrl, fixed stale docs |
+| 49 | cli/utils/ | 8 | 5 | MERGED | — | — | Reused cached FS, removed unreachable default |
+| 50 | cli/help/ | 8 | 6 | MERGED | — | — | Eliminated duplicate computation |
+| 51 | cli/mcp/ | 15 | 13 | MERGED | — | — | Removed duplicate re-export, consolidated imports |
+| 52 | cli/ui/ | 16 | 12 | MERGED | — | — | Removed dead matrix animation, deduped spinner |
+| 53 | cli/app/ | 25 | 3 | MERGED | — | — | Deleted dead examples view + 6 functions (-231 lines) |
 
 ## Batch 10: CLI Large
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 54 | cli/commands/ | 117 | 72 | QUEUED | — | — | Split by subdir |
+| 54 | cli/commands/ | 117 | 72 | MERGED | — | — | Fixed OAuth bug, deleted dead new/ dir, moved test |
 | 55 | cli/templates/ | 427 | 1 | SKIPPED | — | — | Generated content |
