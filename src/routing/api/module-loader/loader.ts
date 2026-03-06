@@ -341,7 +341,7 @@ function createImportMapPlugin(
           ? resolvedPath
           : pathHelper.resolve(projectDir, resolvedPath);
 
-        if (!isWithinDirectory(projectDir, absolutePath)) {
+        if (!isWithinDirectory(pathHelper.resolve(projectDir), absolutePath)) {
           logger.error(`[API] Import map entry escapes project directory: ${args.path} -> ${absolutePath}`);
           return { errors: [{ text: `Import map path escapes project: ${args.path}` }] };
         }
@@ -561,12 +561,14 @@ async function readFileWithExtensions(
   extensions: string[],
   projectDir?: string,
 ): Promise<{ filePath: string; contents: string }> {
+  const resolvedProjectDir = projectDir ? pathHelper.resolve(projectDir) : undefined;
+
   for (const ext of extensions) {
     const filePath = ext ? basePath + ext : basePath;
 
-    if (projectDir) {
+    if (resolvedProjectDir) {
       const resolved = pathHelper.resolve(filePath);
-      if (!isWithinDirectory(pathHelper.resolve(projectDir), resolved)) {
+      if (!isWithinDirectory(resolvedProjectDir, resolved)) {
         throw toError(
           createError({
             type: "api",

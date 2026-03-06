@@ -314,4 +314,57 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       "module path escapes project directory",
     );
   });
+
+  it("rejects import map entries that escape project directory", async () => {
+    const realDir = await makeTempDir();
+    const modulePath = join(realDir, "handler.ts");
+
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { secret } from "@app/escape";`,
+        `export const GET = () => new Response(secret);`,
+      ].join("\n"),
+    );
+
+    const config = {
+      resolve: {
+        importMap: {
+          imports: {
+            "@app/escape": "../../../etc/passwd",
+          },
+        },
+      },
+    };
+
+    // Use a virtual adapter so the loader goes through the esbuild transpile
+    // path (where the import map plugin runs) rather than direct Deno import.
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
+    const toReal = (path: string): string => path.replace(virtualBase, realDir);
+
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => fs.readTextFile(toReal(path)),
+        exists: (path: string) => fs.exists(toReal(path)),
+      },
+    };
+
+    let caught = "";
+    try {
+      await loadHandlerModule({
+        projectDir: virtualBase,
+        modulePath: join(virtualBase, "handler.ts"),
+        adapter: virtualAdapter,
+        // deno-lint-ignore no-explicit-any
+        config: config as any,
+      });
+    } catch (error) {
+      caught = error instanceof Error ? error.message : String(error);
+    }
+
+    assertMatch(caught, /import map path escapes project|Failed to load/i);
+  });
 });
