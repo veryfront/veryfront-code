@@ -20,6 +20,10 @@ export function postToStudio(message: Record<string, unknown>): void {
 
 export function isFromStudio(event: MessageEvent): boolean {
   try {
+    // Ignore messages from the current window (e.g. React DevTools, browser extensions).
+    // Only accept messages from a different window (the parent Studio frame).
+    if (!event.source || event.source === window) return false;
+
     const url = new URL(event.origin || "");
     const host = url.hostname;
     const valid = host === "localhost" ||

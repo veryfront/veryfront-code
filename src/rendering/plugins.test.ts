@@ -4,9 +4,7 @@ import { VFile } from "vfile";
 import {
   getRehypePlugins,
   getRemarkPlugins,
-  rehypeMdxComponents,
-  rehypePreserveNodeIds,
-  remarkAddNodeId,
+  rehypeNodePositions,
   remarkCodeBlocks,
   remarkMdxHeadings,
   remarkMdxImports,
@@ -33,77 +31,53 @@ function runRehype(tree: any, plugins: Plugin[]): void {
 describe("plugins", () => {
   describe("exports", () => {
     it("exports all plugins", () => {
-      assertExists(remarkAddNodeId);
       assertExists(remarkMdxHeadings);
       assertExists(remarkMdxRemoveParagraphs);
       assertExists(remarkCodeBlocks);
       assertExists(remarkMdxImports);
-      assertExists(rehypePreserveNodeIds);
-      assertExists(rehypeMdxComponents);
+      assertExists(rehypeNodePositions);
       assertExists(getRemarkPlugins);
       assertExists(getRehypePlugins);
     });
   });
 
-  describe("remarkAddNodeId", () => {
+  describe("rehypeNodePositions", () => {
     it("returns a function", () => {
-      assertEquals(typeof remarkAddNodeId(), "function");
+      assertEquals(typeof rehypeNodePositions(), "function");
     });
 
-    it("accepts options", () => {
-      assertEquals(
-        typeof remarkAddNodeId({ prefix: "test", includePosition: false }),
-        "function",
-      );
-    });
-
-    it("adds node IDs to elements", () => {
-      const plugin = remarkAddNodeId({ prefix: "test" });
-
-      const tree: any = {
-        type: "root",
-        children: [
-          {
-            type: "paragraph",
-            children: [{ type: "text", value: "Hello world" }],
-            position: {
-              start: { line: 1, column: 1, offset: 0 },
-              end: { line: 1, column: 12, offset: 11 },
-            },
-          },
-        ],
+    it("injects position attributes on HTML elements", () => {
+      const el: any = {
+        type: "element",
+        tagName: "h1",
+        properties: {},
+        position: {
+          start: { line: 3, column: 1 },
+        },
+        children: [],
       };
 
-      plugin(tree, {});
+      const tree: any = { type: "root", children: [el] };
+      runRehype(tree, [() => rehypeNodePositions({ filePath: "docs/intro.md" })]);
 
-      const paragraph = tree.children[0];
-      assertExists(paragraph.data);
-      assertExists(paragraph.data.hProperties);
-      assertEquals(paragraph.data.hProperties["data-node-id"], "test-1");
+      assertEquals(el.properties["data-node-file"], "docs/intro.md");
+      assertEquals(el.properties["data-node-name"], "h1");
+      assertEquals(el.properties["data-node-line"], "3");
+      assertEquals(el.properties["data-node-column"], "0");
     });
 
-    it("adds ids and counts", () => {
-      const tree: any = {
-        type: "root",
-        children: [
-          {
-            type: "paragraph",
-            position: {
-              start: { offset: 0, line: 1 },
-              end: { offset: 10, line: 1 },
-            },
-            children: [{ type: "text", value: "hi" }],
-          },
-        ],
+    it("skips elements without position", () => {
+      const el: any = {
+        type: "element",
+        tagName: "div",
+        properties: {},
+        children: [],
       };
 
-      const file = new VFile();
-      runRemark(tree, file, [() => remarkAddNodeId({ prefix: "x" })]);
+      const tree: any = { type: "root", children: [el] };
+      runRehype(tree, [() => rehypeNodePositions({ filePath: "test.md" })]);
 
-      assertEquals(file.data.nodeCount, 3);
-
-      const para = tree.children[0];
-      assert(para.data?.hProperties?.["data-node-id"]?.startsWith("x-"));
+      assertEquals(el.properties["data-node-line"], undefined);
     });
   });
 
@@ -206,45 +180,6 @@ describe("plugins", () => {
   describe("remarkMdxImports", () => {
     it("returns a function", () => {
       assertEquals(typeof remarkMdxImports(), "function");
-    });
-  });
-
-  describe("rehypePreserveNodeIds", () => {
-    it("returns a function", () => {
-      assertEquals(typeof rehypePreserveNodeIds(), "function");
-    });
-
-    it("copies data-node-* properties", () => {
-      const el: any = {
-        type: "element",
-        tagName: "div",
-        data: { hProperties: { "data-node-start": 1 } },
-        properties: {},
-      };
-
-      const tree: any = { type: "root", children: [el] };
-      runRehype(tree, [rehypePreserveNodeIds]);
-
-      assertEquals(el.properties["data-node-start"], 1);
-    });
-  });
-
-  describe("rehypeMdxComponents", () => {
-    it("returns a function", () => {
-      assertEquals(typeof rehypeMdxComponents(), "function");
-    });
-
-    it("tags mdx nodes with component name", () => {
-      const node: any = {
-        type: "mdxJsxFlowElement",
-        name: "MyX",
-        data: { hProperties: {} },
-      };
-
-      const tree: any = { type: "root", children: [node] };
-      runRehype(tree, [rehypeMdxComponents]);
-
-      assertEquals(node.data.hProperties["data-mdx-component"], "MyX");
     });
   });
 

@@ -52,6 +52,8 @@ export function handleMDXPage(
         fmArg,
         path,
         "server",
+        undefined,
+        options?.studioEmbed,
       );
 
       const pageBundle = ssrBundle as PageBundle;
@@ -68,6 +70,8 @@ export function handleMDXPage(
             fmArg,
             path,
             "browser",
+            undefined,
+            options?.studioEmbed,
           );
           pageBundle.clientModuleCode = browserBundle.compiledCode;
         }

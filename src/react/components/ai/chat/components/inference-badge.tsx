@@ -38,7 +38,7 @@ export function InferenceBadge({
   }
 
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1 text-xs text-neutral-500 dark:text-neutral-400">
+    <div className="flex items-center gap-1.5 px-3 py-1 text-xs text-[var(--muted-foreground)]">
       <span
         className={`size-1.5 rounded-full ${dotColor} ${showProgress ? "animate-pulse" : ""}`}
       />

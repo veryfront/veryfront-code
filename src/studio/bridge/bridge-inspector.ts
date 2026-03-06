@@ -8,10 +8,11 @@ import { DOM_IGNORE_TAGS, state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
 import {
   DATA_NODE_COLUMN,
-  DATA_NODE_END_COLUMN,
-  DATA_NODE_END_LINE,
+  DATA_NODE_FILE,
   DATA_NODE_ID,
   DATA_NODE_LINE,
+  DATA_NODE_NAME,
+  DATA_NODE_SOURCE,
   DATA_VF_ID,
   DATA_VF_IGNORE,
   DATA_VF_SELECTOR,
@@ -97,18 +98,10 @@ function isValidElement(el: Element): boolean {
 }
 
 function getNodeType(el: Element): string {
-  const tagName = el.tagName.toLowerCase();
-
   const vfId = el.getAttribute(DATA_VF_ID) || "";
   if (vfId && /^[A-Z]/.test(vfId)) return "component";
   if (el.hasAttribute(DATA_VF_TEXT)) return "text";
-
-  if (
-    ["h1", "h2", "h3", "h4", "h5", "h6", "p", "blockquote", "ul", "ol", "li", "pre", "code"]
-      .includes(tagName)
-  ) {
-    return "markdown";
-  }
+  if (el.getAttribute(DATA_NODE_SOURCE) === "md") return "markdown";
 
   return "element";
 }
@@ -147,10 +140,7 @@ export function buildNavigatorTree(root: Element): any {
         line: parseInt(el.getAttribute(DATA_NODE_LINE) || "0", 10),
         column: parseInt(el.getAttribute(DATA_NODE_COLUMN) || "0", 10),
       },
-      end: {
-        line: parseInt(el.getAttribute(DATA_NODE_END_LINE) || "0", 10),
-        column: parseInt(el.getAttribute(DATA_NODE_END_COLUMN) || "0", 10),
-      },
+      end: { line: 0, column: 0 },
       children: [],
       text: el.hasAttribute(DATA_VF_TEXT) ? el.textContent?.trim() : undefined,
       isRemote: false,
@@ -220,7 +210,16 @@ export function setupMutationObserver(): void {
     const hasRelevantChanges = mutations.some(
       (m) => m.type === "childList" || m.type === "characterData",
     );
-    if (hasRelevantChanges) debouncedTreeUpdate();
+    if (!hasRelevantChanges) return;
+
+    // Deselect if the selected element was removed from the DOM
+    if (state.selectedNodeId && !findElementById(state.selectedNodeId)) {
+      state.selectedNodeId = null;
+      hideOverlay(state.selectionOverlay);
+      postToStudio({ action: "setSelectedNode", id: null });
+    }
+
+    debouncedTreeUpdate();
   });
 
   mutationObserver.observe(root, { childList: true, characterData: true, subtree: true });
@@ -262,9 +261,19 @@ export function scrollToElement(nodeId: string): void {
 
 // --- Inspect mode ---
 
+function getDirectText(el: Element): string {
+  let text = "";
+  for (let i = 0; i < el.childNodes.length; i++) {
+    if (el.childNodes[i].nodeType === Node.TEXT_NODE) {
+      text += el.childNodes[i].textContent || "";
+    }
+  }
+  return text.trim();
+}
+
 export function setupInspectMode(): void {
   const INSPECTABLE_SELECTOR = "[" + DATA_VF_ID + "], [" + DATA_VF_SELECTOR + "], [" +
-    DATA_NODE_ID + "]";
+    DATA_NODE_ID + "], [" + DATA_NODE_FILE + "]";
 
   function getElementId(el: Element): string | null {
     return (
@@ -293,7 +302,18 @@ export function setupInspectMode(): void {
       const id = getElementId(target);
       state.selectedNodeId = id;
       showSelectionOverlay(id);
-      postToStudio({ action: "setSelectedNode", id: id });
+      postToStudio({
+        action: "setSelectedNode",
+        id: id,
+        node: {
+          name: target.getAttribute(DATA_NODE_NAME) || target.tagName.toLowerCase(),
+          type: getNodeType(target),
+          file: target.getAttribute(DATA_NODE_FILE) || getConfig().pagePath,
+          line: parseInt(target.getAttribute(DATA_NODE_LINE) || "0", 10),
+          column: parseInt(target.getAttribute(DATA_NODE_COLUMN) || "0", 10),
+          text: getDirectText(target).slice(0, 200),
+        },
+      });
     },
     true,
   );

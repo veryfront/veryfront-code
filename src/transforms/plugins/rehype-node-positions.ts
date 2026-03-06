@@ -1,3 +1,17 @@
+/**
+ * Rehype plugin that injects source location attributes on every element.
+ *
+ * Handles both:
+ *   - HTML elements from markdown (h1, p, li, …)
+ *   - MDX JSX nodes (mdxJsxFlowElement, mdxJsxTextElement)
+ *
+ * Injected attributes:
+ *   data-node-file   — project-relative source file path
+ *   data-node-name   — element or component name
+ *   data-node-line   — source line number
+ *   data-node-column — source column number (0-based)
+ */
+
 import type { Element, Root } from "hast";
 import { visit } from "unist-util-visit";
 
@@ -8,78 +22,46 @@ export interface RehypeNodePositionsOptions {
 interface MdxJsxNode {
   type: string;
   name?: string;
-  tagName?: string;
   attributes?: Array<{ type: string; name: string; value: unknown }>;
-  properties?: Record<string, unknown>;
-  position?: { start: { line: number; column: number }; end?: { line: number; column: number } };
+  position?: { start: { line: number; column: number } };
 }
 
 export function rehypeNodePositions(
   options: RehypeNodePositionsOptions = {},
 ): (tree: Root) => void {
   return function transform(tree: Root): void {
-    visit(tree, (visitedNode) => {
-      if (visitedNode.type === "element") {
-        const node = visitedNode as Element;
-        if (!node.position) return;
+    visit(tree, (node) => {
+      if (node.type === "element") {
+        const el = node as Element;
+        if (!el.position) return;
 
-        addPositionAttributes(node, node.properties ?? (node.properties = {}), options.filePath);
+        const props = el.properties ?? (el.properties = {});
+        const { start } = el.position;
+
+        if (options.filePath) props["data-node-file"] = options.filePath;
+        props["data-node-name"] = el.tagName;
+        props["data-node-line"] = String(start.line);
+        props["data-node-column"] = String(start.column - 1);
+        props["data-node-source"] = "md";
         return;
       }
 
-      const node = visitedNode as MdxJsxNode;
       if (node.type !== "mdxJsxFlowElement" && node.type !== "mdxJsxTextElement") return;
-      if (!node.position) return;
 
-      const attributes = node.attributes ?? (node.attributes = []);
-      const { start, end } = node.position;
+      const mdx = node as MdxJsxNode;
+      if (!mdx.position) return;
 
-      attributes.push(
+      const attrs = mdx.attributes ?? (mdx.attributes = []);
+      const { start } = mdx.position;
+
+      if (options.filePath) {
+        attrs.push({ type: "mdxJsxAttribute", name: "data-node-file", value: options.filePath });
+      }
+      attrs.push(
+        { type: "mdxJsxAttribute", name: "data-node-name", value: mdx.name || "unknown" },
         { type: "mdxJsxAttribute", name: "data-node-line", value: String(start.line) },
         { type: "mdxJsxAttribute", name: "data-node-column", value: String(start.column - 1) },
       );
-
-      if (end) {
-        attributes.push(
-          { type: "mdxJsxAttribute", name: "data-node-end-line", value: String(end.line) },
-          {
-            type: "mdxJsxAttribute",
-            name: "data-node-end-column",
-            value: String(end.column - 1),
-          },
-        );
-      }
-
-      if (!options.filePath) return;
-
-      attributes.push({
-        type: "mdxJsxAttribute",
-        name: "data-node-file",
-        value: options.filePath,
-      });
     });
   };
-}
-
-function addPositionAttributes(
-  node: Element,
-  properties: Record<string, unknown>,
-  filePath?: string,
-): void {
-  const { position } = node;
-  if (!position) return;
-
-  const { start, end } = position;
-
-  properties["data-node-line"] = start.line;
-  properties["data-node-column"] = start.column - 1; // Convert to 0-based
-
-  if (end) {
-    properties["data-node-end-line"] = end.line;
-    properties["data-node-end-column"] = end.column - 1; // Convert to 0-based
-  }
-
-  if (filePath) {
-    properties["data-node-file"] = filePath;
-  }
 }

@@ -14,6 +14,10 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+// Static import ensures deno compile includes embedding in the binary.
+// Other modules (agent, tool, etc.) are statically imported elsewhere;
+// embedding is only referenced here.
+import * as embeddingMod from "#veryfront/embedding/index.ts";
 
 const transpileCache = new Map<string, unknown>();
 
@@ -40,6 +44,7 @@ async function ensureVeryfrontGlobals(): Promise<void> {
     "veryfront/platform": platformMod,
     "veryfront/prompt": promptMod,
     "veryfront/resource": resourceMod,
+    "veryfront/embedding": embeddingMod,
   };
 
   veryfrontGlobalsInitialized = true;

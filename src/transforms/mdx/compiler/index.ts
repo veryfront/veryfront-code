@@ -27,6 +27,7 @@ export function compileContent(
   filePath?: string,
   target: CompilationTarget = "server",
   baseUrl?: string,
+  studioEmbed?: boolean,
 ): Promise<MdxRuntimeBundle> {
   if (isMarkdownFile(filePath)) {
     return compileMarkdownRuntime(
@@ -37,8 +38,18 @@ export function compileContent(
       filePath,
       target,
       baseUrl,
+      studioEmbed,
     );
   }
 
-  return compileMDXRuntime(mode, projectDir, content, frontmatter, filePath, target, baseUrl);
+  return compileMDXRuntime(
+    mode,
+    projectDir,
+    content,
+    frontmatter,
+    filePath,
+    target,
+    baseUrl,
+    studioEmbed,
+  );
 }

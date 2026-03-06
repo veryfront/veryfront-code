@@ -207,11 +207,11 @@ interface AgentTheme {
 
 ## Dark Mode
 
-All components support dark mode out of the box using Tailwind's `dark:` variants:
+All components support dark mode automatically via CSS custom properties. Dark mode activates through `prefers-color-scheme: dark`, a `.dark` class, or `[data-theme="dark"]` on a parent element. No `dark:` Tailwind variants are needed — the token system handles it:
 
 ```tsx
 <Chat {...chat} />;
-// Automatically adapts to dark mode
+// Automatically adapts to dark mode via CSS variables
 ```
 
 ## Accessibility

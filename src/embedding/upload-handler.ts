@@ -1,0 +1,175 @@
+import type { UploadStore } from "./types.ts";
+import { loadUpload } from "./upload-loader.ts";
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+const MIME_TO_TYPE: Record<string, string> = {
+  "text/plain": "txt",
+  "text/markdown": "md",
+  "text/mdx": "mdx",
+  "text/csv": "csv",
+  "text/html": "html",
+  "text/xml": "xml",
+  "application/csv": "csv",
+  "application/pdf": "pdf",
+  "application/rtf": "rtf",
+  "application/json": "json",
+  "application/epub+zip": "epub",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/msword": "doc",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.ms-powerpoint": "ppt",
+};
+
+const EXT_TO_TYPE: Record<string, string> = {
+  txt: "txt",
+  md: "md",
+  mdx: "mdx",
+  csv: "csv",
+  html: "html",
+  htm: "html",
+  xml: "xml",
+  pdf: "pdf",
+  rtf: "rtf",
+  json: "json",
+  epub: "epub",
+  docx: "docx",
+  xlsx: "xlsx",
+  pptx: "pptx",
+  doc: "doc",
+  xls: "xls",
+  ppt: "ppt",
+};
+
+function inferType(file: File): string | null {
+  const fromMime = MIME_TO_TYPE[file.type];
+  if (fromMime) return fromMime;
+  const ext = file.name.split(".").pop()?.toLowerCase();
+  return EXT_TO_TYPE[ext ?? ""] ?? null;
+}
+
+function mimeForType(type: string): string {
+  return Object.entries(MIME_TO_TYPE).find(([, v]) => v === type)?.[0] ?? "text/plain";
+}
+
+interface UploadHandlerConfig {
+  maxFileSize?: number;
+}
+
+/**
+ * Creates HTTP route handlers for upload, listing, and deletion.
+ *
+ * **Important:** These handlers do not include authentication or authorization.
+ * Add your own auth middleware before exposing them in production.
+ *
+ * Returns `{ POST, GET, DELETE }` handlers compatible with file-based routing.
+ * POST accepts multipart form data with a `file` field, extracts text via
+ * `loadUpload`, and ingests into the provided upload store. GET returns
+ * the upload list. DELETE removes an upload by ID from route params.
+ *
+ * @example
+ * ```ts
+ * // app/api/uploads/route.ts
+ * import { createUploadHandler } from "veryfront/embedding";
+ * import { store } from "../../../lib/store.ts";
+ *
+ * export const { POST, GET } = createUploadHandler(store);
+ * ```
+ *
+ * @example
+ * ```ts
+ * // app/api/uploads/[id]/route.ts
+ * import { createUploadHandler } from "veryfront/embedding";
+ * import { store } from "../../../../lib/store.ts";
+ *
+ * export const { DELETE } = createUploadHandler(store);
+ * ```
+ */
+export function createUploadHandler(
+  store: UploadStore,
+  config?: UploadHandlerConfig,
+) {
+  const maxSize = config?.maxFileSize ?? MAX_FILE_SIZE;
+
+  async function POST(request: Request): Promise<Response> {
+    try {
+      const formData = await request.formData();
+      const file = formData.get("file");
+
+      if (!file || !(file instanceof File)) {
+        return Response.json({ error: "No file provided" }, { status: 400 });
+      }
+
+      if (file.size > maxSize) {
+        return Response.json(
+          { error: `File exceeds ${Math.round(maxSize / 1024 / 1024)} MB limit` },
+          { status: 400 },
+        );
+      }
+
+      const fileType = inferType(file);
+      if (!fileType) {
+        return Response.json(
+          { error: `Unsupported file type: ${file.type || file.name}` },
+          { status: 400 },
+        );
+      }
+
+      const buffer = await file.arrayBuffer();
+      const text = await loadUpload(buffer, mimeForType(fileType));
+      if (!text.trim()) {
+        return Response.json(
+          { error: "No text could be extracted from file" },
+          { status: 400 },
+        );
+      }
+
+      // Sanitize file name: strip path components, limit length
+      const safeName = file.name.replace(/[/\\]/g, "_").slice(0, 200);
+
+      const id = await store.ingest(safeName, text, {
+        source: `upload:${safeName}`,
+        type: fileType,
+      });
+
+      return Response.json({
+        success: true,
+        upload: { id, title: file.name, type: fileType },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Upload failed";
+      return Response.json({ error: message }, { status: 500 });
+    }
+  }
+
+  async function GET(): Promise<Response> {
+    try {
+      const uploads = await store.listUploads();
+      return Response.json({ uploads });
+    } catch (error) {
+      console.error("Upload list failed:", error);
+      return Response.json({ error: "Failed to list uploads" }, { status: 500 });
+    }
+  }
+
+  async function DELETE(
+    _request: Request,
+    context: { params: Record<string, string> },
+  ): Promise<Response> {
+    try {
+      const id = context.params.id;
+      if (!id) {
+        return Response.json({ error: "Missing upload ID" }, { status: 400 });
+      }
+      await store.removeUpload(id);
+      return Response.json({ success: true });
+    } catch (error) {
+      console.error("Upload delete failed:", error);
+      return Response.json({ error: "Delete failed" }, { status: 500 });
+    }
+  }
+
+  return { POST, GET, DELETE };
+}

@@ -37,6 +37,10 @@ describe("platform/compat/path/basic-operations", () => {
     it("should return . for files without directory", () => {
       assertEquals(dirname("file.ts"), ".");
     });
+
+    it("should handle Windows backslash paths", () => {
+      assertEquals(dirname("D:\\a\\project\\src\\file.ts"), "D:/a/project/src");
+    });
   });
 
   describe("basename", () => {

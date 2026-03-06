@@ -4,6 +4,7 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { clearTranspileCache, importModule } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { stop as stopEsbuild } from "esbuild";
+import * as embeddingMod from "#veryfront/embedding/index.ts";
 
 /**
  * Creates a mock FileSystemAdapter backed by an in-memory file map.
@@ -54,6 +55,37 @@ function createMockAdapter(
     },
   } satisfies FileSystemAdapter;
 }
+
+describe("embedding module static import", () => {
+  // The embedding module must be statically imported so deno compile includes
+  // it in the binary. Unlike agent/tool/platform which are statically imported
+  // throughout the codebase, embedding is only referenced in transpiler.ts.
+  // If this import breaks, the compiled binary will fail to load upload handlers.
+
+  it("exports createUploadHandler", () => {
+    assertEquals(typeof embeddingMod.createUploadHandler, "function");
+  });
+
+  it("exports uploadStore", () => {
+    assertEquals(typeof embeddingMod.uploadStore, "function");
+  });
+
+  it("exports embedding", () => {
+    assertEquals(typeof embeddingMod.embedding, "function");
+  });
+
+  it("exports vectorStore", () => {
+    assertEquals(typeof embeddingMod.vectorStore, "function");
+  });
+
+  it("exports chunk", () => {
+    assertEquals(typeof embeddingMod.chunk, "function");
+  });
+
+  it("exports loadUpload", () => {
+    assertEquals(typeof embeddingMod.loadUpload, "function");
+  });
+});
 
 describe("discovery/transpiler", () => {
   afterEach(() => {

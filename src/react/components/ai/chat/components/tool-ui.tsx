@@ -45,7 +45,7 @@ export function ToolStatusBadge({ state }: { state: string }): React.JSX.Element
   const config = TOOL_STATUS_CONFIG[state];
 
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground border border-border">
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent)] px-2.5 py-0.5 text-xs font-medium text-[var(--foreground)] border border-[var(--border)]">
       {config?.icon ?? <CircleIcon className="size-3.5" />}
       {config?.label ?? state}
     </span>
@@ -67,14 +67,14 @@ function formatJsonWithHighlight(obj: unknown): React.ReactNode {
   const highlighted = escaped
     .replace(
       /&quot;([^&]*)&quot;:/g,
-      '<span class="text-green-600 dark:text-green-400">&quot;$1&quot;</span>:',
+      '<span class="text-green-600">&quot;$1&quot;</span>:',
     )
     .replace(
       /: &quot;([^&]*)&quot;/g,
-      ': <span class="text-amber-600 dark:text-amber-400">&quot;$1&quot;</span>',
+      ': <span class="text-amber-600">&quot;$1&quot;</span>',
     )
-    .replace(/: (\d+)/g, ': <span class="text-blue-600 dark:text-blue-400">$1</span>')
-    .replace(/: (true|false)/g, ': <span class="text-purple-600 dark:text-purple-400">$1</span>');
+    .replace(/: (\d+)/g, ': <span class="text-blue-600">$1</span>')
+    .replace(/: (true|false)/g, ': <span class="text-purple-600">$1</span>');
 
   return (
     <pre
@@ -97,11 +97,11 @@ function renderOutputAsTable(output: unknown): React.ReactNode | null {
     <div className="overflow-x-auto">
       <table className="min-w-full text-sm">
         <thead>
-          <tr className="border-b border-neutral-200 dark:border-neutral-700">
+          <tr className="border-b border-[var(--border)]">
             {keys.map((key) => (
               <th
                 key={key}
-                className="px-4 py-2 text-left font-semibold text-neutral-900 dark:text-neutral-100"
+                className="px-4 py-2 text-left font-semibold text-[var(--foreground)]"
               >
                 {key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
               </th>
@@ -113,9 +113,9 @@ function renderOutputAsTable(output: unknown): React.ReactNode | null {
             const record = row as Record<string, unknown> | null;
 
             return (
-              <tr key={i} className="border-b border-neutral-100 dark:border-neutral-800">
+              <tr key={i} className="border-b border-[var(--border)]">
                 {keys.map((key) => (
-                  <td key={key} className="px-4 py-2 text-neutral-700 dark:text-neutral-300">
+                  <td key={key} className="px-4 py-2 text-[var(--card-foreground)]">
                     {String(record?.[key] ?? "")}
                   </td>
                 ))}
@@ -142,55 +142,57 @@ export function ToolCallCard({
   const tableOutput = tool.output === undefined ? null : renderOutputAsTable(tool.output);
 
   return (
-    <div className="not-prose w-full rounded-md border border-border bg-card">
+    <div className="not-prose w-full rounded-xl border border-[var(--border)] bg-[var(--card)]">
       <button
         type="button"
         onClick={() => setIsExpanded((v) => !v)}
-        className="group flex w-full items-center justify-between gap-4 p-3 hover:bg-muted/50 transition-colors"
+        className="group flex w-full items-center justify-between gap-4 p-3 hover:bg-[var(--accent)] transition-all rounded-t-xl"
       >
         <div className="flex items-center gap-2">
-          <WrenchIcon className="size-4 text-muted-foreground" />
-          <span className="font-medium text-sm text-foreground">{tool.toolName}</span>
+          <WrenchIcon className="size-4 text-[var(--muted-foreground)]" />
+          <span className="font-medium text-sm text-[var(--foreground)]">{tool.toolName}</span>
           <ToolStatusBadge state={tool.state} />
         </div>
         <ChevronDownIcon
           className={cn(
-            "size-4 text-muted-foreground transition-transform",
+            "size-4 text-[var(--muted-foreground)] transition-transform",
             isExpanded && "rotate-180",
           )}
         />
       </button>
 
       {!isExpanded ? null : (
-        <div className="border-t border-border">
+        <div className="border-t border-[var(--border)]">
           {tool.input === undefined ? null : (
             <div className="space-y-2 overflow-hidden p-4">
-              <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
+              <h4 className="font-medium text-[var(--muted-foreground)] text-xs uppercase tracking-wide">
                 Parameters
               </h4>
-              <div className="rounded-md bg-muted/50 p-3">
+              <div className="rounded-lg bg-[var(--accent)] p-3">
                 {formatJsonWithHighlight(tool.input)}
               </div>
             </div>
           )}
 
-          {tool.output === undefined ? null : (
-            <div className="space-y-2 p-4 border-t border-border">
-              <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
-                Result
-              </h4>
-              <div className="overflow-x-auto rounded-md bg-muted/50 text-foreground">
-                {tableOutput ?? <div className="p-3">{formatJsonWithHighlight(tool.output)}</div>}
+          {tool.output === undefined
+            ? null
+            : (
+              <div className="space-y-2 p-4 border-t border-[var(--border)]">
+                <h4 className="font-medium text-[var(--muted-foreground)] text-xs uppercase tracking-wide">
+                  Result
+                </h4>
+                <div className="overflow-x-auto rounded-lg bg-[var(--accent)] text-[var(--foreground)]">
+                  {tableOutput ?? <div className="p-3">{formatJsonWithHighlight(tool.output)}</div>}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
           {!tool.errorText ? null : (
-            <div className="space-y-2 p-4 border-t border-border">
-              <h4 className="font-medium text-destructive text-xs uppercase tracking-wide">
+            <div className="space-y-2 p-4 border-t border-[var(--border)]">
+              <h4 className="font-medium text-[var(--destructive)] text-xs uppercase tracking-wide">
                 Error
               </h4>
-              <div className="rounded-md bg-destructive/10 text-destructive p-3 text-sm">
+              <div className="rounded-lg bg-[var(--destructive)]/10 text-[var(--destructive)] p-3 text-sm">
                 {tool.errorText}
               </div>
             </div>

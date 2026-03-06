@@ -126,35 +126,53 @@ This creates binaries in `dist/`:
 ### Build Individual Platform
 
 ```bash
+# Required prep step (manifests, prebundles, framework sources)
+deno task build:prepare
+
 # macOS ARM (M1/M2/M3)
 deno compile --allow-all \
+  --include src/platform/polyfills \
+  --include src/proxy/main.ts \
+  --include dist/framework-src \
   --target aarch64-apple-darwin \
   --output dist/veryfront-macos-arm64 \
-  src/cli/main.ts
+  cli/main.ts
 
 # macOS Intel
 deno compile --allow-all \
+  --include src/platform/polyfills \
+  --include src/proxy/main.ts \
+  --include dist/framework-src \
   --target x86_64-apple-darwin \
   --output dist/veryfront-macos-x64 \
-  src/cli/main.ts
+  cli/main.ts
 
 # Linux x64
 deno compile --allow-all \
+  --include src/platform/polyfills \
+  --include src/proxy/main.ts \
+  --include dist/framework-src \
   --target x86_64-unknown-linux-gnu \
   --output dist/veryfront-linux-x64 \
-  src/cli/main.ts
+  cli/main.ts
 
 # Linux ARM64
 deno compile --allow-all \
+  --include src/platform/polyfills \
+  --include src/proxy/main.ts \
+  --include dist/framework-src \
   --target aarch64-unknown-linux-gnu \
   --output dist/veryfront-linux-arm64 \
-  src/cli/main.ts
+  cli/main.ts
 
 # Windows x64
 deno compile --allow-all \
+  --include src/platform/polyfills \
+  --include src/proxy/main.ts \
+  --include dist/framework-src \
   --target x86_64-pc-windows-msvc \
   --output dist/veryfront-windows-x64.exe \
-  src/cli/main.ts
+  cli/main.ts
 ```
 
 ### Test Binaries
@@ -186,6 +204,9 @@ deno task release 0.1.0
 ### 2. Build All Binaries
 
 ```bash
+# One-shot local distribution verification (binary + npm package)
+deno task verify:dist
+
 # Build for all platforms
 node scripts/build/build-all.js
 
@@ -509,12 +530,18 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Prepare build artifacts
+        run: deno task build:prepare
+
       - name: Build binary
         run: |
           deno compile --allow-all \
+            --include src/platform/polyfills \
+            --include src/proxy/main.ts \
+            --include dist/framework-src \
             --target ${{ matrix.target }} \
             --output dist/${{ matrix.output }} \
-            src/cli/main.ts
+            cli/main.ts
 
       - name: Generate checksum
         run: |

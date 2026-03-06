@@ -20,6 +20,8 @@ export interface SSRModuleLoaderOptions {
   contentSourceId?: string;
   /** React version for transforms (defaults to DEFAULT_REACT_VERSION) */
   reactVersion?: string;
+  /** Request mode ("preview" | "production") for studio features */
+  mode?: string;
 }
 
 export interface ModuleCacheEntry {

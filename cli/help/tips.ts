@@ -17,7 +17,7 @@ export function getBuildTips(): string {
 export function getInitTemplates(): string {
   return `${yellow("Available Templates:")}\n` +
     `  • ${green("ai-agent")}              - AI chatbot with tools and streaming\n` +
-    `  • ${green("chat-with-your-docs")} - Chat with your docs (RAG + citations)\n` +
+    `  • ${green("docs-agent")}         - Document Q&A with source citations\n` +
     `  • ${green("multi-agent-system")}  - Agents that delegate to each other\n` +
     `  • ${green("agentic-workflow")}    - AI pipeline with approvals\n` +
     `  • ${green("coding-agent")}        - AI code assistant with file tools\n` +

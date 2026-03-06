@@ -41,7 +41,10 @@ if (USE_COMPILED) {
     await Deno.stat("./veryfront-local");
   } catch {
     console.log("❌ Binary not found. Compile first:");
-    console.log("   deno compile --allow-all --unstable-net --output ./veryfront-local cli/main.ts");
+    console.log("   deno task build:prepare");
+    console.log(
+      "   deno compile --allow-all --unstable-net --include src/platform/polyfills --include src/proxy/main.ts --include dist/framework-src --output ./veryfront-local cli/main.ts",
+    );
     Deno.exit(1);
   }
 

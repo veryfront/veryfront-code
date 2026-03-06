@@ -59,12 +59,18 @@ export interface DynamicToolUIPart {
   errorText?: string;
 }
 
+export interface StepUIPart {
+  type: "step-start" | "step-end";
+  stepIndex: number;
+}
+
 export type UIMessagePart =
   | TextUIPart
   | ReasoningUIPart
   | ToolUIPart
   | ToolResultUIPart
-  | DynamicToolUIPart;
+  | DynamicToolUIPart
+  | StepUIPart;
 
 export interface UIMessage {
   id: string;
@@ -111,6 +117,11 @@ export interface UseChatOptions {
   onToolCall?: (arg: OnToolCallArg) => void | Promise<void>;
 }
 
+export interface BranchInfo {
+  current: number;
+  total: number;
+}
+
 export interface UseChatResult {
   messages: UIMessage[];
   input: string;
@@ -126,6 +137,12 @@ export interface UseChatResult {
   /** Change the model for subsequent requests */
   setModel: (model: string | undefined) => void;
   sendMessage: (message: { text: string }) => Promise<void>;
+  /** Edit a user message and resubmit — truncates history to that point */
+  editMessage: (messageId: string, newText: string) => Promise<void>;
+  /** Get branch info for a message (returns { current, total }; total=1 if no branches) */
+  getBranches: (messageId: string) => BranchInfo;
+  /** Switch to a different branch at a given message */
+  switchBranch: (messageId: string, branchIndex: number) => void;
   reload: () => Promise<void>;
   stop: () => void;
   setMessages: (messages: UIMessage[]) => void;
@@ -133,4 +150,10 @@ export interface UseChatResult {
   data?: unknown;
   handleInputChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
   handleSubmit: (e: React.FormEvent) => Promise<void>;
+  /** Alias for `handleInputChange` — matches `ChatProps.onChange` for easy spreading */
+  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  /** Alias for `handleSubmit` — matches `ChatProps.onSubmit` for easy spreading */
+  onSubmit: (e: React.FormEvent) => Promise<void>;
+  /** Alias for `setModel` — matches `ChatProps.onModelChange` for easy spreading */
+  onModelChange: (model: string | undefined) => void;
 }

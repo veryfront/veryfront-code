@@ -10,6 +10,7 @@ import { visit } from "unist-util-visit";
 import { toString } from "mdast-util-to-string";
 import type { Heading, Root as MdastRoot } from "mdast";
 import { rendererLogger } from "#veryfront/utils";
+import { rehypeNodePositions } from "../../plugins/rehype-node-positions.ts";
 import { extractFrontmatter } from "../../mdx/compiler/frontmatter-extractor.ts";
 import type {
   CompilationMode,
@@ -75,6 +76,7 @@ export function compileMarkdownRuntime(
   filePath?: string,
   _target: CompilationTarget = "server",
   _baseUrl?: string,
+  studioEmbed?: boolean,
 ): Promise<MdxRuntimeBundle> {
   return withSpan(
     "transforms.compileMarkdownRuntime",
@@ -87,17 +89,22 @@ export function compileMarkdownRuntime(
 
         const headings: ExtractedHeading[] = [];
 
-        const processor = unified()
+        const pipeline = unified()
           .use(remarkParse)
           .use(remarkGfm)
           .use(remarkFrontmatter)
           .use(remarkExtractHeadings, headings)
           .use(remarkRehype, { allowDangerousHtml: true })
           .use(rehypeStarryNight)
-          .use(rehypeSlug)
-          .use(rehypeStringify, { allowDangerousHtml: true });
+          .use(rehypeSlug);
 
-        const result = await processor.process(body);
+        if (studioEmbed && filePath) {
+          pipeline.use(rehypeNodePositions, { filePath });
+        }
+
+        const result = await pipeline
+          .use(rehypeStringify, { allowDangerousHtml: true })
+          .process(body);
         const html = String(result);
 
         logger.debug("Compiled markdown:", {
