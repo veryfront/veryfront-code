@@ -78,13 +78,7 @@ function isLruIntervalDisabled(): boolean {
   return globalFlag === true || getDisableLruIntervalEnv();
 }
 
-// Default singleton instance for backward compatibility
 let defaultInstance: VendorCacheManager | undefined;
-
-function _getDefaultInstance(): VendorCacheManager {
-  defaultInstance ??= new VendorCacheManager();
-  return defaultInstance;
-}
 
 const TRANSFORM_VERSION = "3";
 

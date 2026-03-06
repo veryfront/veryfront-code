@@ -86,8 +86,9 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
 
         if (!response.ok) throw new Error(`Failed to fetch runs: ${response.status}`);
 
-        const data: any = await response.json();
-        const fetchedRuns: WorkflowRun[] = data.runs ?? data;
+        const data: { runs?: WorkflowRun[]; cursor?: string; totalCount?: number } = await response
+          .json();
+        const fetchedRuns: WorkflowRun[] = data.runs ?? (data as unknown as WorkflowRun[]);
         const nextCursor: string | undefined = data.cursor;
         const total: number | undefined = data.totalCount;
 

@@ -86,10 +86,19 @@ export interface RedisEventPublisherConfig {
  * Redis-based event publisher for distributed streaming
  * Uses Redis Pub/Sub for real-time event delivery
  */
+/** Minimal structural type for a Redis Pub/Sub client */
+interface RedisClient {
+  connect(): Promise<void>;
+  publish(channel: string, message: string): Promise<number>;
+  subscribe(channel: string, listener: (message: string) => void): Promise<void>;
+  unsubscribe(channel: string): Promise<void>;
+  quit(): Promise<void>;
+}
+
 export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCodeEventSubscriber {
   private config: Required<RedisEventPublisherConfig>;
-  private publishClient: any;
-  private subscribeClient: any;
+  private publishClient: RedisClient | null = null;
+  private subscribeClient: RedisClient | null = null;
   private initialized = false;
 
   constructor(config: RedisEventPublisherConfig) {
@@ -106,8 +115,8 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
     // Dynamic import to avoid loading Redis if not used
     const { createClient } = await import("redis");
 
-    this.publishClient = createClient({ url: this.config.url });
-    this.subscribeClient = createClient({ url: this.config.url });
+    this.publishClient = createClient({ url: this.config.url }) as unknown as RedisClient;
+    this.subscribeClient = createClient({ url: this.config.url }) as unknown as RedisClient;
 
     await Promise.all([this.publishClient.connect(), this.subscribeClient.connect()]);
 

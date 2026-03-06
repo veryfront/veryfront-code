@@ -164,10 +164,11 @@ export class CSSOptimizerService {
     cssPath: string,
   ): Promise<{ optimized: string; sourceMap?: string }> {
     const strategy = this.selectStrategy();
+    const fallback = () => ({
+      optimized: this.options.minify ? basicMinify(content) : content,
+    });
 
-    if (!strategy) {
-      return { optimized: this.options.minify ? basicMinify(content) : content };
-    }
+    if (!strategy) return fallback();
 
     try {
       const result = await strategy.process(content, cssPath, this.options);
@@ -181,18 +182,12 @@ export class CSSOptimizerService {
   }
 
   private selectStrategy(): CSSOptimizationStrategy | null {
-    const sortedStrategies = [...this.strategies].sort((a, b) => b.priority - a.priority);
+    const selected = [...this.strategies]
+      .sort((a, b) => b.priority - a.priority)
+      .find((s) => s.canProcess(this.options));
 
-    for (const strategy of sortedStrategies) {
-      if (!strategy.canProcess(this.options)) {
-        continue;
-      }
-
-      logger.debug(`Selected strategy: ${strategy.name}`);
-      return strategy;
-    }
-
-    return null;
+    if (selected) logger.debug(`Selected strategy: ${selected.name}`);
+    return selected ?? null;
   }
 
   getStats(): CSSOptimizerStats {

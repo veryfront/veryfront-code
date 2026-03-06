@@ -121,10 +121,15 @@ export class WorkflowExecutor {
     if (!bs) return;
 
     const resolveIfBlob = <T>(
-      ref: any,
+      ref: unknown,
       fn: (id: string) => Promise<T>,
       fallback: T,
-    ): Promise<T> => (ref?.__kind === "blob" ? fn(ref.id) : Promise.resolve(fallback));
+    ): Promise<T> => {
+      const blob = ref as Record<string, unknown> | null | undefined;
+      return blob?.__kind === "blob" && typeof blob.id === "string"
+        ? fn(blob.id)
+        : Promise.resolve(fallback);
+    };
 
     this.blobResolver = {
       getText: (ref) => resolveIfBlob(ref, (id) => bs.getText(id), null),

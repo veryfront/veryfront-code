@@ -2,10 +2,7 @@ import { compile as compileMdx } from "@mdx-js/mdx";
 import { bundlerLogger as logger } from "#veryfront/utils";
 import * as esbuild from "esbuild";
 import { extract } from "#std/front-matter/yaml.ts";
-import { dirname, join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { createSecureFs } from "#veryfront/security";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export interface MDXFrontmatter {
@@ -21,8 +18,6 @@ export interface CompileToJSOptions {
   components?: string[];
   adapter: RuntimeAdapter;
 }
-
-const fs = createFileSystem();
 
 function getComponentName(imp: { name: string; path: string }): string {
   return imp.path.split("/").pop()?.replace(/\.(jsx?|tsx?)$/, "") ?? imp.name;
@@ -142,100 +137,4 @@ export default function MDXPage({ components = {} }) {
   });
 
   return { code: result.code, frontmatter };
-}
-
-export async function compileMDXFile(
-  mdxPath: string,
-  outputDir: string,
-  options: CompileToJSOptions,
-): Promise<void> {
-  const secureFs = createSecureFs({
-    baseDir: options.projectDir,
-    adapter: options.adapter,
-    context: "build",
-    throwOnError: true,
-  });
-
-  try {
-    const content = await secureFs.readFile(mdxPath);
-    const { code } = await compileMDXToJS(mdxPath, content, options);
-
-    const relativePath = mdxPath.replace(options.projectDir, "").replace(/^\//, "");
-    const outputPath = join(outputDir, relativePath.replace(".mdx", ".mdx.js"));
-
-    await secureFs.mkdir(dirname(outputPath), { recursive: true });
-    await secureFs.writeFile(outputPath, code);
-
-    logger.info(`Compiled MDX: ${mdxPath} -> ${outputPath}`);
-  } catch (error) {
-    logger.error(`Failed to compile MDX file ${mdxPath}:`, error);
-    throw error;
-  }
-}
-
-export async function compileProjectMDX(
-  projectDir: string,
-  outputDir: string,
-  options: Omit<CompileToJSOptions, "projectDir">,
-): Promise<void> {
-  const compileOptions: CompileToJSOptions = { ...options, projectDir };
-
-  const componentsDir = join(projectDir, "components");
-  const components: string[] = [];
-
-  try {
-    for await (const entry of fs.readDir(componentsDir)) {
-      if (!entry.isFile || !/\.(jsx?|tsx?)$/.test(entry.name)) continue;
-      components.push(entry.name.replace(/\.(jsx?|tsx?)$/, ""));
-    }
-  } catch {
-    // Components directory might not exist
-  }
-
-  compileOptions.components = components;
-
-  const mdxFiles: string[] = [];
-  const VERYFRONT_EXCLUDED_DIRS = new Set([
-    "cache",
-    "compiled",
-    "tmp",
-    "temp",
-    "output",
-    "optimized-images",
-    "css",
-  ]);
-
-  async function findMDXFiles(dir: string): Promise<void> {
-    try {
-      for await (const entry of fs.readDir(dir)) {
-        const path = join(dir, entry.name);
-
-        if (entry.isFile && (entry.name.endsWith(".mdx") || entry.name.endsWith(".md"))) {
-          mdxFiles.push(path);
-          continue;
-        }
-
-        if (!entry.isDirectory || entry.name === "node_modules") continue;
-        if (entry.name.startsWith(".") && entry.name !== ".veryfront") continue;
-        if (dir.includes(".veryfront") && VERYFRONT_EXCLUDED_DIRS.has(entry.name)) continue;
-
-        await findMDXFiles(path);
-      }
-    } catch {
-      // Directory might not exist
-    }
-  }
-
-  await findMDXFiles(join(projectDir, "pages"));
-  await findMDXFiles(join(projectDir, "layouts"));
-  await findMDXFiles(join(projectDir, "providers"));
-  await findMDXFiles(join(projectDir, ".veryfront"));
-
-  logger.info(`Found ${mdxFiles.length} MDX files to compile`);
-
-  for (const mdxFile of mdxFiles) {
-    await compileMDXFile(mdxFile, outputDir, compileOptions);
-  }
-
-  logger.info(`Compiled ${mdxFiles.length} MDX files to ${outputDir}`);
 }
