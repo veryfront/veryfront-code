@@ -252,9 +252,6 @@ export function useChat(options: UseChatOptions): UseChatResult {
           try {
             const body = await response.json();
             if (body.code === "NO_AI_AVAILABLE") {
-              if (body.systemPrompt) {
-                systemPromptRef.current = body.systemPrompt;
-              }
               setInferenceMode("browser");
               setBrowserStatus("idle");
               await doBrowserInference(allMessages);

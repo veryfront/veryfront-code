@@ -109,7 +109,8 @@ describe("chat-handler 503 fallback", () => {
       assertEquals(body.code, "NO_AI_AVAILABLE");
       assertEquals(body.fallback, "browser");
       assertEquals(body.model, "smollm2-135m");
-      assertEquals(body.systemPrompt, "You are a test bot.");
+      // System prompt must NOT be sent to the client (security: C2)
+      assertEquals(body.systemPrompt, undefined);
     } finally {
       if (originalLogLevel) setEnv("LOG_LEVEL", originalLogLevel);
       if (originalNodeEnv) setEnv("NODE_ENV", originalNodeEnv);

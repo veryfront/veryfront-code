@@ -282,8 +282,6 @@ export function createChatHandler(
   // deno-lint-ignore no-explicit-any
   return async function POST(requestOrCtx: any): Promise<Response> {
     const request = extractRequest(requestOrCtx);
-    // Resolve agent outside try so it's available in the catch block for
-    // extracting the system prompt in the 503 fallback response.
     let agent: ReturnType<typeof getAgent> | undefined;
     try {
       agent = getAgent(agentId);
@@ -341,27 +339,17 @@ export function createChatHandler(
         );
       }
 
-      // Detect structured "no_ai_available" errors from local engine
+      // Detect structured "no_ai_available" errors from local engine.
+      // Never send the server-side system prompt to the client — it may
+      // contain business logic, personas, or internal instructions.
+      // The client (useChat) has its own systemPrompt option for browser fallback.
       const vfError = fromError(error);
       if (vfError?.type === "no_ai_available") {
-        let systemPrompt: string | undefined;
-        try {
-          systemPrompt = agent
-            ? typeof agent.config.system === "string"
-              ? agent.config.system
-              : typeof agent.config.system === "function"
-              ? await agent.config.system()
-              : undefined
-            : undefined;
-        } catch {
-          // If system prompt resolution fails, continue without it
-        }
         return Response.json(
           {
             code: "NO_AI_AVAILABLE",
             fallback: "browser",
             model: DEFAULT_LOCAL_MODEL,
-            ...(systemPrompt ? { systemPrompt } : {}),
           },
           { status: 503 },
         );
