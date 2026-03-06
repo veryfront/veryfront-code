@@ -1,11 +1,11 @@
 # Refactoring Progress Tracker
 
 > Tracks per-module refactoring progress across sessions.
-> Last updated: 2026-03-06 15:15
+> Last updated: 2026-03-06 15:45
 
 ## Summary
 - Total modules: 54 (43 src + 11 cli)
-- Completed: 10 (sandbox, prompt, resource, tool, ai, client, schemas, task, issues, mcp)
+- Completed: 16 (Batches 1-3 done)
 - In progress: 0
 - Skipped: 5 (4 barrels + cli/templates)
 
@@ -46,13 +46,13 @@
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 14 | src/testing/ | 8 | 2 | QUEUED | — | — | |
-| 15 | src/integrations/ | 8 | 3 | QUEUED | — | — | |
+| 14 | src/testing/ | 8 | 2 | MERGED | — | — | Removed dead exports, simplified withTempDir/withTempFile |
+| 15 | src/integrations/ | 8 | 3 | MERGED | — | — | Spec only, code already clean |
 | 16 | src/tool/ | 9 | 0 | MERGED | — | — | Spec written, deduplicated schema conversion |
-| 17 | src/repositories/ | 10 | 1 | QUEUED | — | — | |
-| 18 | src/types/ | 10 | 1 | QUEUED | — | — | |
-| 19 | src/data/ | 10 | 7 | QUEUED | — | — | |
-| 20 | src/skill/ | 10 | 7 | QUEUED | — | — | |
+| 17 | src/repositories/ | 10 | 1 | MERGED | — | — | Removed dead name field, buildCacheKey, FS options schema |
+| 18 | src/types/ | 10 | 1 | MERGED | — | — | Removed 4 dead exports, narrowed RouteHandler, fixed regex |
+| 19 | src/data/ | 10 | 7 | MERGED | — | — | Removed unused RuntimeAdapter, simplified fetchData dispatch |
+| 20 | src/skill/ | 10 | 7 | MERGED | — | — | Removed alias, simplified guard, added barrel export |
 
 ## Batch 4: Small-Medium Modules (11-15 files)
 
