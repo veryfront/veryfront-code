@@ -31,6 +31,7 @@ import { MessageActions as ActionsImpl } from "../components/message-actions.tsx
 import { MessageFeedback as FeedbackImpl } from "../components/message-feedback.tsx";
 import { BranchPicker as BranchPickerImpl } from "../components/branch-picker.tsx";
 import { ReasoningCard } from "../components/reasoning.tsx";
+import { SkillBadge } from "../components/skill-badge.tsx";
 import { ToolCallCard } from "../components/tool-ui.tsx";
 import { StepIndicator } from "../components/step-indicator.tsx";
 import { Sources as SourcesImpl } from "../components/sources.tsx";
@@ -40,6 +41,7 @@ import {
   extractSourcesFromParts,
   getTextContent,
   groupPartsInOrder,
+  isSkillToolPart,
 } from "../utils/message-parts.ts";
 
 // ---------------------------------------------------------------------------
@@ -241,9 +243,14 @@ function MessageContent({
             )
             : null;
         }
+        const isSkill = isSkillToolPart(group.tool);
         return (
-          <div key={group.tool.toolCallId} className="my-3">
-            {renderTool ? renderTool(group.tool) : <ToolCallCard tool={group.tool} />}
+          <div key={group.tool.toolCallId} className={isSkill ? "my-2" : "my-3"}>
+            {renderTool
+              ? renderTool(group.tool)
+              : isSkill
+              ? <SkillBadge tool={group.tool} />
+              : <ToolCallCard tool={group.tool} />}
           </div>
         );
       })}

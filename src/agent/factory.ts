@@ -77,10 +77,13 @@ export function agent(config: AgentConfig): Agent {
   let mergedToolsConfig = config.tools;
 
   if (config.skills) {
-    // Register skill tools in the current project registry (not shared/global)
+    // Skill tools (load-skill, load-skill-reference, execute-skill-script) are
+    // framework infrastructure — shared across all projects. Project tools and
+    // skills themselves remain project-scoped. Using registerShared avoids
+    // scope mismatch between module-load time and request-handling time.
     for (const registration of SKILL_TOOL_REGISTRATIONS) {
       if (!toolRegistry.has(registration.id)) {
-        registerTool(registration.id, registration.create());
+        toolRegistry.registerShared(registration.id, registration.create());
       }
     }
 

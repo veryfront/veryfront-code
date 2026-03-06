@@ -86,6 +86,13 @@ export function createLoadSkillTool(): Tool {
         allowedTools: skill.metadata.allowedTools,
         references,
         scripts,
+        ...(scripts.length === 0 && references.length === 0
+          ? { note: "This skill has no scripts or reference files. Do NOT call execute-skill-script or load-skill-reference." }
+          : scripts.length === 0
+          ? { note: "This skill has no scripts. Do NOT call execute-skill-script." }
+          : references.length === 0
+          ? { note: "This skill has no reference files. Do NOT call load-skill-reference." }
+          : {}),
       };
     },
   });

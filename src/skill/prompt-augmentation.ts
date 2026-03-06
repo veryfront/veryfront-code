@@ -23,7 +23,7 @@ export function buildSkillManifestPrompt(skills: Map<string, Skill>): string {
   const lines: string[] = [
     "## Available Skills",
     "",
-    "The following skills are available. Use `load-skill` to activate a skill and get its full instructions.",
+    "You have access to skills via tool calling. IMPORTANT: You MUST call the load-skill tool (not write it as text) to activate a skill before performing skill-related tasks.",
     "",
   ];
 
@@ -32,16 +32,16 @@ export function buildSkillManifestPrompt(skills: Map<string, Skill>): string {
   }
 
   lines.push("");
-  lines.push("### Skill Tools");
+  lines.push("### Skill Tools (call these as tools, never write them as text)");
   lines.push("");
   lines.push(
-    "- `load-skill({ skillId })` — Load a skill's full instructions and see available references/scripts",
+    "- load-skill: Call with { skillId } to load a skill's full instructions and available references/scripts",
   );
   lines.push(
-    "- `load-skill-reference({ skillId, reference })` — Read a reference file from the skill",
+    "- load-skill-reference: Call with { skillId, reference } to read a reference file from the skill",
   );
   lines.push(
-    "- `execute-skill-script({ skillId, script, args?, env?, timeoutMs? })` — Execute a script from the skill",
+    "- execute-skill-script: Call with { skillId, script, args?, env?, timeoutMs? } to execute a script",
   );
 
   return lines.join("\n");

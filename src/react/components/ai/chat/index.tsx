@@ -98,6 +98,7 @@ export { MessageActions, type MessageActionsProps } from "./components/message-a
 export { MessageEditForm, type MessageEditFormProps } from "./components/message-edit-form.tsx";
 export { BranchPicker, type BranchPickerProps } from "./components/branch-picker.tsx";
 export { DropZoneOverlay, type DropZoneOverlayProps } from "./components/drop-zone.tsx";
+export { SkillBadge, type SkillBadgeProps } from "./components/skill-badge.tsx";
 export { ToolCallCard, ToolStatusBadge } from "./components/tool-ui.tsx";
 export { InferenceBadge, type InferenceBadgeProps } from "./components/inference-badge.tsx";
 export { UpgradeCTA, type UpgradeCTAProps } from "./components/upgrade-cta.tsx";
@@ -142,6 +143,7 @@ export {
   getTextContent,
   groupPartsInOrder,
   isReasoningPart,
+  isSkillToolPart,
   isToolPart,
   type PartGroup,
 } from "./utils/message-parts.ts";
