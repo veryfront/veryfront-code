@@ -24,6 +24,18 @@ export interface AgentConfig {
   /** Tool mode — maps to SDK permission modes */
   mode?: ClaudeCodeMode;
 
+  /**
+   * Explicitly opt in to `bypassPermissions` mode (unrestricted filesystem
+   * and shell access with no interactive prompts).
+   *
+   * When `true`, the agent runs with `permissionMode: "bypassPermissions"`
+   * regardless of `mode`. This is a server-side-only flag — it cannot be
+   * set from tool input schemas.
+   *
+   * @default false
+   */
+  bypassPermissions?: boolean;
+
   /** Maximum conversation turns before stopping */
   maxTurns?: number;
 
@@ -52,18 +64,27 @@ export interface AgentConfig {
 const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
 
 /**
- * Map tool mode to SDK permission mode
+ * Map tool mode to SDK permission mode.
+ *
+ * `bypassPermissions` is only available when explicitly opted in via
+ * `config.bypassPermissions = true` — it cannot be selected from
+ * user-facing tool input schemas.
  */
 function resolvePermissionMode(
-  mode?: ClaudeCodeMode,
+  config: AgentConfig,
 ): "default" | "acceptEdits" | "bypassPermissions" | "plan" {
-  switch (mode) {
+  if (config.bypassPermissions) {
+    logger.warn(
+      "Agent running with bypassPermissions — unrestricted filesystem and shell access",
+    );
+    return "bypassPermissions";
+  }
+
+  switch (config.mode) {
     case "analysis":
       return "plan"; // read-only
     case "code":
       return "acceptEdits"; // can write files + run commands
-    case "full":
-      return "bypassPermissions"; // all tools, no prompts
     case "custom":
       return "default"; // user controls via allowedTools
     default:
@@ -113,7 +134,7 @@ export async function executeAgent(
         cwd: config.cwd || cwd(),
         maxTurns: config.maxTurns,
         maxBudgetUsd: config.maxBudgetUsd,
-        permissionMode: resolvePermissionMode(config.mode),
+        permissionMode: resolvePermissionMode(config),
         allowedTools: config.allowedTools,
         additionalDirectories: config.additionalDirectories,
         systemPrompt: config.systemPrompt

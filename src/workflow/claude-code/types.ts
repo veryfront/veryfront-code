@@ -10,7 +10,6 @@
 export type ClaudeCodeMode =
   | "code" // read-write (maps to SDK acceptEdits)
   | "analysis" // read-only (maps to SDK plan)
-  | "full" // all tools (maps to SDK bypassPermissions)
   | "custom"; // user-specified (maps to SDK default)
 
 /**
