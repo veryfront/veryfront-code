@@ -140,7 +140,7 @@ function parseAllowedTools(
   value: unknown,
   skillName: string,
 ): string[] | undefined {
-  if (!value) return undefined;
+  if (value === undefined || value === null) return undefined;
 
   let patterns: string[];
 

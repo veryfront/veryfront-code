@@ -55,9 +55,10 @@ describe("src/skill/allowed-tools", () => {
       assertEquals(result.length, 4);
     });
 
-    it("should return all tools when allowedTools is empty", () => {
+    it("should return only skill tools when allowedTools is empty", () => {
       const result = filterToolsForSkill(tools, []);
-      assertEquals(result.length, 4);
+      assertEquals(result.length, 1);
+      assertEquals(result.map((t) => t.name), ["load-skill"]);
     });
 
     it("should filter to only allowed tools + skill tools", () => {
@@ -82,8 +83,14 @@ describe("src/skill/allowed-tools", () => {
       assertEquals(isToolAllowedBySkill("anything", undefined), true);
     });
 
-    it("should allow all tools when empty policy", () => {
-      assertEquals(isToolAllowedBySkill("anything", []), true);
+    it("should deny non-skill tools when empty policy", () => {
+      assertEquals(isToolAllowedBySkill("anything", []), false);
+    });
+
+    it("should allow skill tools when empty policy", () => {
+      assertEquals(isToolAllowedBySkill("load-skill", []), true);
+      assertEquals(isToolAllowedBySkill("load-skill-reference", []), true);
+      assertEquals(isToolAllowedBySkill("execute-skill-script", []), true);
     });
 
     it("should allow matching tool", () => {

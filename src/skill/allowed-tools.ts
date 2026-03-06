@@ -51,14 +51,14 @@ export interface FilterableToolDefinition {
  * (skill system tools) pass through regardless.
  *
  * @param tools - Full list of tool definitions
- * @param allowedTools - Allowed tool patterns, or undefined/empty for no restrictions
+ * @param allowedTools - Allowed tool patterns, or undefined for no restrictions
  * @returns Filtered tool definitions
  */
 export function filterToolsForSkill<T extends FilterableToolDefinition>(
   tools: T[],
   allowedTools: string[] | undefined,
 ): T[] {
-  if (!allowedTools || allowedTools.length === 0) {
+  if (allowedTools === undefined) {
     return tools;
   }
 
@@ -72,14 +72,14 @@ export function filterToolsForSkill<T extends FilterableToolDefinition>(
  * Layer 2: Check if a specific tool call is allowed at execution time.
  *
  * @param toolName - Name of the tool being called
- * @param allowedTools - Allowed tool patterns, or undefined/empty for no restrictions
+ * @param allowedTools - Allowed tool patterns, or undefined for no restrictions
  * @returns true if the tool call is allowed
  */
 export function isToolAllowedBySkill(
   toolName: string,
   allowedTools: string[] | undefined,
 ): boolean {
-  if (!allowedTools || allowedTools.length === 0) return true;
+  if (allowedTools === undefined) return true;
   if (ALWAYS_ALLOWED_TOOLS.has(toolName)) return true;
   return allowedTools.some((pattern) => matchesAllowedTool(toolName, pattern));
 }

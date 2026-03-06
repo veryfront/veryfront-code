@@ -66,6 +66,11 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(result, { allowed: true });
     });
 
+    it("should reject non-skill tools for empty policy", () => {
+      const result = enforceSkillPolicy("Read", [], false);
+      assertEquals(result.allowed, false);
+    });
+
     it("should reject non-skill tools when mustLoadSkillFirst is true", () => {
       const result = enforceSkillPolicy("Read", undefined, true);
       assertEquals(result.allowed, false);

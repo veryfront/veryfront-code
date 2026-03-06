@@ -181,6 +181,36 @@ Body text.`;
       }
     });
 
+    it("should reject false boolean allowed-tools (fail closed)", () => {
+      try {
+        validateSkillMetadata(
+          { description: "desc", "allowed-tools": false },
+          "test",
+        );
+        throw new Error("Should have thrown");
+      } catch (e) {
+        assertEquals(
+          (e as Error).message.includes("expected a string or array of strings"),
+          true,
+        );
+      }
+    });
+
+    it("should reject zero numeric allowed-tools (fail closed)", () => {
+      try {
+        validateSkillMetadata(
+          { description: "desc", "allowed-tools": 0 },
+          "test",
+        );
+        throw new Error("Should have thrown");
+      } catch (e) {
+        assertEquals(
+          (e as Error).message.includes("expected a string or array of strings"),
+          true,
+        );
+      }
+    });
+
     it("should reject invalid allowed-tools pattern", () => {
       try {
         validateSkillMetadata(
