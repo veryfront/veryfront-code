@@ -1,11 +1,11 @@
 # Refactoring Progress Tracker
 
 > Tracks per-module refactoring progress across sessions.
-> Last updated: 2026-03-06 17:15
+> Last updated: 2026-03-06 17:45
 
 ## Summary
 - Total modules: 54 (43 src + 11 cli)
-- Completed: 33 (Batches 1-6 done)
+- Completed: 36 (Batches 1-7 done)
 - In progress: 0
 - Skipped: 5 (4 barrels + cli/templates)
 
@@ -90,9 +90,9 @@
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 38 | src/utils/ | 70 | 42 | QUEUED | — | — | Split by subdir |
-| 39 | src/workflow/ | 81 | 19 | QUEUED | — | — | Split by subdir |
-| 40 | src/build/ | 81 | 31 | QUEUED | — | — | Split by subdir |
+| 38 | src/utils/ | 70 | 42 | MERGED | — | — | Deleted dead file, improved type safety, cleaned lint ignores |
+| 39 | src/workflow/ | 81 | 19 | MERGED | — | — | Deleted 11 dead files, replaced 3 any with structural types |
+| 40 | src/build/ | 81 | 31 | MERGED | — | — | Removed dead exports/functions, narrowed scope, simplified |
 
 ## Batch 8: XL Modules (120+ files) — Split into sub-batches
 
