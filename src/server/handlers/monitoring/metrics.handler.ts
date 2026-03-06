@@ -14,9 +14,12 @@ export class MetricsHandler extends BaseHandler {
     name: "MetricsHandler",
     priority: PRIORITY_HIGH as HandlerPriority,
     patterns: [{ pattern: "/_metrics", exact: true }],
+    enabled: (ctx) => !!ctx.isLocalProject,
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+    if (!ctx.isLocalProject) return Promise.resolve(this.continue());
+
     const { pathname } = new URL(req.url);
     if (pathname !== "/_metrics") return Promise.resolve(this.continue());
 
