@@ -140,7 +140,7 @@ export class OAuthProvider {
     body: URLSearchParams,
     clientId: string,
     clientSecret: string,
-  ): Promise<{ response: Response; data: any }> {
+  ): Promise<{ response: Response; data: Record<string, unknown> }> {
     const response = await fetch(this.config.tokenUrl, {
       method: "POST",
       headers: this.buildTokenHeaders(clientId, clientSecret),
@@ -173,8 +173,8 @@ export class OAuthProvider {
       if (!response.ok) {
         return {
           success: false,
-          error: data.error || errorFallback,
-          errorDescription: data.error_description ||
+          error: (data.error as string) || errorFallback,
+          errorDescription: (data.error_description as string) ||
             (errorDescriptionFallback ? errorDescriptionFallback(response.status) : undefined),
         };
       }

@@ -140,18 +140,19 @@ let cacheRevision = 0;
 function validateCorsConfig(userConfig: unknown): void {
   if (!userConfig || typeof userConfig !== "object") return;
 
-  const security = (userConfig as Record<string, unknown>).security as
-    | Record<string, unknown>
-    | undefined;
-  const cors = security?.cors;
+  const cfg = userConfig as Record<string, unknown>;
+  const security = cfg.security as Record<string, unknown> | undefined;
+  if (!security) return;
+
+  const cors = security.cors;
   if (!cors || typeof cors !== "object" || Array.isArray(cors)) return;
 
   const origin = (cors as Record<string, unknown>).origin;
-  if (origin !== undefined && typeof origin !== "string") {
-    throw CONFIG_VALIDATION_FAILED.create({
-      detail: "security.cors.origin must be a string. Expected boolean or { origin?: string }",
-    });
-  }
+  if (origin === undefined || typeof origin === "string") return;
+
+  throw CONFIG_VALIDATION_FAILED.create({
+    detail: "security.cors.origin must be a string. Expected boolean or { origin?: string }",
+  });
 }
 
 function validateConfigShape(userConfig: unknown): void {
