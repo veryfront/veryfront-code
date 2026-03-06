@@ -973,11 +973,26 @@ async function registerVfModules(subpaths: Set<string>): Promise<void> {
     Record<string, unknown>
   >;
 
+  // __VERYFRONT_MODULES__ is populated by the discovery transpiler via hash
+  // imports (#veryfront/...) which resolve correctly in compiled binaries.
+  // Check it first before attempting bare specifier dynamic imports.
+  const discoveryModules = (globalThis as Record<string, unknown>).__VERYFRONT_MODULES__ as
+    | Record<string, Record<string, unknown>>
+    | undefined;
+
   for (const subpath of subpaths) {
     if (modules[subpath]) continue;
 
+    const specifier = `veryfront/${subpath}`;
+
+    const fromDiscovery = discoveryModules?.[specifier];
+    if (fromDiscovery) {
+      modules[subpath] = fromDiscovery;
+      logger.debug(`[API] Registered module ${specifier} from discovery globals`);
+      continue;
+    }
+
     try {
-      const specifier = `veryfront/${subpath}`;
       modules[subpath] = await import(specifier) as Record<string, unknown>;
       logger.debug(`[API] Registered module ${specifier} on globalThis`);
     } catch (e) {
