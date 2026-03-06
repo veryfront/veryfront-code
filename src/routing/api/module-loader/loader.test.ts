@@ -6,6 +6,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 const fs = createFileSystem();
 
@@ -327,7 +328,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       ].join("\n"),
     );
 
-    const config = {
+    const config: VeryfrontConfig = {
       resolve: {
         importMap: {
           imports: {
@@ -358,8 +359,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
         projectDir: virtualBase,
         modulePath: join(virtualBase, "handler.ts"),
         adapter: virtualAdapter,
-        // deno-lint-ignore no-explicit-any
-        config: config as any,
+        config,
       });
     } catch (error) {
       caught = error instanceof Error ? error.message : String(error);
