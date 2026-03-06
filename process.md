@@ -1,11 +1,11 @@
 # Refactoring Progress Tracker
 
 > Tracks per-module refactoring progress across sessions.
-> Last updated: 2026-03-06 16:45
+> Last updated: 2026-03-06 17:15
 
 ## Summary
 - Total modules: 54 (43 src + 11 cli)
-- Completed: 28 (Batches 1-5 done)
+- Completed: 33 (Batches 1-6 done)
 - In progress: 0
 - Skipped: 5 (4 barrels + cli/templates)
 
@@ -80,11 +80,11 @@
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 33 | src/observability/ | 39 | 21 | QUEUED | — | — | |
-| 34 | src/routing/ | 43 | 32 | QUEUED | — | — | |
-| 35 | src/modules/ | 49 | 26 | QUEUED | — | — | |
-| 36 | src/agent/ | 55 | 11 | QUEUED | — | — | |
-| 37 | src/security/ | 58 | 34 | QUEUED | — | — | |
+| 33 | src/observability/ | 39 | 21 | MERGED | — | — | Removed async wrapper, per-call alloc, magic number |
+| 34 | src/routing/ | 43 | 32 | MERGED | — | — | Deleted dead router.ts, filePathToPattern, deduped helper |
+| 35 | src/modules/ | 49 | 26 | MERGED | — | — | Removed dead type/method, fixed any in websocket-handler |
+| 36 | src/agent/ | 55 | 11 | MERGED | — | — | Removed duplicate interface, dead calls, redundant re-exports |
+| 37 | src/security/ | 58 | 34 | MERGED | — | — | Removed dead re-exports, constants, deleted types.ts |
 
 ## Batch 7: Large Modules (70-81 files) — Consider sub-batching
 
