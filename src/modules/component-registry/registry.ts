@@ -25,6 +25,11 @@ export interface ComponentRegistryOptions {
   vendorBundleHash?: string;
 }
 
+export type ComponentLoader = {
+  loadComponent: (componentName: string, source: string, projectDir: string) => Promise<unknown>;
+  clearCache: () => void;
+};
+
 export class ComponentRegistry {
   private components = new Map<string, ComponentInfo>();
   private componentDirs: string[];
@@ -157,6 +162,10 @@ export class ComponentRegistry {
 
   getAll(): Map<string, ComponentInfo> {
     return new Map(this.components);
+  }
+
+  getLoader(): ComponentLoader | undefined {
+    return undefined;
   }
 
   getAllAsComponents(): Record<string, React.ComponentType<unknown>> {
