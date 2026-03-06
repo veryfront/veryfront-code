@@ -122,5 +122,3 @@ export function isMDX(ctx: TransformContext): boolean {
 export function isTypeScript(ctx: TransformContext): boolean {
   return ctx.filePath.endsWith(".ts") || ctx.filePath.endsWith(".tsx");
 }
-
-export { getExtension } from "#veryfront/utils/path-utils.ts";

@@ -225,10 +225,6 @@ export function clearDomainCache(): void {
   logger.debug("Cache cleared");
 }
 
-export function getDomainCacheStats(): { size: number; maxSize: number } {
-  return { size: domainCache.size, maxSize: DOMAIN_CACHE_MAX_ENTRIES };
-}
-
 /**
  * Inject a CacheRepository for testing or distributed caching.
  * Call with null to restore default Map-based caching.

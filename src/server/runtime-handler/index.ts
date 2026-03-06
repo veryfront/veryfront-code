@@ -322,10 +322,24 @@ export function createVeryfrontHandler(
         // proceeding would cause cryptic 500s deep in the rendering pipeline.
         if (isProxyMode && !isLightweightPath(url.pathname) && !isWebSocketPath(url.pathname)) {
           const token = req.headers.get("x-token");
-          if (!headers.projectSlug) {
-            logger.error("Missing required x-project-slug header in proxy mode", {
+
+          const missingHeader = !headers.projectSlug
+            ? {
+              error: "Missing project context",
+              detail: "x-project-slug header is required in proxy mode",
+            }
+            : !token
+            ? {
+              error: "Missing authentication context",
+              detail: "x-token header is required in proxy mode",
+            }
+            : null;
+
+          if (missingHeader) {
+            logger.error(missingHeader.detail, {
               pathname: url.pathname,
               domain,
+              projectSlug: headers.projectSlug,
               host: req.headers.get("host"),
               forwardedHost: req.headers.get("x-forwarded-host"),
             });
@@ -338,32 +352,7 @@ export function createVeryfrontHandler(
             completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, false);
             endRequestTracing(spanInfo.span, 502);
             return new Response(
-              JSON.stringify({
-                error: "Missing project context",
-                detail: "x-project-slug header is required in proxy mode",
-              }),
-              { status: 502, headers: { "Content-Type": "application/json" } },
-            );
-          }
-          if (!token) {
-            logger.error("Missing required x-token header in proxy mode", {
-              pathname: url.pathname,
-              domain,
-              projectSlug: headers.projectSlug,
-            });
-            endContentMetrics({
-              requestId: lifecycle.requestId,
-              pathname: url.pathname,
-              mode: "proxy",
-            });
-            completeRequestTracking(lifecycle.requestId, 502, false);
-            completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, false);
-            endRequestTracing(spanInfo.span, 502);
-            return new Response(
-              JSON.stringify({
-                error: "Missing authentication context",
-                detail: "x-token header is required in proxy mode",
-              }),
+              JSON.stringify(missingHeader),
               { status: 502, headers: { "Content-Type": "application/json" } },
             );
           }

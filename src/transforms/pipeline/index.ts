@@ -366,10 +366,6 @@ function buildReadFile(adapter: unknown, projectDir: string): (path: string) => 
   };
 }
 
-export function getDefaultPlugins(ssr: boolean): TransformPlugin[] {
-  return ssr ? [...SSR_PIPELINE] : [...BROWSER_PIPELINE];
-}
-
 export type {
   PipelineConfig,
   TransformContext,

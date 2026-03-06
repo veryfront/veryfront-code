@@ -46,8 +46,3 @@ export function getCacheStrategy(
 export function shouldEnableCache(ctx: RequestContext, isLocalProject?: boolean): boolean {
   return getCacheStrategy(ctx, isLocalProject) === "immutable";
 }
-
-export function shouldUseNoCacheHeaders(ctx?: RequestContext, isLocalProject?: boolean): boolean {
-  if (!ctx || isLocalProject) return true;
-  return ctx.mode === "preview";
-}

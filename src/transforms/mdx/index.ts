@@ -9,7 +9,6 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/constants/cache.ts";
 import React from "react";
 import { type ESMLoaderContext, loadModuleESM } from "./esm-module-loader/index.ts";
-import { type ParsedMDX, parseMDXCode } from "./parser.ts";
 import type { MDXComponents, MDXFrontmatter, MDXGlobals, MDXModule } from "./types.ts";
 
 export interface MDXRenderOptions {
@@ -74,10 +73,6 @@ export class MDXRenderer {
       "Please update to: ",
       React.createElement("code", {}, "await mdxRenderer.loadModuleESM(compiledCode)"),
     );
-  }
-
-  private parseMDXCode(compiledCode: string): ParsedMDX {
-    return parseMDXCode(compiledCode);
   }
 }
 

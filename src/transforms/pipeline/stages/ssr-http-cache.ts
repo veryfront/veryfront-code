@@ -20,7 +20,6 @@ const LOG_PREFIX = "[SSR-HTTP-CACHE]";
 export const ssrHttpCachePlugin: TransformPlugin = {
   name: "ssr-http-cache",
   stage: TransformStage.FINALIZE - 1, // Run just before finalize
-  condition: () => true,
 
   async transform(ctx) {
     const cachedMap = ctx.metadata.get("importMap") as ImportMapConfig | undefined;

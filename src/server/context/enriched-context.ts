@@ -103,25 +103,7 @@ export function buildEnrichedContext(options: BuildEnrichedContextOptions): Enri
   };
 }
 
-export function toRequestContext(enriched: EnrichedContext): {
-  token: string;
-  slug: string;
-  branch: string | null;
-  mode: Environment;
-} {
-  return {
-    token: enriched.token,
-    slug: enriched.projectSlug,
-    branch: enriched.branch,
-    mode: enriched.environment,
-  };
-}
-
-export function shouldEnableCacheFromEnriched(enriched: EnrichedContext): boolean {
-  return !enriched.isLocalProject && enriched.environment !== "preview";
-}
-
-export function shouldUseNoCacheHeadersFromEnriched(enriched: EnrichedContext): boolean {
+function shouldUseNoCacheHeadersFromEnriched(enriched: EnrichedContext): boolean {
   return enriched.isLocalProject || enriched.environment === "preview";
 }
 

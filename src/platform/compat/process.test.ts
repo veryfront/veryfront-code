@@ -27,9 +27,7 @@ import {
   memoryUsage,
   onSignal,
   pid,
-  ppid,
   promptSync,
-  requireEnv,
   runCommand,
   setEnv,
   unrefTimer,
@@ -201,42 +199,6 @@ describe("Process Compat", () => {
     });
   });
 
-  describe("requireEnv", () => {
-    const testKey = "__TEST_REQUIRE_ENV__";
-
-    afterEach(() => {
-      try {
-        deleteEnv(testKey);
-      } catch {
-        // Ignore
-      }
-    });
-
-    it("should return value when env var exists", () => {
-      setEnv(testKey, "required-value");
-      assertEquals(requireEnv(testKey), "required-value");
-    });
-
-    it("should throw when env var does not exist", () => {
-      try {
-        requireEnv("__DEFINITELY_NOT_SET__");
-        assertEquals(false, true);
-      } catch (e) {
-        assertEquals(e instanceof Error, true);
-        assertEquals((e as Error).message.includes("__DEFINITELY_NOT_SET__"), true);
-      }
-    });
-
-    it("should include key name in error message", () => {
-      try {
-        requireEnv("MY_MISSING_VAR");
-        assertEquals(false, true);
-      } catch (e) {
-        assertEquals((e as Error).message.includes("MY_MISSING_VAR"), true);
-      }
-    });
-  });
-
   describe("env", () => {
     it("should return all environment variables", () => {
       const envVars = env();
@@ -305,15 +267,6 @@ describe("Process Compat", () => {
 
     it("should return consistent value", () => {
       assertEquals(pid(), pid());
-    });
-  });
-
-  describe("ppid", () => {
-    it("should return a parent process ID", () => {
-      const parentPid = ppid();
-      assertEquals(typeof parentPid, "number");
-      // ppid should be >= 0 (0 is valid for init processes)
-      assertEquals(parentPid >= 0, true);
     });
   });
 

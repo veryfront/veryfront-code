@@ -161,16 +161,6 @@ export function getEnvBoolean(
   return fallback;
 }
 
-/**
- * Get an environment variable or throw if not set
- * @throws Error if the environment variable is not set
- */
-export function requireEnv(key: string): string {
-  const value = getEnv(key);
-  if (value === undefined) throw new Error(`Required environment variable "${key}" is not set`);
-  return value;
-}
-
 export function setEnv(key: string, value: string): void {
   if (IS_DENO) {
     Deno.env.set(key, value);
@@ -219,12 +209,6 @@ export function getEnvOverlayStorage(): EnvOverlayStorage | null {
 export function pid(): number {
   if (IS_DENO) return Deno.pid;
   if (hasNodeProcess) return nodeProcess!.pid;
-  return 0;
-}
-
-export function ppid(): number {
-  if (IS_DENO && "ppid" in Deno) return Deno.ppid || 0;
-  if (hasNodeProcess) return nodeProcess!.ppid || 0;
   return 0;
 }
 
@@ -286,44 +270,6 @@ export function getTerminalSize(): { columns: number; rows: number } {
   if (columns && rows) return { columns, rows };
 
   return defaultSize;
-}
-
-/**
- * Get network interfaces
- */
-export async function getNetworkInterfaces(): Promise<
-  Array<{ name: string; address: string; family: "IPv4" | "IPv6" }>
-> {
-  if (IS_DENO) {
-    return Deno.networkInterfaces().map((iface) => ({
-      name: iface.name,
-      address: iface.address,
-      family: iface.family as "IPv4" | "IPv6",
-    }));
-  }
-
-  // Bun and Node.js both support node:os
-  if (!hasNodeProcess && !IS_BUN) {
-    throw new Error("networkInterfaces() is not supported in this runtime");
-  }
-
-  // Use dynamicImport to avoid static analysis by bundlers
-  const os = await dynamicImport<typeof import("node:os")>("node:os");
-  const interfaces = os.networkInterfaces();
-  const result: Array<{ name: string; address: string; family: "IPv4" | "IPv6" }> = [];
-
-  for (const [name, addrs] of Object.entries(interfaces)) {
-    if (!addrs) continue;
-    for (const addr of addrs) {
-      result.push({
-        name,
-        address: addr.address,
-        family: addr.family as "IPv4" | "IPv6",
-      });
-    }
-  }
-
-  return result;
 }
 
 /**
@@ -534,9 +480,10 @@ export function readStdinByteSync(): number | null {
 
   if (IS_BUN) {
     // Bun: read one byte from the file descriptor directly
-    // deno-lint-ignore no-explicit-any
-    const Bun = (globalThis as any).Bun;
-    const chunk = Bun?.stdin?.read?.(1);
+    const BunGlobal =
+      (globalThis as { Bun?: { stdin?: { read?: (n: number) => Uint8Array | null } } })
+        .Bun;
+    const chunk = BunGlobal?.stdin?.read?.(1);
     if (chunk && chunk.length > 0) return chunk[0];
     return null;
   }
