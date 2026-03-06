@@ -196,6 +196,7 @@ export class AgentRuntime {
             type: "data",
             data: {
               inferenceMode: isLocal ? "server-local" : "cloud",
+              model: resolvedModelString,
             },
           });
           sendSSE(controller, encoder, { type: "text-start", id: textPartId });

@@ -129,6 +129,8 @@ export interface UseChatResult {
   error: Error | null;
   /** Current model override (undefined = use agent default) */
   model: string | undefined;
+  /** The actual model being used after auto-upgrade (e.g. "anthropic/claude-sonnet-4-20250514") */
+  activeModel: string | undefined;
   /** Where inference is currently happening */
   inferenceMode: InferenceMode;
   /** Browser-side model loading/inference status (null when not using browser fallback) */

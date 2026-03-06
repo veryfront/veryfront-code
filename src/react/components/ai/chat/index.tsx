@@ -218,6 +218,8 @@ export interface ChatProps {
   showMessageActions?: boolean;
   models?: ModelOption[];
   model?: string;
+  /** The actual resolved model after auto-upgrade (used for avatar display) */
+  activeModel?: string;
   onModelChange?: (model: string) => void;
   inferenceMode?: InferenceMode;
   browserStatus?: BrowserInferenceStatus | null;
@@ -282,6 +284,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     showMessageActions = true,
     models,
     model,
+    activeModel,
     onModelChange,
     inferenceMode,
     browserStatus,
@@ -445,7 +448,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
             theme={theme}
             renderMessage={renderMessage}
             renderTool={renderTool}
-            model={model}
+            model={activeModel || model}
             showMessageActions={showMessageActions}
             showSources={showSources}
             showSteps={showSteps}

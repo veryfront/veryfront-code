@@ -170,6 +170,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
       showScrollButton: features?.scrollButton,
       showMessageActions: features?.messageActions,
       models: models?.options,
+      activeModel: chat.activeModel,
       inferenceMode: chat.inferenceMode,
       browserStatus: chat.browserStatus,
       showSources: features?.sources,
