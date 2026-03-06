@@ -240,6 +240,9 @@ export async function executeAgent(
 /**
  * Create a reusable agent function with preset configuration.
  *
+ * **Security note:** Do not expose the `overrides` parameter to untrusted
+ * input — it can set `bypassPermissions: true`.
+ *
  * @example
  * ```typescript
  * const reviewer = createAgent({

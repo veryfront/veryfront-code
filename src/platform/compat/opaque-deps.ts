@@ -32,6 +32,9 @@ export function importTransformers(): Promise<OpaqueModule> {
 
 /** Lazily import `@anthropic-ai/claude-agent-sdk` (~69MB). */
 export function importClaudeAgentSDK(): Promise<OpaqueModule> {
+  // Allow tests to inject a mock SDK without loading the real 69 MB package.
+  const mock = (globalThis as Record<string, unknown>).__vfMockClaudeSDK;
+  if (mock) return Promise.resolve(mock);
   return dynamicImport(resolve("@anthropic-ai/claude-agent-sdk", "0.2.37"));
 }
 
