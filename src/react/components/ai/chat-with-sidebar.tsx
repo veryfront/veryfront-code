@@ -24,6 +24,7 @@ export interface ChatWithSidebarChatController {
   isLoading?: ChatProps["isLoading"];
   error?: ChatProps["error"];
   model?: ChatProps["model"];
+  activeModel?: ChatProps["activeModel"];
   onModelChange?: ChatProps["onModelChange"];
   inferenceMode?: ChatProps["inferenceMode"];
   browserStatus?: ChatProps["browserStatus"];
