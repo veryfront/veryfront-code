@@ -1,11 +1,11 @@
 # Refactoring Progress Tracker
 
 > Tracks per-module refactoring progress across sessions.
-> Last updated: 2026-03-06 16:10
+> Last updated: 2026-03-06 16:45
 
 ## Summary
 - Total modules: 54 (43 src + 11 cli)
-- Completed: 21 (Batches 1-4 done)
+- Completed: 28 (Batches 1-5 done)
 - In progress: 0
 - Skipped: 5 (4 barrels + cli/templates)
 
@@ -68,13 +68,13 @@
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 26 | src/discovery/ | 20 | 5 | QUEUED | — | — | |
-| 27 | src/middleware/ | 23 | 13 | QUEUED | — | — | |
-| 28 | src/studio/ | 27 | 7 | QUEUED | — | — | |
-| 29 | src/errors/ | 32 | 27 | QUEUED | — | — | |
-| 30 | src/react/ | 35 | 9 | QUEUED | — | — | |
-| 31 | src/cache/ | 36 | 18 | QUEUED | — | — | |
-| 32 | src/html/ | 37 | 27 | QUEUED | — | — | |
+| 26 | src/discovery/ | 20 | 5 | MERGED | — | — | Removed dead fn, unsafe cast, simplified getId |
+| 27 | src/middleware/ | 23 | 13 | MERGED | — | — | Spec only, code already clean |
+| 28 | src/studio/ | 27 | 7 | MERGED | — | — | Removed duplicate helpers, dead constant, unused option |
+| 29 | src/errors/ | 32 | 27 | MERGED | — | — | Deleted enhanced-catalog, removed duplicates, tightened types |
+| 30 | src/react/ | 35 | 9 | MERGED | — | — | Deleted 8 dead files (live/ dir + redundant barrel) |
+| 31 | src/cache/ | 36 | 18 | MERGED | — | — | Removed dead re-export and unused destructuring |
+| 32 | src/html/ | 37 | 27 | MERGED | — | — | Removed 3 dead functions, consolidated import |
 
 ## Batch 6: Medium-Large Modules (39-58 files)
 
