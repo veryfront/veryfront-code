@@ -110,8 +110,9 @@ var __vf_builtinSet = new Set(${builtinSet});
 var __vf_projectRoot = ${safeProjectRoot};
 var __vf_cache = Object.create(null);
 function __vf_assertContained(resolved) {
-  var norm = __vf_resolve(resolved);
-  if (!norm.startsWith(__vf_projectRoot + "/") && norm !== __vf_projectRoot) {
+  var norm = __vf_resolve(resolved).replace(/\\\\/g, "/");
+  var root = __vf_projectRoot.replace(/\\\\/g, "/");
+  if (!norm.startsWith(root + "/") && norm !== root) {
     throw new Error("CJS loader blocked path outside project: " + resolved);
   }
 }
