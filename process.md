@@ -1,13 +1,13 @@
 # Refactoring Progress Tracker
 
 > Tracks per-module refactoring progress across sessions.
-> Last updated: 2026-03-06
+> Last updated: 2026-03-06 14:30
 
 ## Summary
 - Total modules: 54 (43 src + 11 cli)
-- Completed: 0
+- Completed: 4 (sandbox, prompt, resource, tool)
 - In progress: 0
-- Skipped: 1 (cli/templates — generated content)
+- Skipped: 5 (4 barrels + cli/templates)
 
 ## Status Legend
 - QUEUED — Not started
@@ -23,11 +23,11 @@
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 1 | src/fs/ | 1 | 0 | QUEUED | — | — | Pilot module |
-| 2 | src/markdown/ | 1 | 0 | QUEUED | — | — | |
-| 3 | src/mdx/ | 1 | 0 | QUEUED | — | — | |
-| 4 | src/chat/ | 1 | 0 | QUEUED | — | — | Barrel only |
-| 5 | src/sandbox/ | 2 | 0 | QUEUED | — | — | |
+| 1 | src/fs/ | 1 | 0 | SKIPPED | — | — | Barrel only — spec written |
+| 2 | src/markdown/ | 1 | 0 | SKIPPED | — | — | Barrel only |
+| 3 | src/mdx/ | 1 | 0 | SKIPPED | — | — | Barrel only |
+| 4 | src/chat/ | 1 | 0 | SKIPPED | — | — | Barrel only |
+| 5 | src/sandbox/ | 2 | 0 | MERGED | — | — | Pilot: extracted resolveApiUrl |
 
 ## Batch 2: Small Leaf Modules (2-6 files)
 
@@ -38,8 +38,8 @@
 | 8 | src/schemas/ | 3 | 1 | QUEUED | — | — | |
 | 9 | src/task/ | 4 | 2 | QUEUED | — | — | |
 | 10 | src/issues/ | 5 | 2 | QUEUED | — | — | |
-| 11 | src/prompt/ | 6 | 0 | QUEUED | — | — | |
-| 12 | src/resource/ | 6 | 0 | QUEUED | — | — | |
+| 11 | src/prompt/ | 6 | 0 | MERGED | — | — | Spec written, code already clean |
+| 12 | src/resource/ | 6 | 0 | MERGED | — | — | Spec written, code already clean |
 | 13 | src/mcp/ | 6 | 1 | QUEUED | — | — | |
 
 ## Batch 3: Small Modules (8-10 files)
@@ -48,7 +48,7 @@
 |---|--------|-------|-------|--------|---------|-------------|-------|
 | 14 | src/testing/ | 8 | 2 | QUEUED | — | — | |
 | 15 | src/integrations/ | 8 | 3 | QUEUED | — | — | |
-| 16 | src/tool/ | 9 | 0 | QUEUED | — | — | |
+| 16 | src/tool/ | 9 | 0 | MERGED | — | — | Spec written, deduplicated schema conversion |
 | 17 | src/repositories/ | 10 | 1 | QUEUED | — | — | |
 | 18 | src/types/ | 10 | 1 | QUEUED | — | — | |
 | 19 | src/data/ | 10 | 7 | QUEUED | — | — | |
