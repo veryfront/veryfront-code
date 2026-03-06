@@ -1,11 +1,11 @@
 # Refactoring Progress Tracker
 
 > Tracks per-module refactoring progress across sessions.
-> Last updated: 2026-03-06 17:45
+> Last updated: 2026-03-06 18:15
 
 ## Summary
 - Total modules: 54 (43 src + 11 cli)
-- Completed: 36 (Batches 1-7 done)
+- Completed: 40 (Batches 1-8 done, all src/ modules complete)
 - In progress: 0
 - Skipped: 5 (4 barrels + cli/templates)
 
@@ -98,10 +98,10 @@
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 41 | src/rendering/ | 120 | 49 | QUEUED | — | — | Split by subdir |
-| 42 | src/transforms/ | 122 | 36 | QUEUED | — | — | Split by subdir |
-| 43 | src/server/ | 158 | 35 | QUEUED | — | — | Split by subdir |
-| 44 | src/platform/ | 171 | 93 | QUEUED | — | — | Split by subdir |
+| 41 | src/rendering/ | 120 | 49 | MERGED | — | — | Interface extraction to eliminate any, dead export, cache cleanup |
+| 42 | src/transforms/ | 122 | 36 | MERGED | — | — | Removed ~15 dead functions, fixed any cast |
+| 43 | src/server/ | 158 | 35 | MERGED | — | — | Removed 6 dead functions, deduped proxy validation |
+| 44 | src/platform/ | 171 | 93 | MERGED | — | — | Removed dead fns, eliminated 5 any casts with typed interfaces |
 
 ## Batch 9: CLI Small Modules
 
