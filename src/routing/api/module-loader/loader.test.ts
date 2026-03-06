@@ -1,4 +1,4 @@
-import { assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { loadHandlerModule, toCjsDestructureBindings } from "./loader.ts";
@@ -6,6 +6,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 const fs = createFileSystem();
 
@@ -280,6 +281,135 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(
       toCjsDestructureBindings("{ foo, bar }"),
       "{ foo, bar }",
+    );
+  });
+
+  it("rejects module path that escapes project directory via traversal", async () => {
+    const tmpDir = await makeTempDir();
+
+    await assertRejects(
+      () =>
+        loadHandlerModule({
+          projectDir: tmpDir,
+          modulePath: join(tmpDir, "..", "..", "etc", "passwd"),
+          adapter,
+          config: undefined,
+        }),
+      Error,
+      "module path escapes project directory",
+    );
+  });
+
+  it("rejects absolute module path outside project directory", async () => {
+    const tmpDir = await makeTempDir();
+
+    await assertRejects(
+      () =>
+        loadHandlerModule({
+          projectDir: tmpDir,
+          modulePath: "/etc/passwd",
+          adapter,
+          config: undefined,
+        }),
+      Error,
+      "module path escapes project directory",
+    );
+  });
+
+  it("rejects import map entries that escape project directory", async () => {
+    const realDir = await makeTempDir();
+    const modulePath = join(realDir, "handler.ts");
+
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { secret } from "@app/escape";`,
+        `export const GET = () => new Response(secret);`,
+      ].join("\n"),
+    );
+
+    const config: VeryfrontConfig = {
+      resolve: {
+        importMap: {
+          imports: {
+            "@app/escape": "../../../etc/passwd",
+          },
+        },
+      },
+    };
+
+    // Use a virtual adapter so the loader goes through the esbuild transpile
+    // path (where the import map plugin runs) rather than direct Deno import.
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
+    const toReal = (path: string): string => path.replace(virtualBase, realDir);
+
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => fs.readTextFile(toReal(path)),
+        exists: (path: string) => fs.exists(toReal(path)),
+      },
+    };
+
+    let caught = "";
+    try {
+      await loadHandlerModule({
+        projectDir: virtualBase,
+        modulePath: join(virtualBase, "handler.ts"),
+        adapter: virtualAdapter,
+        config,
+      });
+    } catch (error) {
+      caught = error instanceof Error ? error.message : String(error);
+    }
+
+    assertMatch(caught, /import map path escapes project|Failed to load/i);
+  });
+
+  it("rejects relative imports inside handler that escape project directory", async () => {
+    const realDir = await makeTempDir();
+    const modulePath = join(realDir, "handler.ts");
+
+    // Handler itself is inside project, but contains a relative import that escapes
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import secret from "../../../../etc/passwd";`,
+        `export const GET = () => new Response(secret);`,
+      ].join("\n"),
+    );
+
+    // Use a virtual adapter to force the esbuild transpile path
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
+    const toReal = (path: string): string => path.replace(virtualBase, realDir);
+
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => fs.readTextFile(toReal(path)),
+        exists: (path: string) => fs.exists(toReal(path)),
+      },
+    };
+
+    let caught = "";
+    try {
+      await loadHandlerModule({
+        projectDir: virtualBase,
+        modulePath: join(virtualBase, "handler.ts"),
+        adapter: virtualAdapter,
+        config: undefined,
+      });
+    } catch (error) {
+      caught = error instanceof Error ? error.message : String(error);
+    }
+
+    assertMatch(
+      caught,
+      /escapes project|Failed to load/i,
     );
   });
 });
