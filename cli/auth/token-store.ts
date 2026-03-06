@@ -22,7 +22,7 @@ export async function readToken(env?: EnvironmentConfig): Promise<string | null>
     if (!(await fs.exists(tokenPath))) return null;
     const content = await fs.readTextFile(tokenPath);
     const token = content.trim();
-    return token ? token : null;
+    return token || null;
   } catch (error) {
     cliLogger.debug("Failed to read token:", error);
     return null;

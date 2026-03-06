@@ -6,8 +6,7 @@ import { z } from "zod";
 import { getEnvironmentConfig } from "veryfront/config";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { ReloadNotifier } from "veryfront/server";
-import { getErrorCollector } from "veryfront/observability";
-import { getLogBuffer } from "veryfront/observability";
+import { getErrorCollector, getLogBuffer } from "veryfront/observability";
 import type { MCPTool } from "../tools.ts";
 import { formatError } from "./helpers.ts";
 

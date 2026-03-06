@@ -8,16 +8,11 @@
 import { brand, dim, muted } from "../../ui/colors.ts";
 import type { InputState, LogEntry } from "../state.ts";
 
-export interface InlineInputOptions {
-  maxWidth?: number;
-}
-
 /**
  * Render the inline input prompt
  */
 export function renderInput(
   input: InputState,
-  _options: InlineInputOptions = {},
 ): string {
   if (!input.active) return "";
 

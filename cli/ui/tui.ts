@@ -53,6 +53,8 @@ function render(): void {
   getSize();
   const lines: string[] = [""];
 
+  const spinner = getSpinnerFrame(spinnerFrame);
+
   const infoKeys = Object.keys(state.info);
   if (infoKeys.length > 0) {
     const maxKeyLen = Math.max(...infoKeys.map((k) => k.length));
@@ -64,7 +66,6 @@ function render(): void {
   }
 
   if (state.steps.length > 0) {
-    const spinner = getSpinnerFrame(spinnerFrame);
     const stepLine = state.steps
       .map((s, i) => {
         const icon = s.done ? success("✓") : i === state.currentStep ? brand(spinner) : dim("○");
@@ -75,11 +76,10 @@ function render(): void {
     lines.push(`  ${stepLine}`, "");
   }
 
-  const spinnerChar = getSpinnerFrame(spinnerFrame);
   let statusIcon = dim("○");
   switch (state.statusType) {
     case "loading":
-      statusIcon = brand(spinnerChar);
+      statusIcon = brand(spinner);
       break;
     case "success":
       statusIcon = success("●");

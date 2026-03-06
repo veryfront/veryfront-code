@@ -338,7 +338,7 @@ export async function GET(request: Request): Promise<Response> {
 
     return redirect("/?connected=${config.name}");
   } catch (error) {
-    console.error("OAuth callback error:", err);
+    console.error("OAuth callback error:", error);
     return redirect("/?error=callback_failed");
   }
 }

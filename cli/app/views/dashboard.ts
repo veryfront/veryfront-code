@@ -176,23 +176,6 @@ function renderHelpBar(state: AppState): string {
 }
 
 /**
- * Render a boxed dashboard (alternative style)
- */
-export function renderDashboardBoxed(state: AppState): string {
-  const termWidth = Math.min(getTerminalWidth() - 4, 80);
-  const content = renderDashboard(state);
-
-  return box(content, {
-    style: "rounded",
-    title: "Veryfront",
-    titleColor: "\x1b[38;2;252;143;93m",
-    width: termWidth,
-    paddingX: 1,
-    paddingY: 0,
-  });
-}
-
-/**
  * Render empty state when no projects found
  */
 export function renderEmptyState(state: AppState): string {

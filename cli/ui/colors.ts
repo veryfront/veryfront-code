@@ -207,18 +207,6 @@ export const errorBold = (text: string) => bold(error(text));
 
 export { RESET as reset };
 
-const MATRIX_STATES = [
-  ["●", "○", "○"],
-  ["○", "●", "○"],
-  ["○", "○", "●"],
-  ["○", "●", "○"],
-];
-
-export function animatedMatrix(frame: number): string {
-  const state = MATRIX_STATES[frame % MATRIX_STATES.length] ?? ["●", "○", "○"];
-  return state.map((dot) => (dot === "●" ? brand(dot) : muted(dot))).join("");
-}
-
 /**
  * Apply shimmer effect to text - creates a wave of brightness moving across
  * @param text The text to shimmer

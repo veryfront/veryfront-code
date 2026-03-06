@@ -8,7 +8,6 @@ export { moveRemoteFocusDown, moveRemoteFocusUp, updateRemoteFocus } from "./rem
 
 export {
   handleAuthKey,
-  handleExamplesKey,
   handleNewProjectKey,
   handleTemplatesKey,
   type ViewHandlerContext,

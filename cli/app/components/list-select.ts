@@ -99,15 +99,6 @@ export function selectByNumber<T>(
   return { ...state, selectedIndex: index };
 }
 
-/**
- * Get currently selected item
- */
-export function getSelectedItem<T>(
-  state: ListSelectState<T>,
-): ListItem<T> | undefined {
-  return state.items[state.selectedIndex];
-}
-
 function getShortcut(displayNum: number): string | undefined {
   if (displayNum <= 0 || displayNum > 35) return undefined;
   if (displayNum <= 9) return String(displayNum);
@@ -203,16 +194,4 @@ export function renderList<T>(
   if (end < state.items.length) lines.push(`   ${dim("↓")}  ${dim("more below")}`);
 
   return lines.join("\n");
-}
-
-/**
- * Create a list section with title
- */
-export function listSection<T>(
-  title: string,
-  state: ListSelectState<T>,
-  options: ListSelectOptions = {},
-): string {
-  const header = `  ${dim(title)} ${dim(`(${state.items.length})`)}`;
-  return `${header}\n${renderList(state, options)}`;
 }

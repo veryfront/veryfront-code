@@ -6,9 +6,9 @@ import {
   onSignal,
   promptSync,
   readStdinByteSync,
+  setRawMode,
   writeStdout,
 } from "veryfront/platform";
-import { setRawMode } from "veryfront/platform";
 import { DEFAULT_DEV_PORT } from "../shared/constants.ts";
 import {
   bold,
