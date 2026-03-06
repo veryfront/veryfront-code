@@ -38,13 +38,17 @@ export class Sandbox {
     private apiUrl: string,
   ) {}
 
-  /** Create a new sandbox session. Claims a warm pod or creates a new one. */
-  static async create(options: SandboxOptions): Promise<Sandbox> {
-    const apiUrl = options.apiUrl ||
+  private static resolveApiUrl(options: SandboxOptions): string {
+    return options.apiUrl ||
       (typeof Deno !== "undefined"
         ? Deno.env.get("VERYFRONT_API_URL")
         : process.env.VERYFRONT_API_URL) ||
       "https://api.veryfront.com";
+  }
+
+  /** Create a new sandbox session. Claims a warm pod or creates a new one. */
+  static async create(options: SandboxOptions): Promise<Sandbox> {
+    const apiUrl = Sandbox.resolveApiUrl(options);
 
     const res = await fetch(`${apiUrl}/sandbox-sessions`, {
       method: "POST",
@@ -70,11 +74,7 @@ export class Sandbox {
 
   /** Reconnect to an existing sandbox session. */
   static async get(id: string, options: SandboxOptions): Promise<Sandbox> {
-    const apiUrl = options.apiUrl ||
-      (typeof Deno !== "undefined"
-        ? Deno.env.get("VERYFRONT_API_URL")
-        : process.env.VERYFRONT_API_URL) ||
-      "https://api.veryfront.com";
+    const apiUrl = Sandbox.resolveApiUrl(options);
 
     const res = await fetch(`${apiUrl}/sandbox-sessions/${id}`, {
       headers: { Authorization: `Bearer ${options.authToken}` },
