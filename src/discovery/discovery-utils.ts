@@ -37,13 +37,6 @@ export function trackAgentPath(id: string, filePath: string): void {
 }
 
 /**
- * Get all tracked agent paths
- */
-export function getTrackedAgentPaths(): Map<string, string> {
-  return discoveredAgentPaths;
-}
-
-/**
  * Clear tracked agent paths
  */
 export function clearTrackedAgents(): void {

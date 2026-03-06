@@ -156,7 +156,7 @@ describe("error-registry", () => {
     });
 
     it("should return empty array for invalid category", () => {
-      const errors = getErrorsByCategory("INVALID");
+      const errors = getErrorsByCategory("INVALID" as ErrorCategory);
       assertEquals(errors.length, 0);
     });
   });

@@ -17,8 +17,11 @@ import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { hashCSS } from "./candidate-extractor.ts";
-import { buildCSSCacheEntry, parseCSSCacheEntry } from "./tailwind-compiler-utils.ts";
-import { resolveStylesheet } from "./tailwind-compiler-utils.ts";
+import {
+  buildCSSCacheEntry,
+  parseCSSCacheEntry,
+  resolveStylesheet,
+} from "./tailwind-compiler-utils.ts";
 
 const logger = serverLogger.component("tailwind");
 

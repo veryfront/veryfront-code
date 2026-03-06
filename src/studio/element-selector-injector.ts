@@ -31,8 +31,6 @@ interface InjectorOptions {
   prefix?: string;
   /** Elements to skip (in addition to defaults) */
   skipElements?: string[];
-  /** Only inject into elements within this selector */
-  rootSelector?: string;
 }
 
 /** Inject data-vf-selector attributes into HTML for Studio Navigator */

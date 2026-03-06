@@ -4,7 +4,8 @@
 
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
-import { isVeryfrontError, wrapUnknownError, wrapWithContext } from "./wrap-unknown.ts";
+import { wrapUnknownError, wrapWithContext } from "./wrap-unknown.ts";
+import { isVeryfrontError } from "../http-error.ts";
 import { VeryfrontError } from "../types.ts";
 import { CONFIG_NOT_FOUND } from "../error-registry.ts";
 

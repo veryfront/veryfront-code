@@ -7,9 +7,13 @@
  * @see https://datatracker.ietf.org/doc/html/rfc9457
  */
 
-import { type ErrorCategory, type RFC9457Response, VeryfrontError } from "./types.ts";
+import {
+  type ErrorCategory,
+  type RegisteredError,
+  type RFC9457Response,
+  VeryfrontError,
+} from "./types.ts";
 import { getErrorMessage } from "./veryfront-error.ts";
-import type { RegisteredError } from "./types.ts";
 
 /**
  * Content-Type header for RFC 9457 responses
@@ -81,7 +85,7 @@ export function createProblemResponse(params: {
  * Check if an error is a VeryfrontError with slug-based identity
  */
 export function isVeryfrontError(error: unknown): error is VeryfrontError {
-  return error instanceof VeryfrontError && typeof (error as VeryfrontError).slug === "string";
+  return error instanceof VeryfrontError;
 }
 
 /**

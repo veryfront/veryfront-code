@@ -99,12 +99,10 @@ components/
 ├── LayoutComponent.tsx   # Layout wrapper
 ├── ProviderComponent.tsx # Provider wrapper
 ├── AppWrapper.tsx        # App-level wrapper
-├── optimized-image/      # Image optimization
-│   ├── OptimizedImage.tsx
-│   ├── ImageLoader.tsx
-│   └── srcset-builder.ts
-└── live/                 # Live reload components
-    └── LiveReload.tsx
+└── optimized-image/      # Image optimization
+    ├── OptimizedImage.tsx
+    ├── ImageLoader.tsx
+    └── srcset-builder.ts
 ```
 
 ## 🔗 Dependencies

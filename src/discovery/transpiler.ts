@@ -205,9 +205,9 @@ export async function importModule(
     },
   });
 
-  if (result.errors?.length) {
+  if (result.errors.length > 0) {
     throw new Error(
-      `Failed to transpile ${filePath}: ${result.errors[0]?.text || "unknown error"}`,
+      `Failed to transpile ${filePath}: ${result.errors[0]?.text ?? "unknown error"}`,
     );
   }
 

@@ -177,36 +177,8 @@ export function createMarkdownDragGhost(block: Element): HTMLElement {
 }
 
 // ---------------------------------------------------------------------------
-// Line number / MDX helpers
+// MDX helpers
 // ---------------------------------------------------------------------------
-
-export function getLineNumberForOffset(text: unknown, offset: unknown): number {
-  const source = typeof text === "string" ? text : "";
-  const maxOffset = Math.max(0, Math.min(source.length, Math.trunc((offset as number) || 0)));
-  let line = 1;
-  for (let i = 0; i < maxOffset; i += 1) {
-    if (source.charCodeAt(i) === 10) {
-      line += 1;
-    }
-  }
-  return line;
-}
-
-export function getMdxComponentName(blockText: unknown): string {
-  const source = typeof blockText === "string" ? blockText : "";
-  const fence = String.fromCharCode(96, 96, 96);
-  const componentMatch = source.match(/<\s*([A-Z][\w.]*)/);
-  if (componentMatch && componentMatch[1]) {
-    return componentMatch[1];
-  }
-  if (source.trim().startsWith(fence + "tsx")) {
-    return "tsx block";
-  }
-  if (source.trim().startsWith(fence + "jsx")) {
-    return "jsx block";
-  }
-  return "component block";
-}
 
 export function getMdxBlockOpenUiState(block: any): {
   hasResolvedTarget: boolean;

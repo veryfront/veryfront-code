@@ -14,7 +14,6 @@ The React integration module provides React version compatibility, framework-pro
 - SSR/SSG rendering adapters
 - React hooks for framework features
 - Component configuration for different React versions
-- Live development components with HMR support
 
 ### What this module does NOT do:
 
@@ -47,10 +46,6 @@ react/
     ├── Link.tsx            # Navigation links
     ├── Head.tsx            # Meta tag management
     ├── MDXProvider.tsx     # MDX context provider
-    ├── live/               # Live/HMR components
-    │   ├── LiveApp.tsx
-    │   ├── LiveDataProvider.tsx
-    │   └── LiveLayoutComponent.tsx
     └── optimized-image/    # Optimized images
         ├── OptimizedImage.tsx
         ├── OptimizedBackgroundImage.tsx

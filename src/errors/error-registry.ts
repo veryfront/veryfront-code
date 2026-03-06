@@ -1,4 +1,4 @@
-import { defineError } from "./types.ts";
+import { defineError, type ErrorCategory } from "./types.ts";
 
 // =============================================================================
 // CONFIG - Configuration & environment errors
@@ -789,7 +789,7 @@ export function getErrorBySlug(slug: ErrorSlug) {
 /**
  * Get all errors in a category
  */
-export function getErrorsByCategory(category: string) {
+export function getErrorsByCategory(category: ErrorCategory) {
   return Object.values(ERROR_REGISTRY).filter((error) => error.category === category);
 }
 

@@ -132,15 +132,6 @@ export function fromError(error: unknown): VeryfrontErrorData | null {
   return context as VeryfrontErrorData;
 }
 
-export function logError(
-  error: VeryfrontErrorData,
-  logger?: { error: (msg: string, ...args: unknown[]) => void },
-): void {
-  const log = logger ?? console;
-  const context = "context" in error ? error.context : undefined;
-  log.error(`[${error.type}] ${error.message}`, context ?? {});
-}
-
 /**
  * Extract error message from any error type
  */

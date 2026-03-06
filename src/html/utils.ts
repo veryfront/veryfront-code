@@ -37,30 +37,6 @@ const DEFAULT_VERSIONS: DetectedVersions = {
   veryfront: VERYFRONT_VERSION,
 };
 
-export async function detectVersions(projectDir: string): Promise<DetectedVersions> {
-  try {
-    const { createFileSystem } = await import("../platform/compat/fs.ts");
-    const fs = createFileSystem();
-    const content = await fs.readTextFile(`${projectDir}/package.json`);
-    const pkg = JSON.parse(content) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-
-    // Use shared resolver for React version (ensures consistency with module server)
-    const reactVersion = await resolveProjectReactVersion({ projectDir });
-
-    return {
-      react: reactVersion,
-      veryfront: deps.veryfront ? stripSemverRange(deps.veryfront) : DEFAULT_VERSIONS.veryfront,
-    };
-  } catch {
-    return DEFAULT_VERSIONS;
-  }
-}
-
 type CdnProvider = "esm.sh" | "unpkg" | "jsdelivr";
 
 // Platform utilities served from local module server to match SSR behavior.
@@ -220,10 +196,6 @@ function getCdnImportMap(
   return (CDN_IMPORT_MAP_FACTORIES[provider] ?? getEsmShImportMap)(versions);
 }
 
-function getDefaultHTMLImportMap(): Record<string, string> {
-  return getEsmShImportMap(DEFAULT_VERSIONS);
-}
-
 async function resolveVersions(
   projectDir: string,
   config?: VeryfrontConfig,
@@ -311,11 +283,6 @@ export async function buildImportMapJson(
     imports = { ...imports, ...customImports };
   }
 
-  return JSON.stringify({ imports }, null, 2);
-}
-
-export function buildImportMapJsonSync(importMap?: Record<string, string>): string {
-  const imports = importMap ?? getDefaultHTMLImportMap();
   return JSON.stringify({ imports }, null, 2);
 }
 
