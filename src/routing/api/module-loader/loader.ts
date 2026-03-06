@@ -343,7 +343,9 @@ function createImportMapPlugin(
           : pathHelper.resolve(projectDir, resolvedPath);
 
         if (!isWithinDirectory(pathHelper.resolve(projectDir), absolutePath)) {
-          logger.error(`[API] Import map entry escapes project directory: ${args.path} -> ${absolutePath}`);
+          logger.error(
+            `[API] Import map entry escapes project directory: ${args.path} -> ${absolutePath}`,
+          );
           return { errors: [{ text: `Import map path escapes project: ${args.path}` }] };
         }
 
