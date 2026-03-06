@@ -367,4 +367,49 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 
     assertMatch(caught, /import map path escapes project|Failed to load/i);
   });
+
+  it("rejects relative imports inside handler that escape project directory", async () => {
+    const realDir = await makeTempDir();
+    const modulePath = join(realDir, "handler.ts");
+
+    // Handler itself is inside project, but contains a relative import that escapes
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import secret from "../../../../etc/passwd";`,
+        `export const GET = () => new Response(secret);`,
+      ].join("\n"),
+    );
+
+    // Use a virtual adapter to force the esbuild transpile path
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
+    const toReal = (path: string): string => path.replace(virtualBase, realDir);
+
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => fs.readTextFile(toReal(path)),
+        exists: (path: string) => fs.exists(toReal(path)),
+      },
+    };
+
+    let caught = "";
+    try {
+      await loadHandlerModule({
+        projectDir: virtualBase,
+        modulePath: join(virtualBase, "handler.ts"),
+        adapter: virtualAdapter,
+        config: undefined,
+      });
+    } catch (error) {
+      caught = error instanceof Error ? error.message : String(error);
+    }
+
+    assertMatch(
+      caught,
+      /escapes project|Failed to load/i,
+    );
+  });
 });

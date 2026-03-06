@@ -362,6 +362,7 @@ function createImportMapPlugin(
               adapter,
               args.path,
               FILE_EXTENSIONS,
+              projectDir,
             );
 
             return {
@@ -381,7 +382,10 @@ function createImportMapPlugin(
 }
 
 /** Resolves relative imports through the adapter's virtual FS for remote projects. */
-function createAdapterResolvePlugin(adapter: RuntimeAdapter): Plugin {
+function createAdapterResolvePlugin(
+  adapter: RuntimeAdapter,
+  projectDir: string,
+): Plugin {
   return {
     name: "vf-adapter-resolve",
     setup(build) {
@@ -392,6 +396,16 @@ function createAdapterResolvePlugin(adapter: RuntimeAdapter): Plugin {
         if (!baseDir) return undefined;
 
         const absolutePath = pathHelper.resolve(baseDir, args.path);
+
+        if (!isWithinDirectory(pathHelper.resolve(projectDir), absolutePath)) {
+          logger.error(
+            `[API] Adapter resolve path escapes project: ${args.path} -> ${absolutePath}`,
+          );
+          return {
+            errors: [{ text: `Relative import escapes project: ${args.path}` }],
+          };
+        }
+
         logger.debug(
           `[API] Adapter resolve: ${args.path} (from ${
             args.importer || "stdin"
@@ -413,6 +427,7 @@ function createAdapterResolvePlugin(adapter: RuntimeAdapter): Plugin {
               adapter,
               args.path,
               FILE_EXTENSIONS,
+              projectDir,
             );
 
             return {
@@ -533,7 +548,7 @@ function loadAndTranspileModule(
         },
         plugins: [
           createImportMapPlugin(projectDir, adapter, config),
-          createAdapterResolvePlugin(adapter),
+          createAdapterResolvePlugin(adapter, projectDir),
           createHTTPPlugin(allowedHosts),
         ],
       });
