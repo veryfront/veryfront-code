@@ -113,3 +113,23 @@ export interface OpenAPIResponse {
     "application/json"?: { schema: JsonSchema };
   };
 }
+
+const STATUS_DESCRIPTIONS: Record<number, string> = {
+  200: "Successful response",
+  201: "Resource created",
+  204: "No content",
+  400: "Bad request",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "Not found",
+  409: "Conflict",
+  422: "Unprocessable entity",
+  429: "Too many requests",
+  500: "Internal server error",
+  502: "Bad gateway",
+  503: "Service unavailable",
+};
+
+export function getDefaultStatusDescription(statusCode: number): string {
+  return STATUS_DESCRIPTIONS[statusCode] ?? `Response with status ${statusCode}`;
+}

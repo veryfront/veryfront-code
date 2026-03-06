@@ -16,8 +16,8 @@ export function initializeInstruments(
   meter: Meter,
   config: MetricsConfig,
   runtimeState: RuntimeState,
-): Promise<MetricsInstruments> {
-  const instruments: MetricsInstruments = {
+): MetricsInstruments {
+  const emptyInstruments: MetricsInstruments = {
     httpRequestCounter: null,
     httpRequestDuration: null,
     httpActiveRequests: null,
@@ -53,7 +53,8 @@ export function initializeInstruments(
   };
 
   try {
-    Object.assign(instruments, {
+    return {
+      ...emptyInstruments,
       ...createHttpInstruments(meter, config),
       ...createCacheInstruments(meter, config, runtimeState),
       ...createRenderInstruments(meter, config),
@@ -62,10 +63,9 @@ export function initializeInstruments(
       ...createDataInstruments(meter, config),
       ...createMemoryInstruments(meter, config),
       ...createErrorInstruments(meter, config),
-    });
+    };
   } catch (error) {
     logger.warn("Failed to initialize metric instruments", error);
+    return emptyInstruments;
   }
-
-  return Promise.resolve(instruments);
 }

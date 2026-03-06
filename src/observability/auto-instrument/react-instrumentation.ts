@@ -1,4 +1,4 @@
-import type { Span } from "@opentelemetry/api";
+import { type Span, SpanStatusCode } from "@opentelemetry/api";
 import { endSpan, setSpanAttributes, SpanNames, startSpan, withSpan } from "../tracing/index.ts";
 import { recordRenderError } from "../metrics/index.ts";
 
@@ -47,7 +47,7 @@ function handleRenderError(span: Span | null, error: unknown, componentName: str
   if (!span) return;
 
   span.recordException(error as Error);
-  span.setStatus({ code: 2, message: String(error) }); // 2 = ERROR
+  span.setStatus({ code: SpanStatusCode.ERROR, message: String(error) });
 }
 
 function recordRenderDuration(span: Span | null, startTime: number): void {

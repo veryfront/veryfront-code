@@ -98,9 +98,8 @@ export function getToolArguments(part: ToolCallPart): Record<string, unknown> {
   if (hasArgs(part)) return part.args;
   if (hasInput(part)) return part.input;
 
-  const basePart = part as ToolCallPart;
   throw new Error(
-    `Tool call part for "${basePart.toolName}" (${basePart.toolCallId}) missing both 'args' and 'input' fields`,
+    `Tool call part for "${part.toolName}" (${part.toolCallId}) missing both 'args' and 'input' fields`,
   );
 }
 

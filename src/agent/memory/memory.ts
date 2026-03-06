@@ -3,19 +3,10 @@ import {
   getTextFromMemoryParts,
   type Memory,
   type MemoryConfigBase,
-  type MemoryPersistence,
   type MemoryStats,
   type MinimalMessage,
 } from "./memory-interface.ts";
 import { withSpan, withSpanSync } from "#veryfront/observability/tracing/otlp-setup.ts";
-
-export {
-  estimateTokens,
-  type Memory,
-  type MemoryPersistence,
-  type MemoryStats,
-  type MinimalMessage,
-};
 
 type BasicMemoryType = "conversation" | "buffer";
 

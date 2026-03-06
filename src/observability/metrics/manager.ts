@@ -82,7 +82,7 @@ export class MetricsManager {
       this.api = await import("@opentelemetry/api");
       this.meter = this.api.metrics.getMeter(finalConfig.prefix, VERSION);
 
-      this.instruments = await initializeInstruments(this.meter, finalConfig, this.runtimeState);
+      this.instruments = initializeInstruments(this.meter, finalConfig, this.runtimeState);
       this.recorder.instruments = this.instruments;
 
       logger.info("OpenTelemetry metrics initialized", {

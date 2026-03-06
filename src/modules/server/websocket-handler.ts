@@ -64,7 +64,7 @@ export function setupWebSocketHandlers(
         return;
       }
 
-      let message: any;
+      let message: { type?: string };
       try {
         message = JSON.parse(event.data);
       } catch (parseError) {

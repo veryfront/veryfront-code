@@ -14,14 +14,14 @@ export const DEFAULT_CONFIG: MetricsConfig = {
 };
 
 function getEnvVar(env: unknown, key: string): string | undefined {
-  const envObj = env as Record<string, unknown> | null | undefined;
+  if (env == null || typeof env !== "object") return undefined;
 
-  const getter = envObj?.get;
-  if (typeof getter === "function") {
-    return getter.call(envObj, key) as string | undefined;
+  const envObj = env as Record<string, unknown>;
+  if (typeof envObj.get === "function") {
+    return envObj.get(key) as string | undefined;
   }
 
-  const value = envObj?.[key];
+  const value = envObj[key];
   return typeof value === "string" ? value : undefined;
 }
 
