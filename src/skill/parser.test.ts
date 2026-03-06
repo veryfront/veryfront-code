@@ -136,6 +136,51 @@ Body text.`;
       assertEquals(result.allowedTools, undefined);
     });
 
+    it("should reject non-string non-array allowed-tools (fail closed)", () => {
+      try {
+        validateSkillMetadata(
+          { description: "desc", "allowed-tools": 123 },
+          "test",
+        );
+        throw new Error("Should have thrown");
+      } catch (e) {
+        assertEquals(
+          (e as Error).message.includes("expected a string or array of strings"),
+          true,
+        );
+      }
+    });
+
+    it("should reject object allowed-tools (fail closed)", () => {
+      try {
+        validateSkillMetadata(
+          { description: "desc", "allowed-tools": { Read: true } },
+          "test",
+        );
+        throw new Error("Should have thrown");
+      } catch (e) {
+        assertEquals(
+          (e as Error).message.includes("expected a string or array of strings"),
+          true,
+        );
+      }
+    });
+
+    it("should reject boolean allowed-tools (fail closed)", () => {
+      try {
+        validateSkillMetadata(
+          { description: "desc", "allowed-tools": true },
+          "test",
+        );
+        throw new Error("Should have thrown");
+      } catch (e) {
+        assertEquals(
+          (e as Error).message.includes("expected a string or array of strings"),
+          true,
+        );
+      }
+    });
+
     it("should reject invalid allowed-tools pattern", () => {
       try {
         validateSkillMetadata(

@@ -75,7 +75,7 @@ function getSkillActivationRequiredError(toolName: string): string {
  * Returns `[]` (no tools allowed) for invalid/missing policies instead of
  * `undefined` (no restrictions), preventing accidental policy bypass.
  */
-function extractSkillPolicy(result: unknown): string[] | undefined {
+export function extractSkillPolicy(result: unknown): string[] | undefined {
   if (!result || typeof result !== "object") return undefined;
   const skillResult = result as { allowedTools?: unknown };
 
@@ -110,7 +110,7 @@ type SkillPolicyResult =
  * Enforce skill policy on a single tool call.
  * Shared between generate() and stream() paths.
  */
-function enforceSkillPolicy(
+export function enforceSkillPolicy(
   toolName: string,
   activeSkillPolicy: string[] | undefined,
   mustLoadSkillFirst: boolean,

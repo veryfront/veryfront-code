@@ -28,6 +28,18 @@ describe("src/skill/allowed-tools", () => {
     it("should return false for invalid pattern", () => {
       assertEquals(matchesAllowedTool("Read", "Bash(git:*)"), false);
     });
+
+    it("should reject double-colon patterns", () => {
+      assertEquals(matchesAllowedTool("api::list", "api::*"), false);
+    });
+
+    it("should reject leading digit patterns", () => {
+      assertEquals(matchesAllowedTool("123tool", "123tool"), false);
+    });
+
+    it("should reject trailing colon patterns", () => {
+      assertEquals(matchesAllowedTool("api:", "api:"), false);
+    });
   });
 
   describe("filterToolsForSkill", () => {
