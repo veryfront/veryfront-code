@@ -17,9 +17,3 @@ g.__vfTestEnv = true;
 g.__vfTestEnvMask = {
   prefixes: ["VERYFRONT_", "OTEL_", "OAUTH_", "GITHUB_", "OPENAI_", "ANTHROPIC_", "GOOGLE_"],
 };
-
-/**
- * Marker that test initialization has run.
- * Can be checked by other modules to verify proper init order.
- */
-export const TEST_ENV_INITIALIZED = true;

@@ -1,5 +1,3 @@
-// Direct import from base.ts to avoid circular dependency through barrel
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
@@ -8,8 +6,6 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 
 export class ServerDataFetcher {
-  constructor(private adapter?: RuntimeAdapter) {}
-
   fetch(pageModule: PageWithData, context: DataContext): Promise<DataResult> {
     if (typeof pageModule.getServerData !== "function") {
       return Promise.resolve({ props: {} });
@@ -30,12 +26,9 @@ export class ServerDataFetcher {
         const start = performance.now();
 
         try {
-          const getServerData = pageModule.getServerData;
-          if (!getServerData) throw new Error(`No getServerData function on ${pathname}`);
-
           const result = await circuitBreaker.execute(() =>
             withTimeoutThrow(
-              Promise.resolve(getServerData(context)),
+              Promise.resolve(pageModule.getServerData!(context)),
               DATA_FETCH_TIMEOUT_MS,
               `getServerData for ${pathname}`,
             )

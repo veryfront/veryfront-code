@@ -21,22 +21,7 @@ export const CacheRepositoryOptionsSchema = z.object({
   maxEntries: z.number().int().positive().optional(),
 });
 
-export const FileSystemRepositoryOptionsSchema = z.object({
-  baseDir: z.string(),
-  securityContext: z
-    .enum([
-      "user-input",
-      "static-serving",
-      "build",
-      "internal",
-      "route-discovery",
-      "module-loading",
-    ])
-    .optional(),
-});
-
 // Inferred types
 export type RepositoryContext = z.infer<typeof RepositoryContextSchema>;
 export type CacheStats = z.infer<typeof CacheStatsSchema>;
 export type CacheRepositoryOptions = z.infer<typeof CacheRepositoryOptionsSchema>;
-export type FileSystemRepositoryOptions = z.infer<typeof FileSystemRepositoryOptionsSchema>;

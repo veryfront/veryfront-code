@@ -11,9 +11,6 @@
 import { SKILL_ALLOWED_TOOL_PATTERN_REGEX, SKILL_TOOL_IDS } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
-/** Skill-system tools that are always allowed regardless of policy */
-const ALWAYS_ALLOWED_TOOLS = SKILL_TOOL_IDS;
-
 /**
  * Check if a tool name matches a single allowed-tools pattern.
  *
@@ -63,7 +60,7 @@ export function filterToolsForSkill<T extends FilterableToolDefinition>(
   }
 
   return tools.filter((tool) => {
-    if (ALWAYS_ALLOWED_TOOLS.has(tool.name)) return true;
+    if (SKILL_TOOL_IDS.has(tool.name)) return true;
     return allowedTools.some((pattern) => matchesAllowedTool(tool.name, pattern));
   });
 }
@@ -80,7 +77,7 @@ export function isToolAllowedBySkill(
   allowedTools: string[] | undefined,
 ): boolean {
   if (allowedTools === undefined) return true;
-  if (ALWAYS_ALLOWED_TOOLS.has(toolName)) return true;
+  if (SKILL_TOOL_IDS.has(toolName)) return true;
   return allowedTools.some((pattern) => matchesAllowedTool(toolName, pattern));
 }
 

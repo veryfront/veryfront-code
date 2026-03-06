@@ -1,6 +1,6 @@
 /**
  * Shared type definitions — server/handler types, branded IDs, React component
- * contracts, page/request contexts, bundler config, and cache entry shapes.
+ * contracts, page/request contexts, and bundler config.
  *
  * @module types
  */
@@ -21,7 +21,6 @@ export type {
   HandlerMetadata,
   HandlerResult,
   MiddlewareFunction,
-  MiddlewareFunction as ServerMiddlewareFunction,
   ParsedDomain,
   RouteHandlerModule,
   RoutePattern,
@@ -117,17 +116,7 @@ export interface RequestContext {
   headers?: Headers;
 }
 
-export interface CacheEntry<T = unknown> {
-  value: T;
-  ttl?: number;
-  timestamp?: number;
-}
-
 export type MaybePromise<T> = T | Promise<T>;
-
-export type DeepPartial<T> = {
-  [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
-};
 
 export interface MdxBundle {
   compiledCode: string;
@@ -173,14 +162,6 @@ export interface ScriptPageModule {
   default?: ((ctx: PageContext) => MaybePromise<string | Response>) | string;
   html?: string;
   generateMetadata?: (ctx: PageContext) => MaybePromise<Record<string, unknown>>;
-}
-
-export interface Bundler {
-  bundleTsxSourceToComponent?: (
-    content: string,
-    filePath: string,
-    projectDir: string,
-  ) => Promise<React.ComponentType>;
 }
 
 export interface RenderMetadata {

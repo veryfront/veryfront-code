@@ -1,12 +1,7 @@
 import type { DirEntry, FileInfo } from "#veryfront/platform/adapters/base.ts";
 
 // Re-export schema-based types
-export type {
-  CacheRepositoryOptions,
-  CacheStats,
-  FileSystemRepositoryOptions,
-  RepositoryContext,
-} from "./schemas/index.ts";
+export type { CacheRepositoryOptions, CacheStats, RepositoryContext } from "./schemas/index.ts";
 
 // Import for use in interface definitions
 import type { CacheStats, RepositoryContext } from "./schemas/index.ts";

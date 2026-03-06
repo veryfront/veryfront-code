@@ -27,6 +27,7 @@ export {
   SKILL_NAME_REGEX,
   SKILL_REFERENCES_DIR,
   SKILL_SCRIPTS_DIR,
+  SKILL_TOOL_IDS,
 } from "./types.ts";
 
 // Registry

@@ -10,7 +10,6 @@ export type {
   CacheRepositoryOptions,
   CacheStats,
   FileSystemRepository,
-  FileSystemRepositoryOptions,
   RepositoryContext,
 } from "./types.ts";
 

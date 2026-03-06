@@ -132,9 +132,8 @@ export async function withTempDir<T>(
 ): Promise<T> {
   const tempDir = await makeTempDirWithOptions({ prefix: options?.prefix ?? "test-" });
 
-  let result: T;
   try {
-    result = await fn(tempDir);
+    return await fn(tempDir);
   } finally {
     try {
       if (isDeno) {
@@ -148,7 +147,6 @@ export async function withTempDir<T>(
       // Ignore cleanup errors
     }
   }
-  return result;
 }
 
 export async function withTempFile<T>(
@@ -157,9 +155,8 @@ export async function withTempFile<T>(
 ): Promise<T> {
   const tempFile = await makeTempFile({ prefix: options?.prefix, suffix: options?.suffix });
 
-  let result: T;
   try {
-    result = await fn(tempFile);
+    return await fn(tempFile);
   } finally {
     try {
       if (isDeno) {
@@ -173,7 +170,6 @@ export async function withTempFile<T>(
       // Ignore cleanup errors
     }
   }
-  return result;
 }
 
 export async function withEnv<T>(

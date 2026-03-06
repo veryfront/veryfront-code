@@ -1,5 +1,3 @@
-// Direct import from base.ts to avoid circular dependency through barrel
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
@@ -14,10 +12,11 @@ export class DataFetcher {
   private staticFetcher: StaticDataFetcher;
   private pathsFetcher: StaticPathsFetcher;
 
-  constructor(adapter?: RuntimeAdapter) {
+  // deno-lint-ignore no-unused-vars -- adapter kept for public API compatibility
+  constructor(adapter?: unknown) {
     this.cacheManager = new CacheManager();
-    this.serverFetcher = new ServerDataFetcher(adapter);
-    this.staticFetcher = new StaticDataFetcher(this.cacheManager, adapter);
+    this.serverFetcher = new ServerDataFetcher();
+    this.staticFetcher = new StaticDataFetcher(this.cacheManager);
     this.pathsFetcher = new StaticPathsFetcher();
   }
 
@@ -27,26 +26,21 @@ export class DataFetcher {
     mode: "development" | "production" = "development",
   ): Promise<DataResult> {
     const preferServerData = mode === "development" || !pageModule.getStaticData;
+    const useServer = preferServerData && !!pageModule.getServerData;
+    const useStatic = !useServer && !!pageModule.getStaticData;
 
-    let fetchType: "server" | "static" | "none" = "none";
-    if (preferServerData && pageModule.getServerData) {
-      fetchType = "server";
-    } else if (pageModule.getStaticData) {
-      fetchType = "static";
-    }
+    const fetchType: "server" | "static" | "none" = useServer
+      ? "server"
+      : useStatic
+      ? "static"
+      : "none";
 
     return withSpan(
       SpanNames.DATA_FETCH,
-      async () => {
-        if (preferServerData && pageModule.getServerData) {
-          return this.serverFetcher.fetch(pageModule, context);
-        }
-
-        if (pageModule.getStaticData) {
-          return this.staticFetcher.fetch(pageModule, context);
-        }
-
-        return { props: {} };
+      () => {
+        if (useServer) return this.serverFetcher.fetch(pageModule, context);
+        if (useStatic) return this.staticFetcher.fetch(pageModule, context);
+        return Promise.resolve({ props: {} });
       },
       {
         "data.fetch_type": fetchType,

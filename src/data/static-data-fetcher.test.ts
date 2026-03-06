@@ -35,10 +35,9 @@ describe("StaticDataFetcher", () => {
       assertExists(fetcher);
     });
 
-    it("should create instance with adapter", () => {
+    it("should create instance with cache manager only", () => {
       const cache = new CacheManager();
-      const mockAdapter = { env: { get: () => undefined } } as any;
-      const fetcher = new StaticDataFetcher(cache, mockAdapter);
+      const fetcher = new StaticDataFetcher(cache);
       assertExists(fetcher);
     });
   });

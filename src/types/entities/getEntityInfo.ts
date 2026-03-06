@@ -436,7 +436,7 @@ export async function getLayoutEntity(
 function getSlugFromPath(filePath: string): string {
   const parts = filePath.split(pathHelper.sep);
   const fileName = parts[parts.length - 1] ?? "";
-  const slug = fileName.replace(/\.(mdx?|tsx?|jsx?|ts)$/, "");
+  const slug = fileName.replace(/\.(mdx?|tsx?|jsx?)$/, "");
   if (slug !== "index") return slug;
 
   const parentDir = parts[parts.length - 2];

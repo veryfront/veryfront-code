@@ -1,5 +1,3 @@
-// Direct import from base.ts to avoid circular dependency through barrel
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { CacheManager } from "./data-fetching-cache.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -56,10 +54,7 @@ function getProjectId(context: DataContext, fallback: string): string {
 export class StaticDataFetcher {
   private pendingRevalidations = new Map<string, Promise<void>>();
 
-  constructor(
-    private cacheManager: CacheManager,
-    private adapter?: RuntimeAdapter,
-  ) {}
+  constructor(private cacheManager: CacheManager) {}
 
   async fetch(pageModule: PageWithData, context: DataContext): Promise<DataResult> {
     if (typeof pageModule.getStaticData !== "function") return { props: {} };
