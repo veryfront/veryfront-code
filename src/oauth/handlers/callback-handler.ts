@@ -35,6 +35,9 @@ export interface OAuthCallbackHandlerOptions {
   /** Custom error callback */
   onError?: (serviceId: string, error: string) => void | Promise<void>;
 
+  /** Skip state validation for providers that don't return state */
+  skipStateValidation?: boolean;
+
   /** EnvironmentConfig for test isolation (defaults to getEnvironmentConfig()) */
   env?: EnvironmentConfig;
 
@@ -53,6 +56,7 @@ export function createOAuthCallbackHandler(
     errorRedirect = "/",
     onSuccess,
     onError,
+    skipStateValidation = false,
     env = getEnvironmentConfig(),
     envReader = getEnv,
   } = options;
@@ -105,12 +109,20 @@ export function createOAuthCallbackHandler(
     if (!code) return handleError(appUrl, "no_code");
 
     let oauthState: Awaited<ReturnType<TokenStore["getState"]>> | null = null;
-    if (state) {
+    if (!skipStateValidation) {
+      if (!state) {
+        return handleError(appUrl, "invalid_state", "Missing state parameter", {
+          serviceId: config.serviceId,
+        });
+      }
       oauthState = await tokenStore.getState(state);
       if (!oauthState) {
-        logger.warn("Invalid or expired state", { serviceId: config.serviceId });
-        // Continue anyway - some providers don't properly return state
+        return handleError(appUrl, "invalid_state", "Invalid or expired state", {
+          serviceId: config.serviceId,
+        });
       }
+    } else if (state) {
+      oauthState = await tokenStore.getState(state);
     }
 
     const service = new OAuthService(config, tokenStore, envReader);
