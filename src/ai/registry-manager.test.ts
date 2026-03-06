@@ -82,6 +82,13 @@ describe("ProjectScopedRegistryManager", () => {
       assert(manager.has("shared-a"));
     });
 
+    it("should return true for shared items even when project registry exists", () => {
+      const manager = createManager<string>("tool");
+      manager.register("proj-item", "pv");
+      manager.registerShared("shared-item", "sv");
+      assert(manager.has("shared-item"));
+    });
+
     it("should return false for missing items", () => {
       const manager = createManager<string>("tool");
       assertEquals(manager.has("missing"), false);

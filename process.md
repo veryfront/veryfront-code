@@ -1,11 +1,11 @@
 # Refactoring Progress Tracker
 
 > Tracks per-module refactoring progress across sessions.
-> Last updated: 2026-03-06 14:30
+> Last updated: 2026-03-06 15:15
 
 ## Summary
 - Total modules: 54 (43 src + 11 cli)
-- Completed: 4 (sandbox, prompt, resource, tool)
+- Completed: 10 (sandbox, prompt, resource, tool, ai, client, schemas, task, issues, mcp)
 - In progress: 0
 - Skipped: 5 (4 barrels + cli/templates)
 
@@ -33,14 +33,14 @@
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 6 | src/ai/ | 2 | 1 | QUEUED | — | — | |
-| 7 | src/client/ | 3 | 1 | QUEUED | — | — | |
-| 8 | src/schemas/ | 3 | 1 | QUEUED | — | — | |
-| 9 | src/task/ | 4 | 2 | QUEUED | — | — | |
-| 10 | src/issues/ | 5 | 2 | QUEUED | — | — | |
+| 6 | src/ai/ | 2 | 1 | MERGED | — | — | Fixed has() shared-registry fallback bug, added test |
+| 7 | src/client/ | 3 | 1 | MERGED | — | — | Precomputed regex patterns in path-utils |
+| 8 | src/schemas/ | 3 | 1 | MERGED | — | — | Spec written, code already clean |
+| 9 | src/task/ | 4 | 2 | MERGED | — | — | Replaced mutate-and-delete env filtering |
+| 10 | src/issues/ | 5 | 2 | MERGED | — | — | Spec written, code already clean |
 | 11 | src/prompt/ | 6 | 0 | MERGED | — | — | Spec written, code already clean |
 | 12 | src/resource/ | 6 | 0 | MERGED | — | — | Spec written, code already clean |
-| 13 | src/mcp/ | 6 | 1 | QUEUED | — | — | |
+| 13 | src/mcp/ | 6 | 1 | MERGED | — | — | Spec written, code already clean |
 
 ## Batch 3: Small Modules (8-10 files)
 

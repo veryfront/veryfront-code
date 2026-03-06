@@ -17,6 +17,12 @@ const SOURCE_PATH_PATTERN = new RegExp(
 const KNOWN_EXT_PATTERN = /\.(tsx|ts|jsx|mdx|js|mjs)$/;
 const SOURCE_EXT_REPLACE_PATTERN = /\.(tsx|ts|jsx|mdx)$/;
 
+/** Precomputed regex for absolute paths containing a source directory */
+const ABSOLUTE_SOURCE_PATH_PATTERN = new RegExp(`/${SOURCE_PATH_PATTERN.source}`);
+
+/** Precomputed regex for relative paths starting with a source directory */
+const RELATIVE_SOURCE_PATH_PATTERN = new RegExp(`^${SOURCE_PATH_PATTERN.source}`);
+
 export function getModuleServerUrl(): string {
   if (typeof window === "undefined") return "/_vf_modules";
   return globalThis.MODULE_SERVER_URL ?? "/_vf_modules";
@@ -25,8 +31,8 @@ export function getModuleServerUrl(): string {
 export function pathToModuleUrl(path: string, baseUrl?: string): string {
   const base = baseUrl ?? getModuleServerUrl();
 
-  const absoluteMatch = path.match(new RegExp(`/${SOURCE_PATH_PATTERN.source}`));
-  const match = absoluteMatch ?? path.match(new RegExp(`^${SOURCE_PATH_PATTERN.source}`));
+  const match = path.match(ABSOLUTE_SOURCE_PATH_PATTERN) ??
+    path.match(RELATIVE_SOURCE_PATH_PATTERN);
 
   if (match) {
     return `${base}/${match[1]}/${match[2]}.js`;
