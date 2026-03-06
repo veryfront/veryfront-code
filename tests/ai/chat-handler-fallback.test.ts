@@ -462,7 +462,7 @@ describe("runtime inference mode metadata", () => {
     } finally {
       if (originalLogLevel) setEnv("LOG_LEVEL", originalLogLevel);
       if (originalNodeEnv) setEnv("NODE_ENV", originalNodeEnv);
-      if (origAnthropicKey) setEnv("ANTHROPIC_API_KEY", origAnthropicKey); else deleteEnv("ANTHROPIC_API_KEY");
+      if (origAnthropicKey != null) setEnv("ANTHROPIC_API_KEY", origAnthropicKey); else deleteEnv("ANTHROPIC_API_KEY");
     }
   });
 });

@@ -140,6 +140,8 @@ function autoInitializeFromEnv(): void {
 /**
  * Default cloud models to try when auto-upgrading from a local model.
  * Ordered by preference: Anthropic → OpenAI → Google.
+ *
+ * NOTE: model IDs are hardcoded — update when default models change.
  */
 const CLOUD_UPGRADE_CANDIDATES: Array<{
   provider: string;

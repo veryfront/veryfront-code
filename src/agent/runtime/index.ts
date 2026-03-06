@@ -238,8 +238,8 @@ export class AgentRuntime {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
       const maxSteps = this.computeMaxSteps(maxAgentSteps);
-      const requestedModel = modelString || this.config.model;
-      const languageModel = resolveModel(requestedModel);
+      const effectiveModel = modelString || this.config.model;
+      const languageModel = resolveModel(effectiveModel);
 
       const toolCalls: ToolCall[] = [];
       const currentMessages = [...messages];
@@ -249,7 +249,7 @@ export class AgentRuntime {
       const isLocal = isLocalModel(languageModel);
       if (isLocal && this.config.tools) {
         logger.warn(
-          `Agent "${this.id}" has tools configured but is using local model "${requestedModel}". ` +
+          `Agent "${this.id}" has tools configured but is using local model "${effectiveModel}". ` +
             "Local models don't support tool calling — tools will be skipped. " +
             "Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
         );
@@ -422,8 +422,8 @@ export class AgentRuntime {
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
     const maxSteps = this.computeMaxSteps(maxAgentSteps);
-    const requestedModel = modelString || this.config.model;
-    const languageModel = resolvedModel ?? resolveModel(requestedModel);
+    const effectiveModel = modelString || this.config.model;
+    const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
     const toolCalls: ToolCall[] = [];
     const currentMessages = [...messages];
@@ -433,7 +433,7 @@ export class AgentRuntime {
     const isLocalStreaming = isLocalModel(languageModel);
     if (isLocalStreaming && this.config.tools) {
       logger.warn(
-        `Agent "${this.id}" has tools configured but is using local model "${requestedModel}". ` +
+        `Agent "${this.id}" has tools configured but is using local model "${effectiveModel}". ` +
           "Local models don't support tool calling — tools will be skipped. " +
           "Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
       );
