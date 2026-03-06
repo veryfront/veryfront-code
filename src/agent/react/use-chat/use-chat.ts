@@ -281,12 +281,14 @@ export function useChat(options: UseChatOptions): UseChatResult {
         const streamingMessageId = generateClientId("msg");
         let hasAddedStreamingMessage = false;
         const currentMessageIdRef = { current: streamingMessageId };
+        // Mutable local — updated by onData before onMessage/onUpdate use it.
+        let serverModel: string | undefined = model;
 
         await handleStreamingResponse(response.body, {
           onMessage: (assistantMessage) => {
             const withMeta = {
               ...assistantMessage,
-              metadata: { ...assistantMessage.metadata, model },
+              metadata: { ...assistantMessage.metadata, model: serverModel },
             };
             setMessages((prev) => {
               if (!hasAddedStreamingMessage) return [...prev, withMeta];
@@ -312,6 +314,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
                 setInferenceMode(d.inferenceMode);
               }
               if (d.model) {
+                serverModel = d.model;
                 setActiveModel(d.model);
               }
             }
@@ -333,7 +336,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
               hasAddedStreamingMessage = true;
               setMessages((
                 prev,
-              ) => [...prev, { id, role: "assistant", parts, metadata: { model } }]);
+              ) => [...prev, { id, role: "assistant", parts, metadata: { model: serverModel } }]);
               return;
             }
 

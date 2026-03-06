@@ -212,6 +212,24 @@ describe("useChat streaming handler (veryfront protocol)", () => {
     assertEquals(getTextContent(result.messages[0]!), "Local response");
   });
 
+  it("handles model field in data event from server", async () => {
+    const result = await processStream([
+      { type: "message-start", messageId: "msg-model" },
+      { type: "data", data: { inferenceMode: "cloud", model: "anthropic/claude-sonnet-4-20250514" } },
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "Cloud response" },
+      { type: "text-end", id: "text-1" },
+      { type: "message-finish" },
+    ]);
+
+    assertEquals(result.dataEvents.length, 1);
+    assertEquals(
+      (result.dataEvents[0] as { model: string }).model,
+      "anthropic/claude-sonnet-4-20250514",
+    );
+    assertEquals(getTextContent(result.messages[0]!), "Cloud response");
+  });
+
   it("uses parts array as primary content structure", async () => {
     const result = await processStream([
       { type: "message-start", messageId: "msg-parts" },
