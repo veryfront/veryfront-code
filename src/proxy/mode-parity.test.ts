@@ -212,6 +212,7 @@ describe("Proxy-Renderer Mode Parity", () => {
 
   describe("combined mode produces same context as split mode", () => {
     it("same headers for veryfront preview domain", async () => {
+      if (typeof (globalThis as { Deno?: unknown }).Deno === "undefined") return;
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
         if (pathname === "/auth/token") {

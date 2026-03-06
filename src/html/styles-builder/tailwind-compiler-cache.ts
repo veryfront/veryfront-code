@@ -45,12 +45,19 @@ async function getTailwindBaseCSS(): Promise<string> {
   const url = getTailwindCSSUrl();
   logger.debug("Fetching base CSS", { url });
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch Tailwind CSS: ${response.status} ${response.statusText}`);
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch Tailwind CSS: ${response.status} ${response.statusText}`);
+    }
+    tailwindBaseCSS = await response.text();
+  } catch (error) {
+    logger.warn("Failed to fetch Tailwind base CSS, using empty fallback", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    tailwindBaseCSS = "";
   }
 
-  tailwindBaseCSS = await response.text();
   return tailwindBaseCSS;
 }
 

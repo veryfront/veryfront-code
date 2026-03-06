@@ -1,5 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { DenoHttpServer } from "./deno-server.ts";
 
 /** Find a free port by temporarily binding to port 0. */
@@ -13,6 +14,7 @@ function getFreePort(): number {
 describe("DenoHttpServer", () => {
   describe("serve", () => {
     it("returns native Response instances from handler", async () => {
+      if (!isDeno) return;
       const server = new DenoHttpServer();
       const ac = new AbortController();
       const port = getFreePort();
@@ -41,6 +43,7 @@ describe("DenoHttpServer", () => {
     });
 
     it("re-wraps non-native Response-like objects as native Response", async () => {
+      if (!isDeno) return;
       const server = new DenoHttpServer();
       const ac = new AbortController();
       const port = getFreePort();

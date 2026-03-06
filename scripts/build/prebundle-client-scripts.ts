@@ -36,6 +36,21 @@ const candidatesPath = join(
   "framework-candidates.generated.ts",
 );
 
+async function writeFormattedTypeScriptFile(path: string, contents: string): Promise<void> {
+  await Deno.writeTextFile(path, contents);
+  const result = await new Deno.Command("deno", {
+    args: ["fmt", path],
+    stdout: "null",
+    stderr: "piped",
+  }).output();
+  if (!result.success) {
+    const errorOutput = new TextDecoder().decode(result.stderr).trim();
+    throw new Error(
+      `Failed to format generated file ${path}${errorOutput ? `: ${errorOutput}` : ""}`,
+    );
+  }
+}
+
 console.log("[prebundle-client-scripts] Bundling client router...");
 const routerBundle = await generateClientModule({ forceSourceBundle: true });
 
@@ -59,7 +74,7 @@ export const CLIENT_ROUTER_BUNDLE: string | undefined = ${JSON.stringify(routerB
 export const CLIENT_PREFETCH_BUNDLE: string | undefined = ${JSON.stringify(prefetchBundle)};
 `;
 
-await Deno.writeTextFile(templatesPath, output);
+await writeFormattedTypeScriptFile(templatesPath, output);
 console.log(`[prebundle-client-scripts] Written to ${templatesPath}`);
 
 // --- Extract framework component Tailwind candidates ---
@@ -104,7 +119,7 @@ const candidatesOutput = `/**
 export const FRAMEWORK_CANDIDATES: readonly string[] = ${JSON.stringify(sorted, null, 2).replace(/\n\]$/, ",\n]")};
 `;
 
-await Deno.writeTextFile(candidatesPath, candidatesOutput);
+await writeFormattedTypeScriptFile(candidatesPath, candidatesOutput);
 console.log(
   `[prebundle-client-scripts] Extracted ${sorted.length} framework candidates to ${candidatesPath}`,
 );

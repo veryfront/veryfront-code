@@ -6,6 +6,7 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
+import { env as getProcessEnv } from "#veryfront/compat/process.ts";
 import type { DiscoveredTask } from "./discovery.ts";
 import type { TaskContext } from "./types.ts";
 
@@ -59,7 +60,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
     logger.info(`Running task "${task.id}" (${task.name})`);
   }
 
-  const allEnv = Deno.env.toObject();
+  const allEnv = getProcessEnv();
   const env: Record<string, string> = envAllowlist
     ? Object.fromEntries(
       envAllowlist.flatMap((k) => {

@@ -1,4 +1,4 @@
-import { assertEquals, assertNotEquals } from "jsr:@std/assert@1";
+import { assertEquals, assertNotEquals } from "#std/assert";
 import { createOAuthCallbackHandler } from "./callback-handler.ts";
 import { MemoryTokenStore } from "../token-store/memory.ts";
 import type { OAuthServiceConfig } from "../types.ts";
