@@ -12,6 +12,7 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createChatHandler } from "./chat-handler.ts";
 import { registerAgent } from "./composition/index.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 describe("createChatHandler", () => {
   // The handler calls extractRequest first. If that fails, it throws
@@ -282,5 +283,102 @@ describe("createChatHandler", () => {
     assertEquals((streamMessages[0]?.parts[0] as { text?: string }).text, "replacement");
     assertEquals(streamMessages[1]?.role, "system");
     assertStringIncludes(streamMessages[1]?.id ?? "", "append_");
+  });
+
+  it("should not leak system prompt in 503 no_ai_available response", async () => {
+    const agentId = `no-ai-agent-${crypto.randomUUID()}`;
+    const secretSystemPrompt =
+      "TOP SECRET: You are a financial advisor with access to internal data.";
+
+    const fakeAgent = {
+      id: agentId,
+      config: { model: "local/smollm2-360m", system: secretSystemPrompt },
+      clearMemory: async () => {},
+      stream: async () => {
+        throw toError(
+          createError({
+            type: "no_ai_available",
+            message: "Local AI model unavailable.",
+          }),
+        );
+      },
+    };
+
+    // deno-lint-ignore no-explicit-any
+    registerAgent(agentId, fakeAgent as any);
+
+    const handler = createChatHandler(agentId);
+    const request = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          {
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          },
+        ],
+      }),
+    });
+
+    const response = await handler(request);
+    assertEquals(response.status, 503);
+
+    const body = await response.json();
+    assertEquals(body.code, "NO_AI_AVAILABLE");
+    assertEquals(body.fallback, "browser");
+    assertEquals(body.systemPrompt, undefined, "Server system prompt must not be sent to client");
+    assertEquals(
+      JSON.stringify(body).includes(secretSystemPrompt),
+      false,
+      "Response body must not contain the system prompt anywhere",
+    );
+  });
+
+  it("should not leak async system prompt in 503 no_ai_available response", async () => {
+    const agentId = `no-ai-async-${crypto.randomUUID()}`;
+
+    const fakeAgent = {
+      id: agentId,
+      config: {
+        model: "local/smollm2-360m",
+        system: () => Promise.resolve("CONFIDENTIAL: Internal instructions for the agent."),
+      },
+      clearMemory: async () => {},
+      stream: async () => {
+        throw toError(
+          createError({
+            type: "no_ai_available",
+            message: "Local AI model unavailable.",
+          }),
+        );
+      },
+    };
+
+    // deno-lint-ignore no-explicit-any
+    registerAgent(agentId, fakeAgent as any);
+
+    const handler = createChatHandler(agentId);
+    const request = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          {
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          },
+        ],
+      }),
+    });
+
+    const response = await handler(request);
+    assertEquals(response.status, 503);
+
+    const body = await response.json();
+    assertEquals(body.code, "NO_AI_AVAILABLE");
+    assertEquals(body.systemPrompt, undefined, "Async system prompt must not be sent to client");
   });
 });
