@@ -196,7 +196,7 @@ export const veryfrontConfigSchema = z
       .optional(),
     middleware: z
       .object({
-        custom: z.array(z.unknown()).optional(),
+        custom: z.array(z.any()).optional(),
       })
       .partial()
       .optional(),

@@ -61,7 +61,12 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
 
   const allEnv = Deno.env.toObject();
   const env: Record<string, string> = envAllowlist
-    ? Object.fromEntries(envAllowlist.filter((k) => k in allEnv).map((k) => [k, allEnv[k]]))
+    ? Object.fromEntries(
+      envAllowlist.flatMap((k) => {
+        const value = allEnv[k];
+        return value === undefined ? [] : [[k, value] as const];
+      }),
+    )
     : { ...allEnv };
 
   const ctx: TaskContext = {

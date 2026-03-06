@@ -290,6 +290,9 @@ export function createChatHandler(
     } catch {
       return Response.json({ error: "Agent not found" }, { status: 404 });
     }
+    if (!agent) {
+      return Response.json({ error: "Agent not found" }, { status: 404 });
+    }
 
     try {
       const body = await request.json();

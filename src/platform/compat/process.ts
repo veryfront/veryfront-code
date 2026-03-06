@@ -484,7 +484,10 @@ export function readStdinByteSync(): number | null {
       (globalThis as { Bun?: { stdin?: { read?: (n: number) => Uint8Array | null } } })
         .Bun;
     const chunk = BunGlobal?.stdin?.read?.(1);
-    if (chunk && chunk.length > 0) return chunk[0];
+    if (chunk && chunk.length > 0) {
+      const first = chunk.at(0);
+      return first ?? null;
+    }
     return null;
   }
 
