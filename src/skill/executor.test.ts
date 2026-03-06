@@ -1,11 +1,8 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { detectRuntime, LocalScriptExecutor, resetSkillScriptExecutor } from "./executor.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { detectRuntime, LocalScriptExecutor } from "./executor.ts";
 
 describe("src/skill/executor", () => {
-  afterEach(() => {
-    resetSkillScriptExecutor();
-  });
 
   describe("detectRuntime", () => {
     it("should detect Python scripts", () => {

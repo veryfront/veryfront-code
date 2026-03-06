@@ -3,6 +3,7 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill, skillRegistry } from "./registry.ts";
 import { createLoadSkillReferenceTool, createLoadSkillTool } from "./tools.ts";
 import type { Skill } from "./types.ts";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSkillTestAdapter } from "./testing.ts";
 
 function createTestSkill(fsAdapter: FileSystemAdapter): Skill {

@@ -1,5 +1,4 @@
 import type { Agent, AgentConfig, AgentResponse, Message } from "./types.ts";
-import type { Skill } from "#veryfront/skill";
 import { AgentRuntime } from "./runtime/index.ts";
 import {
   detectPlatform,
@@ -74,13 +73,10 @@ export function agent(config: AgentConfig): Agent {
     }
   }
 
-  // Skill resolution + tool registration (immutable config merge)
-  let resolvedSkills: Map<string, Skill> | undefined;
+  // Skill tool registration (immutable config merge)
   let mergedToolsConfig = config.tools;
 
   if (config.skills) {
-    resolvedSkills = skillRegistry.resolveForAgent(config.skills);
-
     // Register skill tools in the current project registry (not shared/global)
     for (const registration of SKILL_TOOL_REGISTRATIONS) {
       if (!toolRegistry.has(registration.id)) {
@@ -99,14 +95,17 @@ export function agent(config: AgentConfig): Agent {
     }
   }
 
-  // System prompt augmentation with skill manifest
+  // System prompt augmentation with skill manifest.
+  // Re-resolve skills at invocation time so HMR changes are picked up.
   const originalSystem = config.system;
-  const augmentedSystem = resolvedSkills?.size
+  const augmentedSystem = config.skills
     ? async () => {
+      const currentSkills = skillRegistry.resolveForAgent(config.skills!);
       const basePrompt = typeof originalSystem === "function"
         ? await originalSystem()
         : originalSystem;
-      return `${basePrompt}\n\n${buildSkillManifestPrompt(resolvedSkills!)}`;
+      if (!currentSkills.size) return basePrompt ?? "You are a helpful AI assistant.";
+      return `${basePrompt}\n\n${buildSkillManifestPrompt(currentSkills)}`;
     }
     : originalSystem;
 

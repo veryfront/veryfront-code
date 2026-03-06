@@ -178,6 +178,13 @@ export class CloudScriptExecutor implements SkillScriptExecutor {
       const result = await withTimeout(commandPromise, timeoutMs);
 
       if (result === TIMEOUT_SENTINEL) {
+        // Kill any running processes before returning — withTimeout only
+        // races the timer, it doesn't terminate the sandbox command.
+        try {
+          await sandbox.executeCommand("kill -9 -1 2>/dev/null || true");
+        } catch {
+          // Best-effort kill; sandbox.close() in finally will clean up.
+        }
         return timeoutResult(timeoutMs);
       }
 
@@ -196,22 +203,13 @@ export class CloudScriptExecutor implements SkillScriptExecutor {
   }
 }
 
-let executorInstance: SkillScriptExecutor | null = null;
-
 /**
  * Get the appropriate script executor.
- * Returns CloudScriptExecutor if SANDBOX_AUTH_TOKEN is set, otherwise LocalScriptExecutor.
+ * Checks SANDBOX_AUTH_TOKEN on every call so request-scoped env overlays
+ * (e.g. project-env AsyncLocalStorage) are respected.
  */
 export function getSkillScriptExecutor(): SkillScriptExecutor {
-  if (!executorInstance) {
-    executorInstance = getEnv("SANDBOX_AUTH_TOKEN")
-      ? new CloudScriptExecutor()
-      : new LocalScriptExecutor();
-  }
-  return executorInstance;
-}
-
-/** Reset the executor singleton (for testing). */
-export function resetSkillScriptExecutor(): void {
-  executorInstance = null;
+  return getEnv("SANDBOX_AUTH_TOKEN")
+    ? new CloudScriptExecutor()
+    : new LocalScriptExecutor();
 }

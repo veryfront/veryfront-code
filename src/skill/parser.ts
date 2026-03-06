@@ -170,7 +170,13 @@ function parseAllowedTools(
       patterns.push(pattern);
     }
   } else {
-    return undefined;
+    throw toError(
+      createError({
+        type: "agent",
+        message:
+          `Skill "${skillName}" has invalid allowed-tools value: expected a string or array of strings, got ${typeof value}`,
+      }),
+    );
   }
 
   if (patterns.length === 0) return undefined;

@@ -15,7 +15,7 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 export const SKILL_NAME_REGEX = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** Valid allowed-tool pattern: exact ID or prefix wildcard (e.g. "api:*") */
-export const SKILL_ALLOWED_TOOL_PATTERN_REGEX = /^[A-Za-z0-9._:-]+(?:\:\*)?$/;
+export const SKILL_ALLOWED_TOOL_PATTERN_REGEX = /^[A-Za-z][A-Za-z0-9._-]*(:[A-Za-z][A-Za-z0-9._-]*)*(:\*)?$/;
 
 /** Maximum description length in characters */
 export const SKILL_DESCRIPTION_MAX_LENGTH = 1024;

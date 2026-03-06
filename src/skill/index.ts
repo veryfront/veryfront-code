@@ -46,7 +46,7 @@ export {
 } from "./tools.ts";
 
 // Executor
-export { getSkillScriptExecutor, resetSkillScriptExecutor } from "./executor.ts";
+export { getSkillScriptExecutor } from "./executor.ts";
 
 // Prompt
 export { buildSkillManifestPrompt } from "./prompt-augmentation.ts";

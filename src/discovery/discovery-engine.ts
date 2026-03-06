@@ -8,7 +8,7 @@
 import { detectPlatform } from "#veryfront/platform/core-platform.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
-import { registerSkill } from "#veryfront/skill/registry.ts";
+import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import type {
   DiscoveryConfig,
   DiscoveryHandler,
@@ -127,6 +127,9 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
   for (const dir of config.taskDirs ?? ["tasks"]) {
     await discoverItems(`${baseDir}/${dir}`, result, context, taskHandler, config.verbose);
   }
+
+  // Clear stale skills before rediscovery so deleted/renamed skills are removed.
+  skillRegistry.clear();
 
   // Discover skills (parallel path — markdown-based, not TypeScript import)
   for (const dir of config.skillDirs ?? ["skills"]) {
