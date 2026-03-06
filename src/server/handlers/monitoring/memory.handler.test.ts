@@ -88,6 +88,19 @@ describe("server/handlers/monitoring/memory-debug", () => {
       assertExists(body.caches);
     });
 
+    it("should handle GC trigger for /gc sub-path", async () => {
+      const handler = createHandler();
+      const req = new Request("http://localhost/_debug/memory/gc");
+      const result = await handler.handle(req, localCtx);
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const body = await result.response.json();
+      assertEquals(typeof body.gcTriggered, "boolean");
+      assertExists(body.before);
+      assertExists(body.after);
+    });
+
     it("should return pressure check for /pressure sub-path", async () => {
       const handler = createHandler();
       const req = new Request("http://localhost/_debug/memory/pressure");
