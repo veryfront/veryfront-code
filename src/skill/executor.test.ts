@@ -3,7 +3,6 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { detectRuntime, LocalScriptExecutor } from "./executor.ts";
 
 describe("src/skill/executor", () => {
-
   describe("detectRuntime", () => {
     it("should detect Python scripts", () => {
       const { command, args } = detectRuntime("scripts/setup.py");

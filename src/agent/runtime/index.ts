@@ -88,7 +88,9 @@ export function extractSkillPolicy(result: unknown): string[] | undefined {
   const raw = skillResult.allowedTools;
   if (!Array.isArray(raw) || !raw.every((v) => typeof v === "string")) {
     // Invalid shape — fail closed (empty policy = no tools allowed)
-    logger.warn("load-skill returned invalid allowedTools; falling back to empty policy (no tools)");
+    logger.warn(
+      "load-skill returned invalid allowedTools; falling back to empty policy (no tools)",
+    );
     return [];
   }
 
@@ -96,7 +98,9 @@ export function extractSkillPolicy(result: unknown): string[] | undefined {
   try {
     return validateAllowedToolPatterns(raw);
   } catch {
-    logger.warn("load-skill returned invalid tool patterns; falling back to empty policy (no tools)");
+    logger.warn(
+      "load-skill returned invalid tool patterns; falling back to empty policy (no tools)",
+    );
     return [];
   }
 }
@@ -407,7 +411,11 @@ export class AgentRuntime {
           await withSpan("agent.tool_execute", async (toolSpan) => {
             setSpanAttributes(toolSpan, { "tool.name": tc.toolName, "tool.id": tc.toolCallId });
 
-            const policyCheck = enforceSkillPolicy(tc.toolName, activeSkillPolicy, mustLoadSkillFirst);
+            const policyCheck = enforceSkillPolicy(
+              tc.toolName,
+              activeSkillPolicy,
+              mustLoadSkillFirst,
+            );
             if (!policyCheck.allowed) {
               toolCall.status = "error";
               toolCall.error = policyCheck.error;

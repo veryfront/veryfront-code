@@ -209,7 +209,5 @@ export class CloudScriptExecutor implements SkillScriptExecutor {
  * (e.g. project-env AsyncLocalStorage) are respected.
  */
 export function getSkillScriptExecutor(): SkillScriptExecutor {
-  return getEnv("SANDBOX_AUTH_TOKEN")
-    ? new CloudScriptExecutor()
-    : new LocalScriptExecutor();
+  return getEnv("SANDBOX_AUTH_TOKEN") ? new CloudScriptExecutor() : new LocalScriptExecutor();
 }
