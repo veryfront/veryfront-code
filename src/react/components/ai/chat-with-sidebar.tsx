@@ -24,6 +24,7 @@ export interface ChatWithSidebarChatController {
   isLoading?: ChatProps["isLoading"];
   error?: ChatProps["error"];
   model?: ChatProps["model"];
+  activeModel?: ChatProps["activeModel"];
   onModelChange?: ChatProps["onModelChange"];
   inferenceMode?: ChatProps["inferenceMode"];
   browserStatus?: ChatProps["browserStatus"];
@@ -170,6 +171,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
       showScrollButton: features?.scrollButton,
       showMessageActions: features?.messageActions,
       models: models?.options,
+      activeModel: chat.activeModel,
       inferenceMode: chat.inferenceMode,
       browserStatus: chat.browserStatus,
       showSources: features?.sources,

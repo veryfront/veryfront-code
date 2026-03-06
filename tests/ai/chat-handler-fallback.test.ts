@@ -265,10 +265,9 @@ describe("runtime inference mode metadata", () => {
         (e) => e.type === "data" && typeof e.data === "object",
       );
       assertEquals(dataEvent !== undefined, true, "Should have a data event");
-      assertEquals(
-        (dataEvent?.data as { inferenceMode: string })?.inferenceMode,
-        "cloud",
-      );
+      const dataPayload = dataEvent?.data as { inferenceMode: string; model: string };
+      assertEquals(dataPayload.inferenceMode, "cloud");
+      assertEquals(dataPayload.model, "mock/test-model", "model field should match requested cloud model");
     } finally {
       if (originalLogLevel) setEnv("LOG_LEVEL", originalLogLevel);
       if (originalNodeEnv) setEnv("NODE_ENV", originalNodeEnv);
@@ -302,7 +301,7 @@ describe("runtime inference mode metadata", () => {
 
       const mockLocal = new MockLanguageModelV3({
         provider: "local",
-        modelId: "local/smollm2-135m",
+        modelId: "smollm2-135m",
         doStream: async () => ({
           stream: simulateReadableStream({
             chunks: [
@@ -370,9 +369,13 @@ describe("runtime inference mode metadata", () => {
         (e) => e.type === "data" && typeof e.data === "object",
       );
       assertEquals(dataEvent !== undefined, true, "Should have a data event");
+      const dataPayload = dataEvent?.data as { inferenceMode: string; model: string };
+      assertEquals(dataPayload.inferenceMode, "server-local");
+      // effectiveModel: requested "openai/gpt-4o" fell back to local — model should reflect the local modelId
       assertEquals(
-        (dataEvent?.data as { inferenceMode: string })?.inferenceMode,
-        "server-local",
+        dataPayload.model,
+        "local/smollm2-135m",
+        "model field should reflect the resolved local model, not the originally requested cloud model",
       );
     } finally {
       if (originalLogLevel) setEnv("LOG_LEVEL", originalLogLevel);
@@ -455,9 +458,13 @@ describe("runtime inference mode metadata", () => {
         (e) => e.type === "data" && typeof e.data === "object",
       );
       assertEquals(dataEvent !== undefined, true, "Should have a data event");
+      const dataPayload = dataEvent?.data as { inferenceMode: string; model: string };
+      assertEquals(dataPayload.inferenceMode, "cloud");
+      // Auto-upgraded from local to anthropic — model should be the cloud model string
       assertEquals(
-        (dataEvent?.data as { inferenceMode: string })?.inferenceMode,
-        "cloud",
+        dataPayload.model,
+        "anthropic/claude-sonnet-4-20250514",
+        "model field should reflect the upgraded cloud model",
       );
     } finally {
       if (originalLogLevel) setEnv("LOG_LEVEL", originalLogLevel);

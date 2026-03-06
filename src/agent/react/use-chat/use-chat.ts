@@ -75,6 +75,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
   const [data, setData] = useState<unknown>(null);
   const [model, setModel] = useState<string | undefined>(options.model);
   const [inferenceMode, setInferenceMode] = useState<InferenceMode>("cloud");
+  const [activeModel, setActiveModel] = useState<string | undefined>(undefined);
   const [browserStatus, setBrowserStatus] = useState<BrowserInferenceStatus | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef(0);
@@ -280,12 +281,15 @@ export function useChat(options: UseChatOptions): UseChatResult {
         const streamingMessageId = generateClientId("msg");
         let hasAddedStreamingMessage = false;
         const currentMessageIdRef = { current: streamingMessageId };
+        // Mutable local — updated by onData before onMessage/onUpdate use it.
+        let serverModel: string | undefined = model;
+        setActiveModel(undefined);
 
         await handleStreamingResponse(response.body, {
           onMessage: (assistantMessage) => {
             const withMeta = {
               ...assistantMessage,
-              metadata: { ...assistantMessage.metadata, model },
+              metadata: { ...assistantMessage.metadata, model: serverModel },
             };
             setMessages((prev) => {
               if (!hasAddedStreamingMessage) return [...prev, withMeta];
@@ -300,15 +304,19 @@ export function useChat(options: UseChatOptions): UseChatResult {
           },
           onData: (eventData) => {
             setData(eventData);
-            // Detect inference mode from server metadata
+            // Detect inference mode and resolved model from server metadata
             if (
               eventData &&
               typeof eventData === "object" &&
               "inferenceMode" in eventData
             ) {
-              const mode = (eventData as { inferenceMode: string }).inferenceMode;
-              if (mode === "server-local" || mode === "cloud") {
-                setInferenceMode(mode);
+              const d = eventData as { inferenceMode: string; model?: string };
+              if (d.inferenceMode === "server-local" || d.inferenceMode === "cloud") {
+                setInferenceMode(d.inferenceMode);
+              }
+              if (d.model) {
+                serverModel = d.model;
+                setActiveModel(d.model);
               }
             }
           },
@@ -329,7 +337,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
               hasAddedStreamingMessage = true;
               setMessages((
                 prev,
-              ) => [...prev, { id, role: "assistant", parts, metadata: { model } }]);
+              ) => [...prev, { id, role: "assistant", parts, metadata: { model: serverModel } }]);
               return;
             }
 
@@ -547,6 +555,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
     isLoading,
     error,
     model,
+    activeModel,
     inferenceMode,
     browserStatus,
     setInput,
