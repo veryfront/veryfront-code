@@ -79,7 +79,7 @@ describe(
       });
     });
 
-    it("serves static files from public/ and exposes metrics and CORS", async () => {
+    it("serves static files from public/ and restricts metrics to local projects", async () => {
       await withTestContext("production-server-static", async (context: TestContext) => {
         await writeTextFile(`${context.projectDir}/public/hello.txt`, "hi");
 
@@ -105,15 +105,12 @@ describe(
           await notMod.text();
         }
 
+        // /_metrics is restricted to local projects only (security: H9/M11)
         const m = await fetch(`http://127.0.0.1:${port}/_metrics`, {
           headers: { origin: "http://example.com" },
         });
-        assertEquals(m.status, 200);
-        const json = await m.json();
-        if (!json?.counters) throw new Error("missing counters in metrics");
-
-        const metricsAllowOrigin = m.headers.get("access-control-allow-origin");
-        if (metricsAllowOrigin) assertEquals(metricsAllowOrigin, "http://example.com");
+        assertEquals(m.status, 404);
+        await m.text();
 
         controller.abort();
         await server.stop();
