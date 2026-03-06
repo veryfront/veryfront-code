@@ -130,10 +130,10 @@ function __vf_loadCjs(id, parentDir) {
         try { Deno.statSync(resolved + exts[i]); resolved += exts[i]; break; } catch {}
       }
     }
+    __vf_assertContained(resolved);
   } else {
     resolved = __vf_builtinRequire.resolve(id);
   }
-  __vf_assertContained(resolved);
   if (resolved in __vf_cache) return __vf_cache[resolved];
   var code = Deno.readTextFileSync(resolved);
   if (resolved.endsWith(".json")) {
