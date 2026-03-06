@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@1";
+import { assertEquals, assertNotEquals } from "jsr:@std/assert@1";
 import { createOAuthCallbackHandler } from "./callback-handler.ts";
 import { MemoryTokenStore } from "../token-store/memory.ts";
 import type { OAuthServiceConfig } from "../types.ts";
@@ -59,6 +59,31 @@ Deno.test("callback-handler: rejects request when state parameter is invalid (no
   assertEquals(location.searchParams.get("error"), "invalid_state");
 });
 
+Deno.test("callback-handler: rejects request when state has expired", async () => {
+  const tokenStore = new MemoryTokenStore();
+
+  await tokenStore.setState({
+    state: "expired-state",
+    redirectUri: "http://localhost:3000/api/auth/test-provider/callback",
+    scopes: ["read"],
+    createdAt: Date.now() - 11 * 60 * 1000, // 11 minutes ago, past 10-minute expiry
+  });
+
+  const handler = createOAuthCallbackHandler(TEST_CONFIG, {
+    tokenStore,
+    baseUrl: "http://localhost:3000",
+    envReader: (key) => ENV[key],
+  });
+
+  const response = await handler(
+    makeRequest({ code: "auth-code-123", state: "expired-state" }),
+  );
+
+  assertEquals(response.status, 302);
+  const location = new URL(response.headers.get("location")!);
+  assertEquals(location.searchParams.get("error"), "invalid_state");
+});
+
 Deno.test("callback-handler: allows missing state when skipStateValidation is true", async () => {
   const tokenStore = new MemoryTokenStore();
 
@@ -87,7 +112,7 @@ Deno.test("callback-handler: allows missing state when skipStateValidation is tr
   const error = location.searchParams.get("error");
   if (error) {
     // Any error other than invalid_state is acceptable - it means state validation was skipped
-    assertEquals(error !== "invalid_state", true);
+    assertNotEquals(error, "invalid_state");
   }
 });
 
@@ -137,6 +162,6 @@ Deno.test("callback-handler: accepts request with valid state from store", async
   // Should NOT be invalid_state - it proceeds to token exchange
   const error = location.searchParams.get("error");
   if (error) {
-    assertEquals(error !== "invalid_state", true);
+    assertNotEquals(error, "invalid_state");
   }
 });
