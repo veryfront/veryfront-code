@@ -1,4 +1,4 @@
-import { assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { loadHandlerModule, toCjsDestructureBindings } from "./loader.ts";
@@ -280,6 +280,38 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(
       toCjsDestructureBindings("{ foo, bar }"),
       "{ foo, bar }",
+    );
+  });
+
+  it("rejects module path that escapes project directory via traversal", async () => {
+    const tmpDir = await makeTempDir();
+
+    await assertRejects(
+      () =>
+        loadHandlerModule({
+          projectDir: tmpDir,
+          modulePath: join(tmpDir, "..", "..", "etc", "passwd"),
+          adapter,
+          config: undefined,
+        }),
+      Error,
+      "module path escapes project directory",
+    );
+  });
+
+  it("rejects absolute module path outside project directory", async () => {
+    const tmpDir = await makeTempDir();
+
+    await assertRejects(
+      () =>
+        loadHandlerModule({
+          projectDir: tmpDir,
+          modulePath: "/etc/passwd",
+          adapter,
+          config: undefined,
+        }),
+      Error,
+      "module path escapes project directory",
     );
   });
 });

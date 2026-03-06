@@ -15,8 +15,27 @@ import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isCompiledBinary } from "#veryfront/utils";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 
 const logger = serverLogger.component("api");
+
+/**
+ * Validates that a module path is contained within the project directory.
+ * Prevents path traversal attacks that could load arbitrary files from the host.
+ */
+function validateModulePath(modulePath: string, projectDir: string): void {
+  const resolved = pathHelper.resolve(modulePath);
+  const resolvedProject = pathHelper.resolve(projectDir);
+
+  if (!isWithinDirectory(resolvedProject, resolved)) {
+    throw toError(
+      createError({
+        type: "api",
+        message: `[API] module path escapes project directory: ${modulePath}`,
+      }),
+    );
+  }
+}
 
 /** Node.js built-in module names — shared across the CJS shim, esbuild externals, and Deno rewrites. */
 const NODE_BUILTINS = [
@@ -81,13 +100,21 @@ async function readProjectDependencies(
 function generateCompiledBinaryRequireShim(projectDir: string): string {
   const builtinSet = JSON.stringify(NODE_BUILTINS);
   const safeProjectDir = JSON.stringify(projectDir + "/package.json");
+  const safeProjectRoot = JSON.stringify(pathHelper.resolve(projectDir));
 
   return `
 import { createRequire as __vf_createRequire } from "node:module";
 import { dirname as __vf_dirname, resolve as __vf_resolve } from "node:path";
 var __vf_builtinRequire = __vf_createRequire(${safeProjectDir});
 var __vf_builtinSet = new Set(${builtinSet});
+var __vf_projectRoot = ${safeProjectRoot};
 var __vf_cache = Object.create(null);
+function __vf_assertContained(resolved) {
+  var norm = __vf_resolve(resolved);
+  if (!norm.startsWith(__vf_projectRoot + "/") && norm !== __vf_projectRoot) {
+    throw new Error("CJS loader blocked path outside project: " + resolved);
+  }
+}
 function __vf_loadCjs(id, parentDir) {
   if (id.startsWith("node:")) return __vf_builtinRequire(id);
   if (__vf_builtinSet.has(id)) return __vf_builtinRequire(id);
@@ -105,6 +132,7 @@ function __vf_loadCjs(id, parentDir) {
   } else {
     resolved = __vf_builtinRequire.resolve(id);
   }
+  __vf_assertContained(resolved);
   if (resolved in __vf_cache) return __vf_cache[resolved];
   var code = Deno.readTextFileSync(resolved);
   if (resolved.endsWith(".json")) {
@@ -187,6 +215,8 @@ export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute 
     async () => {
       const { projectDir, modulePath, adapter, config } = options;
       const fs = createFileSystem();
+
+      validateModulePath(modulePath, projectDir);
 
       try {
         const module = await loadModule({ modulePath, projectDir, adapter, fs, config });
@@ -311,6 +341,11 @@ function createImportMapPlugin(
           ? resolvedPath
           : pathHelper.resolve(projectDir, resolvedPath);
 
+        if (!isWithinDirectory(projectDir, absolutePath)) {
+          logger.error(`[API] Import map entry escapes project directory: ${args.path} -> ${absolutePath}`);
+          return { errors: [{ text: `Import map path escapes project: ${args.path}` }] };
+        }
+
         logger.debug(`Import map resolved: ${args.path} -> ${absolutePath}`);
 
         return { path: absolutePath, namespace: "import-map" };
@@ -407,6 +442,7 @@ function loadAndTranspileModule(
         adapter,
         modulePath,
         FILE_EXTENSIONS,
+        projectDir,
       );
 
       if (!source) {
@@ -523,9 +559,23 @@ async function readFileWithExtensions(
   adapter: RuntimeAdapter,
   basePath: string,
   extensions: string[],
+  projectDir?: string,
 ): Promise<{ filePath: string; contents: string }> {
   for (const ext of extensions) {
     const filePath = ext ? basePath + ext : basePath;
+
+    if (projectDir) {
+      const resolved = pathHelper.resolve(filePath);
+      if (!isWithinDirectory(pathHelper.resolve(projectDir), resolved)) {
+        throw toError(
+          createError({
+            type: "api",
+            message: `[API] file path escapes project directory: ${filePath}`,
+          }),
+        );
+      }
+    }
+
     try {
       const contents = await adapter.fs.readFile(filePath);
       return { filePath, contents };
