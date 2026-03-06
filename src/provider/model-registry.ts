@@ -138,6 +138,53 @@ function autoInitializeFromEnv(): void {
 }
 
 /**
+ * Default cloud models to try when auto-upgrading from a local model.
+ * Ordered by preference: Anthropic → OpenAI → Google.
+ *
+ * NOTE: model IDs are hardcoded — update when default models change.
+ */
+const CLOUD_UPGRADE_CANDIDATES: Array<{
+  provider: string;
+  model: string;
+  hasKey: () => boolean;
+}> = [
+  {
+    provider: "anthropic",
+    model: "claude-sonnet-4-20250514",
+    hasKey: () => !!getAnthropicEnvConfig().apiKey,
+  },
+  {
+    provider: "openai",
+    model: "gpt-4o-mini",
+    hasKey: () => !!getOpenAIEnvConfig().apiKey,
+  },
+  {
+    provider: "google",
+    model: "gemini-2.0-flash",
+    hasKey: () => !!getGoogleGenAIEnvConfig().apiKey,
+  },
+];
+
+/**
+ * Find the first cloud provider with a valid API key.
+ *
+ * Returns a "provider/model" string that can be passed to `resolveModel`,
+ * or `null` if no cloud provider is available.
+ *
+ * This is intentionally a **query** — it does NOT resolve the model.
+ * The caller (agent runtime) decides whether to use it.
+ */
+export function findAvailableCloudModel(): string | null {
+  autoInitializeFromEnv();
+  for (const { provider, model, hasKey } of CLOUD_UPGRADE_CANDIDATES) {
+    if (!hasKey()) continue;
+    if (!manager.has(provider)) continue;
+    return `${provider}/${model}`;
+  }
+  return null;
+}
+
+/**
  * Resolve a "provider/model" string to an AI SDK LanguageModel instance.
  *
  * Auto-initializes providers from environment on first call.

@@ -19,6 +19,7 @@
 export {
   clearModelProviders,
   ensureModelReady,
+  findAvailableCloudModel,
   getRegisteredModelProviders,
   hasModelProvider,
   registerModelProvider,

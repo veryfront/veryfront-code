@@ -4,7 +4,7 @@
  */
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
-import { getEnv, setEnv } from "#veryfront/testing/deno-compat";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat";
 
 import { createError, fromError, toError } from "../../src/errors/veryfront-error.ts";
 
@@ -180,7 +180,7 @@ describe("chat-handler 503 fallback", () => {
 });
 
 describe("runtime inference mode metadata", () => {
-  it("emits data event with inferenceMode in SSE stream", async () => {
+  it("emits cloud inferenceMode for non-local provider", async () => {
     const originalLogLevel = getEnv("LOG_LEVEL");
     const originalNodeEnv = getEnv("NODE_ENV");
 
@@ -224,11 +224,11 @@ describe("runtime inference mode metadata", () => {
         }),
       });
 
-      // Register as "local" provider to test server-local detection
-      registerModelProvider("local", () => mockModel);
+      // Register as "mock" provider to test cloud inferenceMode detection
+      registerModelProvider("mock", () => mockModel);
 
       const runtime = new AgentRuntime("test-mode", {
-        model: "local/smollm2-135m",
+        model: "mock/test-model",
         system: "Test",
       });
 
@@ -236,7 +236,7 @@ describe("runtime inference mode metadata", () => {
         [{ id: "msg-1", role: "user", parts: [{ type: "text", text: "hi" }] }],
         undefined,
         undefined,
-        "local/smollm2-135m",
+        "mock/test-model",
       );
 
       // Read all SSE events from the stream
@@ -267,7 +267,7 @@ describe("runtime inference mode metadata", () => {
       assertEquals(dataEvent !== undefined, true, "Should have a data event");
       assertEquals(
         (dataEvent?.data as { inferenceMode: string })?.inferenceMode,
-        "server-local",
+        "cloud",
       );
     } finally {
       if (originalLogLevel) setEnv("LOG_LEVEL", originalLogLevel);
@@ -377,6 +377,92 @@ describe("runtime inference mode metadata", () => {
     } finally {
       if (originalLogLevel) setEnv("LOG_LEVEL", originalLogLevel);
       if (originalNodeEnv) setEnv("NODE_ENV", originalNodeEnv);
+    }
+  });
+
+  it("auto-upgrades local model to cloud when API key is available", async () => {
+    const originalLogLevel = getEnv("LOG_LEVEL");
+    const originalNodeEnv = getEnv("NODE_ENV");
+    const origAnthropicKey = getEnv("ANTHROPIC_API_KEY");
+
+    setEnv("LOG_LEVEL", "silent");
+    setEnv("NODE_ENV", "test");
+    setEnv("ANTHROPIC_API_KEY", "sk-test-key");
+
+    try {
+      const { AgentRuntime } = await import("../../src/agent/runtime/index.ts");
+      const { registerModelProvider, clearModelProviders } = await import(
+        "../../src/provider/model-registry.ts"
+      );
+      const { MockLanguageModelV3, simulateReadableStream } = await import("ai/test");
+
+      clearModelProviders();
+
+      const mockCloud = new MockLanguageModelV3({
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-20250514",
+        doStream: async () => ({
+          stream: simulateReadableStream({
+            chunks: [
+              { type: "text-start" as const, id: "text-1" },
+              { type: "text-delta" as const, id: "text-1", delta: "Hi from cloud" },
+              { type: "text-end" as const, id: "text-1" },
+              {
+                type: "finish" as const,
+                finishReason: { unified: "stop" as const, raw: "stop" },
+                usage: {
+                  inputTokens: { total: 5, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+                  outputTokens: { total: 3, text: undefined, reasoning: undefined },
+                },
+              },
+            ],
+          }),
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        }),
+      });
+
+      registerModelProvider("anthropic", () => mockCloud);
+
+      // Agent configured with local model, but cloud key is available
+      const runtime = new AgentRuntime("test-auto-upgrade", {
+        model: "local/smollm2-135m",
+        system: "Test",
+      });
+
+      const stream = await runtime.stream(
+        [{ id: "msg-1", role: "user", parts: [{ type: "text", text: "hi" }] }],
+        undefined,
+        undefined,
+        "local/smollm2-135m",
+      );
+
+      const decoder = new TextDecoder();
+      const reader = stream.getReader();
+      const events: Array<Record<string, unknown>> = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value);
+        for (const line of text.split("\n")) {
+          if (line.startsWith("data: ")) {
+            try { events.push(JSON.parse(line.slice(6))); } catch { /* skip */ }
+          }
+        }
+      }
+
+      const dataEvent = events.find(
+        (e) => e.type === "data" && typeof e.data === "object",
+      );
+      assertEquals(dataEvent !== undefined, true, "Should have a data event");
+      assertEquals(
+        (dataEvent?.data as { inferenceMode: string })?.inferenceMode,
+        "cloud",
+      );
+    } finally {
+      if (originalLogLevel) setEnv("LOG_LEVEL", originalLogLevel);
+      if (originalNodeEnv) setEnv("NODE_ENV", originalNodeEnv);
+      if (origAnthropicKey != null) setEnv("ANTHROPIC_API_KEY", origAnthropicKey); else deleteEnv("ANTHROPIC_API_KEY");
     }
   });
 });
