@@ -95,6 +95,40 @@ defineConfig({
 });
 ```
 
+### AI discovery (tools, agents, skills)
+
+Control which directories are scanned for AI primitives:
+
+```ts
+defineConfig({
+  ai: {
+    tools: {
+      discovery: {
+        enabled: true,
+        paths: ["tools", "packages/shared-tools"],
+      },
+    },
+    agents: {
+      discovery: {
+        enabled: true,
+        paths: ["agents"],
+      },
+    },
+    skills: {
+      discovery: {
+        enabled: true,
+        paths: ["skills", "internal/skills"],
+      },
+    },
+  },
+});
+```
+
+Notes:
+- `paths` are relative to your project root.
+- Defaults are `tools`, `agents`, and `skills`.
+- Set `enabled: false` to disable discovery for that primitive.
+
 ## Environment variables
 
 Set environment variables in `.env` files or your deployment platform:

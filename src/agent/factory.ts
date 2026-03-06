@@ -5,6 +5,14 @@ import {
   validatePlatformCompatibility,
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
+import { toolRegistry } from "#veryfront/tool";
+import { skillRegistry } from "#veryfront/skill/registry.ts";
+import { buildSkillManifestPrompt } from "#veryfront/skill/prompt-augmentation.ts";
+import {
+  createExecuteSkillScriptTool,
+  createLoadSkillReferenceTool,
+  createLoadSkillTool,
+} from "#veryfront/skill/tools.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
@@ -16,6 +24,12 @@ const STREAMING_HEADERS: Record<string, string> = {
   Connection: "keep-alive",
   "x-vercel-ai-ui-message-stream": "v1",
 };
+
+const SKILL_TOOL_REGISTRATIONS = [
+  { id: "load-skill", create: createLoadSkillTool },
+  { id: "load-skill-reference", create: createLoadSkillReferenceTool },
+  { id: "execute-skill-script", create: createExecuteSkillScriptTool },
+] as const;
 
 export interface AgentStreamResult {
   toDataStreamResponse(options?: {
@@ -59,6 +73,45 @@ export function agent(config: AgentConfig): Agent {
     }
   }
 
+  // Skill tool registration (immutable config merge)
+  let mergedToolsConfig = config.tools;
+
+  if (config.skills) {
+    // Skill tools (load-skill, load-skill-reference, execute-skill-script) are
+    // framework infrastructure — shared across all projects. Project tools and
+    // skills themselves remain project-scoped. Using registerShared avoids
+    // scope mismatch between module-load time and request-handling time.
+    for (const registration of SKILL_TOOL_REGISTRATIONS) {
+      if (!toolRegistry.has(registration.id)) {
+        toolRegistry.registerShared(registration.id, registration.create());
+      }
+    }
+
+    // Ensure skill tools are enabled for this agent even when config.tools is undefined
+    if (config.tools !== true) {
+      mergedToolsConfig = {
+        ...(config.tools ?? {}),
+        "load-skill": true,
+        "load-skill-reference": true,
+        "execute-skill-script": true,
+      };
+    }
+  }
+
+  // System prompt augmentation with skill manifest.
+  // Re-resolve skills at invocation time so HMR changes are picked up.
+  const originalSystem = config.system;
+  const augmentedSystem = config.skills
+    ? async () => {
+      const currentSkills = skillRegistry.resolveForAgent(config.skills!);
+      const basePrompt = typeof originalSystem === "function"
+        ? await originalSystem()
+        : originalSystem;
+      if (!currentSkills.size) return basePrompt ?? "You are a helpful AI assistant.";
+      return `${basePrompt}\n\n${buildSkillManifestPrompt(currentSkills)}`;
+    }
+    : originalSystem;
+
   const platform = detectPlatform();
   const compatibility = validatePlatformCompatibility(
     {
@@ -85,7 +138,11 @@ export function agent(config: AgentConfig): Agent {
     agentLogger.warn(`Agent "${id}" warnings:\n${compatibility.warnings.join("\n")}`);
   }
 
-  const runtime = new AgentRuntime(id, config);
+  const runtime = new AgentRuntime(id, {
+    ...config,
+    tools: mergedToolsConfig,
+    system: augmentedSystem,
+  });
 
   const agentInstance: Agent = {
     id,

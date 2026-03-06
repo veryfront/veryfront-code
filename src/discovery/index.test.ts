@@ -56,6 +56,7 @@ describe("src/discovery/index", () => {
       const result: DiscoveryResult = {
         tools: new Map(),
         agents: new Map(),
+        skills: new Map(),
         resources: new Map(),
         prompts: new Map(),
         workflows: new Map(),

@@ -9,6 +9,7 @@
 import type { Tool, ToolDefinition } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
+import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
 
 const logger = serverLogger.component("agent");
@@ -87,9 +88,13 @@ function addToolDefinition(
  * Get available tools based on agent configuration.
  * When tools === true, loads all tools from registry.
  * Otherwise loads specific tools from config.
+ *
+ * @param toolsConfig - Agent tools configuration
+ * @param options.includeSkillTools - When true, include skill tools for `tools: true` agents
  */
 export function getAvailableTools(
   toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
+  options?: { includeSkillTools?: boolean },
 ): ToolDefinition[] {
   if (!toolsConfig) return [];
 
@@ -101,6 +106,10 @@ export function getAvailableTools(
       const def = toolToProviderDefinition(tool);
       logToolDefinition(name, def);
       return def;
+    }).filter((def) => {
+      // Exclude skill tools unless explicitly included
+      if (SKILL_TOOL_IDS.has(def.name) && !options?.includeSkillTools) return false;
+      return true;
     });
   }
 

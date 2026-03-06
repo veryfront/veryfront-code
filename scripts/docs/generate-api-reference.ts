@@ -278,6 +278,10 @@ const RELATED_MODULES: Record<string, Array<{ path: string; reason: string }>> =
     { path: "tool", reason: "Define tools that integrations expose" },
     { path: "mcp", reason: "Expose integration tools via MCP" },
   ],
+  "veryfront/sandbox": [
+    { path: "agent", reason: "Run isolated commands from agent tools/workflows" },
+    { path: "mcp", reason: "Expose sandbox-backed operations over MCP" },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -1078,6 +1082,10 @@ const API_DOCS: Record<string, APIDocs> = {
     functions: { resource: { configType: "ResourceConfig" } },
     expandTypes: ["ResourceConfig"],
   },
+  "veryfront/sandbox": {
+    methods: { Sandbox: "Sandbox session client" },
+    expandTypes: ["SandboxOptions", "ExecResult", "ExecStreamEvent"],
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -1121,6 +1129,41 @@ const METHOD_DESCRIPTIONS: Record<string, Record<string, { desc: string; params?
     },
     id: { desc: "The agent's unique identifier." },
     config: { desc: "The agent's configuration." },
+  },
+  Sandbox: {
+    create: {
+      desc: "Create a new sandbox session. Claims a warm pod or creates a new one.",
+      params: { options: "Sandbox creation options (auth token + optional API URL)." },
+    },
+    get: {
+      desc: "Reconnect to an existing sandbox session.",
+      params: {
+        id: "Existing sandbox session ID.",
+        options: "Sandbox connection options (auth token + optional API URL).",
+      },
+    },
+    executeCommand: {
+      desc: "Execute a command and return buffered stdout/stderr + exit code.",
+      params: { command: "Bash command string to execute in the sandbox." },
+    },
+    executeStream: {
+      desc: "Execute a command and stream output events as they arrive.",
+      params: { command: "Bash command string to execute in the sandbox." },
+    },
+    readFile: {
+      desc: "Read a file from the sandbox workspace.",
+      params: { path: "Absolute or workspace-relative file path." },
+    },
+    writeFiles: {
+      desc: "Write one or more files to the sandbox workspace.",
+      params: { files: "Array of file descriptors (`{ path, content }`)." },
+    },
+    heartbeat: {
+      desc: "Send a heartbeat to keep the sandbox session alive.",
+    },
+    close: {
+      desc: "Close the sandbox session and mark it for deletion.",
+    },
   },
   MiddlewarePipeline: {
     use: {
@@ -1169,6 +1212,21 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     edge: "Edge runtime configuration",
     multimodal: "Enable vision and/or audio",
     allowedModels: 'Restrict runtime model overrides to these "provider/model" strings',
+    skills: "Enable all discovered skills (`true`) or only selected skill IDs (`string[]`)",
+  },
+  SandboxOptions: {
+    apiUrl: "Veryfront API base URL. Defaults to VERYFRONT_API_URL environment variable.",
+    authToken: "JWT used for sandbox API authentication.",
+  },
+  ExecResult: {
+    stdout: "Buffered standard output from command execution.",
+    stderr: "Buffered standard error from command execution.",
+    exitCode: "Process exit code.",
+  },
+  ExecStreamEvent: {
+    type: "Event type (`stdout`, `stderr`, `exit`, `error`).",
+    data: "Chunk payload for stdout/stderr/error events.",
+    exitCode: "Exit code for `exit` events.",
   },
   MemoryConfig: {
     type: "Memory strategy (`\"buffer\"`, `\"conversation\"`, `\"summary\"`)",
@@ -1485,7 +1543,7 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
         const methodMeta = METHOD_DESCRIPTIONS[typeName] ?? {};
 
         for (const method of node.classDef.methods) {
-          if (method.isStatic || method.accessibility === "private") continue;
+          if (method.accessibility === "private") continue;
 
           if (!hasContent) {
             lines.push("## API");
@@ -1496,7 +1554,12 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           const fd = method.functionDef;
           const paramNames = fd.params.map((p) => p.name).join(", ");
           const instanceName = typeName.charAt(0).toLowerCase() + typeName.slice(1);
-          lines.push(`### \`${instanceName}.${method.name}(${paramNames})\``);
+          const callTarget = method.isStatic ? typeName : instanceName;
+          const isAccessor = method.kind === "getter" || method.kind === "setter";
+          const signature = isAccessor
+            ? `${callTarget}.${method.name}`
+            : `${callTarget}.${method.name}(${paramNames})`;
+          lines.push(`### \`${signature}\``);
           lines.push("");
 
           const methodDesc = method.jsDoc?.doc?.split("\n")[0] ?? methodMeta[method.name]?.desc ?? "";

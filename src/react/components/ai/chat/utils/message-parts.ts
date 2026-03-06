@@ -28,6 +28,17 @@ export function isToolPart(part: UIMessagePart): part is ToolUIPart | DynamicToo
   return part.type.startsWith("tool-") && part.type !== "tool-result";
 }
 
+const SKILL_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "load-skill",
+  "load-skill-reference",
+  "execute-skill-script",
+]);
+
+/** Check if a tool part is a skill-related tool (load-skill, load-skill-reference, execute-skill-script) */
+export function isSkillToolPart(tool: ToolUIPart | DynamicToolUIPart): boolean {
+  return SKILL_TOOL_NAMES.has(tool.toolName);
+}
+
 /** Check if a part is a reasoning part */
 export function isReasoningPart(
   part: UIMessagePart,

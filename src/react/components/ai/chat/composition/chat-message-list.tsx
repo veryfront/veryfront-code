@@ -24,10 +24,12 @@ import {
   extractSourcesFromParts,
   getTextContent,
   groupPartsInOrder,
+  isSkillToolPart,
 } from "../utils/message-parts.ts";
 import { ConversationScrollButton } from "../components/empty-state.tsx";
 import { MessageActions } from "../components/message-actions.tsx";
 import { ReasoningCard } from "../components/reasoning.tsx";
+import { SkillBadge } from "../components/skill-badge.tsx";
 import { ToolCallCard } from "../components/tool-ui.tsx";
 
 import { Sources } from "../components/sources.tsx";
@@ -320,9 +322,14 @@ function AssistantMessage({
               )
               : null;
           }
+          const isSkill = isSkillToolPart(group.tool);
           return (
-            <div key={group.tool.toolCallId} className="my-3">
-              {renderTool ? renderTool(group.tool) : <ToolCallCard tool={group.tool} />}
+            <div key={group.tool.toolCallId} className={isSkill ? "my-2" : "my-3"}>
+              {renderTool
+                ? renderTool(group.tool)
+                : isSkill
+                ? <SkillBadge tool={group.tool} />
+                : <ToolCallCard tool={group.tool} />}
             </div>
           );
         })}

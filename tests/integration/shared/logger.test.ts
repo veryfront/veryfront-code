@@ -262,13 +262,13 @@ describe("Logger", () => {
         const mod = await importFresh();
         const { getDefaultLevel, LogLevel } = mod;
 
-        const defaultLevel = getDefaultLevel(undefined, undefined);
+        const defaultLevel = getDefaultLevel("", "");
         assertEquals(defaultLevel, LogLevel.INFO, "Default level without env vars should be INFO");
 
-        const debugLevel = getDefaultLevel(undefined, "1");
+        const debugLevel = getDefaultLevel("", "1");
         assertEquals(debugLevel, LogLevel.DEBUG, "Level with VERYFRONT_DEBUG=1 should be DEBUG");
 
-        const debugLevelTrue = getDefaultLevel(undefined, "true");
+        const debugLevelTrue = getDefaultLevel("", "true");
         assertEquals(
           debugLevelTrue,
           LogLevel.DEBUG,

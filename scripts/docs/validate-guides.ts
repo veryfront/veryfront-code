@@ -176,6 +176,7 @@ const validImports = new Set([
   "veryfront/prompt",
   "veryfront/resource",
   "veryfront/fs",
+  "veryfront/sandbox",
 ]);
 
 for (const filename of guideFiles) {

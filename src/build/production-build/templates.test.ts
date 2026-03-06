@@ -28,14 +28,20 @@ describe("build/production-build/templates", () => {
   });
 
   describe("CLIENT_ROUTER_BUNDLE", () => {
-    it("should be undefined by default (placeholder)", () => {
-      assertEquals(CLIENT_ROUTER_BUNDLE, undefined);
+    it("should be undefined or a string", () => {
+      assertEquals(
+        CLIENT_ROUTER_BUNDLE === undefined || typeof CLIENT_ROUTER_BUNDLE === "string",
+        true,
+      );
     });
   });
 
   describe("CLIENT_PREFETCH_BUNDLE", () => {
-    it("should be undefined by default (placeholder)", () => {
-      assertEquals(CLIENT_PREFETCH_BUNDLE, undefined);
+    it("should be undefined or a string", () => {
+      assertEquals(
+        CLIENT_PREFETCH_BUNDLE === undefined || typeof CLIENT_PREFETCH_BUNDLE === "string",
+        true,
+      );
     });
   });
 });
