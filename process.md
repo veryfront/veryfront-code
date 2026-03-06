@@ -1,11 +1,11 @@
 # Refactoring Progress Tracker
 
 > Tracks per-module refactoring progress across sessions.
-> Last updated: 2026-03-06 15:45
+> Last updated: 2026-03-06 16:10
 
 ## Summary
 - Total modules: 54 (43 src + 11 cli)
-- Completed: 16 (Batches 1-3 done)
+- Completed: 21 (Batches 1-4 done)
 - In progress: 0
 - Skipped: 5 (4 barrels + cli/templates)
 
@@ -58,11 +58,11 @@
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 21 | src/embedding/ | 11 | 1 | QUEUED | — | — | |
-| 22 | src/config/ | 11 | 8 | QUEUED | — | — | |
-| 23 | src/provider/ | 14 | 1 | QUEUED | — | — | |
-| 24 | src/oauth/ | 15 | 1 | QUEUED | — | — | |
-| 25 | src/proxy/ | 15 | 9 | QUEUED | — | — | |
+| 21 | src/embedding/ | 11 | 1 | MERGED | — | — | Renamed mimeForType, added lookup table, fixed shadowing |
+| 22 | src/config/ | 11 | 8 | MERGED | — | — | z.any()→z.unknown(), flattened validation, fixed test mock |
+| 23 | src/provider/ | 14 | 1 | MERGED | — | — | Typed convertPrompt params, extracted shared options mapping |
+| 24 | src/oauth/ | 15 | 1 | MERGED | — | — | Eliminated any, flattened nesting, removed redundant configs |
+| 25 | src/proxy/ | 15 | 9 | MERGED | — | — | Removed dead sleep/isOTLPEnabled/span names, alias cleanup |
 
 ## Batch 5: Medium Modules (20-37 files)
 
