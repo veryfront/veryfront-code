@@ -116,22 +116,7 @@ Deno.test("GCSBlobStorage signs JWT with RS256 using Web Crypto", async () => {
   const originalFetch = globalThis.fetch;
   let capturedJwt = "";
 
-  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (url === "https://oauth2.googleapis.com/token" && init?.body) {
-      const body = new URLSearchParams(init.body as string);
-      capturedJwt = body.get("assertion") ?? "";
-      return new Response(
-        JSON.stringify({ access_token: "test-token", expires_in: 3600 }),
-        { status: 200 },
-      );
-    }
-    return originalFetch(input, init);
-  }) as typeof fetch;
-
   try {
-    // Trigger getAccessToken by calling put (which calls getAccessToken internally)
-    // Use a mock that returns after token fetch
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url === "https://oauth2.googleapis.com/token") {

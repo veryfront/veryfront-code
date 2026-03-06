@@ -45,6 +45,7 @@ export interface GCSBlobStorageConfig {
 
 export class GCSBlobStorage implements BlobStorage {
   private config: GCSBlobStorageConfig;
+  private serviceAccount: { private_key: string; client_email: string };
   private tokenCache: { accessToken: string; expiresAt: Date } | null = null;
 
   constructor(config: GCSBlobStorageConfig) {
@@ -66,6 +67,8 @@ export class GCSBlobStorage implements BlobStorage {
     if (typeof sa.client_email !== "string" || !sa.client_email) {
       throw new Error("GCSBlobStorage: serviceAccountKey must contain a valid client_email field.");
     }
+
+    this.serviceAccount = { private_key: sa.private_key, client_email: sa.client_email };
   }
 
   private getKey(id: string): string {
@@ -77,7 +80,7 @@ export class GCSBlobStorage implements BlobStorage {
       return this.tokenCache.accessToken;
     }
 
-    const sa = JSON.parse(this.config.serviceAccountKey);
+    const sa = this.serviceAccount;
     const tokenEndpoint = "https://oauth2.googleapis.com/token";
     const scope = "https://www.googleapis.com/auth/devstorage.full_control";
 
