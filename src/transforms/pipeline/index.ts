@@ -339,7 +339,7 @@ function extractReadFile(adapter: unknown): ((path: string) => Promise<string>) 
   const a = adapter as { fs?: { readFile?: (path: string) => Promise<string> } } | null;
   const readFile = a?.fs?.readFile;
   if (typeof readFile !== "function") return undefined;
-  return (path: string) => readFile(path);
+  return (path: string) => readFile.call(a!.fs, path);
 }
 
 /**

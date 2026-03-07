@@ -181,7 +181,7 @@ export function createMarkdownDragGhost(block: Element): HTMLElement {
 // MDX helpers
 // ---------------------------------------------------------------------------
 
-export function getMdxBlockOpenUiState(block: Record<string, unknown> | null | undefined): {
+export function getMdxBlockOpenUiState(block: { filePath?: string } | null | undefined): {
   hasResolvedTarget: boolean;
   buttonLabel: string;
   showUnresolvedNote: boolean;

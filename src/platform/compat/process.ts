@@ -737,7 +737,7 @@ export async function runCommand(
   return await new Promise((resolve) => {
     const child = spawn(cmd, args, {
       cwd: cmdCwd,
-      env: cmdEnv ? { ...nodeProcess?.env, ...cmdEnv } : undefined,
+      env: cmdEnv ? { ...nodeProcess.env, ...cmdEnv } : undefined,
       stdio: nodeStdio,
       shell,
     });

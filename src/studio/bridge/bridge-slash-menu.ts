@@ -194,6 +194,8 @@ export function renderMarkdownSlashMenu(): void {
     state.markdownSlashMenuRoot.appendChild(item);
   });
 
+  if (!state.markdownSlashMenuRoot) return;
+
   const footer = document.createElement("div");
   footer.className = "vf-markdown-editor__slash-footer";
   const footerLabel = document.createElement("span");
