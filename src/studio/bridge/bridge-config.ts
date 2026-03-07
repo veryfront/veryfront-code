@@ -23,7 +23,10 @@ export interface BridgeConfig {
 let config: BridgeConfig | null = null;
 
 export function initConfig(): void {
-  const raw = (window as unknown as Record<string, unknown>).__VF_BRIDGE_CONFIG__;
+  const raw: Record<string, unknown> | undefined = (globalThis as Record<string, unknown>)
+    .__VF_BRIDGE_CONFIG__ as
+      | Record<string, unknown>
+      | undefined;
 
   // studioMode can come from the injected config or from a query parameter
   // (Studio sets vf_studio_mode on the iframe URL).
@@ -46,16 +49,15 @@ export function initConfig(): void {
     };
     return;
   }
-  const cfg = raw as Record<string, unknown>;
   config = {
-    projectId: (cfg.projectId as string) ?? "",
-    pageId: (cfg.pageId as string) ?? "",
-    pagePath: (cfg.pagePath as string) ?? (cfg.pageId as string) ?? "",
-    wsUrl: (cfg.wsUrl as string) ?? "",
-    yjsGuid: (cfg.yjsGuid as string) ?? "",
-    studioMode: resolveMode(cfg.studioMode),
-    debugSkipInit: !!cfg.debugSkipInit,
-    debugExposeInternals: !!cfg.debugExposeInternals,
+    projectId: String(raw.projectId ?? ""),
+    pageId: String(raw.pageId ?? ""),
+    pagePath: String(raw.pagePath ?? raw.pageId ?? ""),
+    wsUrl: String(raw.wsUrl ?? ""),
+    yjsGuid: String(raw.yjsGuid ?? ""),
+    studioMode: resolveMode(raw.studioMode),
+    debugSkipInit: !!raw.debugSkipInit,
+    debugExposeInternals: !!raw.debugExposeInternals,
   };
 }
 

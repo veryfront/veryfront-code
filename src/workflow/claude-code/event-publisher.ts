@@ -168,7 +168,9 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
 
     const listener = (message: string) => {
       try {
-        const event = JSON.parse(message) as ClaudeCodeEvent;
+        const parsed: unknown = JSON.parse(message);
+        if (!parsed || typeof parsed !== "object") return;
+        const event = parsed as ClaudeCodeEvent;
         handler(event);
       } catch (error) {
         logger.error("Failed to parse event", error);

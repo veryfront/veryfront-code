@@ -61,7 +61,9 @@ export async function handleStreamingResponse(
 
       const data = line.slice(6);
       try {
-        const parsed = JSON.parse(data) as Record<string, unknown>;
+        const raw: unknown = JSON.parse(data);
+        if (!raw || typeof raw !== "object") continue;
+        const parsed = raw as Record<string, unknown>;
         processEvent(parsed, state, callbacks, getBuildParts);
       } catch {
         // Skip invalid JSON
@@ -72,8 +74,11 @@ export async function handleStreamingResponse(
   // Process any remaining buffered data
   if (buffer.startsWith("data: ") && buffer.trim()) {
     try {
-      const parsed = JSON.parse(buffer.slice(6)) as Record<string, unknown>;
-      processEvent(parsed, state, callbacks, getBuildParts);
+      const raw: unknown = JSON.parse(buffer.slice(6));
+      if (raw && typeof raw === "object") {
+        const parsed = raw as Record<string, unknown>;
+        processEvent(parsed, state, callbacks, getBuildParts);
+      }
     } catch {
       // Skip invalid JSON
     }

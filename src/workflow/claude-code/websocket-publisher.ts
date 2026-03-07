@@ -65,7 +65,9 @@ export class WebSocketPublisher implements BidirectionalPublisher {
 
     socket.onmessage = (event) => {
       try {
-        const command = JSON.parse(event.data) as ClientCommand;
+        const parsed: unknown = JSON.parse(event.data);
+        if (!parsed || typeof parsed !== "object") return;
+        const command = parsed as ClientCommand;
         this.handleCommand(command);
       } catch (error) {
         if (this.config.debug) {

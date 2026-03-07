@@ -109,8 +109,7 @@ export async function getCompiler(
     loadModule: async (id: string) => {
       const loaded = await loadPlugin(id, pluginCache, pluginErrors);
       if (!loaded) throw new Error(`Failed to load plugin "${id}": plugin not installed`);
-      // deno-lint-ignore no-explicit-any -- dynamically loaded plugin cannot be statically verified against Tailwind's Plugin | Config type
-      return { module: loaded as any, base: "/", path: "/" };
+      return { module: loaded as Record<string, unknown>, base: "/", path: "/" };
     },
   });
 

@@ -286,7 +286,9 @@ export function useClaudeCodeStream(
 
     eventSource.onmessage = (e) => {
       try {
-        const event = JSON.parse(e.data) as ClaudeCodeEvent;
+        const parsed: unknown = JSON.parse(e.data);
+        if (!parsed || typeof parsed !== "object") return;
+        const event = parsed as ClaudeCodeEvent;
         processEvent(event);
       } catch (error) {
         console.error("[useClaudeCodeStream] Failed to parse event:", error);

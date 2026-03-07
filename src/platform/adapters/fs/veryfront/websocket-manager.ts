@@ -192,15 +192,21 @@ export class WebSocketManager {
 
   private handlePokeMessage(event: MessageEvent): void {
     try {
-      const data = JSON.parse(event.data as string);
+      const raw: unknown = JSON.parse(event.data as string);
+      if (!raw || typeof raw !== "object") return;
+      const data = raw as Record<string, unknown>;
       const isPoke = data.type === "poke" || data.type === "entity_updated";
       if (!isPoke) return;
 
-      const changedPaths = data.data?.changedPaths as string[] | undefined;
+      const payload = (data.data && typeof data.data === "object" ? data.data : {}) as Record<
+        string,
+        unknown
+      >;
+      const changedPaths = payload.changedPaths as string[] | undefined;
       const contentContext = this.deps.getContentContext();
 
-      const pokeBranchId = data.data?.branchId as string | null | undefined;
-      const pokeBranchName = data.data?.branchName as string | null | undefined;
+      const pokeBranchId = payload.branchId as string | null | undefined;
+      const pokeBranchName = payload.branchName as string | null | undefined;
 
       const normalizedBranchId = typeof pokeBranchId === "string" && pokeBranchId.length > 0
         ? pokeBranchId
@@ -228,9 +234,9 @@ export class WebSocketManager {
         isProductionPoke,
         isProductionMode,
         currentBranch,
-        entityId: data.data?.entityId,
-        entityType: data.data?.entityType,
-        action: data.data?.action,
+        entityId: payload.entityId,
+        entityType: payload.entityType,
+        action: payload.action,
         connectionId: this.wsConnectionId,
         totalPokesReceived: this.pokeMetrics.received,
         timeSinceLastPokeMs: timeSinceLastPoke,
@@ -291,15 +297,15 @@ export class WebSocketManager {
         }
       }
 
-      const pokeReleaseId = data.data?.releaseId as string | null | undefined;
+      const pokeReleaseId = payload.releaseId as string | null | undefined;
       const normalizedPokeReleaseId = typeof pokeReleaseId === "string" && pokeReleaseId.length > 0
         ? pokeReleaseId
         : null;
 
-      const isDeploymentPoke = data.data?.entityType === "deployment";
+      const isDeploymentPoke = payload.entityType === "deployment";
       const isPublishPoke = isDeploymentPoke || (isProductionMode && !changedPaths?.length);
 
-      const pokeEnvironmentName = data.data?.environmentName as string | null | undefined;
+      const pokeEnvironmentName = payload.environmentName as string | null | undefined;
       const normalizedPokeEnvironment =
         typeof pokeEnvironmentName === "string" && pokeEnvironmentName.length > 0
           ? pokeEnvironmentName

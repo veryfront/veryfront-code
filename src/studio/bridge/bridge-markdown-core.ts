@@ -496,8 +496,11 @@ export function extractRawBlocksForEditor(
   // capture groups. In a .replace() callback, the last two args are
   // always (offset, inputText), and the first capture group is always
   // the leading newline.
-  const replaceWithToken = function (match: string, ...rest: (string | number)[]): string {
-    const leadingNewline = rest[0] as string;
+  const replaceWithToken = function (
+    match: string,
+    leadingNewline: string,
+    ...rest: unknown[]
+  ): string {
     const offset = rest[rest.length - 2] as number;
     const inputText = rest[rest.length - 1] as string;
     const safeLeading = typeof leadingNewline === "string" ? leadingNewline : "";

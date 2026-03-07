@@ -21,7 +21,9 @@ export function getSessionFromJwt(
 
   try {
     const bytes = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0));
-    return JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed as Record<string, unknown>;
   } catch {
     return null;
   }

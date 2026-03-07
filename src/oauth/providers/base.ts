@@ -115,12 +115,21 @@ export class OAuthProvider {
   ): OAuthTokens {
     const mapping = this.config.tokenResponseMapping ?? {};
 
-    const accessToken = data[mapping.accessToken ?? "access_token"] as string;
-    const refreshToken = (data[mapping.refreshToken ?? "refresh_token"] as string | undefined) ??
+    const str = (key: string): string => {
+      const v = data[key];
+      return typeof v === "string" ? v : "";
+    };
+    const optStr = (key: string): string | undefined => {
+      const v = data[key];
+      return typeof v === "string" ? v : undefined;
+    };
+
+    const accessToken = str(mapping.accessToken ?? "access_token");
+    const refreshToken = optStr(mapping.refreshToken ?? "refresh_token") ??
       fallbackRefreshToken;
-    const tokenType = data[mapping.tokenType ?? "token_type"] as string;
-    const scope = data[mapping.scope ?? "scope"] as string;
-    const idToken = data.id_token as string | undefined;
+    const tokenType = str(mapping.tokenType ?? "token_type");
+    const scope = str(mapping.scope ?? "scope");
+    const idToken = optStr("id_token");
 
     const tokens: OAuthTokens = {
       accessToken,
@@ -130,7 +139,12 @@ export class OAuthProvider {
       idToken,
     };
 
-    const expiresIn = data[mapping.expiresIn ?? "expires_in"] as number | undefined;
+    const rawExpiresIn = data[mapping.expiresIn ?? "expires_in"];
+    const expiresIn = typeof rawExpiresIn === "number"
+      ? rawExpiresIn
+      : typeof rawExpiresIn === "string"
+      ? Number(rawExpiresIn) || undefined
+      : undefined;
     if (expiresIn) tokens.expiresAt = Date.now() + expiresIn * 1000;
 
     return tokens;
@@ -173,8 +187,9 @@ export class OAuthProvider {
       if (!response.ok) {
         return {
           success: false,
-          error: (data.error as string) || errorFallback,
-          errorDescription: (data.error_description as string) ||
+          error: (typeof data.error === "string" ? data.error : "") || errorFallback,
+          errorDescription:
+            (typeof data.error_description === "string" ? data.error_description : "") ||
             (errorDescriptionFallback ? errorDescriptionFallback(response.status) : undefined),
         };
       }

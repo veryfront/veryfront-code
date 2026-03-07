@@ -384,7 +384,9 @@ export function useClaudeCodeWebSocket(
 
     socket.onmessage = (e) => {
       try {
-        const event = JSON.parse(e.data) as ClaudeCodeEventExtended;
+        const parsed: unknown = JSON.parse(e.data);
+        if (!parsed || typeof parsed !== "object") return;
+        const event = parsed as ClaudeCodeEventExtended;
         processEvent(event);
       } catch (error) {
         console.error("[useClaudeCodeWebSocket] Failed to parse event:", error);

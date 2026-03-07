@@ -32,9 +32,9 @@ export function processNdjsonChunk(doc: Document, buffered: string): string {
     const s = line.trim();
     if (!s) continue;
 
-    let msg: SlotMessage;
+    let parsed: unknown;
     try {
-      msg = JSON.parse(s) as SlotMessage;
+      parsed = JSON.parse(s);
     } catch (e) {
       rscLogger.debug("[client-dom] malformed NDJSON line", {
         line: s,
@@ -43,6 +43,8 @@ export function processNdjsonChunk(doc: Document, buffered: string): string {
       continue;
     }
 
+    if (!parsed || typeof parsed !== "object") continue;
+    const msg = parsed as SlotMessage;
     if (msg.type !== "slot") continue;
 
     applySlotMessage(doc, msg);
