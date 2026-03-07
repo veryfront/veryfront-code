@@ -6,12 +6,7 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
-import {
-  AGENT_NOT_FOUND,
-  INVALID_ARGUMENT,
-  ORCHESTRATION_ERROR,
-  TIMEOUT_ERROR,
-} from "#veryfront/errors";
+import { INVALID_ARGUMENT, ORCHESTRATION_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import type {
   BlobResolver,
   NodeState,
@@ -174,7 +169,9 @@ export class WorkflowExecutor {
     options?: { runId?: string },
   ): Promise<WorkflowHandle<TOutput>> {
     const workflow = this.workflows.get(workflowId);
-    if (!workflow) throw AGENT_NOT_FOUND.create({ detail: `Workflow not found: ${workflowId}` });
+    if (!workflow) {
+      throw ORCHESTRATION_ERROR.create({ detail: `Workflow not found: ${workflowId}` });
+    }
 
     workflow.inputSchema?.parse(input);
 
@@ -222,7 +219,7 @@ export class WorkflowExecutor {
    */
   async resume(runId: string, fromCheckpoint?: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
-    if (!run) throw AGENT_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    if (!run) throw ORCHESTRATION_ERROR.create({ detail: `Run not found: ${runId}` });
 
     if (run.status !== "waiting" && run.status !== "pending") {
       throw ORCHESTRATION_ERROR.create({
@@ -233,14 +230,14 @@ export class WorkflowExecutor {
 
     const workflow = this.workflows.get(run.workflowId);
     if (!workflow) {
-      throw AGENT_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
+      throw ORCHESTRATION_ERROR.create({ detail: `Workflow not found: ${run.workflowId}` });
     }
 
     const nodes = this.resolveNodes(workflow, run.context);
     const resumeInfo = await this.checkpointManager.prepareResume(runId, nodes, fromCheckpoint);
 
     if (fromCheckpoint && !resumeInfo) {
-      throw AGENT_NOT_FOUND.create({
+      throw ORCHESTRATION_ERROR.create({
         detail: `Checkpoint "${fromCheckpoint}" not found for run "${runId}". ` +
           `Cannot resume from non-existent checkpoint.`,
       });
@@ -265,11 +262,11 @@ export class WorkflowExecutor {
    */
   async executeAsync(runId: string, startFromNode?: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
-    if (!run) throw AGENT_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    if (!run) throw ORCHESTRATION_ERROR.create({ detail: `Run not found: ${runId}` });
 
     const workflow = this.workflows.get(run.workflowId);
     if (!workflow) {
-      throw AGENT_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
+      throw ORCHESTRATION_ERROR.create({ detail: `Workflow not found: ${run.workflowId}` });
     }
 
     const useLocking = this.config.enableLocking !== false && hasLockSupport(this.config.backend);
@@ -566,7 +563,7 @@ export class WorkflowExecutor {
   ): Promise<TOutput> {
     while (true) {
       const run = await this.config.backend.getRun(runId);
-      if (!run) throw AGENT_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+      if (!run) throw ORCHESTRATION_ERROR.create({ detail: `Run not found: ${runId}` });
 
       if (run.status === "completed") return run.output as TOutput;
       if (run.status === "failed") {
@@ -585,7 +582,7 @@ export class WorkflowExecutor {
    */
   async cancel(runId: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
-    if (!run) throw AGENT_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    if (!run) throw ORCHESTRATION_ERROR.create({ detail: `Run not found: ${runId}` });
 
     if (run.status === "completed" || run.status === "failed") {
       throw ORCHESTRATION_ERROR.create({

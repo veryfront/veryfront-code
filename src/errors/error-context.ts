@@ -1,5 +1,8 @@
 /******** Structured error handling with logging for silent failure operations */
 
+// NOTE: serverLogger is imported but only accessed inside function bodies (never at
+// module-eval time). This is safe even with circular deps because by the time any
+// function in this module is called, all modules have finished initializing.
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getErrorMessage } from "./veryfront-error.ts";
 

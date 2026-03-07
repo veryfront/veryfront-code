@@ -72,7 +72,8 @@ export function loop(id: string, options: LoopOptions): WorkflowNode {
 
   if (maxIterations > MAX_ITERATIONS_LIMIT) {
     throw INVALID_ARGUMENT.create({
-      detail: `Loop "${id}" maxIterations cannot exceed ${MAX_ITERATIONS_LIMIT} (got ${maxIterations}). ` +
+      detail:
+        `Loop "${id}" maxIterations cannot exceed ${MAX_ITERATIONS_LIMIT} (got ${maxIterations}). ` +
         `For higher limits, consider restructuring your workflow.`,
     });
   }

@@ -1,6 +1,5 @@
 import { isBun as IS_BUN, isDeno as IS_DENO } from "./runtime.ts";
 import { dynamicImport } from "./dynamic-import.ts";
-import { NOT_SUPPORTED } from "#veryfront/errors";
 
 const nodeProcess = (globalThis as { process?: typeof import("node:process") }).process;
 type RuntimeProcess = typeof import("node:process");
@@ -36,13 +35,13 @@ export function getArgs(): string[] {
 export function exit(code?: number): never {
   if (IS_DENO) Deno.exit(code);
   if (runtimeProcess) runtimeProcess.exit(code);
-  throw NOT_SUPPORTED.create({ detail: "exit() is not supported in this runtime" });
+  throw new Error("exit() is not supported in this runtime");
 }
 
 export function cwd(): string {
   if (IS_DENO) return Deno.cwd();
   if (runtimeProcess) return runtimeProcess.cwd();
-  throw NOT_SUPPORTED.create({ detail: "cwd() is not supported in this runtime" });
+  throw new Error("cwd() is not supported in this runtime");
 }
 
 export function chdir(directory: string): void {
@@ -54,7 +53,7 @@ export function chdir(directory: string): void {
     runtimeProcess.chdir(directory);
     return;
   }
-  throw NOT_SUPPORTED.create({ detail: "chdir() is not supported in this runtime" });
+  throw new Error("chdir() is not supported in this runtime");
 }
 
 export function env(): Record<string, string> {
@@ -184,7 +183,7 @@ export function setEnv(key: string, value: string): void {
     runtimeProcess.env[key] = value;
     return;
   }
-  throw NOT_SUPPORTED.create({ detail: "setEnv() is not supported in this runtime" });
+  throw new Error("setEnv() is not supported in this runtime");
 }
 
 export function deleteEnv(key: string): void {
@@ -196,7 +195,7 @@ export function deleteEnv(key: string): void {
     delete runtimeProcess.env[key];
     return;
   }
-  throw NOT_SUPPORTED.create({ detail: "deleteEnv() is not supported in this runtime" });
+  throw new Error("deleteEnv() is not supported in this runtime");
 }
 
 type EnvOverlayStorage = {
@@ -238,7 +237,7 @@ export function memoryUsage(): {
   }
 
   if (!runtimeProcess) {
-    throw NOT_SUPPORTED.create({ detail: "memoryUsage() is not supported in this runtime" });
+    throw new Error("memoryUsage() is not supported in this runtime");
   }
 
   const { rss, heapTotal, heapUsed, external } = runtimeProcess.memoryUsage();

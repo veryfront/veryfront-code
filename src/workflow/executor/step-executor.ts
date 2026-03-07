@@ -3,7 +3,6 @@ import type { Agent, AgentResponse } from "#veryfront/agent";
 import type { Tool } from "#veryfront/tool";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import {
-  AGENT_NOT_FOUND,
   CONFIG_NOT_FOUND,
   INVALID_ARGUMENT,
   ORCHESTRATION_ERROR,
@@ -292,7 +291,7 @@ export class StepExecutor {
       ? this.formatAvailableItems(available)
       : ` No ${type}s are registered.`;
 
-    throw AGENT_NOT_FOUND.create({ detail: `${label} not found: "${id}".${suggestion}` });
+    throw ORCHESTRATION_ERROR.create({ detail: `${label} not found: "${id}".${suggestion}` });
   }
 
   private getAgent(id: string): Agent {
