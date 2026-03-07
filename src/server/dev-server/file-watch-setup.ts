@@ -30,9 +30,14 @@ const IGNORED_PATH_PATTERNS = [
   ".git\\",
   ".veryfront/",
   ".veryfront\\",
-  "data/",
-  "data\\",
 ];
+
+/**
+ * Project-root directory names that contain runtime data (not source code)
+ * and should be excluded from HMR. Matched by first path segment relative
+ * to projectDir to avoid false positives (e.g. "src/data/" is fine).
+ */
+const IGNORED_RUNTIME_DIRS = new Set(["data"]);
 
 /**
  * Check if a path should be ignored for HMR purposes.
@@ -128,8 +133,8 @@ export class FileWatchSetup {
         if (signal.aborted) break;
 
         try {
-          // Filter out paths that shouldn't trigger HMR (cache, node_modules, etc.)
-          const relevantPaths = paths.filter((p) => !shouldIgnorePath(p));
+          // Filter out paths that shouldn't trigger HMR (cache, node_modules, runtime data, etc.)
+          const relevantPaths = paths.filter((p) => !shouldIgnorePath(p) && !this.isRuntimeDataPath(p));
           if (relevantPaths.length === 0) continue;
 
           if (this.optimizedWatcher) {
@@ -175,6 +180,16 @@ export class FileWatchSetup {
     const rel = relative(this.projectDir, fullPath);
     const firstSegment = rel.split(sep)[0] ?? "";
     return this.aiDirs.has(firstSegment);
+  }
+
+  /**
+   * Check if a path is inside a runtime data directory (data/, etc.)
+   * that contains generated content (embedding indices) rather than source code.
+   */
+  private isRuntimeDataPath(fullPath: string): boolean {
+    const rel = relative(this.projectDir, fullPath);
+    const firstSegment = rel.split(sep)[0] ?? "";
+    return IGNORED_RUNTIME_DIRS.has(firstSegment);
   }
 
   /** FNV-1a hash for fast content comparison */
