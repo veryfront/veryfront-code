@@ -6,7 +6,8 @@ export async function exists(path: string): Promise<boolean> {
   try {
     await fs.access(path);
     return true;
-  } catch {
+  } catch (_) {
+    /* expected: access fails when path does not exist */
     return false;
   }
 }
@@ -15,7 +16,8 @@ export function existsSync(path: string): boolean {
   try {
     accessSync(path);
     return true;
-  } catch {
+  } catch (_) {
+    /* expected: access fails when path does not exist */
     return false;
   }
 }

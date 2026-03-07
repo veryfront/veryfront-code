@@ -67,7 +67,8 @@ async function createClient(options: RedisClientOptions): Promise<RedisClient> {
     const redisClientModule = "npm:@redis/client@1.5.8";
     const mod = await import(redisClientModule);
     createClientFn = mod.createClient as (opts: { url?: string }) => RedisClient;
-  } catch {
+  } catch (error) {
+    logger.debug("Failed to load @redis/client module", { error });
     throw new Error(
       "[Redis] Failed to load @redis/client. Install with: deno add npm:@redis/client@1.5.8",
     );
@@ -107,8 +108,8 @@ export async function disconnectRedis(): Promise<void> {
   if (sharedClient) {
     try {
       await sharedClient.disconnect();
-    } catch {
-      // Ignore disconnect errors
+    } catch (error) {
+      logger.debug("Redis disconnect error (ignored)", { error });
     }
     sharedClient = null;
   }

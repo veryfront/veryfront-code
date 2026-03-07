@@ -36,8 +36,8 @@ function sendPingToAllClients(): void {
     try {
       socket.send(pingMessage);
       sentCount++;
-    } catch {
-      // Client will be cleaned up when socket closes
+    } catch (_) {
+      /* expected: client will be cleaned up when socket closes */
     }
   }
 

@@ -250,8 +250,8 @@ class DenoFileSystem implements FileSystem {
     try {
       // @ts-ignore - Deno global
       await Deno.chmod(path, mode);
-    } catch {
-      // Ignore errors on Windows where chmod is not fully supported
+    } catch (_) {
+      /* expected: chmod is not fully supported on Windows */
     }
   }
 }

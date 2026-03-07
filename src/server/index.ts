@@ -263,8 +263,8 @@ export async function createHandler(
       if (messageSize > HMR_MAX_MESSAGE_SIZE_BYTES) {
         try {
           ws.close(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
-        } catch {
-          // Ignore close errors
+        } catch (_) {
+          /* expected: socket may already be closed */
         }
         return;
       }
@@ -272,8 +272,8 @@ export async function createHandler(
       if (!hmrRateLimiter.check(ws)) {
         try {
           ws.close(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
-        } catch {
-          // Ignore close errors
+        } catch (_) {
+          /* expected: socket may already be closed */
         }
         return;
       }
@@ -288,16 +288,16 @@ export async function createHandler(
         if (data?.type === "ping") {
           ws.send(JSON.stringify({ type: "pong" }));
         }
-      } catch {
-        // Ignore parse errors from client
+      } catch (_) {
+        /* expected: ignore malformed JSON from client */
       }
     });
 
     const sendConnected = () => {
       try {
         ws.send(JSON.stringify({ type: "connected" }));
-      } catch {
-        // Socket may have closed immediately
+      } catch (_) {
+        /* expected: socket may have closed immediately */
       }
     };
 
@@ -353,7 +353,8 @@ export function toNodeHandler(
         }
       }
       res.end();
-    } catch {
+    } catch (error) {
+      serverLogger.debug("toNodeHandler request failed", { error });
       res.writeHead(500);
       res.end("Internal Server Error");
     }

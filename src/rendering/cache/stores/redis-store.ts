@@ -65,7 +65,8 @@ export class RedisCacheStore implements CacheStore {
       const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");
       const mod = await import(redisClientModule);
       createClient = mod.createClient as (options: { url?: string }) => RedisClient;
-    } catch {
+    } catch (_) {
+      /* expected: redis client package may not be installed */
       throw toError(
         createError({
           type: "render",
@@ -119,7 +120,8 @@ export class RedisCacheStore implements CacheStore {
 
       try {
         return JSON.parse(raw) as CachePayload;
-      } catch {
+      } catch (_) {
+        /* expected: cached data may be corrupted or malformed JSON */
         return undefined;
       }
     } catch (error) {

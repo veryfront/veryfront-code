@@ -185,7 +185,8 @@ export class StaticFileService {
         cacheStrategy: this.determineCacheStrategy(candidate, requestPath, options),
         source: candidate.source,
       };
-    } catch {
+    } catch (_) {
+      /* expected: file may not exist */
       return null;
     }
   }
@@ -231,7 +232,8 @@ export class StaticFileService {
     let stat: { isFile: boolean; mtime: Date | null };
     try {
       stat = await fs.stat(manifestPath);
-    } catch {
+    } catch (_) {
+      /* expected: manifest file may not exist */
       return null;
     }
 
@@ -253,7 +255,8 @@ export class StaticFileService {
         const indexValue: ManifestIndex = { assets, mtime: currentMtime };
         manifestCache.set(cacheKey, indexValue);
         return indexValue;
-      } catch {
+      } catch (_) {
+        /* expected: manifest may be malformed or unreadable */
         manifestCache.delete(cacheKey);
         return null;
       } finally {

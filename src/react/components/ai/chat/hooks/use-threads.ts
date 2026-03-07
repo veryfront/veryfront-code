@@ -49,7 +49,7 @@ function loadIndex(key: string): ThreadIndex {
   try {
     const raw = localStorage.getItem(`${key}-index`);
     if (raw) return JSON.parse(raw) as ThreadIndex;
-  } catch { /* corrupted */ }
+  } catch (_) { /* expected: corrupted localStorage data */ }
   return { ids: [] };
 }
 
@@ -63,7 +63,7 @@ function loadThread(key: string, id: string): Thread | null {
   try {
     const raw = localStorage.getItem(`${key}-${id}`);
     if (raw) return JSON.parse(raw) as Thread;
-  } catch { /* corrupted */ }
+  } catch (_) { /* expected: corrupted localStorage data */ }
   return null;
 }
 

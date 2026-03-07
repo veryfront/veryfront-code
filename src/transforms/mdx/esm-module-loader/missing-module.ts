@@ -48,8 +48,8 @@ export function buildMissingModuleError(ctx: MissingModuleContext): Error {
       importStatement: ctx.importStatement,
       projectSlug: ctx.projectSlug,
     });
-  } catch {
-    // Error collector may not be initialized in all contexts
+  } catch (_) {
+    /* expected: error collector may not be initialized in all contexts */
   }
 
   return error;

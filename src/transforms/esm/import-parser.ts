@@ -127,7 +127,8 @@ async function checkFileExists(path: string, adapter?: RuntimeAdapter): Promise<
     const fs = adapter?.fs.stat ? adapter.fs : createFileSystem();
     const stat = await fs.stat(path);
     return stat.isFile;
-  } catch {
+  } catch (_) {
+    /* expected: file may not exist */
     return false;
   }
 }
@@ -145,7 +146,8 @@ async function resolveLocalImportPath(
       const normalizedPath = basePath.replace(/^\/+/, "");
       const resolved = await adapter.fs.resolveFile(normalizedPath);
       if (resolved) return resolved;
-    } catch {
+    } catch (_) {
+      /* expected: resolveFile may not be supported */
       // Fall through to traditional resolution
     }
   }
@@ -180,7 +182,8 @@ async function resolveAliasImportPath(
     try {
       const resolved = await adapter.fs.resolveFile(normalizedPath);
       if (resolved) return resolved;
-    } catch {
+    } catch (_) {
+      /* expected: resolveFile may not be supported */
       // Fall through to manual resolution
     }
   }
@@ -190,7 +193,8 @@ async function resolveAliasImportPath(
     try {
       const stat = await fs.stat(absolutePath);
       return stat.isFile ? absolutePath : null;
-    } catch {
+    } catch (_) {
+      /* expected: file may not exist */
       return null;
     }
   }
@@ -212,7 +216,8 @@ async function findFirstExistingFile(
       try {
         const stat = await fs.stat(path);
         return stat.isFile ? path : null;
-      } catch {
+      } catch (_) {
+        /* expected: file may not exist */
         return null;
       }
     }),

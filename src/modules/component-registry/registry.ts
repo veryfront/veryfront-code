@@ -234,7 +234,8 @@ export class ComponentRegistry {
           lastModified: stat.mtime?.toISOString(),
           type: "component",
         });
-      } catch {
+      } catch (_) {
+        /* expected: stat may fail for components without filesystem entries */
         components.push({ name, path: info.path, type: "component" });
       }
     }

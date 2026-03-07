@@ -39,7 +39,8 @@ export function isFromStudio(event: MessageEvent): boolean {
       studioOrigin = event.origin;
     }
     return valid;
-  } catch {
+  } catch (_) {
+    /* expected: invalid URL in event.origin */
     return false;
   }
 }

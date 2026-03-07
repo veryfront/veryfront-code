@@ -130,8 +130,8 @@ export class MCPServer {
     if (this.integrationLoader && !this.integrationsLoaded) {
       try {
         this.integrationsLoaded = await this.loadIntegrationTools(this.integrationLoader);
-      } catch {
-        // Non-fatal: integration tools won't be available.
+      } catch (_) {
+        // expected: non-fatal integration loading failure; tools won't be available
         // Keep integrationsLoaded=false so a later tools/list can retry.
       }
     }
@@ -327,7 +327,8 @@ export class MCPServer {
       let rpcRequest: JSONRPCRequest;
       try {
         rpcRequest = await request.json();
-      } catch {
+      } catch (_) {
+        // expected: malformed JSON in request body
         return new Response(
           JSON.stringify({
             jsonrpc: "2.0",

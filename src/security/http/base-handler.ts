@@ -123,8 +123,8 @@ export abstract class BaseHandler implements Handler {
     if (typeof fsWrapper.setRequestBranch === "function") {
       try {
         fsWrapper.setRequestBranch(ctx.parsedDomain?.branch ?? null);
-      } catch {
-        // Ignore - multi-project mode uses runWithContext for branch context
+      } catch (_) {
+        /* expected: multi-project mode uses runWithContext for branch context */
       }
     }
 

@@ -215,7 +215,8 @@ async function doFetchAndCacheModule(
           return cachedPath;
         }
       }
-    } catch {
+    } catch (_) {
+      /* expected: cached file may no longer exist on disk */
       pathCache.delete(versionedKey);
     }
   }

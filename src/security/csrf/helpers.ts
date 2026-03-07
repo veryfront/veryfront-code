@@ -78,8 +78,8 @@ export function validateCsrf(
   let cookieToken: string | undefined;
   try {
     cookieToken = parseCookiesFromHeaders(req.headers)[cookieName];
-  } catch {
-    // Malformed cookie (e.g. bad percent-encoding) → treat as missing
+  } catch (_) {
+    /* expected: malformed cookie (e.g. bad percent-encoding) → treat as missing */
     return false;
   }
   if (!cookieToken) return false;
@@ -121,8 +121,8 @@ export function applyCsrfCookie(
   let cookies: Record<string, string>;
   try {
     cookies = parseCookiesFromHeaders(req.headers);
-  } catch {
-    // Malformed cookie header — issue a fresh token
+  } catch (_) {
+    /* expected: malformed cookie header — issue a fresh token */
     cookies = {};
   }
   if (cookies[cookieName]) return;

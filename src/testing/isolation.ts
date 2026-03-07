@@ -120,8 +120,8 @@ function clearSSRGlobalStubs(): void {
   for (const key of SSR_GLOBAL_KEYS) {
     try {
       delete (globalThis as Record<string, unknown>)[key];
-    } catch {
-      // Best-effort cleanup for globals that might be non-configurable.
+    } catch (_) {
+      /* expected: globals may be non-configurable */
     }
   }
 }
@@ -377,7 +377,8 @@ async function ensureDenoEnvOverlay(): Promise<EnvOverlay | null> {
     const overlay: EnvOverlay = { storage };
     globalAny[denoEnvOverlayKey] = overlay;
     return overlay;
-  } catch {
+  } catch (_) {
+    /* expected: node:async_hooks may not be available in all runtimes */
     return null;
   }
 }
@@ -409,7 +410,8 @@ async function ensureEnvOverlay(): Promise<EnvOverlay | null> {
     const overlay: EnvOverlay = { storage, baseEnv: processEnv };
     globalAny[envOverlayKey] = overlay;
     return overlay;
-  } catch {
+  } catch (_) {
+    /* expected: node:async_hooks may not be available in all runtimes */
     return null;
   }
 }
@@ -417,7 +419,8 @@ async function ensureEnvOverlay(): Promise<EnvOverlay | null> {
 function captureEnvSnapshot(): Record<string, string> {
   try {
     return { ...readEnv() };
-  } catch {
+  } catch (_) {
+    /* expected: env access may not be available in all runtimes */
     return {};
   }
 }
@@ -428,7 +431,8 @@ function restoreEnvSnapshot(snapshot: Record<string, string> | null): void {
   let current: Record<string, string>;
   try {
     current = readEnv();
-  } catch {
+  } catch (_) {
+    /* expected: env access may not be available in all runtimes */
     current = {};
   }
 
@@ -436,16 +440,16 @@ function restoreEnvSnapshot(snapshot: Record<string, string> | null): void {
     if (key in snapshot) continue;
     try {
       deleteEnv(key);
-    } catch {
-      // ignore env cleanup errors
+    } catch (_) {
+      /* expected: env deletion may fail in restricted runtimes */
     }
   }
 
   for (const [key, value] of Object.entries(snapshot)) {
     try {
       setEnv(key, value);
-    } catch {
-      // ignore env cleanup errors
+    } catch (_) {
+      /* expected: env mutation may fail in restricted runtimes */
     }
   }
 }
@@ -470,8 +474,8 @@ function restoreGlobalSnapshot(
     try {
       if (entry.had) (globalThis as Record<string, unknown>)[key] = entry.value;
       else delete (globalThis as Record<string, unknown>)[key];
-    } catch {
-      // ignore global restore errors
+    } catch (_) {
+      /* expected: globals may be non-configurable */
     }
   }
 }
@@ -564,8 +568,8 @@ export async function resetAllTestState(): Promise<void> {
   for (const cleanup of cleanups) {
     try {
       await cleanup();
-    } catch {
-      // Best-effort cleanup; ignore individual failures.
+    } catch (error) {
+      console.debug("resetAllTestState cleanup task failed", error);
     }
   }
 
@@ -574,8 +578,8 @@ export async function resetAllTestState(): Promise<void> {
     try {
       const { cleanupBundler } = await import("../rendering/cleanup.ts");
       await cleanupBundler();
-    } catch {
-      // Best-effort cleanup; ignore individual failures.
+    } catch (error) {
+      console.debug("resetAllTestState bundler cleanup failed", error);
     }
   }
 }
@@ -587,8 +591,8 @@ async function runCleanupTasks(): Promise<void> {
   for (const task of tasks) {
     try {
       await task();
-    } catch {
-      // Best-effort cleanup; ignore individual failures.
+    } catch (error) {
+      console.debug("runCleanupTasks task failed", error);
     }
   }
 }
@@ -597,15 +601,15 @@ async function runSSRTestCleanup(): Promise<void> {
   try {
     const { resetSSRGlobalsState } = await import("../rendering/ssr-globals/context.ts");
     resetSSRGlobalsState();
-  } catch {
-    // Best-effort cleanup; ignore SSR reset failures.
+  } catch (error) {
+    console.debug("runSSRTestCleanup resetSSRGlobalsState failed", error);
   }
 
   try {
     const { disableSSRFetchInterception } = await import("../rendering/ssr-globals/index.ts");
     disableSSRFetchInterception();
-  } catch {
-    // Best-effort cleanup; ignore fetch interception reset failures.
+  } catch (error) {
+    console.debug("runSSRTestCleanup disableSSRFetchInterception failed", error);
   }
 
   clearSSRGlobalStubs();
@@ -729,8 +733,8 @@ export async function installTestIsolation(hooks: HookRegistration): Promise<voi
   try {
     const asyncHooks = await import("node:async_hooks");
     isolationStorage = new asyncHooks.AsyncLocalStorage<TestIsolationContext>();
-  } catch {
-    // AsyncLocalStorage not available, use fallback (single-threaded)
+  } catch (_) {
+    /* expected: AsyncLocalStorage not available in all runtimes */
     isolationStorage = null;
   }
 

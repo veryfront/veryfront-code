@@ -15,8 +15,8 @@ function getEnvString(key: string): string | undefined {
 
   try {
     return g.Deno?.env?.get?.(key) ?? g.process?.env?.[key];
-  } catch {
-    // Gracefully handle missing --allow-env permission in Deno
+  } catch (_) {
+    /* expected: Deno may deny --allow-env permission */
     return undefined;
   }
 }

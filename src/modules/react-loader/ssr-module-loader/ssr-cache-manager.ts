@@ -82,7 +82,8 @@ export class SSRCacheManager {
         .slice(0, 8)
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
-    } catch {
+    } catch (_) {
+      /* expected: WebCrypto may not be available, fall back to sync hash */
       return hashCodeHex(content);
     }
   }
@@ -170,7 +171,8 @@ export class SSRCacheManager {
       }
       verifiedHttpBundlePaths.set(verifyKey, true);
       return globalModuleCache.has(contentCacheKey);
-    } catch {
+    } catch (error) {
+      logger.debug("Failed to validate memory cache entry, invalidating", { error });
       this.invalidateContentAndFileCacheEntries(contentCacheKey, filePathCacheKey, cachedEntry);
       return false;
     }
@@ -234,10 +236,11 @@ export class SSRCacheManager {
         if (!stat.isFile) {
           return true;
         }
-      } catch {
+      } catch (error) {
         logger.debug("Redis cache has invalid local path, re-transforming", {
           file: filePath.slice(-40),
           missingPath: path.slice(-60),
+          error,
         });
         return true;
       }

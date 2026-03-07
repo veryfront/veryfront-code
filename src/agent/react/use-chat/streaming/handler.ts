@@ -65,8 +65,8 @@ export async function handleStreamingResponse(
         if (!raw || typeof raw !== "object") continue;
         const parsed = raw as Record<string, unknown>;
         processEvent(parsed, state, callbacks, getBuildParts);
-      } catch {
-        // Skip invalid JSON
+      } catch (_) {
+        /* expected: skip malformed JSON in SSE stream */
       }
     }
   }

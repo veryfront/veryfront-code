@@ -295,10 +295,11 @@ async function readFileWithFallback(
 ): Promise<string> {
   try {
     return await adapter.fs.readFile(modulePath);
-  } catch {
+  } catch (_) {
+    /* expected: original path may not exist, try normalized path */
     try {
       return await adapter.fs.readFile(normalizedPath);
-    } catch {
+    } catch (_) {
       throw toError(
         createError({
           type: "file",

@@ -156,7 +156,8 @@ export function parseIssue(content: string, path: string): Issue | null {
   try {
     const metadata = validateMetadata(parseYaml(parsed.frontmatter));
     return { metadata, body: parsed.body, path };
-  } catch {
+  } catch (_) {
+    // expected: invalid or unparseable frontmatter metadata
     return null;
   }
 }
@@ -200,8 +201,8 @@ export class IssuesManager {
         const id = entry.name.replace(/\.md$/, "");
         if (ISSUE_ID_PATTERN.test(id)) ids.push(id);
       }
-    } catch {
-      // Directory doesn't exist yet
+    } catch (_) {
+      // expected: directory doesn't exist yet
     }
 
     return ids;
@@ -244,7 +245,8 @@ export class IssuesManager {
     try {
       const content = await this.fs.readTextFile(join(this.projectDir, path));
       return parseIssue(content, path);
-    } catch {
+    } catch (_) {
+      // expected: issue file may not exist
       return null;
     }
   }
@@ -287,7 +289,8 @@ export class IssuesManager {
     try {
       await this.fs.remove(join(this.projectDir, path));
       return true;
-    } catch {
+    } catch (_) {
+      // expected: issue file may not exist
       return false;
     }
   }

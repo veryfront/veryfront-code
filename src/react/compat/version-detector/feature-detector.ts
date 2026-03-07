@@ -79,7 +79,7 @@ export async function detectReactVersionFromProject(
         version,
       });
     }
-  } catch {
+  } catch (_) {
     logger.debug("Could not read package.json, using bundled React version", {
       projectDir,
       version,

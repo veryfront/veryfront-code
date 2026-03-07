@@ -167,8 +167,8 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
   if (definition.inputSchema) {
     try {
       inputSchemaJson = zodToJsonSchema(definition.inputSchema) as Record<string, unknown>;
-    } catch {
-      // Ignore conversion errors
+    } catch (_) {
+      /* expected: zod-to-json-schema conversion may not support all types */
     }
   }
 

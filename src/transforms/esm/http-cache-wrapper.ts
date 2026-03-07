@@ -337,7 +337,8 @@ export class HttpBundleCache {
           try {
             assertLocal(localCode);
             results.set(hash, localCode);
-          } catch {
+          } catch (_) {
+            /* expected: detokenization may be incomplete for some items */
             logger.warn("Batch item failed assertion", { hash });
           }
         }
@@ -363,7 +364,8 @@ export class HttpBundleCache {
 
     try {
       return await distributed.get(distributedKey("hash", hashStr));
-    } catch {
+    } catch (_) {
+      /* expected: distributed cache may be unavailable */
       return null;
     }
   }

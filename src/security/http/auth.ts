@@ -14,8 +14,8 @@ function encodeBase64(value: string): string {
   if (typeof globalThis.btoa === "function") {
     try {
       return globalThis.btoa(value);
-    } catch {
-      // Fallback for non-Latin1 strings
+    } catch (_) {
+      /* expected: non-Latin1 string — fall back to TextEncoder */
       const bytes = new TextEncoder().encode(value);
       let binary = "";
       for (const byte of bytes) binary += String.fromCharCode(byte);

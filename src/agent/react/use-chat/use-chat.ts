@@ -257,8 +257,8 @@ export function useChat(options: UseChatOptions): UseChatResult {
               await doBrowserInference(allMessages);
               return;
             }
-          } catch {
-            // If parsing fails, fall through to normal error handling
+          } catch (_) {
+            /* expected: non-JSON 503 response body, fall through to normal error handling */
           }
         }
 
@@ -397,8 +397,8 @@ export function useChat(options: UseChatOptions): UseChatResult {
           "./browser-inference/browser-engine.ts"
         );
         stopBrowserInference();
-      } catch {
-        // Worker module may already be terminated or unavailable
+      } catch (_) {
+        /* expected: Worker module may already be terminated or unavailable */
       }
       browserInferenceActiveRef.current = false;
       setBrowserStatus("ready");

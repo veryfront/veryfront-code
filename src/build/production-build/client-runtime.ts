@@ -26,8 +26,8 @@ try {
   CLIENT_ROUTER_BUNDLE = (templates as { CLIENT_ROUTER_BUNDLE?: string }).CLIENT_ROUTER_BUNDLE;
   CLIENT_PREFETCH_BUNDLE =
     (templates as { CLIENT_PREFETCH_BUNDLE?: string }).CLIENT_PREFETCH_BUNDLE;
-} catch {
-  // Pre-bundled scripts not available (Deno development mode)
+} catch (_) {
+  /* expected: pre-bundled scripts not available in Deno development mode */
 }
 
 interface ClientScriptGenerationOptions {
@@ -43,7 +43,8 @@ async function statFile(path: string): Promise<FileStatResult | null> {
   try {
     const stat = await fs.stat(path);
     return { isFile: stat.isFile };
-  } catch {
+  } catch (_) {
+    /* expected: file may not exist */
     return null;
   }
 }
@@ -292,7 +293,8 @@ function createFsLoaderPlugin(): Plugin {
           const ext = extname(args.path).toLowerCase();
           const loader = extensionToLoader[ext] ?? "js";
           return { contents, loader };
-        } catch {
+        } catch (error) {
+          logger.debug("fs-loader: failed to read file", { path: args.path, error });
           return null;
         }
       });

@@ -107,8 +107,8 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
         const fs = await import("node:fs/promises");
         await fs.rename(tmpPath, storagePath);
       }
-    } catch {
-      // Fallback for environments where rename isn't available
+    } catch (_) {
+      // expected: rename not available in all environments, fall back to direct write
       await writeTextFile(storagePath, payload);
     }
   }
@@ -135,8 +135,8 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
           files.push(fullPath);
         }
       }
-    } catch {
-      // directory may not exist yet
+    } catch (_) {
+      // expected: directory may not exist yet
     }
     return files;
   }

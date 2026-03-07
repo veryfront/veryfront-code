@@ -185,7 +185,8 @@ function shouldDisableLruInterval(): boolean {
 
   try {
     return getDisableLruIntervalEnv();
-  } catch {
+  } catch (_) {
+    /* expected: env variable may not be available */
     return false;
   }
 }

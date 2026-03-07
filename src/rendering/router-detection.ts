@@ -142,10 +142,12 @@ async function withAdapterFallback<T>(
 ): Promise<T> {
   try {
     return await adapterFn();
-  } catch {
+  } catch (_) {
+    /* expected: adapter may not support this operation */
     try {
       return await fallbackFn();
-    } catch {
+    } catch (_) {
+      /* expected: fallback may also fail */
       return defaultValue;
     }
   }

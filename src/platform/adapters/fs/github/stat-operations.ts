@@ -170,7 +170,8 @@ export class GitHubStatOperations {
     try {
       await this.stat(path);
       return true;
-    } catch {
+    } catch (_) {
+      /* expected: stat throws when file does not exist */
       return false;
     }
   }

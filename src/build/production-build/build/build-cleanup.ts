@@ -10,15 +10,15 @@ export async function cleanupCaches(): Promise<void> {
   try {
     const { destroyTransformCache } = await import("#veryfront/transforms/esm/transform-cache.ts");
     destroyTransformCache();
-  } catch {
-    // Ignore if not available
+  } catch (_) {
+    /* expected: transform cache module may not be available */
   }
 
   try {
     const { destroyVendorCache } = await import("../../../build/vendor-cache.ts");
     destroyVendorCache();
-  } catch {
-    // Ignore if not available
+  } catch (_) {
+    /* expected: vendor cache module may not be available */
   }
 }
 

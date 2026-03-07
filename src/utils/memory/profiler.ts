@@ -126,7 +126,8 @@ export async function forceGC(): Promise<boolean> {
     buffer.fill(0);
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
     return true;
-  } catch {
+  } catch (error) {
+    logger.debug("forceGC allocation failed", { error });
     return false;
   }
 }
@@ -203,7 +204,8 @@ function getMemoryThreshold(envVar: string, fallback: number): number {
     if (Number.isNaN(parsed)) return fallback;
 
     return parsed;
-  } catch {
+  } catch (_) {
+    /* expected: Deno.env.get may fail without --allow-env */
     return fallback;
   }
 }

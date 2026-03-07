@@ -85,7 +85,8 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
     const onCopy = React.useCallback(async () => {
       try {
         await navigator.clipboard.writeText(textContent);
-      } catch {
+      } catch (_) {
+        /* expected: clipboard API unavailable, using fallback */
         const textarea = document.createElement("textarea");
         textarea.value = textContent;
         document.body.appendChild(textarea);

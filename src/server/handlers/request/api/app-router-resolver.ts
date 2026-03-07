@@ -155,7 +155,8 @@ export async function resolveAppRouteFile(
   try {
     const st = await ctx.adapter.fs.stat(appRoot);
     if (!st.isDirectory) return null;
-  } catch {
+  } catch (_) {
+    // expected: app directory doesn't exist
     return null;
   }
 

@@ -201,7 +201,8 @@ function isTty(): boolean {
     if (hasNodeProcess(globalThis)) {
       return Boolean(globalThis.process?.stdout?.isTTY);
     }
-  } catch {
+  } catch (_) {
+    /* expected: TTY detection may fail in restricted environments */
     return false;
   }
   return false;

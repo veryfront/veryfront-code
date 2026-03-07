@@ -99,8 +99,8 @@ export async function tryLoadReservedInDirs(
           contentSourceId,
         });
         if (typeof Cmp === "function") return Cmp as ReservedComponent;
-      } catch {
-        // Component not found in this path, continue to next
+      } catch (_) {
+        /* expected: component not found in this path, continue to next */
       }
     }
   }

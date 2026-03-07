@@ -23,7 +23,8 @@ function extractEsmShPackage(url: string): string | null {
 
     const packageName = pathname.split("@")[0]?.split("/")[0] ?? "";
     return packageName || null;
-  } catch {
+  } catch (_) {
+    /* expected: URL may be malformed */
     return null;
   }
 }

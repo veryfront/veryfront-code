@@ -14,8 +14,8 @@ const otel: OtelInstruments = {};
 export function safeLogWarn(message: string, error?: unknown): void {
   try {
     logger.warn(message, error);
-  } catch {
-    // Logger unavailable
+  } catch (_) {
+    /* expected: logger may be unavailable during bootstrap */
   }
 }
 

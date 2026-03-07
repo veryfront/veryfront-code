@@ -32,7 +32,8 @@ export async function findMissingFrameworkBundles(paths: string[]): Promise<stri
       if (!(await fsExists(path))) {
         missing.push(path);
       }
-    } catch {
+    } catch (_) {
+      /* expected: file may not exist */
       missing.push(path);
     }
   }
@@ -81,7 +82,8 @@ export async function initializeCacheDir(context: ESMLoaderContext): Promise<str
     context.esmCacheDir = persistentCacheDir;
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Using persistent cache dir: ${persistentCacheDir}`);
     return persistentCacheDir;
-  } catch {
+  } catch (_) {
+    /* expected: persistent cache dir may not be writable, fall through to temp dir */
     const tempDir = await localFs.makeTempDir({ prefix: `veryfront-mdx-esm-${projectKey}-` });
     context.esmCacheDir = tempDir;
     return tempDir;

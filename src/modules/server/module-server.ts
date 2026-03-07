@@ -555,8 +555,8 @@ async function findSourceFile(
             });
             return { path: frameworkPath, isFrameworkFile: true };
           }
-        } catch {
-          // continue
+        } catch (_) {
+          /* expected: file may not exist at this extension */
         }
       }
     }
@@ -588,8 +588,8 @@ async function findSourceFile(
         });
         return { path: fullPath, isFrameworkFile: false };
       }
-    } catch {
-      // continue
+    } catch (_) {
+      /* expected: file may not exist at this path */
     }
   }
 
@@ -602,8 +602,8 @@ async function findSourceFile(
         logger.debug("Found file", { basePath, resolvedPath: fullPath });
         return { path: fullPath, isFrameworkFile: false };
       }
-    } catch {
-      // continue
+    } catch (_) {
+      /* expected: file may not exist at this extension */
     }
   }
 
@@ -624,8 +624,8 @@ async function findSourceFile(
           });
           return { path: fullPath, isFrameworkFile: false };
         }
-      } catch {
-        // continue
+      } catch (_) {
+        /* expected: file may not exist after stripping prefix */
       }
     }
   }
@@ -641,8 +641,8 @@ async function findSourceFile(
         });
         return { path: fullPath, isFrameworkFile: false };
       }
-    } catch {
-      // continue
+    } catch (_) {
+      /* expected: index file may not exist at this extension */
     }
   }
 
@@ -660,8 +660,8 @@ async function findSourceFile(
           });
           return { path: fullPath, isFrameworkFile: false };
         }
-      } catch {
-        // continue
+      } catch (_) {
+        /* expected: file may not exist in common directory */
       }
     }
   }

@@ -48,7 +48,8 @@ export class FileListIndex {
     if (this.readyPromise) {
       try {
         await this.readyPromise;
-      } catch {
+      } catch (_) {
+        /* expected: file list initialization may fail, will fetch individually */
         logger.debug("File list initialization failed, will fetch individually");
       }
     }

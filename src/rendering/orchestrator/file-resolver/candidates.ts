@@ -17,8 +17,8 @@ export async function findFirstExisting(
     try {
       await statFn(fullPath);
       return fullPath;
-    } catch {
-      // ignore
+    } catch (_) {
+      /* expected: file may not exist at this candidate path */
     }
   }
   return null;

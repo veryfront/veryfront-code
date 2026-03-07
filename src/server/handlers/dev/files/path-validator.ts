@@ -51,7 +51,8 @@ export async function validateDevFilePath(
   try {
     const info = await ctx.adapter.fs.stat(absPath);
     if (!info.isFile) return "Error: Not a file";
-  } catch {
+  } catch (_) {
+    /* expected: file may not exist */
     return "Error: File not found";
   }
 

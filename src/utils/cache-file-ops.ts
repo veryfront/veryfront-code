@@ -83,7 +83,8 @@ export async function verifyCacheFileExists(
   try {
     const stat = await fs.stat(path);
     return !!stat?.isFile;
-  } catch {
+  } catch (_) {
+    /* expected: file may not exist */
     return false;
   }
 }

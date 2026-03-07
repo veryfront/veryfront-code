@@ -25,7 +25,8 @@ export function getDomRenderedText(root: Node | null): string {
     const range = document.createRange();
     range.selectNodeContents(root);
     return range.toString();
-  } catch {
+  } catch (_) {
+    /* expected: Range operation on detached or invalid node */
     return "";
   }
 }
@@ -48,7 +49,8 @@ export function getTextOffsetWithinRoot(
     range.selectNodeContents(root);
     range.setEnd(targetNode, targetOffset);
     return range.toString().length;
-  } catch {
+  } catch (_) {
+    /* expected: Range operation on detached or invalid node */
     return 0;
   }
 }
@@ -406,8 +408,8 @@ export function setMarkdownEditorSelection(start: number, end?: number): void {
       range.setEnd(focus.node, focus.offset);
       selection.removeAllRanges();
       selection.addRange(range);
-    } catch {
-      // Ignore when point resolution races with Lexical DOM updates.
+    } catch (_) {
+      /* expected: point resolution races with Lexical DOM updates */
     }
     return;
   }
@@ -579,7 +581,8 @@ export function createMarkdownEditorRange(
     range.setStart(startPoint.node, startPoint.offset);
     range.setEnd(endPoint.node, endPoint.offset);
     return range;
-  } catch {
+  } catch (_) {
+    /* expected: Range operation on detached or invalid node */
     return null;
   }
 }

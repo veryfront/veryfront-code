@@ -77,7 +77,8 @@ export function jsonResponse<T>(
       status,
       headers,
     });
-  } catch {
+  } catch (_) {
+    /* expected: JSON.stringify may fail on circular or non-serializable data */
     return errorResponse(
       HttpStatus.INTERNAL_SERVER_ERROR,
       "Failed to serialize response data",
@@ -219,7 +220,8 @@ function isValidRedirectUrl(url: string): boolean {
     }
 
     return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
+  } catch (_) {
+    /* expected: URL parsing fails for malformed URLs */
     return false;
   }
 }

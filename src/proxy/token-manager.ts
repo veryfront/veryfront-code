@@ -176,8 +176,8 @@ export class TokenManager {
 
       const decoded = JSON.parse(atob(payload));
       if (decoded?.exp) return decoded.exp * 1000;
-    } catch {
-      // Fall through to default
+    } catch (_) {
+      // expected: malformed JWT payload, fall through to default
     }
 
     return Date.now() + 3600 * 1000;

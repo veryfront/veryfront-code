@@ -84,7 +84,8 @@ export function createHTTPPlugin(): Plugin {
           }
           try {
             return { path: new URL(path, args.importer).toString(), namespace: "http-url" };
-          } catch {
+          } catch (_) {
+            /* expected: relative path may not resolve against importer URL */
             return undefined;
           }
         }
@@ -97,7 +98,8 @@ export function createHTTPPlugin(): Plugin {
 
         try {
           return { path: new URL(path, args.importer).toString(), namespace: "http-url" };
-        } catch {
+        } catch (_) {
+          /* expected: bare specifier may not resolve as URL */
           return { path: `https://esm.sh/${path}`, namespace: "http-url" };
         }
       });
@@ -202,8 +204,8 @@ function ensureEsmExternalAndDeps(specifier: string, version: string): string | 
       const out = url.toString();
       logger.debug(`${LOG_PREFIX} ${specifier} -> ${out}`);
       return out;
-    } catch {
-      // Fallback: add as new param (may create duplicate)
+    } catch (_) {
+      /* expected: URL may be malformed, fallback to string append */
     }
   }
 

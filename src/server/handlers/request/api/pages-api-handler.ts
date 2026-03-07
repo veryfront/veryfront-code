@@ -48,8 +48,8 @@ async function destroyHandler(promise?: Promise<APIRouteHandler>): Promise<void>
   } catch (error) {
     try {
       logger.debug("Failed to destroy handler", error);
-    } catch {
-      // noop
+    } catch (_) {
+      // expected: logger itself may throw during shutdown
     }
   }
 }

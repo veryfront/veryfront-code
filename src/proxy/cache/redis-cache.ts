@@ -188,8 +188,8 @@ export class RedisCache implements TokenCache {
 
       try {
         await client.quit();
-      } catch {
-        // Ignore close errors
+      } catch (_) {
+        // expected: close errors are non-critical
       } finally {
         this.client = null;
         this.connected = false;

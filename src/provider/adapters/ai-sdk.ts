@@ -28,7 +28,8 @@ function getToolSchema(tool: Tool): JsonSchema {
 
   try {
     return zodToJsonSchema(tool.inputSchema);
-  } catch {
+  } catch (_) {
+    // expected: zod schema conversion may fail for unsupported schema types
     return { type: "object", properties: {} };
   }
 }

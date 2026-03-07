@@ -14,7 +14,8 @@ export function isCompiledBinary(): boolean {
 
   try {
     return execPath().includes("veryfront");
-  } catch {
+  } catch (_) {
+    /* expected: execPath may not be available on all platforms */
     return false;
   }
 }

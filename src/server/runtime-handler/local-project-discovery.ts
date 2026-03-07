@@ -90,8 +90,9 @@ export async function findLocalProjectPath(
         slug,
         path: normalizedPath,
       });
-    } catch {
+    } catch (error) {
       logger.warn("Failed to validate x-project-path override", {
+        error,
         slug,
         path: headerPath,
       });

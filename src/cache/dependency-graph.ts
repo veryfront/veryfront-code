@@ -201,7 +201,8 @@ async function buildDependencyGraph(
         buildDependencyGraph(dep, graph, contentHashes, getContent, projectDir, visited)
       ),
     );
-  } catch {
+  } catch (_) {
+    // expected: file may not exist or imports may fail to parse
     graph.addModule(filePath, []);
   }
 }

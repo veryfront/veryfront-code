@@ -15,7 +15,8 @@ export async function parseFrontmatter(content: string): Promise<ParsedContent> 
       frontmatter: (result.attrs ?? {}) as MDXFrontmatter,
       content: result.body,
     };
-  } catch {
+  } catch (_) {
+    /* expected: standard extract may fail on malformed frontmatter, fall back to manual parsing */
     const manualResult = await parseManually(content);
     return manualResult ?? { frontmatter: {}, content };
   }
@@ -86,7 +87,8 @@ function parseExportValue(value: string): unknown {
     }
 
     return trimmed;
-  } catch {
+  } catch (_) {
+    /* expected: value may not be valid JSON, return as stripped string */
     return trimmed.replace(/^['"]|['"]$/g, "");
   }
 }

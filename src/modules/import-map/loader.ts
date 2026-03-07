@@ -90,8 +90,8 @@ async function loadDenoJsonImportMap(
           : {};
         return { imports, scopes };
       }
-    } catch {
-      // deno.json not found in virtual filesystem
+    } catch (_) {
+      /* expected: deno.json not found in virtual filesystem */
     }
     return null;
   }
@@ -118,8 +118,8 @@ async function loadDenoJsonImportMap(
           : {};
         return { imports, scopes };
       }
-    } catch {
-      // deno.json not found in this directory, continue searching
+    } catch (_) {
+      /* expected: deno.json not found in this directory, continue searching */
     }
 
     const parent = dirname(currentPath);
@@ -153,8 +153,8 @@ export function loadImportMap(
             scopes: importMap.scopes ?? {},
           };
         }
-      } catch {
-        // Config not found or invalid, continue without it
+      } catch (_) {
+        /* expected: config not found or invalid, continue without it */
       }
 
       // Merge: defaults < deno.json < config

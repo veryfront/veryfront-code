@@ -33,8 +33,8 @@ export async function tryReadWithExtensions(
         const content = await fs.readTextFile(sourcePath);
         return { sourcePath, content };
       }
-    } catch {
-      // Continue trying other extensions
+    } catch (_) {
+      /* expected: file may not exist at this extension */
     }
   }
   return null;
@@ -140,14 +140,14 @@ export async function resolveVeryfrontSourcePath(specifier: string): Promise<str
       try {
         const srcPath = basePath + ".src";
         if (await exists(srcPath)) return srcPath;
-      } catch {
-        // Continue
+      } catch (_) {
+        /* expected: file may not exist at this path */
       }
       // Try exact path
       try {
         if (await exists(basePath)) return basePath;
-      } catch {
-        // Continue
+      } catch (_) {
+        /* expected: file may not exist at this path */
       }
       continue;
     }
@@ -163,8 +163,8 @@ export async function resolveVeryfrontSourcePath(specifier: string): Promise<str
       const pathWithExt = basePath + ext;
       try {
         if (await exists(pathWithExt)) return pathWithExt;
-      } catch {
-        // Continue
+      } catch (_) {
+        /* expected: file may not exist at this path */
       }
     }
 
@@ -173,8 +173,8 @@ export async function resolveVeryfrontSourcePath(specifier: string): Promise<str
       const indexPath = join(basePath, "index" + ext);
       try {
         if (await exists(indexPath)) return indexPath;
-      } catch {
-        // Continue
+      } catch (_) {
+        /* expected: file may not exist at this path */
       }
     }
   }
@@ -216,16 +216,16 @@ export async function resolveRelativeFrameworkImport(
     // Try exact path first
     try {
       if (await exists(basePath)) return basePath;
-    } catch {
-      // Continue
+    } catch (_) {
+      /* expected: file may not exist at this path */
     }
 
     // Try with .src suffix for embedded sources
     try {
       const srcPath = basePath + ".src";
       if (await exists(srcPath)) return srcPath;
-    } catch {
-      // Continue
+    } catch (_) {
+      /* expected: file may not exist at this path */
     }
 
     // Not found with explicit extension
@@ -242,8 +242,8 @@ export async function resolveRelativeFrameworkImport(
     const pathWithExt = basePath + ext;
     try {
       if (await exists(pathWithExt)) return pathWithExt;
-    } catch {
-      // Continue
+    } catch (_) {
+      /* expected: file may not exist at this path */
     }
   }
 
@@ -252,8 +252,8 @@ export async function resolveRelativeFrameworkImport(
     const indexPath = join(basePath, "index" + ext);
     try {
       if (await exists(indexPath)) return indexPath;
-    } catch {
-      // Continue
+    } catch (_) {
+      /* expected: file may not exist at this path */
     }
   }
 

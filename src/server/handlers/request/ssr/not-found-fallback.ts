@@ -15,7 +15,8 @@ export async function tryNotFoundFallback(
     try {
       const st = await ctx.adapter.fs.stat(appRoot);
       if (!st.isDirectory) return null;
-    } catch {
+    } catch (_) {
+      /* expected: app directory may not exist */
       return null;
     }
 
@@ -56,7 +57,8 @@ export async function tryNotFoundFallback(
 
     try {
       inner = await renderToStringAdapter(element);
-    } catch {
+    } catch (_) {
+      /* expected: SSR render may fail, fall back to text extraction */
       inner = (await extractNotFoundText(dirs, ctx)) ?? "<p>Not Found</p>";
     }
 
@@ -68,7 +70,8 @@ export async function tryNotFoundFallback(
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache("no-cache")
       .html(html, 404);
-  } catch {
+  } catch (_) {
+    /* expected: entire not-found fallback may fail gracefully */
     return null;
   }
 }
@@ -92,8 +95,8 @@ async function extractNotFoundText(
         const match = src.match(/>\s*([^<]+?)\s*</);
 
         if (match?.[1]) return `<p>${match[1]}</p>`;
-      } catch {
-        // try next
+      } catch (_) {
+        /* expected: not-found file may not exist, try next */
       }
     }
   }

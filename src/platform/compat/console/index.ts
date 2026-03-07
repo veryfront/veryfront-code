@@ -37,7 +37,8 @@ async function loadColors(): Promise<ConsoleStyler> {
   try {
     const mod = await (isDeno ? import("./deno.ts") : import("./node.ts"));
     _colors = mod.colors;
-  } catch {
+  } catch (_) {
+    /* expected: color module may not be available in all runtimes */
     _colors = fallbackColors;
   }
 

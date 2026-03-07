@@ -30,8 +30,8 @@ async function findEsbuildInVFS(): Promise<string | null> {
     try {
       const stat = await Deno.stat(vfsPath);
       if (stat.isFile) return vfsPath;
-    } catch {
-      // ignore
+    } catch (_) {
+      /* expected: VFS path may not exist in deno compile */
     }
   }
 
@@ -45,8 +45,8 @@ async function extractEsbuildBinary(): Promise<string | null> {
   try {
     const stat = await Deno.stat(targetPath);
     if (stat.isFile && stat.mode && (stat.mode & 0o111)) return targetPath;
-  } catch {
-    // doesn't exist
+  } catch (_) {
+    /* expected: cached binary does not exist yet */
   }
 
   const vfsPath = await findEsbuildInVFS();

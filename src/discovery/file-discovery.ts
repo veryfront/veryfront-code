@@ -50,7 +50,8 @@ export async function findTypeScriptFiles(
         files.push(...(await findTypeScriptFiles(filePath, context)));
       }
     }
-  } catch {
+  } catch (_) {
+    /* expected: directory may not exist or be unreadable */
     return files;
   }
 

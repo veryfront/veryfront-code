@@ -41,7 +41,8 @@ function isDenoCompiledBinary(): boolean {
 
   try {
     return testDenoCompiledDetection(Deno.execPath());
-  } catch {
+  } catch (_) {
+    /* expected: Deno.execPath() may not be available in all environments */
     return false;
   }
 }

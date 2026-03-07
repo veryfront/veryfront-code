@@ -108,7 +108,8 @@ export async function validatePath(
   if (checkExists && adapter) {
     try {
       await adapter.fs.stat(canonicalPath);
-    } catch {
+    } catch (_) {
+      /* expected: file does not exist at canonicalPath */
       return {
         valid: false,
         error: `File not found: ${canonicalPath}`,

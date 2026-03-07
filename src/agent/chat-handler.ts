@@ -3,6 +3,7 @@ import { getAgent } from "./composition/index.ts";
 import type { Message } from "./types.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
 import { DEFAULT_LOCAL_MODEL } from "../provider/local/model-catalog.ts";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
 // ---------------------------------------------------------------------------
 // Zod schemas for validating AI SDK v5 chat UI messages
@@ -293,7 +294,8 @@ export function createChatHandler(
     let agent: ReturnType<typeof getAgent> | undefined;
     try {
       agent = getAgent(agentId);
-    } catch {
+    } catch (error) {
+      agentLogger.debug("getAgent lookup failed", { error });
       return Response.json({ error: "Agent not found" }, { status: 404 });
     }
     if (!agent) {

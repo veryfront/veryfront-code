@@ -60,8 +60,8 @@ function applyEnvFromDeno(config: TracingConfig): void {
 
     const exporterType = tracingConfig.exporter;
     if (isValidExporter(exporterType)) config.exporter = exporterType;
-  } catch {
-    // Environment access may fail in some runtimes
+  } catch (_) {
+    /* expected: environment access may fail in some runtimes */
   }
 }
 

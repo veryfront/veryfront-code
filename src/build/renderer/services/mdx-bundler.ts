@@ -51,8 +51,8 @@ async function validateLocalImport(
     try {
       const stat = await fs.stat(basePath + ext);
       if (stat.isFile) return;
-    } catch {
-      // continue
+    } catch (_) {
+      /* expected: file may not exist with this extension */
     }
   }
 
@@ -95,7 +95,8 @@ export function bundleMdx(
                 });
 
                 return outputPath;
-              } catch {
+              } catch (error) {
+                logger.debug("Failed to compile MDX import", { importPath, error });
                 return null;
               }
             }

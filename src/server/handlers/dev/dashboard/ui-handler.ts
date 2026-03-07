@@ -30,15 +30,15 @@ async function readUiModule(
   const tsxPath = `${uiDir}/${relativePath}.tsx`;
   try {
     return { filePath: tsxPath, source: await readTextFile(tsxPath) };
-  } catch {
-    // try .ts from filesystem
+  } catch (_) {
+    // expected: .tsx not found, try .ts next
   }
 
   const tsPath = `${uiDir}/${relativePath}.ts`;
   try {
     return { filePath: tsPath, source: await readTextFile(tsPath) };
-  } catch {
-    // Filesystem failed, try embedded manifest (for compiled binary)
+  } catch (_) {
+    // expected: .ts not found on filesystem, try embedded manifest
   }
 
   // Try embedded manifest - paths are relative to dev-ui directory

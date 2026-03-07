@@ -75,8 +75,8 @@ export function loadConfig(
       metricsEndpoint: metricsConfig.metricsEndpoint,
       exporter: metricsConfig.exporter,
     });
-  } catch {
-    // getEnv access may fail, silently continue
+  } catch (_) {
+    /* expected: getEnv access may fail in some runtimes */
   }
 
   return finalConfig;
@@ -89,7 +89,8 @@ export function getMemoryUsage(): {
 } | null {
   try {
     return platformMemoryUsage();
-  } catch {
+  } catch (_) {
+    /* expected: memory usage API may be unavailable on some platforms */
     return null;
   }
 }

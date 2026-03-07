@@ -289,7 +289,7 @@ export class WorkspaceSync {
       try {
         const localPath = this.resolveSafePath(path);
         await Deno.stat(localPath);
-      } catch {
+      } catch (_) {
         // File was deleted
         changes.push({
           path,
@@ -467,7 +467,8 @@ export class WorkspaceSync {
       const localPath = this.resolveSafePath(path);
       await Deno.stat(localPath);
       return true;
-    } catch {
+    } catch (_) {
+      /* expected: file may not exist */
       return false;
     }
   }

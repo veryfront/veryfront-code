@@ -42,7 +42,8 @@ export async function loadChunkManifest(manifestPath: string): Promise<ChunkMani
 
   try {
     return JSON.parse(content) as ChunkManifest;
-  } catch {
+  } catch (_) {
+    /* expected: invalid JSON triggers a clearer error message */
     throw new Error(`Failed to parse chunk manifest: ${manifestPath}`);
   }
 }

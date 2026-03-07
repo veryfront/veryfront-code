@@ -228,7 +228,8 @@ export class MultiProjectFSAdapter implements FSAdapter {
     try {
       const adapter = await this.getAdapter();
       return adapter.getProjectData?.();
-    } catch {
+    } catch (error) {
+      logger.debug("getProjectData failed", { error });
       return undefined;
     }
   }
@@ -237,7 +238,8 @@ export class MultiProjectFSAdapter implements FSAdapter {
     try {
       const adapter = await this.getAdapter();
       return adapter.getFilePathByEntityId?.(entityId);
-    } catch {
+    } catch (error) {
+      logger.debug("getFilePathByEntityId failed", { entityId, error });
       return undefined;
     }
   }

@@ -30,7 +30,8 @@ function resolveWithImportMeta(specifier: string, parentUrl: string): string | n
 
   try {
     return metaResolve(specifier, parentUrl);
-  } catch {
+  } catch (_) {
+    /* expected: specifier may not be resolvable in this environment */
     return null;
   }
 }

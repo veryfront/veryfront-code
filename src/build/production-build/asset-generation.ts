@@ -133,8 +133,8 @@ export async function copyStaticAssets(
     await writeFileBytes(testFilePath, new Uint8Array([0]));
     try {
       await fs.remove(testFilePath);
-    } catch {
-      // Best-effort cleanup; ignore failures to remove test file.
+    } catch (_) {
+      /* expected: best-effort cleanup of write-test file */
     }
   }
 

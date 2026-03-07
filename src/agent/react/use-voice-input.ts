@@ -192,8 +192,8 @@ export function useVoiceInput(
 
     try {
       recognitionRef.current.start();
-    } catch {
-      console.warn("Speech recognition already started");
+    } catch (error) {
+      console.debug("Speech recognition already started", error);
     }
   }, [isListening]);
 

@@ -65,8 +65,8 @@ export function createRequestLoggerMiddleware(): MiddlewareFunction {
       try {
         await enrichSpanWithRequestInfo(method, pathname, requestId);
         reqLogger.debug(`${method} ${pathname} started`);
-      } catch {
-        /* dev only */
+      } catch (_) {
+        /* expected: OpenTelemetry may not be available in dev */
       }
 
       let response: Response | undefined;
@@ -89,8 +89,8 @@ export function createRequestLoggerMiddleware(): MiddlewareFunction {
           status: response?.status ?? 0,
           durationMs,
         });
-      } catch {
-        /* dev only */
+      } catch (_) {
+        /* expected: logging may fail in edge cases */
       }
 
       return response;
@@ -234,7 +234,7 @@ async function enrichSpanWithRequestInfo(
     span.setAttribute("http.route", pathname);
     span.setAttribute("veryfront.request_id", requestId);
     span.updateName(`${method} ${pathname}`);
-  } catch {
-    /* otel optional */
+  } catch (_) {
+    /* expected: OpenTelemetry is optional */
   }
 }

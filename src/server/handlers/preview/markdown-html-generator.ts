@@ -84,8 +84,8 @@ function buildStudioScript(
       const apiUrl = new URL(apiBaseUrl);
       const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
       wsUrl = `${wsProtocol}//${apiUrl.host}/ws/${canonicalProjectId}/yjs`;
-    } catch {
-      // Invalid API URL — wsUrl stays empty, bridge won't self-connect
+    } catch (_) {
+      /* expected: invalid API URL — wsUrl stays empty, bridge won't self-connect */
     }
   }
   const yjsGuid = branchId ? `${canonicalProjectId}:${branchId}` : canonicalProjectId;

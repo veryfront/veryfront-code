@@ -21,7 +21,7 @@ export function generateDevErrorLoggerScript(nonce?: string): string {
               timestamp: new Date().toISOString()
             })
           }).catch(() => {});
-        } catch {}
+        } catch (_) { /* expected: fire-and-forget log, network errors ignored */ }
       };
 
       window.addEventListener('error', (event) => {

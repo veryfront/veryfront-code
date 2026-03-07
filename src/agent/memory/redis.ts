@@ -63,7 +63,8 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
     if (!data) return [];
     try {
       return JSON.parse(data);
-    } catch {
+    } catch (_) {
+      /* expected: corrupted JSON in Redis, return empty message list */
       return [];
     }
   }

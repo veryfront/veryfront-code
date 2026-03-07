@@ -20,7 +20,8 @@ function getFileURLToPath(): ((url: string | URL) => string) | null {
 
     _fileURLToPath = fileURLToPath;
     return _fileURLToPath;
-  } catch {
+  } catch (_) {
+    /* expected: node:url require may fail in non-Node runtimes */
     return null;
   }
 }

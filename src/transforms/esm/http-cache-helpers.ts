@@ -104,7 +104,8 @@ export function normalizeHttpUrl(raw: string): string {
     normalizeEsmShUrl(url);
     url.searchParams.sort();
     return url.toString();
-  } catch {
+  } catch (_) {
+    /* expected: URL may be malformed */
     return raw;
   }
 }

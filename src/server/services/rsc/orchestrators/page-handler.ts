@@ -29,7 +29,8 @@ export class PageHandler {
         const res = await fetch(url);
         if (!res.ok) return null;
         return await res.json();
-      } catch {
+      } catch (_) {
+        // expected: fetch may fail in browser context
         return null;
       }
     }

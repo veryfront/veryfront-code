@@ -29,7 +29,8 @@ import { createElementClass, createWindowStub } from "./dom-stubs.ts";
 function setGlobal(name: string, value: unknown): void {
   try {
     (globalThis as Record<string, unknown>)[name] = value;
-  } catch {
+  } catch (_) {
+    /* expected: direct assignment may fail on frozen/non-configurable properties */
     Object.defineProperty(globalThis, name, {
       value,
       writable: true,

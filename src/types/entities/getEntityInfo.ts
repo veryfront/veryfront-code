@@ -97,8 +97,8 @@ export async function getEntityInfo(
             const extracted = extract(content);
             frontmatter = extracted.attrs as Frontmatter;
             body = extracted.body;
-          } catch {
-            // Malformed YAML frontmatter - continue with empty frontmatter
+          } catch (_) {
+            /* expected: malformed YAML frontmatter */
           }
         }
 
@@ -129,8 +129,8 @@ export async function getEntityInfo(
                 entityId = getEntityIdForPath(relativePath) ?? entityId;
               }
             }
-          } catch {
-            // Ignore errors, fall back to file path
+          } catch (_) {
+            /* expected: entity ID extraction may fail, fall back to file path */
           }
         }
 
@@ -230,7 +230,8 @@ export async function getEntityBySlug(
                 { operationName: "stat:getEntityBySlug", logError: false },
               );
               dirExists = stat.isDirectory;
-            } catch {
+            } catch (_) {
+              /* expected: stat may fail for non-existent directories */
               dirExists = false;
             }
 
@@ -253,8 +254,8 @@ export async function getEntityBySlug(
             for (const info of dynamicResults) {
               if (info?.entity.isPage) return info;
             }
-          } catch {
-            // Directory doesn't exist or error reading it, continue to next depth
+          } catch (_) {
+            /* expected: directory may not exist or readDir may fail */
           }
         }
 
@@ -318,7 +319,8 @@ export async function getEntityBySlug(
                 { operationName: "stat:getEntityBySlug", logError: false },
               );
               dirExists = stat.isDirectory;
-            } catch {
+            } catch (_) {
+              /* expected: stat may fail for non-existent directories */
               dirExists = false;
             }
           } else {
@@ -347,8 +349,8 @@ export async function getEntityBySlug(
           for (const info of dynamicResults) {
             if (info?.entity.isPage) return info;
           }
-        } catch {
-          // Directory doesn't exist or error reading it, continue to next depth
+        } catch (_) {
+          /* expected: directory may not exist or readDir may fail */
         }
       }
 

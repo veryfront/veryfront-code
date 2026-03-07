@@ -54,7 +54,8 @@ function getRequestContextFn(): (() => MultiProjectRequestContextType | null) | 
       | { getCurrentRequestContext?: () => MultiProjectRequestContextType | null }
       | undefined;
     _getCurrentRequestContext = mod?.getCurrentRequestContext ?? null;
-  } catch {
+  } catch (_) {
+    // expected: multi-project adapter may not be available
     _getCurrentRequestContext = null;
   }
 

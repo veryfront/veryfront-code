@@ -22,7 +22,8 @@ export async function getCanonicalPath(
   try {
     const stat = await adapter.fs.stat(path);
     return { path: resolvedPath, isSymlink: stat.isSymlink };
-  } catch {
+  } catch (_) {
+    /* expected: file may not exist when checking symlink status */
     return { path: resolvedPath, isSymlink: false };
   }
 }

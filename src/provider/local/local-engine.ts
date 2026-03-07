@@ -100,7 +100,8 @@ export async function getTransformers(): Promise<TransformersModule> {
   let mod: TransformersModule;
   try {
     mod = await importTransformers();
-  } catch {
+  } catch (_) {
+    // expected: ONNX runtime not available in some environments (e.g. compiled binaries)
     throw toError(
       createError({
         type: "no_ai_available",

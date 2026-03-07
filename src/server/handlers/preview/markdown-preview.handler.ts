@@ -90,8 +90,8 @@ export class MarkdownPreviewHandler extends BaseHandler {
         if (ctx.proxyToken) fsAdapter.setRequestToken(ctx.proxyToken);
         fsAdapter.setRequestBranch(ctx.parsedDomain?.branch ?? null);
         fsAdapter.setProductionMode(false);
-      } catch {
-        // Some operations may not be supported
+      } catch (_) {
+        /* expected: some FS adapter operations may not be supported */
       }
     }
 
@@ -115,7 +115,8 @@ export class MarkdownPreviewHandler extends BaseHandler {
       let content: string;
       try {
         content = await ctx.adapter.fs.readFile(resolvedPath ?? filePath);
-      } catch {
+      } catch (_) {
+        /* expected: markdown file may not exist */
         logger.debug("File not found", { filePath, resolvedPath });
 
         const builder = this.createResponseBuilder(ctx);
@@ -132,8 +133,8 @@ export class MarkdownPreviewHandler extends BaseHandler {
         const extracted = extract(content);
         frontmatter = extracted.attrs as Record<string, unknown>;
         body = extracted.body;
-      } catch {
-        // No frontmatter or malformed YAML
+      } catch (_) {
+        /* expected: no frontmatter or malformed YAML */
       }
 
       if (frontmatter.prose === false) {

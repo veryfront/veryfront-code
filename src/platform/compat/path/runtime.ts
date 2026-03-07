@@ -13,8 +13,8 @@ if (hasNodeApis) {
     if (nodeRequire) {
       nodePath = nodeRequire("node:path") as NodePathModule;
     }
-  } catch {
-    // ignore
+  } catch (_) {
+    /* expected: node:path require may fail in non-Node runtimes */
   }
 }
 

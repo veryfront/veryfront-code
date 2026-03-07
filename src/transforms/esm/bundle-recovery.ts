@@ -127,8 +127,8 @@ export async function recoverHttpBundleByHash(
         const parentPath = join(absoluteCacheDir, `http-${parentHash}.mjs`);
         try {
           await fs.remove(parentPath);
-        } catch {
-          // Ignore if file doesn't exist
+        } catch (_) {
+          /* expected: file may not exist */
         }
 
         const importMap = { imports: {}, scopes: {} };
@@ -164,8 +164,8 @@ export async function recoverHttpBundleByHash(
 
         try {
           await fs.remove(foundParent.path);
-        } catch {
-          // Ignore if file doesn't exist
+        } catch (_) {
+          /* expected: file may not exist */
         }
 
         const importMap = { imports: {}, scopes: {} };
@@ -236,8 +236,8 @@ export async function ensureHttpBundlesExist(
         for (const dep of extractBundleDeps(code)) {
           if (!seen.has(dep.hash)) pending.push({ hash: dep.hash });
         }
-      } catch {
-        /* ignore read errors for dep scanning */
+      } catch (_) {
+        /* expected: cached bundle file may be unreadable during dep scan */
       }
     }
 
@@ -272,8 +272,8 @@ export async function ensureHttpBundlesExist(
             for (const dep of extractBundleDeps(recoveredCode)) {
               if (!seen.has(dep.hash)) pending.push({ hash: dep.hash });
             }
-          } catch {
-            /* ignore read errors for dep scanning */
+          } catch (_) {
+            /* expected: recovered bundle file may be unreadable during dep scan */
           }
           return;
         }
@@ -340,8 +340,8 @@ export async function invalidateHttpBundle(hash: string, cacheDir: string): Prom
     try {
       await fs.remove(cachePath);
       logger.info("Deleted local bundle file", { hash, path: cachePath });
-    } catch {
-      // File might not exist locally, that's fine
+    } catch (_) {
+      /* expected: file may not exist locally */
     }
 
     return true;

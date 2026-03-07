@@ -92,8 +92,8 @@ export async function createStubModule(
         namedImports,
         importStatement,
       });
-    } catch {
-      // Error collector may not be initialized in all contexts
+    } catch (_) {
+      /* expected: error collector may not be initialized in all contexts */
     }
 
     logger.error(`${LOG_PREFIX_MDX_LOADER} Missing module: ${modulePath}`, {

@@ -21,7 +21,8 @@ function extractEsmShPackage(url: string): string | null {
 
     const pkg = (pathname.split("@")[0] ?? "").split("/")[0] ?? "";
     return pkg || null;
-  } catch {
+  } catch (_) {
+    /* expected: URL may be malformed */
     return null;
   }
 }
@@ -47,7 +48,8 @@ function extractEsmShSubpath(url: string): string {
 
     const restPath = pathname.slice(firstSlash);
     return restPath.startsWith("/") ? restPath : "";
-  } catch {
+  } catch (_) {
+    /* expected: URL may be malformed */
     return "";
   }
 }

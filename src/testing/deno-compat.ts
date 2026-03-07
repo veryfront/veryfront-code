@@ -143,8 +143,8 @@ export async function withTempDir<T>(
         const { default: fs } = await import("node:fs/promises");
         await fs.rm(tempDir, { recursive: true, force: true });
       }
-    } catch {
-      // Ignore cleanup errors
+    } catch (_) {
+      /* expected: temp dir may already be removed or inaccessible */
     }
   }
 }
@@ -166,8 +166,8 @@ export async function withTempFile<T>(
         const { default: fs } = await import("node:fs/promises");
         await fs.rm(tempFile, { force: true });
       }
-    } catch {
-      // Ignore cleanup errors
+    } catch (_) {
+      /* expected: temp file may already be removed or inaccessible */
     }
   }
 }

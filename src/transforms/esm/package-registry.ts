@@ -154,8 +154,8 @@ export async function resolveProjectReactVersion(options: {
         const stripped = stripSemverRange(rawVersion);
         return normalizeReactVersion(stripped);
       }
-    } catch {
-      // package.json not found or unreadable - fall through to default
+    } catch (_) {
+      /* expected: package.json may not exist or be unreadable */
     }
   }
 
