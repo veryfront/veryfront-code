@@ -8,13 +8,14 @@ import {
   getDefaultLevel,
   type LogEntry,
   LogLevel,
+  refreshLoggerConfig,
   serverLogger,
 } from "./logger.ts";
 import { type RequestContext, runWithRequestContextAsync } from "./request-context.ts";
 import { runWithProjectEnv } from "../../server/project-env/storage.ts";
 import { VERSION } from "../version.ts";
 
-function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
+function captureConsoleLog(): { getOutput: () => string; reset: () => void; restore: () => void } {
   const originalLog = console.log;
   let capturedOutput = "";
 
@@ -24,6 +25,9 @@ function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
 
   return {
     getOutput: () => capturedOutput,
+    reset: () => {
+      capturedOutput = "";
+    },
     restore: () => {
       console.log = originalLog;
     },
@@ -89,6 +93,64 @@ describe("logger", () => {
 
     it("should return INFO for invalid LOG_LEVEL without debug flag", () => {
       assertEquals(getDefaultLevel("INVALID", ""), LogLevel.INFO);
+    });
+  });
+
+  describe("refreshLoggerConfig", () => {
+    it("should switch to JSON after NODE_ENV changes post-startup", () => {
+      const previousNodeEnv = Deno.env.get("NODE_ENV");
+      const previousLogFormat = Deno.env.get("LOG_FORMAT");
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        Deno.env.delete("NODE_ENV");
+        Deno.env.delete("LOG_FORMAT");
+        __resetLoggerConfigForTests();
+
+        serverLogger.info("Text before refresh");
+        assertEquals(getOutput().startsWith("{"), false);
+
+        Deno.env.set("NODE_ENV", "production");
+        refreshLoggerConfig();
+
+        serverLogger.info("JSON after refresh");
+
+        const entry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(entry.level, "info");
+        assertEquals(entry.message, "JSON after refresh");
+      } finally {
+        restore();
+        if (previousNodeEnv === undefined) Deno.env.delete("NODE_ENV");
+        else Deno.env.set("NODE_ENV", previousNodeEnv);
+        if (previousLogFormat === undefined) Deno.env.delete("LOG_FORMAT");
+        else Deno.env.set("LOG_FORMAT", previousLogFormat);
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    it("should pick up LOG_LEVEL changes after refresh", () => {
+      const previousLogLevel = Deno.env.get("LOG_LEVEL");
+      const { getOutput, reset, restore } = captureConsoleLog();
+
+      try {
+        Deno.env.delete("LOG_LEVEL");
+        __resetLoggerConfigForTests();
+
+        serverLogger.info("Visible before refresh");
+        assertEquals(getOutput().includes("Visible before refresh"), true);
+
+        Deno.env.set("LOG_LEVEL", "ERROR");
+        refreshLoggerConfig();
+        reset();
+
+        serverLogger.info("Hidden after refresh");
+        assertEquals(getOutput(), "");
+      } finally {
+        restore();
+        if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+        else Deno.env.set("LOG_LEVEL", previousLogLevel);
+        __resetLoggerConfigForTests();
+      }
     });
   });
 

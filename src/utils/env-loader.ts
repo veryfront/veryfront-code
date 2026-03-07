@@ -1,4 +1,4 @@
-import { serverLogger } from "./logger/index.ts";
+import { refreshLoggerConfig, serverLogger } from "./logger/index.ts";
 import { cwd as getCwd, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts";
 
@@ -56,6 +56,7 @@ export async function loadEnv(
   }
 
   envLoaded = true;
+  refreshLoggerConfig();
   if (loadedCount === 0) return;
 
   logger.debug(
