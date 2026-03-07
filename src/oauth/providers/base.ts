@@ -301,7 +301,10 @@ export class OAuthService extends OAuthProvider {
     const result = await this.refreshTokens(tokens.refreshToken);
     if (!result.success || !result.tokens) return null;
 
-    await this.tokenStore!.setTokens(this.serviceId, result.tokens);
+    if (!this.tokenStore) {
+      throw new Error("TokenStore not configured");
+    }
+    await this.tokenStore.setTokens(this.serviceId, result.tokens);
     return result.tokens.accessToken;
   }
 

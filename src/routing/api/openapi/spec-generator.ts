@@ -146,13 +146,14 @@ function buildOperation(
   const openApiPath = toOpenAPIPath(pattern);
   const supportsBody = method === "POST" || method === "PUT" || method === "PATCH";
 
+  const parameters: OpenAPIParameter[] = [];
+
   const operation: OpenAPIOperation = {
     operationId: generateOperationId(method, openApiPath),
     summary: metadata?.summary ?? `${method} ${openApiPath}`,
     description: metadata?.description,
     tags: metadata?.tags,
     deprecated: metadata?.deprecated,
-    parameters: [],
     responses: {},
   };
 
@@ -168,14 +169,14 @@ function buildOperation(
       parameter.description = "Catch-all parameter (matches multiple path segments)";
     }
 
-    operation.parameters!.push(parameter);
+    parameters.push(parameter);
   }
 
   const queryProps = metadata?.query?.properties;
   if (queryProps) {
     const required = metadata?.query?.required ?? [];
     for (const [name, schema] of Object.entries(queryProps)) {
-      operation.parameters!.push({
+      parameters.push({
         name,
         in: "query",
         required: required.includes(name),
@@ -206,7 +207,7 @@ function buildOperation(
     if (supportsBody) operation.responses["400"] = { description: "Bad request" };
   }
 
-  if (operation.parameters!.length === 0) delete operation.parameters;
+  if (parameters.length > 0) operation.parameters = parameters;
 
   return operation;
 }

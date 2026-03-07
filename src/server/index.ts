@@ -212,7 +212,7 @@ export async function createHandler(
         if (!wsServer) wsServer = new WebSocketServer({ noServer: true });
 
         const key = request.headers["sec-websocket-key"];
-        const requestId = typeof key === "string" ? key : Array.isArray(key) ? key[0]! : "";
+        const requestId = typeof key === "string" ? key : Array.isArray(key) ? key[0] ?? "" : "";
 
         // Run request through handler pipeline so HMRHandler registers the WebSocket client
         const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
@@ -228,9 +228,10 @@ export async function createHandler(
           "#veryfront/platform/adapters/runtime/node/http-server.ts"
         );
 
-        wsServer.handleUpgrade(request, socket, head, (ws: import("ws").WebSocket) => {
+        const server = wsServer;
+        server.handleUpgrade(request, socket, head, (ws: import("ws").WebSocket) => {
           resolveWebSocketUpgrade(requestId, ws);
-          wsServer!.emit("connection", ws, request);
+          server.emit("connection", ws, request);
         });
       } catch (_error) {
         socket.destroy();

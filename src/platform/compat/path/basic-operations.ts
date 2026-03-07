@@ -1,11 +1,7 @@
-import { hasNodePath, isDeno, nodePath } from "./runtime.ts";
+import { isDeno, nodePath } from "./runtime.ts";
 
 function hasWindowsLikePath(path: string): boolean {
   return path.includes("\\") || /^[A-Za-z]:/.test(path) || path.startsWith("\\\\");
-}
-
-function useNodePath(paths: string[]): boolean {
-  return !isDeno && hasNodePath && !paths.some(hasWindowsLikePath);
 }
 
 /** Normalize backslashes to forward slashes (for Deno on Windows). */
@@ -25,7 +21,7 @@ export function join(...paths: string[]): string {
 }
 
 export function dirname(path: string): string {
-  if (useNodePath([path])) return nodePath!.dirname(path);
+  if (!isDeno && nodePath && !hasWindowsLikePath(path)) return nodePath.dirname(path);
 
   const p = normSep(path);
   const lastSlash = p.lastIndexOf("/");
@@ -35,9 +31,9 @@ export function dirname(path: string): string {
 }
 
 export function basename(path: string, ext?: string): string {
-  if (useNodePath([path])) {
+  if (!isDeno && nodePath && !hasWindowsLikePath(path)) {
     // Only pass ext if defined - Bun is strict about this parameter
-    return ext === undefined ? nodePath!.basename(path) : nodePath!.basename(path, ext);
+    return ext === undefined ? nodePath.basename(path) : nodePath.basename(path, ext);
   }
 
   let normalizedPath = normSep(path);
@@ -54,7 +50,7 @@ export function basename(path: string, ext?: string): string {
 }
 
 export function extname(path: string): string {
-  if (useNodePath([path])) return nodePath!.extname(path);
+  if (!isDeno && nodePath && !hasWindowsLikePath(path)) return nodePath.extname(path);
 
   const base = basename(path);
   const lastDot = base.lastIndexOf(".");

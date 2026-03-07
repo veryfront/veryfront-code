@@ -78,30 +78,45 @@ class NodeFileSystem implements FileSystem {
     this.initialized = true;
   }
 
+  private getFs(): NodeFsPromises {
+    if (!this.fs) throw new Error("NodeFileSystem not initialized");
+    return this.fs;
+  }
+
+  private getOs(): typeof import("node:os") {
+    if (!this.os) throw new Error("NodeFileSystem not initialized");
+    return this.os;
+  }
+
+  private getPath(): typeof import("node:path") {
+    if (!this.path) throw new Error("NodeFileSystem not initialized");
+    return this.path;
+  }
+
   async readTextFile(path: string): Promise<string> {
     await this.ensureInitialized();
-    return this.fs!.readFile(path, { encoding: "utf8" }) as Promise<string>;
+    return this.getFs().readFile(path, { encoding: "utf8" }) as Promise<string>;
   }
 
   async readFile(path: string): Promise<Uint8Array> {
     await this.ensureInitialized();
-    return this.fs!.readFile(path) as Promise<Uint8Array>;
+    return this.getFs().readFile(path) as Promise<Uint8Array>;
   }
 
   async writeTextFile(path: string, data: string): Promise<void> {
     await this.ensureInitialized();
-    await this.fs!.writeFile(path, data, { encoding: "utf8" });
+    await this.getFs().writeFile(path, data, { encoding: "utf8" });
   }
 
   async writeFile(path: string, data: Uint8Array): Promise<void> {
     await this.ensureInitialized();
-    await this.fs!.writeFile(path, data);
+    await this.getFs().writeFile(path, data);
   }
 
   async exists(path: string): Promise<boolean> {
     await this.ensureInitialized();
     try {
-      await this.fs!.access(path);
+      await this.getFs().access(path);
       return true;
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return false;
@@ -111,7 +126,7 @@ class NodeFileSystem implements FileSystem {
 
   async stat(path: string): Promise<FileInfo> {
     await this.ensureInitialized();
-    const stat = await this.fs!.stat(path);
+    const stat = await this.getFs().stat(path);
     return {
       isFile: stat.isFile(),
       isDirectory: stat.isDirectory(),
@@ -123,14 +138,14 @@ class NodeFileSystem implements FileSystem {
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
     await this.ensureInitialized();
-    await this.fs!.mkdir(path, { recursive: options?.recursive ?? false });
+    await this.getFs().mkdir(path, { recursive: options?.recursive ?? false });
   }
 
   async *readDir(
     path: string,
   ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
     await this.ensureInitialized();
-    const entries = await this.fs!.readdir(path, { withFileTypes: true });
+    const entries = await this.getFs().readdir(path, { withFileTypes: true });
     for (const entry of entries) {
       yield { name: entry.name, isFile: entry.isFile(), isDirectory: entry.isDirectory() };
     }
@@ -139,23 +154,23 @@ class NodeFileSystem implements FileSystem {
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     await this.ensureInitialized();
     const recursive = options?.recursive ?? false;
-    await this.fs!.rm(path, { recursive, force: recursive });
+    await this.getFs().rm(path, { recursive, force: recursive });
   }
 
   async makeTempDir(options?: { prefix?: string }): Promise<string> {
     await this.ensureInitialized();
-    const tempDir = this.path!.join(
-      this.os!.tmpdir(),
+    const tempDir = this.getPath().join(
+      this.getOs().tmpdir(),
       `${options?.prefix ?? "tmp-"}${Math.random().toString(36).substring(2, 8)}`,
     );
-    await this.fs!.mkdir(tempDir, { recursive: true });
+    await this.getFs().mkdir(tempDir, { recursive: true });
     return tempDir;
   }
 
   async chmod(path: string, mode: number): Promise<void> {
     await this.ensureInitialized();
     try {
-      await this.fs!.chmod(path, mode);
+      await this.getFs().chmod(path, mode);
     } catch {
       // Ignore errors on Windows where chmod is not fully supported
     }

@@ -111,7 +111,7 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
                 Messages
               </h3>
               <div className="space-y-2 max-h-96 overflow-y-auto">
-                {messages!.map((msg) => {
+                {messages?.map((msg) => {
                   const text = msg.parts
                     ?.filter((p): p is { type: "text"; text: string } => p.type === "text")
                     .map((p) => p.text)

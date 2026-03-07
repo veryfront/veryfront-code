@@ -152,7 +152,10 @@ export class Sandbox {
       throw new Error(`Exec failed: ${res.status} ${await res.text()}`);
     }
 
-    const reader = res.body!.getReader();
+    if (!res.body) {
+      throw new Error("Exec response has no body");
+    }
+    const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
 

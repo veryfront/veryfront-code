@@ -402,7 +402,9 @@ async function ensureEnvOverlay(): Promise<EnvOverlay | null> {
     const storage = new asyncHooks.AsyncLocalStorage<EnvOverlayStore>();
     const proxy = createEnvProxy(processEnv, storage);
 
-    (globalThis as { process?: { env: Record<string, string> } }).process!.env = proxy;
+    const proc = (globalThis as { process?: { env: Record<string, string> } }).process;
+    if (!proc) return null;
+    proc.env = proxy;
 
     const overlay: EnvOverlay = { storage, baseEnv: processEnv };
     globalAny[envOverlayKey] = overlay;

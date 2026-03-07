@@ -279,8 +279,9 @@ export function scrollToElement(nodeId: string): void {
 function getDirectText(el: Element): string {
   let text = "";
   for (let i = 0; i < el.childNodes.length; i++) {
-    if (el.childNodes[i].nodeType === Node.TEXT_NODE) {
-      text += el.childNodes[i].textContent || "";
+    const node = el.childNodes[i];
+    if (node?.nodeType === Node.TEXT_NODE) {
+      text += node.textContent || "";
     }
   }
   return text.trim();

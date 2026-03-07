@@ -190,8 +190,11 @@ export function renderMarkdownSlashMenu(): void {
       item.appendChild(el("span", "vf-markdown-editor__slash-shortcut", command.shortcut));
     }
 
-    state.markdownSlashMenuRoot!.appendChild(item);
+    if (!state.markdownSlashMenuRoot) return;
+    state.markdownSlashMenuRoot.appendChild(item);
   });
+
+  if (!state.markdownSlashMenuRoot) return;
 
   const footer = document.createElement("div");
   footer.className = "vf-markdown-editor__slash-footer";

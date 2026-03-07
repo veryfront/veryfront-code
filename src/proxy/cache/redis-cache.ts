@@ -32,8 +32,7 @@ export class RedisCache implements TokenCache {
       "cache.redis.get",
       async () => {
         try {
-          await this.ensureConnected();
-          const client = this.client!;
+          const client = await this.getConnectedClient();
           const data = await client.get(this.key(key));
 
           if (!data) {
@@ -69,8 +68,7 @@ export class RedisCache implements TokenCache {
       "cache.redis.set",
       async () => {
         try {
-          await this.ensureConnected();
-          const client = this.client!;
+          const client = await this.getConnectedClient();
           const ttlMs = entry.expiresAt - Date.now();
           const ttlSeconds = Math.max(1, Math.floor(ttlMs / 1000));
           await client.setEx(this.key(key), ttlSeconds, JSON.stringify(entry));
@@ -91,8 +89,8 @@ export class RedisCache implements TokenCache {
       "cache.redis.delete",
       async () => {
         try {
-          await this.ensureConnected();
-          await this.client!.del(this.key(key));
+          const client = await this.getConnectedClient();
+          await client.del(this.key(key));
         } catch (error) {
           logger.error("[RedisCache] Delete error", {
             error: error instanceof Error ? error.message : String(error),
@@ -108,8 +106,7 @@ export class RedisCache implements TokenCache {
   async clear(): Promise<void> {
     return withSpan("cache.redis.clear", async () => {
       try {
-        await this.ensureConnected();
-        const client = this.client!;
+        const client = await this.getConnectedClient();
 
         const pattern = `${this.prefix}*`;
         let cursor = 0;
@@ -149,8 +146,8 @@ export class RedisCache implements TokenCache {
       "cache.redis.has",
       async () => {
         try {
-          await this.ensureConnected();
-          return (await this.client!.exists(this.key(key))) === 1;
+          const client = await this.getConnectedClient();
+          return (await client.exists(this.key(key))) === 1;
         } catch (error) {
           logger.error("[RedisCache] Has error", {
             error: error instanceof Error ? error.message : String(error),
@@ -168,8 +165,8 @@ export class RedisCache implements TokenCache {
       let size = 0;
 
       try {
-        await this.ensureConnected();
-        size = await this.client!.dbSize();
+        const client = await this.getConnectedClient();
+        size = await client.dbSize();
       } catch (error) {
         this.connected = false;
         logger.error("[RedisCache] Stats error", {
@@ -198,6 +195,14 @@ export class RedisCache implements TokenCache {
         this.connected = false;
       }
     });
+  }
+
+  private async getConnectedClient(): Promise<RedisClientType> {
+    await this.ensureConnected();
+    if (!this.client) {
+      throw new Error("Redis client not available after connect");
+    }
+    return this.client;
   }
 
   private async ensureConnected(): Promise<void> {

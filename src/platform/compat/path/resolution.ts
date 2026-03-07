@@ -1,11 +1,7 @@
-import { hasNodePath, isDeno, nodePath } from "./runtime.ts";
+import { isDeno, nodePath } from "./runtime.ts";
 
 function hasWindowsLikePath(path: string): boolean {
   return path.includes("\\") || /^[A-Za-z]:/.test(path) || path.startsWith("\\\\");
-}
-
-function useNodePath(paths: string[]): boolean {
-  return !isDeno && hasNodePath && !paths.some(hasWindowsLikePath);
 }
 
 /** Normalize backslashes to forward slashes (for Deno on Windows). */
@@ -17,7 +13,7 @@ function normSep(p: string): string {
 const DRIVE_LETTER = /^[A-Za-z]:\//;
 
 export function resolve(...paths: string[]): string {
-  if (useNodePath(paths)) return nodePath!.resolve(...paths);
+  if (!isDeno && nodePath && !paths.some(hasWindowsLikePath)) return nodePath.resolve(...paths);
 
   let resolvedPath = normSep(globalThis.Deno?.cwd?.() ?? "/");
 
@@ -56,7 +52,7 @@ export function resolve(...paths: string[]): string {
 }
 
 export function isAbsolute(path: string): boolean {
-  if (useNodePath([path]) && nodePath!.isAbsolute(path)) return true;
+  if (!isDeno && nodePath && !hasWindowsLikePath(path) && nodePath.isAbsolute(path)) return true;
   // Cross-platform fallback: Unix, Windows drive letters, and UNC paths
   if (path.startsWith("/")) return true;
   if (/^[A-Za-z]:[/\\]/.test(path)) return true;
@@ -64,8 +60,8 @@ export function isAbsolute(path: string): boolean {
 }
 
 export function relative(from: string, to: string): string {
-  if (useNodePath([from, to])) {
-    const relativePath = nodePath!.relative(from, to);
+  if (!isDeno && nodePath && !hasWindowsLikePath(from) && !hasWindowsLikePath(to)) {
+    const relativePath = nodePath.relative(from, to);
     return relativePath || ".";
   }
 
@@ -96,7 +92,7 @@ export function relative(from: string, to: string): string {
 }
 
 export function normalize(path: string): string {
-  if (useNodePath([path])) return nodePath!.normalize(path);
+  if (!isDeno && nodePath && !hasWindowsLikePath(path)) return nodePath.normalize(path);
   if (path === "") return ".";
 
   const p = normSep(path);

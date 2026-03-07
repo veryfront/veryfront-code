@@ -30,6 +30,7 @@ import {
   promptSync,
   runCommand,
   setEnv,
+  testHasRuntimeProcess,
   unrefTimer,
   uptime,
   writeStdout,
@@ -37,6 +38,16 @@ import {
 } from "./process.ts";
 
 describe("Process Compat", () => {
+  describe("testHasRuntimeProcess", () => {
+    it("should detect a real Node/Bun process object", () => {
+      assertEquals(testHasRuntimeProcess({ env: {}, versions: { node: "22.0.0" } }), true);
+    });
+
+    it("should reject a browser process shim", () => {
+      assertEquals(testHasRuntimeProcess({ env: {} }), false);
+    });
+  });
+
   describe("getEnv / setEnv / deleteEnv", () => {
     const testKey = "__TEST_PROCESS_COMPAT__";
     const testValue = "test-value-123";
