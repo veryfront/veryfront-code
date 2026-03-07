@@ -3,10 +3,10 @@ import { describe, it } from "#veryfront/testing/bdd";
 import {
   bunAdapter,
   denoAdapter,
-  detectRuntime,
   getAdapter,
   nodeAdapter,
 } from "#veryfront/platform/adapters/detect.ts";
+import { detectRuntime } from "#veryfront/platform/adapters/runtime-detection.ts";
 import { isBun, isDeno, isNode } from "../../../src/platform/compat/runtime.ts";
 
 function assertRuntime(runtime: string): void {
@@ -184,7 +184,6 @@ describe("Runtime detection", () => {
       it("should import detect module successfully", async () => {
         const mod = await import("#veryfront/platform/adapters/detect.ts");
 
-        assertExists(mod.detectRuntime);
         assertExists(mod.getAdapter);
         assertExists(mod.denoAdapter);
         assertExists(mod.bunAdapter);
