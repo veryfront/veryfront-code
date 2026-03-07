@@ -224,8 +224,8 @@ export class ProcessJobExecutor implements JobExecutor {
       }
     }, timeout);
 
-    // Wait for process to complete
-    job.process.status.then((status) => {
+    // Wait for process to complete (fire-and-forget with error handling)
+    void job.process.status.then((status) => {
       clearTimeout(timeoutId);
 
       job.completedAt = new Date();

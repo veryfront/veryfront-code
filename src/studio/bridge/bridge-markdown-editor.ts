@@ -85,16 +85,18 @@ export function setupMarkdownLexicalEditor(): void {
     return;
   }
 
-  state.markdownLexicalSetupPromise = Promise.all([
-    import("https://esm.sh/lexical@0.21.0?target=es2022"),
-    import("https://esm.sh/@lexical/rich-text@0.21.0?target=es2022"),
-    import("https://esm.sh/@lexical/list@0.21.0?target=es2022"),
-    import("https://esm.sh/@lexical/markdown@0.21.0?target=es2022"),
-    import("https://esm.sh/@lexical/history@0.21.0?target=es2022"),
-    import("https://esm.sh/@lexical/selection@0.21.0?target=es2022"),
-  ])
-    // deno-lint-ignore no-explicit-any -- dynamic ESM CDN imports have no static types
-    .then(function (modules: any[]) {
+  // deno-lint-ignore no-explicit-any -- dynamic ESM CDN imports have no static types
+  state.markdownLexicalSetupPromise = (async function (): Promise<void> {
+    try {
+      const modules: any[] = await Promise.all([
+        import("https://esm.sh/lexical@0.21.0?target=es2022"),
+        import("https://esm.sh/@lexical/rich-text@0.21.0?target=es2022"),
+        import("https://esm.sh/@lexical/list@0.21.0?target=es2022"),
+        import("https://esm.sh/@lexical/markdown@0.21.0?target=es2022"),
+        import("https://esm.sh/@lexical/history@0.21.0?target=es2022"),
+        import("https://esm.sh/@lexical/selection@0.21.0?target=es2022"),
+      ]);
+
       if (!state.markdownEditorSurface) {
         return;
       }
@@ -198,8 +200,7 @@ export function setupMarkdownLexicalEditor(): void {
 
       applyMarkdownContent(state.markdownCurrentContent);
       hideMarkdownBlockDropIndicator();
-    })
-    .catch(function (error: unknown) {
+    } catch (error: unknown) {
       logger.warn(
         "Failed to load Lexical markdown editor; falling back to textarea",
         error instanceof Error ? error : { error: String(error) },
@@ -214,7 +215,8 @@ export function setupMarkdownLexicalEditor(): void {
       hideMarkdownInlineToolbar();
       hideMarkdownBlockDragUi();
       clearMarkdownSelectionOverlay();
-    });
+    }
+  })();
 }
 
 // ---------------------------------------------------------------------------

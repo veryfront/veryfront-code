@@ -78,27 +78,28 @@ interface DistributedCacheInitOptions {
   initFailureLog: string;
 }
 
-function getOrInitializeDistributedCache(
+async function getOrInitializeDistributedCache(
   options: DistributedCacheInitOptions,
 ): Promise<CacheBackend> {
   const existing = options.getCache();
-  if (existing) return Promise.resolve(existing);
+  if (existing) return existing;
 
   const pending = options.getCacheInitPromise();
   if (pending) return pending;
 
-  const initPromise = createCacheBackend({ keyPrefix: options.keyPrefix })
-    .then((backend) => {
+  const initPromise = (async () => {
+    try {
+      const backend = await createCacheBackend({ keyPrefix: options.keyPrefix });
       options.setCache(backend);
       logger.debug(options.initializedLog, { type: backend.type });
       return backend;
-    })
-    .catch((error) => {
+    } catch (error) {
       logger.warn(options.initFailureLog, { error });
       const fallback = new MemoryCacheBackend(options.localFallbackSize);
       options.setCache(fallback);
       return fallback;
-    });
+    }
+  })();
 
   options.setCacheInitPromise(initPromise);
   return initPromise;

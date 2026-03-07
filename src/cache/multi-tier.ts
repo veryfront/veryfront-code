@@ -174,7 +174,7 @@ export class MultiTierCache<T = string> {
         );
 
         if (this.config.asyncBackfill) {
-          void Promise.all(setOps);
+          void Promise.all(setOps).catch(() => {});
           return;
         }
 
@@ -263,7 +263,7 @@ export class MultiTierCache<T = string> {
 
     if (backfillPromises.length > 0) {
       if (this.config.asyncBackfill) {
-        void Promise.all(backfillPromises);
+        void Promise.all(backfillPromises).catch(() => {});
       } else {
         await Promise.all(backfillPromises);
       }
@@ -349,14 +349,14 @@ export class MultiTierCache<T = string> {
 
   private async maybeAwaitBackfill(promise: Promise<void>): Promise<void> {
     if (this.config.asyncBackfill) {
-      void promise;
+      void promise.catch(() => {});
       return;
     }
     await promise;
   }
 
-  private backfill(key: string, value: T, tiers: ("l1" | "l2")[]): Promise<void> {
-    if (!this.config.backfillOnHit) return Promise.resolve();
+  private async backfill(key: string, value: T, tiers: ("l1" | "l2")[]): Promise<void> {
+    if (!this.config.backfillOnHit) return;
 
     this.stats.backfills++;
     const ttl = this.config.defaultTtlSeconds;
@@ -379,7 +379,7 @@ export class MultiTierCache<T = string> {
       );
     }
 
-    return Promise.all(backfillOps).then(() => {});
+    await Promise.all(backfillOps);
   }
 
   private async individualGets(tier: CacheTier<T>, keys: string[]): Promise<Map<string, T | null>> {

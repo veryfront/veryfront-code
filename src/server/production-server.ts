@@ -195,10 +195,11 @@ export function startProductionServer(
         resolveListenReady = resolve;
       });
 
-      const ready = Promise.all([listenReady, handler.ready ?? Promise.resolve()]).then(() => {
+      const ready = (async () => {
+        await Promise.all([listenReady, handler.ready ?? Promise.resolve()]);
         // Mark server as initialized when ready resolves
         setServerInitialized(true);
-      });
+      })();
 
       const server = await adapter.serve(handler, {
         port,

@@ -314,10 +314,11 @@ export class HTMLGenerator {
     mergedFrontmatter: MDXFrontmatter,
   ): Promise<HTMLGenerationOptions> {
     const stylesheetPath = this.config.config?.tailwind?.stylesheet || "globals.css";
-    const [appComponentPath, globalCSS] = await Promise.all([
-      this.resolveAppPath().then((p) => p ?? undefined),
+    const [appComponentPathOrNull, globalCSS] = await Promise.all([
+      this.resolveAppPath(),
       this.loadProjectFile(stylesheetPath),
     ]);
+    const appComponentPath = appComponentPathOrNull ?? undefined;
     const projectClasses = await this.extractProjectClassesForRoute(context, appComponentPath);
 
     // Load CSS imported by components and merge with globalCSS.

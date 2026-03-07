@@ -176,7 +176,17 @@ export class ResilientCache implements TokenCache {
 
   async close(): Promise<void> {
     return withSpan("cache.resilient.close", async () => {
-      await Promise.all([this.primary.close(), this.fallback.close()]);
+      const results = await Promise.allSettled([
+        this.primary.close(),
+        this.fallback.close(),
+      ]);
+      for (const result of results) {
+        if (result.status === "rejected") {
+          logger.warn("[ResilientCache] Error closing cache:", {
+            error: result.reason instanceof Error ? result.reason.message : result.reason,
+          });
+        }
+      }
     });
   }
 

@@ -87,11 +87,13 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
 
   const setupId = ++state.markdownYjsSetupId;
 
-  Promise.all([
-    import("https://esm.sh/yjs@13.6.28?target=es2022"),
-    import("https://esm.sh/y-websocket@2.1.0?deps=yjs@13.6.28&target=es2022"),
-  ])
-    .then((modules) => {
+  void (async () => {
+    try {
+      const modules = await Promise.all([
+        import("https://esm.sh/yjs@13.6.28?target=es2022"),
+        import("https://esm.sh/y-websocket@2.1.0?deps=yjs@13.6.28&target=es2022"),
+      ]);
+
       // Abort if edit mode was closed while imports were loading
       if (setupId !== state.markdownYjsSetupId) {
         return;
@@ -350,13 +352,13 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
           });
         }
       });
-    })
-    .catch((error) => {
+    } catch (error) {
       logger.error(
         "Failed to setup Yjs connection",
         error instanceof Error ? error : { error: String(error) },
       );
-    });
+    }
+  })();
 }
 
 // ---------------------------------------------------------------------------

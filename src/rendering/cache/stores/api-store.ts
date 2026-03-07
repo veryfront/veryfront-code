@@ -67,25 +67,26 @@ export class APICacheStore implements CacheStore {
     if (this.backend) return Promise.resolve(this.backend);
     if (this.backendInitPromise) return this.backendInitPromise;
 
-    this.backendInitPromise = createCacheBackend({
-      keyPrefix: this.keyPrefix,
-      preferredBackend: "api",
-    })
-      .then((backend) => {
+    this.backendInitPromise = (async () => {
+      try {
+        const backend = await createCacheBackend({
+          keyPrefix: this.keyPrefix,
+          preferredBackend: "api",
+        });
         this.backend = backend;
         logger.debug("Distributed cache initialized", {
           type: backend.type,
         });
         return backend;
-      })
-      .catch((error) => {
+      } catch (error) {
         logger.warn(
           "[APICacheStore] Failed to init distributed cache, skipping fallback",
           { error },
         );
         this.backend = null;
         throw error;
-      });
+      }
+    })();
 
     return this.backendInitPromise;
   }
@@ -158,14 +159,17 @@ export class APICacheStore implements CacheStore {
 
     await this.localCache?.set(key, value);
 
-    this.getBackend()
-      .then((backend) => backend.set(key, this.serialize(value), this.ttlSeconds))
-      .catch((error) => {
+    void (async () => {
+      try {
+        const backend = await this.getBackend();
+        await backend.set(key, this.serialize(value), this.ttlSeconds);
+      } catch (error) {
         logger.debug(
           "[APICacheStore] Failed to store in distributed cache (no fallback)",
           { key, error },
         );
-      });
+      }
+    })();
   }
 
   async delete(key: string): Promise<void> {

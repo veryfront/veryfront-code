@@ -23,13 +23,15 @@ export async function computeDepsHash(
       const componentPath = item.componentPath;
       if (componentPath) {
         hashPromises.push(
-          adapter.fs
-            .readFile(componentPath)
-            .then((src) => computeHash(src))
-            .catch((e) => {
+          (async () => {
+            try {
+              const src = await adapter.fs.readFile(componentPath);
+              return await computeHash(src);
+            } catch (e) {
               logger.debug("reading tsx layout for dep hash failed", e as Error);
               return "";
-            }),
+            }
+          })(),
         );
         continue;
       }

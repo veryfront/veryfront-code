@@ -127,7 +127,7 @@ export function trackBundleAccumulator(
 ): void {
   const accumulator = bundleAccumulatorStorage.getStore();
   if (accumulator) {
-    createFileSystem().stat(cachePath).then((stat) => {
+    void createFileSystem().stat(cachePath).then((stat) => {
       accumulator.push({
         hash: String(hash),
         url: normalizedUrl,

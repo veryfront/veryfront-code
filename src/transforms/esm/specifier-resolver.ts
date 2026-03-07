@@ -88,10 +88,16 @@ export async function buildReplacements(
   const uniqueSpecifiers = [...new Set(imports.map((imp) => imp.n).filter(Boolean))] as string[];
 
   const results = await Promise.all(
-    uniqueSpecifiers.map(async (specifier) => ({
-      specifier,
-      resolved: await resolveSpecifier(specifier, baseUrl, options, cacheHttpModule),
-    })),
+    uniqueSpecifiers.map(async (specifier) => {
+      try {
+        return {
+          specifier,
+          resolved: await resolveSpecifier(specifier, baseUrl, options, cacheHttpModule),
+        };
+      } catch {
+        return { specifier, resolved: null };
+      }
+    }),
   );
 
   const replacements = new Map<string, string>();

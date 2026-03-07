@@ -155,8 +155,12 @@ export async function validateBundleGroup(
 
   await Promise.all(
     manifest.bundles.map(async ({ hash }) => {
-      const path = join(cacheDir, `http-${hash}.mjs`);
-      if (!(await exists(path))) missingBundles.push({ path, hash });
+      try {
+        const path = join(cacheDir, `http-${hash}.mjs`);
+        if (!(await exists(path))) missingBundles.push({ path, hash });
+      } catch {
+        missingBundles.push({ path: join(cacheDir, `http-${hash}.mjs`), hash });
+      }
     }),
   );
 

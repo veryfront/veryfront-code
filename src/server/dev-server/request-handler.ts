@@ -89,9 +89,9 @@ export class RequestHandler {
   }
 
   private incrementRequestMetrics(): void {
-    import("#veryfront/observability/simple-metrics/index.ts")
+    void import("#veryfront/observability/simple-metrics/index.ts")
       .then(({ metrics }) => metrics.incRequest())
-      .catch((error) => logger.debug("[dev] metrics.incRequest failed", error));
+      .catch((error: unknown) => logger.debug("[dev] metrics.incRequest failed", error));
   }
 
   private handleDevEndpoint(req: Request, pathname: string): Response | null {

@@ -86,8 +86,17 @@ export async function resolveVfModuleImports(
 
   const results = await Promise.all(
     imports.map(async ({ original, path }) => {
-      const cachedFilePath = await fetchAndCacheModule(path, fetcherContext);
-      return { original, path, cachedFilePath };
+      try {
+        const cachedFilePath = await fetchAndCacheModule(path, fetcherContext);
+        return { original, path, cachedFilePath };
+      } catch (error) {
+        logger.warn("Failed to fetch _vf_modules import", {
+          file: options.filePath.slice(-40),
+          path,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return { original, path, cachedFilePath: null };
+      }
     }),
   );
 

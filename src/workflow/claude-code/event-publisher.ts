@@ -191,7 +191,7 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
   async close(): Promise<void> {
     if (!this.initialized) return;
 
-    await Promise.all([
+    const results = await Promise.allSettled([
       this.publishClient?.quit(),
       this.subscribeClient?.quit(),
     ]);
@@ -199,6 +199,13 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
     this.publishClient = null;
     this.subscribeClient = null;
     this.initialized = false;
+
+    // Re-throw the first error if any quit failed
+    for (const result of results) {
+      if (result.status === "rejected") {
+        throw result.reason;
+      }
+    }
   }
 }
 
@@ -281,11 +288,25 @@ export class MultiEventPublisher implements ClaudeCodeEventPublisher {
   }
 
   async publish(event: ClaudeCodeEvent): Promise<void> {
-    await Promise.all(this.publishers.map((p) => p.publish(event)));
+    const results = await Promise.allSettled(this.publishers.map((p) => p.publish(event)));
+
+    // Re-throw the first error if any publisher failed
+    for (const result of results) {
+      if (result.status === "rejected") {
+        throw result.reason;
+      }
+    }
   }
 
   async close(): Promise<void> {
-    await Promise.all(this.publishers.map((p) => p.close()));
+    const results = await Promise.allSettled(this.publishers.map((p) => p.close()));
+
+    // Re-throw the first error if any close failed
+    for (const result of results) {
+      if (result.status === "rejected") {
+        throw result.reason;
+      }
+    }
   }
 
   addPublisher(publisher: ClaudeCodeEventPublisher): void {
