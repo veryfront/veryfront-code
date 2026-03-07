@@ -7,10 +7,7 @@ import {
   buildEnrichedContext,
   type BuildEnrichedContextOptions,
   type EnrichedContext,
-  shouldEnableCacheFromEnriched,
-  shouldUseNoCacheHeadersFromEnriched,
   shouldUseNoCacheHeadersFromHandler,
-  toRequestContext,
 } from "./enriched-context.ts";
 
 // ---------------------------------------------------------------------------
@@ -177,114 +174,6 @@ describe("enriched-context", () => {
       assertEquals(ctx.releaseId, "rel_1");
       assertEquals(ctx.environmentName, "Production");
       assertEquals(ctx.projectData, projectData);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // toRequestContext
-  // -----------------------------------------------------------------------
-  describe("toRequestContext", () => {
-    it("should extract request context fields from enriched context", () => {
-      const enriched = makeEnriched({
-        token: "tok_xyz",
-        projectSlug: "slug-1",
-        branch: "feature-a",
-        environment: "preview",
-      });
-      const rc = toRequestContext(enriched);
-      assertEquals(rc, {
-        token: "tok_xyz",
-        slug: "slug-1",
-        branch: "feature-a",
-        mode: "preview",
-      });
-    });
-
-    it("should return branch as null when enriched has null branch", () => {
-      const rc = toRequestContext(makeEnriched({ branch: null }));
-      assertEquals(rc.branch, null);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // shouldEnableCacheFromEnriched
-  // -----------------------------------------------------------------------
-  describe("shouldEnableCacheFromEnriched", () => {
-    it("should return true for non-local production", () => {
-      assertEquals(
-        shouldEnableCacheFromEnriched(
-          makeEnriched({ isLocalProject: false, environment: "production" }),
-        ),
-        true,
-      );
-    });
-
-    it("should return false for local production", () => {
-      assertEquals(
-        shouldEnableCacheFromEnriched(
-          makeEnriched({ isLocalProject: true, environment: "production" }),
-        ),
-        false,
-      );
-    });
-
-    it("should return false for non-local preview", () => {
-      assertEquals(
-        shouldEnableCacheFromEnriched(
-          makeEnriched({ isLocalProject: false, environment: "preview" }),
-        ),
-        false,
-      );
-    });
-
-    it("should return false for local preview", () => {
-      assertEquals(
-        shouldEnableCacheFromEnriched(
-          makeEnriched({ isLocalProject: true, environment: "preview" }),
-        ),
-        false,
-      );
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // shouldUseNoCacheHeadersFromEnriched
-  // -----------------------------------------------------------------------
-  describe("shouldUseNoCacheHeadersFromEnriched", () => {
-    it("should return true for local project", () => {
-      assertEquals(
-        shouldUseNoCacheHeadersFromEnriched(
-          makeEnriched({ isLocalProject: true, environment: "production" }),
-        ),
-        true,
-      );
-    });
-
-    it("should return true for preview environment", () => {
-      assertEquals(
-        shouldUseNoCacheHeadersFromEnriched(
-          makeEnriched({ isLocalProject: false, environment: "preview" }),
-        ),
-        true,
-      );
-    });
-
-    it("should return false for non-local production", () => {
-      assertEquals(
-        shouldUseNoCacheHeadersFromEnriched(
-          makeEnriched({ isLocalProject: false, environment: "production" }),
-        ),
-        false,
-      );
-    });
-
-    it("should return true for local preview (both conditions)", () => {
-      assertEquals(
-        shouldUseNoCacheHeadersFromEnriched(
-          makeEnriched({ isLocalProject: true, environment: "preview" }),
-        ),
-        true,
-      );
     });
   });
 
