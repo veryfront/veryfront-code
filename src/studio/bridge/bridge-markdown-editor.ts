@@ -234,30 +234,6 @@ export function focusMarkdownEditor(): void {
 }
 
 // ---------------------------------------------------------------------------
-// applyMarkdownHistoryCommand
-// ---------------------------------------------------------------------------
-
-function applyMarkdownHistoryCommand(command: unknown): void {
-  if (
-    !state.markdownLexicalApi ||
-    !state.markdownLexicalApi.editor ||
-    !state.markdownLexicalApi.lexicalModule
-  ) {
-    return;
-  }
-  if (!command) {
-    return;
-  }
-
-  state.markdownLexicalApi.editor.focus();
-  state.markdownLexicalApi.editor.dispatchCommand(command, undefined);
-  scheduleMarkdownSelectionSync();
-  scheduleMarkdownSelectionOverlayRender();
-  scheduleMarkdownSlashMenuUpdate();
-  scheduleMarkdownInlineToolbarUpdate();
-}
-
-// ---------------------------------------------------------------------------
 // applyMarkdownContent
 // ---------------------------------------------------------------------------
 

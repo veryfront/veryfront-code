@@ -95,10 +95,6 @@ export function openFilePathInStudio(
   );
 }
 
-function openMarkdownSourceInStudio(lineNumber?: number): void {
-  openFilePathInStudio(getConfig().pagePath, lineNumber);
-}
-
 export function normalizePathSegments(segments: string[]): string[] {
   const stack: string[] = [];
   for (const segment of segments) {
