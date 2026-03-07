@@ -17,6 +17,15 @@ import type {
 
 const logger = baseLogger.component("websocket-publisher");
 
+/** Default interval for WebSocket ping/keepalive messages */
+const DEFAULT_PING_INTERVAL_MS = 30_000;
+
+/** Default timeout for tool call approval requests */
+const DEFAULT_APPROVAL_TIMEOUT_MS = 60_000;
+
+/** Default timeout for user input requests (5 minutes) */
+const DEFAULT_INPUT_TIMEOUT_MS = 300_000;
+
 /**
  * WebSocket publisher configuration
  */
@@ -52,7 +61,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
   constructor(config: WebSocketPublisherConfig) {
     this.config = {
       debug: false,
-      pingInterval: 30000,
+      pingInterval: DEFAULT_PING_INTERVAL_MS,
       ...config,
     };
 
@@ -403,7 +412,7 @@ export class AgentController {
       return Promise.reject(new Error("Agent cancelled"));
     }
 
-    const timeout = this.config.approvalTimeout || 60000;
+    const timeout = this.config.approvalTimeout || DEFAULT_APPROVAL_TIMEOUT_MS;
 
     // Send approval request to client
     this.publisher.send({
@@ -439,7 +448,7 @@ export class AgentController {
       return Promise.reject(new Error("Agent cancelled"));
     }
 
-    const timeout = this.config.inputTimeout || 300000; // 5 minutes
+    const timeout = this.config.inputTimeout || DEFAULT_INPUT_TIMEOUT_MS;
 
     // Send input request to client
     this.publisher.send({

@@ -82,7 +82,7 @@ const rendererRouter = (discoveryHost || staticTargets)
   ? new RendererRouter(
     discoveryHost || "static-targets",
     PRODUCTION_SERVER_URL,
-    parseInt(getEnv("VERYFRONT_SERVER_DISCOVERY_INTERVAL_MS") || "15000") || 15000,
+    parseInt(getEnv("VERYFRONT_SERVER_DISCOVERY_INTERVAL_MS") || "15000") || 15_000,
   )
   : null;
 
@@ -93,15 +93,20 @@ const apiInternalPass = getEnv("VERYFRONT_API_INTERNAL_PASS") || "";
 const serverResolver = new ServerResolver(apiInternalUrl, apiInternalUser, apiInternalPass);
 
 const { hostname: HOST, port: PORT } = resolveProxyBinding();
-const WS_CONNECT_TIMEOUT_MS = 30000;
+const WS_CONNECT_TIMEOUT_MS = 30_000;
 // Timeout for forwarding requests to production server (SSR can take time on cold start)
+const DEFAULT_SERVER_REQUEST_TIMEOUT_MS = 90_000;
 const VERYFRONT_SERVER_REQUEST_TIMEOUT_MS = parseInt(
-  getEnv("VERYFRONT_SERVER_REQUEST_TIMEOUT_MS") || "90000",
+  getEnv("VERYFRONT_SERVER_REQUEST_TIMEOUT_MS") || String(DEFAULT_SERVER_REQUEST_TIMEOUT_MS),
 );
 // Retry configuration for transient connection errors
-const VERYFRONT_SERVER_RETRY_COUNT = parseInt(getEnv("VERYFRONT_SERVER_RETRY_COUNT") || "1");
+const DEFAULT_SERVER_RETRY_COUNT = 1;
+const DEFAULT_SERVER_RETRY_DELAY_MS = 100;
+const VERYFRONT_SERVER_RETRY_COUNT = parseInt(
+  getEnv("VERYFRONT_SERVER_RETRY_COUNT") || String(DEFAULT_SERVER_RETRY_COUNT),
+);
 const VERYFRONT_SERVER_RETRY_DELAY_MS = parseInt(
-  getEnv("VERYFRONT_SERVER_RETRY_DELAY_MS") || "100",
+  getEnv("VERYFRONT_SERVER_RETRY_DELAY_MS") || String(DEFAULT_SERVER_RETRY_DELAY_MS),
 );
 
 // Initialize cache and proxy handler

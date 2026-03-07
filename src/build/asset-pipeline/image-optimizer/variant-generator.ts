@@ -12,6 +12,9 @@ import type {
   SharpMetadata,
 } from "./types.ts";
 
+/** Default assumed image width when metadata has no width */
+const DEFAULT_IMAGE_WIDTH = 1_920;
+
 export function generateVariant(
   sharp: SharpConstructor,
   image: SharpInstance,
@@ -80,7 +83,7 @@ export function generateImageVariants(
     "build.asset.generateImageVariants",
     async (): Promise<ImageVariant[]> => {
       const variants: ImageVariant[] = [];
-      const originalWidth = metadata.width ?? 1920;
+      const originalWidth = metadata.width ?? DEFAULT_IMAGE_WIDTH;
       const metaWidth = metadata.width;
 
       const validSizes = metaWidth ? sizes.filter((size) => metaWidth >= size) : sizes;

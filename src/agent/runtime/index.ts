@@ -37,6 +37,7 @@ import { convertToolsToAISDK } from "./model-tool-converter.ts";
 import { createStreamState, processStream } from "./ai-stream-handler.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { generateText, type LanguageModel, streamText } from "ai";
+import { AGENT_DEFAULTS } from "../ai-defaults.ts";
 
 // Re-export from submodules
 export { generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -179,7 +180,8 @@ export class AgentRuntime {
     this.id = id;
     this.config = config;
 
-    const memoryConfig = config.memory || { type: "conversation", maxTokens: 4000 };
+    const memoryConfig = config.memory ||
+      { type: "conversation", maxTokens: AGENT_DEFAULTS.memoryMaxTokens };
     this.memory = createMemory<Message>(memoryConfig);
   }
 

@@ -14,6 +14,7 @@ const logger = baseLogger.component("transform-cache");
 
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes
 const FALLBACK_MAX_ENTRIES = 500;
+const WARMUP_TTL_SECONDS = 3_600; // 1 hour
 
 /**
  * Pattern to match unresolved /_vf_modules/_veryfront/ imports.
@@ -354,7 +355,7 @@ export interface WarmupResult {
 
 export async function warmupTransformCache(
   entries: WarmupEntry[],
-  ttlSeconds: number = 3600,
+  ttlSeconds: number = WARMUP_TTL_SECONDS,
 ): Promise<WarmupResult> {
   const start = performance.now();
   let success = 0;

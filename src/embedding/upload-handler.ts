@@ -3,6 +3,7 @@ import type { UploadStore } from "./types.ts";
 import { loadUpload } from "./upload-loader.ts";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_NAME_LENGTH = 200;
 
 const MIME_TO_TYPE: Record<string, string> = {
   "text/plain": "txt",
@@ -132,7 +133,7 @@ export function createUploadHandler(
       }
 
       // Sanitize file name: strip path components, limit length
-      const safeName = file.name.replace(/[/\\]/g, "_").slice(0, 200);
+      const safeName = file.name.replace(/[/\\]/g, "_").slice(0, MAX_FILE_NAME_LENGTH);
 
       const id = await store.ingest(safeName, text, {
         source: `upload:${safeName}`,

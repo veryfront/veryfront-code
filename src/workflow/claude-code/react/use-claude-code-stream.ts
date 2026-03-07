@@ -7,6 +7,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClaudeCodeEvent, ClaudeCodeResult } from "../types.ts";
 
+/** Default delay before reconnecting after disconnect */
+const DEFAULT_RECONNECT_DELAY_MS = 1_000;
+
+/** Default maximum number of events to retain in history */
+const DEFAULT_MAX_EVENT_HISTORY = 100;
+
 /**
  * State for Claude Code streaming
  */
@@ -145,9 +151,9 @@ export function useClaudeCodeStream(
     autoConnect = true,
     autoReconnect = true,
     maxReconnectAttempts = 5,
-    reconnectDelay = 1000,
+    reconnectDelay = DEFAULT_RECONNECT_DELAY_MS,
     keepEventHistory = false,
-    maxEventHistory = 100,
+    maxEventHistory = DEFAULT_MAX_EVENT_HISTORY,
     onEvent,
     onConnect,
     onDisconnect,

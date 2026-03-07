@@ -21,6 +21,19 @@ import { registerLRUCache } from "#veryfront/cache/registry.ts";
 
 const logger = serverLogger.component("config");
 
+/** Cache TTL for veryfront-api filesystem in proxy mode */
+const DEFAULT_FS_CACHE_TTL_MS = 60_000;
+/** Maximum retry attempts for veryfront-api filesystem requests */
+const DEFAULT_FS_MAX_RETRIES = 3;
+/** Initial backoff delay between retries */
+const DEFAULT_FS_INITIAL_DELAY_MS = 500;
+/** Maximum backoff delay between retries */
+const DEFAULT_FS_MAX_DELAY_MS = 5_000;
+/** Maximum entries in the render cache */
+const DEFAULT_RENDER_CACHE_MAX_ENTRIES = 500;
+/** Maximum entries in the per-project config cache */
+const DEFAULT_CONFIG_CACHE_MAX_ENTRIES = 100;
+
 export type { VeryfrontConfig } from "./schemas/index.ts";
 
 /**
@@ -57,8 +70,12 @@ function getDefaultFsConfig(): VeryfrontConfig["fs"] {
       veryfront: {
         apiBaseUrl,
         proxyMode: true,
-        cache: { enabled: true, ttl: 60000 },
-        retry: { maxRetries: 3, initialDelay: 500, maxDelay: 5000 },
+        cache: { enabled: true, ttl: DEFAULT_FS_CACHE_TTL_MS },
+        retry: {
+          maxRetries: DEFAULT_FS_MAX_RETRIES,
+          initialDelay: DEFAULT_FS_INITIAL_DELAY_MS,
+          maxDelay: DEFAULT_FS_MAX_DELAY_MS,
+        },
       },
     };
   }
@@ -103,7 +120,7 @@ function createFreshDefaults(): Partial<VeryfrontConfig> {
       render: {
         type: "memory",
         ttl: undefined,
-        maxEntries: 500,
+        maxEntries: DEFAULT_RENDER_CACHE_MAX_ENTRIES,
         kvPath: undefined,
         redisUrl: undefined,
         redisKeyPrefix: undefined,
@@ -129,7 +146,7 @@ function createFreshDefaults(): Partial<VeryfrontConfig> {
 }
 
 const configCacheByProject = new LRUCache<string, { revision: number; config: VeryfrontConfig }>({
-  maxEntries: 100,
+  maxEntries: DEFAULT_CONFIG_CACHE_MAX_ENTRIES,
 });
 
 // Register cache for monitoring

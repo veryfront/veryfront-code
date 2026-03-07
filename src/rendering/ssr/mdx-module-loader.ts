@@ -11,10 +11,12 @@ import type { MDXModule } from "./types.ts";
 
 const logger = rendererLogger.component("mdx");
 
+const MDX_CACHE_CLEANUP_INTERVAL_MS = 60_000;
+
 const mdxModuleCache = new LRUCache<string, MDXModule>({
   maxEntries: MDX_RENDERER_MAX_ENTRIES,
   ttlMs: MDX_RENDERER_TTL_MS,
-  cleanupIntervalMs: 60000,
+  cleanupIntervalMs: MDX_CACHE_CLEANUP_INTERVAL_MS,
 });
 
 registerCache("mdx-module-cache", () => ({

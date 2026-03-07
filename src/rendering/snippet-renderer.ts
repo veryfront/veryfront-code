@@ -15,8 +15,9 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 const logger = rendererLogger.component("snippet-renderer");
 
 const SNIPPET_CACHE_MAX_ENTRIES = 500;
-const SNIPPET_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const SNIPPET_CACHE_TTL_MS = 10 * 60 * 1_000; // 10 minutes
 const SNIPPET_DISTRIBUTED_CACHE_TTL_SECONDS = 600; // 10 minutes for distributed cache
+const SNIPPET_CACHE_CLEANUP_INTERVAL_MS = 60_000;
 
 export interface SnippetRenderOptions {
   mode: "development" | "production";
@@ -47,7 +48,7 @@ interface SnippetCacheEntry {
 const snippetCache = new LRUCache<string, SnippetCacheEntry>({
   maxEntries: SNIPPET_CACHE_MAX_ENTRIES,
   ttlMs: SNIPPET_CACHE_TTL_MS,
-  cleanupIntervalMs: 60000,
+  cleanupIntervalMs: SNIPPET_CACHE_CLEANUP_INTERVAL_MS,
 });
 
 registerCache("snippet-cache", () => ({

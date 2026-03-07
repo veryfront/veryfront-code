@@ -28,7 +28,7 @@ export function jumpHash(keyStr: string, numBuckets: number): number {
   return Number(b);
 }
 
-const MAX_STALENESS_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_STALENESS_MS = 5 * 60 * 1_000; // 5 minutes
 
 export class RendererRouter {
   private targets: string[] = [];

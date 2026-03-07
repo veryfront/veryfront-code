@@ -4,6 +4,9 @@ import {
 } from "#veryfront/utils/constants/cache.ts";
 import type { CacheBackend } from "../types.ts";
 
+const DEFAULT_TTL_SECONDS = 300;
+const MAX_REGEX_CACHE_SIZE = 100;
+
 export class MemoryCacheBackend implements CacheBackend {
   readonly type = "memory" as const;
   private store = new Map<string, { value: string; expiresAt: number; sizeBytes: number }>();
@@ -66,7 +69,7 @@ export class MemoryCacheBackend implements CacheBackend {
     return Promise.resolve(results);
   }
 
-  set(key: string, value: string, ttlSeconds = 300): Promise<void> {
+  set(key: string, value: string, ttlSeconds = DEFAULT_TTL_SECONDS): Promise<void> {
     const entrySize = this.estimateSize(key, value);
 
     // Reject single entries that exceed the byte limit on their own
@@ -120,7 +123,7 @@ export class MemoryCacheBackend implements CacheBackend {
       this.currentSizeBytes += entrySize;
       this.store.set(key, {
         value,
-        expiresAt: now + (ttl ?? 300) * 1000,
+        expiresAt: now + (ttl ?? DEFAULT_TTL_SECONDS) * 1000,
         sizeBytes: entrySize,
       });
     }
@@ -141,7 +144,7 @@ export class MemoryCacheBackend implements CacheBackend {
       const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
       regex = new RegExp(`^${escaped.replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
 
-      if (this.regexCache.size >= 100) {
+      if (this.regexCache.size >= MAX_REGEX_CACHE_SIZE) {
         const firstKey = this.regexCache.keys().next().value as string | undefined;
         if (firstKey) this.regexCache.delete(firstKey);
       }

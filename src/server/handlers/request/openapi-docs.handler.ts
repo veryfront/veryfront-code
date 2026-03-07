@@ -16,6 +16,9 @@ import { escapeHtml } from "#veryfront/html/html-escape.ts";
 const DEFAULT_DOCS_PATH = "/_docs";
 const DEFAULT_JSON_PATH = "/_openapi.json";
 
+/** Cache duration for production docs pages (1 hour) */
+const DOCS_CACHE_MAX_AGE_SECONDS = 3_600;
+
 export class OpenAPIDocsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "OpenAPIDocsHandler",
@@ -37,7 +40,7 @@ export class OpenAPIDocsHandler extends BaseHandler {
     const isDev = !!ctx.isLocalProject;
 
     const response = this.createResponseBuilder(ctx)
-      .withCache(isDev ? "no-cache" : { maxAge: 3600, public: true })
+      .withCache(isDev ? "no-cache" : { maxAge: DOCS_CACHE_MAX_AGE_SECONDS, public: true })
       .withContentType("text/html; charset=utf-8", html, HTTP_OK);
 
     return Promise.resolve(this.respond(response));

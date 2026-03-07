@@ -4,6 +4,7 @@ import { logger } from "#veryfront/utils";
 import type { CacheBackend } from "../types.ts";
 
 const CACHE_SUBDIR = "veryfront-files";
+const MAX_REGEX_CACHE_SIZE = 100;
 const fsPromises = import("node:fs/promises");
 
 interface DiskCacheEnvelope {
@@ -110,7 +111,7 @@ export class DiskCacheBackend implements CacheBackend {
     if (!regex) {
       const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
       regex = new RegExp(`^${escaped.replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
-      if (this.regexCache.size >= 100) {
+      if (this.regexCache.size >= MAX_REGEX_CACHE_SIZE) {
         const firstKey = this.regexCache.keys().next().value as string | undefined;
         if (firstKey) this.regexCache.delete(firstKey);
       }

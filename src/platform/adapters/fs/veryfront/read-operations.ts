@@ -49,6 +49,7 @@ export interface ContentContextProvider {
 
 const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_IN_FLIGHT_REQUESTS = 100;
+const IN_FLIGHT_CLEANUP_INTERVAL_MS = 1_000;
 
 function previewText(content: string, max = 80): string {
   return content.length > max ? `${content.slice(0, max)}...` : content;
@@ -58,7 +59,7 @@ export class ReadOperations {
   private readonly inFlightRequests = new InFlightRequestDeduper<string>({
     timeoutMs: IN_FLIGHT_REQUEST_TIMEOUT_MS,
     maxEntries: MAX_IN_FLIGHT_REQUESTS,
-    cleanupIntervalMs: 1000,
+    cleanupIntervalMs: IN_FLIGHT_CLEANUP_INTERVAL_MS,
   });
   private readonly fileListIndex: FileListIndex;
   /** Caches extensionless base paths → resolved full paths to avoid repeated API resolution calls */

@@ -1,6 +1,10 @@
 import type { AgentResponse } from "../../types.ts";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
+const DEFAULT_LRU_MAX_SIZE = 100;
+const DEFAULT_TTL_MS = 300_000; // 5 minutes
+const TTL_CLEANUP_INTERVAL_MS = 60_000;
+
 export interface CacheConfig {
   strategy: "memory" | "lru" | "ttl";
   maxSize?: number;
@@ -61,7 +65,7 @@ class MemoryCache {
 class LRUCache {
   private cache = new Map<string, CacheEntry>();
 
-  constructor(private maxSize: number = 100) {}
+  constructor(private maxSize: number = DEFAULT_LRU_MAX_SIZE) {}
 
   set(key: string, response: AgentResponse): void {
     if (this.cache.has(key)) this.cache.delete(key);
@@ -175,7 +179,7 @@ class TTLCache {
           this.cache.delete(key);
         }
       }
-    }, 60000);
+    }, TTL_CLEANUP_INTERVAL_MS);
   }
 }
 
@@ -184,9 +188,9 @@ type CacheInstance = Pick<MemoryCache, "set" | "get" | "has" | "delete" | "clear
 function createCacheByStrategy(config: CacheConfig): CacheInstance {
   switch (config.strategy) {
     case "lru":
-      return new LRUCache(config.maxSize ?? 100);
+      return new LRUCache(config.maxSize ?? DEFAULT_LRU_MAX_SIZE);
     case "ttl":
-      return new TTLCache(config.ttl ?? 300000);
+      return new TTLCache(config.ttl ?? DEFAULT_TTL_MS);
     default:
       return new MemoryCache();
   }

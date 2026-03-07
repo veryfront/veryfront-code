@@ -16,7 +16,13 @@ interface RedisClient {
 }
 
 /** Default TTL for Redis cache entries (1 hour) */
-const DEFAULT_TTL_SECONDS = 3600;
+const DEFAULT_TTL_SECONDS = 3_600;
+/** Max entries for the in-memory fallback cache when Redis is unavailable */
+const FALLBACK_MAX_ENTRIES = 100;
+/** Number of keys to scan per Redis SCAN iteration */
+const REDIS_SCAN_COUNT = 100;
+/** Smaller scan batch size for clear operations (deletes each key inline) */
+const REDIS_CLEAR_SCAN_COUNT = 50;
 
 export interface RedisCacheStoreOptions {
   url?: string;
@@ -46,9 +52,9 @@ export class RedisCacheStore implements CacheStore {
   private getFallbackStore(): MemoryCacheStore {
     if (this.fallbackStore) return this.fallbackStore;
 
-    // Small fallback cache (100 entries) for when Redis is unavailable
+    // Small fallback cache for when Redis is unavailable
     this.fallbackStore = new MemoryCacheStore({
-      maxEntries: 100,
+      maxEntries: FALLBACK_MAX_ENTRIES,
       ttlMs: this.ttlSeconds * 1000,
     });
     logger.warn("Redis unavailable, using memory cache fallback");
@@ -189,7 +195,7 @@ export class RedisCacheStore implements CacheStore {
       do {
         const [nextCursor, keys] = await client.scan(cursor, {
           MATCH: `${this.keyPrefix}${prefix}*`,
-          COUNT: 100,
+          COUNT: REDIS_SCAN_COUNT,
         });
         cursor = nextCursor;
         if (keys.length) keysToDelete.push(...keys);
@@ -225,7 +231,7 @@ export class RedisCacheStore implements CacheStore {
       do {
         const [nextCursor, keys] = await client.scan(cursor, {
           MATCH: `${this.keyPrefix}*`,
-          COUNT: 50,
+          COUNT: REDIS_CLEAR_SCAN_COUNT,
         });
         cursor = nextCursor;
 

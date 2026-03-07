@@ -12,6 +12,9 @@ import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 
 const logger = baseLogger.component("approval-manager");
 
+/** Default interval for checking expired approvals */
+const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
+
 export type ApprovalNotifier = (
   approval: PendingApproval,
   run: WorkflowRun,
@@ -53,7 +56,7 @@ export class ApprovalManager {
 
   constructor(config: ApprovalManagerConfig) {
     this.config = {
-      expirationCheckInterval: 60000,
+      expirationCheckInterval: DEFAULT_EXPIRATION_CHECK_INTERVAL_MS,
       debug: false,
       ...config,
     };

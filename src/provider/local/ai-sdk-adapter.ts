@@ -18,6 +18,9 @@ import { isLocalAIDisabled } from "./env.ts";
 
 const logger = serverLogger.component("local-llm");
 
+/** Default maximum new tokens for local model generation */
+const DEFAULT_MAX_NEW_TOKENS = 512;
+
 /** Shape of a single message in the AI SDK LanguageModelV2 prompt array. */
 interface PromptMessage {
   role: string;
@@ -75,7 +78,7 @@ interface LocalModelOptions {
 /** Map AI SDK generation options to local engine GenerateOptions. */
 function toGenerateOptions(options: LocalModelOptions): GenerateOptions {
   return {
-    maxNewTokens: options.maxOutputTokens ?? 512,
+    maxNewTokens: options.maxOutputTokens ?? DEFAULT_MAX_NEW_TOKENS,
     temperature: options.temperature ?? 0.7,
     topP: options.topP,
     topK: options.topK,

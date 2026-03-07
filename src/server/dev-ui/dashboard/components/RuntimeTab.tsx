@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { Card } from "./Card.tsx";
 import { ErrorState, LoadingState, PageLayout } from "./shared.tsx";
 
+/** How often the dashboard auto-refreshes runtime metrics and memory data */
+const AUTO_REFRESH_INTERVAL_MS = 15_000;
+
 type SubTab = "metrics" | "memory";
 
 interface HeapStats {
@@ -55,7 +58,7 @@ export function RuntimeTab(): React.JSX.Element {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 15000);
+    const interval = setInterval(loadData, AUTO_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
   }, []);
 

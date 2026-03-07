@@ -23,6 +23,15 @@ import type { JobConfig, JobExecutor, JobStatus } from "./executors/types.ts";
 
 const logger = baseLogger.component("workflow-job-manager");
 
+/** Default interval between poll cycles */
+const DEFAULT_POLL_INTERVAL_MS = 5_000;
+
+/** Default timeout for a single job (30 minutes) */
+const DEFAULT_JOB_TIMEOUT_MS = 30 * 60 * 1_000;
+
+/** Default threshold after which a run is considered stalled */
+const DEFAULT_STALLED_THRESHOLD_MS = 60_000;
+
 // Re-export types for convenience
 export type { JobExecutor, JobInfo, JobStatus } from "./executors/types.ts";
 
@@ -139,10 +148,10 @@ export class WorkflowJobManager {
     this.managerId = generateId("mgr");
 
     this.config = {
-      pollInterval: 5000,
+      pollInterval: DEFAULT_POLL_INTERVAL_MS,
       maxConcurrentJobs: 10,
-      jobTimeout: 30 * 60 * 1000, // 30 minutes
-      stalledThreshold: 60000, // 60 seconds
+      jobTimeout: DEFAULT_JOB_TIMEOUT_MS,
+      stalledThreshold: DEFAULT_STALLED_THRESHOLD_MS,
       debug: false,
       ...config,
     };

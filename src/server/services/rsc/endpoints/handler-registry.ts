@@ -12,6 +12,7 @@ import { registerCache } from "#veryfront/utils/memory/index.ts";
 
 const RSC_HANDLERS_MAX_ENTRIES = 50;
 const RSC_HANDLERS_TTL_MS = 60 * 60 * 1000; // 1 hour
+const RSC_HANDLERS_CLEANUP_INTERVAL_MS = 300_000; // 5 minutes
 
 /**
  * Handler cache interface for dependency injection.
@@ -37,7 +38,7 @@ function getHandlersCache(): HandlerCache<RSCDevServerHandler> {
   rscHandlersByProject = new LRUCache<string, RSCDevServerHandler>({
     maxEntries: RSC_HANDLERS_MAX_ENTRIES,
     ttlMs: RSC_HANDLERS_TTL_MS,
-    cleanupIntervalMs: 300000, // 5 minutes
+    cleanupIntervalMs: RSC_HANDLERS_CLEANUP_INTERVAL_MS,
   });
 
   if (!cacheRegistered) {

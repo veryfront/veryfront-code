@@ -43,14 +43,20 @@ export function runWithWorkflowTenant<T>(
   return workflowTenantStorage.run(tenant, fn);
 }
 
+/** Default initial delay before first retry attempt */
+const DEFAULT_RETRY_INITIAL_DELAY_MS = 1_000;
+
+/** Default maximum delay between retry attempts */
+const DEFAULT_RETRY_MAX_DELAY_MS = 30_000;
+
 const DEFAULT_RETRY: RetryConfig = {
   maxAttempts: 1,
   backoff: "exponential",
-  initialDelay: 1000,
-  maxDelay: 30000,
+  initialDelay: DEFAULT_RETRY_INITIAL_DELAY_MS,
+  maxDelay: DEFAULT_RETRY_MAX_DELAY_MS,
 };
 
-const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1_000;
 
 export interface AgentRegistry {
   get(id: string): Agent | undefined;
@@ -170,8 +176,8 @@ export class StepExecutor {
   }
 
   private calculateRetryDelay(attempt: number, config: RetryConfig): number {
-    const initialDelay = config.initialDelay ?? 1000;
-    const maxDelay = config.maxDelay ?? 30000;
+    const initialDelay = config.initialDelay ?? DEFAULT_RETRY_INITIAL_DELAY_MS;
+    const maxDelay = config.maxDelay ?? DEFAULT_RETRY_MAX_DELAY_MS;
 
     let baseDelay = initialDelay;
     if (config.backoff === "exponential") baseDelay = initialDelay * Math.pow(2, attempt - 1);

@@ -25,6 +25,8 @@ import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import { ReloadNotifier } from "../../../reload-notifier.ts";
 import type { HandlerContext } from "../../types.ts";
 
+const WORKFLOW_EXECUTION_TIMEOUT_MS = 30_000;
+
 const JSON_HEADERS = {
   "Content-Type": "application/json",
   "Cache-Control": "no-cache",
@@ -307,11 +309,13 @@ async function handleStartWorkflow(req: Request): Promise<Response> {
     const startTime = Date.now();
     const handle = await client.start(workflowId, (input as Record<string, unknown>) ?? {});
 
-    const timeoutMs = 30000;
     const result = await Promise.race([
       handle.result(),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Workflow execution timed out (30s)")), timeoutMs)
+        setTimeout(
+          () => reject(new Error("Workflow execution timed out (30s)")),
+          WORKFLOW_EXECUTION_TIMEOUT_MS,
+        )
       ),
     ]);
 

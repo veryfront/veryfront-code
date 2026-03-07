@@ -33,6 +33,26 @@ export function detectPlatform(): Platform {
   return "unknown";
 }
 
+/** CPU time limit for Cloudflare Workers (30 seconds) */
+const CF_WORKERS_CPU_TIME_LIMIT_MS = 30_000;
+/** Memory limit for Cloudflare Workers (128 MB) */
+const CF_WORKERS_MEMORY_LIMIT_MB = 128;
+/** Max agent steps for Cloudflare Workers */
+const CF_WORKERS_MAX_AGENT_STEPS = 3;
+
+/** CPU time limit for unknown platforms (60 seconds) */
+const UNKNOWN_PLATFORM_CPU_TIME_LIMIT_MS = 60_000;
+/** Memory limit for unknown platforms (512 MB) */
+const UNKNOWN_PLATFORM_MEMORY_LIMIT_MB = 512;
+/** Max agent steps for unknown platforms */
+const UNKNOWN_PLATFORM_MAX_AGENT_STEPS = 5;
+
+/** Minimum agent steps threshold for generating a warning */
+const MIN_AGENT_STEPS_WARNING_THRESHOLD = 10;
+
+/** CPU time limit below which a platform warning is emitted (60 seconds) */
+const CPU_TIME_WARNING_THRESHOLD_MS = 60_000;
+
 const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
   deno: {
     canRunMCPServer: true,
@@ -66,9 +86,9 @@ const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
   },
   "cloudflare-workers": {
     canRunMCPServer: false,
-    maxAgentSteps: 3,
-    cpuTimeLimit: 30000,
-    memoryLimit: 128,
+    maxAgentSteps: CF_WORKERS_MAX_AGENT_STEPS,
+    cpuTimeLimit: CF_WORKERS_CPU_TIME_LIMIT_MS,
+    memoryLimit: CF_WORKERS_MEMORY_LIMIT_MB,
     hasFileSystem: false,
     supportsLongRunning: false,
     streamingRecommended: true,
@@ -76,9 +96,9 @@ const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
   },
   unknown: {
     canRunMCPServer: false,
-    maxAgentSteps: 5,
-    cpuTimeLimit: 60000,
-    memoryLimit: 512,
+    maxAgentSteps: UNKNOWN_PLATFORM_MAX_AGENT_STEPS,
+    cpuTimeLimit: UNKNOWN_PLATFORM_CPU_TIME_LIMIT_MS,
+    memoryLimit: UNKNOWN_PLATFORM_MEMORY_LIMIT_MB,
     hasFileSystem: false,
     supportsLongRunning: false,
     streamingRecommended: true,
@@ -109,13 +129,16 @@ export function getPlatformWarnings(): string[] {
     );
   }
 
-  if (capabilities.maxAgentSteps < 10) {
+  if (capabilities.maxAgentSteps < MIN_AGENT_STEPS_WARNING_THRESHOLD) {
     warnings.push(
       `${capabilities.displayName} has limited agent steps (${capabilities.maxAgentSteps}). Use simple agents only.`,
     );
   }
 
-  if (capabilities.cpuTimeLimit !== null && capabilities.cpuTimeLimit < 60000) {
+  if (
+    capabilities.cpuTimeLimit !== null &&
+    capabilities.cpuTimeLimit < CPU_TIME_WARNING_THRESHOLD_MS
+  ) {
     warnings.push(
       `${capabilities.displayName} has CPU time limit of ${capabilities.cpuTimeLimit}ms. Enable streaming for better UX.`,
     );

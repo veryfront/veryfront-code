@@ -26,6 +26,9 @@ import type { BlobStorage } from "../blob/types.ts";
 
 const logger = baseLogger.component("workflow-executor");
 
+/** Default polling interval for waiting on workflow result */
+const DEFAULT_RESULT_POLL_INTERVAL_MS = 1_000;
+
 /**
  * Workflow executor configuration
  */
@@ -87,9 +90,9 @@ export class WorkflowExecutor {
   private blobResolver?: BlobResolver;
 
   /** Default lock duration: 30 seconds */
-  private static readonly DEFAULT_LOCK_DURATION = 30000;
+  private static readonly DEFAULT_LOCK_DURATION = 30_000;
   /** Heartbeat interval for long-running workflow liveness tracking */
-  private static readonly HEARTBEAT_INTERVAL_MS = 10000;
+  private static readonly HEARTBEAT_INTERVAL_MS = 10_000;
 
   constructor(config: WorkflowExecutorConfig) {
     this.config = {
@@ -532,7 +535,10 @@ export class WorkflowExecutor {
   /**
    * Wait for workflow result
    */
-  private async waitForResult<TOutput>(runId: string, pollInterval = 1000): Promise<TOutput> {
+  private async waitForResult<TOutput>(
+    runId: string,
+    pollInterval = DEFAULT_RESULT_POLL_INTERVAL_MS,
+  ): Promise<TOutput> {
     while (true) {
       const run = await this.config.backend.getRun(runId);
       if (!run) throw new Error(`Run not found: ${runId}`);

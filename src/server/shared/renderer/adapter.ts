@@ -34,6 +34,12 @@ import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 
 const logger = rendererLogger.component("renderer-adapter");
 
+/** TTL for the API-backed distributed render cache (1 hour) */
+const RENDER_CACHE_TTL_SECONDS = 3_600;
+
+/** Maximum entries for the local render cache layer */
+const RENDER_CACHE_LOCAL_MAX_ENTRIES = 200;
+
 export interface RendererAdapter {
   renderPage(slug: string, options?: RenderOptions): Promise<RenderResult>;
   resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse>;
@@ -72,16 +78,15 @@ async function getOrInitRenderer(): Promise<Renderer> {
 
   // Only use API-backed cache when both PROXY_MODE=1 and API URL is configured
   if (isProxyMode && apiBaseUrl) {
-    const renderCacheTtlSeconds = 3600;
     logger.debug("Using API-backed distributed render cache");
     options.cache = {
       store: new APICacheStore({
         keyPrefix: "render",
-        ttlSeconds: renderCacheTtlSeconds,
-        localMaxEntries: 200,
+        ttlSeconds: RENDER_CACHE_TTL_SECONDS,
+        localMaxEntries: RENDER_CACHE_LOCAL_MAX_ENTRIES,
         enableLocalCache: false,
       }),
-      ttlMs: renderCacheTtlSeconds * 1000,
+      ttlMs: RENDER_CACHE_TTL_SECONDS * 1000,
     };
   }
 

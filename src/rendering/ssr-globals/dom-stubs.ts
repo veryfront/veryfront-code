@@ -5,6 +5,11 @@ const noopNull = (): null => null;
 const noopEmptyArray = (): [] => [];
 const emptyString = "";
 
+/** Default SSR viewport width for window stub */
+const SSR_VIEWPORT_WIDTH = 1_024;
+/** Default SSR viewport height for window stub */
+const SSR_VIEWPORT_HEIGHT = 768;
+
 function createClassListStub(): {
   add: () => void;
   remove: () => void;
@@ -342,10 +347,10 @@ export function createWindowStub(): {
       forward: noop,
     },
 
-    innerWidth: 1024,
-    innerHeight: 768,
-    outerWidth: 1024,
-    outerHeight: 768,
+    innerWidth: SSR_VIEWPORT_WIDTH,
+    innerHeight: SSR_VIEWPORT_HEIGHT,
+    outerWidth: SSR_VIEWPORT_WIDTH,
+    outerHeight: SSR_VIEWPORT_HEIGHT,
     screenX: 0,
     screenY: 0,
     pageXOffset: 0,

@@ -28,6 +28,16 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
 
+/** Default interval for periodic memory usage snapshots */
+const DEFAULT_MEMORY_MONITORING_INTERVAL_MS = 30_000;
+
+/** Default time to wait for in-flight requests to drain during shutdown.
+ *  K8s default terminationGracePeriodSeconds is 30s, so 25s leaves headroom. */
+const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
+
+/** Default port when PORT / VERYFRONT_PORT env vars are not set */
+const DEFAULT_SERVER_PORT = 3_000;
+
 /** Configuration for AI primitives discovery during server startup */
 export interface DiscoveryOptions {
   baseDir: string;
@@ -268,7 +278,8 @@ if (import.meta.main) {
     // Start memory monitoring if enabled
     const enableMemoryMonitoring = adapter.env.get("ENABLE_MEMORY_MONITORING") === "true";
     const monitoringIntervalMs = parseInt(
-      adapter.env.get("MEMORY_MONITORING_INTERVAL_MS") ?? "30000",
+      adapter.env.get("MEMORY_MONITORING_INTERVAL_MS") ??
+        String(DEFAULT_MEMORY_MONITORING_INTERVAL_MS),
       10,
     );
 
@@ -287,7 +298,9 @@ if (import.meta.main) {
 
     const shutdownController = new AbortController();
     const projectDir = cwd();
-    const port = Number(adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? 3000);
+    const port = Number(
+      adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? DEFAULT_SERVER_PORT,
+    );
     // BIND_ADDRESS: 0.0.0.0 = all interfaces, 127.0.0.1 = localhost only
     // Note: Don't use HOSTNAME - K8s sets it to pod name which resolves to pod IP
     const bindAddress = adapter.env.get("BIND_ADDRESS") ?? "0.0.0.0";
@@ -312,7 +325,10 @@ if (import.meta.main) {
 
     // Graceful shutdown for direct CLI execution (e.g., deno run)
     // Default drain timeout: 25 seconds (K8s default terminationGracePeriodSeconds is 30)
-    const drainTimeoutMs = parseInt(adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS") ?? "25000", 10);
+    const drainTimeoutMs = parseInt(
+      adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS") ?? String(DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS),
+      10,
+    );
 
     let shuttingDown = false;
     const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {

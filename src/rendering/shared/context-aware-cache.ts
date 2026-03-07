@@ -9,6 +9,11 @@ import { createCacheKey } from "../context/render-context.ts";
 
 const logger = rendererLogger.component("context-aware-cache");
 
+/** Default TTL for context-aware cache entries (5 minutes) */
+const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1_000;
+/** Default max entries for the in-memory cache store */
+const DEFAULT_MAX_ENTRIES = 500;
+
 export interface ContextAwareCacheOptions {
   store?: CacheStore;
   memory?: MemoryCacheStoreOptions;
@@ -32,13 +37,13 @@ export interface ContextAwareCacheLookupResult {
 export class ContextAwareCacheCoordinator {
   private store: CacheStore;
   private ttlMs: number | undefined;
-  private readonly defaultTtlMs = 5 * 60 * 1000; // 5 minutes
+  private readonly defaultTtlMs = DEFAULT_CACHE_TTL_MS;
 
   constructor(options: ContextAwareCacheOptions = {}) {
     this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
     this.store = options.store ??
       new MemoryCacheStore({
-        maxEntries: options.memory?.maxEntries ?? 500,
+        maxEntries: options.memory?.maxEntries ?? DEFAULT_MAX_ENTRIES,
         ttlMs: options.memory?.ttlMs ?? this.ttlMs,
       });
   }

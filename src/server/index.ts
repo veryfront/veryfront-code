@@ -36,6 +36,9 @@ import {
   serverLogger,
 } from "#veryfront/utils";
 
+/** Default server port when no port is specified */
+const DEFAULT_SERVER_PORT = 3_000;
+
 export { DevServer, startDevServer, startProductionServer };
 export type {
   DevServerOptions,
@@ -185,7 +188,7 @@ export async function createHandler(
   }
 
   // Development mode (default) — includes file watching, HMR, cache invalidation
-  const port = options.port ?? 3000;
+  const port = options.port ?? DEFAULT_SERVER_PORT;
   const devServer = new DevServer({
     port,
     projectDir,
@@ -370,7 +373,7 @@ export async function startServer(
   options: StartServerOptions = {},
 ): Promise<VeryfrontServer> {
   const projectDir = options.projectDir ?? process.cwd();
-  const port = options.port ?? 3000;
+  const port = options.port ?? DEFAULT_SERVER_PORT;
   const bindAddress = options.bindAddress ?? "localhost";
 
   if (options?.mode === "production") {

@@ -2,8 +2,14 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { recordSecurityHeaders } from "#veryfront/observability";
 import type { SecurityConfig } from "./types.ts";
 
+/** HSTS max-age default: 1 year in seconds */
+const HSTS_MAX_AGE_SECONDS = 31_536_000;
+
+/** Number of random bytes used to generate CSP nonces */
+const NONCE_BYTE_LENGTH = 16;
+
 export function generateNonce(): string {
-  const array = new Uint8Array(16);
+  const array = new Uint8Array(NONCE_BYTE_LENGTH);
   crypto.getRandomValues(array);
   return btoa(String.fromCharCode(...array));
 }
@@ -82,7 +88,7 @@ export function applySecurityHeaders(
   if (csp) headers.set("Content-Security-Policy", csp);
 
   if (!isDev) {
-    const hstsMaxAge = config?.hsts?.maxAge ?? 31536000;
+    const hstsMaxAge = config?.hsts?.maxAge ?? HSTS_MAX_AGE_SECONDS;
     const hstsIncludeSubDomains = config?.hsts?.includeSubDomains ?? true;
     const hstsPreload = config?.hsts?.preload ?? false;
 

@@ -31,6 +31,13 @@ import {
 
 const logger = baseLogger.component("veryfront-fs-adapter");
 
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
+const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
+const DEFAULT_CACHE_TTL_MS = 60_000;
+const DEFAULT_CACHE_MAX_ENTRIES = 1_000;
+const DEFAULT_CACHE_MAX_MEMORY_BYTES = 100 * 1024 * 1024;
+
 export class VeryfrontFSAdapter implements FSAdapter {
   private client: VeryfrontApiClient;
   private cache: FileCache;
@@ -79,9 +86,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.proxyMode = vf.proxyMode ?? false;
 
     const retryConfig = {
-      maxRetries: 3,
-      initialDelay: 1000,
-      maxDelay: 10000,
+      maxRetries: DEFAULT_MAX_RETRIES,
+      initialDelay: DEFAULT_INITIAL_RETRY_DELAY_MS,
+      maxDelay: DEFAULT_MAX_RETRY_DELAY_MS,
       ...vf.retry,
     };
 
@@ -96,9 +103,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     const cacheConfig: FileCacheOptions = {
       enabled: true,
-      ttl: 60_000,
-      maxSize: 1000,
-      maxMemory: 100 * 1024 * 1024,
+      ttl: DEFAULT_CACHE_TTL_MS,
+      maxSize: DEFAULT_CACHE_MAX_ENTRIES,
+      maxMemory: DEFAULT_CACHE_MAX_MEMORY_BYTES,
       ...vf.cache,
     };
 

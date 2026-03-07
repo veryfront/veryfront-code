@@ -4,13 +4,18 @@ import type { Message } from "./types.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
 import { DEFAULT_LOCAL_MODEL } from "../provider/local/model-catalog.ts";
 
+/** Maximum character length for a single text part */
+const MAX_TEXT_PART_LENGTH = 10_000;
+/** Maximum number of messages in a single chat request */
+const MAX_MESSAGES_PER_REQUEST = 100;
+
 // ---------------------------------------------------------------------------
 // Zod schemas for validating AI SDK v5 chat UI messages
 // ---------------------------------------------------------------------------
 
 const textPartSchema = z.object({
   type: z.literal("text"),
-  text: z.string().max(10000),
+  text: z.string().max(MAX_TEXT_PART_LENGTH),
   state: z.string().optional(),
 });
 
@@ -65,7 +70,7 @@ const messageSchema = z.object({
 });
 
 const chatRequestSchema = z.object({
-  messages: z.array(messageSchema).min(1).max(100),
+  messages: z.array(messageSchema).min(1).max(MAX_MESSAGES_PER_REQUEST),
   model: z.string().optional(),
 });
 

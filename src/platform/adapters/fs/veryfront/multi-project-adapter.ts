@@ -8,6 +8,10 @@ import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts"
 
 const logger = baseLogger.component("multi-project-fs-adapter");
 
+const DEFAULT_MAX_ADAPTERS = 100;
+const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
+const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
+
 interface RequestContext {
   projectSlug: string;
   projectId?: string;
@@ -36,9 +40,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
   constructor(config: FSAdapterConfig) {
     this.manager = new ProxyFSAdapterManager({
       baseConfig: config,
-      maxAdapters: 100,
-      cleanupIntervalMs: 5 * 60 * 1000,
-      maxIdleMs: 30 * 60 * 1000,
+      maxAdapters: DEFAULT_MAX_ADAPTERS,
+      cleanupIntervalMs: DEFAULT_CLEANUP_INTERVAL_MS,
+      maxIdleMs: DEFAULT_MAX_IDLE_MS,
     });
 
     logger.debug("Created", {

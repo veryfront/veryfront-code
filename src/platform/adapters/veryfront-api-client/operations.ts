@@ -21,6 +21,8 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 const logger = baseLogger.component("api");
 
+const DEFAULT_PAGE_LIMIT = 100;
+
 export type TokenProvider = () => string;
 
 export interface ListFilesOptions {
@@ -52,7 +54,8 @@ export interface FileDetail {
 }
 
 function buildListParams(options: ListFilesOptions): URLSearchParams {
-  const { cursor, limit = 100, pattern, sortBy = "updated_at", sortOrder = "desc" } = options;
+  const { cursor, limit = DEFAULT_PAGE_LIMIT, pattern, sortBy = "updated_at", sortOrder = "desc" } =
+    options;
 
   const params = new URLSearchParams({
     limit: String(limit),
@@ -175,7 +178,11 @@ export class VeryfrontAPIOperations {
     options: Omit<ListFilesOptions, "cursor"> = {},
   ): Promise<ProjectFile[]> {
     const allFiles = await listAllFiles((cursor) =>
-      this.listBranchFiles(projectRef, branchName, { ...options, cursor, limit: 100 })
+      this.listBranchFiles(projectRef, branchName, {
+        ...options,
+        cursor,
+        limit: DEFAULT_PAGE_LIMIT,
+      })
     );
 
     logger.debug("listAllBranchFiles DONE", {
@@ -250,7 +257,11 @@ export class VeryfrontAPIOperations {
     options: Omit<ListFilesOptions, "cursor"> = {},
   ): Promise<ProjectFile[]> {
     const allFiles = await listAllFiles((cursor) =>
-      this.listEnvironmentFiles(projectRef, environmentName, { ...options, cursor, limit: 100 })
+      this.listEnvironmentFiles(projectRef, environmentName, {
+        ...options,
+        cursor,
+        limit: DEFAULT_PAGE_LIMIT,
+      })
     );
 
     logger.debug("listAllEnvironmentFiles", {
@@ -324,7 +335,7 @@ export class VeryfrontAPIOperations {
     options: Omit<ListFilesOptions, "cursor"> = {},
   ): Promise<ProjectFile[]> {
     return listAllFiles((cursor) =>
-      this.listReleaseFiles(projectRef, version, { ...options, cursor, limit: 100 })
+      this.listReleaseFiles(projectRef, version, { ...options, cursor, limit: DEFAULT_PAGE_LIMIT })
     );
   }
 

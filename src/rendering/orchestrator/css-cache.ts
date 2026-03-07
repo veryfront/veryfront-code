@@ -10,7 +10,7 @@
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 
 /** Timeout for CSS generation SSR (shorter than full SSR since it's optional) */
-export const CSS_SSR_TIMEOUT_MS = 5000;
+export const CSS_SSR_TIMEOUT_MS = 5_000;
 
 /**
  * Per-page CSS cache to avoid redundant SSR for CSS generation.

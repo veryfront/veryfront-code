@@ -1,4 +1,8 @@
+import { FNV1A_PRIME_32 } from "./constants/crypto.ts";
 import { HASH_SEED_FNV1A } from "./constants/hash.ts";
+
+/** Number of hex characters kept by shortHash (8 hex chars = 32 bits) */
+const SHORT_HASH_LENGTH = 8;
 
 export async function computeHash(content: string): Promise<string> {
   const data = new TextEncoder().encode(content);
@@ -35,7 +39,7 @@ export function hashCodeHex(str: string): string {
 
 export async function shortHash(content: string): Promise<string> {
   const fullHash = await computeHash(content);
-  return fullHash.slice(0, 8);
+  return fullHash.slice(0, SHORT_HASH_LENGTH);
 }
 
 /** FNV-1a hash for strings - returns hex string */
@@ -44,7 +48,7 @@ export function fnv1aHash(input: string): string {
 
   for (const char of input) {
     hash ^= char.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
+    hash = Math.imul(hash, FNV1A_PRIME_32);
   }
 
   return (hash >>> 0).toString(16);

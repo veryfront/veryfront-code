@@ -37,7 +37,7 @@ export interface RedisMemoryConfig extends MemoryConfigBase {
   ttl?: number;
 }
 
-const DEFAULT_TTL = 86400; // 24 hours
+const DEFAULT_TTL = 86_400; // 24 hours
 const DEFAULT_KEY_PREFIX = "veryfront:agent:memory:";
 
 export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {

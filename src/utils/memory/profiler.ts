@@ -10,6 +10,15 @@ import { getArgs, getEnv, memoryUsage } from "#veryfront/platform/compat/process
 
 const logger = rendererLogger.component("memory-profiler");
 
+/** Fallback V8 heap limit when no --max-old-space-size flag is set (5 GB) */
+const DEFAULT_HEAP_LIMIT_MB = 5_120;
+
+/** Default interval for periodic memory snapshots (30 seconds) */
+const DEFAULT_MEMORY_MONITORING_INTERVAL_MS = 30_000;
+
+/** Heap growth (MB) per interval that triggers a rapid-growth warning */
+const HEAP_RAPID_GROWTH_THRESHOLD_MB = 100;
+
 const cacheRegistry = new Map<string, () => CacheStats>();
 
 export interface CacheStats {
@@ -89,7 +98,7 @@ function getConfiguredHeapLimit(): number {
   const v8MaxOldSpaceSize = parseInt(getEnv("V8_MAX_OLD_SPACE_SIZE") ?? "", 10);
   if (!Number.isNaN(v8MaxOldSpaceSize) && v8MaxOldSpaceSize > 0) return v8MaxOldSpaceSize;
 
-  return 5120;
+  return DEFAULT_HEAP_LIMIT_MB;
 }
 
 export function getCacheStats(): CacheStats[] {
@@ -131,7 +140,7 @@ export async function forceGC(): Promise<boolean> {
   }
 }
 
-export function startMemoryMonitoring(intervalMs = 30000): void {
+export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INTERVAL_MS): void {
   if (memoryCheckInterval) clearInterval(memoryCheckInterval);
 
   logger.info(`Starting memory monitoring (interval: ${intervalMs}ms)`);
@@ -159,7 +168,7 @@ export function startMemoryMonitoring(intervalMs = 30000): void {
     }
 
     const heapGrowthMB = heap.usedHeapSizeMB - lastHeapUsed;
-    if (heapGrowthMB > 100) {
+    if (heapGrowthMB > HEAP_RAPID_GROWTH_THRESHOLD_MB) {
       logger.warn("Rapid heap growth detected", {
         growthMB: heapGrowthMB,
         intervalMs,

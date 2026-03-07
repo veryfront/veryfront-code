@@ -26,6 +26,9 @@ import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
+/** Content length threshold: below this, use fast sync hash; above, use async SHA-256 */
+const SYNC_HASH_THRESHOLD = 10_000;
+
 const UNRESOLVED_VF_MODULE_IMPORT_PATTERN =
   /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/;
 
@@ -72,7 +75,7 @@ export class SSRCacheManager {
   }
 
   async hashContentAsync(content: string): Promise<string> {
-    if (content.length < 10000) return hashCodeHex(content);
+    if (content.length < SYNC_HASH_THRESHOLD) return hashCodeHex(content);
 
     try {
       const data = new TextEncoder().encode(content);

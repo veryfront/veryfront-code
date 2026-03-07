@@ -3,7 +3,7 @@ import { getOpenSockets } from "./hmr-client-manager.ts";
 
 const logger = serverLogger.component("hmr-handler");
 
-const PING_INTERVAL_MS = 45000;
+const PING_INTERVAL_MS = 45_000;
 
 let pingInterval: ReturnType<typeof setInterval> | null = null;
 

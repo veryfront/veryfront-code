@@ -26,6 +26,9 @@ const logger = baseLogger.component("stat-operations");
 
 const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
 
+const API_SEARCH_CIRCUIT_BREAKER_THRESHOLD = 5;
+const API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS = 30_000;
+
 export class StatOperations extends VeryfrontOperationsBase {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
@@ -37,8 +40,8 @@ export class StatOperations extends VeryfrontOperationsBase {
   private pathMapping: Map<string, string> = new Map();
 
   private readonly apiSearchCircuitBreaker = new ApiSearchCircuitBreaker({
-    threshold: 5,
-    cooldownMs: 30000,
+    threshold: API_SEARCH_CIRCUIT_BREAKER_THRESHOLD,
+    cooldownMs: API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS,
   });
 
   stat(path: string): Promise<FileInfo> {

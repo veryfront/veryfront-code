@@ -9,7 +9,7 @@ import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 
 const logger = serverLogger.component("timeout");
 
-const DEFAULT_TIMEOUT_MS = 60000;
+const DEFAULT_TIMEOUT_MS = 60_000;
 const TIMEOUT_SENTINEL = Symbol("timeout");
 
 export interface TimeoutOptions {

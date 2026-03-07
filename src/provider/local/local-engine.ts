@@ -19,6 +19,9 @@ import { isLocalAIDisabled } from "./env.ts";
 
 const logger = serverLogger.component("local-llm");
 
+/** Default maximum new tokens for local model generation */
+const DEFAULT_MAX_NEW_TOKENS = 512;
+
 /** Chat message format expected by Transformers.js */
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -226,7 +229,7 @@ export async function* generateStream(
   const transformers = await getTransformers();
 
   const {
-    maxNewTokens = 512,
+    maxNewTokens = DEFAULT_MAX_NEW_TOKENS,
     temperature = 0.7,
     topP,
     topK,

@@ -10,6 +10,11 @@ import type { UIMessage, UIMessagePart } from "../types.ts";
 import { generateClientId } from "../utils.ts";
 import { BrowserInferenceClient } from "./worker-client.ts";
 
+/** Default max tokens for browser-side inference */
+const DEFAULT_BROWSER_MAX_TOKENS = 512;
+/** Default temperature for browser-side inference */
+const DEFAULT_BROWSER_TEMPERATURE = 0.7;
+
 export interface BrowserInferenceCallbacks {
   onUpdate: (parts: UIMessagePart[], messageId: string) => void;
   onMessage: (message: UIMessage) => void;
@@ -45,7 +50,11 @@ export function runBrowserInference(
   client.generate(
     messageId,
     simpleMessages,
-    { systemPrompt, maxNewTokens: 512, temperature: 0.7 },
+    {
+      systemPrompt,
+      maxNewTokens: DEFAULT_BROWSER_MAX_TOKENS,
+      temperature: DEFAULT_BROWSER_TEMPERATURE,
+    },
     {
       onStatus: (status) => callbacks.onStatusChange(status),
       onDownloadProgress: (progress) => callbacks.onDownloadProgress?.(progress),

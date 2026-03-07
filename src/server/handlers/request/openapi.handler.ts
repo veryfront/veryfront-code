@@ -17,6 +17,9 @@ const logger = baseLogger.component("open-api");
 const DEFAULT_JSON_PATH = "/_openapi.json";
 const DEFAULT_YAML_PATH = "/_openapi.yaml";
 
+/** Cache duration for production OpenAPI spec (1 hour) */
+const SPEC_CACHE_MAX_AGE_SECONDS = 3_600;
+
 export class OpenAPIHandler extends BaseHandler {
   private cachedSpec: OpenAPISpec | null = null;
   private cacheKey: string | null = null;
@@ -51,7 +54,7 @@ export class OpenAPIHandler extends BaseHandler {
       const isDev = !!ctx.isLocalProject;
 
       const response = this.createResponseBuilder(ctx)
-        .withCache(isDev ? "no-cache" : { maxAge: 3600, public: true })
+        .withCache(isDev ? "no-cache" : { maxAge: SPEC_CACHE_MAX_AGE_SECONDS, public: true })
         .withCORS(req, { origin: "*" })
         .withContentType(
           isYaml ? "text/yaml; charset=utf-8" : "application/json; charset=utf-8",

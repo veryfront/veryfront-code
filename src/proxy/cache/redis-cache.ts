@@ -5,8 +5,11 @@ import { proxyLogger } from "../logger.ts";
 
 const logger = proxyLogger.child({ module: "redis-cache" });
 const DEFAULT_PREFIX = "vf:token:";
-const DEFAULT_CONNECT_TIMEOUT = 5000;
+const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 const DEFAULT_SCAN_COUNT = 100;
+const MAX_RECONNECT_RETRIES = 3;
+const RECONNECT_BACKOFF_BASE_MS = 100;
+const RECONNECT_BACKOFF_MAX_MS = 3_000;
 
 export class RedisCache implements TokenCache {
   private client: RedisClientType | null = null;
@@ -20,7 +23,7 @@ export class RedisCache implements TokenCache {
   constructor(options: RedisCacheOptions) {
     this.url = options.url;
     this.prefix = options.prefix ?? DEFAULT_PREFIX;
-    this.connectTimeout = options.connectTimeout ?? DEFAULT_CONNECT_TIMEOUT;
+    this.connectTimeout = options.connectTimeout ?? DEFAULT_CONNECT_TIMEOUT_MS;
   }
 
   private key(k: string): string {
@@ -214,9 +217,10 @@ export class RedisCache implements TokenCache {
         socket: {
           connectTimeout: this.connectTimeout,
           reconnectStrategy: (retries) => {
-            // Exponential backoff with max 3 retries
-            if (retries > 3) return new Error("Max reconnection attempts reached");
-            return Math.min(retries * 100, 3000);
+            if (retries > MAX_RECONNECT_RETRIES) {
+              return new Error("Max reconnection attempts reached");
+            }
+            return Math.min(retries * RECONNECT_BACKOFF_BASE_MS, RECONNECT_BACKOFF_MAX_MS);
           },
         },
       });

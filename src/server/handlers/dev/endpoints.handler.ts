@@ -10,6 +10,8 @@ import { getHMRScript, getPreviewHMRScript } from "./scripts/hmr-scripts.ts";
 import { getErrorOverlay } from "./scripts/error-overlay.ts";
 import { getHydrateScript } from "./scripts/dev-loader.ts";
 
+const DEFAULT_HMR_PORT = "3000";
+
 export class DevEndpointsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "DevEndpointsHandler",
@@ -44,7 +46,7 @@ export class DevEndpointsHandler extends BaseHandler {
   private getScriptForPath(pathname: string, url: URL): string | null {
     switch (pathname) {
       case "/_veryfront/hmr.js": {
-        const port = url.searchParams.get("port") ?? "3000";
+        const port = url.searchParams.get("port") ?? DEFAULT_HMR_PORT;
         return getHMRScript(parseInt(port, 10));
       }
       case "/_veryfront/hydrate.js": {

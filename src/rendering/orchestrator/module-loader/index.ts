@@ -41,7 +41,7 @@ export { createEsmCache, createModuleCache, generateHash } from "./cache.ts";
 export { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
 
 /** Maximum number of directories to track to prevent memory leaks */
-const MAX_CREATED_DIRS = 5000;
+const MAX_CREATED_DIRS = 5_000;
 
 /** Cache for created directories to avoid repeated mkdir calls (LRU-style) */
 const createdDirs = new Set<string>();
