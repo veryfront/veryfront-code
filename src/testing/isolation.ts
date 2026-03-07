@@ -18,6 +18,19 @@ export function registerTestCleanup(task: CleanupTask): void {
   cleanupTasks.add(task);
 }
 
+async function runRegisteredCleanups(): Promise<void> {
+  const tasks = Array.from(cleanupTasks);
+  cleanupTasks.clear();
+
+  for (const task of tasks) {
+    try {
+      await task();
+    } catch (error) {
+      console.debug("resetAllTestState registered cleanup failed", error);
+    }
+  }
+}
+
 /**
  * Comprehensive reset of ALL test state across the application.
  *
@@ -35,6 +48,8 @@ export function registerTestCleanup(task: CleanupTask): void {
  * - Reload notifier
  */
 export async function resetAllTestState(): Promise<void> {
+  await runRegisteredCleanups();
+
   const cleanups: Array<() => Promise<void> | void> = [
     // Config state - CRITICAL for test isolation
     async () => {

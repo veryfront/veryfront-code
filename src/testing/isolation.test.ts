@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { registerTestCleanup } from "./isolation.ts";
+import { registerTestCleanup, resetAllTestState } from "./isolation.ts";
 
 describe("isolation", () => {
   describe("registerTestCleanup", () => {
@@ -18,6 +18,19 @@ describe("isolation", () => {
       registerTestCleanup(async () => {
         await Promise.resolve();
       });
+    });
+
+    it("runs registered cleanups and clears them after reset", async () => {
+      let calls = 0;
+
+      registerTestCleanup(() => {
+        calls++;
+      });
+
+      await resetAllTestState();
+      await resetAllTestState();
+
+      assertEquals(calls, 1);
     });
   });
 });
