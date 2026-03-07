@@ -10,6 +10,11 @@ import { makeTempDir, makeTempFile, withTempDir } from "./deno-compat.ts";
 import { remove, stat } from "#veryfront/compat/fs.ts";
 
 describe("testing/assert", () => {
+  it("exposes initBdd from the direct BDD entrypoint", async () => {
+    const bddModule = await import("#veryfront/testing/bdd.ts");
+    assertEquals(typeof bddModule.initBdd, "function");
+  });
+
   it("assertEquals works with primitives", () => {
     assertEquals(1, 1);
     assertEquals("hello", "hello");
