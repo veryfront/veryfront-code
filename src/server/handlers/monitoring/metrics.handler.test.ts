@@ -1,13 +1,14 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { HandlerContext } from "../types.ts";
 import { MetricsHandler } from "./metrics.handler.ts";
 
 function createHandler(): MetricsHandler {
   return new MetricsHandler();
 }
 
-const localCtx = { securityConfig: undefined, isLocalProject: true } as never;
-const remoteCtx = { securityConfig: undefined, isLocalProject: false } as never;
+const localCtx = { securityConfig: undefined, isLocalProject: true } as unknown as HandlerContext;
+const remoteCtx = { securityConfig: undefined, isLocalProject: false } as unknown as HandlerContext;
 
 describe("server/handlers/monitoring/metrics", () => {
   describe("MetricsHandler metadata", () => {
@@ -34,9 +35,9 @@ describe("server/handlers/monitoring/metrics", () => {
 
       if (typeof enabledFn !== "function") return;
 
-      assertEquals(enabledFn({ isLocalProject: false } as never), false);
-      assertEquals(enabledFn({ isLocalProject: true } as never), true);
-      assertEquals(enabledFn({} as never), false);
+      assertEquals(enabledFn({ isLocalProject: false } as unknown as HandlerContext), false);
+      assertEquals(enabledFn({ isLocalProject: true } as unknown as HandlerContext), true);
+      assertEquals(enabledFn({} as unknown as HandlerContext), false);
     });
   });
 
