@@ -26,6 +26,10 @@ interface MarkdownYjsConnectionOptions {
   token?: string;
 }
 
+interface YTextEvent {
+  transaction: { origin: unknown };
+}
+
 // ---------------------------------------------------------------------------
 // syncLocalChangeToYText
 // ---------------------------------------------------------------------------
@@ -315,11 +319,11 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
           // Observe Y.Text for remote changes (from other users / Monaco)
           if (!ytextObserverRegistered) {
             ytextObserverRegistered = true;
-            ytext.observe((event: any) => {
+            ytext.observe((event: unknown) => {
               if (!isCurrentSetup()) {
                 return;
               }
-              const origin = event.transaction.origin;
+              const origin = (event as YTextEvent).transaction.origin;
               if (origin === LEXICAL_YJS_ORIGIN) {
                 return;
               }

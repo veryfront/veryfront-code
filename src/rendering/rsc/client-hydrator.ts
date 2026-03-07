@@ -16,7 +16,7 @@ interface WindowWithVeryfront extends Window {
 }
 
 export class RSCHydrator {
-  private componentCache = new Map<string, React.ComponentType<any>>();
+  private componentCache = new Map<string, React.ComponentType<Record<string, unknown>>>();
   private manifestUrl: string;
   private manifest: Record<string, string> | null = null;
   private onError?: (error: Error) => void;
@@ -59,7 +59,7 @@ export class RSCHydrator {
     const instanceId = element.dataset.rscId;
 
     try {
-      const props = propsJson ? JSON.parse(propsJson) : {};
+      const props: Record<string, unknown> = propsJson ? JSON.parse(propsJson) : {};
       const Component = await this.loadClientComponent(componentName);
       const reactElement = React.createElement(Component, props);
 
@@ -91,7 +91,9 @@ export class RSCHydrator {
     }
   }
 
-  private async loadClientComponent(name: string): Promise<React.ComponentType<any>> {
+  private async loadClientComponent(
+    name: string,
+  ): Promise<React.ComponentType<Record<string, unknown>>> {
     const cached = this.componentCache.get(name);
     if (cached) return cached;
 
@@ -122,8 +124,9 @@ export class RSCHydrator {
         });
       }
 
-      this.componentCache.set(name, Component);
-      return Component;
+      const validated = Component as React.ComponentType<Record<string, unknown>>;
+      this.componentCache.set(name, validated);
+      return validated;
     } catch (error) {
       rscLogger.error(`Failed to load component ${name}:`, error);
       if (
@@ -162,8 +165,8 @@ export class RSCHydrator {
         });
       }
 
-      const data = await response.json();
-      this.manifest = data.components || data;
+      const data: Record<string, unknown> = await response.json();
+      this.manifest = (data.components || data) as Record<string, string>;
 
       rscLogger.debug("Loaded manifest:", this.manifest);
     } catch (error) {

@@ -6,12 +6,11 @@ import type { Prompt } from "#veryfront/prompt";
 /**
  * Generic MCP tool definition
  */
-// deno-lint-ignore no-explicit-any
+// deno-lint-ignore no-explicit-any -- generic erasure: interface must accept any concrete Tool instantiation
 export interface MCPTool<TInput = any, TOutput = any> {
   name: string;
   description: string;
-  // Using ZodType with output type for compatibility with ZodDefault/ZodOptional
-  // deno-lint-ignore no-explicit-any
+  // deno-lint-ignore no-explicit-any -- ZodType Def/Input params require any for ZodDefault/ZodOptional compatibility
   inputSchema: z.ZodType<TInput, any, any>;
   execute: (input: TInput) => Promise<TOutput>;
 }

@@ -55,13 +55,13 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
 
     case ZodFirstPartyTypeKind.ZodNativeEnum:
       return {
-        enum: Object.values((schema as z.ZodNativeEnum<any>)._def.values).filter(
+        enum: Object.values((schema as z.ZodNativeEnum<z.EnumLike>)._def.values).filter(
           (value) => typeof value !== "number",
         ),
       };
 
     case ZodFirstPartyTypeKind.ZodObject: {
-      const obj = schema as z.ZodObject<any>;
+      const obj = schema as z.ZodObject<z.ZodRawShape>;
       const properties: Record<string, JsonSchema> = {};
       const required: string[] = [];
 
@@ -102,7 +102,10 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
     }
 
     case ZodFirstPartyTypeKind.ZodDiscriminatedUnion: {
-      const union = schema as z.ZodDiscriminatedUnion<string, z.ZodObject<any>[]>;
+      const union = schema as z.ZodDiscriminatedUnion<
+        string,
+        z.ZodDiscriminatedUnionOption<string>[]
+      >;
       return {
         anyOf: Array.from(union._def.options.values()).map((option) => zodToJsonSchema(option)),
       };
@@ -111,7 +114,9 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
     case ZodFirstPartyTypeKind.ZodRecord:
       return {
         type: "object",
-        additionalProperties: zodToJsonSchema((schema as z.ZodRecord<any>)._def.valueType),
+        additionalProperties: zodToJsonSchema(
+          (schema as z.ZodRecord<z.ZodString, z.ZodTypeAny>)._def.valueType,
+        ),
       };
 
     case ZodFirstPartyTypeKind.ZodDefault: {
@@ -127,10 +132,10 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
     }
 
     case ZodFirstPartyTypeKind.ZodLazy:
-      return convert((schema as z.ZodLazy<any>)._def.getter());
+      return convert((schema as z.ZodLazy<z.ZodTypeAny>)._def.getter());
 
     case ZodFirstPartyTypeKind.ZodEffects:
-      return convert((schema as z.ZodEffects<any>)._def.schema);
+      return convert((schema as z.ZodEffects<z.ZodTypeAny>)._def.schema);
 
     default:
       return { type: "object" };
@@ -157,7 +162,7 @@ function unwrapSchema(
         break;
 
       case ZodFirstPartyTypeKind.ZodEffects:
-        current = (current as z.ZodEffects<any>)._def.schema;
+        current = (current as z.ZodEffects<z.ZodTypeAny>)._def.schema;
         break;
 
       default:

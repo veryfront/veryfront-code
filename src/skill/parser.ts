@@ -52,8 +52,8 @@ function parseFrontmatterFallback(content: string): ParsedSkillContent {
     return { frontmatter: {}, body: content };
   }
 
-  const rawFrontmatter = match[1]!;
-  const body = match[2]!;
+  const rawFrontmatter = match[1] ?? "";
+  const body = match[2] ?? "";
   const frontmatter: Record<string, unknown> = {};
 
   for (const line of rawFrontmatter.split("\n")) {

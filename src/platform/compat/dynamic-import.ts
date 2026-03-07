@@ -8,7 +8,8 @@
  * @module platform/compat
  */
 
-// deno-lint-ignore no-explicit-any
-export const dynamicImport = new Function("specifier", "return import(specifier)") as <T = any>(
+export const dynamicImport = new Function("specifier", "return import(specifier)") as <
+  T = unknown,
+>(
   specifier: string,
 ) => Promise<T>;

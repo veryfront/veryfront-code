@@ -18,6 +18,7 @@ export class RSCRenderer {
   }
 
   renderToPayload(
+    // deno-lint-ignore no-explicit-any -- RSC components accept arbitrary props at runtime
     Component: React.ComponentType<any> | React.ReactElement,
     props: Record<string, unknown> = {},
   ): Promise<RSCPayload> {

@@ -61,7 +61,7 @@ export function getElementTypeName(element: React.ReactElement): string {
   const { type } = element;
 
   if (typeof type === "function") {
-    const componentType = type as React.ComponentType<any>;
+    const componentType = type as React.ComponentType<unknown>;
     return type.name || componentType.displayName || "<Anonymous>";
   }
 

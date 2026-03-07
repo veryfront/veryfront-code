@@ -113,12 +113,16 @@ export async function getEntityInfo(
           try {
             const adapterFs = adapter.fs;
             if (isExtendedFSAdapter(adapterFs) && adapterFs.isVeryfrontAdapter()) {
-              const underlyingAdapter = adapterFs.getUnderlyingAdapter() as {
-                getEntityIdForPath?: (path: string) => string | undefined;
-              };
+              const underlyingAdapter = adapterFs.getUnderlyingAdapter();
 
-              const getEntityIdForPath = underlyingAdapter?.getEntityIdForPath;
-              if (getEntityIdForPath) {
+              if (
+                underlyingAdapter &&
+                "getEntityIdForPath" in underlyingAdapter &&
+                typeof underlyingAdapter.getEntityIdForPath === "function"
+              ) {
+                const getEntityIdForPath = underlyingAdapter.getEntityIdForPath as (
+                  path: string,
+                ) => string | undefined;
                 const relativePath = filePath
                   .replace(/^.*?\/pages\//, "pages/")
                   .replace(/^.*?\/components\//, "components/");

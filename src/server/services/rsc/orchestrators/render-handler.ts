@@ -34,7 +34,7 @@ export class RenderHandler {
     }
   }
 
-  private async loadComponent(pathname: string): Promise<React.ComponentType<any>> {
+  private async loadComponent(pathname: string): Promise<React.ComponentType<RenderProps>> {
     const componentPath = await resolveComponentPath(pathname, this.projectDir);
     if (!componentPath) {
       throw toError(
@@ -57,7 +57,7 @@ export class RenderHandler {
       );
     }
 
-    return Component as React.ComponentType<any>;
+    return Component as React.ComponentType<RenderProps>;
   }
 
   private buildProps(pathname: string, searchParams: URLSearchParams): RenderProps {
@@ -68,7 +68,7 @@ export class RenderHandler {
   }
 
   private async renderPayload(
-    component: React.ComponentType<any>,
+    component: React.ComponentType<RenderProps>,
     props: RenderProps,
   ): Promise<RSCPayload> {
     const renderer = this.getRenderer();

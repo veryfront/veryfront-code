@@ -27,8 +27,7 @@ export interface ModuleToLoad {
 export interface LoadedModule {
   type: "page" | "layout";
   id: string;
-  // deno-lint-ignore no-explicit-any
-  mod: any;
+  mod: unknown;
 }
 
 /**

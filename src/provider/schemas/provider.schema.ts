@@ -50,7 +50,8 @@ export const CompletionRequestSchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
   topP: z.number().min(0).max(1).optional(),
   stream: z.boolean().optional(),
-  tools: z.array(z.any()).optional(), // ToolDefinition is complex
+  // deno-lint-ignore no-explicit-any -- ToolDefinition shapes vary across providers
+  tools: z.array(z.any()).optional(),
   reasoning: z
     .object({
       effort: z.enum(["low", "medium", "high"]).optional(),

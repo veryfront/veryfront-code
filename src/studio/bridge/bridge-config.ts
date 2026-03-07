@@ -21,6 +21,7 @@ export interface BridgeConfig {
 let config: BridgeConfig | null = null;
 
 export function initConfig(): void {
+  // deno-lint-ignore no-explicit-any -- accessing injected global property
   const raw = (window as any).__VF_BRIDGE_CONFIG__;
 
   // studioMode can come from the injected config or from a query parameter

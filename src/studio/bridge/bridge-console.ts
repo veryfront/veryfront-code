@@ -10,13 +10,15 @@ import { hideOverlay } from "./bridge-inspector.ts";
 
 export function setupConsoleCapture(): void {
   CONSOLE_METHODS.forEach((method) => {
+    // deno-lint-ignore no-explicit-any -- dynamic console method access by string key
     state.originalConsole[method] = (console as any)[method];
-    (console as any)[method] = function (...args: any[]) {
+    // deno-lint-ignore no-explicit-any -- replacing console methods dynamically
+    (console as any)[method] = function (...args: unknown[]) {
       state.originalConsole[method]!.apply(console, args);
 
       const logId = "vf-" + Date.now() + "-" + ++state.logCounter;
 
-      const formattedData = args.map((arg) => {
+      const formattedData = args.map((arg: unknown) => {
         try {
           if (arg instanceof Error) {
             return { __isError: true, message: arg.message, stack: arg.stack, name: arg.name };

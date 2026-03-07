@@ -524,7 +524,10 @@ async function getModuleCacheDir(config: ModuleLoaderConfig): Promise<string> {
  * @param config - Module loader configuration
  * @returns The loaded module
  */
-export async function loadModule(filePath: string, config: ModuleLoaderConfig): Promise<any> {
+export async function loadModule(
+  filePath: string,
+  config: ModuleLoaderConfig,
+): Promise<Record<string, unknown>> {
   const tmpDir = await getModuleCacheDir(config);
   const localAdapter = await getLocalAdapter();
 
