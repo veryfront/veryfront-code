@@ -11,6 +11,7 @@
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { agentLogger as logger } from "#veryfront/utils";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { INITIALIZATION_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
 
 type S3ClientType = import("@aws-sdk/client-s3").S3Client;
 
@@ -25,10 +26,11 @@ async function getS3Module(): Promise<typeof import("@aws-sdk/client-s3")> {
       : await import("@aws-sdk/client-s3");
     return s3Module;
   } catch (error) {
-    throw new Error(
-      `Failed to load @aws-sdk/client-s3. Please install it: npm install @aws-sdk/client-s3\n` +
-        `Original error: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw INITIALIZATION_ERROR.create({
+      detail:
+        `Failed to load @aws-sdk/client-s3. Please install it: npm install @aws-sdk/client-s3`,
+      cause: error instanceof Error ? error : undefined,
+    });
   }
 }
 
@@ -81,7 +83,9 @@ export class S3BlobStorage implements BlobStorage {
       await this.initPromise;
       this.initPromise = null;
     }
-    if (!this.client) throw new Error("S3BlobStorage: Client failed to initialize");
+    if (!this.client) {
+      throw INITIALIZATION_ERROR.create({ detail: "S3BlobStorage: Client failed to initialize" });
+    }
     return this.client;
   }
 
@@ -119,7 +123,7 @@ export class S3BlobStorage implements BlobStorage {
     } else if (data instanceof ReadableStream) {
       body = data;
     } else {
-      throw new Error("Unsupported data type for S3BlobStorage");
+      throw INVALID_ARGUMENT.create({ detail: "Unsupported data type for S3BlobStorage" });
     }
 
     const putCommand = new PutObjectCommand({

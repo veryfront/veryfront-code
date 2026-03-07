@@ -32,7 +32,7 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
-import { SERVICE_OVERLOADED } from "#veryfront/errors/error-registry.ts";
+import { INITIALIZATION_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors/error-registry.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { buildQueryAwareCacheKey, type QueryParamCacheOptions } from "#veryfront/cache/keys.ts";
 import { getEnvNumber } from "#veryfront/compat/process.ts";
@@ -176,7 +176,9 @@ export class Renderer {
       "renderer.renderPage",
       async () => {
         if (!this.initialized) {
-          throw new Error("Renderer not initialized. Call initialize() first.");
+          throw INITIALIZATION_ERROR.create({
+            detail: "Renderer not initialized. Call initialize() first.",
+          });
         }
 
         const startTime = performance.now();
@@ -389,7 +391,9 @@ export class Renderer {
     options?: RenderOptions,
   ): Promise<PageDataResponse> {
     if (!this.initialized) {
-      throw new Error("Renderer not initialized. Call initialize() first.");
+      throw INITIALIZATION_ERROR.create({
+        detail: "Renderer not initialized. Call initialize() first.",
+      });
     }
 
     const services = this.createServicesForContext(ctx);
@@ -405,7 +409,9 @@ export class Renderer {
 
   getAllPages(ctx: RenderContext): Promise<string[]> {
     if (!this.initialized) {
-      throw new Error("Renderer not initialized. Call initialize() first.");
+      throw INITIALIZATION_ERROR.create({
+        detail: "Renderer not initialized. Call initialize() first.",
+      });
     }
 
     return createPageResolver(ctx).getAllPages();
@@ -543,7 +549,9 @@ let renderer: Renderer | null = null;
 
 export function getRenderer(): Renderer {
   if (!renderer) {
-    throw new Error("Renderer not initialized. Call initializeRenderer() first.");
+    throw INITIALIZATION_ERROR.create({
+      detail: "Renderer not initialized. Call initializeRenderer() first.",
+    });
   }
   return renderer;
 }

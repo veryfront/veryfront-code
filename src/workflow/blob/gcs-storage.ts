@@ -1,5 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
+import { API_ERROR, CONFIG_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
 
 const logger = baseLogger.component("gcs-blob-storage");
 
@@ -55,17 +56,23 @@ export class GCSBlobStorage implements BlobStorage {
     try {
       sa = JSON.parse(this.config.serviceAccountKey);
     } catch (_) {
-      throw new Error("GCSBlobStorage: serviceAccountKey must be a valid JSON string.");
+      /* expected: invalid JSON is rethrown with a clearer message */
+      throw CONFIG_INVALID.create({
+        detail: "GCSBlobStorage: serviceAccountKey must be a valid JSON string.",
+      });
     }
 
     if (typeof sa.private_key !== "string" || !sa.private_key.includes("BEGIN PRIVATE KEY")) {
-      throw new Error(
-        "GCSBlobStorage: serviceAccountKey must contain a valid private_key field (PKCS8 PEM).",
-      );
+      throw CONFIG_INVALID.create({
+        detail:
+          "GCSBlobStorage: serviceAccountKey must contain a valid private_key field (PKCS8 PEM).",
+      });
     }
 
     if (typeof sa.client_email !== "string" || !sa.client_email) {
-      throw new Error("GCSBlobStorage: serviceAccountKey must contain a valid client_email field.");
+      throw CONFIG_INVALID.create({
+        detail: "GCSBlobStorage: serviceAccountKey must contain a valid client_email field.",
+      });
     }
 
     this.serviceAccount = { private_key: sa.private_key, client_email: sa.client_email };
@@ -120,7 +127,9 @@ export class GCSBlobStorage implements BlobStorage {
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`Failed to get GCS access token: ${response.status} - ${error}`);
+      throw API_ERROR.create({
+        detail: `Failed to get GCS access token: ${response.status} - ${error}`,
+      });
     }
 
     const { access_token: accessToken, expires_in: expiresIn } = await response.json();
@@ -160,7 +169,7 @@ export class GCSBlobStorage implements BlobStorage {
     } else if (data instanceof ReadableStream) {
       body = data;
     } else {
-      throw new Error("Unsupported data type for GCSBlobStorage");
+      throw INVALID_ARGUMENT.create({ detail: "Unsupported data type for GCSBlobStorage" });
     }
 
     const token = await this.getAccessToken();
@@ -191,9 +200,10 @@ export class GCSBlobStorage implements BlobStorage {
 
     if (!response.ok) {
       const errorBody = await response.text();
-      throw new Error(
-        `Failed to upload to GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
-      );
+      throw API_ERROR.create({
+        detail:
+          `Failed to upload to GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
+      });
     }
 
     const gcsObject = await response.json();
@@ -225,9 +235,10 @@ export class GCSBlobStorage implements BlobStorage {
 
       if (!response.ok) {
         const errorBody = await response.text();
-        throw new Error(
-          `Failed to download from GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
-        );
+        throw API_ERROR.create({
+          detail:
+            `Failed to download from GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
+        });
       }
 
       return response.body;
@@ -264,9 +275,10 @@ export class GCSBlobStorage implements BlobStorage {
 
     if (!response.ok) {
       const errorBody = await response.text();
-      throw new Error(
-        `Failed to delete from GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
-      );
+      throw API_ERROR.create({
+        detail:
+          `Failed to delete from GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
+      });
     }
   }
 
@@ -285,9 +297,10 @@ export class GCSBlobStorage implements BlobStorage {
     if (response.status === 404) return false;
 
     const errorBody = await response.text();
-    throw new Error(
-      `Failed to check existence in GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
-    );
+    throw API_ERROR.create({
+      detail:
+        `Failed to check existence in GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
+    });
   }
 
   async stat(id: string): Promise<BlobRef | null> {
@@ -304,9 +317,10 @@ export class GCSBlobStorage implements BlobStorage {
 
     if (!response.ok) {
       const errorBody = await response.text();
-      throw new Error(
-        `Failed to get metadata from GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
-      );
+      throw API_ERROR.create({
+        detail:
+          `Failed to get metadata from GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
+      });
     }
 
     const gcsObject = await response.json();

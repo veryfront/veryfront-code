@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { DependencyList, Dispatch, EffectCallback, SetStateAction } from "react";
 import { rendererLogger } from "#veryfront/utils";
+import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
 
 const logger = rendererLogger.component("veryfront");
 
@@ -129,7 +130,7 @@ class StateBridge implements StateStore {
       if (state && typeof state === "object" && !Array.isArray(state)) {
         return state as Record<string, unknown>;
       }
-      throw new Error("Persisted state is not an object");
+      throw INVALID_ARGUMENT.create({ detail: "Persisted state is not an object" });
     } catch (error) {
       logger.error("Failed to parse state from sessionStorage:", error);
       try {

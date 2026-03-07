@@ -11,6 +11,7 @@ import type {
   ClaudeCodeEventPublisher,
   ClaudeCodeEventSubscriber,
 } from "./types.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 const logger = baseLogger.component("redis-event-publisher");
 
@@ -320,13 +321,13 @@ export function createEventPublisher(
 
     case "redis":
       if (!options.redisUrl) {
-        throw new Error("Redis URL required for redis publisher");
+        throw INVALID_ARGUMENT.create({ detail: "Redis URL required for redis publisher" });
       }
       return new RedisEventPublisher({ url: options.redisUrl });
 
     case "callback":
       if (!options.callback) {
-        throw new Error("Callback required for callback publisher");
+        throw INVALID_ARGUMENT.create({ detail: "Callback required for callback publisher" });
       }
       return new CallbackEventPublisher(options.callback);
 
@@ -334,6 +335,6 @@ export function createEventPublisher(
       return new SSEEventPublisher();
 
     default:
-      throw new Error(`Unknown publisher type: ${options.type}`);
+      throw INVALID_ARGUMENT.create({ detail: `Unknown publisher type: ${options.type}` });
   }
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { REQUEST_ERROR } from "#veryfront/errors";
 import type { RunFilter, WorkflowRun, WorkflowStatus } from "#veryfront/workflow/types.ts";
 
 /** Default interval for auto-refreshing the workflow list */
@@ -87,7 +88,12 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
         const queryString = buildQueryString(filter, append ? cursor : undefined);
         const response = await fetch(`${apiBase}/runs?${queryString}`);
 
-        if (!response.ok) throw new Error(`Failed to fetch runs: ${response.status}`);
+        if (!response.ok) {
+          throw REQUEST_ERROR.create({
+            detail: `Failed to fetch runs: ${response.status}`,
+            status: response.status,
+          });
+        }
 
         const data: { runs?: WorkflowRun[]; cursor?: string; totalCount?: number } = await response
           .json();

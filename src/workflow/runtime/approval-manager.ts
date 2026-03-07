@@ -9,6 +9,7 @@ import type {
 import { generateId, parseDuration } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
+import { INVALID_ARGUMENT, PERMISSION_DENIED, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 
 const logger = baseLogger.component("approval-manager");
 
@@ -147,27 +148,27 @@ export class ApprovalManager {
 
     const approval = await this.getApproval(runId, approvalId);
     if (!approval) {
-      throw new Error(`Approval not found: ${approvalId}`);
+      throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
 
     if (approval.status !== "pending") {
-      throw new Error(`Approval already processed: ${approval.status}`);
+      throw INVALID_ARGUMENT.create({ detail: `Approval already processed: ${approval.status}` });
     }
 
     if (approval.expiresAt && new Date() > approval.expiresAt) {
-      throw new Error("Approval has expired");
+      throw INVALID_ARGUMENT.create({ detail: "Approval has expired" });
     }
 
     const approvers = approval.approvers;
     if (approvers?.length && !approvers.includes(decision.approver)) {
-      throw new Error("Not authorized to approve this request");
+      throw PERMISSION_DENIED.create({ detail: "Not authorized to approve this request" });
     }
 
     await this.config.backend.updateApproval(runId, approvalId, decision);
 
     const run = await this.config.backend.getRun(runId);
     if (!run) {
-      throw new Error(`Run not found: ${runId}`);
+      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
     }
 
     const decidedAt = new Date();

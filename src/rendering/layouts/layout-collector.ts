@@ -9,6 +9,7 @@ import { detectAppRouter } from "../router-detection.ts";
 import { LAYOUT_EXTENSIONS, type LayoutExtension } from "./types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { LAYOUT_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
 
 const logger = rendererLogger.component("layout-collector");
 
@@ -246,10 +247,10 @@ export class LayoutCollector {
 
     if (!layoutInfo) {
       const source = typeof layoutValue === "string" ? "frontmatter" : "config";
-      throw new Error(
-        `Layout "${layoutName}" not found. Specified in ${source} for page "${pageInfo.entity.path}". ` +
-          `Check that the layout file exists.`,
-      );
+      throw LAYOUT_NOT_FOUND.create({
+        detail:
+          `Layout "${layoutName}" not found. Specified in ${source} for page "${pageInfo.entity.path}". Check that the layout file exists.`,
+      });
     }
 
     const layoutPath = layoutInfo.entity.path;

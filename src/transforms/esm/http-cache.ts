@@ -10,6 +10,7 @@
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { BUILD_FAILED, BUNDLE_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -185,9 +186,10 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
           await fs.writeTextFile(cachePath, cachedCode);
 
           if (!(await exists(cachePath))) {
-            throw new Error(
-              `[HTTP-CACHE] INVARIANT VIOLATION: Redis recovery write succeeded but file does not exist: ${cachePath}`,
-            );
+            throw FILE_NOT_FOUND.create({
+              detail:
+                `[HTTP-CACHE] INVARIANT VIOLATION: Redis recovery write succeeded but file does not exist: ${cachePath}`,
+            });
           }
 
           getCachedPaths().set(cacheKey, cachePath);
@@ -204,9 +206,10 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         await fs.writeTextFile(cachePath, cachedCode);
 
         if (!(await exists(cachePath))) {
-          throw new Error(
-            `[HTTP-CACHE] INVARIANT VIOLATION: Redis recovery write succeeded but file does not exist: ${cachePath}`,
-          );
+          throw FILE_NOT_FOUND.create({
+            detail:
+              `[HTTP-CACHE] INVARIANT VIOLATION: Redis recovery write succeeded but file does not exist: ${cachePath}`,
+          });
         }
 
         getCachedPaths().set(cacheKey, cachePath);
@@ -255,7 +258,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch ${normalizedUrl}: ${response.status}`);
+      throw BUILD_FAILED.create({ detail: `Failed to fetch ${normalizedUrl}: ${response.status}` });
     }
 
     let code = await response.text();
@@ -272,9 +275,10 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
           preview: code.slice(0, 200),
         },
       );
-      throw new Error(
-        `Received HTML instead of JavaScript from ${normalizedUrl}. The package may not exist or failed to build on esm.sh.`,
-      );
+      throw BUNDLE_ERROR.create({
+        detail:
+          `Received HTML instead of JavaScript from ${normalizedUrl}. The package may not exist or failed to build on esm.sh.`,
+      });
     }
 
     processingStack.add(normalizedUrl);
@@ -290,9 +294,10 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     await fs.writeTextFile(cachePath, code);
 
     if (!(await exists(cachePath))) {
-      throw new Error(
-        `[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist: ${cachePath}`,
-      );
+      throw FILE_NOT_FOUND.create({
+        detail:
+          `[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist: ${cachePath}`,
+      });
     }
 
     try {

@@ -10,6 +10,7 @@
 import { VERSION } from "#veryfront/utils/version.ts";
 import { CacheKeyPrefix, type FileOperationContext } from "../prefixes.ts";
 import { hashPathWithName } from "../utils.ts";
+import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 
 function getSourceTypeKey(sourceType: "branch" | "release" | "environment"): string {
   return sourceType === "environment" ? "env" : sourceType;
@@ -19,9 +20,9 @@ function buildSourceQualifier(ctx: FileOperationContext): string {
   if (ctx.sourceType === "branch") return ctx.branch ?? "main";
 
   if (!ctx.releaseId) {
-    throw new Error(
-      `Missing releaseId for ${ctx.sourceType} sourceType (project: ${ctx.projectSlug})`,
-    );
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: `Missing releaseId for ${ctx.sourceType} sourceType (project: ${ctx.projectSlug})`,
+    });
   }
 
   if (ctx.sourceType === "release") return ctx.releaseId;

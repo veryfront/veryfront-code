@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import { ZodFirstPartyTypeKind } from "zod";
 import type { JsonSchema } from "./json-schema.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 const LITERAL_TYPE_MAP: Record<string, "string" | "number" | "boolean"> = {
   string: "string",
@@ -15,7 +16,7 @@ function getLiteralType(value: unknown): "string" | "number" | "boolean" | undef
 export function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema {
   // Guard against invalid schemas (can happen with different zod instances in npm bundle)
   if (!schema || typeof schema !== "object" || !("_def" in schema)) {
-    throw new Error("Invalid Zod schema: missing _def property");
+    throw INVALID_ARGUMENT.create({ detail: "Invalid Zod schema: missing _def property" });
   }
 
   const { schema: unwrapped, nullable } = unwrapSchema(schema);

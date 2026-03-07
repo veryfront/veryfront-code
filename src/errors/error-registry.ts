@@ -619,6 +619,14 @@ export const FILE_NOT_FOUND = defineError({
   suggestion: "Verify the file path exists",
 });
 
+export const RESOURCE_NOT_FOUND = defineError({
+  slug: "resource-not-found",
+  category: "GENERAL",
+  status: 404,
+  title: "Requested resource not found",
+  suggestion: "Verify the referenced resource ID or name exists",
+});
+
 export const INVALID_ARGUMENT = defineError({
   slug: "invalid-argument",
   category: "GENERAL",
@@ -769,6 +777,7 @@ export const ERROR_REGISTRY = {
   "unknown-error": UNKNOWN_ERROR,
   "permission-denied": PERMISSION_DENIED,
   "file-not-found": FILE_NOT_FOUND,
+  "resource-not-found": RESOURCE_NOT_FOUND,
   "invalid-argument": INVALID_ARGUMENT,
   "timeout-error": TIMEOUT_ERROR,
   "initialization-error": INITIALIZATION_ERROR,

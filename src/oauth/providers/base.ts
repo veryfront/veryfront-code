@@ -9,6 +9,7 @@ import type {
   TokenStore,
 } from "../types.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { INVALID_ARGUMENT, TOKEN_STORAGE_ERROR } from "#veryfront/errors";
 
 /** Buffer before token expiry to trigger proactive refresh (5 minutes). */
 const TOKEN_REFRESH_BUFFER_MS = 300_000;
@@ -64,7 +65,9 @@ export class OAuthProvider {
     options: AuthorizationUrlOptions & { defaultScopes?: string[] } = {},
   ): Promise<{ url: string; state: OAuthState }> {
     const clientId = this.getClientId();
-    if (!clientId) throw new Error(`${this.config.clientIdEnvVar} not configured`);
+    if (!clientId) {
+      throw INVALID_ARGUMENT.create({ detail: `${this.config.clientIdEnvVar} not configured` });
+    }
 
     const state = options.state ?? generateRandomString(32);
     const scopes = options.scopes ?? options.defaultScopes ?? [];
@@ -332,7 +335,11 @@ export class OAuthService extends OAuthProvider {
 
   async fetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const token = await this.getAccessToken();
-    if (!token) throw new Error(`Not authenticated with ${this.serviceConfig.displayName}`);
+    if (!token) {
+      throw TOKEN_STORAGE_ERROR.create({
+        detail: `Not authenticated with ${this.serviceConfig.displayName}`,
+      });
+    }
 
     const url = endpoint.startsWith("http") ? endpoint : `${this.apiBaseUrl}${endpoint}`;
 
@@ -347,7 +354,9 @@ export class OAuthService extends OAuthProvider {
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`${this.serviceConfig.displayName} API error: ${response.status} ${error}`);
+      throw INVALID_ARGUMENT.create({
+        detail: `${this.serviceConfig.displayName} API error: ${response.status} ${error}`,
+      });
     }
 
     return response.json();

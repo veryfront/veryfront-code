@@ -1,5 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { INITIALIZATION_ERROR, INVALID_ARGUMENT, PLATFORM_ERROR } from "#veryfront/errors";
 import type { RuntimeAdapter, RuntimeId } from "./base.ts";
 import { detectRuntime } from "./runtime-detection.ts";
 
@@ -61,25 +62,25 @@ class AdapterRegistry {
       "platform.registry.doInitialize",
       async () => {
         if (runtimeId === "unknown") {
-          throw new Error(
-            "Unsupported runtime detected. Supported runtimes: deno, node, bun. " +
+          throw PLATFORM_ERROR.create({
+            detail: "Unsupported runtime detected. Supported runtimes: deno, node, bun. " +
               "For Cloudflare Workers, call runtime.set(createCloudflareAdapter(env)).",
-          );
+          });
         }
 
         if (runtimeId === "cloudflare") {
-          throw new Error(
-            "Cloudflare Workers detected but requires manual initialization. " +
+          throw INITIALIZATION_ERROR.create({
+            detail: "Cloudflare Workers detected but requires manual initialization. " +
               "Use: await runtime.set(createCloudflareAdapter(env))",
-          );
+          });
         }
 
         const loader = this.loaders.get(runtimeId);
         if (!loader) {
-          throw new Error(
-            `No loader registered for runtime: ${runtimeId}. ` +
+          throw PLATFORM_ERROR.create({
+            detail: `No loader registered for runtime: ${runtimeId}. ` +
               `Registered runtimes: ${[...this.loaders.keys()].join(", ")}`,
-          );
+          });
         }
 
         try {
@@ -103,9 +104,10 @@ class AdapterRegistry {
       "platform.registry.set",
       async () => {
         if (!adapter.id || !adapter.name || !adapter.fs || !adapter.env || !adapter.server) {
-          throw new Error(
-            "Invalid adapter: must implement RuntimeAdapter interface with id, name, fs, env, and server properties",
-          );
+          throw INVALID_ARGUMENT.create({
+            detail:
+              "Invalid adapter: must implement RuntimeAdapter interface with id, name, fs, env, and server properties",
+          });
         }
 
         const oldAdapter = this.instance && this.initialized ? this.instance : null;
@@ -137,10 +139,10 @@ class AdapterRegistry {
 
   getSync(): RuntimeAdapter {
     if (!this.instance || !this.initialized) {
-      throw new Error(
-        "RuntimeAdapter not initialized. Call `await runtime.get()` first, " +
+      throw INITIALIZATION_ERROR.create({
+        detail: "RuntimeAdapter not initialized. Call `await runtime.get()` first, " +
           "or use `await runtime.set(adapter)` to configure manually.",
-      );
+      });
     }
     return this.instance;
   }
@@ -167,9 +169,10 @@ class AdapterRegistry {
 
   registerLoader(id: RuntimeId, loader: AdapterLoader, options?: { overwrite?: boolean }): void {
     if (this.loaders.has(id) && !options?.overwrite) {
-      throw new Error(
-        `Loader for runtime '${id}' already registered. Use { overwrite: true } to replace.`,
-      );
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Loader for runtime '${id}' already registered. Use { overwrite: true } to replace.`,
+      });
     }
     this.loaders.set(id, loader);
   }

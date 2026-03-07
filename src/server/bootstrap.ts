@@ -7,6 +7,7 @@ import {
   refreshEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
@@ -264,9 +265,9 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
         "[Bootstrap:Prod] CRITICAL: NODE_ENV is not set in proxy mode. " +
           "Set NODE_ENV=production in your pod configuration.",
       );
-      throw new Error(
-        "NODE_ENV must be set to 'production' when running in proxy mode (PROXY_MODE=1)",
-      );
+      throw INVALID_ARGUMENT.create({
+        detail: "NODE_ENV must be set to 'production' when running in proxy mode (PROXY_MODE=1)",
+      });
     }
 
     if (nodeEnv !== "production") {

@@ -3,6 +3,7 @@
  */
 
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
+import { MODULE_NOT_FOUND } from "#veryfront/errors";
 import { extractNamedImports } from "./utils/stub-module.ts";
 
 type MissingModuleContext = {
@@ -38,7 +39,7 @@ export function buildMissingModuleError(ctx: MissingModuleContext): Error {
   ].filter(Boolean);
 
   const message = parts.join(" ");
-  const error = new Error(message);
+  const error = MODULE_NOT_FOUND.create({ detail: message });
   error.name = "MissingModuleError";
 
   try {

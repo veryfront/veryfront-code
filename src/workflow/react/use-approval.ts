@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { REQUEST_ERROR } from "#veryfront/errors";
 import type { ApprovalDecision, PendingApproval } from "#veryfront/workflow/types.ts";
 
 export interface UseApprovalOptions {
@@ -52,7 +53,10 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         const response = await fetch(`${apiBase}/runs/${runId}/approvals/${approvalId}`);
 
         if (!response.ok) {
-          throw new Error(`Failed to fetch approval: ${response.status}`);
+          throw REQUEST_ERROR.create({
+            detail: `Failed to fetch approval: ${response.status}`,
+            status: response.status,
+          });
         }
 
         const data: PendingApproval = await response.json();
@@ -85,7 +89,10 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         });
 
         if (!response.ok) {
-          throw new Error(`Failed to submit decision: ${response.status}`);
+          throw REQUEST_ERROR.create({
+            detail: `Failed to submit decision: ${response.status}`,
+            status: response.status,
+          });
         }
 
         setApproval((prev) => {

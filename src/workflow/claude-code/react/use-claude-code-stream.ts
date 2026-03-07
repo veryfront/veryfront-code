@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClaudeCodeEvent, ClaudeCodeResult } from "../types.ts";
+import { REQUEST_ERROR } from "#veryfront/errors";
 
 /** Default delay before reconnecting after disconnect */
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
@@ -312,7 +313,7 @@ export function useClaudeCodeStream(
           connect();
         }, reconnectDelay * reconnectAttemptsRef.current);
       } else {
-        onError?.(new Error("Connection failed"));
+        onError?.(REQUEST_ERROR.create({ detail: "Connection failed" }));
       }
     };
 

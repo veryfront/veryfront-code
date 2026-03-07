@@ -1,4 +1,5 @@
 import { getMCPRegistry, getMCPStats } from "#veryfront/mcp";
+import { REQUEST_ERROR } from "#veryfront/errors";
 import { executeTool, toolRegistry } from "#veryfront/tool";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
@@ -313,7 +314,7 @@ async function handleStartWorkflow(req: Request): Promise<Response> {
       handle.result(),
       new Promise((_, reject) =>
         setTimeout(
-          () => reject(new Error("Workflow execution timed out (30s)")),
+          () => reject(REQUEST_ERROR.create({ detail: "Workflow execution timed out (30s)" })),
           WORKFLOW_EXECUTION_TIMEOUT_MS,
         )
       ),

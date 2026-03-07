@@ -19,6 +19,7 @@ import type {
   UploadStoreConfig,
   UploadStoreData,
 } from "./types.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Default number of top results returned by similarity search. */
 const DEFAULT_TOP_K = 5;
@@ -155,14 +156,14 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
         const uploadId = crypto.randomUUID();
 
         if (text.length > MAX_TEXT_LENGTH) {
-          throw new Error(
-            `Upload text exceeds ${MAX_TEXT_LENGTH / 1024 / 1024} MB limit`,
-          );
+          throw INVALID_ARGUMENT.create({
+            detail: `Upload text exceeds ${MAX_TEXT_LENGTH / 1024 / 1024} MB limit`,
+          });
         }
 
         const chunks = await chunk(text, chunkOptions);
         if (chunks.length === 0) {
-          throw new Error("Upload contains no extractable text");
+          throw INVALID_ARGUMENT.create({ detail: "Upload contains no extractable text" });
         }
 
         const doc: UploadMeta = {

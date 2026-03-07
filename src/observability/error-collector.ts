@@ -6,6 +6,7 @@
  **************************/
 
 import type { ErrorCategory } from "#veryfront/errors/types.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 export type ErrorType = "compile" | "runtime" | "bundle" | "hmr" | "module";
 
@@ -75,9 +76,10 @@ export class ErrorCollector {
   add(error: Omit<DevError, "id" | "timestamp">): DevError {
     const expectedCategory = ERROR_TYPE_TO_CATEGORY[error.type];
     if (error.category !== expectedCategory) {
-      throw new Error(
-        `ErrorCollector.add() received mismatched type/category: ${error.type} must use ${expectedCategory}, got ${error.category}`,
-      );
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `ErrorCollector.add() received mismatched type/category: ${error.type} must use ${expectedCategory}, got ${error.category}`,
+      });
     }
 
     const fullError: DevError = {

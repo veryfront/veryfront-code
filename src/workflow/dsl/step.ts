@@ -8,6 +8,7 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { validateNodeId } from "./validation.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 export interface StepOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   agent?: string | Agent;
@@ -26,11 +27,13 @@ export function step(id: string, options: StepOptions): WorkflowNode {
   const hasTool = options.tool != null;
 
   if (!hasAgent && !hasTool) {
-    throw new Error(`Step "${id}" must specify either 'agent' or 'tool'`);
+    throw INVALID_ARGUMENT.create({ detail: `Step "${id}" must specify either 'agent' or 'tool'` });
   }
 
   if (hasAgent && hasTool) {
-    throw new Error(`Step "${id}" cannot specify both 'agent' and 'tool'`);
+    throw INVALID_ARGUMENT.create({
+      detail: `Step "${id}" cannot specify both 'agent' and 'tool'`,
+    });
   }
 
   const config: StepNodeConfig = {

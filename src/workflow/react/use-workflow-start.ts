@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { REQUEST_ERROR } from "#veryfront/errors";
 
 export interface UseWorkflowStartOptions {
   workflowId: string;
@@ -41,9 +42,10 @@ export function useWorkflowStart<TInput = unknown>(
             message?: string;
           };
 
-          throw new Error(
-            errorData.message ?? `Failed to start workflow: ${response.status}`,
-          );
+          throw REQUEST_ERROR.create({
+            detail: errorData.message ?? `Failed to start workflow: ${response.status}`,
+            status: response.status,
+          });
         }
 
         const data = (await response.json()) as { runId?: string; id?: string };

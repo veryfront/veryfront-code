@@ -5,6 +5,7 @@
  */
 
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import { NETWORK_ERROR } from "#veryfront/errors";
 
 const baseLogger = getBaseLogger("PROJECT-ENV");
 
@@ -44,7 +45,7 @@ export async function fetchProjectEnvVars(
         environmentId,
         status: response.status,
       });
-      throw new Error(`Failed to fetch env vars: ${response.status}`);
+      throw NETWORK_ERROR.create({ detail: `Failed to fetch env vars: ${response.status}` });
     }
 
     const body = await response.json() as {

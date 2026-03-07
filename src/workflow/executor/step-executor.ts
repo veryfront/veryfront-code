@@ -2,6 +2,14 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { Agent, AgentResponse } from "#veryfront/agent";
 import type { Tool } from "#veryfront/tool";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import {
+  AGENT_NOT_FOUND,
+  INITIALIZATION_ERROR,
+  INVALID_ARGUMENT,
+  ORCHESTRATION_ERROR,
+  RESOURCE_NOT_FOUND,
+  TIMEOUT_ERROR,
+} from "#veryfront/errors";
 import type {
   CapturedTenantContext,
   NodeState,
@@ -97,10 +105,11 @@ export class StepExecutor {
     const config = node.config as StepNodeConfig;
 
     if (config.type !== "step") {
-      throw new Error(
-        `StepExecutor can only execute 'step' nodes, but node "${node.id}" has type '${config.type}'. ` +
+      throw ORCHESTRATION_ERROR.create({
+        detail:
+          `StepExecutor can only execute 'step' nodes, but node "${node.id}" has type '${config.type}'. ` +
           `This is likely a bug in the DAG executor routing.`,
-      );
+      });
     }
 
     const retryConfig = { ...DEFAULT_RETRY, ...config.retry };
@@ -209,7 +218,7 @@ export class StepExecutor {
 
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(() => {
-        reject(new Error(`Step "${nodeId}" timed out after ${timeout}ms`));
+        reject(TIMEOUT_ERROR.create({ detail: `Step "${nodeId}" timed out after ${timeout}ms` }));
       }, timeout);
     });
 
@@ -227,7 +236,7 @@ export class StepExecutor {
   ): Promise<unknown> {
     if (config.agent) return this.executeAgent(config.agent, input, context);
     if (config.tool) return this.executeTool(config.tool, input);
-    throw new Error("Step must have either 'agent' or 'tool' specified");
+    throw INVALID_ARGUMENT.create({ detail: "Step must have either 'agent' or 'tool' specified" });
   }
 
   private async executeAgent(
@@ -271,7 +280,9 @@ export class StepExecutor {
     const label = type.charAt(0).toUpperCase() + type.slice(1);
 
     if (!registry) {
-      throw new Error(`${label} registry not configured. Cannot resolve ${type} "${id}"`);
+      throw INITIALIZATION_ERROR.create({
+        detail: `${label} registry not configured. Cannot resolve ${type} "${id}"`,
+      });
     }
 
     const item = registry.get(id);
@@ -282,7 +293,10 @@ export class StepExecutor {
       ? this.formatAvailableItems(available)
       : ` No ${type}s are registered.`;
 
-    throw new Error(`${label} not found: "${id}".${suggestion}`);
+    const detail = `${label} not found: "${id}".${suggestion}`;
+    throw (type === "agent"
+      ? AGENT_NOT_FOUND.create({ detail })
+      : RESOURCE_NOT_FOUND.create({ detail }));
   }
 
   private getAgent(id: string): Agent {

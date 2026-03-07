@@ -14,6 +14,7 @@ import type {
   FileSystemRepository,
   RepositoryContext,
 } from "../types.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 export interface TrackedCall {
   method: string;
@@ -49,7 +50,7 @@ export class MockFileSystemRepository implements FileSystemRepository {
 
     const content = this.files.get(path);
     if (content === undefined) {
-      throw new Error(`ENOENT: no such file: ${path}`);
+      throw INVALID_ARGUMENT.create({ detail: `ENOENT: no such file: ${path}` });
     }
 
     if (content instanceof Uint8Array) {
@@ -64,7 +65,7 @@ export class MockFileSystemRepository implements FileSystemRepository {
 
     const content = this.files.get(path);
     if (content === undefined) {
-      throw new Error(`ENOENT: no such file: ${path}`);
+      throw INVALID_ARGUMENT.create({ detail: `ENOENT: no such file: ${path}` });
     }
 
     if (content instanceof Uint8Array) return content;
@@ -89,7 +90,7 @@ export class MockFileSystemRepository implements FileSystemRepository {
     const isDirectory = this.directories.has(path);
 
     if (!isFile && !isDirectory) {
-      throw new Error(`ENOENT: no such file or directory: ${path}`);
+      throw INVALID_ARGUMENT.create({ detail: `ENOENT: no such file or directory: ${path}` });
     }
 
     const content = this.files.get(path);

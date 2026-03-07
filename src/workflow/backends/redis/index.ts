@@ -19,6 +19,7 @@ import type {
 import type { WorkflowBackend } from "../types.ts";
 import { agentLogger } from "#veryfront/utils";
 import { requeueRun } from "../shared/requeue-run.ts";
+import { INITIALIZATION_ERROR, INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import {
@@ -103,9 +104,13 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private deserializeRun(data: Record<string, string>): WorkflowRun {
-    if (!data.id) throw new Error("Invalid workflow run data: missing 'id' field");
+    if (!data.id) {
+      throw INVALID_ARGUMENT.create({ detail: "Invalid workflow run data: missing 'id' field" });
+    }
     if (!data.workflowId) {
-      throw new Error(`Invalid workflow run data for run "${data.id}": missing 'workflowId' field`);
+      throw INVALID_ARGUMENT.create({
+        detail: `Invalid workflow run data for run "${data.id}": missing 'workflowId' field`,
+      });
     }
 
     const validStatuses: WorkflowStatus[] = [
@@ -119,10 +124,11 @@ export class RedisBackend implements WorkflowBackend {
 
     const status = data.status as WorkflowStatus;
     if (data.status && !validStatuses.includes(status)) {
-      throw new Error(
-        `Invalid workflow run data for run "${data.id}": unknown status "${data.status}". ` +
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Invalid workflow run data for run "${data.id}": unknown status "${data.status}". ` +
           `Expected one of: ${validStatuses.join(", ")}`,
-      );
+      });
     }
 
     function safeJsonParse<T>(
@@ -135,10 +141,12 @@ export class RedisBackend implements WorkflowBackend {
       try {
         return JSON.parse(value) as T;
       } catch (e) {
-        throw new Error(
-          `Invalid workflow run data for run "${runId}": failed to parse '${field}' as JSON. ` +
+        throw INVALID_ARGUMENT.create({
+          detail:
+            `Invalid workflow run data for run "${runId}": failed to parse '${field}' as JSON. ` +
             `Error: ${e instanceof Error ? e.message : String(e)}`,
-        );
+          cause: e instanceof Error ? e : undefined,
+        });
       }
     }
 
@@ -208,7 +216,7 @@ export class RedisBackend implements WorkflowBackend {
       return this.client;
     }
 
-    throw new Error("No Redis client available for this runtime.");
+    throw INITIALIZATION_ERROR.create({ detail: "No Redis client available for this runtime." });
   }
 
   async initialize(): Promise<void> {
@@ -431,10 +439,14 @@ export class RedisBackend implements WorkflowBackend {
       return data.id === approvalId;
     });
 
-    if (targetIndex === -1) throw new Error(`Approval not found: ${approvalId}`);
+    if (targetIndex === -1) {
+      throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
+    }
 
     const rawTarget = rawList[targetIndex];
-    if (!rawTarget) throw new Error(`Approval data not found: ${approvalId}`);
+    if (!rawTarget) {
+      throw RESOURCE_NOT_FOUND.create({ detail: `Approval data not found: ${approvalId}` });
+    }
 
     const data = JSON.parse(rawTarget);
     data.status = decision.approved ? "approved" : "rejected";

@@ -1,3 +1,4 @@
+import { API_CLIENT_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { ContentSource, ResolvedContentContext } from "./types.ts";
 
@@ -107,7 +108,9 @@ export async function resolveContentContext(
     case "domain": {
       const lookup = await client.lookupProjectByDomain(contentSource.domain);
       if (!lookup) {
-        throw new Error(`Domain lookup failed for: ${contentSource.domain}`);
+        throw API_CLIENT_ERROR.create({
+          detail: `Domain lookup failed for: ${contentSource.domain}`,
+        });
       }
       return {
         sourceType: "environment",
@@ -119,9 +122,9 @@ export async function resolveContentContext(
 
     case "release":
       if (!contentSource.releaseId) {
-        throw new Error(
-          `Missing releaseId for release sourceType (project: ${projectSlug})`,
-        );
+        throw INVALID_ARGUMENT.create({
+          detail: `Missing releaseId for release sourceType (project: ${projectSlug})`,
+        });
       }
       return {
         sourceType: "release",

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getAgent } from "./composition/index.ts";
 import type { Message } from "./types.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { DEFAULT_LOCAL_MODEL } from "../provider/local/model-catalog.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
@@ -274,7 +275,9 @@ function extractRequest(requestOrCtx: unknown): Request {
     const candidate = (requestOrCtx as Record<string, unknown>).request;
     if (isRequest(candidate)) return candidate;
   }
-  throw new Error("Invalid handler argument: expected Request or APIContext");
+  throw INVALID_ARGUMENT.create({
+    detail: "Invalid handler argument: expected Request or APIContext",
+  });
 }
 
 /**

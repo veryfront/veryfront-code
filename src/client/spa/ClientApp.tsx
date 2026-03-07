@@ -3,6 +3,7 @@ import { type Router, RouterProvider } from "veryfront/router";
 import { type PageContext, PageContextProvider } from "veryfront/context";
 import { type LayoutInfo, LayoutShell } from "./LayoutShell.tsx";
 import { getCachedComponent, loadComponent, preloadComponent } from "./component-loader.ts";
+import { PAGE_NOT_FOUND } from "#veryfront/errors";
 
 export interface PageDataResponse {
   slug: string;
@@ -136,7 +137,9 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
       const layoutPreloads = (data.layouts || []).map((l) => preloadComponent(l.path));
       const [PageComponent] = await Promise.all([loadComponent(data.pagePath), ...layoutPreloads]);
 
-      if (!PageComponent) throw new Error(`Failed to load page component: ${data.pagePath}`);
+      if (!PageComponent) {
+        throw PAGE_NOT_FOUND.create({ detail: `Failed to load page component: ${data.pagePath}` });
+      }
 
       if (data.frontmatter?.title) document.title = String(data.frontmatter.title);
 

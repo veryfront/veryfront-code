@@ -22,6 +22,7 @@
 import { getWorkflowTenant } from "./executor/step-executor.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
+import { INITIALIZATION_ERROR, INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 
 /**
  * Validate that a project slug is safe and well-formed.
@@ -56,21 +57,21 @@ function getTenant() {
   const tenant = getWorkflowTenant() ?? getCurrentRequestContext();
 
   if (!tenant) {
-    throw new Error(
-      "No tenant context available. " +
+    throw INITIALIZATION_ERROR.create({
+      detail: "No tenant context available. " +
         "This API must be called within a request or workflow execution. " +
         "If you're calling this from a standalone script, you need to wrap " +
         "your code with runWithContext() first.",
-    );
+    });
   }
 
   // Validate tenant fields to prevent injection attacks
   if (!isValidProjectSlug(tenant.projectSlug)) {
-    throw new Error(
-      `Invalid project slug: "${tenant.projectSlug}". ` +
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: `Invalid project slug: "${tenant.projectSlug}". ` +
         "Project slugs must be 1-128 characters, start with alphanumeric, " +
         "and contain only alphanumeric characters, hyphens, or underscores.",
-    );
+    });
   }
 
   return tenant;

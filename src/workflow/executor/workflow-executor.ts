@@ -6,6 +6,12 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import {
+  INVALID_ARGUMENT,
+  ORCHESTRATION_ERROR,
+  RESOURCE_NOT_FOUND,
+  TIMEOUT_ERROR,
+} from "#veryfront/errors";
 import type {
   BlobResolver,
   NodeState,
@@ -168,7 +174,9 @@ export class WorkflowExecutor {
     options?: { runId?: string },
   ): Promise<WorkflowHandle<TOutput>> {
     const workflow = this.workflows.get(workflowId);
-    if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
+    if (!workflow) {
+      throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${workflowId}` });
+    }
 
     workflow.inputSchema?.parse(input);
 
@@ -216,26 +224,28 @@ export class WorkflowExecutor {
    */
   async resume(runId: string, fromCheckpoint?: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
-    if (!run) throw new Error(`Run not found: ${runId}`);
+    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
     if (run.status !== "waiting" && run.status !== "pending") {
-      throw new Error(
-        `Cannot resume workflow run "${runId}": current status is "${run.status}". ` +
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Cannot resume workflow run "${runId}": current status is "${run.status}". ` +
           `Only runs in "waiting" or "pending" status can be resumed.`,
-      );
+      });
     }
 
     const workflow = this.workflows.get(run.workflowId);
-    if (!workflow) throw new Error(`Workflow not found: ${run.workflowId}`);
+    if (!workflow) {
+      throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
+    }
 
     const nodes = this.resolveNodes(workflow, run.context);
     const resumeInfo = await this.checkpointManager.prepareResume(runId, nodes, fromCheckpoint);
 
     if (fromCheckpoint && !resumeInfo) {
-      throw new Error(
-        `Checkpoint "${fromCheckpoint}" not found for run "${runId}". ` +
+      throw RESOURCE_NOT_FOUND.create({
+        detail: `Checkpoint "${fromCheckpoint}" not found for run "${runId}". ` +
           `Cannot resume from non-existent checkpoint.`,
-      );
+      });
     }
 
     if (resumeInfo) {
@@ -257,10 +267,12 @@ export class WorkflowExecutor {
    */
   async executeAsync(runId: string, startFromNode?: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
-    if (!run) throw new Error(`Run not found: ${runId}`);
+    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
     const workflow = this.workflows.get(run.workflowId);
-    if (!workflow) throw new Error(`Workflow not found: ${run.workflowId}`);
+    if (!workflow) {
+      throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
+    }
 
     const useLocking = this.config.enableLocking !== false && hasLockSupport(this.config.backend);
     const lockDuration = this.config.lockDuration ?? WorkflowExecutor.DEFAULT_LOCK_DURATION;
@@ -270,10 +282,11 @@ export class WorkflowExecutor {
     if (useLocking) {
       const acquired = await this.config.backend.acquireLock!(runId, lockDuration);
       if (!acquired) {
-        throw new Error(
-          `Cannot execute workflow run "${runId}": another worker is already executing it. ` +
+        throw ORCHESTRATION_ERROR.create({
+          detail:
+            `Cannot execute workflow run "${runId}": another worker is already executing it. ` +
             `This can happen when multiple workers try to execute the same run concurrently.`,
-        );
+        });
       }
       logger.debug("Acquired lock for run", { runId });
     }
@@ -346,7 +359,7 @@ export class WorkflowExecutor {
         return;
       }
 
-      const error = new Error(result.error || "Unknown error");
+      const error = ORCHESTRATION_ERROR.create({ detail: result.error || "Unknown error" });
       await this.failRun(runId, error, result.context, result.nodeStates);
 
       await workflow.onError?.(error, result.context);
@@ -393,11 +406,15 @@ export class WorkflowExecutor {
    */
   private validateNodes(nodes: WorkflowNode[], workflowId: string): void {
     if (!Array.isArray(nodes)) {
-      throw new Error(`Workflow "${workflowId}" steps must resolve to an array`);
+      throw INVALID_ARGUMENT.create({
+        detail: `Workflow "${workflowId}" steps must resolve to an array`,
+      });
     }
 
     if (nodes.length === 0) {
-      throw new Error(`Workflow "${workflowId}" must have at least one step`);
+      throw INVALID_ARGUMENT.create({
+        detail: `Workflow "${workflowId}" must have at least one step`,
+      });
     }
 
     const seenIds = new Set<string>();
@@ -406,24 +423,34 @@ export class WorkflowExecutor {
       const node = nodes[i];
 
       if (!node) {
-        throw new Error(`Workflow "${workflowId}" has undefined node at index ${i}`);
+        throw INVALID_ARGUMENT.create({
+          detail: `Workflow "${workflowId}" has undefined node at index ${i}`,
+        });
       }
 
       if (!node.id || typeof node.id !== "string") {
-        throw new Error(`Workflow "${workflowId}" node at index ${i} has invalid ID`);
+        throw INVALID_ARGUMENT.create({
+          detail: `Workflow "${workflowId}" node at index ${i} has invalid ID`,
+        });
       }
 
       if (seenIds.has(node.id)) {
-        throw new Error(`Workflow "${workflowId}" has duplicate node ID: "${node.id}"`);
+        throw INVALID_ARGUMENT.create({
+          detail: `Workflow "${workflowId}" has duplicate node ID: "${node.id}"`,
+        });
       }
       seenIds.add(node.id);
 
       if (!node.config || typeof node.config !== "object") {
-        throw new Error(`Workflow "${workflowId}" node "${node.id}" has invalid config`);
+        throw INVALID_ARGUMENT.create({
+          detail: `Workflow "${workflowId}" node "${node.id}" has invalid config`,
+        });
       }
 
       if (!node.config.type) {
-        throw new Error(`Workflow "${workflowId}" node "${node.id}" config missing type`);
+        throw INVALID_ARGUMENT.create({
+          detail: `Workflow "${workflowId}" node "${node.id}" config missing type`,
+        });
       }
     }
   }
@@ -442,7 +469,7 @@ export class WorkflowExecutor {
 
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(() => {
-        reject(new Error(`Workflow timed out after ${timeoutMs}ms`));
+        reject(TIMEOUT_ERROR.create({ detail: `Workflow timed out after ${timeoutMs}ms` }));
       }, timeoutMs);
     });
 
@@ -541,11 +568,15 @@ export class WorkflowExecutor {
   ): Promise<TOutput> {
     while (true) {
       const run = await this.config.backend.getRun(runId);
-      if (!run) throw new Error(`Run not found: ${runId}`);
+      if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
       if (run.status === "completed") return run.output as TOutput;
-      if (run.status === "failed") throw new Error(run.error?.message || "Workflow failed");
-      if (run.status === "cancelled") throw new Error("Workflow was cancelled");
+      if (run.status === "failed") {
+        throw ORCHESTRATION_ERROR.create({ detail: run.error?.message || "Workflow failed" });
+      }
+      if (run.status === "cancelled") {
+        throw ORCHESTRATION_ERROR.create({ detail: "Workflow was cancelled" });
+      }
 
       await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
@@ -556,13 +587,13 @@ export class WorkflowExecutor {
    */
   async cancel(runId: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
-    if (!run) throw new Error(`Run not found: ${runId}`);
+    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
     if (run.status === "completed" || run.status === "failed") {
-      throw new Error(
-        `Cannot cancel workflow run "${runId}": run has already ${run.status}. ` +
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Cannot cancel workflow run "${runId}": run has already ${run.status}. ` +
           `Only active runs (pending, running, waiting) can be cancelled.`,
-      );
+      });
     }
 
     await this.config.backend.updateRun(runId, {

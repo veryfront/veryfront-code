@@ -20,6 +20,7 @@ import { hasLockSupport, hasWorkerSupport, type WorkflowBackend } from "../backe
 import type { WorkflowRun } from "../types.ts";
 import { generateId } from "../types.ts";
 import type { JobConfig, JobExecutor, JobStatus } from "./executors/types.ts";
+import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 
 const logger = baseLogger.component("workflow-job-manager");
 
@@ -172,7 +173,7 @@ export class WorkflowJobManager {
    */
   async start(): Promise<void> {
     if (this.status === "running") {
-      throw new Error("Job manager is already running");
+      throw ORCHESTRATION_ERROR.create({ detail: "Job manager is already running" });
     }
 
     // Initialize executor if needed

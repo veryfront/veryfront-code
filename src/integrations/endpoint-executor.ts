@@ -8,6 +8,7 @@
 
 import { logger } from "#veryfront/utils";
 import type { IntegrationEndpoint } from "./types.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 interface ExecutionContext {
   integration: string;
@@ -33,7 +34,9 @@ async function executeGraphQL(
   ctx: ExecutionContext,
 ): Promise<{ result: unknown; status: number }> {
   if (!endpoint.query) {
-    throw new Error(`GraphQL endpoint for ${ctx.integration}:${ctx.toolId} missing query`);
+    throw INVALID_ARGUMENT.create({
+      detail: `GraphQL endpoint for ${ctx.integration}:${ctx.toolId} missing query`,
+    });
   }
 
   // Build variables from params
@@ -98,7 +101,7 @@ async function executeRest(
     if (def.in === "path") {
       const value = args[key];
       if (value === undefined) {
-        throw new Error(`Missing required path parameter: ${key}`);
+        throw INVALID_ARGUMENT.create({ detail: `Missing required path parameter: ${key}` });
       }
       url = url.replace(`{${key}}`, encodeURIComponent(String(value)));
     }

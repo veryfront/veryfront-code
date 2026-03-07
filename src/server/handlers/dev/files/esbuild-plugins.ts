@@ -1,4 +1,5 @@
 import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "esbuild";
+import { NETWORK_ERROR } from "#veryfront/errors";
 // Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getDirectory, joinPath } from "#veryfront/utils/path-utils.ts";
@@ -184,7 +185,11 @@ export function createBareExternalPlugin(
 
         try {
           const response = await fetch(args.path, { redirect: "follow" });
-          if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          if (!response.ok) {
+            throw NETWORK_ERROR.create({
+              detail: `HTTP ${response.status}: ${response.statusText}`,
+            });
+          }
 
           const contents = await response.text();
           const resolvedUrl = response.url || args.path;

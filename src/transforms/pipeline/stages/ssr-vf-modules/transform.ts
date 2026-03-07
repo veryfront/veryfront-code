@@ -8,6 +8,7 @@
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { IMPORT_RESOLUTION_ERROR } from "#veryfront/errors";
 import { replaceSpecifiers } from "../../../esm/lexer.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -175,13 +176,14 @@ export async function transformFrameworkCode(
       if (resolved) {
         veryfrontReplacements.set(specifier, resolved);
       } else if (throwOnMissingImport) {
-        throw new Error(
-          `${LOG_PREFIX} Could not resolve framework import "${specifier}" in ${sourcePath}. ` +
+        throw IMPORT_RESOLUTION_ERROR.create({
+          detail:
+            `${LOG_PREFIX} Could not resolve framework import "${specifier}" in ${sourcePath}. ` +
             `Expected to find ${
               join(FRAMEWORK_ROOT, "src", specifier.slice("#veryfront/".length))
             }.{ts,tsx,js,jsx} ` +
             `or an index file at that path.`,
-        );
+        });
       }
     }
 
@@ -211,9 +213,10 @@ export async function transformFrameworkCode(
         const resolvedPath = await resolveRelativeFrameworkImport(specifier, sourcePath, ctx.fs);
         if (!resolvedPath) {
           if (throwOnMissingImport) {
-            throw new Error(
-              `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,
-            );
+            throw IMPORT_RESOLUTION_ERROR.create({
+              detail:
+                `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,
+            });
           }
           logger.warn(
             `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,

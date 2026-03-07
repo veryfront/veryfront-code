@@ -8,6 +8,7 @@ import type {
   WorkflowRun,
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
+import { NOT_SUPPORTED } from "#veryfront/errors";
 
 interface CloudflareAdapterConfig extends BackendConfig {
   /** Durable Object namespace binding name */
@@ -42,37 +43,37 @@ export class CloudflareAdapter implements WorkflowBackend {
 
   // Run Management
   createRun(_run: WorkflowRun): Promise<void> {
-    throw new Error("CloudflareAdapter.createRun not implemented");
+    throw NOT_SUPPORTED.create({ detail: "CloudflareAdapter.createRun not implemented" });
   }
 
   getRun(_runId: string): Promise<WorkflowRun | null> {
-    throw new Error("CloudflareAdapter.getRun not implemented");
+    throw NOT_SUPPORTED.create({ detail: "CloudflareAdapter.getRun not implemented" });
   }
 
   updateRun(_runId: string, _patch: Partial<WorkflowRun>): Promise<void> {
-    throw new Error("CloudflareAdapter.updateRun not implemented");
+    throw NOT_SUPPORTED.create({ detail: "CloudflareAdapter.updateRun not implemented" });
   }
 
   listRuns(_filter: RunFilter): Promise<WorkflowRun[]> {
-    throw new Error("CloudflareAdapter.listRuns not implemented");
+    throw NOT_SUPPORTED.create({ detail: "CloudflareAdapter.listRuns not implemented" });
   }
 
   // Checkpointing
   saveCheckpoint(_runId: string, _checkpoint: Checkpoint): Promise<void> {
-    throw new Error("CloudflareAdapter.saveCheckpoint not implemented");
+    throw NOT_SUPPORTED.create({ detail: "CloudflareAdapter.saveCheckpoint not implemented" });
   }
 
   getLatestCheckpoint(_runId: string): Promise<Checkpoint | null> {
-    throw new Error("CloudflareAdapter.getLatestCheckpoint not implemented");
+    throw NOT_SUPPORTED.create({ detail: "CloudflareAdapter.getLatestCheckpoint not implemented" });
   }
 
   // Approvals
   savePendingApproval(_runId: string, _approval: PendingApproval): Promise<void> {
-    throw new Error("CloudflareAdapter.savePendingApproval not implemented");
+    throw NOT_SUPPORTED.create({ detail: "CloudflareAdapter.savePendingApproval not implemented" });
   }
 
   getPendingApprovals(_runId: string): Promise<PendingApproval[]> {
-    throw new Error("CloudflareAdapter.getPendingApprovals not implemented");
+    throw NOT_SUPPORTED.create({ detail: "CloudflareAdapter.getPendingApprovals not implemented" });
   }
 
   updateApproval(
@@ -80,16 +81,16 @@ export class CloudflareAdapter implements WorkflowBackend {
     _approvalId: string,
     _decision: ApprovalDecision,
   ): Promise<void> {
-    throw new Error("CloudflareAdapter.updateApproval not implemented");
+    throw NOT_SUPPORTED.create({ detail: "CloudflareAdapter.updateApproval not implemented" });
   }
 
   // Queue (using Cloudflare Queues)
   enqueue(_job: WorkflowJob): Promise<void> {
-    throw new Error("CloudflareAdapter.enqueue not implemented");
+    throw NOT_SUPPORTED.create({ detail: "CloudflareAdapter.enqueue not implemented" });
   }
 
   dequeue(): Promise<WorkflowJob | null> {
-    throw new Error("CloudflareAdapter.dequeue not implemented");
+    throw NOT_SUPPORTED.create({ detail: "CloudflareAdapter.dequeue not implemented" });
   }
 
   acknowledge(_runId: string): Promise<void> {

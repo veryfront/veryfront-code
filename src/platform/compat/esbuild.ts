@@ -10,6 +10,7 @@ import nodeProcess from "node:process";
 import { getEnv, setEnv } from "./process.ts";
 import { isDenoCompiled } from "./runtime.ts";
 import { ESBUILD_VERSION, getEsbuildBinaryName, getVFSBasePath } from "./esbuild-shared.ts";
+import { FILE_NOT_FOUND } from "#veryfront/errors";
 
 function getTempDir(): string {
   return getEnv("TMPDIR") ?? getEnv("TEMP") ?? getEnv("TMP") ?? "/tmp";
@@ -79,12 +80,12 @@ async function extractEsbuildBinary(): Promise<string> {
   const vfsPath = await findEsbuildInVFS();
   if (!vfsPath) {
     const vfsBase = getVFSBasePath(new URL(import.meta.url).pathname, getTempDir());
-    throw new Error(
-      `Could not find esbuild binary in deno compile VFS.\n` +
+    throw FILE_NOT_FOUND.create({
+      detail: `Could not find esbuild binary in deno compile VFS.\n` +
         `  Platform: ${getEsbuildBinaryName()}\n` +
         `  VFS base: ${vfsBase}\n` +
         `  Tip: Ensure esbuild is in dependencies and deno compile includes node_modules.`,
-    );
+    });
   }
 
   await Deno.mkdir(cacheDir, { recursive: true });

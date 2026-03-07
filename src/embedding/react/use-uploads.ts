@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { UploadMeta } from "../types.ts";
+import { API_ERROR } from "#veryfront/errors";
 
 export interface UseUploadsOptions {
   /** API endpoint, e.g. "/api/uploads" */
@@ -70,7 +71,7 @@ export function useUploads(options: UseUploadsOptions): UseUploadsResult {
           signal: abortController.signal,
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Upload failed");
+        if (!res.ok) throw API_ERROR.create({ detail: data.error ?? "Upload failed" });
         await refresh();
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") return;

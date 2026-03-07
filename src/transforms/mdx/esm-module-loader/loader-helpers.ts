@@ -10,6 +10,7 @@
 
 import { join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -47,9 +48,10 @@ export function resolveProjectDir(context: ESMLoaderContext): string {
     context.adapter?.env.get("VF_PROJECT_DIR");
   if (envProjectDir) return envProjectDir;
 
-  throw new Error(
-    "[MDX] projectDir is required for import map resolution. Pass it explicitly to loadModuleESM.",
-  );
+  throw INVALID_ARGUMENT.create({
+    detail:
+      "[MDX] projectDir is required for import map resolution. Pass it explicitly to loadModuleESM.",
+  });
 }
 
 /**
@@ -60,14 +62,14 @@ export async function initializeCacheDir(context: ESMLoaderContext): Promise<str
   if (context.esmCacheDir) return context.esmCacheDir;
 
   if (!context.projectId) {
-    throw new Error(
-      `Missing projectId for MDX ESM cache directory (projectSlug: ${context.projectSlug})`,
-    );
+    throw INVALID_ARGUMENT.create({
+      detail: `Missing projectId for MDX ESM cache directory (projectSlug: ${context.projectSlug})`,
+    });
   }
   if (!context.contentSourceId) {
-    throw new Error(
-      `Missing contentSourceId for MDX ESM cache directory (project: ${context.projectId})`,
-    );
+    throw INVALID_ARGUMENT.create({
+      detail: `Missing contentSourceId for MDX ESM cache directory (project: ${context.projectId})`,
+    });
   }
 
   const localFs = getLocalFs();
@@ -138,9 +140,9 @@ export async function processVfModuleImports(
   }
 
   if (!context.projectId) {
-    throw new Error(
-      `Missing projectId for module fetching (projectSlug: ${context.projectSlug})`,
-    );
+    throw INVALID_ARGUMENT.create({
+      detail: `Missing projectId for module fetching (projectSlug: ${context.projectSlug})`,
+    });
   }
 
   const fetcherContext = createModuleFetcherContext(

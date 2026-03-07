@@ -1,5 +1,6 @@
 import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
 import { validateNodeId } from "./validation.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Default maximum number of loop iterations */
 const DEFAULT_MAX_ITERATIONS = 10;
@@ -54,24 +55,27 @@ export function loop(id: string, options: LoopOptions): WorkflowNode {
   validateNodeId(id);
 
   if (typeof options.while !== "function") {
-    throw new Error(`Loop "${id}" must have a 'while' condition function`);
+    throw INVALID_ARGUMENT.create({
+      detail: `Loop "${id}" must have a 'while' condition function`,
+    });
   }
 
   if (!options.steps) {
-    throw new Error(`Loop "${id}" must have 'steps' configured`);
+    throw INVALID_ARGUMENT.create({ detail: `Loop "${id}" must have 'steps' configured` });
   }
 
   const maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
 
   if (maxIterations < 1) {
-    throw new Error(`Loop "${id}" maxIterations must be at least 1`);
+    throw INVALID_ARGUMENT.create({ detail: `Loop "${id}" maxIterations must be at least 1` });
   }
 
   if (maxIterations > MAX_ITERATIONS_LIMIT) {
-    throw new Error(
-      `Loop "${id}" maxIterations cannot exceed ${MAX_ITERATIONS_LIMIT} (got ${maxIterations}). ` +
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `Loop "${id}" maxIterations cannot exceed ${MAX_ITERATIONS_LIMIT} (got ${maxIterations}). ` +
         `For higher limits, consider restructuring your workflow.`,
-    );
+    });
   }
 
   return {

@@ -7,6 +7,8 @@
  * @module
  */
 
+import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+
 /** Options for creating a sandbox session. */
 export interface SandboxOptions {
   /** Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL env. */
@@ -59,7 +61,9 @@ export class Sandbox {
     });
 
     if (!res.ok) {
-      throw new Error(`Failed to create sandbox: ${res.status} ${await res.text()}`);
+      throw REQUEST_ERROR.create({
+        detail: `Failed to create sandbox: ${res.status} ${await res.text()}`,
+      });
     }
 
     const { id, endpoint, status } = await res.json();
@@ -81,7 +85,9 @@ export class Sandbox {
     });
 
     if (!res.ok) {
-      throw new Error(`Failed to get sandbox: ${res.status} ${await res.text()}`);
+      throw REQUEST_ERROR.create({
+        detail: `Failed to get sandbox: ${res.status} ${await res.text()}`,
+      });
     }
 
     const { endpoint } = await res.json();
@@ -107,11 +113,13 @@ export class Sandbox {
         const data = await res.json();
         if (data.status === "running") return;
         if (data.status === "error" || data.status === "deleting") {
-          throw new Error(`Sandbox failed to start: status=${data.status}`);
+          throw INITIALIZATION_ERROR.create({
+            detail: `Sandbox failed to start: status=${data.status}`,
+          });
         }
       }
     }
-    throw new Error("Sandbox did not become ready within timeout");
+    throw TIMEOUT_ERROR.create({ detail: "Sandbox did not become ready within timeout" });
   }
 
   /** Execute a bash command in the sandbox and return buffered result. */
@@ -149,7 +157,7 @@ export class Sandbox {
     });
 
     if (!res.ok) {
-      throw new Error(`Exec failed: ${res.status} ${await res.text()}`);
+      throw REQUEST_ERROR.create({ detail: `Exec failed: ${res.status} ${await res.text()}` });
     }
 
     if (!res.body) {
@@ -189,7 +197,7 @@ export class Sandbox {
     );
 
     if (!res.ok) {
-      throw new Error(`Read file failed: ${res.status} ${await res.text()}`);
+      throw REQUEST_ERROR.create({ detail: `Read file failed: ${res.status} ${await res.text()}` });
     }
 
     return res.text();
@@ -209,7 +217,9 @@ export class Sandbox {
     });
 
     if (!res.ok) {
-      throw new Error(`Write files failed: ${res.status} ${await res.text()}`);
+      throw REQUEST_ERROR.create({
+        detail: `Write files failed: ${res.status} ${await res.text()}`,
+      });
     }
   }
 

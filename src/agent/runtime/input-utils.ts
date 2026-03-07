@@ -1,4 +1,5 @@
 import type { Message } from "../types.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 export function normalizeInput(input: string | Message[]): Message[] {
   const now = Date.now();
@@ -16,7 +17,7 @@ export function normalizeInput(input: string | Message[]): Message[] {
 
   return input.map((msg, index) => {
     if (typeof msg.id === "string" && msg.id.trim().length === 0) {
-      throw new Error("Message id cannot be empty.");
+      throw INVALID_ARGUMENT.create({ detail: "Message id cannot be empty." });
     }
 
     return {

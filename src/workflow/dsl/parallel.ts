@@ -6,6 +6,7 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { validateNodeId } from "./validation.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 export interface ParallelOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   strategy?: "all" | "race" | "allSettled";
@@ -24,15 +25,17 @@ export function parallel(
   validateNodeId(id);
 
   if (nodes.length === 0) {
-    throw new Error(`Parallel node "${id}" must have at least one child node`);
+    throw INVALID_ARGUMENT.create({
+      detail: `Parallel node "${id}" must have at least one child node`,
+    });
   }
 
   const prefix = `${id}/`;
   const prefixedNodes = nodes.map((node, index) => {
     if (typeof node.id !== "string" || node.id.length === 0) {
-      throw new Error(
-        `Child node at index ${index} in parallel "${id}" has invalid ID`,
-      );
+      throw INVALID_ARGUMENT.create({
+        detail: `Child node at index ${index} in parallel "${id}" has invalid ID`,
+      });
     }
 
     const childId = node.id.startsWith(prefix) ? node.id : `${prefix}${node.id}`;

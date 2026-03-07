@@ -2,6 +2,7 @@ import { join } from "#veryfront/compat/path";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { rendererLogger } from "#veryfront/utils";
+import { CONFIG_INVALID } from "#veryfront/errors/error-registry.ts";
 
 const logger = rendererLogger.component("app-resolver");
 
@@ -33,9 +34,10 @@ export async function resolveAppComponentPath(
 
   if (configApp) {
     if (!isValidComponentPath(configApp)) {
-      throw new Error(
-        `App component not found: "${configApp}". Check your veryfront.config.ts 'app' setting.`,
-      );
+      throw CONFIG_INVALID.create({
+        detail:
+          `Invalid app component path: "${configApp}". Check your veryfront.config.ts 'app' setting.`,
+      });
     }
 
     const appPath = configApp.startsWith("/") || configApp.startsWith(projectDir)
@@ -43,9 +45,10 @@ export async function resolveAppComponentPath(
       : join(projectDir, configApp);
 
     if (!(await adapter.fs.exists(appPath))) {
-      throw new Error(
-        `App component not found: "${configApp}" (resolved to "${appPath}"). Check your veryfront.config.ts 'app' setting.`,
-      );
+      throw CONFIG_INVALID.create({
+        detail:
+          `Configured app component does not exist: "${configApp}" (resolved to "${appPath}"). Check your veryfront.config.ts 'app' setting.`,
+      });
     }
 
     logger.debug("Using config.app", { path: appPath });

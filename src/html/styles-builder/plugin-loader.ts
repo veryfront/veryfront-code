@@ -11,6 +11,13 @@ import plugin from "tailwindcss/plugin";
 import defaultTheme from "tailwindcss/defaultTheme";
 import colors from "tailwindcss/colors";
 import { serverLogger } from "#veryfront/utils";
+import {
+  type ErrorSlug,
+  getErrorBySlug,
+  IMPORT_RESOLUTION_ERROR,
+  NETWORK_ERROR,
+  VeryfrontError,
+} from "#veryfront/errors";
 
 const logger = serverLogger.component("tailwind");
 
@@ -104,13 +111,15 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
 
   const stubResponse = await fetch(stubUrl);
   if (!stubResponse.ok) {
-    throw new Error(`Failed to fetch stub: ${stubResponse.status}`);
+    throw NETWORK_ERROR.create({ detail: `Failed to fetch stub: ${stubResponse.status}` });
   }
   const stubCode = await stubResponse.text();
 
   const bundleMatch = stubCode.match(/from\s*["'](\/[^"']+\.bundle\.mjs)["']/);
   if (!bundleMatch) {
-    throw new Error(`Could not find bundle path in esm.sh response: ${stubCode.substring(0, 200)}`);
+    throw IMPORT_RESOLUTION_ERROR.create({
+      detail: `Could not find bundle path in esm.sh response: ${stubCode.substring(0, 200)}`,
+    });
   }
 
   const bundleUrl = `https://esm.sh${bundleMatch[1]}`;
@@ -118,13 +127,15 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
 
   const bundleResponse = await fetch(bundleUrl);
   if (!bundleResponse.ok) {
-    throw new Error(`Failed to fetch bundle: ${bundleResponse.status}`);
+    throw NETWORK_ERROR.create({ detail: `Failed to fetch bundle: ${bundleResponse.status}` });
   }
   let code = await bundleResponse.text();
 
   // Step 3: Verify it's actually JavaScript (not an HTML error page)
   if (code.trimStart().startsWith("<!") || code.trimStart().startsWith("<html")) {
-    throw new Error(`esm.sh returned HTML instead of JavaScript for ${packageName}`);
+    throw IMPORT_RESOLUTION_ERROR.create({
+      detail: `esm.sh returned HTML instead of JavaScript for ${packageName}`,
+    });
   }
 
   // Step 4: Rewrite tailwindcss imports to use global shims
@@ -157,11 +168,12 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
 export async function loadPlugin(
   id: string,
   pluginCache: Map<string, unknown>,
-  pluginErrors: Map<string, string>,
+  pluginErrors: Map<string, Error>,
 ): Promise<unknown> {
+  const cachedError = pluginErrors.get(id);
+  if (cachedError) throw cachedError;
+
   if (pluginCache.has(id)) {
-    const errorMsg = pluginErrors.get(id);
-    if (errorMsg) throw new Error(errorMsg);
     return pluginCache.get(id);
   }
 
@@ -177,20 +189,9 @@ export async function loadPlugin(
       logger.debug("Loading plugin from node_modules", { id });
       try {
         mod = await import(id);
-      } catch (importError) {
+      } catch {
         logger.debug("Plugin not found in node_modules, falling back to esm.sh", { id });
-        try {
-          mod = await loadModuleFromEsmSh(id);
-        } catch (_) {
-          const errorMsg = `Failed to load plugin "${id}": plugin not installed`;
-          logger.warn("Plugin not installed", {
-            id,
-            error: importError instanceof Error ? importError.message : String(importError),
-          });
-          pluginErrors.set(id, errorMsg);
-          pluginCache.set(id, null);
-          throw new Error(errorMsg);
-        }
+        mod = await loadModuleFromEsmSh(id);
       }
     }
 
@@ -198,11 +199,31 @@ export async function loadPlugin(
     pluginCache.set(id, pluginExport);
     return pluginExport;
   } catch (error) {
-    const errorMsg = `Failed to load plugin "${id}": ${
-      error instanceof Error ? error.message : String(error)
-    }`;
-    logger.warn(`${errorMsg}`);
-    pluginErrors.set(id, errorMsg);
-    throw new Error(errorMsg);
+    const wrappedError = wrapPluginError(id, error);
+    logger.warn(wrappedError.message);
+    pluginErrors.set(id, wrappedError);
+    throw wrappedError;
   }
+}
+
+function wrapPluginError(id: string, error: unknown): Error {
+  const detail = `Failed to load plugin "${id}": ${
+    error instanceof Error ? error.message : String(error)
+  }`;
+
+  if (error instanceof VeryfrontError) {
+    return getErrorBySlug(error.slug as ErrorSlug).create({
+      detail,
+      cause: error.cause,
+      context: error.context,
+      instance: error.instance,
+      status: error.status,
+    });
+  }
+
+  if (error instanceof Error) {
+    return new Error(detail, { cause: error });
+  }
+
+  return IMPORT_RESOLUTION_ERROR.create({ detail });
 }

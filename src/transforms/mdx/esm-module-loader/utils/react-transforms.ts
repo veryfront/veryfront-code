@@ -9,6 +9,7 @@
  */
 
 import { fileURLToPath } from "node:url";
+import { NOT_SUPPORTED } from "#veryfront/errors";
 import { IS_TRUE_NODE } from "../constants.ts";
 
 type ImportMetaWithResolve = ImportMeta & {
@@ -21,9 +22,9 @@ function resolveWithImportMeta(specifier: string, parentUrl: string): string | n
   const metaResolve = (import.meta as ImportMetaWithResolve).resolve;
 
   if (typeof metaResolve !== "function") {
-    const error = new Error(
-      "import.meta.resolve is required for Node ESM resolution (Node >= 22).",
-    );
+    const error = NOT_SUPPORTED.create({
+      detail: "import.meta.resolve is required for Node ESM resolution (Node >= 22).",
+    });
     error.name = IMPORT_META_RESOLVE_ERROR;
     throw error;
   }

@@ -7,6 +7,7 @@
  */
 
 import type { FileSystemAdapter, FileWatcher } from "#veryfront/platform/adapters/base.ts";
+import { FILE_NOT_FOUND } from "#veryfront/errors";
 
 /**
  * Create a lightweight in-memory FileSystemAdapter for tests.
@@ -52,7 +53,7 @@ export function createSkillTestAdapter(files: Record<string, string>): FileSyste
   return {
     async readFile(path: string): Promise<string> {
       const content = files[path];
-      if (content === undefined) throw new Error(`File not found: ${path}`);
+      if (content === undefined) throw FILE_NOT_FOUND.create({ detail: `File not found: ${path}` });
       return content;
     },
     async exists(path: string): Promise<boolean> {

@@ -236,7 +236,9 @@ export function memoryUsage(): {
     return { rss, heapTotal, heapUsed, external };
   }
 
-  if (!runtimeProcess) throw new Error("memoryUsage() is not supported in this runtime");
+  if (!runtimeProcess) {
+    throw new Error("memoryUsage() is not supported in this runtime");
+  }
 
   const { rss, heapTotal, heapUsed, external } = runtimeProcess.memoryUsage();
   return { rss, heapTotal, heapUsed, external: external || 0 };

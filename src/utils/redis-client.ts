@@ -1,5 +1,6 @@
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { logger as baseLogger } from "./logger/logger.ts";
+import { DEPENDENCY_MISSING, INITIALIZATION_ERROR } from "#veryfront/errors";
 
 const logger = baseLogger.component("redis");
 
@@ -36,7 +37,9 @@ export async function getRedisClient(options: RedisClientOptions = {}): Promise<
   if (sharedClient && sharedClient.isOpen !== false) return sharedClient;
 
   if (connectionFailed && Date.now() - lastConnectionAttempt < RECONNECT_DELAY_MS) {
-    throw new Error("[Redis] Connection recently failed, waiting before retry");
+    throw INITIALIZATION_ERROR.create({
+      detail: "[Redis] Connection recently failed, waiting before retry",
+    });
   }
 
   if (isConnecting && connectionPromise) return connectionPromise;
@@ -69,9 +72,10 @@ async function createClient(options: RedisClientOptions): Promise<RedisClient> {
     createClientFn = mod.createClient as (opts: { url?: string }) => RedisClient;
   } catch (error) {
     logger.debug("Failed to load @redis/client module", { error });
-    throw new Error(
-      "[Redis] Failed to load @redis/client. Install with: deno add npm:@redis/client@1.5.8",
-    );
+    throw DEPENDENCY_MISSING.create({
+      detail:
+        "[Redis] Failed to load @redis/client. Install with: deno add npm:@redis/client@1.5.8",
+    });
   }
 
   const client = createClientFn({ url: options.url ?? getEnv("REDIS_URL") });

@@ -7,7 +7,7 @@
 
 import { logger } from "./bridge-logger.ts";
 
-type StudioMode = "simple" | "advanced";
+export type StudioMode = "simple" | "advanced";
 
 interface BridgeConfig {
   projectId: string;

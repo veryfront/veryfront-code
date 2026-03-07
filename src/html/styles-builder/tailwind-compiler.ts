@@ -1,4 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
+import { COMPILATION_ERROR } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
@@ -112,9 +113,10 @@ export async function getProjectCSS(
         error: formatted.message,
         suggestion: formatted.suggestion,
       });
-      throw new Error(
-        `[tailwind] ${formatted.title}: ${formatted.message} Suggestion: ${formatted.suggestion}`,
-      );
+      throw COMPILATION_ERROR.create({
+        detail:
+          `[tailwind] ${formatted.title}: ${formatted.message} Suggestion: ${formatted.suggestion}`,
+      });
     }
 
     const hash = hashCSS(result.css);

@@ -1,6 +1,7 @@
 import type { ServeOptions, Server } from "../../base.ts";
 import type { NodeHttpServer, WSWebSocket, WSWebSocketServer } from "./types.ts";
 import { DEFAULT_PORT } from "../../../compat/constants.ts";
+import { TIMEOUT_ERROR } from "#veryfront/errors";
 
 const pendingWebSocketUpgrades = new Map<
   string,
@@ -45,7 +46,7 @@ export function registerWebSocketUpgrade(requestId: string): Promise<WSWebSocket
       if (!pending) return;
 
       pendingWebSocketUpgrades.delete(requestId);
-      pending.reject(new Error("WebSocket upgrade timed out"));
+      pending.reject(TIMEOUT_ERROR.create({ detail: "WebSocket upgrade timed out" }));
     }, 30000);
   });
 }

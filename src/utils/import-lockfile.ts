@@ -1,6 +1,7 @@
 import { computeHash } from "./hash-utils.ts";
 import { serverLogger } from "./logger/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { CACHE_ERROR, NETWORK_ERROR } from "#veryfront/errors";
 
 const logger = serverLogger.component("lockfile");
 
@@ -181,9 +182,10 @@ export async function fetchWithLock(options: FetchWithLockOptions): Promise<Fetc
 
     if (!res.ok) {
       if (strict) {
-        throw new Error(
-          `Lockfile entry stale: ${url} resolved to ${entry.resolved} returned ${res.status}`,
-        );
+        throw CACHE_ERROR.create({
+          detail:
+            `Lockfile entry stale: ${url} resolved to ${entry.resolved} returned ${res.status}`,
+        });
       }
       logger.warn(`Cached URL ${entry.resolved} returned ${res.status}, refetching`);
     } else {
@@ -200,9 +202,10 @@ export async function fetchWithLock(options: FetchWithLockOptions): Promise<Fetc
       }
 
       if (strict) {
-        throw new Error(
-          `Integrity mismatch for ${url}: expected ${entry.integrity}, got ${currentIntegrity}`,
-        );
+        throw CACHE_ERROR.create({
+          detail:
+            `Integrity mismatch for ${url}: expected ${entry.integrity}, got ${currentIntegrity}`,
+        });
       }
       logger.warn(`Integrity mismatch for ${url}, updating lockfile`);
     }
@@ -211,7 +214,7 @@ export async function fetchWithLock(options: FetchWithLockOptions): Promise<Fetc
   logger.debug(`Fetching fresh: ${url}`);
   const res = await fetchFn(url, { headers: USER_AGENT_HEADERS, redirect: "follow" });
 
-  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
+  if (!res.ok) throw NETWORK_ERROR.create({ detail: `Failed to fetch ${url}: ${res.status}` });
 
   const content = await res.text();
   const resolvedUrl = res.url || url;

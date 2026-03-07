@@ -8,6 +8,7 @@
  */
 
 import * as React from "react";
+import { COMPONENT_ERROR } from "#veryfront/errors";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import type { ModelOption } from "../../model-selector.tsx";
 
@@ -47,7 +48,9 @@ const ComposerContext = React.createContext<ComposerContextValue | null>(null);
 export function useComposerContext(): ComposerContextValue {
   const context = React.useContext(ComposerContext);
   if (!context) {
-    throw new Error("useComposerContext must be used within a Composer or Chat component");
+    throw COMPONENT_ERROR.create({
+      detail: "useComposerContext must be used within a Composer or Chat component",
+    });
   }
   return context;
 }

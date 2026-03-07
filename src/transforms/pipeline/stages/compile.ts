@@ -1,5 +1,6 @@
 import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { rendererLogger } from "#veryfront/utils";
+import { COMPILATION_ERROR } from "#veryfront/errors";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { getLoaderFromPath } from "../../esm/transform-utils.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
@@ -60,7 +61,10 @@ export const compilePlugin: TransformPlugin = {
 
       getErrorCollector().addCompileError(errorMsg, ctx.filePath);
 
-      throw new Error(`ESM transform failed for ${ctx.filePath} (loader: ${loader}): ${errorMsg}`);
+      throw COMPILATION_ERROR.create({
+        detail: `ESM transform failed for ${ctx.filePath} (loader: ${loader}): ${errorMsg}`,
+        cause: err,
+      });
     }
   },
 };

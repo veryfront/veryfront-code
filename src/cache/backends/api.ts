@@ -5,6 +5,7 @@ import { tryGetCacheKeyContext } from "../cache-key-builder.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import type { CacheBackend } from "../types.ts";
 import { getEnvValue } from "./helpers.ts";
+import { REQUEST_ERROR } from "#veryfront/errors";
 
 const logger = baseLogger.component("api-cache-backend");
 
@@ -119,9 +120,9 @@ export class ApiCacheBackend implements CacheBackend {
                 error: bodyError instanceof Error ? bodyError.message : String(bodyError),
               });
             }
-            throw new Error(
-              `HTTP ${response.status}: ${responseBody.slice(0, ERROR_BODY_MAX_LENGTH)}`,
-            );
+            throw REQUEST_ERROR.create({
+              detail: `HTTP ${response.status}: ${responseBody.slice(0, ERROR_BODY_MAX_LENGTH)}`,
+            });
           }
 
           return (await response.json()) as T;

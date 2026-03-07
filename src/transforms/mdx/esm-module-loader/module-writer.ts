@@ -11,6 +11,13 @@
 import { join } from "#veryfront/compat/path";
 import React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
+import {
+  BUILD_FAILED,
+  BUNDLE_ERROR,
+  CACHE_ERROR,
+  IMPORT_RESOLUTION_ERROR,
+  INVALID_ARGUMENT,
+} from "#veryfront/errors";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -149,9 +156,9 @@ export async function doLoadModuleESM(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths DONE`, { projectSlug });
 
     if (!context.projectId) {
-      throw new Error(
-        `Missing projectId for MDX module cache (projectSlug: ${context.projectSlug})`,
-      );
+      throw INVALID_ARGUMENT.create({
+        detail: `Missing projectId for MDX module cache (projectSlug: ${context.projectSlug})`,
+      });
     }
 
     let codeHash = hashString(rewritten);
@@ -174,7 +181,7 @@ export async function doLoadModuleESM(
         unresolvedPaths.join(", ")
       }`;
       logger.error(`${LOG_PREFIX_MDX_RENDERER} ${errorMsg}`);
-      throw new Error(errorMsg);
+      throw IMPORT_RESOLUTION_ERROR.create({ detail: errorMsg });
     }
 
     const nsDir = join(esmCacheDir, namespaceKey);
@@ -196,7 +203,7 @@ export async function doLoadModuleESM(
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Writing module file`, { projectSlug, filePath });
       const written = await writeCacheFile(localFs, filePath, rewritten, "MDX-ESM-LOADER");
       if (!written) {
-        throw new Error(`Failed to write MDX module cache file: ${filePath}`);
+        throw BUILD_FAILED.create({ detail: `Failed to write MDX module cache file: ${filePath}` });
       }
     });
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight DONE`, { projectSlug, filePath });
@@ -258,9 +265,9 @@ export async function doLoadModuleESM(
               "MDX-ESM-LOADER",
             );
             if (!written) {
-              throw new Error(
-                `Failed to write refreshed MDX module cache file: ${refreshedPath}`,
-              );
+              throw BUILD_FAILED.create({
+                detail: `Failed to write refreshed MDX module cache file: ${refreshedPath}`,
+              });
             }
           });
 
@@ -278,11 +285,11 @@ export async function doLoadModuleESM(
           if (refreshedBundles.length > 0) {
             const stillFailed = await ensureHttpBundlesExist(refreshedBundles, cacheDir);
             if (stillFailed.length > 0) {
-              throw new Error(
-                `Failed to recover ${stillFailed.length} HTTP bundle(s) after re-fetch: ${
+              throw BUNDLE_ERROR.create({
+                detail: `Failed to recover ${stillFailed.length} HTTP bundle(s) after re-fetch: ${
                   stillFailed.join(", ")
                 }`,
-              );
+              });
             }
           }
         }
@@ -333,9 +340,9 @@ export async function doLoadModuleESM(
             "MDX-ESM-LOADER",
           );
           if (!written) {
-            throw new Error(
-              `Failed to write regenerated MDX module cache file: ${refreshedPath}`,
-            );
+            throw BUILD_FAILED.create({
+              detail: `Failed to write regenerated MDX module cache file: ${refreshedPath}`,
+            });
           }
         });
 
@@ -353,9 +360,11 @@ export async function doLoadModuleESM(
           extractFrameworkBundlePaths(rewritten),
         );
         if (stillMissing.length > 0) {
-          throw new Error(
-            `Failed to regenerate ${stillMissing.length} framework bundle(s): ${stillMissing[0]}`,
-          );
+          throw BUNDLE_ERROR.create({
+            detail: `Failed to regenerate ${stillMissing.length} framework bundle(s): ${
+              stillMissing[0]
+            }`,
+          });
         }
 
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Framework bundles regenerated successfully`, {
@@ -368,9 +377,9 @@ export async function doLoadModuleESM(
     // Verify the cache file exists before attempting dynamic import
     const fileExists = await verifyCacheFileExists(localFs, filePath, "MDX-ESM-LOADER");
     if (!fileExists) {
-      throw new Error(
-        `MDX module cache file missing before import: ${filePath}`,
-      );
+      throw CACHE_ERROR.create({
+        detail: `MDX module cache file missing before import: ${filePath}`,
+      });
     }
 
     const mod = await withSpan(

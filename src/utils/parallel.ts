@@ -9,6 +9,7 @@
 
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { TIMEOUT_ERROR } from "#veryfront/errors";
 
 const DEFAULT_CONCURRENCY = 20;
 const ACQUIRE_TIMEOUT_MS = 30_000;
@@ -32,9 +33,10 @@ async function acquireOrThrow(
   const acquired = await semaphore.tryAcquire(timeoutMs);
   if (acquired) return;
 
-  throw new Error(
-    `${label}: timed out waiting for semaphore after ${timeoutMs}ms (available: ${semaphore.available}, waiting: ${semaphore.waiting})`,
-  );
+  throw TIMEOUT_ERROR.create({
+    detail:
+      `${label}: timed out waiting for semaphore after ${timeoutMs}ms (available: ${semaphore.available}, waiting: ${semaphore.waiting})`,
+  });
 }
 
 export function parallelMap<T, R>(
