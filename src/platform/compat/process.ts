@@ -2,7 +2,6 @@ import { isBun as IS_BUN, isDeno as IS_DENO } from "./runtime.ts";
 import { dynamicImport } from "./dynamic-import.ts";
 
 const nodeProcess = (globalThis as { process?: typeof import("node:process") }).process;
-const hasNodeProcess = !!nodeProcess?.versions?.node;
 
 function isWindowsPlatform(): boolean {
   if (IS_DENO) return Deno.build.os === "windows";
@@ -14,20 +13,20 @@ function isWindowsPlatform(): boolean {
 /** Get command-line arguments (cross-runtime: Deno.args or process.argv). */
 export function getArgs(): string[] {
   if (IS_DENO) return Deno.args;
-  if (hasNodeProcess) return nodeProcess!.argv.slice(2);
+  if (nodeProcess) return nodeProcess.argv.slice(2);
   return [];
 }
 
 /** Exit the process with an optional code (cross-runtime: Deno.exit or process.exit). */
 export function exit(code?: number): never {
   if (IS_DENO) Deno.exit(code);
-  if (hasNodeProcess) nodeProcess!.exit(code);
+  if (nodeProcess) nodeProcess.exit(code);
   throw new Error("exit() is not supported in this runtime");
 }
 
 export function cwd(): string {
   if (IS_DENO) return Deno.cwd();
-  if (hasNodeProcess) return nodeProcess!.cwd();
+  if (nodeProcess) return nodeProcess.cwd();
   throw new Error("cwd() is not supported in this runtime");
 }
 
@@ -36,8 +35,8 @@ export function chdir(directory: string): void {
     Deno.chdir(directory);
     return;
   }
-  if (hasNodeProcess) {
-    nodeProcess!.chdir(directory);
+  if (nodeProcess) {
+    nodeProcess.chdir(directory);
     return;
   }
   throw new Error("chdir() is not supported in this runtime");
@@ -45,7 +44,7 @@ export function chdir(directory: string): void {
 
 export function env(): Record<string, string> {
   if (IS_DENO) return Deno.env.toObject();
-  if (hasNodeProcess) return nodeProcess!.env as Record<string, string>;
+  if (nodeProcess) return nodeProcess.env as Record<string, string>;
   return {};
 }
 
@@ -95,7 +94,7 @@ export function getEnv(key: string): string | undefined {
   if (isProjectEnvActiveSafe()) return undefined;
 
   if (IS_DENO) return Deno.env.get(key);
-  if (hasNodeProcess) return nodeProcess!.env[key];
+  if (nodeProcess) return nodeProcess.env[key];
   return undefined;
 }
 
@@ -166,8 +165,8 @@ export function setEnv(key: string, value: string): void {
     Deno.env.set(key, value);
     return;
   }
-  if (hasNodeProcess) {
-    nodeProcess!.env[key] = value;
+  if (nodeProcess) {
+    nodeProcess.env[key] = value;
     return;
   }
   throw new Error("setEnv() is not supported in this runtime");
@@ -178,8 +177,8 @@ export function deleteEnv(key: string): void {
     Deno.env.delete(key);
     return;
   }
-  if (hasNodeProcess) {
-    delete nodeProcess!.env[key];
+  if (nodeProcess) {
+    delete nodeProcess.env[key];
     return;
   }
   throw new Error("deleteEnv() is not supported in this runtime");
@@ -208,7 +207,7 @@ export function getEnvOverlayStorage(): EnvOverlayStorage | null {
 
 export function pid(): number {
   if (IS_DENO) return Deno.pid;
-  if (hasNodeProcess) return nodeProcess!.pid;
+  if (nodeProcess) return nodeProcess.pid;
   return 0;
 }
 
@@ -223,9 +222,9 @@ export function memoryUsage(): {
     return { rss, heapTotal, heapUsed, external };
   }
 
-  if (!hasNodeProcess) throw new Error("memoryUsage() is not supported in this runtime");
+  if (!nodeProcess) throw new Error("memoryUsage() is not supported in this runtime");
 
-  const { rss, heapTotal, heapUsed, external } = nodeProcess!.memoryUsage();
+  const { rss, heapTotal, heapUsed, external } = nodeProcess.memoryUsage();
   return { rss, heapTotal, heapUsed, external: external || 0 };
 }
 
@@ -234,7 +233,7 @@ export function memoryUsage(): {
  */
 export function isInteractive(): boolean {
   if (IS_DENO) return Deno.stdin.isTerminal();
-  if (hasNodeProcess) return nodeProcess!.stdin.isTTY ?? false;
+  if (nodeProcess) return nodeProcess.stdin.isTTY ?? false;
   return false;
 }
 
@@ -243,7 +242,7 @@ export function isInteractive(): boolean {
  */
 export function isStdoutTTY(): boolean {
   if (IS_DENO) return Deno.stdout.isTerminal();
-  if (hasNodeProcess) return nodeProcess!.stdout.isTTY ?? false;
+  if (nodeProcess) return nodeProcess.stdout.isTTY ?? false;
   return false;
 }
 
@@ -263,10 +262,10 @@ export function getTerminalSize(): { columns: number; rows: number } {
     }
   }
 
-  if (!hasNodeProcess) return defaultSize;
+  if (!nodeProcess) return defaultSize;
 
-  const columns = nodeProcess!.stdout?.columns;
-  const rows = nodeProcess!.stdout?.rows;
+  const columns = nodeProcess.stdout?.columns;
+  const rows = nodeProcess.stdout?.rows;
   if (columns && rows) return { columns, rows };
 
   return defaultSize;
@@ -280,7 +279,7 @@ export function getRuntimeVersion(): string {
   if ("Bun" in globalThis) {
     return `Bun ${(globalThis as unknown as { Bun: { version: string } }).Bun.version}`;
   }
-  if (hasNodeProcess) return `Node.js ${nodeProcess!.version}`;
+  if (nodeProcess) return `Node.js ${nodeProcess.version}`;
   return "unknown";
 }
 
@@ -290,9 +289,9 @@ export function getRuntimeVersion(): string {
  */
 export function getOsType(): string {
   if (IS_DENO) return Deno.build.os;
-  if (hasNodeProcess) {
+  if (nodeProcess) {
     // Node/Bun uses process.platform which returns "win32" for Windows
-    const platform = nodeProcess!.platform;
+    const platform = nodeProcess.platform;
     return platform === "win32" ? "windows" : platform;
   }
   return "unknown";
@@ -309,7 +308,7 @@ export function onSignal(
     Deno.addSignalListener(signal, handler);
     return;
   }
-  if (hasNodeProcess) nodeProcess!.on(signal, handler);
+  if (nodeProcess) nodeProcess.on(signal, handler);
 }
 
 /**
@@ -338,7 +337,7 @@ export function onGlobalError(
     return;
   }
 
-  if (!hasNodeProcess) return;
+  if (!nodeProcess) return;
 
   const handleNodeGlobalError = (
     error: Error,
@@ -359,14 +358,14 @@ export function onGlobalError(
     // Node/Bun suppress default fatal behavior when a listener is registered.
     // If the callback did not explicitly handle the error, exit to preserve
     // expected fatal semantics for uncaught exceptions and unhandled rejections.
-    nodeProcess!.exit(1);
+    nodeProcess.exit(1);
   };
 
-  nodeProcess!.on("uncaughtException", (error: Error) => {
+  nodeProcess.on("uncaughtException", (error: Error) => {
     handleNodeGlobalError(error, "uncaughtException");
   });
 
-  nodeProcess!.on("unhandledRejection", (reason: unknown) => {
+  nodeProcess.on("unhandledRejection", (reason: unknown) => {
     const error = reason instanceof Error ? reason : new Error(String(reason));
     handleNodeGlobalError(error, "unhandledRejection");
   });
@@ -391,7 +390,7 @@ export function unrefTimer(timerId: ReturnType<typeof setInterval>): void {
  */
 export function execPath(): string {
   if (IS_DENO) return Deno.execPath();
-  if (hasNodeProcess) return nodeProcess!.execPath;
+  if (nodeProcess) return nodeProcess.execPath;
   return "";
 }
 
@@ -404,9 +403,9 @@ export function uptime(): number {
     // Deno.osUptime() returns system uptime in seconds
     return Deno.osUptime?.() ?? 0;
   }
-  if (hasNodeProcess) {
+  if (nodeProcess) {
     // process.uptime() returns process uptime in seconds
-    return nodeProcess!.uptime?.() ?? 0;
+    return nodeProcess.uptime?.() ?? 0;
   }
   return 0;
 }
@@ -420,8 +419,8 @@ export function getStdout(): { write: (data: string) => void } | null {
     const encoder = new TextEncoder();
     return { write: (data: string) => Deno.stdout.writeSync(encoder.encode(data)) };
   }
-  if (hasNodeProcess && nodeProcess!.stdout) {
-    return { write: (data: string) => nodeProcess!.stdout.write(data) };
+  if (nodeProcess?.stdout) {
+    return { write: (data: string) => nodeProcess.stdout.write(data) };
   }
   return null;
 }
@@ -441,9 +440,9 @@ export function writeStdout(text: string): void {
 export async function writeStdoutAsync(data: Uint8Array): Promise<number> {
   if (IS_DENO) return await Deno.stdout.write(data);
 
-  if (hasNodeProcess && nodeProcess!.stdout) {
+  if (nodeProcess?.stdout) {
     return await new Promise((resolve, reject) => {
-      nodeProcess!.stdout.write(data, (error) => {
+      nodeProcess.stdout.write(data, (error) => {
         if (error) reject(error);
         else resolve(data.length);
       });
@@ -475,7 +474,7 @@ export function readStdinByteSync(): number | null {
 
   if (IS_DENO) {
     const n = Deno.stdin.readSync(buf);
-    return n ? buf[0]! : null;
+    return n ? buf[0] ?? null : null;
   }
 
   if (IS_BUN) {
@@ -646,7 +645,9 @@ export async function runCommand(
         capture && child.stderr ? readStreamToString(child.stderr) : Promise.resolve(undefined),
       ]);
 
-      if (timeout.hasTimedOut()) return createTimeoutResult(effectiveTimeoutMs!, stdout, stderr);
+      if (timeout.hasTimedOut()) {
+        return createTimeoutResult(effectiveTimeoutMs ?? 0, stdout, stderr);
+      }
 
       return {
         success: status.success,
@@ -709,7 +710,9 @@ export async function runCommand(
         capture && proc.stderr ? readStreamToString(proc.stderr) : Promise.resolve(undefined),
       ]);
 
-      if (timeout.hasTimedOut()) return createTimeoutResult(effectiveTimeoutMs!, stdout, stderr);
+      if (timeout.hasTimedOut()) {
+        return createTimeoutResult(effectiveTimeoutMs ?? 0, stdout, stderr);
+      }
 
       return { success: code === 0, code, stdout, stderr };
     } finally {
@@ -717,7 +720,7 @@ export async function runCommand(
     }
   }
 
-  if (!hasNodeProcess) return { success: false, code: 1 };
+  if (!nodeProcess) return { success: false, code: 1 };
 
   const { spawn } = await dynamicImport<typeof import("node:child_process")>("node:child_process");
 
@@ -734,7 +737,7 @@ export async function runCommand(
   return await new Promise((resolve) => {
     const child = spawn(cmd, args, {
       cwd: cmdCwd,
-      env: cmdEnv ? { ...nodeProcess!.env, ...cmdEnv } : undefined,
+      env: cmdEnv ? { ...nodeProcess?.env, ...cmdEnv } : undefined,
       stdio: nodeStdio,
       shell,
     });
@@ -763,7 +766,7 @@ export async function runCommand(
       if (timeout.hasTimedOut()) {
         resolve(
           createTimeoutResult(
-            effectiveTimeoutMs!,
+            effectiveTimeoutMs ?? 0,
             capture ? stdout : undefined,
             capture ? stderr : undefined,
           ),

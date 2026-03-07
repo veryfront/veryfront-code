@@ -337,8 +337,9 @@ export async function transformToESM(
 /** Extract readFile from adapter if available, for dependency hash computation. */
 function extractReadFile(adapter: unknown): ((path: string) => Promise<string>) | undefined {
   const a = adapter as { fs?: { readFile?: (path: string) => Promise<string> } } | null;
-  if (typeof a?.fs?.readFile !== "function") return undefined;
-  return (path: string) => a.fs!.readFile!(path);
+  const readFile = a?.fs?.readFile;
+  if (typeof readFile !== "function") return undefined;
+  return (path: string) => readFile(path);
 }
 
 /**

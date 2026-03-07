@@ -148,9 +148,17 @@ export async function transformJsxImports(
         }
 
         const isFrameworkFile = filePath.startsWith(FRAMEWORK_ROOT);
-        const jsxCode = isFrameworkFile
-          ? await getLocalFs().readTextFile(filePath)
-          : await adapter!.fs.readFile(filePath);
+        let jsxCode: string | Uint8Array;
+        if (isFrameworkFile) {
+          jsxCode = await getLocalFs().readTextFile(filePath);
+        } else if (adapter) {
+          jsxCode = await adapter.fs.readFile(filePath);
+        } else {
+          logger.warn(
+            `${LOG_PREFIX_MDX_LOADER} No adapter available to read JSX file: ${filePath}`,
+          );
+          return null;
+        }
 
         const loaderMap: Record<string, "js" | "jsx" | "ts" | "tsx"> = {
           tsx: "tsx",

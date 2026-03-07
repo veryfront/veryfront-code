@@ -46,7 +46,7 @@ export class ManifestHandler {
     }
 
     if (!this.isCacheValid()) return null;
-    return this.cache!.data;
+    return this.cache?.data ?? null;
   }
 
   private async setCachedData(data: ManifestData): Promise<void> {
