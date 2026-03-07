@@ -238,8 +238,8 @@ export function parseMdxImportMap(content: string): Record<string, MdxImportEntr
       const aliasMatch = normalizedPart.match(
         /^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/,
       );
-      const sourceName = aliasMatch ? aliasMatch[1]! : normalizedPart;
-      const localName = aliasMatch ? aliasMatch[2]! : normalizedPart;
+      const sourceName = aliasMatch ? (aliasMatch[1] ?? normalizedPart) : normalizedPart;
+      const localName = aliasMatch ? (aliasMatch[2] ?? normalizedPart) : normalizedPart;
       if (localName) {
         const isDefaultAlias = sourceName === "default";
         setImportEntry(
@@ -458,12 +458,12 @@ export function extractRawBlocksForEditor(
     const componentNamePattern = /^[A-Z][\w$]*(?:\.[A-Z][\w$]*)*$/;
     const normalizedComponentName = componentNamePattern.test(componentName) ? componentName : "";
     const componentParts = normalizedComponentName ? normalizedComponentName.split(".") : [];
-    const namespaceName = componentParts.length > 0 ? componentParts[0] : "";
+    const namespaceName = componentParts.length > 0 ? (componentParts[0] ?? "") : "";
     const fallbackSymbol = componentParts.length > 0
-      ? componentParts[componentParts.length - 1]
+      ? (componentParts[componentParts.length - 1] ?? "")
       : "";
     const directEntry = normalizedComponentName ? importMap[normalizedComponentName] : null;
-    const namespaceEntry = !directEntry && namespaceName ? importMap[namespaceName!] : null;
+    const namespaceEntry = !directEntry && namespaceName ? importMap[namespaceName] : null;
     const importEntry = directEntry || namespaceEntry || null;
     const entryPath = importEntry && typeof importEntry.filePath === "string"
       ? importEntry.filePath
@@ -481,7 +481,7 @@ export function extractRawBlocksForEditor(
     if (entrySymbol) {
       componentSymbol = entrySymbol;
     } else if (entryKind === "namespace" && componentParts.length > 1) {
-      componentSymbol = componentParts[componentParts.length - 1];
+      componentSymbol = componentParts[componentParts.length - 1] ?? "";
     }
     mdxBlocks.push({
       tokenIndex: tokenIndex,

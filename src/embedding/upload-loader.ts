@@ -38,7 +38,7 @@ function extractCSV(buffer: ArrayBuffer): string {
   const lines = text.split("\n").filter((line) => line.trim());
   if (lines.length < 2) return text;
 
-  const headers = parseCSVLine(lines[0]!);
+  const headers = parseCSVLine(lines[0] ?? "");
   const rows = lines.slice(1).map((line) => {
     const values = parseCSVLine(line);
     return headers

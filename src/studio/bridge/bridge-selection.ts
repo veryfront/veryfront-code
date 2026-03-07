@@ -113,7 +113,7 @@ export function escapeRegexText(value: unknown): string {
   const text = String(value || "");
   let escaped = "";
   for (let i = 0; i < text.length; i += 1) {
-    const char = text[i]!;
+    const char = text[i] ?? "";
     if ("\\^$.*+?()[]{}|".indexOf(char) >= 0) {
       escaped += "\\" + char;
     } else {
@@ -323,7 +323,7 @@ export function buildEditorRenderedMaps(
   let lastSrc = 0;
   for (let r = 0; r <= trimmed.length; r++) {
     if (r2e[r] !== undefined) {
-      lastSrc = r2e[r]!;
+      lastSrc = r2e[r] ?? 0;
     } else {
       r2e[r] = lastSrc;
     }
