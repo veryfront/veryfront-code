@@ -32,7 +32,7 @@ export function isInternalHost(host: string): boolean {
 }
 
 /** Monitoring paths that should skip domain lookup */
-export const MONITORING_PATHS = new Set(["/healthz", "/readyz", "/_health", "/_metrics"]);
+export const MONITORING_PATHS = new Set(["/healthz", "/readyz", "/_health"]);
 
 /** Cached request timeout value (lazy-loaded to avoid module-level env access) */
 let _requestTimeoutMs: number | null = null;
