@@ -516,7 +516,7 @@ export class Renderer {
 
     const pipeline = new RenderPipeline({
       pageResolver,
-      cacheCoordinator: pipelineCacheCoordinator as any,
+      cacheCoordinator: pipelineCacheCoordinator,
       pageRenderer,
       layoutOrchestrator,
       ssrOrchestrator,

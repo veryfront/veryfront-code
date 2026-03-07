@@ -5,6 +5,8 @@
  * Used for the Veryfront logo in CLI experiences.
  ******************/
 
+import { RESET } from "./ansi.ts";
+
 export const AGENT_FACE: number[][] = [
   [0, 0, 0, 0, 0, 0, 0],
   [0, 1, 1, 1, 0, 0, 0],
@@ -59,8 +61,6 @@ const COMPACT_OPTIONS: Partial<DotMatrixOptions> = {
   offChar: "·",
   spacing: " ",
 };
-
-const RESET = "\x1b[0m";
 
 const SPIN_COLORS = {
   bright: "\x1b[38;2;255;165;120m",
@@ -315,9 +315,7 @@ export class AnimatedDotMatrix {
   }
 
   stopSpinner(): void {
-    this._spinning = false;
-    this.clearInterval();
-    this.pattern = AGENT_FACE;
+    this.stop();
   }
 
   stop(): void {
@@ -328,7 +326,6 @@ export class AnimatedDotMatrix {
 
   reset(): void {
     this.stop();
-    this.pattern = AGENT_FACE;
   }
 
   setPattern(pattern: number[][]): void {

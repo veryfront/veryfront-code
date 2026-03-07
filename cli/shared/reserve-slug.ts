@@ -9,6 +9,7 @@
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { capitalizeSeparatedWords } from "veryfront/utils/case-utils";
 import { randomSuffix } from "#cli/shared/slug";
+import { getApiUrl } from "#cli/shared/constants";
 
 function slugToName(slug: string): string {
   return capitalizeSeparatedWords(slug, "-", " ");
@@ -32,10 +33,6 @@ interface CreateProjectResult {
 }
 
 const MAX_SLUG_ATTEMPTS = 10;
-
-function getApiUrl(env: EnvironmentConfig = getEnvironmentConfig()): string {
-  return env.apiUrl ?? "https://api.veryfront.com";
-}
 
 export async function reserveProjectSlug(
   slug: string,

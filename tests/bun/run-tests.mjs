@@ -2,7 +2,9 @@
 
 import { spawn } from "node:child_process";
 import os from "node:os";
+import { readFileSync } from "node:fs";
 import { filterTestFiles, listTestFiles, splitIntoShards } from "../test-file-utils.mjs";
+import { ensureNpmNodeModulesLinks } from "../ensure-npm-links.mjs";
 
 function resolveConcurrency(envKeys) {
   for (const key of envKeys) {
@@ -32,6 +34,7 @@ function resolveShardCount(envKeys) {
 }
 
 const args = process.argv.slice(2);
+ensureNpmNodeModulesLinks();
 const concurrency = resolveConcurrency(["VF_TEST_CONCURRENCY", "BUN_TEST_CONCURRENCY"]);
 const shardOverride = resolveShardCount(["VF_TEST_SHARDS", "BUN_TEST_SHARDS"]);
 const autoShards = concurrency >= 4 ? Math.min(4, Math.floor(concurrency / 2)) : 1;
@@ -41,15 +44,43 @@ const includePatterns = (process.env.BUN_TEST_INCLUDE || process.env.VF_TEST_INC
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
-const excludePatterns = (process.env.BUN_TEST_EXCLUDE || process.env.VF_TEST_EXCLUDE || "")
+const runtimeIncompatibleTests = [
+  "src/config/env.test.ts",
+  "src/proxy/handler.test.ts",
+  "src/proxy/oauth-client.test.ts",
+  "src/proxy/token-priority.test.ts",
+  "src/server/project-env/fetcher.test.ts",
+  "src/routing/api/module-loader/loader.test.ts",
+];
+const envExcludePatterns = (process.env.BUN_TEST_EXCLUDE || process.env.VF_TEST_EXCLUDE || "")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
+const excludePatterns = [...runtimeIncompatibleTests, ...envExcludePatterns];
 const hasFilters = includePatterns.length > 0 || excludePatterns.length > 0;
+const preloadPath = "./tests/bun/preload.ts";
+
+function isDenoDependentTest(file) {
+  try {
+    const source = readFileSync(file, "utf-8");
+    return /\bDeno\./.test(source) ||
+      /\bDeno\.test\s*\(/.test(source) ||
+      /tests\/_helpers\/utils\.ts/.test(source) ||
+      /\bcreateMockServer\s*\(/.test(source);
+  } catch {
+    return false;
+  }
+}
+
+function removeDenoDependentTests(files) {
+  return files.filter((file) => !isDenoDependentTest(file));
+}
 
 function buildArgsForShard(files, perShardConcurrency) {
   return [
     "test",
+    "--preload",
+    preloadPath,
     "--concurrency",
     String(perShardConcurrency),
     ...files,
@@ -62,6 +93,7 @@ async function runShardedTests() {
   if (hasFilters) {
     files = filterTestFiles(files, { include: includePatterns, exclude: excludePatterns });
   }
+  files = removeDenoDependentTests(files);
   if (files.length === 0) {
     return hasFilters ? true : null;
   }
@@ -89,6 +121,8 @@ async function runShardedTests() {
 
 const bunArgs = [
   "test",
+  "--preload",
+  preloadPath,
   "--concurrency",
   String(concurrency),
   ...args,
@@ -100,6 +134,16 @@ if (!env.NODE_ENV) env.NODE_ENV = "production";
 if (!env.LOG_FORMAT) env.LOG_FORMAT = "text";
 // Don't scale time by default - many tests have timing-sensitive operations
 if (!env.VF_TEST_TIME_SCALE) env.VF_TEST_TIME_SCALE = "1";
+for (const key of [
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_BASE_URL",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+]) {
+  delete env[key];
+}
 
 function runSingleProcess(explicitFiles) {
   if (explicitFiles && explicitFiles.length === 0) {
@@ -108,6 +152,8 @@ function runSingleProcess(explicitFiles) {
   const resolvedArgs = explicitFiles && explicitFiles.length > 0
     ? [
       "test",
+      "--preload",
+      preloadPath,
       "--concurrency",
       String(concurrency),
       ...explicitFiles,
@@ -139,8 +185,11 @@ if (shardCount > 1) {
     const patterns = args.length > 0 ? args : defaultRoots;
     let files = listTestFiles(patterns);
     files = filterTestFiles(files, { include: includePatterns, exclude: excludePatterns });
+    files = removeDenoDependentTests(files);
     runSingleProcess(files);
   } else {
-    runSingleProcess();
+    const patterns = args.length > 0 ? args : defaultRoots;
+    const files = removeDenoDependentTests(listTestFiles(patterns));
+    runSingleProcess(files);
   }
 }

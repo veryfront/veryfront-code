@@ -78,8 +78,7 @@ export async function writeCacheFile(
 export async function verifyCacheFileExists(
   fs: FileSystem,
   path: string,
-  // deno-lint-ignore no-unused-vars
-  label = "cache",
+  _label = "cache",
 ): Promise<boolean> {
   try {
     const stat = await fs.stat(path);
@@ -94,14 +93,15 @@ export async function verifyCacheFileExists(
  * (directory removed between mkdir and write).
  */
 export function isCacheWriteRaceError(error: unknown): boolean {
-  const code = (error as { code?: string } | null | undefined)?.code;
-  if (code === "ENOENT") return true;
+  if (error == null || typeof error !== "object") return false;
+
+  if ("code" in error && (error as Record<string, unknown>).code === "ENOENT") return true;
 
   // Deno-specific NotFound
   if (typeof Deno !== "undefined" && error instanceof Deno.errors.NotFound) return true;
 
   // os error 22 (EINVAL) on some platforms when path component is gone
-  if (error instanceof TypeError && String(error.message).includes("os error 22")) return true;
+  if (error instanceof TypeError && error.message.includes("os error 22")) return true;
 
   return false;
 }

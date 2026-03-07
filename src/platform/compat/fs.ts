@@ -309,12 +309,22 @@ export async function symlink(target: string, path: string): Promise<void> {
   await fs.symlink(target, path);
 }
 
+type DenoGlobal = typeof globalThis & {
+  Deno?: {
+    errors?: {
+      NotFound?: new (...args: unknown[]) => Error;
+      AlreadyExists?: new (...args: unknown[]) => Error;
+    };
+  };
+};
+
 export function isNotFoundError(error: unknown): boolean {
-  if (isDeno && error instanceof (globalThis as any).Deno.errors.NotFound) return true;
+  const NotFound = (globalThis as DenoGlobal).Deno?.errors?.NotFound;
+  if (isDeno && NotFound && error instanceof NotFound) return true;
   if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return true;
   if (
     error instanceof Error && error.name === "VeryfrontError" &&
-    (error as any).slug === "file-not-found"
+    (error as { slug?: string }).slug === "file-not-found"
   ) {
     return true;
   }
@@ -322,6 +332,7 @@ export function isNotFoundError(error: unknown): boolean {
 }
 
 export function isAlreadyExistsError(error: unknown): boolean {
-  if (isDeno && error instanceof (globalThis as any).Deno.errors.AlreadyExists) return true;
+  const AlreadyExists = (globalThis as DenoGlobal).Deno?.errors?.AlreadyExists;
+  if (isDeno && AlreadyExists && error instanceof AlreadyExists) return true;
   return (error as NodeJS.ErrnoException)?.code === "EEXIST";
 }

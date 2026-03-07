@@ -15,12 +15,7 @@
 
 import { logger } from "#veryfront/utils";
 import type { CacheBackend } from "./types.ts";
-import {
-  assertPortableCode,
-  CACHE_INVARIANT_VIOLATION,
-  detokenizeAllCachePaths,
-  tokenizeAllVeryFrontPaths,
-} from "./paths.ts";
+import { assertPortableCode, detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "./paths.ts";
 
 /**
  * Gateway interface for code storage in distributed cache.
@@ -281,6 +276,3 @@ export function createTokenizingGateway(
 ): TokenizingCacheGateway {
   return new TokenizingCacheGateway(backend, name);
 }
-
-// Re-export error definition for consumers
-export { CACHE_INVARIANT_VIOLATION };

@@ -102,7 +102,8 @@ export class ProjectScopedRegistryManager<T> {
    */
   has(id: string): boolean {
     const projectId = this.getCurrentProjectId();
-    return this.registriesByProject.get(projectId)?.has(id) ?? this.sharedRegistry.has(id);
+    return (this.registriesByProject.get(projectId)?.has(id) ?? false) ||
+      this.sharedRegistry.has(id);
   }
 
   /**

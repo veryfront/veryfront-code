@@ -3,12 +3,9 @@
  *
  * This plugin handles:
  * 1. #veryfront/* aliases → ./src/* paths
- * 2. #std/* and @std/* aliases → ./src/platform/compat/std/* shims
+ * 2. #std/* and @std/* aliases → compat shims
  * 3. npm: protocol stripping (for Deno compat)
  * 4. file:// URLs with query params (cache busting)
- *
- * React and HTTP modules are now handled by shared facades (src/react/shared-*.ts)
- * which use node_modules in Bun (no esm.sh fetching needed).
  */
 
 import { plugin } from "bun";
@@ -18,24 +15,95 @@ import { fileURLToPath } from "url";
 
 const projectRoot = resolve(dirname(import.meta.dir), "../..");
 
-// Import map for @std/* aliases (Deno std compat)
-const importMap: Record<string, string> = {
-  "@std/assert": "./src/testing/assert.ts",
-  "@std/testing/bdd": "./src/testing/bdd.ts",
-  "@std/expect": "./src/platform/compat/std/expect.ts",
-  "@std/async": "./src/platform/compat/std/async.ts",
-  "@std/dotenv": "./src/platform/compat/std/dotenv.ts",
-  "@std/flags": "./src/platform/compat/std/flags.ts",
-  "@std/fmt/colors": "./src/platform/compat/std/fmt-colors.ts",
-  "@std/front-matter/yaml": "./src/platform/compat/std/front-matter-yaml.ts",
-  "@std/fs": "./src/platform/compat/std/fs.ts",
-  "@std/path": "./src/platform/compat/std/path.ts",
+const stdImportMap: Record<string, string> = {
+  "#std/assert": "./src/testing/assert.ts",
+  "#std/assert.ts": "./src/testing/assert.ts",
+  "#std/testing": "./src/testing/index.ts",
+  "#std/testing.ts": "./src/testing/index.ts",
+  "#std/testing/bdd": "./src/testing/bdd.ts",
+  "#std/testing/bdd.ts": "./src/testing/bdd.ts",
+  "#std/expect": "./src/platform/compat/std/expect.ts",
+  "#std/expect.ts": "./src/platform/compat/std/expect.ts",
+  "#std/async": "./src/platform/compat/std/async.ts",
+  "#std/async.ts": "./src/platform/compat/std/async.ts",
+  "#std/dotenv": "./src/platform/compat/std/dotenv.ts",
+  "#std/dotenv.ts": "./src/platform/compat/std/dotenv.ts",
+  "#std/flags": "./src/platform/compat/std/flags.ts",
+  "#std/flags.ts": "./src/platform/compat/std/flags.ts",
+  "#std/fmt/colors": "./src/platform/compat/std/fmt-colors.ts",
+  "#std/fmt/colors.ts": "./src/platform/compat/std/fmt-colors.ts",
+  "#std/front-matter/yaml": "./src/platform/compat/std/front-matter-yaml.ts",
+  "#std/front-matter/yaml.ts": "./src/platform/compat/std/front-matter-yaml.ts",
+  "#std/fs": "./src/platform/compat/std/fs.ts",
+  "#std/fs.ts": "./src/platform/compat/std/fs.ts",
+  "#std/path": "./src/platform/compat/std/path.ts",
+  "#std/path.ts": "./src/platform/compat/std/path.ts",
+  "#std/path/posix": "./src/platform/compat/std/path.ts",
+  "#std/path/posix.ts": "./src/platform/compat/std/path.ts",
 };
 
+const reactImportMap: Record<string, string> = {
+  react: "./npm/node_modules/react/index.js",
+  "react/jsx-runtime": "./npm/node_modules/react/jsx-runtime.js",
+  "react/jsx-dev-runtime": "./npm/node_modules/react/jsx-dev-runtime.js",
+  "react-dom": "./npm/node_modules/react-dom/index.js",
+  "react-dom/client": "./npm/node_modules/react-dom/client.js",
+  "react-dom/server": "./npm/node_modules/react-dom/server.node.js",
+  "react-dom/static": "./npm/node_modules/react-dom/static.node.js",
+};
+
+const importMap: Record<string, string> = {
+  "#deno-config": "./deno.json",
+  ...stdImportMap,
+  ...reactImportMap,
+};
+
+function findProjectModule(candidate: string): string | null {
+  const fullPath = resolve(projectRoot, candidate.replace(/^\.\//, ""));
+  const tryPaths = [
+    fullPath,
+    `${fullPath}.ts`,
+    `${fullPath}.tsx`,
+    `${fullPath}.js`,
+    `${fullPath}.mjs`,
+    `${fullPath}.json`,
+    resolve(fullPath, "index.ts"),
+    resolve(fullPath, "index.tsx"),
+    resolve(fullPath, "index.js"),
+    resolve(fullPath, "index.mjs"),
+  ];
+
+  for (const path of tryPaths) {
+    if (existsSync(path) && statSync(path).isFile()) {
+      return path;
+    }
+  }
+
+  return null;
+}
+
 function resolveImport(specifier: string): string | null {
-  // Direct match for @std/* aliases
-  if (importMap[specifier]) {
-    return resolve(projectRoot, importMap[specifier]);
+  const stdNormalized = specifier.startsWith("@std/")
+    ? `#std/${specifier.slice("@std/".length)}`
+    : specifier.startsWith("std/")
+      ? `#std/${specifier.slice("std/".length)}`
+      : specifier;
+
+  const mapped = importMap[specifier] ?? importMap[stdNormalized];
+  if (mapped) {
+    return findProjectModule(mapped);
+  }
+
+  if (specifier === "#veryfront" || specifier === "veryfront") {
+    return findProjectModule("./src/index.ts");
+  }
+
+  if (specifier.startsWith("#veryfront/")) {
+    return findProjectModule(`./src/${specifier.slice("#veryfront/".length)}`);
+  }
+
+  if (specifier.startsWith("veryfront/")) {
+    return findProjectModule(`./src/${specifier.slice("veryfront/".length)}`);
   }
 
   return null;
@@ -82,8 +150,7 @@ plugin({
       return { path: packageName };
     });
 
-    // Handle @std/* imports
-    build.onResolve({ filter: /^@std\// }, (args) => {
+    build.onResolve({ filter: /^(#deno-config|@std\/|#std\/|std\/|#veryfront(?:\/|$)|veryfront(?:\/|$)|react(?:$|\/jsx-runtime$|\/jsx-dev-runtime$)|react-dom(?:$|\/client$|\/server$|\/static$))/ }, (args) => {
       const resolved = resolveImport(args.path);
       if (resolved) {
         return { path: resolved };
@@ -91,44 +158,7 @@ plugin({
       return undefined;
     });
 
-    // Handle #veryfront/* imports (subpath imports from package.json)
-    build.onResolve({ filter: /^#veryfront\// }, (args) => {
-      const subpath = args.path.replace("#veryfront/", "");
-      const candidates = [
-        `./src/${subpath}.ts`,
-        `./src/${subpath}/index.ts`,
-        `./src/${subpath}`,
-      ];
-
-      for (const candidate of candidates) {
-        const fullPath = resolve(projectRoot, candidate);
-        if (existsSync(fullPath)) {
-          const stat = statSync(fullPath);
-          if (stat.isFile()) {
-            return { path: fullPath };
-          }
-          // Check for index.ts in directory
-          const indexPath = resolve(fullPath, "index.ts");
-          if (existsSync(indexPath) && statSync(indexPath).isFile()) {
-            return { path: indexPath };
-          }
-        }
-      }
-      return undefined;
-    });
-
-    // Handle #std/* imports (subpath imports for Deno std compat)
-    build.onResolve({ filter: /^#std\// }, (args) => {
-      const subpath = args.path.replace("#std/", "");
-      const shimPath = resolve(projectRoot, `./src/platform/compat/std/${subpath}.ts`);
-      if (existsSync(shimPath) && statSync(shimPath).isFile()) {
-        return { path: shimPath };
-      }
-      return undefined;
-    });
-
     // Let Bun handle everything else natively:
-    // - react, react-dom → node_modules (package.json dependencies)
-    // - HTTP modules → not used in Bun (shared facades use node_modules)
+    // - all other bare imports
   },
 });

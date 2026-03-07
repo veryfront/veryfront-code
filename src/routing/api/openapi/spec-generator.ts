@@ -11,6 +11,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { DynamicRouter, RouteEntry } from "../api-route-matcher.ts";
 import { loadHandlerModule } from "../module-loader/loader.ts";
 import {
+  getDefaultStatusDescription,
   OPENAPI_METADATA,
   type OpenAPIOperation,
   type OpenAPIParameter,
@@ -260,24 +261,4 @@ function toYaml(obj: unknown, indent: number): string {
   }
 
   return String(obj);
-}
-
-function getDefaultStatusDescription(statusCode: number): string {
-  const descriptions: Record<number, string> = {
-    200: "Successful response",
-    201: "Resource created",
-    204: "No content",
-    400: "Bad request",
-    401: "Unauthorized",
-    403: "Forbidden",
-    404: "Not found",
-    409: "Conflict",
-    422: "Unprocessable entity",
-    429: "Too many requests",
-    500: "Internal server error",
-    502: "Bad gateway",
-    503: "Service unavailable",
-  };
-
-  return descriptions[statusCode] || `Response with status ${statusCode}`;
 }

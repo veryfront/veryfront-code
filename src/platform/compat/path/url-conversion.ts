@@ -1,6 +1,11 @@
 import { hasNodePath, isDeno } from "./runtime.ts";
 import { isAbsolute, resolve } from "./resolution.ts";
 
+type GlobalWithRequire = typeof globalThis & {
+  require?: (specifier: string) => { fileURLToPath?: (url: string | URL) => string };
+  Deno?: { cwd?: () => string; build?: { os?: string } };
+};
+
 let _fileURLToPath: ((url: string | URL) => string) | null = null;
 
 function getFileURLToPath(): ((url: string | URL) => string) | null {
@@ -8,10 +13,8 @@ function getFileURLToPath(): ((url: string | URL) => string) | null {
   if (!hasNodePath) return null;
 
   try {
-    const nodeUrl = (globalThis as any).require?.("node:url");
-    const fileURLToPath = nodeUrl?.fileURLToPath as
-      | ((url: string | URL) => string)
-      | undefined;
+    const nodeUrl = (globalThis as GlobalWithRequire).require?.("node:url");
+    const fileURLToPath = nodeUrl?.fileURLToPath;
 
     if (!fileURLToPath) return null;
 
@@ -29,8 +32,9 @@ export function fromFileUrl(url: string | URL): string {
   const urlString = typeof url === "string" ? url : url.toString();
 
   if (isDeno) {
-    const hasCwd = Boolean((Deno as any).cwd);
-    const isWindows = (globalThis as any).Deno?.build?.os === "windows";
+    const g = globalThis as GlobalWithRequire;
+    const hasCwd = Boolean(g.Deno?.cwd);
+    const isWindows = g.Deno?.build?.os === "windows";
 
     if (hasCwd && isWindows) {
       return decodeURIComponent(urlString.slice(8).replace(/\//g, "\\"));

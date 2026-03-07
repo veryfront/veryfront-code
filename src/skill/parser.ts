@@ -203,10 +203,12 @@ function parseMetadata(
 ): Record<string, string> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) return undefined;
+
   const result: Record<string, string> = {};
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+  for (const [k, v] of entries) {
     result[k] = String(v);
   }
-
-  return Object.keys(result).length > 0 ? result : undefined;
+  return result;
 }

@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { clearReactPathsCache, getLocalReactPaths, isReactSpecifier } from "./react-paths.ts";
+import { isBun } from "./runtime.ts";
 
 describe("react-paths", () => {
   describe("isReactSpecifier", () => {
@@ -26,11 +27,14 @@ describe("react-paths", () => {
   });
 
   describe("getLocalReactPaths", () => {
-    it("should return an empty object on Deno", () => {
-      // On Deno, returns empty because Deno uses esm.sh URLs
+    it("should return runtime-appropriate local React path mappings", () => {
       const paths = getLocalReactPaths();
       assertEquals(typeof paths, "object");
-      assertEquals(Object.keys(paths).length, 0);
+      if (isBun) {
+        assertEquals(Object.keys(paths).length > 0, true);
+      } else {
+        assertEquals(Object.keys(paths).length, 0);
+      }
     });
   });
 

@@ -151,6 +151,7 @@ describe("html-generation/html-shell-generator", () => {
           mode: "production",
           environment: "production",
           isLocalProject: false,
+          globalCSS: '@import "tailwindcss";',
         }),
       );
 

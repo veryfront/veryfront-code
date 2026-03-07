@@ -22,13 +22,16 @@ function resolve(pkg: string, version: string): string {
   return isDeno ? `npm:${pkg}@${version}` : pkg;
 }
 
+// deno-lint-ignore no-explicit-any -- Opaque deps have unknown shapes; callers cast at call site
+type OpaqueModule = any;
+
 /** Lazily import `@huggingface/transformers` (+ onnxruntime, ~500MB). */
-export function importTransformers(): Promise<any> {
+export function importTransformers(): Promise<OpaqueModule> {
   return dynamicImport(resolve("@huggingface/transformers", "3.4.2"));
 }
 
 /** Lazily import `@anthropic-ai/claude-agent-sdk` (~69MB). */
-export function importClaudeAgentSDK(): Promise<any> {
+export function importClaudeAgentSDK(): Promise<OpaqueModule> {
   return dynamicImport(resolve("@anthropic-ai/claude-agent-sdk", "0.2.37"));
 }
 
@@ -49,9 +52,11 @@ export async function importKreuzberg(): Promise<{
 }> {
   if (isDeno) {
     // Regular import — visible to deno compile, resolved via deno.json import map
-    const mod = await import("@kreuzberg/wasm");
-    await (mod as any).initWasm();
-    return mod as any;
+    const mod = await import("@kreuzberg/wasm") as unknown as
+      & { initWasm?: () => Promise<void> }
+      & { extractBytes: (data: Uint8Array, mimeType: string) => Promise<{ content: string }> };
+    await mod.initWasm?.();
+    return mod;
   }
   // Opaque import — resolved from node_modules at runtime
   return dynamicImport("@kreuzberg/node");

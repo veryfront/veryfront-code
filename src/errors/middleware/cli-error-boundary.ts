@@ -31,7 +31,20 @@ interface ColorFormatter {
  * Check if output is a TTY (supports colors)
  */
 function isTTY(): boolean {
-  return Deno.stdout.isTerminal?.() ?? false;
+  const deno = globalThis as {
+    Deno?: {
+      stdout?: { isTerminal?: () => boolean };
+    };
+    process?: {
+      stdout?: { isTTY?: boolean };
+    };
+  };
+
+  if (typeof deno.Deno?.stdout?.isTerminal === "function") {
+    return deno.Deno.stdout.isTerminal();
+  }
+
+  return deno.process?.stdout?.isTTY ?? false;
 }
 
 /**
@@ -208,5 +221,18 @@ export function cliErrorBoundarySync(
  * Exit the process with a status code
  */
 function exit(code: number): never {
-  Deno.exit(code);
+  const runtime = globalThis as {
+    Deno?: { exit?: (code: number) => never };
+    process?: { exit?: (code: number) => never };
+  };
+
+  if (typeof runtime.Deno?.exit === "function") {
+    runtime.Deno.exit(code);
+  }
+
+  if (typeof runtime.process?.exit === "function") {
+    runtime.process.exit(code);
+  }
+
+  throw new Error(`Failed to exit with code ${code}`);
 }

@@ -20,7 +20,7 @@ const ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const TIMEOUT_SENTINEL = Symbol("skill-script-timeout");
 
 function resolveTimeoutMs(timeoutMs?: number): number {
-  if (!Number.isFinite(timeoutMs) || !timeoutMs || timeoutMs <= 0) {
+  if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return DEFAULT_SCRIPT_TIMEOUT_MS;
   }
   return Math.min(Math.floor(timeoutMs), MAX_SCRIPT_TIMEOUT_MS);

@@ -56,16 +56,6 @@ export function wrapUnknownError(
 }
 
 /**
- * Check if an error is already a VeryfrontError
- *
- * @param error - Any error value
- * @returns True if the error is a VeryfrontError instance
- */
-export function isVeryfrontError(error: unknown): error is VeryfrontError {
-  return error instanceof VeryfrontError;
-}
-
-/**
  * Wrap an error with additional context
  *
  * If the error is already a VeryfrontError, preserves its slug and adds context.

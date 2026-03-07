@@ -591,11 +591,6 @@ async function runCleanupTasks(): Promise<void> {
   }
 }
 
-async function runDefaultCleanup(): Promise<void> {
-  // Delegate to resetAllTestState for comprehensive cleanup
-  await resetAllTestState();
-}
-
 async function runSSRTestCleanup(): Promise<void> {
   try {
     const { resetSSRGlobalsState } = await import("../rendering/ssr-globals/context.ts");
@@ -756,7 +751,7 @@ export async function installTestIsolation(hooks: HookRegistration): Promise<voi
     const context = getIsolationContext();
 
     await runCleanupTasks();
-    await runDefaultCleanup();
+    await resetAllTestState();
     timerTracker.clear();
 
     if (envOverlay) envOverlay.storage.enterWith(new Map());

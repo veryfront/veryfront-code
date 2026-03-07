@@ -1,6 +1,5 @@
 import { cliLogger } from "#cli/utils";
-import { writeStdout } from "veryfront/platform";
-import { getStdinReader, setRawMode } from "veryfront/platform";
+import { getStdinReader, setRawMode, writeStdout } from "veryfront/platform";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { deleteToken, getTokenLocation, hasToken, readToken, saveToken } from "./token-store.ts";
 import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";

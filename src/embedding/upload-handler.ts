@@ -50,8 +50,12 @@ function inferType(file: File): string | null {
   return EXT_TO_TYPE[ext ?? ""] ?? null;
 }
 
-function mimeForType(type: string): string {
-  return Object.entries(MIME_TO_TYPE).find(([, v]) => v === type)?.[0] ?? "text/plain";
+const TYPE_TO_MIME: Record<string, string> = Object.fromEntries(
+  Object.entries(MIME_TO_TYPE).map(([mime, type]) => [type, mime]),
+);
+
+function typeToMime(type: string): string {
+  return TYPE_TO_MIME[type] ?? "text/plain";
 }
 
 interface UploadHandlerConfig {
@@ -118,7 +122,7 @@ export function createUploadHandler(
       }
 
       const buffer = await file.arrayBuffer();
-      const text = await loadUpload(buffer, mimeForType(fileType));
+      const text = await loadUpload(buffer, typeToMime(fileType));
       if (!text.trim()) {
         return Response.json(
           { error: "No text could be extracted from file" },

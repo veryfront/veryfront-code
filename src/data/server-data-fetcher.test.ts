@@ -19,9 +19,8 @@ describe("ServerDataFetcher", () => {
       assertExists(new ServerDataFetcher());
     });
 
-    it("should create instance with adapter", () => {
-      const mockAdapter = { env: { get: () => undefined } } as any;
-      assertExists(new ServerDataFetcher(mockAdapter));
+    it("should create instance without arguments", () => {
+      assertExists(new ServerDataFetcher());
     });
   });
 

@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import { zodToJsonSchema } from "#veryfront/tool/schema";
 import {
+  getDefaultStatusDescription,
   OPENAPI_METADATA,
   type OpenAPIRouteConfig,
   type OpenAPIRouteMetadata,
@@ -84,26 +85,6 @@ export function createRoute<
   wrappedHandler[OPENAPI_METADATA] = metadata;
 
   return wrappedHandler;
-}
-
-function getDefaultStatusDescription(statusCode: number): string {
-  const descriptions: Record<number, string> = {
-    200: "Successful response",
-    201: "Resource created",
-    204: "No content",
-    400: "Bad request",
-    401: "Unauthorized",
-    403: "Forbidden",
-    404: "Not found",
-    409: "Conflict",
-    422: "Unprocessable entity",
-    429: "Too many requests",
-    500: "Internal server error",
-    502: "Bad gateway",
-    503: "Service unavailable",
-  };
-
-  return descriptions[statusCode] ?? `Response with status ${statusCode}`;
 }
 
 export { z } from "zod";

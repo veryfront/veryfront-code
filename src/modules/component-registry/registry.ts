@@ -164,9 +164,6 @@ export class ComponentRegistry {
     return new Map(this.components);
   }
 
-  /**
-   * Loader accessor for compatibility with older tests; loader is not used in this registry.
-   */
   getLoader(): ComponentLoader | undefined {
     return undefined;
   }

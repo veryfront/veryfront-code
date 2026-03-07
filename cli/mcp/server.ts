@@ -6,14 +6,12 @@
  * and HTTP transport (for remote access).
  */
 
-import { readTextFile } from "veryfront/platform";
+import { cwd, readTextFile } from "veryfront/platform";
 import { createHttpServer, type HttpServer } from "veryfront/platform/http";
-import { cwd } from "veryfront/platform";
 import type { StdinReader } from "veryfront/platform";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIssuesManager } from "veryfront/issues";
-import { getErrorCollector } from "veryfront/observability";
-import { getLogBuffer } from "veryfront/observability";
+import { getErrorCollector, getLogBuffer } from "veryfront/observability";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
 import {
@@ -483,6 +481,5 @@ export function createMCPServer(config: MCPServerConfig): MCPDevServer {
   return server;
 }
 
-export * from "veryfront/observability";
 export * from "veryfront/observability";
 export * from "./tools.ts";

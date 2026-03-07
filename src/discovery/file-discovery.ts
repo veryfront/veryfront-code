@@ -58,20 +58,14 @@ export async function findTypeScriptFiles(
 }
 
 /**
- * Get Node.js fs and path modules (cached on context)
+ * Get Node.js fs and path modules (cached on context).
+ *
+ * Only called when no fsAdapter is present — callers must guard accordingly.
  */
 export async function getNodeDeps(
   context: FileDiscoveryContext,
 ): Promise<{ fs: typeof import("node:fs"); path: typeof import("node:path") }> {
   if (context.nodeDeps) return context.nodeDeps;
-
-  if (context.fsAdapter) {
-    context.nodeDeps = {
-      fs: {} as typeof import("node:fs"),
-      path: {} as typeof import("node:path"),
-    };
-    return context.nodeDeps;
-  }
 
   const [fsModule, pathModule] = await Promise.all([import("node:fs"), import("node:path")]);
   context.nodeDeps = { fs: fsModule, path: pathModule };

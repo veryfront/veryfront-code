@@ -82,7 +82,7 @@ export async function getChunkInfo(
 }
 
 /** Adds a route entry to the manifest */
-export function addRouteToManifest(
+function addRouteToManifest(
   manifest: ChunkManifest,
   output: MetafileOutput,
   relativePath: string,

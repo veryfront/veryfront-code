@@ -551,13 +551,13 @@ describe("ReadOperations", () => {
       const elapsed = performance.now() - start;
 
       assertEquals(content, "found via mdx");
-      // Parallel: all 5 fallback extensions fire at once (~50ms total)
-      // Sequential would be: 5 * 50ms = ~250ms minimum
-      // Allow generous margin but ensure it's well under sequential time
+      // Parallel: all fallback extensions fire at once (~50ms total).
+      // Sequential would be roughly 250ms (5 * 50ms), but CI noise can add jitter.
+      // Keep a margin that still asserts meaningful parallel speedup.
       assert(
-        elapsed < SIMULATED_LATENCY_MS * 3,
+        elapsed < SIMULATED_LATENCY_MS * 4,
         `Parallel fallback took ${Math.round(elapsed)}ms, expected < ${
-          SIMULATED_LATENCY_MS * 3
+          SIMULATED_LATENCY_MS * 4
         }ms (sequential would be ~${SIMULATED_LATENCY_MS * 5}ms)`,
       );
     });

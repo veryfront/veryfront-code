@@ -50,7 +50,4 @@ export {
   remarkMdxRemoveParagraphs,
 } from "./plugins/index.ts";
 
-// Compat re-export (esm-transform.ts duplicates esm/ exports — kept for backward compat)
-// NOTE: esm-transform.ts is a subset of esm/index.ts, no unique exports
-
 export { clearAllLocalCaches } from "./mdx/esm-module-loader/cache/index.ts";

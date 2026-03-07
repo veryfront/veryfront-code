@@ -17,16 +17,10 @@ type PicoColors = {
   reset: (s: string) => string;
 };
 
-let pc: PicoColors | null = null;
-
-async function ensurePc(): Promise<PicoColors> {
-  if (pc) return pc;
-
-  const mod = await import("npm:picocolors@1.1.1");
-  pc = mod.default as PicoColors;
-
-  return pc;
-}
+// NOTE: pc is null because lazy initialization was removed as dead code.
+// Colors on Node.js currently fall through to identity (no-op).
+// The console/index.ts fallback colors and ANSI module handle the actual coloring.
+const pc: PicoColors | null = null;
 
 function lazyColor(fn: keyof PicoColors): (s: string) => string {
   return (s: string) => pc?.[fn]?.(s) ?? s;
@@ -65,7 +59,3 @@ export const {
   strikethrough,
   reset,
 } = colors;
-
-export async function initColors(): Promise<void> {
-  await ensurePc();
-}

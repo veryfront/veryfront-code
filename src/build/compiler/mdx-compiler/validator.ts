@@ -9,21 +9,17 @@ export function validateCompileParams(
   content: string,
   options: CompileOptions,
 ): void {
-  if (!filePath) throw new TypeError("filePath must be a non-empty string");
-  if (typeof filePath !== "string") throw new TypeError("filePath must be a non-empty string");
-
+  if (!filePath || typeof filePath !== "string") {
+    throw new TypeError("filePath must be a non-empty string");
+  }
   if (typeof content !== "string") throw new TypeError("content must be a string");
-
   if (!options || typeof options !== "object") throw new TypeError("options must be an object");
-
   if (!options.projectDir || typeof options.projectDir !== "string") {
     throw new TypeError("options.projectDir must be a non-empty string");
   }
-
   if (!options.outputDir || typeof options.outputDir !== "string") {
     throw new TypeError("options.outputDir must be a non-empty string");
   }
-
   if (options.mode !== "development" && options.mode !== "production") {
     throw new TypeError('options.mode must be either "development" or "production"');
   }

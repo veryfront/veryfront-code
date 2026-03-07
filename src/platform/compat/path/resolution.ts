@@ -1,7 +1,11 @@
 import { hasNodePath, isDeno, nodePath } from "./runtime.ts";
 
-function useNodePath(): boolean {
-  return !isDeno && hasNodePath;
+function hasWindowsLikePath(path: string): boolean {
+  return path.includes("\\") || /^[A-Za-z]:/.test(path) || path.startsWith("\\\\");
+}
+
+function useNodePath(paths: string[]): boolean {
+  return !isDeno && hasNodePath && !paths.some(hasWindowsLikePath);
 }
 
 /** Normalize backslashes to forward slashes (for Deno on Windows). */
@@ -13,9 +17,9 @@ function normSep(p: string): string {
 const DRIVE_LETTER = /^[A-Za-z]:\//;
 
 export function resolve(...paths: string[]): string {
-  if (useNodePath()) return nodePath!.resolve(...paths);
+  if (useNodePath(paths)) return nodePath!.resolve(...paths);
 
-  let resolvedPath = normSep(globalThis.Deno?.cwd() ?? "/");
+  let resolvedPath = normSep(globalThis.Deno?.cwd?.() ?? "/");
 
   for (const rawPath of paths) {
     if (!rawPath) continue;
@@ -52,15 +56,18 @@ export function resolve(...paths: string[]): string {
 }
 
 export function isAbsolute(path: string): boolean {
-  if (useNodePath()) return nodePath!.isAbsolute(path);
-  // Deno fallback: Unix, Windows drive letters, and UNC paths
+  if (useNodePath([path]) && nodePath!.isAbsolute(path)) return true;
+  // Cross-platform fallback: Unix, Windows drive letters, and UNC paths
   if (path.startsWith("/")) return true;
   if (/^[A-Za-z]:[/\\]/.test(path)) return true;
   return /^\\\\[^\\]+\\[^\\]+/.test(path);
 }
 
 export function relative(from: string, to: string): string {
-  if (useNodePath()) return nodePath!.relative(from, to);
+  if (useNodePath([from, to])) {
+    const relativePath = nodePath!.relative(from, to);
+    return relativePath || ".";
+  }
 
   const resolvedFrom = resolve(from);
   const resolvedTo = resolve(to);
@@ -89,7 +96,7 @@ export function relative(from: string, to: string): string {
 }
 
 export function normalize(path: string): string {
-  if (useNodePath()) return nodePath!.normalize(path);
+  if (useNodePath([path])) return nodePath!.normalize(path);
   if (path === "") return ".";
 
   const p = normSep(path);

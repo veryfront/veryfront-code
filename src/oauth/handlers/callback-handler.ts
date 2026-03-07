@@ -12,7 +12,7 @@ import {
 } from "#veryfront/config/environment-config.ts";
 import { type EnvReader, OAuthService } from "../providers/base.ts";
 import { memoryTokenStore } from "../token-store/memory.ts";
-import type { OAuthServiceConfig, TokenStore } from "../types.ts";
+import type { OAuthServiceConfig, OAuthState, TokenStore } from "../types.ts";
 
 const logger = baseLogger.component("o-auth");
 
@@ -108,21 +108,21 @@ export function createOAuthCallbackHandler(
 
     if (!code) return handleError(appUrl, "no_code");
 
-    let oauthState: Awaited<ReturnType<TokenStore["getState"]>> | null = null;
-    if (!skipStateValidation) {
-      if (!state) {
-        return handleError(appUrl, "invalid_state", "Missing state parameter", {
-          serviceId: config.serviceId,
-        });
-      }
+    let oauthState: OAuthState | null = null;
+
+    if (!skipStateValidation && !state) {
+      return handleError(appUrl, "invalid_state", "Missing state parameter", {
+        serviceId: config.serviceId,
+      });
+    }
+
+    if (state) {
       oauthState = await tokenStore.getState(state);
-      if (!oauthState) {
+      if (!skipStateValidation && !oauthState) {
         return handleError(appUrl, "invalid_state", "Invalid or expired state", {
           serviceId: config.serviceId,
         });
       }
-    } else if (state) {
-      oauthState = await tokenStore.getState(state);
     }
 
     const service = new OAuthService(config, tokenStore, envReader);

@@ -40,79 +40,79 @@ function buildSchemaFromShape(
   };
 }
 
+function permissiveFallback(logPrefix: string, toolId: string, detail: string): JsonSchema {
+  agentLogger.info(`[${logPrefix}] ${detail} for "${toolId}"`);
+  return { type: "object", properties: {}, additionalProperties: true };
+}
+
+function schemaError(toolId: string, message: string): never {
+  throw toError(createError({ type: "agent", message: `Tool "${toolId}" ${message}` }));
+}
+
+function tryConvert(
+  fn: () => JsonSchema,
+  toolId: string,
+  logPrefix: string,
+  permissive: boolean,
+  errorDetail: string,
+): JsonSchema | null {
+  try {
+    return fn();
+  } catch (error) {
+    if (permissive) return permissiveFallback(logPrefix, toolId, "Using permissive schema");
+    schemaError(toolId, `${errorDetail}: ${getErrorMessage(error)}`);
+  }
+}
+
+function logSchemaResult(logPrefix: string, toolId: string, method: string, schema: JsonSchema) {
+  agentLogger.info(
+    `[${logPrefix}] ${method} schema for "${toolId}": ${
+      Object.keys(schema.properties || {}).length
+    } properties`,
+  );
+}
+
 function convertSchemaToJson(
   schema: unknown,
   toolId: string,
   logPrefix: string,
   permissive = false,
 ): JsonSchema {
-  const fallbackSchema: JsonSchema = permissive
-    ? { type: "object", properties: {}, additionalProperties: true }
-    : { type: "object", properties: {} };
-
-  const usePermissiveFallback = (message: string): JsonSchema => {
-    agentLogger.info(message);
-    return fallbackSchema;
-  };
-
   if (hasValidZodTypeName(schema)) {
-    try {
+    const result = tryConvert(
       // deno-lint-ignore no-explicit-any
-      const result = zodToJsonSchema(schema as any);
-      agentLogger.info(
-        `[${logPrefix}] Pre-converted schema for "${toolId}": ${
-          Object.keys(result.properties || {}).length
-        } properties`,
-      );
+      () => zodToJsonSchema(schema as any),
+      toolId,
+      logPrefix,
+      permissive,
+      "input schema conversion failed",
+    );
+    if (result) {
+      logSchemaResult(logPrefix, toolId, "Pre-converted", result);
       return result;
-    } catch (error) {
-      if (permissive) {
-        return usePermissiveFallback(`[${logPrefix}] Using permissive schema for "${toolId}"`);
-      }
-
-      throw toError(
-        createError({
-          type: "agent",
-          message: `Tool "${toolId}" input schema conversion failed: ${getErrorMessage(error)}`,
-        }),
-      );
     }
   }
 
   const shape = getSchemaShape(schema as ZodLikeSchema);
   if (shape) {
-    try {
-      const result = buildSchemaFromShape(shape, permissive);
-      agentLogger.info(
-        `[${logPrefix}] Introspected schema for "${toolId}" from external zod: ${
-          Object.keys(result.properties || {}).length
-        } properties`,
-      );
+    const result = tryConvert(
+      () => buildSchemaFromShape(shape, permissive),
+      toolId,
+      logPrefix,
+      permissive,
+      "schema introspection failed",
+    );
+    if (result) {
+      logSchemaResult(logPrefix, toolId, "Introspected", result);
       return result;
-    } catch (error) {
-      if (permissive) {
-        return usePermissiveFallback(`[${logPrefix}] Using permissive schema for "${toolId}"`);
-      }
-
-      throw toError(
-        createError({
-          type: "agent",
-          message: `Tool "${toolId}" schema introspection failed: ${getErrorMessage(error)}`,
-        }),
-      );
     }
   }
 
-  if (permissive) {
-    return usePermissiveFallback(`[${logPrefix}] Using fully dynamic schema for "${toolId}"`);
-  }
+  if (permissive) return permissiveFallback(logPrefix, toolId, "Using fully dynamic schema");
 
-  throw toError(
-    createError({
-      type: "agent",
-      message:
-        `Tool "${toolId}" input schema is not a valid Zod schema. Use the same Zod instance or set allowUnknownSchema to true.`,
-    }),
+  schemaError(
+    toolId,
+    "input schema is not a valid Zod schema. Use the same Zod instance or set allowUnknownSchema to true.",
   );
 }
 

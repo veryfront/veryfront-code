@@ -110,16 +110,3 @@ export function setStepActive(state: StartupState, index: number): StartupState 
 
   return { ...state, steps };
 }
-
-/**
- * Mark all steps done and set ready
- */
-export function setStartupReady(
-  state: StartupState,
-  serverUrl: string,
-  mcpUrl?: string,
-): StartupState {
-  const steps = state.steps.map((step): StartupStep => ({ ...step, status: "done" }));
-
-  return { ...state, steps, serverUrl, mcpUrl, ready: true };
-}

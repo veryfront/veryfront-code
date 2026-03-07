@@ -64,9 +64,7 @@ function autoInitializeFromEnv(): void {
   }
 
   if (!providers.has("local")) {
-    providers.set("local", (id) => {
-      return createLocalEmbeddingModel(id);
-    });
+    providers.set("local", createLocalEmbeddingModel);
   }
 }
 

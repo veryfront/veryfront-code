@@ -330,12 +330,31 @@ describe("VeryfrontFSAdapter", () => {
         branch: "main",
       });
 
-      let unhandledRejection: PromiseRejectionEvent | null = null;
-      const handler = (e: PromiseRejectionEvent) => {
+      let unhandledRejection: unknown = null;
+      const hasEventTargetHandlers = typeof globalThis.addEventListener === "function" &&
+        typeof globalThis.removeEventListener === "function";
+
+      const browserStyleHandler = (e: PromiseRejectionEvent) => {
         unhandledRejection = e;
         e.preventDefault();
       };
-      globalThis.addEventListener("unhandledrejection", handler);
+
+      const processRef = (globalThis as {
+        process?: {
+          on?: (event: string, listener: (reason: unknown) => void) => void;
+          off?: (event: string, listener: (reason: unknown) => void) => void;
+        };
+      }).process;
+
+      const nodeStyleHandler = (reason: unknown) => {
+        unhandledRejection = reason;
+      };
+
+      if (hasEventTargetHandlers) {
+        globalThis.addEventListener("unhandledrejection", browserStyleHandler);
+      } else if (typeof processRef?.on === "function") {
+        processRef.on("unhandledRejection", nodeStyleHandler);
+      }
 
       let threw = false;
       try {
@@ -351,7 +370,11 @@ describe("VeryfrontFSAdapter", () => {
         assertEquals(threw, true, "initialize() should throw");
         assertEquals(unhandledRejection, null, "should not cause unhandled rejection");
       } finally {
-        globalThis.removeEventListener("unhandledrejection", handler);
+        if (hasEventTargetHandlers) {
+          globalThis.removeEventListener("unhandledrejection", browserStyleHandler);
+        } else if (typeof processRef?.off === "function") {
+          processRef.off("unhandledRejection", nodeStyleHandler);
+        }
       }
     });
   });

@@ -16,7 +16,10 @@ export function isLocalAIDisabled(): boolean {
   const denoVal = (globalThis as any).Deno?.env?.get?.("VERYFRONT_DISABLE_LOCAL_AI");
   if (denoVal === "1") return true;
 
-  if (typeof process !== "undefined" && process.env?.VERYFRONT_DISABLE_LOCAL_AI === "1") {
+  if (
+    typeof process !== "undefined" &&
+    process.env?.VERYFRONT_DISABLE_LOCAL_AI === "1"
+  ) {
     return true;
   }
 

@@ -10,7 +10,6 @@ export const githubConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "GITHUB_CLIENT_SECRET",
   apiBaseUrl: "https://api.github.com",
   defaultScopes: ["repo", "user"],
-  additionalAuthParams: {},
 };
 
 export const slackConfig: OAuthServiceConfig = {
@@ -23,7 +22,6 @@ export const slackConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "SLACK_CLIENT_SECRET",
   apiBaseUrl: "https://slack.com/api",
   defaultScopes: ["channels:read", "chat:write", "users:read"],
-  additionalAuthParams: {},
 };
 
 export const notionConfig: OAuthServiceConfig = {
@@ -52,7 +50,6 @@ export const figmaConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "FIGMA_CLIENT_SECRET",
   apiBaseUrl: "https://api.figma.com/v1",
   defaultScopes: ["file_read"],
-  additionalAuthParams: {},
 };
 
 export const discordConfig: OAuthServiceConfig = {
@@ -65,7 +62,6 @@ export const discordConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "DISCORD_CLIENT_SECRET",
   apiBaseUrl: "https://discord.com/api/v10",
   defaultScopes: ["identify", "guilds"],
-  additionalAuthParams: {},
 };
 
 export const linearConfig: OAuthServiceConfig = {
@@ -78,7 +74,6 @@ export const linearConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "LINEAR_CLIENT_SECRET",
   apiBaseUrl: "https://api.linear.app",
   defaultScopes: ["read", "write"],
-  additionalAuthParams: {},
 };
 
 export const gitlabConfig: OAuthServiceConfig = {
@@ -91,7 +86,6 @@ export const gitlabConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "GITLAB_CLIENT_SECRET",
   apiBaseUrl: "https://gitlab.com/api/v4",
   defaultScopes: ["read_user", "api"],
-  additionalAuthParams: {},
 };
 
 export const airtableConfig: OAuthServiceConfig = {
@@ -105,7 +99,6 @@ export const airtableConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.airtable.com/v0",
   defaultScopes: ["data.records:read", "data.records:write", "schema.bases:read"],
   useBasicAuth: true,
-  additionalAuthParams: {},
 };
 
 export const dropboxConfig: OAuthServiceConfig = {
@@ -133,7 +126,6 @@ export const hubspotConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "HUBSPOT_CLIENT_SECRET",
   apiBaseUrl: "https://api.hubapi.com",
   defaultScopes: ["crm.objects.contacts.read", "crm.objects.contacts.write"],
-  additionalAuthParams: {},
 };
 
 export const salesforceConfig: OAuthServiceConfig = {
@@ -146,7 +138,6 @@ export const salesforceConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "SALESFORCE_CLIENT_SECRET",
   apiBaseUrl: "https://login.salesforce.com/services/data/v59.0",
   defaultScopes: ["api", "refresh_token"],
-  additionalAuthParams: {},
 };
 
 export const twitterConfig: OAuthServiceConfig = {
@@ -160,7 +151,6 @@ export const twitterConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.twitter.com/2",
   defaultScopes: ["tweet.read", "users.read", "offline.access"],
   useBasicAuth: true,
-  additionalAuthParams: {},
 };
 
 export const asanaConfig: OAuthServiceConfig = {
@@ -173,7 +163,6 @@ export const asanaConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "ASANA_CLIENT_SECRET",
   apiBaseUrl: "https://app.asana.com/api/1.0",
   defaultScopes: ["default"],
-  additionalAuthParams: {},
 };
 
 export const mondayConfig: OAuthServiceConfig = {
@@ -186,7 +175,6 @@ export const mondayConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "MONDAY_CLIENT_SECRET",
   apiBaseUrl: "https://api.monday.com/v2",
   defaultScopes: ["me:read", "boards:read", "boards:write"],
-  additionalAuthParams: {},
 };
 
 export const zoomConfig: OAuthServiceConfig = {
@@ -200,7 +188,6 @@ export const zoomConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.zoom.us/v2",
   defaultScopes: ["meeting:read", "meeting:write", "user:read"],
   useBasicAuth: true,
-  additionalAuthParams: {},
 };
 
 export const intercomConfig: OAuthServiceConfig = {
@@ -213,7 +200,6 @@ export const intercomConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "INTERCOM_CLIENT_SECRET",
   apiBaseUrl: "https://api.intercom.io",
   defaultScopes: [],
-  additionalAuthParams: {},
 };
 
 export const freshdeskConfig: OAuthServiceConfig = {
@@ -226,7 +212,6 @@ export const freshdeskConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "FRESHDESK_CLIENT_SECRET",
   apiBaseUrl: "https://domain.freshdesk.com/api/v2",
   defaultScopes: ["freshdesk"],
-  additionalAuthParams: {},
 };
 
 export const mailchimpConfig: OAuthServiceConfig = {
@@ -239,7 +224,6 @@ export const mailchimpConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "MAILCHIMP_CLIENT_SECRET",
   apiBaseUrl: "https://server.api.mailchimp.com/3.0",
   defaultScopes: [],
-  additionalAuthParams: {},
 };
 
 export const shopifyConfig: OAuthServiceConfig = {
@@ -252,7 +236,6 @@ export const shopifyConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "SHOPIFY_CLIENT_SECRET",
   apiBaseUrl: "https://shop.myshopify.com/admin/api/2024-01",
   defaultScopes: ["read_products", "write_products", "read_orders"],
-  additionalAuthParams: {},
 };
 
 export const quickbooksConfig: OAuthServiceConfig = {
@@ -265,7 +248,6 @@ export const quickbooksConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "QUICKBOOKS_CLIENT_SECRET",
   apiBaseUrl: "https://quickbooks.api.intuit.com/v3",
   defaultScopes: ["com.intuit.quickbooks.accounting"],
-  additionalAuthParams: {},
 };
 
 export const xeroConfig: OAuthServiceConfig = {
@@ -284,7 +266,6 @@ export const xeroConfig: OAuthServiceConfig = {
     "accounting.transactions",
     "offline_access",
   ],
-  additionalAuthParams: {},
 };
 
 export const boxConfig: OAuthServiceConfig = {
@@ -297,7 +278,6 @@ export const boxConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "BOX_CLIENT_SECRET",
   apiBaseUrl: "https://api.box.com/2.0",
   defaultScopes: [],
-  additionalAuthParams: {},
 };
 
 export const webexConfig: OAuthServiceConfig = {
@@ -310,7 +290,6 @@ export const webexConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "WEBEX_CLIENT_SECRET",
   apiBaseUrl: "https://webexapis.com/v1",
   defaultScopes: ["spark:all", "spark:kms"],
-  additionalAuthParams: {},
 };
 
 export const trelloConfig: OAuthServiceConfig = {
@@ -338,7 +317,6 @@ export const clickupConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "CLICKUP_CLIENT_SECRET",
   apiBaseUrl: "https://api.clickup.com/api/v2",
   defaultScopes: [],
-  additionalAuthParams: {},
 };
 
 export const pipedriveConfig: OAuthServiceConfig = {
@@ -351,7 +329,6 @@ export const pipedriveConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "PIPEDRIVE_CLIENT_SECRET",
   apiBaseUrl: "https://api.pipedrive.com/v1",
   defaultScopes: [],
-  additionalAuthParams: {},
 };
 
 export const commonServices = {

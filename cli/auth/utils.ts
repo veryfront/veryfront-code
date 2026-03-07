@@ -4,6 +4,7 @@
  * Shared utilities for authentication-related CLI operations.
  */
 
+import type { AuthMethod } from "./login.ts";
 import type { ParsedArgs } from "../shared/types.ts";
 
 /**
@@ -11,7 +12,7 @@ import type { ParsedArgs } from "../shared/types.ts";
  */
 export function parseLoginMethod(
   args: ParsedArgs,
-): "google" | "github" | "microsoft" | "token" | undefined {
+): AuthMethod | undefined {
   if (args.google) return "google";
   if (args.github) return "github";
   if (args.microsoft) return "microsoft";

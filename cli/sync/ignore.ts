@@ -7,7 +7,7 @@ import { createFileSystem } from "veryfront/platform";
 import { cliLogger } from "#cli/utils";
 
 /** Default patterns always ignored */
-const DEFAULT_IGNORE_PATTERNS = [
+const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
   // Directories
   "node_modules",
   "dist",
@@ -91,23 +91,35 @@ export async function loadIgnorePatterns(projectPath: string): Promise<string[]>
 }
 
 /**
+ * Escape special regex characters
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Convert a single ignore pattern to a RegExp
+ */
+function patternToRegex(pattern: string): RegExp {
+  if (pattern.endsWith("/")) {
+    const dirName = pattern.slice(0, -1);
+    return new RegExp(`(^|/)${escapeRegex(dirName)}(/|$)`);
+  }
+
+  const regex = escapeRegex(pattern)
+    .replace(/\\\*/g, ".*") // * matches anything
+    .replace(/\\\?/g, "."); // ? matches single char
+
+  if (pattern.startsWith("*")) return new RegExp(`(^|/)${regex}$`);
+
+  return new RegExp(`(^|/)${regex}(/|$)`);
+}
+
+/**
  * Create an ignore checker with loaded patterns
  */
-export function createIgnoreChecker(patterns: string[]): IgnoreChecker {
-  const regexPatterns = patterns.map((pattern) => {
-    if (pattern.endsWith("/")) {
-      const dirName = pattern.slice(0, -1);
-      return new RegExp(`(^|/)${escapeRegex(dirName)}(/|$)`);
-    }
-
-    const regex = escapeRegex(pattern)
-      .replace(/\\\*/g, ".*") // * matches anything
-      .replace(/\\\?/g, "."); // ? matches single char
-
-    if (pattern.startsWith("*")) return new RegExp(`(^|/)${regex}$`);
-
-    return new RegExp(`(^|/)${regex}(/|$)`);
-  });
+export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker {
+  const regexPatterns = patterns.map(patternToRegex);
 
   function isIgnored(relativePath: string): boolean {
     const normalizedPath = relativePath.replace(/\\/g, "/");
@@ -121,13 +133,6 @@ export function createIgnoreChecker(patterns: string[]): IgnoreChecker {
   }
 
   return { isIgnored, isSupportedExtension };
-}
-
-/**
- * Escape special regex characters
- */
-function escapeRegex(str: string): string {
-  return str.replace(/[.+^${}()|[\]\\]/g, "\\$&");
 }
 
 /**

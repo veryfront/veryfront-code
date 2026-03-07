@@ -16,13 +16,12 @@ export function showMainHelp(): void {
   console.log();
 
   const commands = Object.values(COMMANDS);
+  const maxLength = calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
 
   console.log(`  ${formatSectionHeader("Commands")}`);
-  for (const line of formatCommandList(commands)) {
+  for (const line of formatCommandList(commands, maxLength)) {
     console.log(line);
   }
-
-  const maxLength = calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
 
   console.log();
   console.log(`  ${formatSectionHeader("Global Options")}`);

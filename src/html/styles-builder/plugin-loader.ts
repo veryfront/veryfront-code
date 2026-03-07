@@ -50,6 +50,49 @@ try {
   __esModule: true,
 };
 
+function isRealDenoRuntime(): boolean {
+  return typeof Deno !== "undefined" && typeof Deno.version === "object";
+}
+
+function encodeToBase64(source: string): string {
+  const bufferCtor = (globalThis as {
+    Buffer?: {
+      from: (input: string, encoding: string) => { toString: (encoding: string) => string };
+    };
+  }).Buffer;
+
+  if (bufferCtor?.from) {
+    return bufferCtor.from(source, "utf8").toString("base64");
+  }
+
+  const bytes = new TextEncoder().encode(source);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function importBundledModule(code: string): Promise<unknown> {
+  if (!isRealDenoRuntime()) {
+    const dataUrl = `data:text/javascript;base64,${encodeToBase64(code)}`;
+    return await import(dataUrl);
+  }
+
+  const tempPath = await Deno.makeTempFile({ prefix: "vf_tw_plugin_", suffix: ".mjs" });
+  await Deno.writeTextFile(tempPath, code);
+  logger.debug("Wrote plugin to temp file", { path: tempPath });
+
+  try {
+    return await import(`file://${tempPath}`);
+  } finally {
+    await Deno.remove(tempPath).catch((error) => {
+      logger.error("Failed to clean up temp plugin file", {
+        path: tempPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+}
+
 /**
  * Dynamically load a module from esm.sh in a compiled Deno binary.
  *
@@ -109,21 +152,7 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
     "(globalThis.__localStorageShim||(globalThis.__localStorageShim={getItem:()=>null,setItem:()=>{},length:0}))",
   );
 
-  // Step 5: Write to temp file and import
-  const tempPath = `/tmp/tw_plugin_${crypto.randomUUID()}.mjs`;
-  await Deno.writeTextFile(tempPath, code);
-  logger.debug("Wrote plugin to temp file", { path: tempPath });
-
-  try {
-    return await import(`file://${tempPath}`);
-  } finally {
-    await Deno.remove(tempPath).catch((error) => {
-      logger.error("Failed to clean up temp plugin file", {
-        path: tempPath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-  }
+  return await importBundledModule(code);
 }
 
 export async function loadPlugin(
@@ -149,12 +178,20 @@ export async function loadPlugin(
       logger.debug("Loading plugin from node_modules", { id });
       try {
         mod = await import(id);
-      } catch {
-        const errorMsg = `Failed to load plugin "${id}": plugin not installed`;
-        logger.warn("Plugin not installed", { id });
-        pluginErrors.set(id, errorMsg);
-        pluginCache.set(id, null);
-        throw new Error(errorMsg);
+      } catch (importError) {
+        logger.debug("Plugin not found in node_modules, falling back to esm.sh", { id });
+        try {
+          mod = await loadModuleFromEsmSh(id);
+        } catch {
+          const errorMsg = `Failed to load plugin "${id}": plugin not installed`;
+          logger.warn("Plugin not installed", {
+            id,
+            error: importError instanceof Error ? importError.message : String(importError),
+          });
+          pluginErrors.set(id, errorMsg);
+          pluginCache.set(id, null);
+          throw new Error(errorMsg);
+        }
       }
     }
 

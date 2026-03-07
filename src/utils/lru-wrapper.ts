@@ -32,10 +32,7 @@ export class LRUCache<K, V> {
   }
 
   private startPeriodicCleanup(): void {
-    if (shouldDisableInterval()) {
-      return;
-    }
-
+    if (shouldDisableInterval()) return;
     this.stopCleanupTimer();
 
     this.cleanupTimer = setInterval(() => {
@@ -47,10 +44,7 @@ export class LRUCache<K, V> {
   }
 
   private stopCleanupTimer(): void {
-    if (!this.cleanupTimer) {
-      return;
-    }
-
+    if (!this.cleanupTimer) return;
     clearInterval(this.cleanupTimer);
     this.cleanupTimer = undefined;
   }

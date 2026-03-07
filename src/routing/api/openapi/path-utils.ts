@@ -98,45 +98,6 @@ export function extractPathParams(pattern: string): PathParam[] {
 }
 
 /**
- * Convert file path to route pattern.
- *
- * Transforms a file system path to an API route pattern.
- *
- * @param filePath - File path relative to pages/api or app directory
- * @param routePrefix - Prefix to add (e.g., "/api")
- * @returns Route pattern
- *
- * @example
- * ```typescript
- * filePathToPattern("users/[id]/route.ts", "/api")
- * // → "/api/users/[id]"
- *
- * filePathToPattern("users/[id].ts", "/api")
- * // → "/api/users/[id]"
- * ```
- */
-export function filePathToPattern(filePath: string, routePrefix: string = ""): string {
-  let pattern = filePath
-    .replace(/\.(ts|tsx|js|jsx)$/, "")
-    .replace(/\/route$/, "")
-    .replace(/\/index$/, "");
-
-  if (!pattern.startsWith("/")) pattern = `/${pattern}`;
-
-  if (routePrefix && !pattern.startsWith(routePrefix)) {
-    pattern = `${routePrefix}${pattern}`;
-  }
-
-  pattern = pattern.replace(/\/+/g, "/");
-
-  if (pattern.length > 1 && pattern.endsWith("/")) {
-    pattern = pattern.slice(0, -1);
-  }
-
-  return pattern;
-}
-
-/**
  * Generate a unique operation ID from method and path.
  *
  * @param method - HTTP method (GET, POST, etc.)

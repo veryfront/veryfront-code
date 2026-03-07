@@ -29,7 +29,6 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
   private readonly store = new Map<string, { value: T; expiresAt: number }>();
   private readonly maxEntries: number;
   private readonly defaultTtlSeconds: number;
-  private readonly name: string;
   private stats: CacheStats = {
     gets: 0,
     hits: 0,
@@ -43,12 +42,10 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
     context: RepositoryContext;
     maxEntries?: number;
     defaultTtlSeconds?: number;
-    name?: string;
   }) {
     this.context = options.context;
     this.maxEntries = options.maxEntries ?? 500;
     this.defaultTtlSeconds = options.defaultTtlSeconds ?? 300;
-    this.name = options.name ?? "memory-cache";
   }
 
   private getScopedKey(key: string): string {
@@ -299,7 +296,6 @@ export function createMemoryCacheRepository<T = string>(
     context,
     maxEntries: options?.maxEntries,
     defaultTtlSeconds: options?.defaultTtlSeconds,
-    name: options?.name,
   });
 }
 

@@ -79,20 +79,6 @@ export class SecureFsRepository implements FileSystemRepository {
   remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     return this.secureFs.remove(path, options);
   }
-
-  /**
-   * Build a cache key scoped to this repository's context
-   *
-   * @example
-   * ```typescript
-   * repo.buildCacheKey("manifest.json")
-   * // Returns: "my-project:preview:v1:manifest.json"
-   * ```
-   */
-  buildCacheKey(key: string): string {
-    const { projectId, environment, versionId } = this.context;
-    return `${projectId}:${environment}:${versionId}:${key}`;
-  }
 }
 
 /**

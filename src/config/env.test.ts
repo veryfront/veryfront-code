@@ -37,6 +37,7 @@ function createMockEnv(overrides: Partial<EnvironmentConfig> = {}): EnvironmentC
     denoTesting: false,
     perfEnabled: false,
     apiBaseUrl: "http://localhost:4000",
+    publicApiBaseUrl: "http://localhost:4000",
     apiUrl: undefined,
     apiToken: undefined,
     projectSlug: undefined,

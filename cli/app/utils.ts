@@ -11,27 +11,6 @@ import { pullCommand } from "../commands/pull/index.ts";
 import { addLog, type AppState, type StateUpdater } from "./state.ts";
 import { ADJECTIVES, NOUNS } from "./data/slug-words.ts";
 
-export async function copyDirectory(src: string, dest: string): Promise<void> {
-  const fs = await import("veryfront/platform");
-  const pathMod = await import("veryfront/platform/path");
-  const filesystem = fs.createFileSystem();
-
-  await filesystem.mkdir(dest, { recursive: true });
-
-  for await (const entry of filesystem.readDir(src)) {
-    const srcPath = pathMod.join(src, entry.name);
-    const destPath = pathMod.join(dest, entry.name);
-
-    if (entry.isDirectory) {
-      await copyDirectory(srcPath, destPath);
-      continue;
-    }
-
-    const content = await filesystem.readFile(srcPath);
-    await filesystem.writeFile(destPath, content);
-  }
-}
-
 export function generateRandomSlug(): string {
   const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
   const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
@@ -55,7 +34,6 @@ export function getLocalProjectsFromState(
 }
 
 export async function pullRemoteProject(
-  _appState: AppState,
   update: (updater: StateUpdater) => void,
   render: () => void,
   focusedSlug: string,

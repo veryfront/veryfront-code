@@ -71,11 +71,6 @@ export class ContextAwareCacheCoordinator {
 
           logger.debug("Cache expired", {
             slug,
-            projectId: ctx.projectId,
-          });
-
-          logger.debug("Cache miss", {
-            slug,
             cacheKey,
             projectId: ctx.projectId,
             environment: ctx.environment,

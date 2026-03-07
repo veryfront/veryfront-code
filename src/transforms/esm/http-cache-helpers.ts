@@ -46,26 +46,6 @@ export function isHttpUrl(specifier: string): boolean {
   return specifier.startsWith("https://") || specifier.startsWith("http://");
 }
 
-/**
- * Check if a URL is for React core packages.
- *
- * React core modules (react, react-dom) must NOT be cached/bundled.
- * Instead, all packages use external=react and import from the same esm.sh URL.
- * This prevents multiple React instances which causes "useContext is null" errors.
- */
-export function _isReactCoreUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    if (!parsed.hostname.includes("esm.sh")) return false;
-
-    const pathname = parsed.pathname.replace(/^\/(v\d+|stable)\//, "/");
-    const match = pathname.match(/^\/(react|react-dom)(@[\d.]+)?(?:\/|$|\?)/);
-    return match !== null;
-  } catch {
-    return false;
-  }
-}
-
 export function isExternalScheme(specifier: string): boolean {
   return specifier.startsWith("node:") ||
     specifier.startsWith("data:") ||

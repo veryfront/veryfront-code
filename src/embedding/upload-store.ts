@@ -169,10 +169,10 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
           createdAt: Date.now(),
         };
 
-        const chunkRecords: StoredChunk[] = chunks.map((text, i) => ({
+        const chunkRecords: StoredChunk[] = chunks.map((chunkText, i) => ({
           id: crypto.randomUUID(),
           uploadId,
-          text,
+          text: chunkText,
           embedding: [], // filled lazily on first search
           index: i,
         }));
@@ -281,10 +281,10 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
           });
 
           data.chunks.push(
-            ...chunks.map((text, i) => ({
+            ...chunks.map((chunkText, i) => ({
               id: crypto.randomUUID(),
               uploadId,
-              text,
+              text: chunkText,
               embedding: [] as number[],
               index: i,
             })),

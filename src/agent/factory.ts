@@ -1,4 +1,4 @@
-import type { Agent, AgentConfig, AgentResponse, Message } from "./types.ts";
+import type { Agent, AgentConfig, AgentResponse, AgentStreamResult, Message } from "./types.ts";
 import { AgentRuntime } from "./runtime/index.ts";
 import {
   detectPlatform,
@@ -30,14 +30,6 @@ const SKILL_TOOL_REGISTRATIONS = [
   { id: "load-skill-reference", create: createLoadSkillReferenceTool },
   { id: "execute-skill-script", create: createExecuteSkillScriptTool },
 ] as const;
-
-export interface AgentStreamResult {
-  toDataStreamResponse(options?: {
-    headers?: Record<string, string>;
-    status?: number;
-    statusText?: string;
-  }): Response;
-}
 
 function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStreamResult {
   return {

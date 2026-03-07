@@ -67,7 +67,7 @@ async function loadApis(): Promise<void> {
   propagationApi = await import("@opentelemetry/core");
 }
 
-export async function initializeOTLP(): Promise<void> {
+export async function initializeOTLPWithApis(): Promise<void> {
   if (initialized) return;
 
   const config = getConfig();
@@ -135,10 +135,6 @@ export async function shutdownOTLP(): Promise<void> {
   } catch (error) {
     console.warn("[otel] Shutdown error", { error });
   }
-}
-
-export function isOTLPEnabled(): boolean {
-  return initialized && tracerProvider !== null;
 }
 
 function getPropagator(): import("@opentelemetry/core").W3CTraceContextPropagator | null {
@@ -237,8 +233,6 @@ export function getTraceContext(): { traceId?: string; spanId?: string } {
  * Span names for proxy tracing.
  */
 export const ProxySpanNames = {
-  PROXY_REQUEST: "proxy.request",
-  PROXY_PROCESS: "proxy.process",
   PROXY_TOKEN_FETCH: "proxy.token_fetch",
   PROXY_DOMAIN_LOOKUP: "proxy.domain_lookup",
   OAUTH_TOKEN_REQUEST: "oauth.token_request",
@@ -280,5 +274,3 @@ export async function withSpan<T>(
     span.end();
   }
 }
-
-export { initializeOTLP as initializeOTLPWithApis };

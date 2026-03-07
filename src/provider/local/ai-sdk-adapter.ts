@@ -18,22 +18,30 @@ import { isLocalAIDisabled } from "./env.ts";
 
 const logger = serverLogger.component("local-llm");
 
+/** Shape of a single message in the AI SDK LanguageModelV2 prompt array. */
+interface PromptMessage {
+  role: string;
+  content: string | ReadonlyArray<{ type: string; text?: string }>;
+}
+
 /**
  * Convert AI SDK LanguageModelV2 prompt format to simple ChatMessage array.
  *
  * The AI SDK prompt is an array of message objects with role and content arrays.
  * We extract text content for the local model.
  */
-// deno-lint-ignore no-explicit-any
-function convertPrompt(prompt: any[]): ChatMessage[] {
+function convertPrompt(prompt: ReadonlyArray<PromptMessage>): ChatMessage[] {
   const messages: ChatMessage[] = [];
 
   for (const msg of prompt) {
-    const role = msg.role as "system" | "user" | "assistant" | "tool";
     // Skip tool messages — local models don't support tool calling
-    if (role === "tool") continue;
+    if (msg.role === "tool") continue;
 
-    const mappedRole = role === "system" ? "system" : role === "user" ? "user" : "assistant";
+    const mappedRole = msg.role === "system"
+      ? "system"
+      : msg.role === "user"
+      ? "user"
+      : "assistant";
 
     // Extract text content from content array
     let text = "";
@@ -53,6 +61,27 @@ function convertPrompt(prompt: any[]): ChatMessage[] {
   }
 
   return messages;
+}
+
+/** AI SDK LanguageModelV2 generation options that both doGenerate and doStream receive. */
+interface LocalModelOptions {
+  prompt: unknown[];
+  maxOutputTokens?: number;
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  stopSequences?: string[];
+}
+
+/** Map AI SDK generation options to local engine GenerateOptions. */
+function toGenerateOptions(options: LocalModelOptions): GenerateOptions {
+  return {
+    maxNewTokens: options.maxOutputTokens ?? 512,
+    temperature: options.temperature ?? 0.7,
+    topP: options.topP,
+    topK: options.topK,
+    stopSequences: options.stopSequences,
+  };
 }
 
 /**
@@ -75,22 +104,9 @@ export function createLocalModel(modelId?: string): LanguageModel {
 
     supportedUrls: {},
 
-    async doGenerate(options: {
-      prompt: unknown[];
-      maxOutputTokens?: number;
-      temperature?: number;
-      topP?: number;
-      topK?: number;
-      stopSequences?: string[];
-    }) {
-      const messages = convertPrompt(options.prompt as unknown[]);
-      const genOptions: GenerateOptions = {
-        maxNewTokens: options.maxOutputTokens ?? 512,
-        temperature: options.temperature ?? 0.7,
-        topP: options.topP,
-        topK: options.topK,
-        stopSequences: options.stopSequences,
-      };
+    async doGenerate(options: LocalModelOptions) {
+      const messages = convertPrompt(options.prompt as ReadonlyArray<PromptMessage>);
+      const genOptions = toGenerateOptions(options);
 
       logger.debug(`[local] doGenerate: ${messages.length} messages → ${resolvedId}`);
 
@@ -108,14 +124,7 @@ export function createLocalModel(modelId?: string): LanguageModel {
       };
     },
 
-    async doStream(options: {
-      prompt: unknown[];
-      maxOutputTokens?: number;
-      temperature?: number;
-      topP?: number;
-      topK?: number;
-      stopSequences?: string[];
-    }) {
+    async doStream(options: LocalModelOptions) {
       // Eagerly check if local AI is disabled — must throw before creating the
       // ReadableStream, otherwise the 200 response headers are already committed.
       // Note: getTransformers() in local-engine.ts also checks this, but we need
@@ -130,14 +139,8 @@ export function createLocalModel(modelId?: string): LanguageModel {
         );
       }
 
-      const messages = convertPrompt(options.prompt as unknown[]);
-      const genOptions: GenerateOptions = {
-        maxNewTokens: options.maxOutputTokens ?? 512,
-        temperature: options.temperature ?? 0.7,
-        topP: options.topP,
-        topK: options.topK,
-        stopSequences: options.stopSequences,
-      };
+      const messages = convertPrompt(options.prompt as ReadonlyArray<PromptMessage>);
+      const genOptions = toGenerateOptions(options);
 
       logger.debug(`[local] doStream: ${messages.length} messages → ${resolvedId}`);
 

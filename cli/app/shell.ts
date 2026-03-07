@@ -534,7 +534,7 @@ export function createApp(config: AppConfig): App {
     // Pull/push operations
     if (key === "p" && state.activeList === "remoteProjects") {
       const focused = state.remote.projects[state.remote.focusedIndex];
-      if (focused) await pullRemoteProject(state, update, render, focused.slug);
+      if (focused) await pullRemoteProject(update, render, focused.slug);
       return;
     }
 

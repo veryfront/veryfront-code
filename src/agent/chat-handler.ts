@@ -288,14 +288,13 @@ export function createChatHandler(
     } catch {
       return Response.json({ error: "Agent not found" }, { status: 404 });
     }
+    if (!agent) {
+      return Response.json({ error: "Agent not found" }, { status: 404 });
+    }
 
     try {
       const body = await request.json();
       const { messages: rawMessages, model: requestModel } = chatRequestSchema.parse(body);
-
-      if (!agent) {
-        return Response.json({ error: "Agent not found" }, { status: 404 });
-      }
 
       const context = typeof options?.context === "function"
         ? await options.context(request)
@@ -311,9 +310,7 @@ export function createChatHandler(
 
       if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
-      let hookResult: ChatHandlerBeforeStreamResult | undefined;
-      if (beforeStreamResult) hookResult = beforeStreamResult;
-
+      const hookResult = beforeStreamResult ?? undefined;
       const messages = applyBeforeStreamResult(baseMessages, hookResult);
       const streamContext = hookResult?.context ?? context;
 

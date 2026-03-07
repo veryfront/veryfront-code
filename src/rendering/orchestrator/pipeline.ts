@@ -30,7 +30,7 @@ import { join } from "#veryfront/compat/path";
 import type { MdxBundle, PageBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import type { CacheCoordinator } from "../cache/cache-coordinator.ts";
+import type { CacheLookupResult } from "../cache/cache-coordinator.ts";
 import type { PageRenderer } from "../page-renderer.ts";
 import type { PageResolver } from "../page-resolution/index.ts";
 import type { LayoutOrchestrator } from "./layout.ts";
@@ -77,9 +77,19 @@ const resolvePageDataLog = logger.component("resolve-page-data");
 // Re-export test helper for backward compatibility
 export { __injectCssCacheForTests } from "./css-cache.ts";
 
+/**
+ * Minimal cache interface used by RenderPipeline.
+ * Decoupled from the concrete CacheCoordinator class so that Renderer
+ * can supply a context-aware adapter without an unsafe `as any` cast.
+ */
+export interface PipelineCacheCoordinator {
+  checkCache(slug: string, cacheKey?: string): Promise<CacheLookupResult>;
+  persistResult(result: RenderResult, slug: string, cacheKey?: string): Promise<void>;
+}
+
 export interface RenderPipelineConfig {
   pageResolver: PageResolver;
-  cacheCoordinator: CacheCoordinator;
+  cacheCoordinator: PipelineCacheCoordinator;
   pageRenderer: PageRenderer;
   layoutOrchestrator: LayoutOrchestrator;
   ssrOrchestrator: SSROrchestrator;

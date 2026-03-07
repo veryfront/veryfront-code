@@ -54,9 +54,6 @@ export async function inspectAgent(
   input: string | Message[],
 ): Promise<InspectionReport> {
   const startTime = Date.now();
-
-  await agent.getMemoryStats(); // memory stats before execution (intentionally unused)
-
   const response = await agent.generate({ input });
   const executionTime = Date.now() - startTime;
 

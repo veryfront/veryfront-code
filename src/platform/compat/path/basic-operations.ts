@@ -1,7 +1,11 @@
 import { hasNodePath, isDeno, nodePath } from "./runtime.ts";
 
-function useNodePath(): boolean {
-  return !isDeno && hasNodePath;
+function hasWindowsLikePath(path: string): boolean {
+  return path.includes("\\") || /^[A-Za-z]:/.test(path) || path.startsWith("\\\\");
+}
+
+function useNodePath(paths: string[]): boolean {
+  return !isDeno && hasNodePath && !paths.some(hasWindowsLikePath);
 }
 
 /** Normalize backslashes to forward slashes (for Deno on Windows). */
@@ -10,8 +14,6 @@ function normSep(p: string): string {
 }
 
 export function join(...paths: string[]): string {
-  if (useNodePath()) return nodePath!.join(...paths);
-
   const joined = paths
     .map(normSep)
     .filter((p) => p.length > 0)
@@ -23,7 +25,7 @@ export function join(...paths: string[]): string {
 }
 
 export function dirname(path: string): string {
-  if (useNodePath()) return nodePath!.dirname(path);
+  if (useNodePath([path])) return nodePath!.dirname(path);
 
   const p = normSep(path);
   const lastSlash = p.lastIndexOf("/");
@@ -33,7 +35,7 @@ export function dirname(path: string): string {
 }
 
 export function basename(path: string, ext?: string): string {
-  if (useNodePath()) {
+  if (useNodePath([path])) {
     // Only pass ext if defined - Bun is strict about this parameter
     return ext === undefined ? nodePath!.basename(path) : nodePath!.basename(path, ext);
   }
@@ -52,7 +54,7 @@ export function basename(path: string, ext?: string): string {
 }
 
 export function extname(path: string): string {
-  if (useNodePath()) return nodePath!.extname(path);
+  if (useNodePath([path])) return nodePath!.extname(path);
 
   const base = basename(path);
   const lastDot = base.lastIndexOf(".");

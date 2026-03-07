@@ -6,8 +6,8 @@
 
 import { join } from "veryfront/platform/path";
 import { cliLogger as logger } from "#cli/utils";
-import { createFileSystem, getEnv } from "veryfront/platform";
-import { getOsType, runCommand } from "veryfront/platform";
+import { getEnv, getOsType, runCommand } from "veryfront/platform";
+import { getFs } from "./fs.ts";
 
 export type PackageManager = "npm" | "yarn" | "pnpm" | "bun" | "deno";
 
@@ -66,7 +66,7 @@ const LOCKFILES: Array<{ file: string; pm: PackageManager }> = [
 async function detectFromDir(
   dir: string,
 ): Promise<{ pm: PackageManager; file: string } | undefined> {
-  const fs = createFileSystem();
+  const fs = getFs();
 
   for (const lock of LOCKFILES) {
     if (await fs.exists(join(dir, lock.file))) return lock;
@@ -160,7 +160,6 @@ export function getDlxCommand(pm: PackageManager): string {
     case "bun":
       return "bunx";
     case "npm":
-    default:
       return "npx";
   }
 }

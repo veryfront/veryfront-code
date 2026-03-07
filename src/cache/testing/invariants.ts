@@ -226,7 +226,7 @@ export async function testConcurrentAccess<T = string>(
   t: Deno.TestContext,
   options: CacheInvariantTestOptions<T>,
 ): Promise<void> {
-  const { createCache, createValue, isEqual: _isEqual, name = "cache" } = options;
+  const { createCache, createValue, name = "cache" } = options;
 
   await t.step(`${name}: concurrent sets don't corrupt data`, async () => {
     const cache = await createCache();

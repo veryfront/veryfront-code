@@ -144,7 +144,7 @@ export interface RouteRegistryConfig {
   enableMetrics?: boolean;
 }
 
-export type RouteHandler = (
+type RouteHandler = (
   req: Request,
   ctx: { params: Record<string, string | string[]> },
 ) => Promise<Response> | Response;

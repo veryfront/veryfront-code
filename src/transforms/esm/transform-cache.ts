@@ -61,12 +61,6 @@ function getEffectiveCacheGateway(): TokenizingCacheGateway | CacheBackend | nul
   return injectedCacheGateway !== undefined ? injectedCacheGateway : cacheGateway;
 }
 
-// Backward compatibility: provide CacheBackend interface
-function _getEffectiveCacheBackend(): CacheBackend | null {
-  const gateway = getEffectiveCacheGateway();
-  return gateway as CacheBackend | null;
-}
-
 /**
  * Inject custom caches for testing.
  * Call with null to restore default behavior.
@@ -438,7 +432,9 @@ export async function prewarmProjectTransforms(
   for (const filePath of filePaths) {
     try {
       const pattern = `v*:${projectId}:${filePath}:*:ssr`;
-      const scan = (gateway as any).scan;
+      const scan =
+        (gateway as unknown as { scan?: (pattern: string, count: number) => Promise<string[]> })
+          .scan;
       if (typeof scan !== "function") continue;
 
       const keys = await scan.call(gateway, pattern, 10);

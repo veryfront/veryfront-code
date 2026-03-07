@@ -13,7 +13,10 @@ function renderMiniLogo(): string[] {
 
   return AGENT_FACE.map((row) =>
     row
-      .map((dot) => `${dot === 1 ? litColor : offColor}${dot === 1 ? "●" : "○"}${RESET}`)
+      .map((dot) => {
+        const lit = dot === 1;
+        return `${lit ? litColor : offColor}${lit ? "●" : "○"}${RESET}`;
+      })
       .join(" ")
   );
 }
@@ -87,9 +90,13 @@ export function calculateMaxLength(items: Array<{ length: number }>): number {
   return Math.max(...items.map((item) => item.length));
 }
 
-export function formatCommandList(commands: CommandHelp[]): string[] {
-  const maxLength = calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
+export function formatCommandList(
+  commands: CommandHelp[],
+  maxNameLength?: number,
+): string[] {
+  const padLength = maxNameLength ??
+    calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
   return commands.map(
-    (cmd) => `    ${formatCommandName(cmd.name, maxLength)} ${formatDescription(cmd.description)}`,
+    (cmd) => `    ${formatCommandName(cmd.name, padLength)} ${formatDescription(cmd.description)}`,
   );
 }
