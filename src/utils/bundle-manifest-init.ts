@@ -117,4 +117,3 @@ export function getBundleManifestTTL(
   if (mode === "production") return BUNDLE_MANIFEST_PROD_TTL_MS;
   return BUNDLE_MANIFEST_DEV_TTL_MS;
 }
-

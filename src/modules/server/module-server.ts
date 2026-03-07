@@ -81,7 +81,6 @@ export default {};
   "_dnt.polyfills": `export default {};\n`,
 };
 
-
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
 // Cross-project import patterns: /_vf_modules/_cross/<slug>[@<version>]/@/<path>

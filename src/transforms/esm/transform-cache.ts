@@ -124,7 +124,6 @@ export async function initializeTransformCache(): Promise<boolean> {
   return cacheGateway?.type !== "memory";
 }
 
-
 interface CacheKeyOptions {
   depsHash?: string;
   configHash?: string;
@@ -317,4 +316,3 @@ export async function getOrComputeTransform(
 
   return { code, cacheHit: false };
 }
-

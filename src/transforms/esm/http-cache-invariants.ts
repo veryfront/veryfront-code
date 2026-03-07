@@ -126,4 +126,3 @@ export function asLocalModuleCode(code: string): LocalModuleCode {
   }
   return code as unknown as LocalModuleCode;
 }
-
