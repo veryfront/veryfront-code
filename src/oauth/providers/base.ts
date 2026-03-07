@@ -140,7 +140,11 @@ export class OAuthProvider {
     };
 
     const rawExpiresIn = data[mapping.expiresIn ?? "expires_in"];
-    const expiresIn = typeof rawExpiresIn === "number" ? rawExpiresIn : undefined;
+    const expiresIn = typeof rawExpiresIn === "number"
+      ? rawExpiresIn
+      : typeof rawExpiresIn === "string"
+      ? Number(rawExpiresIn) || undefined
+      : undefined;
     if (expiresIn) tokens.expiresAt = Date.now() + expiresIn * 1000;
 
     return tokens;
