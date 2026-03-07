@@ -4,9 +4,6 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { detectRuntime } from "./runtime-detection.ts";
 import type { RuntimeAdapter } from "./base.ts";
 
-// Re-export from standalone module to avoid circular dependency
-export { detectRuntime } from "./runtime-detection.ts";
-
 // Re-export the registry for convenient access
 export { runtime } from "./registry.ts";
 

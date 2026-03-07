@@ -1,13 +1,13 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
-import { DynamicRouter } from "./api-route-matcher.ts";
+import { ApiRouteMatcher } from "./api-route-matcher.ts";
 import { discoverPagesRoutes } from "./route-discovery.ts";
 
-const routers: DynamicRouter[] = [];
+const routers: ApiRouteMatcher[] = [];
 
-function createRouter(): DynamicRouter {
-  const router = new DynamicRouter();
+function createRouter(): ApiRouteMatcher {
+  const router = new ApiRouteMatcher();
   routers.push(router);
   return router;
 }
@@ -420,8 +420,8 @@ describe("route-discovery.ts - Pages Router Discovery", () => {
     });
   });
 
-  describe("discoverPagesRoutes() - Integration with DynamicRouter", () => {
-    it("should add routes that can be matched by DynamicRouter", async () => {
+  describe("discoverPagesRoutes() - Integration with ApiRouteMatcher", () => {
+    it("should add routes that can be matched by ApiRouteMatcher", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
 

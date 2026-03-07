@@ -1,11 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { DynamicRouter } from "./pattern-route-matcher.ts";
+import { PageRouteMatcher } from "./pattern-route-matcher.ts";
 
 describe("pattern-route-matcher", () => {
-  describe("DynamicRouter", () => {
+  describe("PageRouteMatcher", () => {
     it("should add and match static routes", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/about", "about.tsx");
 
       const match = router.match("/about");
@@ -13,7 +13,7 @@ describe("pattern-route-matcher", () => {
     });
 
     it("should match dynamic routes", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/users/[id]", "user.tsx");
 
       const match = router.match("/users/123");
@@ -21,7 +21,7 @@ describe("pattern-route-matcher", () => {
     });
 
     it("should prioritize static over dynamic routes", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/users/[id]", "user-dynamic.tsx");
       router.addRoute("/users/profile", "profile.tsx");
 
@@ -30,7 +30,7 @@ describe("pattern-route-matcher", () => {
     });
 
     it("should prioritize dynamic over catch-all routes", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/docs/[...slug]", "docs-catch.tsx");
       router.addRoute("/docs/[id]", "docs-single.tsx");
 
@@ -39,7 +39,7 @@ describe("pattern-route-matcher", () => {
     });
 
     it("should cache route matches", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/about", "about.tsx");
 
       const match1 = router.match("/about");
@@ -49,7 +49,7 @@ describe("pattern-route-matcher", () => {
     });
 
     it("should clear cache", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/test", "test.tsx");
 
       router.match("/test");
@@ -60,7 +60,7 @@ describe("pattern-route-matcher", () => {
     });
 
     it("should return null for unmatched routes", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/about", "about.tsx");
 
       const match = router.match("/unknown");
@@ -68,7 +68,7 @@ describe("pattern-route-matcher", () => {
     });
 
     it("should handle multiple dynamic params", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/blog/[year]/[month]", "archive.tsx");
 
       const match = router.match("/blog/2024/03");
@@ -77,7 +77,7 @@ describe("pattern-route-matcher", () => {
     });
 
     it("should get all routes", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/a", "a.tsx");
       router.addRoute("/b", "b.tsx");
 
@@ -86,7 +86,7 @@ describe("pattern-route-matcher", () => {
     });
 
     it("should normalize trailing slashes", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/about", "about.tsx");
 
       const match = router.match("/about/");

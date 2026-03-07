@@ -1,6 +1,6 @@
 import { relative } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { DynamicRouter } from "./api-route-matcher.ts";
+import type { ApiRouteMatcher } from "./api-route-matcher.ts";
 import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
@@ -9,7 +9,7 @@ const ROUTE_FILE_RE = /^route\.(ts|js|tsx|jsx)$/;
 const PAGE_EXT_RE = /\.(ts|js|tsx|jsx)$/;
 
 export function discoverPagesRoutes(
-  router: DynamicRouter,
+  router: ApiRouteMatcher,
   dir: string,
   prefix: string,
   adapter: RuntimeAdapter,
@@ -30,7 +30,7 @@ export function discoverPagesRoutes(
 }
 
 export function discoverAppRoutes(
-  router: DynamicRouter,
+  router: ApiRouteMatcher,
   dir: string,
   prefix: string,
   adapter: RuntimeAdapter,

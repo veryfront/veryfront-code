@@ -1,7 +1,7 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, HTTP_SERVER_ERROR, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
-import { DynamicRouter } from "#veryfront/routing/api/api-route-matcher.ts";
+import { ApiRouteMatcher } from "#veryfront/routing/api/api-route-matcher.ts";
 import { discoverAppRoutes, discoverPagesRoutes } from "#veryfront/routing/api/route-discovery.ts";
 import { generateOpenAPISpec, specToYaml } from "#veryfront/routing/api/openapi/spec-generator.ts";
 import type { OpenAPISpec } from "#veryfront/routing/api/openapi/types.ts";
@@ -97,7 +97,7 @@ export class OpenAPIHandler extends BaseHandler {
     if (!isDev && this.cachedSpec && this.cacheKey === currentKey) return this.cachedSpec;
 
     const discover = async (): Promise<OpenAPISpec> => {
-      const router = new DynamicRouter();
+      const router = new ApiRouteMatcher();
       const pagesDir = ctx.config?.directories?.pages ?? "pages";
       const appDirName = ctx.config?.directories?.app ?? "app";
 

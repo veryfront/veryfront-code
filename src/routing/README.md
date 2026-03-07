@@ -28,7 +28,7 @@ The routing module provides pattern-based URL matching, dynamic route handling, 
 ```
 routing/
 ├── matchers/              # Route pattern matching
-│   ├── router.ts         # DynamicRouter implementation
+│   ├── router.ts         # PageRouteMatcher implementation
 │   ├── matcher.ts        # Pattern matching logic
 │   └── types.ts          # Route types
 ├── slug-mapper/          # Path/slug conversion
@@ -54,7 +54,7 @@ routing/
 
 ### Route Matching
 
-- `DynamicRouter` - Main router class
+- `PageRouteMatcher` - Main router class
 - `matchRoute(pattern, path)` - Match URL to pattern
 - `parseRoute(pattern)` - Parse route pattern
 - `getSpecificityScore(pattern)` - Calculate route priority
@@ -108,10 +108,10 @@ None (zero external dependencies)
 ### Route Matching
 
 ```typescript
-import { DynamicRouter, normalizePath } from "#veryfront/routing";
+import { normalizePath, PageRouteMatcher } from "#veryfront/routing";
 
 // Create router
-const router = new DynamicRouter();
+const router = new PageRouteMatcher();
 
 // Add routes
 router.addRoute({

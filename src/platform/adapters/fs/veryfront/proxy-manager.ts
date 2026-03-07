@@ -7,18 +7,12 @@ import {
   clearSSRModuleCache,
   clearSSRModuleCacheForProject,
 } from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
-import {
-  clearRouterDetectionCache,
-  clearRouterDetectionCacheForProject,
-} from "#veryfront/rendering/router-detection.ts";
+import { clearRouterDetectionCacheForProject } from "#veryfront/rendering/router-detection.ts";
 import {
   clearModulePathCache,
   invalidateModulePaths,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import {
-  clearSnippetCache,
-  clearSnippetCacheForProject,
-} from "#veryfront/rendering/snippet-renderer.ts";
+import { clearSnippetCacheForProject } from "#veryfront/rendering/snippet-renderer.ts";
 import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
 import { GetAdapterParamsSchema } from "./schemas/index.ts";
 
@@ -313,10 +307,8 @@ export class ProxyFSAdapterManager {
       },
       invalidationCallbacks: {
         clearSSRModuleCache,
-        clearRouterDetectionCache,
         clearModulePathCache,
         invalidateModulePaths,
-        clearSnippetCache,
         clearSSRModuleCacheForProject,
         clearRouterDetectionCacheForProject,
         clearSnippetCacheForProject,

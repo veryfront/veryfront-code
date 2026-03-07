@@ -8,7 +8,7 @@ import { badGateway, internalServerError, notFound } from "#veryfront/http/respo
 import type { CORSConfig } from "#veryfront/security";
 import { applyCORSHeaders, handleCORSPreflight } from "#veryfront/security";
 import { type APIContext } from "./context-builder.ts";
-import { DynamicRouter, type RouteMatch } from "./api-route-matcher.ts";
+import { ApiRouteMatcher, type RouteMatch } from "./api-route-matcher.ts";
 import type { APIRoute } from "./module-loader/types.ts";
 import { loadHandlerModule } from "./module-loader/loader.ts";
 import { discoverAppRoutes, discoverPagesRoutes } from "./route-discovery.ts";
@@ -57,7 +57,7 @@ export interface APIResponse {
 export type APIHandler = (ctx: APIContext) => Promise<Response> | Response;
 
 export class APIRouteHandler {
-  private router = new DynamicRouter();
+  private router = new ApiRouteMatcher();
   private routeCache = new LRUCache<string, APIRoute>({ maxEntries: HANDLER_CACHE_MAX_ENTRIES });
   private lastErrorMessage: string | null = null;
 

@@ -1,11 +1,11 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { DynamicRouter } from "./matchers/index.ts";
+import { PageRouteMatcher } from "./matchers/index.ts";
 
-describe("DynamicRouter", () => {
+describe("PageRouteMatcher", () => {
   describe("Static routes", () => {
     it("matches exact static routes", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/about", "pages/about.tsx");
       router.addRoute("/contact", "pages/contact.tsx");
 
@@ -16,14 +16,14 @@ describe("DynamicRouter", () => {
     });
 
     it("returns null for non-matching routes", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/about", "pages/about.tsx");
 
       assertEquals(router.match("/not-found"), null);
     });
 
     it("normalizes trailing slashes", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/about", "pages/about.tsx");
 
       const match1 = router.match("/about");
@@ -35,7 +35,7 @@ describe("DynamicRouter", () => {
     });
 
     it("handles root route correctly", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/", "pages/index.tsx");
 
       const match = router.match("/");
@@ -46,7 +46,7 @@ describe("DynamicRouter", () => {
 
   describe("Dynamic segments - single parameter", () => {
     it("matches single dynamic segment", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/blog/[slug]", "pages/blog/[slug].tsx");
 
       const match = router.match("/blog/hello-world");
@@ -56,7 +56,7 @@ describe("DynamicRouter", () => {
     });
 
     it("extracts parameter as string not array", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/user/[id]", "pages/user/[id].tsx");
 
       const match = router.match("/user/12345");
@@ -66,7 +66,7 @@ describe("DynamicRouter", () => {
     });
 
     it("decodes URL encoded parameters", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/user/[name]", "pages/user/[name].tsx");
 
       const match = router.match("/user/John%20Doe");
@@ -75,7 +75,7 @@ describe("DynamicRouter", () => {
     });
 
     it("handles special characters in dynamic segments", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/tag/[name]", "pages/tag/[name].tsx");
 
       const match = router.match("/tag/c%2B%2B");
@@ -86,7 +86,7 @@ describe("DynamicRouter", () => {
 
   describe("Dynamic segments - multiple parameters", () => {
     it("matches two dynamic segments", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute(
         "/shop/[category]/[product]",
         "pages/shop/[category]/[product].tsx",
@@ -101,7 +101,7 @@ describe("DynamicRouter", () => {
     });
 
     it("matches three dynamic segments in sequence", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/posts/[year]/[month]/[day]", "pages/posts/archive.tsx");
 
       const match = router.match("/posts/2024/03/15");
@@ -114,7 +114,7 @@ describe("DynamicRouter", () => {
     });
 
     it("handles mix of static and dynamic segments", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute(
         "/api/v1/users/[userId]/posts/[postId]",
         "api/user-posts.tsx",
@@ -129,7 +129,7 @@ describe("DynamicRouter", () => {
     });
 
     it("preserves parameter order correctly", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/[a]/[b]/[c]", "pages/abc.tsx");
 
       const match = router.match("/first/second/third");
@@ -142,7 +142,7 @@ describe("DynamicRouter", () => {
     });
 
     it("fails when segment count does not match", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/posts/[category]/[id]", "pages/posts.tsx");
 
       assertEquals(router.match("/posts/tech"), null);
@@ -151,7 +151,7 @@ describe("DynamicRouter", () => {
 
   describe("Catch-all routes", () => {
     it("matches catch-all routes with multiple segments", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/docs/[...path]", "pages/docs/[...path].tsx");
 
       const match = router.match("/docs/api/auth/login");
@@ -162,7 +162,7 @@ describe("DynamicRouter", () => {
     });
 
     it("matches catch-all with single segment", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/files/[...path]", "pages/files/[...path].tsx");
 
       const match = router.match("/files/readme.txt");
@@ -173,7 +173,7 @@ describe("DynamicRouter", () => {
     });
 
     it("does not match empty catch-all path", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/docs/[...path]", "pages/docs/[...path].tsx");
 
       assertEquals(router.match("/docs"), null);
@@ -181,7 +181,7 @@ describe("DynamicRouter", () => {
     });
 
     it("extracts catch-all parameter as array", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/docs/[...path]", "pages/docs.tsx");
 
       const match = router.match("/docs/introduction");
@@ -191,7 +191,7 @@ describe("DynamicRouter", () => {
     });
 
     it("handles very deep paths with catch-all", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/files/[...path]", "pages/files.tsx");
 
       const match = router.match("/files/a/b/c/d/e/f/file.txt");
@@ -204,7 +204,7 @@ describe("DynamicRouter", () => {
 
   describe("Optional catch-all routes", () => {
     it("matches optional catch-all with segments", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/app/[[...segments]]", "pages/app/[[...segments]].tsx");
 
       const match = router.match("/app/dashboard/settings");
@@ -215,7 +215,7 @@ describe("DynamicRouter", () => {
     });
 
     it("matches optional catch-all without segments", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/app/[[...segments]]", "pages/app/[[...segments]].tsx");
 
       const match = router.match("/app");
@@ -226,7 +226,7 @@ describe("DynamicRouter", () => {
     });
 
     it("matches optional catch-all with trailing slash", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/app/[[...segments]]", "pages/app/[[...segments]].tsx");
 
       const match = router.match("/app/");
@@ -237,7 +237,7 @@ describe("DynamicRouter", () => {
     });
 
     it("matches root path with optional catch-all", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/[[...path]]", "pages/home.tsx");
 
       const match = router.match("/");
@@ -248,7 +248,7 @@ describe("DynamicRouter", () => {
 
   describe("Route specificity and priority", () => {
     it("prefers static routes over dynamic", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/blog/[slug]", "pages/blog/[slug].tsx");
       router.addRoute("/blog/about", "pages/blog/about.tsx");
 
@@ -258,7 +258,7 @@ describe("DynamicRouter", () => {
     });
 
     it("prefers dynamic routes over catch-all", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/files/[...path]", "pages/files/[...path].tsx");
       router.addRoute("/files/[type]/[name]", "pages/files/[type]/[name].tsx");
 
@@ -272,7 +272,7 @@ describe("DynamicRouter", () => {
     });
 
     it("prefers catch-all over optional catch-all", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/api/[[...path]]", "pages/api/optional.tsx");
       router.addRoute("/api/[...path]", "pages/api/required.tsx");
 
@@ -282,7 +282,7 @@ describe("DynamicRouter", () => {
     });
 
     it("handles complex route priority correctly", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/products/[[...path]]", "optional-catch-all.tsx");
       router.addRoute("/products/new", "static.tsx");
       router.addRoute("/products/[id]", "dynamic.tsx");
@@ -306,7 +306,7 @@ describe("DynamicRouter", () => {
     });
 
     it("prioritizes longer static paths", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/api/[version]", "pages/api-version.tsx");
       router.addRoute("/api/v1/users", "pages/users.tsx");
 
@@ -316,7 +316,7 @@ describe("DynamicRouter", () => {
 
   describe("Cache behavior", () => {
     it("caches successful matches", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/blog/[slug]", "pages/blog/[slug].tsx");
 
       const match1 = router.match("/blog/test");
@@ -326,7 +326,7 @@ describe("DynamicRouter", () => {
     });
 
     it("caches null results", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/about", "pages/about.tsx");
 
       assertEquals(router.match("/not-found"), null);
@@ -334,7 +334,7 @@ describe("DynamicRouter", () => {
     });
 
     it("clears cache correctly", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/blog/[slug]", "pages/blog/[slug].tsx");
 
       const match1 = router.match("/blog/test");
@@ -348,7 +348,7 @@ describe("DynamicRouter", () => {
     });
 
     it("maintains separate cache entries for different paths", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/blog/[slug]", "pages/blog.tsx");
 
       const match1 = router.match("/blog/post1");
@@ -366,7 +366,7 @@ describe("DynamicRouter", () => {
 
   describe("Edge cases - trailing slashes", () => {
     it("normalizes trailing slashes for non-root paths", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/about", "pages/about.tsx");
 
       const match1 = router.match("/about");
@@ -378,7 +378,7 @@ describe("DynamicRouter", () => {
     });
 
     it("preserves root path without removing slash", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/", "pages/index.tsx");
 
       const match = router.match("/");
@@ -387,7 +387,7 @@ describe("DynamicRouter", () => {
     });
 
     it("normalizes trailing slash in dynamic routes", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/blog/[slug]", "pages/blog.tsx");
 
       const match1 = router.match("/blog/hello");
@@ -401,7 +401,7 @@ describe("DynamicRouter", () => {
 
   describe("Edge cases - URL decoding", () => {
     it("decodes spaces in parameters", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/article/[title]", "pages/article.tsx");
 
       const match = router.match("/article/How%20to%20Code");
@@ -410,7 +410,7 @@ describe("DynamicRouter", () => {
     });
 
     it("decodes special characters", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/tag/[name]", "pages/tag.tsx");
 
       const match1 = router.match("/tag/C%23");
@@ -423,7 +423,7 @@ describe("DynamicRouter", () => {
     });
 
     it("handles parameters with dots", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/files/[filename]", "pages/files/[filename].tsx");
 
       const match = router.match("/files/document.v2.final.pdf");
@@ -434,7 +434,7 @@ describe("DynamicRouter", () => {
 
   describe("Edge cases - empty parameters", () => {
     it("handles empty parameter in optional catch-all", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/[[...path]]", "pages/[[...path]].tsx");
 
       const match = router.match("/");
@@ -443,14 +443,14 @@ describe("DynamicRouter", () => {
     });
 
     it("returns null for empty path on non-optional routes", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/about", "pages/about.tsx");
 
       assertEquals(router.match(""), null);
     });
 
     it("handles empty segments correctly in optional catch-all", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/app/[[...segments]]", "pages/app.tsx");
 
       const match = router.match("/app");
@@ -461,7 +461,7 @@ describe("DynamicRouter", () => {
 
   describe("getRoutes() method", () => {
     it("returns all routes in sorted order", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/products/[...path]", "catch-all.tsx");
       router.addRoute("/products/new", "static.tsx");
       router.addRoute("/products/[id]", "dynamic.tsx");
@@ -474,7 +474,7 @@ describe("DynamicRouter", () => {
     });
 
     it("returns a copy of routes array", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       router.addRoute("/about", "about.tsx");
 
       const routes1 = router.getRoutes();
@@ -486,7 +486,7 @@ describe("DynamicRouter", () => {
     });
 
     it("returns empty array for router with no routes", () => {
-      const router = new DynamicRouter();
+      const router = new PageRouteMatcher();
       assertEquals(router.getRoutes().length, 0);
     });
   });

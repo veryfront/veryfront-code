@@ -44,6 +44,3 @@ export class PageRouteMatcher {
     return [...this.routes];
   }
 }
-
-/** @deprecated Use PageRouteMatcher instead - kept for backwards compatibility */
-export { PageRouteMatcher as DynamicRouter };

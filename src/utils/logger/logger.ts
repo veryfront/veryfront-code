@@ -40,13 +40,13 @@ export interface LogEntry {
   // Error details if applicable
   error?: SerializedError;
   // Request context (when available)
-  /** @deprecated Use `request_id` instead. Kept for Grafana dashboard transition. */
+  /** @deprecated Use `request_id` instead. Kept for Grafana dashboard transition. Planned removal after Grafana dashboard migration is complete. */
   requestId?: string;
-  /** @deprecated Use `trace_id` instead. Kept for Grafana dashboard transition. */
+  /** @deprecated Use `trace_id` instead. Kept for Grafana dashboard transition. Planned removal after Grafana dashboard migration is complete. */
   traceId?: string;
-  /** @deprecated Use `span_id` instead. Kept for Grafana dashboard transition. */
+  /** @deprecated Use `span_id` instead. Kept for Grafana dashboard transition. Planned removal after Grafana dashboard migration is complete. */
   spanId?: string;
-  /** @deprecated Use `project_slug` instead. Kept for Grafana dashboard transition. */
+  /** @deprecated Use `project_slug` instead. Kept for Grafana dashboard transition. Planned removal after Grafana dashboard migration is complete. */
   projectSlug?: string;
   // Standard fields for Loki filtering (snake_case)
   request_id?: string;
@@ -60,7 +60,7 @@ export interface LogEntry {
   branch_id?: string;
   branch_name?: string;
   // Duration for timed operations
-  /** @deprecated Use `duration_ms` instead. Kept for Grafana dashboard transition. */
+  /** @deprecated Use `duration_ms` instead. Kept for Grafana dashboard transition. Planned removal after Grafana dashboard migration is complete. */
   durationMs?: number;
   duration_ms?: number;
 }

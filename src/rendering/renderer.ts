@@ -425,16 +425,6 @@ export class Renderer {
     await this.cache.clearForContext(ctx);
   }
 
-  /**
-   * Clear all cached render results (across all contexts).
-   * Called by poke/invalidation handlers to ensure fresh renders.
-   * @deprecated Use clearCacheForProject for multi-tenant deployments
-   */
-  async clearAllCaches(): Promise<void> {
-    logger.debug("Clearing ALL render caches (global)");
-    await this.cache.clearAll();
-  }
-
   async clearCacheForProject(projectId: string): Promise<void> {
     logger.debug("Clearing render cache for project", { projectId });
     await this.cache.clearForProject(projectId);
@@ -573,21 +563,6 @@ export async function destroyRenderer(): Promise<void> {
 
   await renderer.destroy();
   renderer = null;
-}
-
-/**
- * Clear all cached render results from the singleton renderer.
- * Safe to call even if renderer is not initialized (no-op).
- * @deprecated Use clearRendererCacheForProject for multi-tenant deployments
- */
-export async function clearRendererCaches(): Promise<void> {
-  logger.debug("clearRendererCaches called (global)", { hasRenderer: !!renderer });
-  if (!renderer) {
-    logger.debug("No renderer instance, skipping cache clear");
-    return;
-  }
-
-  await renderer.clearAllCaches();
 }
 
 export async function clearRendererCacheForProject(projectId: string): Promise<void> {

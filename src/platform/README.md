@@ -138,10 +138,11 @@ interface RuntimeAdapter {
 ### Platform Detection
 
 ```typescript
-import { detectRuntime } from "#veryfront/platform/compat/runtime";
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 
-const runtime = detectRuntime();
+const adapter = await runtime.get();
 // Uses feature detection, not user agent
+// adapter.id is "deno" | "node" | "bun" | "cloudflare"
 ```
 
 ### Virtual Filesystems

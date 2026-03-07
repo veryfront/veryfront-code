@@ -58,7 +58,6 @@ export interface StartCliDevServerOptions {
   port: number;
   projectDir: string;
   signal: AbortSignal;
-  hmrPort?: number;
   enableHMR?: boolean;
   enableFastRefresh?: boolean;
 }
@@ -69,7 +68,6 @@ export async function startCliDevServer(
   const devOptions: DevServerOptions = {
     port: options.port,
     projectDir: options.projectDir,
-    hmrPort: options.hmrPort,
     enableHMR: options.enableHMR,
     enableFastRefresh: options.enableFastRefresh,
     signal: options.signal,

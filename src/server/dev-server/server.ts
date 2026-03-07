@@ -4,7 +4,7 @@ import { buildLocalhostUrl, LOCALHOST } from "#veryfront/config";
 import { basename } from "#veryfront/compat/path";
 import type { RuntimeAdapter, Server } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
-import { DynamicRouter } from "#veryfront/routing/api/index.ts";
+import { ApiRouteMatcher } from "#veryfront/routing/api/index.ts";
 import { ComponentRegistry } from "#veryfront/modules/component-registry/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
@@ -51,7 +51,7 @@ function deriveProjectSlug(projectDir: string): string {
 }
 
 export class DevServer {
-  private router: DynamicRouter;
+  private router: ApiRouteMatcher;
   private componentRegistry!: ComponentRegistry;
   private fileWatchSetup?: FileWatchSetup;
   private pipeline: MiddlewarePipeline;
@@ -71,7 +71,7 @@ export class DevServer {
     this.ready = new Promise<void>((resolve) => {
       this._resolveReady = resolve;
     });
-    this.router = new DynamicRouter();
+    this.router = new ApiRouteMatcher();
     this.pipeline = new MiddlewarePipeline();
   }
 
@@ -120,13 +120,6 @@ export class DevServer {
       hmr: this.options.enableHMR,
       fastRefresh: this.options.enableFastRefresh,
     });
-
-    if (this.options.hmrPort !== undefined) {
-      devServerLog.warn(
-        "`hmrPort` is deprecated and ignored. HMR now uses /_ws on the main dev server port.",
-        { hmrPort: this.options.hmrPort, serverPort: this.options.port },
-      );
-    }
 
     // Set VERYFRONT_DEV_PORT for ESM module loader HTTP fallback
     // This ensures the correct port is used when fetching modules via localhost

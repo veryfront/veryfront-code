@@ -27,7 +27,6 @@ export type {
 } from "./base.ts";
 
 // Detection & registry
-export { detectRuntime } from "./detect.ts";
 export { getAdapter } from "./detect.ts";
 export { getLocalAdapter, resetLocalAdapter, runtime } from "./registry.ts";
 
