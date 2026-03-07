@@ -3,6 +3,7 @@
  */
 
 import type { CacheStats, MemoryCacheOptions, TokenCache, TokenCacheEntry } from "./types.ts";
+import { proxyLogger } from "../logger.ts";
 import { withSpan } from "../tracing.ts";
 
 const DEFAULT_MAX_SIZE = 1000;
@@ -127,7 +128,7 @@ export class MemoryCache implements TokenCache {
     }
 
     if (cleaned > 0) {
-      console.log(`[MemoryCache] Cleaned ${cleaned} expired entries`);
+      proxyLogger.debug("[MemoryCache] Cleaned expired entries", { cleaned });
     }
   }
 }

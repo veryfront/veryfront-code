@@ -7,6 +7,7 @@ import {
   writeTextFile,
 } from "#veryfront/platform/compat/fs.ts";
 import { dirname, extname, join } from "#veryfront/platform/compat/path/basic-operations.ts";
+import { serverLogger } from "#veryfront/utils";
 import { embedding } from "./embedding.ts";
 import { chunk } from "./chunk.ts";
 import type {
@@ -58,7 +59,7 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
     mutex = result.then(
       () => {},
       (err) => {
-        console.error("[upload-store] Lock operation failed:", err);
+        serverLogger.error("[upload-store] Lock operation failed:", err);
       },
     );
     return result;
@@ -76,7 +77,7 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
       const data = await readTextFile(storagePath);
       const parsed = JSON.parse(data);
       if (!parsed || !Array.isArray(parsed.uploads) || !Array.isArray(parsed.chunks)) {
-        console.warn("[upload-store] Corrupted store file, resetting:", storagePath);
+        serverLogger.warn("[upload-store] Corrupted store file, resetting", { storagePath });
         return { uploads: [], chunks: [] };
       }
       return parsed as UploadStoreData;
@@ -85,7 +86,7 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
       if (isNotFoundError(err)) {
         return { uploads: [], chunks: [] };
       }
-      console.warn("[upload-store] Failed to load store, resetting:", err);
+      serverLogger.warn("[upload-store] Failed to load store, resetting", err);
       return { uploads: [], chunks: [] };
     }
   }
@@ -255,7 +256,7 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
           const content = await readTextFile(file);
           if (!content?.trim()) continue;
           if (content.length > MAX_TEXT_LENGTH) {
-            console.warn(
+            serverLogger.warn(
               `[upload-store] Skipping ${file}: exceeds ${
                 MAX_TEXT_LENGTH / 1024 / 1024
               } MB text limit`,

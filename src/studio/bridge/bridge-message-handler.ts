@@ -4,6 +4,7 @@
  * Dispatches incoming Studio messages to the appropriate bridge functions.
  */
 
+import { logger } from "./bridge-logger.ts";
 import { editorState } from "./bridge-editor-state.ts";
 import { state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
@@ -150,7 +151,7 @@ export function handleStudioMessage(event: MessageEvent): void {
       return;
 
     default:
-      console.debug("[StudioBridge] Unknown action:", message.action);
+      logger.debug("Unknown action", { action: message.action });
       return;
   }
 }

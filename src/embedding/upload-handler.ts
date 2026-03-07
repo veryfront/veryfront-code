@@ -1,3 +1,4 @@
+import { serverLogger } from "#veryfront/utils";
 import type { UploadStore } from "./types.ts";
 import { loadUpload } from "./upload-loader.ts";
 
@@ -153,7 +154,7 @@ export function createUploadHandler(
       const uploads = await store.listUploads();
       return Response.json({ uploads });
     } catch (error) {
-      console.error("Upload list failed:", error);
+      serverLogger.error("Upload list failed:", error);
       return Response.json({ error: "Failed to list uploads" }, { status: 500 });
     }
   }
@@ -170,7 +171,7 @@ export function createUploadHandler(
       await store.removeUpload(id);
       return Response.json({ success: true });
     } catch (error) {
-      console.error("Upload delete failed:", error);
+      serverLogger.error("Upload delete failed:", error);
       return Response.json({ error: "Delete failed" }, { status: 500 });
     }
   }

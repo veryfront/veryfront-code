@@ -6,6 +6,7 @@
  */
 
 import { isProduction } from "#veryfront/build/config/environment.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { VeryfrontError } from "./types.ts";
 
 export interface ErrorLogEntry {
@@ -50,23 +51,24 @@ export function logError(
   };
 
   if (isProduction()) {
-    // Structured JSON for log aggregation systems
+    // Direct JSON output — this module owns its own structured format
+    // (slug, category, status, docs) which differs from the logger envelope.
     console.error(JSON.stringify(entry));
   } else {
     // Human-readable format for development
-    console.error(`[ERROR] ${error.slug} (${error.category}) — ${error.title}`);
+    serverLogger.error(`[ERROR] ${error.slug} (${error.category}) — ${error.title}`);
     if (error.detail) {
-      console.error(`  Detail: ${error.detail}`);
+      serverLogger.error(`  Detail: ${error.detail}`);
     }
     if (error.suggestion) {
-      console.error(`  💡 Suggestion: ${error.suggestion}`);
+      serverLogger.error(`  💡 Suggestion: ${error.suggestion}`);
     }
-    console.error(`  📚 Docs: ${entry.docs}`);
+    serverLogger.error(`  📚 Docs: ${entry.docs}`);
     const mergedContext = context
       ? { ...(error.context as Record<string, unknown> ?? {}), ...context }
       : error.context;
     if (mergedContext) {
-      console.error(`  Context: ${JSON.stringify(mergedContext, null, 2)}`);
+      serverLogger.error(`  Context: ${JSON.stringify(mergedContext, null, 2)}`);
     }
   }
 }

@@ -5,6 +5,7 @@
  * inspect mode, markdown editor, mutation observer, and message listener.
  */
 
+import { logger } from "./bridge-logger.ts";
 import { state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
 import { postToStudio } from "./bridge-messaging.ts";
@@ -56,14 +57,14 @@ export function init(): void {
   if (isStandalone) {
     // Allow standalone markdown editing when WS_URL is available (server-injected Yjs config)
     if (!config.wsUrl) {
-      console.debug(
+      logger.debug(
         "[StudioBridge] Not in iframe and not studio_embed mode, skipping initialization",
       );
       return;
     }
   }
 
-  console.debug("[StudioBridge] Initializing...");
+  logger.debug("Initializing...");
 
   // Only set up Studio interaction features when embedded in Studio
   if (!isStandalone) {
@@ -131,9 +132,9 @@ export function init(): void {
     const inspectModeParam = params.get("inspect_mode");
     if (inspectModeParam === "true") {
       state.inspectMode = true;
-      console.debug("[StudioBridge] Inspect mode enabled from query param");
+      logger.debug("Inspect mode enabled from query param");
     }
   }
 
-  console.debug("[StudioBridge] Initialized successfully");
+  logger.debug("Initialized successfully");
 }

@@ -10,6 +10,7 @@
  * All cross-module calls must remain in function bodies (never at module top-level).
  */
 
+import { logger } from "./bridge-logger.ts";
 import { editorState as state } from "./bridge-editor-state.ts";
 import { LEXICAL_YJS_ORIGIN, type PresenceUser, type RemoteSelection } from "./bridge-state.ts";
 import { computeTextDiff } from "./bridge-markdown-core.ts";
@@ -100,7 +101,7 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
       const WebsocketProvider = modules[1].WebsocketProvider;
       state.markdownYjsY = Y as unknown as import("./bridge-editor-state.ts").YjsModule;
 
-      console.debug("[StudioBridge] Yjs setup:", {
+      logger.debug("Yjs setup", {
         wsUrl: config.wsUrl,
         guid: config.guid,
         fileId: config.fileId,
@@ -129,7 +130,8 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
         if (!isCurrentSetup()) {
           return;
         }
-        console.debug("[StudioBridge] Yjs status:", event.status, {
+        logger.debug("Yjs status", {
+          status: event.status,
           hasWs: !!provider.ws,
           wsReadyState: provider.ws?.readyState,
         });
@@ -142,10 +144,9 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
           const origOnMessage = ws.onmessage;
           ws.onmessage = function (wsEvent: MessageEvent) {
             if (typeof wsEvent.data === "string") {
-              console.debug(
-                "[StudioBridge] Yjs filtered string message:",
-                (wsEvent.data as string).slice(0, 120),
-              );
+              logger.debug("Yjs filtered string message", {
+                preview: (wsEvent.data as string).slice(0, 120),
+              });
               return;
             }
             if (origOnMessage) {
@@ -278,7 +279,7 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
         if (!isCurrentSetup()) {
           return;
         }
-        console.debug("[StudioBridge] Yjs sync:", {
+        logger.debug("Yjs sync", {
           synced,
           ytextLength: ytext.length,
           contentPreview: ytext.toString().slice(0, 80),
@@ -329,7 +330,7 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
               }
               const fullContent = ytext.toString();
               const contentMatch = fullContent === state.markdownCurrentContent;
-              console.debug("[StudioBridge] Yjs Y.Text observer:", {
+              logger.debug("Yjs Y.Text observer", {
                 origin: String(origin),
                 contentMatch,
                 ytextLength: fullContent.length,
@@ -344,15 +345,17 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
           // Initial awareness sync after Yjs is connected
           syncAwareness();
 
-          console.debug(
-            "[StudioBridge] Yjs synced, bound to Y.Text for fileId:",
-            config.fileId,
-          );
+          logger.debug("Yjs synced, bound to Y.Text for fileId", {
+            fileId: config.fileId,
+          });
         }
       });
     })
     .catch((error) => {
-      console.error("[StudioBridge] Failed to setup Yjs connection:", error);
+      logger.error(
+        "Failed to setup Yjs connection",
+        error instanceof Error ? error : { error: String(error) },
+      );
     });
 }
 
@@ -370,7 +373,7 @@ export function writeToYText(
   options?: { position?: number; origin?: string },
 ): boolean {
   if (!state.markdownYText || !state.markdownYDoc || !state.markdownYjsConnected) {
-    console.warn("[StudioBridge] writeToYText: Yjs not connected or not synced");
+    logger.warn("writeToYText: Yjs not connected or not synced");
     return false;
   }
 
@@ -392,7 +395,7 @@ export function writeToYText(
  */
 export function replaceYTextContent(content: string): boolean {
   if (!state.markdownYText || !state.markdownYDoc || !state.markdownYjsConnected) {
-    console.warn("[StudioBridge] replaceYTextContent: Yjs not connected or not synced");
+    logger.warn("replaceYTextContent: Yjs not connected or not synced");
     return false;
   }
 

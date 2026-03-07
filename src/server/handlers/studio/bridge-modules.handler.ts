@@ -18,6 +18,9 @@ import type {
 } from "../../handlers/types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { STUDIO_BRIDGE_BUNDLE } from "#veryfront/studio/bridge/bridge-bundle.generated.ts";
+import { serverLogger } from "#veryfront/utils";
+
+const logger = serverLogger.component("studio-bridge-handler");
 
 /** Cached bundle output. */
 let bundleCache: { js: string; etag: string } | null = null;
@@ -114,7 +117,7 @@ export class StudioBridgeModulesHandler extends BaseHandler {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error("[StudioBridgeHandler] Bundle error:", message);
+      logger.error("Bundle error", { message });
       return this.respond(
         new Response(`// Bundle error: ${message}`, {
           status: 500,

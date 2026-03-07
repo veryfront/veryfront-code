@@ -10,6 +10,7 @@
  * All cross-module calls must remain in function bodies (never at module top-level).
  */
 
+import { logger } from "./bridge-logger.ts";
 import { editorState as state } from "./bridge-editor-state.ts";
 import type { RemoteSelection } from "./bridge-state.ts";
 import { getConfig, isMarkdownPage } from "./bridge-config.ts";
@@ -114,7 +115,10 @@ export function setupMarkdownLexicalEditor(): void {
           listModule.ListItemNode,
         ],
         onError: function (error: unknown) {
-          console.error("[StudioBridge] Markdown Lexical error", error);
+          logger.error(
+            "Markdown Lexical error",
+            error instanceof Error ? error : { error: String(error) },
+          );
         },
       });
 
@@ -196,9 +200,9 @@ export function setupMarkdownLexicalEditor(): void {
       hideMarkdownBlockDropIndicator();
     })
     .catch(function (error: unknown) {
-      console.warn(
-        "[StudioBridge] Failed to load Lexical markdown editor; falling back to textarea",
-        error,
+      logger.warn(
+        "Failed to load Lexical markdown editor; falling back to textarea",
+        error instanceof Error ? error : { error: String(error) },
       );
       if (state.markdownEditorSurface) {
         state.markdownEditorSurface.style.display = "none";
@@ -264,8 +268,8 @@ export function applyMarkdownContent(content: unknown): void {
     state.markdownLexicalApi &&
     state.markdownLexicalRenderedContent === content
   ) {
-    console.debug(
-      "[StudioBridge] applyMarkdownContent: skipped (content unchanged)",
+    logger.debug(
+      "applyMarkdownContent: skipped (content unchanged)",
     );
     state.markdownCurrentContent = content;
     scheduleMarkdownSelectionOverlayRender();
@@ -275,13 +279,13 @@ export function applyMarkdownContent(content: unknown): void {
     return;
   }
 
-  console.debug(
-    "[StudioBridge] applyMarkdownContent: rebuilding Lexical DOM, content length:",
-    content.length,
-    "rendered match:",
-    state.markdownLexicalRenderedContent === content,
-    "current match:",
-    state.markdownCurrentContent === content,
+  logger.debug(
+    "applyMarkdownContent: rebuilding Lexical DOM",
+    {
+      contentLength: content.length,
+      renderedMatch: state.markdownLexicalRenderedContent === content,
+      currentMatch: state.markdownCurrentContent === content,
+    },
   );
 
   const mdxImportMap = parseMdxImportMap(content);

@@ -6,6 +6,8 @@
  * time; editor modules call them without knowing about postToStudio.
  */
 
+import { logger } from "./bridge-logger.ts";
+
 export interface EditorCallbacks {
   onContentChange(
     fileId: string | null,
@@ -26,7 +28,7 @@ let callbacks: EditorCallbacks | null = null;
 
 export function registerEditorCallbacks(cb: EditorCallbacks): void {
   if (callbacks) {
-    console.warn("[StudioBridge] EditorCallbacks already registered, overwriting");
+    logger.warn("EditorCallbacks already registered, overwriting");
   }
   callbacks = cb;
 }

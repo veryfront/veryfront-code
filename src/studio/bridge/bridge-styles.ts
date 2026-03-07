@@ -7,6 +7,8 @@
  * Gellix font is proprietary and unavailable in the preview iframe.
  */
 
+import { logger } from "./bridge-logger.ts";
+
 const OVERLAY_CSS = `
       /* ------------------------------------------------------------------ */
       /* Overlays (hover / selection inspector)                              */
@@ -831,12 +833,14 @@ export function injectOverlayStyles(): void {
   try {
     document.head.appendChild(style);
     if (!style.sheet) {
-      console.warn("[StudioBridge] Inline style injection may be blocked by CSP (style-src).");
+      logger.warn("Inline style injection may be blocked by CSP (style-src)");
     }
   } catch (error) {
-    console.warn(
-      "[StudioBridge] Failed to inject bridge styles. This may be caused by CSP style-src restrictions.",
-      error,
+    logger.warn(
+      "Failed to inject bridge styles. This may be caused by CSP style-src restrictions.",
+      error instanceof Error ? error : {
+        error: String(error),
+      },
     );
   }
 }
