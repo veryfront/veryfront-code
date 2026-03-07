@@ -1,10 +1,5 @@
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
-import {
-  assert,
-  assertEquals,
-  assertRejects,
-  assertStringIncludes,
-} from "#veryfront/testing/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
 import { Sandbox } from "./sandbox.ts";
 
 // Mock fetch for testing
