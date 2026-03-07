@@ -275,7 +275,7 @@ export class SecureFs {
     }
 
     const pathArg: string | string[] = validatedPaths.length === 1
-      ? validatedPaths[0]!
+      ? validatedPaths[0] ?? ""
       : validatedPaths;
 
     return this.config.adapter.fs.watch(pathArg, options);

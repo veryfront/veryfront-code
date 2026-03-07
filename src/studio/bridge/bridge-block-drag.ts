@@ -295,14 +295,19 @@ export function getMarkdownBlockHoverIndexFromPointer(
   }
 
   for (let i = 0; i < blocks.length; i += 1) {
-    const rect = blocks[i]!.getBoundingClientRect();
+    const block = blocks[i];
+    if (!block) continue;
+    const rect = block.getBoundingClientRect();
     if (clientY >= rect.top - 4 && clientY <= rect.bottom + 4) {
       return i;
     }
   }
 
-  const firstRect = blocks[0]!.getBoundingClientRect();
-  const lastRect = blocks[blocks.length - 1]!.getBoundingClientRect();
+  const firstBlock = blocks[0];
+  const lastBlock = blocks[blocks.length - 1];
+  if (!firstBlock || !lastBlock) return -1;
+  const firstRect = firstBlock.getBoundingClientRect();
+  const lastRect = lastBlock.getBoundingClientRect();
   if (clientY < firstRect.top) {
     return 0;
   }
@@ -375,7 +380,9 @@ export function getMarkdownDropSlotIndexFromPointer(clientY: number): number {
   }
 
   for (let i = 0; i < blocks.length; i += 1) {
-    const rect = blocks[i]!.getBoundingClientRect();
+    const block = blocks[i];
+    if (!block) continue;
+    const rect = block.getBoundingClientRect();
     const midpoint = rect.top + rect.height / 2;
     if (clientY < midpoint) {
       return i;
@@ -432,10 +439,20 @@ export function showMarkdownBlockDropIndicator(slotIndex: number): void {
   let top;
 
   if (safeSlot >= blocks.length) {
-    const lastRect = blocks[blocks.length - 1]!.getBoundingClientRect();
+    const lastBlock = blocks[blocks.length - 1];
+    if (!lastBlock) {
+      hideMarkdownBlockDropIndicator();
+      return;
+    }
+    const lastRect = lastBlock.getBoundingClientRect();
     top = lastRect.bottom + 1;
   } else {
-    const rect = blocks[safeSlot]!.getBoundingClientRect();
+    const slotBlock = blocks[safeSlot];
+    if (!slotBlock) {
+      hideMarkdownBlockDropIndicator();
+      return;
+    }
+    const rect = slotBlock.getBoundingClientRect();
     top = rect.top - 1;
   }
 
@@ -447,7 +464,7 @@ export function showMarkdownBlockDropIndicator(slotIndex: number): void {
 
   const dropType = safeSlot >= blocks.length
     ? { label: "end of document", color: "#0284c7" }
-    : getMarkdownBlockTypeInfo(blocks[safeSlot]!);
+    : getMarkdownBlockTypeInfo(blocks[safeSlot] ?? null);
   state.markdownBlockDropIndicator.style.background = dropType.color;
   state.markdownBlockDropIndicator.style.boxShadow = "0 1px 6px " + dropType.color;
 

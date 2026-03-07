@@ -306,7 +306,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
       }
 
       // Single re-render handles all paths (server propagates timestamps to all imports)
-      await updateJS(paths[0]);
+      if (paths.length > 0) await updateJS(paths[0]);
     }, UPDATE_DEBOUNCE_MS);
   }
 ${getUpdateJSFunction(logPrefix)}

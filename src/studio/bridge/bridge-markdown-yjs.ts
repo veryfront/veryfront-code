@@ -164,10 +164,10 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
       try {
         const cookieMatch = document.cookie.match(/authToken=([^;]+)/);
         if (cookieMatch) {
-          const parts = cookieMatch[1]!.split(".");
+          const parts = (cookieMatch[1] ?? "").split(".");
           if (parts.length === 3) {
             const payload = JSON.parse(
-              atob(parts[1]!.replace(/-/g, "+").replace(/_/g, "/")),
+              atob((parts[1] ?? "").replace(/-/g, "+").replace(/_/g, "/")),
             );
             if (payload.userId) {
               presenceUser.id = payload.userId;

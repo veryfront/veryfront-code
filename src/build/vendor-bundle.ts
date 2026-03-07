@@ -76,7 +76,7 @@ export async function buildVendorBundle(
     write: false,
   });
 
-  const output = result.outputFiles[0];
+  const output = result.outputFiles?.[0];
   if (!output) {
     throw toError(
       createError({

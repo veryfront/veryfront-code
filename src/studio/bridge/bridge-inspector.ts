@@ -72,7 +72,7 @@ export function positionOverlay(
 
 export function getNodeName(element: Element): string {
   const vfId = element.getAttribute(DATA_VF_ID);
-  if (vfId) return vfId.split("_")[0]!;
+  if (vfId) return vfId.split("_")[0] ?? vfId;
   return element.tagName.toLowerCase();
 }
 
@@ -141,11 +141,11 @@ export function buildNavigatorTree(root: Element): NavigatorTreeNode {
     }
 
     const vfId = el.getAttribute(DATA_VF_ID);
-    const name = vfId ? vfId.split("_")[0] : el.tagName.toLowerCase();
+    const name = vfId ? (vfId.split("_")[0] ?? vfId) : el.tagName.toLowerCase();
 
     const node: NavigatorTreeNode = {
       id: id,
-      name: name!,
+      name: name,
       type: getNodeType(el),
       path: config.pagePath,
       parentId: parentId,

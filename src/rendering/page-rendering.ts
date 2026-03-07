@@ -107,7 +107,9 @@ export function handleMDXPage(
           try {
             const params = options?.params
               ? (Object.fromEntries(
-                Object.entries(options.params).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]),
+                Object.entries(options.params)
+                  .map(([k, v]) => [k, Array.isArray(v) ? v[0] : v])
+                  .filter((entry): entry is [string, string] => entry[1] !== undefined),
               ) as Record<string, string>)
               : {};
 

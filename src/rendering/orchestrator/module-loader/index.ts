@@ -246,14 +246,14 @@ export async function transformModuleWithDeps(
 
   // Match @/ alias imports
   const aliasImports: AliasImport[] = [...fileContent.matchAll(/from\s+["'](@\/[^"']+)["']/g)].map(
-    (m) => ({ full: m[0], path: m[1]! }),
+    (m) => ({ full: m[0], path: m[1] ?? "" }),
   );
 
   // Match relative imports (./ and ../) - exclude npm:, http://, https://, file://
   const relativeImports: RelativeImport[] = [
     ...fileContent.matchAll(/from\s+["'](\.\.?\/[^"']+)["']/g),
   ]
-    .map((m) => ({ full: m[0], path: m[1]!, fromDir: fileDir }))
+    .map((m) => ({ full: m[0], path: m[1] ?? "", fromDir: fileDir }))
     // Filter out already-transformed file:// imports
     .filter((imp) => !imp.path.includes("file://"));
 
