@@ -94,8 +94,6 @@ export type {
   AgentStreamResult,
   EdgeConfig,
   MemoryConfig,
-  /** @deprecated Use `AgentMessage` instead to avoid collision with chat `Message` component. */
-  Message,
   Message as AgentMessage,
   MessagePart,
   ModelProvider,

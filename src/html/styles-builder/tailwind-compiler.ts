@@ -265,9 +265,3 @@ export function formatCSSError(error: Error | string): CSSErrorInfo {
   return formatCSSErrorMessage(message);
 }
 
-/** @deprecated Use generateTailwindCSS with explicit candidates instead */
-export async function generateTailwind4CSS(html: string): Promise<string> {
-  const candidates = extractCandidates(html);
-  const result = await generateTailwindCSS(undefined, candidates);
-  return result.css;
-}

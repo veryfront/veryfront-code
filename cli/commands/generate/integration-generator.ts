@@ -234,13 +234,44 @@ export function setTokens(access: string, refresh?: string, expiresIn?: number):
 export async function getAccessToken(): Promise<string | null> {
   if (!tokenData) return null;
 
-  // Check if token is expired
+  // Check if token is expired and attempt refresh
   if (tokenData.expiresAt && Date.now() > tokenData.expiresAt) {
-    // TODO: Implement token refresh
+    if (tokenData.refreshToken) {
+      const refreshed = await refreshAccessToken(tokenData.refreshToken);
+      if (refreshed) return refreshed;
+    }
     return null;
   }
 
   return tokenData.accessToken;
+}
+
+async function refreshAccessToken(refreshToken: string): Promise<string | null> {
+  const clientId = process.env.${config.envVarPrefix}_CLIENT_ID;
+  const clientSecret = process.env.${config.envVarPrefix}_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) return null;
+
+  try {
+    const response = await fetch("${config.tokenUrl}", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    setTokens(data.access_token, data.refresh_token ?? refreshToken, data.expires_in);
+    return data.access_token;
+  } catch {
+    return null;
+  }
 }
 
 export function clearTokens(): void {
