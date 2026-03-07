@@ -90,7 +90,6 @@ if (!sdkMockAvailable) {
 }
 
 describe("resolvePermissionMode (via executeAgent)", () => {
-
   it("maps 'code' mode to acceptEdits", async () => {
     assertEquals(await capturePermissionMode({ mode: "code" }), "acceptEdits");
   });
