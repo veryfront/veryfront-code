@@ -36,7 +36,7 @@ const DEFAULT_MEMORY_MONITORING_INTERVAL_MS = 30_000;
 const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
 
 /** Default port when PORT / VERYFRONT_PORT env vars are not set */
-const DEFAULT_SERVER_PORT = 3000;
+const DEFAULT_SERVER_PORT = 3_000;
 
 /** Configuration for AI primitives discovery during server startup */
 export interface DiscoveryOptions {

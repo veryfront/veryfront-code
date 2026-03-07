@@ -50,6 +50,9 @@ const UNKNOWN_PLATFORM_MAX_AGENT_STEPS = 5;
 /** Minimum agent steps threshold for generating a warning */
 const MIN_AGENT_STEPS_WARNING_THRESHOLD = 10;
 
+/** CPU time limit below which a platform warning is emitted (60 seconds) */
+const CPU_TIME_WARNING_THRESHOLD_MS = 60_000;
+
 const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
   deno: {
     canRunMCPServer: true,
@@ -134,7 +137,7 @@ export function getPlatformWarnings(): string[] {
 
   if (
     capabilities.cpuTimeLimit !== null &&
-    capabilities.cpuTimeLimit < UNKNOWN_PLATFORM_CPU_TIME_LIMIT_MS
+    capabilities.cpuTimeLimit < CPU_TIME_WARNING_THRESHOLD_MS
   ) {
     warnings.push(
       `${capabilities.displayName} has CPU time limit of ${capabilities.cpuTimeLimit}ms. Enable streaming for better UX.`,

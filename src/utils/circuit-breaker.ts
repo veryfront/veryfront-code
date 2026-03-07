@@ -26,11 +26,11 @@ const MAX_HALF_OPEN_ATTEMPTS = 3;
 export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
 export interface CircuitBreakerOptions {
-  /** Failures before opening (default: DEFAULT_FAILURE_THRESHOLD) */
+  /** Failures before opening (default: 5) */
   failureThreshold?: number;
-  /** Ms to wait before retry (default: DEFAULT_RESET_TIMEOUT_MS) */
+  /** Ms to wait before retry (default: 30000) */
   resetTimeoutMs?: number;
-  /** Successes to close (default: DEFAULT_SUCCESS_THRESHOLD) */
+  /** Successes to close (default: 3) */
   successThreshold?: number;
   /** Optional name for logging */
   name?: string;
