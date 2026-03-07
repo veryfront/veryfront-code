@@ -11,8 +11,8 @@ globalThis.AI_SDK_LOG_WARNINGS = false;
 
 console.log('1. Resolving "openai/gpt-4o" (no API key set)...');
 const model = resolveModel("openai/gpt-4o");
-// deno-lint-ignore no-explicit-any
-console.log(`   → Got model: ${(model as any).modelId ?? (model as any).provider}`);
+const m = model as Record<string, unknown>;
+console.log(`   → Got model: ${m.modelId ?? m.provider}`);
 
 console.log("\n2. Streaming response via AI SDK...");
 const result = streamText({

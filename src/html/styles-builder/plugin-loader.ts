@@ -17,8 +17,7 @@ const logger = serverLogger.component("tailwind");
 // Provide localStorage shim for plugins that use util-deprecate (which checks localStorage)
 // This prevents "LocalStorage is not supported in this context" errors in Deno.
 try {
-  // deno-lint-ignore no-explicit-any -- localStorage may not exist on globalThis in Deno; probing for its presence
-  const _test = (globalThis as any).localStorage;
+  void (globalThis as Record<string, unknown>).localStorage;
 } catch {
   const localStorageShim = {
     getItem: () => null,

@@ -7,9 +7,8 @@ import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
 import type { ContentContextProvider } from "./read-operations.ts";
 
-// deno-lint-ignore no-explicit-any
 function createMockClient(
-  overrides: Record<string, any> = {},
+  overrides: Record<string, unknown> = {},
 ): VeryfrontApiClient {
   return {
     getRequestBranch: () => "main",

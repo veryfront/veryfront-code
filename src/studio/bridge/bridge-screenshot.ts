@@ -6,9 +6,12 @@
 
 import { state } from "./bridge-state.ts";
 
+type Html2CanvasFn = (
+  element: HTMLElement,
+  options?: Record<string, unknown>,
+) => Promise<HTMLCanvasElement>;
 declare const window: Window & {
-  // deno-lint-ignore no-explicit-any -- third-party html2canvas loaded via CDN script tag
-  html2canvas: any;
+  html2canvas: Html2CanvasFn & { default?: Html2CanvasFn };
   devicePixelRatio: number;
 };
 

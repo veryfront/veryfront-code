@@ -22,7 +22,7 @@ function resolve(pkg: string, version: string): string {
   return isDeno ? `npm:${pkg}@${version}` : pkg;
 }
 
-// deno-lint-ignore no-explicit-any -- Opaque deps have unknown shapes; callers cast at call site
+// deno-lint-ignore no-explicit-any -- callers assign to their own typed variable; any allows implicit narrowing at each call site
 type OpaqueModule = any;
 
 /** Lazily import `@huggingface/transformers` (+ onnxruntime, ~500MB). */

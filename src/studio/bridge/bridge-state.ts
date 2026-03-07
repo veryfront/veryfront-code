@@ -62,7 +62,7 @@ export interface MdxBlock {
 // Lexical structural types (dynamically imported from ESM CDN)
 // ---------------------------------------------------------------------------
 
-// deno-lint-ignore no-explicit-any
+// deno-lint-ignore no-explicit-any -- opaque CDN types: Lexical is dynamically imported from esm.sh with no static declarations
 type LexicalCommand = any;
 // deno-lint-ignore no-explicit-any
 type LexicalEditorState = any;

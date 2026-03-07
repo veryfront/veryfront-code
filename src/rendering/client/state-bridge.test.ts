@@ -80,8 +80,7 @@ class MockReactHooks {
     this.effects.push(effect);
   }
 
-  // deno-lint-ignore ban-types
-  useCallback<T extends Function>(callback: T, _deps: DependencyList): T {
+  useCallback<T extends (...args: never[]) => unknown>(callback: T, _deps: DependencyList): T {
     return callback;
   }
 
