@@ -26,6 +26,7 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
@@ -63,8 +64,8 @@ export interface DynamicJobEntrypointConfig {
  * Get tenant context from environment variables
  */
 function getTenantFromEnv(): CapturedTenantContext | undefined {
-  const projectSlug = Deno.env.get("TENANT_PROJECT_SLUG");
-  const token = Deno.env.get("TENANT_TOKEN");
+  const projectSlug = getEnv("TENANT_PROJECT_SLUG");
+  const token = getEnv("TENANT_TOKEN");
 
   if (!projectSlug || !token) {
     return undefined;
@@ -73,9 +74,9 @@ function getTenantFromEnv(): CapturedTenantContext | undefined {
   return {
     projectSlug,
     token,
-    projectId: Deno.env.get("TENANT_PROJECT_ID"),
-    productionMode: Deno.env.get("TENANT_PRODUCTION_MODE") === "1",
-    releaseId: Deno.env.get("TENANT_RELEASE_ID") || undefined,
+    projectId: getEnv("TENANT_PROJECT_ID"),
+    productionMode: getEnv("TENANT_PRODUCTION_MODE") === "1",
+    releaseId: getEnv("TENANT_RELEASE_ID") || undefined,
   };
 }
 
@@ -96,7 +97,7 @@ export async function runDynamicWorkflowJob(
   const { backend, debug = false } = config;
 
   // Get workflow run ID from environment
-  const runId = Deno.env.get("WORKFLOW_RUN_ID");
+  const runId = getEnv("WORKFLOW_RUN_ID");
   if (!runId) {
     logger.error("Missing WORKFLOW_RUN_ID environment variable");
     return DYNAMIC_EXIT_CODES.CONFIG_ERROR;
@@ -138,7 +139,7 @@ export async function runDynamicWorkflowJob(
       },
       async () => {
         // Set up FS adapter with Veryfront API backend
-        const apiUrl = Deno.env.get("VERYFRONT_API_URL") || "https://api.veryfront.com";
+        const apiUrl = getEnv("VERYFRONT_API_URL") || "https://api.veryfront.com";
 
         const fsConfig = {
           fs: {

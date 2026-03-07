@@ -21,6 +21,7 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
@@ -56,8 +57,8 @@ export const EXIT_CODES = {
  * Get tenant context from environment variables
  */
 function getTenantFromEnv(): CapturedTenantContext | undefined {
-  const projectSlug = Deno.env.get("TENANT_PROJECT_SLUG");
-  const token = Deno.env.get("TENANT_TOKEN");
+  const projectSlug = getEnv("TENANT_PROJECT_SLUG");
+  const token = getEnv("TENANT_TOKEN");
 
   if (!projectSlug || !token) {
     return undefined;
@@ -66,9 +67,9 @@ function getTenantFromEnv(): CapturedTenantContext | undefined {
   return {
     projectSlug,
     token,
-    projectId: Deno.env.get("TENANT_PROJECT_ID") || undefined,
-    productionMode: Deno.env.get("TENANT_PRODUCTION_MODE") === "1",
-    releaseId: Deno.env.get("TENANT_RELEASE_ID") || undefined,
+    projectId: getEnv("TENANT_PROJECT_ID") || undefined,
+    productionMode: getEnv("TENANT_PRODUCTION_MODE") === "1",
+    releaseId: getEnv("TENANT_RELEASE_ID") || undefined,
   };
 }
 
@@ -103,7 +104,7 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
   const { backend, executor, debug = false } = config;
 
   // Get workflow run ID from environment
-  const runId = Deno.env.get("WORKFLOW_RUN_ID");
+  const runId = getEnv("WORKFLOW_RUN_ID");
   if (!runId) {
     logger.error("Missing WORKFLOW_RUN_ID environment variable");
     return EXIT_CODES.CONFIG_ERROR;

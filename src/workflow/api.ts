@@ -23,6 +23,7 @@ import { getWorkflowTenant } from "./executor/step-executor.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { INITIALIZATION_ERROR, INPUT_VALIDATION_FAILED } from "#veryfront/errors";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 /**
  * Validate that a project slug is safe and well-formed.
@@ -85,7 +86,7 @@ function getClient(): VeryfrontApiClient {
   const tenant = getTenant();
 
   const client = new VeryfrontApiClient({
-    apiBaseUrl: Deno.env.get("VERYFRONT_API_URL") || "https://api.veryfront.com",
+    apiBaseUrl: getHostEnv("VERYFRONT_API_URL") || "https://api.veryfront.com",
     proxyMode: true,
     projectId: tenant.projectId,
     projectSlug: tenant.projectSlug,
