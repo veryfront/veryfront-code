@@ -42,6 +42,12 @@ function ndjsonResponse(events: Array<Record<string, unknown>>): Response {
   });
 }
 
+function call(index: number): { url: string; init?: RequestInit } {
+  const entry = fetchCalls[index];
+  if (!entry) throw new Error(`No fetch call at index ${index}`);
+  return entry;
+}
+
 describe("Sandbox", () => {
   beforeEach(() => {
     fetchCalls = [];
@@ -66,9 +72,8 @@ describe("Sandbox", () => {
       assertEquals(sandbox.id, "session-1");
       assertEquals(sandbox.url, "https://sandbox.example.com");
 
-      assertStringIncludes(fetchCalls[0].url, "/sandbox-sessions");
-      assertEquals(fetchCalls[0].init?.method, "POST");
-      assertStringIncludes(fetchCalls[0].init?.headers?.toString() ?? "", "");
+      assertStringIncludes(call(0).url, "/sandbox-sessions");
+      assertEquals(call(0).init?.method, "POST");
     });
 
     it("should poll until ready when not running", async () => {
@@ -135,7 +140,7 @@ describe("Sandbox", () => {
       });
       assertEquals(sandbox.id, "session-existing");
       assertEquals(sandbox.url, "https://sandbox.example.com");
-      assertStringIncludes(fetchCalls[0].url, "/sandbox-sessions/session-existing");
+      assertStringIncludes(call(0).url, "/sandbox-sessions/session-existing");
     });
 
     it("should throw when sandbox not found", async () => {
@@ -154,7 +159,6 @@ describe("Sandbox", () => {
 
   describe("executeCommand()", () => {
     it("should execute command and collect output", async () => {
-      // Create sandbox first
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         ndjsonResponse([
@@ -200,7 +204,7 @@ describe("Sandbox", () => {
       const content = await sandbox.readFile("/workspace/test.txt");
 
       assertEquals(content, "file content here");
-      assertStringIncludes(fetchCalls[1].url, "/file?path=");
+      assertStringIncludes(call(1).url, "/file?path=");
     });
 
     it("should throw on read failure", async () => {
@@ -231,8 +235,8 @@ describe("Sandbox", () => {
         { path: "/workspace/b.txt", content: "bbb" },
       ]);
 
-      assertEquals(fetchCalls[1].init?.method, "POST");
-      assertStringIncludes(fetchCalls[1].url, "/files");
+      assertEquals(call(1).init?.method, "POST");
+      assertStringIncludes(call(1).url, "/files");
     });
   });
 
@@ -246,8 +250,8 @@ describe("Sandbox", () => {
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       await sandbox.heartbeat();
 
-      assertStringIncludes(fetchCalls[1].url, "/sandbox-sessions/s6/heartbeat");
-      assertEquals(fetchCalls[1].init?.method, "POST");
+      assertStringIncludes(call(1).url, "/sandbox-sessions/s6/heartbeat");
+      assertEquals(call(1).init?.method, "POST");
     });
   });
 
@@ -261,15 +265,19 @@ describe("Sandbox", () => {
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       await sandbox.close();
 
-      assertStringIncludes(fetchCalls[1].url, "/sandbox-sessions/s7");
-      assertEquals(fetchCalls[1].init?.method, "DELETE");
+      assertStringIncludes(call(1).url, "/sandbox-sessions/s7");
+      assertEquals(call(1).init?.method, "DELETE");
     });
   });
 
   describe("properties", () => {
     it("should expose id and url", async () => {
       mockFetch([
-        jsonResponse({ id: "props-test", endpoint: "https://sb.example.com", status: "running" }),
+        jsonResponse({
+          id: "props-test",
+          endpoint: "https://sb.example.com",
+          status: "running",
+        }),
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });

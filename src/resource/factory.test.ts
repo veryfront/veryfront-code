@@ -52,10 +52,10 @@ describe("resource factory", () => {
         description: "Data",
         paramsSchema: z.object({}),
         load: async () => ({}),
-        mcp: { enabled: true, requiresAuth: true },
+        mcp: { enabled: true, cachePolicy: "cache-first" },
       });
       assertEquals(r.mcp?.enabled, true);
-      assertEquals(r.mcp?.requiresAuth, true);
+      assertEquals(r.mcp?.cachePolicy, "cache-first");
     });
 
     it("should preserve subscribe function", () => {
