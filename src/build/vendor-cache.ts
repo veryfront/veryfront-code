@@ -27,4 +27,3 @@ export async function generateVendorCacheKey(
 
   return `vendor:${projectId}:${hash}`;
 }
-
