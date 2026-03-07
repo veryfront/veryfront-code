@@ -8,6 +8,7 @@
  */
 
 import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 
 /** Options for creating a sandbox session. */
 export interface SandboxOptions {
@@ -42,9 +43,7 @@ export class Sandbox {
 
   private static resolveApiUrl(options: SandboxOptions): string {
     return options.apiUrl ||
-      (typeof Deno !== "undefined"
-        ? Deno.env.get("VERYFRONT_API_URL")
-        : process.env.VERYFRONT_API_URL) ||
+      getEnv("VERYFRONT_API_URL") ||
       "https://api.veryfront.com";
   }
 
