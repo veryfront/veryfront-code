@@ -149,11 +149,14 @@ export class RenderPipeline {
    */
   private async loadModulesInParallel(modules: ModuleToLoad[]): Promise<LoadedModule[]> {
     const results = await Promise.all(
-      modules.map((m) =>
-        this.loadModule(m.path)
-          .then((mod) => ({ ...m, mod, error: null as Error | null }))
-          .catch((error: Error) => ({ ...m, mod: null, error }))
-      ),
+      modules.map(async (m) => {
+        try {
+          const mod = await this.loadModule(m.path);
+          return { ...m, mod, error: null as Error | null };
+        } catch (error) {
+          return { ...m, mod: null, error: error as Error };
+        }
+      }),
     );
 
     const loaded: LoadedModule[] = [];
@@ -276,12 +279,15 @@ export class RenderPipeline {
       () =>
         withTimeoutThrow(
           Promise.all(
-            dataJobs.map((job) =>
-              this.dataFetcher
-                .fetchData(job.mod as PageWithData, dataContext, this.config.mode)
-                .then((result) => ({ ...job, result, error: null as Error | null }))
-                .catch((error: Error) => ({ ...job, result: null, error }))
-            ),
+            dataJobs.map(async (job) => {
+              try {
+                const result = await this.dataFetcher
+                  .fetchData(job.mod as PageWithData, dataContext, this.config.mode);
+                return { ...job, result, error: null as Error | null };
+              } catch (error) {
+                return { ...job, result: null, error: error as Error };
+              }
+            }),
           ),
           DATA_FETCH_TIMEOUT_MS,
           `Data fetch for ${slug}`,
@@ -353,8 +359,8 @@ export class RenderPipeline {
 
     return withSpan(
       "render.page",
-      () =>
-        runWithCSSCollector(async () => {
+      async () => {
+        const { result } = await runWithCSSCollector(async () => {
           const pageResolveStart = performance.now();
           const pageInfo = await withSpan(
             "render.resolve_page",
@@ -533,20 +539,24 @@ export class RenderPipeline {
           };
 
           if (shouldCache && !options?.skipCachePersist) {
-            this.config.cacheCoordinator.persistResult(result, slug, cacheKey).catch((error) => {
-              renderPipelineLog.error("Cache persist failed", {
-                slug,
-                error: error instanceof Error ? error.message : String(error),
-                stack: error instanceof Error ? error.stack : undefined,
-              });
-            });
+            void this.config.cacheCoordinator.persistResult(result, slug, cacheKey).catch(
+              (error) => {
+                renderPipelineLog.error("Cache persist failed", {
+                  slug,
+                  error: error instanceof Error ? error.message : String(error),
+                  stack: error instanceof Error ? error.stack : undefined,
+                });
+              },
+            );
           }
 
           timing.total = Math.round(performance.now() - pipelineStartTime);
           renderPipelineLog.debug("Complete", { slug, timing });
 
           return result;
-        }).then(({ result }) => result),
+        });
+        return result;
+      },
       {
         "render.slug": slug,
         "render.project_id": options?.projectId || this.config.projectDir,

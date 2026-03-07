@@ -238,7 +238,7 @@ export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute 
   );
 }
 
-function loadModule(args: {
+async function loadModule(args: {
   modulePath: string;
   projectDir: string;
   adapter: RuntimeAdapter;
@@ -254,12 +254,11 @@ function loadModule(args: {
     return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
   }
 
-  return fs.exists(modulePath).then((fileExistsLocally) => {
-    if (fileExistsLocally) return loadTSModuleDirect(modulePath);
+  const fileExistsLocally = await fs.exists(modulePath);
+  if (fileExistsLocally) return loadTSModuleDirect(modulePath);
 
-    logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
-    return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
-  });
+  logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
+  return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
 }
 
 /**

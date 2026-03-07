@@ -624,10 +624,14 @@ export class RedisBackend implements WorkflowBackend {
     }
   }
 
-  destroy(): Promise<void> {
+  async destroy(): Promise<void> {
     if (this.client) {
-      if (typeof this.client.quit === "function") this.client.quit();
-      else if (typeof this.client.disconnect === "function") this.client.disconnect();
+      try {
+        if (typeof this.client.quit === "function") await this.client.quit();
+        else if (typeof this.client.disconnect === "function") await this.client.disconnect();
+      } catch {
+        // Ignore errors during cleanup — connection may already be closed
+      }
       this.client = null;
     }
 
@@ -635,6 +639,5 @@ export class RedisBackend implements WorkflowBackend {
     this.initialized = false;
 
     if (this.config.debug) logger.debug("[RedisBackend] Destroyed");
-    return Promise.resolve();
   }
 }

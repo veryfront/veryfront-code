@@ -144,7 +144,7 @@ export class DevServer {
 
     // Initialize disk cache in dev mode when explicitly configured
     if (isDiskCacheConfigured()) {
-      initializeDistributedCaches().catch((error) => {
+      void initializeDistributedCaches().catch((error: unknown) => {
         logger.debug("[DevServer] Cache initialization failed, using memory fallback", { error });
       });
     }

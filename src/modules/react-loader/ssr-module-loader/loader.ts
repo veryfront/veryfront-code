@@ -642,7 +642,7 @@ export class SSRModuleLoader {
         }
 
         if (isSSRDistributedCacheEnabled()) {
-          setInRedis(contentCacheKey, transformed, {
+          void setInRedis(contentCacheKey, transformed, {
             isProduction: this.cache.isProductionContentSource(),
           }).catch((error) => {
             logger.debug("Distributed cache set failed", {

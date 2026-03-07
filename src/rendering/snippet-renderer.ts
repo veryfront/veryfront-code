@@ -60,26 +60,27 @@ registerCache("snippet-cache", () => ({
 let distributedSnippetCache: CacheBackend | null = null;
 let distributedCacheInitPromise: Promise<CacheBackend> | null = null;
 
-function getDistributedSnippetCache(): Promise<CacheBackend> {
-  if (distributedSnippetCache) return Promise.resolve(distributedSnippetCache);
+async function getDistributedSnippetCache(): Promise<CacheBackend> {
+  if (distributedSnippetCache) return distributedSnippetCache;
   if (distributedCacheInitPromise) return distributedCacheInitPromise;
 
-  distributedCacheInitPromise = createCacheBackend({ keyPrefix: "snippet" })
-    .then((backend) => {
+  distributedCacheInitPromise = (async () => {
+    try {
+      const backend = await createCacheBackend({ keyPrefix: "snippet" });
       distributedSnippetCache = backend;
       logger.debug("Distributed cache initialized", {
         type: backend.type,
       });
       return backend;
-    })
-    .catch((error) => {
+    } catch (error) {
       logger.warn(
         "[SnippetRenderer] Failed to initialize distributed cache, using memory",
         { error },
       );
       distributedSnippetCache = new MemoryCacheBackend(SNIPPET_CACHE_MAX_ENTRIES);
       return distributedSnippetCache;
-    });
+    }
+  })();
 
   return distributedCacheInitPromise;
 }
@@ -126,11 +127,14 @@ export function clearSnippetCache(): void {
 
   if (keysToDelete.length === 0) return;
 
-  getDistributedSnippetCache()
-    .then((cache) => Promise.allSettled(keysToDelete.map((key) => cache.del(key))))
-    .catch(() => {
+  void (async () => {
+    try {
+      const cache = await getDistributedSnippetCache();
+      await Promise.allSettled(keysToDelete.map((key) => cache.del(key)));
+    } catch {
       // Ignore distributed cache clear failures
-    });
+    }
+  })();
 }
 
 export function clearSnippetCacheForProject(projectSlug: string): void {
@@ -153,11 +157,14 @@ export function clearSnippetCacheForProject(projectSlug: string): void {
 
   if (keysToDelete.length === 0) return;
 
-  getDistributedSnippetCache()
-    .then((cache) => Promise.allSettled(keysToDelete.map((key) => cache.del(key))))
-    .catch(() => {
+  void (async () => {
+    try {
+      const cache = await getDistributedSnippetCache();
+      await Promise.allSettled(keysToDelete.map((key) => cache.del(key)));
+    } catch {
       // Ignore distributed cache clear failures
-    });
+    }
+  })();
 }
 
 function getModuleServerBase(moduleServerUrl?: string): string {
@@ -221,24 +228,21 @@ export function renderSnippet(
 
         snippetCache.set(hash, cacheEntry);
 
-        getDistributedSnippetCache()
-          .then((cache) =>
-            cache
-              .set(
-                hash,
-                JSON.stringify(cacheEntry),
-                SNIPPET_DISTRIBUTED_CACHE_TTL_SECONDS,
-              )
-              .catch((error) => {
-                logger.debug(
-                  "[SnippetRenderer] Failed to store in distributed cache",
-                  { hash, error },
-                );
-              })
-          )
-          .catch(() => {
-            // Ignore - local cache is sufficient
-          });
+        void (async () => {
+          try {
+            const cache = await getDistributedSnippetCache();
+            await cache.set(
+              hash,
+              JSON.stringify(cacheEntry),
+              SNIPPET_DISTRIBUTED_CACHE_TTL_SECONDS,
+            );
+          } catch (error) {
+            logger.debug(
+              "[SnippetRenderer] Failed to store in distributed cache",
+              { hash, error },
+            );
+          }
+        })();
 
         logger.debug("Snippet cached", {
           hash,

@@ -210,7 +210,7 @@ export function writeDistributedCache(
   const bundlePaths = extractHttpBundlePaths(moduleCode);
   if (bundlePaths.length > 0) {
     const entries = bundlePaths.map((b) => ({ hash: b.hash, url: "", sizeBytes: 0 }));
-    createBundleManifest(entries).then(async (manifest) => {
+    void createBundleManifest(entries).then(async (manifest) => {
       await storeBundleManifest(manifest);
       const bundleManifestKey = `${transformCacheKey}:bm`;
       await distributedCache.set(

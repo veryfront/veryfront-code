@@ -522,10 +522,10 @@ export const getRouterScript = () => `
       domain: window.location.origin,
       path: window.location.pathname,
       push: (path) => {
-        navigateSPA(path, true);
+        void navigateSPA(path, true);
       },
       replace: (path) => {
-        navigateSPA(path, false);
+        void navigateSPA(path, false);
       },
       back: () => {
         window.history.back();
@@ -608,7 +608,7 @@ export const getRouterScript = () => `
       }
 
       e.preventDefault();
-      navigateSPA(href, true);
+      void navigateSPA(href, true);
     });
 
     let currentHoverLink = null;

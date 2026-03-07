@@ -125,12 +125,15 @@ export class LayoutOrchestrator {
 
         if (mdxLayouts.length > 0) {
           preloadPromises.push(
-            preloadImportMap(this.config.projectDir, this.config.adapter)
-              .then((importMap) => {
+            (async (): Promise<LayoutPreloadResult> => {
+              try {
+                const importMap = await preloadImportMap(
+                  this.config.projectDir,
+                  this.config.adapter,
+                );
                 this._preloadedImportMap = importMap;
                 return { type: "importMap" as const, success: true };
-              })
-              .catch((error) => {
+              } catch (error) {
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.error("Failed to preload import map", {
                   error: errorMsg,
@@ -138,24 +141,27 @@ export class LayoutOrchestrator {
                 });
                 this._preloadedImportMap = null;
                 return { type: "importMap" as const, success: false, error: errorMsg };
-              }),
+              }
+            })(),
           );
         }
 
         for (const layout of tsxLayouts) {
           const componentPath = layout.componentPath!;
           preloadPromises.push(
-            loadTSXComponent(
-              componentPath,
-              this.config.projectDir,
-              this.config.layoutCache,
-              this.config.adapter,
-              this.config.projectId,
-              this.config.projectSlug,
-              this.config.contentSourceId,
-            )
-              .then(() => ({ type: "tsx" as const, path: componentPath, success: true }))
-              .catch((error) => {
+            (async (): Promise<LayoutPreloadResult> => {
+              try {
+                await loadTSXComponent(
+                  componentPath,
+                  this.config.projectDir,
+                  this.config.layoutCache,
+                  this.config.adapter,
+                  this.config.projectId,
+                  this.config.projectSlug,
+                  this.config.contentSourceId,
+                );
+                return { type: "tsx" as const, path: componentPath, success: true };
+              } catch (error) {
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.error("Failed to preload TSX layout", {
                   path: componentPath,
@@ -168,22 +174,25 @@ export class LayoutOrchestrator {
                   success: false,
                   error: errorMsg,
                 };
-              }),
+              }
+            })(),
           );
         }
 
         for (const layout of mdxLayouts) {
           preloadPromises.push(
-            preloadMDXLayoutModule(
-              layout.bundle!,
-              this.config.projectDir,
-              this.config.adapter,
-              this.config.projectId,
-              this.config.projectSlug,
-              this.config.contentSourceId,
-            )
-              .then(() => ({ type: "mdx" as const, path: layout.path, success: true }))
-              .catch((error) => {
+            (async (): Promise<LayoutPreloadResult> => {
+              try {
+                await preloadMDXLayoutModule(
+                  layout.bundle!,
+                  this.config.projectDir,
+                  this.config.adapter,
+                  this.config.projectId,
+                  this.config.projectSlug,
+                  this.config.contentSourceId,
+                );
+                return { type: "mdx" as const, path: layout.path, success: true };
+              } catch (error) {
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.error("Failed to preload MDX layout", {
                   path: layout.path,
@@ -191,7 +200,8 @@ export class LayoutOrchestrator {
                   hint: "Layout will be retried during apply phase",
                 });
                 return { type: "mdx" as const, path: layout.path, success: false, error: errorMsg };
-              }),
+              }
+            })(),
           );
         }
 

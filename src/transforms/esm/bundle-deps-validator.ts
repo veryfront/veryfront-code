@@ -68,10 +68,16 @@ export async function validateBundleDepsExist(
     for (const { hash } of batch) seen.add(hash);
 
     const localChecks = await Promise.all(
-      batch.map(async ({ hash }) => ({
-        hash,
-        exists: await exists(join(absoluteCacheDir, `http-${hash}.mjs`)),
-      })),
+      batch.map(async ({ hash }) => {
+        try {
+          return {
+            hash,
+            exists: await exists(join(absoluteCacheDir, `http-${hash}.mjs`)),
+          };
+        } catch {
+          return { hash, exists: false };
+        }
+      }),
     );
 
     const missingDeps = localChecks.filter((c) => !c.exists);

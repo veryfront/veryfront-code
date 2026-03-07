@@ -98,7 +98,7 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
       resolver = r;
     };
 
-    Promise.all(
+    void Promise.all(
       pathArray.map((path) =>
         setupNodeFsWatcher(path, {
           recursive,

@@ -275,7 +275,11 @@ export function invalidateModulePaths(changedPaths: string[]): void {
       }
     }
   };
-  _pendingDiskCleanup = _pendingDiskCleanup.then(cleanup, cleanup);
+  _pendingDiskCleanup = _pendingDiskCleanup.then(cleanup, cleanup).catch((error) => {
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Disk cleanup failed`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
 
 export async function clearESMDiskCache(): Promise<void> {

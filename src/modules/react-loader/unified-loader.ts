@@ -58,13 +58,13 @@ export function loadComponentsUnified(
   );
 }
 
-function transformAllComponents(
+async function transformAllComponents(
   components: ComponentSource[],
   projectDir: string,
   adapter: RuntimeAdapter,
   transformOpts: TransformOptions,
 ): Promise<TransformedComponent[]> {
-  return Promise.all(
+  return await Promise.all(
     components.map(async (comp) => ({
       name: comp.name,
       code: await transformToESM(comp.source, comp.filePath, projectDir, adapter, transformOpts),

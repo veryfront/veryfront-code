@@ -219,11 +219,15 @@ export async function ensureHttpBundlesExist(
     const existenceChecks = await Promise.all(
       batch.map(async ({ hash }) => {
         const canonicalPath = join(absoluteCacheDir, `http-${hash}.mjs`);
-        return {
-          hash,
-          canonicalPath,
-          exists: await exists(canonicalPath),
-        };
+        try {
+          return {
+            hash,
+            canonicalPath,
+            exists: await exists(canonicalPath),
+          };
+        } catch {
+          return { hash, canonicalPath, exists: false };
+        }
       }),
     );
 

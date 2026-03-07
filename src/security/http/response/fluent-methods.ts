@@ -34,12 +34,16 @@ export function withCORS<T extends FluentMethodsContext>(
 }
 
 /** Apply CORS headers asynchronously */
-export function withCORSAsync<T extends FluentMethodsContext>(this: T, req: Request): Promise<T> {
-  return applyCORSHeaders({
+export async function withCORSAsync<T extends FluentMethodsContext>(
+  this: T,
+  req: Request,
+): Promise<T> {
+  await applyCORSHeaders({
     request: req,
     headers: this.headers,
     config: this.securityConfig?.cors,
-  }).then((): T => this);
+  });
+  return this;
 }
 
 /** Apply security headers (CSP, COOP, CORP, COEP) and optionally set CSRF cookie */

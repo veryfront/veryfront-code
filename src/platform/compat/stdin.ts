@@ -119,7 +119,11 @@ export function waitForKeypress(): Promise<void> {
       Deno.stdin.setRaw(true);
       const reader = Deno.stdin.readable.getReader();
 
-      reader.read().then(() => {
+      void reader.read().then(() => {
+        Deno.stdin.setRaw(false);
+        reader.releaseLock();
+        resolve();
+      }).catch(() => {
         Deno.stdin.setRaw(false);
         reader.releaseLock();
         resolve();

@@ -52,9 +52,10 @@ export class ComponentRegistry {
       "modules.componentRegistry.discover",
       async () => {
         this.initialized = false;
-        this.initializedPromise = this._discoverInternal().then(() => {
+        this.initializedPromise = (async () => {
+          await this._discoverInternal();
           this.initialized = true;
-        });
+        })();
         await this.initializedPromise;
       },
       { "registry.projectDir": this.options.projectDir },

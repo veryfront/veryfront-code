@@ -163,23 +163,23 @@ export function createVeryfrontHandler(
   );
 
   let config: VeryfrontConfig | undefined = opts.config;
-  const configPromise =
-    (opts.config ? Promise.resolve(opts.config) : getConfig(projectDir, adapter))
-      .then((c) => {
-        config = c;
-        if (c?.security?.csrf === undefined) {
-          logger.info(
-            "CSRF protection is not configured. Add `security: { csrf: true }` to veryfront.config.ts to enable.",
-          );
-        }
-        return c;
-      })
-      .catch((error) => {
-        logger.warn("Failed to load config, using defaults", {
-          error: getErrorMessage(error),
-        });
-        return undefined;
+  const configPromise = (async () => {
+    try {
+      const c = opts.config ? opts.config : await getConfig(projectDir, adapter);
+      config = c;
+      if (c?.security?.csrf === undefined) {
+        logger.info(
+          "CSRF protection is not configured. Add `security: { csrf: true }` to veryfront.config.ts to enable.",
+        );
+      }
+      return c;
+    } catch (error) {
+      logger.warn("Failed to load config, using defaults", {
+        error: getErrorMessage(error),
       });
+      return undefined;
+    }
+  })();
 
   const registry = new RouteRegistry({
     debug: opts.debug,
