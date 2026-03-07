@@ -1,4 +1,4 @@
-import type { AgentContext, AgentResponse } from "../../types.ts";
+import type { AgentMiddleware, AgentResponse } from "../../types.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
@@ -196,11 +196,12 @@ class CostTracker {
   }
 
   destroy(): void {
-    if (!this.resetInterval) return;
+    if (this.resetInterval) {
+      clearInterval(this.resetInterval);
+      this.resetInterval = null;
+    }
 
-    clearInterval(this.resetInterval);
-    this.resetInterval = null;
-    this.records = [];
+    this.clear();
   }
 
   private createEmptyRecord(agentId: string, model: string): UsageRecord {
@@ -249,10 +250,10 @@ export function createCostTracker(config: CostConfig): {
 
 export function costTrackingMiddleware(
   config: CostConfig,
-): (context: AgentContext, next: () => Promise<AgentResponse>) => Promise<AgentResponse> {
+): AgentMiddleware & { destroy(): void } {
   const tracker = createCostTracker(config);
 
-  return async (context, next): Promise<AgentResponse> => {
+  const middleware = (async (context, next): Promise<AgentResponse> => {
     const result = await next();
     tracker.track(
       context.agentId,
@@ -261,5 +262,11 @@ export function costTrackingMiddleware(
       (context.data as { userId?: string } | undefined)?.userId,
     );
     return result;
+  }) as AgentMiddleware & { destroy(): void };
+
+  middleware.destroy = () => {
+    tracker.destroy();
   };
+
+  return middleware;
 }

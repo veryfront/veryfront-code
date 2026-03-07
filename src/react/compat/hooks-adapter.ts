@@ -15,6 +15,33 @@ function hasReactHook(hookName: string): boolean {
   return typeof (React as Record<string, unknown>)[hookName] === "function";
 }
 
+export function createTransitionFallbackScheduler(
+  onPendingChange: (pending: boolean) => void,
+): {
+  destroy(): void;
+  startTransition(callback: () => void): void;
+} {
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+
+  return {
+    destroy() {
+      for (const timerId of timers) clearTimeout(timerId);
+      timers.clear();
+    },
+    startTransition(callback: () => void) {
+      onPendingChange(true);
+
+      const timerId = setTimeout(() => {
+        timers.delete(timerId);
+        callback();
+        onPendingChange(false);
+      }, 0);
+
+      timers.add(timerId);
+    },
+  };
+}
+
 export function useFormStatusCompat(): FormStatus {
   if (!hasFeature("useFormStatus") || !hasReactHook("useFormStatus")) {
     return { pending: false, data: null, method: null, action: null };
@@ -91,17 +118,19 @@ export function useTransitionCompat(): ReturnType<typeof React.useTransition> {
 
   const [isPending, setIsPending] = React.useState(false);
 
-  const timerRef = React.useRef<ReturnType<typeof setTimeout>>(undefined);
-  React.useEffect(() => () => clearTimeout(timerRef.current), []);
+  const schedulerRef = React.useRef<ReturnType<typeof createTransitionFallbackScheduler>>(
+    undefined,
+  );
+  if (!schedulerRef.current) {
+    schedulerRef.current = createTransitionFallbackScheduler(setIsPending);
+  }
+  React.useEffect(
+    () => () => schedulerRef.current?.destroy(),
+    [],
+  );
 
   const startTransition = React.useCallback((callback: () => void) => {
-    setIsPending(true);
-
-    clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      callback();
-      setIsPending(false);
-    }, 0);
+    schedulerRef.current?.startTransition(callback);
   }, []);
 
   return [isPending, startTransition];
