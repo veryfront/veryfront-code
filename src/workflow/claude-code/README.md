@@ -38,12 +38,14 @@ This module provides a harness for running Claude Code SDK agents within Veryfro
 
 ### 1. Built-in Tool Modes
 
-| Mode       | Tools Enabled        | Use Case                    |
-| ---------- | -------------------- | --------------------------- |
-| `code`     | bash, file editor    | Code modifications, scripts |
-| `analysis` | file reader only     | Code review, analysis       |
-| `full`     | bash, file, computer | Full automation             |
-| `custom`   | User-specified       | Fine-grained control        |
+| Mode       | Tools Enabled     | Use Case                    |
+| ---------- | ----------------- | --------------------------- |
+| `code`     | bash, file editor | Code modifications, scripts |
+| `analysis` | file reader only  | Code review, analysis       |
+| `custom`   | User-specified    | Fine-grained control        |
+
+`bypassPermissions` remains available only as an explicit server-side
+`AgentConfig` opt-in. It is not a user-facing tool mode.
 
 ### 2. Tenant-Aware File Operations
 
@@ -171,7 +173,7 @@ interface ClaudeCodeAgentConfig {
   /** Model to use (default: claude-sonnet-4-20250514) */
   model?: string;
 
-  /** Tool mode: 'code' | 'analysis' | 'full' | 'custom' */
+  /** Tool mode: 'code' | 'analysis' | 'custom' */
   mode?: ClaudeCodeMode;
 
   /** Sandbox mode: 'strict' | 'permissive' | 'none' */
