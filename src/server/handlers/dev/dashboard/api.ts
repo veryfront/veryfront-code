@@ -311,16 +311,20 @@ async function handleStartWorkflow(req: Request): Promise<Response> {
     const handle = await client.start(workflowId, (input as Record<string, unknown>) ?? {});
 
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const result = await Promise.race([
-      handle.result(),
-      new Promise((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(REQUEST_ERROR.create({ detail: "Workflow execution timed out (30s)" })),
-          WORKFLOW_EXECUTION_TIMEOUT_MS,
-        );
-      }),
-    ]);
-    clearTimeout(timeoutId);
+    let result: unknown;
+    try {
+      result = await Promise.race([
+        handle.result(),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(REQUEST_ERROR.create({ detail: "Workflow execution timed out (30s)" })),
+            WORKFLOW_EXECUTION_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     const run = await client.getRun(handle.runId);
 
