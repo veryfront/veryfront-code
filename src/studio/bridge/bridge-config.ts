@@ -5,6 +5,8 @@
  * and provides typed access to bridge options.
  */
 
+import { logger } from "./bridge-logger.ts";
+
 export type StudioMode = "simple" | "advanced";
 
 export interface BridgeConfig {
@@ -32,7 +34,7 @@ export function initConfig(): void {
     value === "simple" || qsMode === "simple" ? "simple" : "advanced";
 
   if (!raw || typeof raw !== "object") {
-    console.warn("[StudioBridge] No bridge config found on window.__VF_BRIDGE_CONFIG__");
+    logger.warn("[StudioBridge] No bridge config found on window.__VF_BRIDGE_CONFIG__");
     config = {
       projectId: "",
       pageId: "",

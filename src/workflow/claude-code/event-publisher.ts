@@ -4,12 +4,15 @@
  * Provides different ways to publish Claude Code events for streaming.
  */
 
+import { logger as baseLogger } from "#veryfront/utils";
 import type {
   ClaudeCodeEvent,
   ClaudeCodeEventHandler,
   ClaudeCodeEventPublisher,
   ClaudeCodeEventSubscriber,
 } from "./types.ts";
+
+const logger = baseLogger.component("redis-event-publisher");
 
 // =============================================================================
 // In-Memory Publisher (for testing/single-process)
@@ -153,7 +156,7 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
     await this.getPublishClient().publish(channel, message);
 
     if (this.config.debug) {
-      console.log(`[RedisEventPublisher] Published to ${channel}:`, event.type);
+      logger.debug("Published event", { channel, eventType: event.type });
     }
   }
 
@@ -168,14 +171,14 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
         const event = JSON.parse(message) as ClaudeCodeEvent;
         handler(event);
       } catch (error) {
-        console.error("[RedisEventPublisher] Failed to parse event:", error);
+        logger.error("Failed to parse event", error);
       }
     };
 
     await subscribeClient.subscribe(channel, listener);
 
     if (this.config.debug) {
-      console.log(`[RedisEventPublisher] Subscribed to ${channel}`);
+      logger.debug("Subscribed to channel", { channel });
     }
 
     return async () => {

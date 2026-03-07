@@ -7,6 +7,7 @@
  **************************/
 
 import type { Agent, AgentResponse, Message } from "../types.ts";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
 export interface TestCase {
   /** Test name */
@@ -162,24 +163,24 @@ async function validateTestCase(
 }
 
 export function printTestResults(suite: TestSuite): void {
-  console.log(`\n=== Test Suite: ${suite.name} ===\n`);
+  agentLogger.info(`\n=== Test Suite: ${suite.name} ===\n`);
 
   const passed = suite.results.filter((r) => r.passed).length;
   const total = suite.results.length;
 
   for (const [index, result] of suite.results.entries()) {
     const icon = result.passed ? "✅" : "❌";
-    console.log(`${icon} ${index + 1}. ${result.name}`);
+    agentLogger.info(`${icon} ${index + 1}. ${result.name}`);
 
-    if (!result.passed && result.error) console.log(`   Error: ${result.error}`);
-    if (result.toolCalls.length) console.log(`   Tools used: ${result.toolCalls.join(", ")}`);
+    if (!result.passed && result.error) agentLogger.info(`   Error: ${result.error}`);
+    if (result.toolCalls.length) agentLogger.info(`   Tools used: ${result.toolCalls.join(", ")}`);
 
-    console.log(`   Time: ${result.executionTime}ms\n`);
+    agentLogger.info(`   Time: ${result.executionTime}ms\n`);
   }
 
-  console.log(`Results: ${passed}/${total} passed`);
-  console.log(`Total time: ${suite.totalTime}ms`);
-  console.log(`Status: ${suite.passed ? "✅ PASSED" : "❌ FAILED"}\n`);
+  agentLogger.info(`Results: ${passed}/${total} passed`);
+  agentLogger.info(`Total time: ${suite.totalTime}ms`);
+  agentLogger.info(`Status: ${suite.passed ? "✅ PASSED" : "❌ FAILED"}\n`);
 }
 
 export function assertContains(response: AgentResponse, text: string): boolean {

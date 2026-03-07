@@ -6,6 +6,7 @@
 import type { Context, Span, Tracer } from "@opentelemetry/api";
 import denoConfig from "#deno-config" with { type: "json" };
 import { getEnv } from "./env.ts";
+import { proxyLogger } from "./logger.ts";
 
 // Get version from environment variable or root deno.json
 const VERYFRONT_VERSION: string = getEnv("VERYFRONT_VERSION") ??
@@ -78,7 +79,7 @@ export async function initializeOTLPWithApis(): Promise<void> {
   }
 
   if (!config.endpoint) {
-    console.warn("[otel] No endpoint configured");
+    proxyLogger.warn("[otel] No endpoint configured");
     initialized = true;
     return;
   }
@@ -116,12 +117,12 @@ export async function initializeOTLPWithApis(): Promise<void> {
 
     await loadApis();
 
-    console.log("[otel] Initialized", {
+    proxyLogger.info("[otel] Initialized", {
       serviceName: config.serviceName,
       endpoint: config.endpoint,
     });
   } catch (error) {
-    console.error("[otel] Init failed", { error });
+    proxyLogger.error("[otel] Init failed", error);
     initialized = true;
   }
 }
@@ -131,9 +132,9 @@ export async function shutdownOTLP(): Promise<void> {
 
   try {
     await tracerProvider.shutdown();
-    console.log("[otel] Shutdown complete");
+    proxyLogger.info("[otel] Shutdown complete");
   } catch (error) {
-    console.warn("[otel] Shutdown error", { error });
+    proxyLogger.error("[otel] Shutdown error", error);
   }
 }
 

@@ -10,9 +10,12 @@
  * 3. After execution: Upload changed files back to Veryfront API
  */
 
+import { logger as baseLogger } from "#veryfront/utils";
 import { api } from "../api.ts";
 import type { CapturedTenantContext } from "../types.ts";
 import { join, relative, resolve } from "@std/path";
+
+const logger = baseLogger.component("workspace-sync");
 
 /**
  * Workspace configuration
@@ -172,7 +175,7 @@ export class WorkspaceSync {
     let bytesDownloaded = 0;
 
     if (this.config.debug) {
-      console.log(`[WorkspaceSync] Initializing workspace: ${this.workspaceDir}`);
+      logger.debug("Initializing workspace", { workspaceDir: this.workspaceDir });
     }
 
     // Create workspace directory
@@ -182,7 +185,7 @@ export class WorkspaceSync {
     const files = await api.files.listAll();
 
     if (this.config.debug) {
-      console.log(`[WorkspaceSync] Found ${files.length} files in project`);
+      logger.debug("Found files in project", { count: files.length });
     }
 
     // Download each file
@@ -211,7 +214,7 @@ export class WorkspaceSync {
         if (content.length > this.config.maxFileSize) {
           skippedFiles.push(path);
           if (this.config.debug) {
-            console.log(`[WorkspaceSync] Skipping large file: ${path} (${content.length} bytes)`);
+            logger.debug("Skipping large file", { path, size: content.length });
           }
           continue;
         }
@@ -230,11 +233,11 @@ export class WorkspaceSync {
         bytesDownloaded += content.length;
 
         if (this.config.debug) {
-          console.log(`[WorkspaceSync] Downloaded: ${path}`);
+          logger.debug("Downloaded file", { path });
         }
       } catch (error) {
         if (this.config.debug) {
-          console.error(`[WorkspaceSync] Failed to download ${path}:`, error);
+          logger.error("Failed to download file", { path }, error);
         }
         skippedFiles.push(path);
       }
@@ -251,7 +254,8 @@ export class WorkspaceSync {
     };
 
     if (this.config.debug) {
-      console.log(`[WorkspaceSync] Initialized in ${result.duration}ms`, {
+      logger.debug("Workspace initialized", {
+        duration: result.duration,
         filesDownloaded,
         bytesDownloaded,
         skipped: skippedFiles.length,
@@ -296,7 +300,7 @@ export class WorkspaceSync {
     }
 
     if (this.config.debug) {
-      console.log(`[WorkspaceSync] Detected ${changes.length} changes`);
+      logger.debug("Detected changes", { count: changes.length });
     }
 
     return changes;
@@ -387,7 +391,7 @@ export class WorkspaceSync {
         } else {
           // No upload handler - just log the change
           if (this.config.debug) {
-            console.log(`[WorkspaceSync] Would upload: ${change.path} (${change.type})`);
+            logger.debug("Would upload file", { path: change.path, type: change.type });
           }
           // Mark as uploaded for tracking, even though we didn't actually upload
           uploaded.push(change);
@@ -473,14 +477,14 @@ export class WorkspaceSync {
    */
   async cleanup(): Promise<void> {
     if (this.config.debug) {
-      console.log(`[WorkspaceSync] Cleaning up workspace: ${this.workspaceDir}`);
+      logger.debug("Cleaning up workspace", { workspaceDir: this.workspaceDir });
     }
 
     try {
       await Deno.remove(this.workspaceDir, { recursive: true });
     } catch (error) {
       if (this.config.debug) {
-        console.error(`[WorkspaceSync] Cleanup failed:`, error);
+        logger.error("Cleanup failed", error);
       }
     }
 

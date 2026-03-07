@@ -6,6 +6,7 @@
  * Y.js awareness; and selection overlay rendering for remote cursors.
  */
 
+import { logger } from "./bridge-logger.ts";
 import { editorState as state } from "./bridge-editor-state.ts";
 import { DATA_VF_IGNORE } from "./bridge-constants.ts";
 
@@ -301,11 +302,9 @@ export function buildEditorRenderedMaps(
   // Warn when alignment didn't consume all rendered text — indicates a
   // mapping failure that will cause visible selection offset bugs.
   if (ri < trimmed.length) {
-    console.warn(
-      "[StudioBridge] Offset mapping divergence: rendered text has",
-      trimmed.length - ri,
-      "unconsumed characters starting at index",
-      ri,
+    logger.warn(
+      "[StudioBridge] Offset mapping divergence: rendered text has unconsumed characters",
+      { unconsumedCount: trimmed.length - ri, startIndex: ri },
     );
   }
 

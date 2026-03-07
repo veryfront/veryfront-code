@@ -4,6 +4,7 @@
  * html2canvas loading, single and multi-section screenshot capture.
  */
 
+import { logger } from "./bridge-logger.ts";
 import { state } from "./bridge-state.ts";
 
 declare const window: Window & {
@@ -38,18 +39,18 @@ function loadHtml2Canvas(): Promise<void> {
       resolve();
     };
     script.onerror = (event) => {
-      console.warn(
+      logger.warn(
         "[StudioBridge] Failed to load html2canvas script. This may be caused by CSP script-src restrictions.",
-        event,
+        { event: String(event) },
       );
       reject(new Error("Failed to load html2canvas script"));
     };
     try {
       document.head.appendChild(script);
     } catch (error) {
-      console.warn(
+      logger.warn(
         "[StudioBridge] Failed to append html2canvas script element. This may be caused by CSP script-src restrictions.",
-        error,
+        { error: error instanceof Error ? error.message : String(error) },
       );
       reject(
         error instanceof Error ? error : new Error("Failed to append html2canvas script element"),
@@ -94,12 +95,10 @@ export async function captureScreenshot(options?: {
     const canvas = await html2canvasFn(document.body, canvasOptions);
 
     if (!canvas || canvas.width === 0 || canvas.height === 0) {
-      console.error(
-        "[bridge] html2canvas produced empty canvas:",
-        canvas?.width,
-        "x",
-        canvas?.height,
-      );
+      logger.error("[StudioBridge] html2canvas produced empty canvas", {
+        width: canvas?.width,
+        height: canvas?.height,
+      });
       window.scrollTo(0, originalScrollY);
       return {
         success: false,
@@ -110,10 +109,9 @@ export async function captureScreenshot(options?: {
     const dataUrl = canvas.toDataURL("image/png", quality);
 
     if (!dataUrl || !dataUrl.startsWith("data:image/") || dataUrl.length < 100) {
-      console.error(
-        "[bridge] html2canvas produced invalid data URL:",
-        dataUrl?.substring(0, 50),
-      );
+      logger.error("[StudioBridge] html2canvas produced invalid data URL", {
+        dataUrlPreview: dataUrl?.substring(0, 50),
+      });
       window.scrollTo(0, originalScrollY);
       return {
         success: false,
@@ -134,7 +132,9 @@ export async function captureScreenshot(options?: {
       url: window.location.href,
     };
   } catch (error: unknown) {
-    console.error("[bridge] html2canvas error:", error);
+    logger.error("[StudioBridge] html2canvas error", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     window.scrollTo(0, originalScrollY);
     return {
       success: false,

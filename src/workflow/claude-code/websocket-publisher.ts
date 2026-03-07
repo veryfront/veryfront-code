@@ -4,6 +4,7 @@
  * Provides bidirectional communication between client and agent.
  */
 
+import { logger as baseLogger } from "#veryfront/utils";
 import type {
   BidirectionalPublisher,
   CancelledEvent,
@@ -13,6 +14,8 @@ import type {
   ClientCommandHandler,
   PongEvent,
 } from "./types.ts";
+
+const logger = baseLogger.component("websocket-publisher");
 
 /**
  * WebSocket publisher configuration
@@ -66,7 +69,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
         this.handleCommand(command);
       } catch (error) {
         if (this.config.debug) {
-          console.error("[WebSocketPublisher] Failed to parse command:", error);
+          logger.error("Failed to parse command", error);
         }
       }
     };
@@ -78,7 +81,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
 
     socket.onerror = (error) => {
       if (this.config.debug) {
-        console.error("[WebSocketPublisher] Socket error:", error);
+        logger.error("Socket error", error);
       }
       // Stop ping interval on error to prevent resource leak
       // The socket may or may not close after an error, but we should
@@ -89,7 +92,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
 
   private handleCommand(command: ClientCommand): void {
     if (this.config.debug) {
-      console.log("[WebSocketPublisher] Received command:", command.type);
+      logger.debug("Received command", { commandType: command.type });
     }
 
     // Handle ping internally
@@ -104,7 +107,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
         handler(command);
       } catch (error) {
         if (this.config.debug) {
-          console.error("[WebSocketPublisher] Handler error:", error);
+          logger.error("Handler error", error);
         }
       }
     }
@@ -165,7 +168,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
     const { socket } = this.config;
     if (socket.readyState !== WebSocket.OPEN) {
       if (this.config.debug) {
-        console.warn("[WebSocketPublisher] Socket not open, dropping event");
+        logger.warn("Socket not open, dropping event");
       }
       return;
     }
@@ -173,7 +176,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
     socket.send(JSON.stringify(event));
 
     if (this.config.debug) {
-      console.log("[WebSocketPublisher] Sent event:", event.type);
+      logger.debug("Sent event", { eventType: event.type });
     }
   }
 

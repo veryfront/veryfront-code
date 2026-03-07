@@ -7,6 +7,8 @@
  * to prevent information leakage to untrusted embedders.
  */
 
+import { logger } from "./bridge-logger.ts";
+
 let studioOrigin: string | null = null;
 
 export function postToStudio(message: Record<string, unknown>): void {
@@ -14,7 +16,9 @@ export function postToStudio(message: Record<string, unknown>): void {
   try {
     window.parent.postMessage(message, studioOrigin || "*");
   } catch (e) {
-    console.debug("[StudioBridge] postMessage failed:", e);
+    logger.debug("[StudioBridge] postMessage failed", {
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
 }
 
