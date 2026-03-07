@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { collectPagesRoutes, collectAppRoutes } from "./build-routes.ts";
+import { collectAppRoutes, collectPagesRoutes } from "./build-routes.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 // ---------- In-memory filesystem mock ----------
@@ -98,7 +98,10 @@ function createMockAdapter(files: Record<string, string>): RuntimeAdapter {
     fs,
     env: {} as RuntimeAdapter["env"],
     server: {} as RuntimeAdapter["server"],
-    serve: () => Promise.resolve({} as ReturnType<RuntimeAdapter["serve"]> extends Promise<infer T> ? T : never),
+    serve: () =>
+      Promise.resolve(
+        {} as ReturnType<RuntimeAdapter["serve"]> extends Promise<infer T> ? T : never,
+      ),
   } as unknown as RuntimeAdapter;
 }
 
