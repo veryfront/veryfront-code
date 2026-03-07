@@ -299,6 +299,8 @@ export function setupInspectMode(): void {
     );
   }
 
+  // Intentionally permanent: inspect-mode handlers persist for the bridge's lifetime,
+  // guarded by state.inspectMode checks to no-op when inactive
   document.addEventListener(
     "click",
     function (event) {

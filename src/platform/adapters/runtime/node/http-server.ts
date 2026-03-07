@@ -175,7 +175,7 @@ export async function createNodeServer(
     wsServer?.close();
     wsServer = null;
     server.close();
-  });
+  }, { once: true });
 
   return new Promise((resolve) => {
     server.listen(port, hostname, () => {

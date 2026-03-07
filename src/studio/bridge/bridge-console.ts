@@ -56,6 +56,7 @@ export function setupErrorHandling(): void {
     hideOverlay(state.selectionOverlay);
   }
 
+  // Intentionally permanent: bridge error handlers persist for the iframe's lifetime
   window.addEventListener("error", function (event) {
     hideOverlays();
     postToStudio({

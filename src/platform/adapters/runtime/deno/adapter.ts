@@ -261,7 +261,7 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
       }
     };
 
-    signal?.addEventListener("abort", cleanup);
+    signal?.addEventListener("abort", cleanup, { once: true });
     void pollLoop();
 
     return createFileWatcher(iterator, cleanup);

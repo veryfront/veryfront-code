@@ -106,6 +106,7 @@ export function init(): void {
 
   setupMarkdownEditor(params);
 
+  // Intentionally permanent: message listener persists for the bridge's lifetime
   window.addEventListener("message", handleStudioMessage);
 
   if (!isStandalone) {
@@ -116,13 +117,13 @@ export function init(): void {
       document.addEventListener("DOMContentLoaded", function () {
         notifyAppLoaded();
         setupMutationObserver();
-      });
+      }, { once: true });
     } else {
       notifyAppLoaded();
       setupMutationObserver();
     }
 
-    window.addEventListener("beforeunload", notifyAppUnloaded);
+    window.addEventListener("beforeunload", notifyAppUnloaded, { once: true });
   }
 
   const colorMode = params.get("color_mode");

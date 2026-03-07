@@ -154,7 +154,7 @@ if (typeof document !== "undefined") {
   };
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", run);
+    document.addEventListener("DOMContentLoaded", run, { once: true });
   } else {
     run();
   }

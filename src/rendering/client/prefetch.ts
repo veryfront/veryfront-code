@@ -131,7 +131,7 @@ export function initPrefetch(options?: PrefetchOptions): PrefetchManager {
   const prefetchManager = new PrefetchManager(options);
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => prefetchManager.init());
+    document.addEventListener("DOMContentLoaded", () => prefetchManager.init(), { once: true });
   } else {
     prefetchManager.init();
   }

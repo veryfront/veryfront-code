@@ -196,7 +196,7 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
       resolver = null;
     }
 
-    if (signal) signal.addEventListener("abort", cleanup);
+    if (signal) signal.addEventListener("abort", cleanup, { once: true });
 
     return createFileWatcher(iterator, cleanup);
   }
