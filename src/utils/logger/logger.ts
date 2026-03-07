@@ -176,7 +176,16 @@ function extractContext(
       continue;
     }
     if (typeof arg === "object" && arg !== null && !Array.isArray(arg)) {
-      context = { ...context, ...arg };
+      const contextArg = arg as Record<string, unknown>;
+      if (contextArg.error instanceof Error) {
+        const { error: contextError, ...rest } = contextArg;
+        error = serializeError(contextError);
+        if (Object.keys(rest).length > 0) {
+          context = { ...context, ...rest };
+        }
+        continue;
+      }
+      context = { ...context, ...contextArg };
     }
   }
 
