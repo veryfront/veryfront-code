@@ -155,10 +155,6 @@ export async function stop(): Promise<void> {
   esbuild.stop();
 }
 
-function isEsbuildReady(): boolean {
-  return setupComplete;
-}
-
 /** Eager initialization for server startup. */
 export async function initializeEsbuild(): Promise<void> {
   await ensureEsbuildBinary();

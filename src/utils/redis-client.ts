@@ -96,33 +96,6 @@ async function createClient(options: RedisClientOptions): Promise<RedisClient> {
   return client;
 }
 
-function isRedisAvailable(): boolean {
-  return sharedClient !== null && sharedClient.isOpen !== false && !connectionFailed;
-}
-
 export function isRedisConfigured(): boolean {
   return Boolean(getEnv("REDIS_URL"));
-}
-
-async function disconnectRedis(): Promise<void> {
-  if (sharedClient) {
-    try {
-      await sharedClient.disconnect();
-    } catch (error) {
-      logger.debug("Redis disconnect error (ignored)", { error });
-    }
-    sharedClient = null;
-  }
-
-  connectionFailed = false;
-  isConnecting = false;
-  connectionPromise = null;
-}
-
-function resetRedisState(): void {
-  sharedClient = null;
-  connectionFailed = false;
-  isConnecting = false;
-  connectionPromise = null;
-  lastConnectionAttempt = 0;
 }

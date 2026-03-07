@@ -215,23 +215,3 @@ export function getCircuitBreaker(
   return breaker;
 }
 
-/** Get circuit breaker registry stats for monitoring */
-function getCircuitBreakerStats(): {
-  total: number;
-  open: number;
-  halfOpen: number;
-  closed: number;
-} {
-  let open = 0;
-  let halfOpen = 0;
-  let closed = 0;
-
-  for (const { breaker } of breakers.values()) {
-    const state = breaker.getState();
-    if (state === "OPEN") open++;
-    else if (state === "HALF_OPEN") halfOpen++;
-    else closed++;
-  }
-
-  return { total: breakers.size, open, halfOpen, closed };
-}

@@ -79,15 +79,6 @@ export function getOpenSockets(projectSlug?: string): WebSocket[] {
   return sockets;
 }
 
-/** Get count of open sockets (may differ from clientsMap.size if some are closing) */
-function getOpenSocketCount(): number {
-  let count = 0;
-  for (const client of clientsMap.values()) {
-    if (client.socket.readyState === WebSocket.OPEN) count++;
-  }
-  return count;
-}
-
 export function clearAll(): void {
   for (const client of clientsMap.values()) {
     try {

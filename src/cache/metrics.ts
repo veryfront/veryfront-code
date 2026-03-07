@@ -8,9 +8,7 @@
  * @module cache/metrics
  */
 
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
-import type { Span } from "@opentelemetry/api";
 
 const MAX_KEY_DISPLAY_LENGTH = 100;
 
@@ -345,28 +343,6 @@ export function instrumentCache<T>(
       }
     },
   };
-}
-
-/**
- * Record a cache operation with OpenTelemetry span.
- */
-function withCacheSpan<T>(
-  domain: CacheDomain,
-  operation: CacheOperation,
-  key: string,
-  fn: (span?: Span) => Promise<T>,
-): Promise<T> {
-  return withSpan(
-    `cache.${domain}.${operation}`,
-    fn,
-    {
-      "cache.domain": domain,
-      "cache.operation": operation,
-      "cache.key": key.length > MAX_KEY_DISPLAY_LENGTH
-        ? key.slice(0, MAX_KEY_DISPLAY_LENGTH) + "..."
-        : key,
-    },
-  );
 }
 
 /**

@@ -127,31 +127,3 @@ export function asLocalModuleCode(code: string): LocalModuleCode {
   return code as unknown as LocalModuleCode;
 }
 
-/**
- * Safely cast string to PortableModuleCode after validation.
- * Use this when you've verified the code is tokenized.
- *
- * @param code - The code string
- * @returns Branded PortableModuleCode
- * @throws VeryfrontError (cache-invariant-violation) if code contains hardcoded paths
- */
-function asPortableModuleCode(code: string): PortableModuleCode {
-  if (hasHardcodedCachePaths(code)) {
-    throw CACHE_INVARIANT_VIOLATION.create({
-      detail:
-        "[CACHE INVARIANT VIOLATION] Cannot treat code as PortableModuleCode: contains hardcoded cache paths",
-    });
-  }
-  return code as unknown as PortableModuleCode;
-}
-
-/**
- * Unwrap branded code type to plain string.
- * Use sparingly - prefer keeping code typed throughout the pipeline.
- *
- * @param code - The branded code
- * @returns Plain string
- */
-function unwrapCode(code: LocalModuleCode | PortableModuleCode): string {
-  return code as unknown as string;
-}

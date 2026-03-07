@@ -16,7 +16,6 @@ import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
 import { addHMRTimestamps } from "#veryfront/transforms/esm/import-rewriter.ts";
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
-import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 
 const logger = serverLogger.component("module-server");
 
@@ -82,36 +81,6 @@ export default {};
   "_dnt.polyfills": `export default {};\n`,
 };
 
-/**
- * Validate that all required polyfills are embedded.
- * Call this at startup in compiled mode to fail fast if polyfills are missing.
- *
- * @throws Error if any required polyfill is missing from EMBEDDED_POLYFILLS
- */
-async function validateEmbeddedPolyfills(): Promise<void> {
-  if (!isDenoCompiled) return; // Only validate in compiled mode
-
-  // Dynamic import to avoid circular dependency at module load time
-  const { getRequiredPolyfillPaths } = await import(
-    "#veryfront/transforms/import-rewriter/strategies/node-builtin-strategy.ts"
-  );
-
-  const requiredPaths = getRequiredPolyfillPaths();
-  const embeddedPaths = new Set(Object.keys(EMBEDDED_POLYFILLS));
-
-  const missing = requiredPaths.filter((path: string) => !embeddedPaths.has(path));
-
-  if (missing.length > 0) {
-    const errorMsg = `FATAL: Missing embedded polyfills (will cause 404 errors in browser):\n` +
-      missing.map((p: string) => `  - ${p}`).join("\n") +
-      `\n\nAdd these to EMBEDDED_POLYFILLS in src/modules/server/module-server.ts`;
-
-    logger.error(errorMsg);
-    throw new Error(errorMsg);
-  }
-
-  logger.info(`Validated ${embeddedPaths.size} embedded polyfills`);
-}
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;

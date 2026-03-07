@@ -58,10 +58,6 @@ function processNdjsonChunk(doc: Document, buffered: string): string {
   return remainder;
 }
 
-function processNdjsonLines(doc: Document, ndjson: string): void {
-  processNdjsonChunk(doc, ndjson.endsWith("\n") ? ndjson : `${ndjson}\n`);
-}
-
 function createAbortPromise(signal: AbortSignal): Promise<never> {
   return new Promise<never>((_, reject) => {
     const abort = (): void => reject(new DOMException("aborted", "AbortError"));

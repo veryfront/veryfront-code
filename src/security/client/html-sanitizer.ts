@@ -12,20 +12,6 @@ import { escapeHtml } from "#veryfront/html/html-escape.ts";
 export { escapeHtml };
 
 /**
- * Create text node safely (alternative to innerHTML for simple text).
- */
-function createSafeTextNode(text: string): Text {
-  return document.createTextNode(text);
-}
-
-/**
- * Set text content safely (never interprets HTML).
- */
-function setSafeTextContent(element: HTMLElement, text: string): void {
-  element.textContent = text;
-}
-
-/**
  * Patterns that RSC should never generate.
  * These indicate potential server compromise or misconfiguration.
  */

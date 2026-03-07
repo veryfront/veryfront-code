@@ -56,19 +56,6 @@ export function esmShReact(
 }
 
 /**
- * Generate esm.sh URL for browser.
- */
-function getEsmShUrl(
-  pkg: string,
-  version: string,
-  external?: readonly string[],
-): string {
-  const params = ["target=es2022"];
-  if (external?.length) params.push(`external=${external.join(",")}`);
-  return `https://esm.sh/${pkg}@${version}?${params.join("&")}`;
-}
-
-/**
  * Get React esm.sh URLs with consistent versioning.
  */
 export function getReactUrls(version?: string): Record<string, string> {
@@ -88,13 +75,6 @@ export function getReactUrls(version?: string): Record<string, string> {
  */
 export function getReactImportMap(version?: string): Record<string, string> {
   return getReactImportMapFromRewriter(version ?? DEFAULT_REACT_VERSION);
-}
-
-/**
- * Get React esm.sh URLs for Deno SSR.
- */
-function getDenoNpmReactMap(version?: string): Record<string, string> {
-  return getReactUrls(version);
 }
 
 /**

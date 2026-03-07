@@ -26,9 +26,3 @@ export function extract<T = Record<string, unknown>>(
 export function test(content: string): boolean {
   return /^---\r?\n/.test(content);
 }
-
-function extractAsync<T = Record<string, unknown>>(
-  content: string,
-): Promise<FrontMatterResult<T>> {
-  return Promise.resolve(extract(content));
-}
