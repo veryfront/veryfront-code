@@ -62,6 +62,18 @@ function call(index: number): { url: string; init?: RequestInit } {
   return entry;
 }
 
+function headerValue(index: number, name: string): string | null {
+  return new Headers(call(index).init?.headers).get(name);
+}
+
+function jsonBody(index: number): unknown {
+  const body = call(index).init?.body;
+  if (typeof body !== "string") {
+    throw new Error(`Expected string body for fetch call ${index}`);
+  }
+  return JSON.parse(body);
+}
+
 describe("Sandbox", () => {
   beforeEach(() => {
     fetchCalls = [];
@@ -89,6 +101,8 @@ describe("Sandbox", () => {
 
       assertStringIncludes(call(0).url, "/sandbox-sessions");
       assertEquals(call(0).init?.method, "POST");
+      assertEquals(headerValue(0, "Authorization"), "Bearer test-token");
+      assertEquals(headerValue(0, "Content-Type"), "application/json");
     });
 
     it("should poll until ready when not running", async () => {
@@ -112,6 +126,8 @@ describe("Sandbox", () => {
       });
       assertEquals(sandbox.id, "session-2");
       assertEquals(fetchCalls.length, 2);
+      assertStringIncludes(call(1).url, "/sandbox-sessions/session-2");
+      assertEquals(headerValue(1, "Authorization"), "Bearer test-token");
     });
 
     it("should throw on creation failure", async () => {
@@ -158,6 +174,7 @@ describe("Sandbox", () => {
       assertEquals(sandbox.id, "session-existing");
       assertEquals(sandbox.url, "https://sandbox.example.com");
       assertStringIncludes(call(0).url, "/sandbox-sessions/session-existing");
+      assertEquals(headerValue(0, "Authorization"), "Bearer test-token");
     });
 
     it("should throw when sandbox not found", async () => {
@@ -190,6 +207,10 @@ describe("Sandbox", () => {
       assertEquals(result.stdout, "hello\n");
       assertEquals(result.stderr, "");
       assertEquals(result.exitCode, 0);
+      assertEquals(call(1).init?.method, "POST");
+      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+      assertEquals(headerValue(1, "Content-Type"), "application/json");
+      assertEquals(jsonBody(1), { command: "echo hello" });
     });
 
     it("should collect stderr output", async () => {
@@ -207,6 +228,7 @@ describe("Sandbox", () => {
       assertEquals(result.stdout, "");
       assertEquals(result.stderr, "error occurred\n");
       assertEquals(result.exitCode, 1);
+      assertEquals(jsonBody(1), { command: "failing-cmd" });
     });
   });
 
@@ -233,6 +255,10 @@ describe("Sandbox", () => {
       assertEquals(events[1]!.type, "stderr");
       assertEquals(events[2]!.type, "exit");
       assertEquals(events[2]!.exitCode, 0);
+      assertEquals(call(1).init?.method, "POST");
+      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+      assertEquals(headerValue(1, "Content-Type"), "application/json");
+      assertEquals(jsonBody(1), { command: "cmd" });
     });
 
     it("should throw on non-OK response", async () => {
@@ -251,6 +277,7 @@ describe("Sandbox", () => {
         Error,
         "Exec failed",
       );
+      assertEquals(jsonBody(1), { command: "bad-cmd" });
     });
 
     it("should handle chunked NDJSON delivery", async () => {
@@ -282,6 +309,7 @@ describe("Sandbox", () => {
       assertEquals(events[0]!.type, "stdout");
       assertEquals(events[1]!.type, "stderr");
       assertEquals(events[2]!.type, "exit");
+      assertEquals(jsonBody(1), { command: "cmd" });
     });
   });
 
@@ -297,6 +325,7 @@ describe("Sandbox", () => {
 
       assertEquals(content, "file content here");
       assertStringIncludes(call(1).url, "/file?path=");
+      assertEquals(headerValue(1, "Authorization"), "Bearer token");
     });
 
     it("should throw on read failure", async () => {
@@ -329,6 +358,14 @@ describe("Sandbox", () => {
 
       assertEquals(call(1).init?.method, "POST");
       assertStringIncludes(call(1).url, "/files");
+      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+      assertEquals(headerValue(1, "Content-Type"), "application/json");
+      assertEquals(jsonBody(1), {
+        files: [
+          { path: "/workspace/a.txt", content: "aaa" },
+          { path: "/workspace/b.txt", content: "bbb" },
+        ],
+      });
     });
   });
 
@@ -344,6 +381,7 @@ describe("Sandbox", () => {
 
       assertStringIncludes(call(1).url, "/sandbox-sessions/s6/heartbeat");
       assertEquals(call(1).init?.method, "POST");
+      assertEquals(headerValue(1, "Authorization"), "Bearer token");
     });
   });
 
@@ -359,6 +397,7 @@ describe("Sandbox", () => {
 
       assertStringIncludes(call(1).url, "/sandbox-sessions/s7");
       assertEquals(call(1).init?.method, "DELETE");
+      assertEquals(headerValue(1, "Authorization"), "Bearer token");
     });
   });
 
