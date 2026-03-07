@@ -130,11 +130,37 @@ describe("resolvePermissionMode (via executeAgent)", () => {
     );
   });
 
+  it("truthy non-boolean bypassPermissions does not grant bypass", async () => {
+    assertEquals(
+      await capturePermissionMode({
+        mode: "analysis",
+        bypassPermissions: "false" as unknown as boolean,
+      }),
+      "plan",
+    );
+  });
+
   it("'full' mode falls through to safe default (acceptEdits)", async () => {
     // Even if unvalidated input somehow passes "full", it must NOT
     // resolve to bypassPermissions.
     const mode = "full" as ClaudeCodeMode;
     assertEquals(await capturePermissionMode({ mode }), "acceptEdits");
+  });
+
+  it("createAgent strips bypassPermissions from overrides", async () => {
+    const mock = createMockSDK();
+    mock.install();
+    try {
+      const { createAgent } = await import("./agent.ts");
+      const reviewer = createAgent({ mode: "analysis" });
+      await reviewer("test task", {
+        mode: "analysis",
+        bypassPermissions: true,
+      });
+      assertEquals(mock.capturedOptions?.permissionMode, "plan");
+    } finally {
+      mock.uninstall();
+    }
   });
 });
 

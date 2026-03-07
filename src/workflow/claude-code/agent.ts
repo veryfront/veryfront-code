@@ -73,7 +73,7 @@ const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
 function resolvePermissionMode(
   config: AgentConfig,
 ): "default" | "acceptEdits" | "bypassPermissions" | "plan" {
-  if (config.bypassPermissions) {
+  if (config.bypassPermissions === true) {
     logger.warn(
       "Agent running with bypassPermissions — unrestricted filesystem and shell access",
     );
@@ -240,8 +240,9 @@ export async function executeAgent(
 /**
  * Create a reusable agent function with preset configuration.
  *
- * **Security note:** Do not expose the `overrides` parameter to untrusted
- * input — it can set `bypassPermissions: true`.
+ * **Security note:** `overrides` cannot set `bypassPermissions` — it is
+ * stripped before execution. Only `defaults` can enable bypass mode, so keep
+ * `defaults` server-controlled and never derived from untrusted input.
  *
  * @example
  * ```typescript
