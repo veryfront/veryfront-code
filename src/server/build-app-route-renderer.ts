@@ -138,7 +138,7 @@ export async function renderAppRouteToHTML(args: {
     }
 
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initializeApp);
+      document.addEventListener('DOMContentLoaded', initializeApp, { once: true });
     } else {
       initializeApp();
     }

@@ -88,7 +88,7 @@ export class NodeHttpServer implements HttpServer {
 
       options.signal?.addEventListener("abort", () => {
         server.close();
-      });
+      }, { once: true });
     });
   }
 

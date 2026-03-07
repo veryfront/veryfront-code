@@ -321,7 +321,7 @@ ${getUpdateJSFunction(logPrefix)}
       reconnectTimerId = null;
     }
     try { ws && ws.close(); } catch (_) { /* expected: socket already closed */ }
-  });
+  }, { once: true });
 
   window.__veryfrontHMR = { getSocket: () => ws };
 })();

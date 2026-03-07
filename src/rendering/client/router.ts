@@ -256,7 +256,7 @@ if (typeof window !== "undefined" && globalThis.document) {
   const router = new VeryfrontRouter();
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => router.init());
+    document.addEventListener("DOMContentLoaded", () => router.init(), { once: true });
   } else {
     router.init();
   }

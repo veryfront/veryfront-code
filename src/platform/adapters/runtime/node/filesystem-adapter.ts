@@ -140,7 +140,7 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
       resolver = null;
     };
 
-    signal?.addEventListener("abort", cleanup);
+    signal?.addEventListener("abort", cleanup, { once: true });
 
     return createFileWatcher(iterator, cleanup);
   }

@@ -349,6 +349,7 @@ export function onGlobalError(
   onError: (error: Error, type: "uncaughtException" | "unhandledRejection") => boolean | void,
 ): void {
   if (IS_DENO) {
+    // Intentionally permanent: process-level handlers must persist for the entire runtime
     globalThis.addEventListener("error", (event) => {
       const error = event.error instanceof Error ? event.error : new Error(String(event.error));
       if (onError(error, "uncaughtException")) event.preventDefault();
