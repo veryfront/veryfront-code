@@ -43,19 +43,19 @@ export function ErrorsTab(): React.JSX.Element {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedError, setSelectedError] = useState<ErrorEntry | null>(null);
 
-  function loadData(): void {
+  async function loadData(): Promise<void> {
     setLoading(true);
 
-    fetch("/_dev/api/errors")
-      .then((res) => res.json())
-      .then((d: ErrorsData) => {
-        setData(d);
-        setError(null);
-      })
-      .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => setLoading(false));
+    try {
+      const res = await fetch("/_dev/api/errors");
+      const d: ErrorsData = await res.json();
+      setData(d);
+      setError(null);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {

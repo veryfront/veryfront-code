@@ -21,10 +21,13 @@ export async function setupNodeFsWatcher(
     const fs = await import("node:fs");
     const fsPromises = await import("node:fs/promises");
 
-    const exists = await fsPromises
-      .access(path)
-      .then(() => true)
-      .catch(() => false);
+    let exists: boolean;
+    try {
+      await fsPromises.access(path);
+      exists = true;
+    } catch {
+      exists = false;
+    }
 
     if (!exists) return;
 

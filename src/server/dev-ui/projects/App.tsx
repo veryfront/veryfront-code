@@ -30,10 +30,16 @@ export function App(): React.JSX.Element {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    fetch("/_projects/api/config")
-      .then((r) => r.json())
-      .then(setConfig)
-      .catch((e) => console.error("Failed to load config:", e));
+    async function loadConfig(): Promise<void> {
+      try {
+        const r = await fetch("/_projects/api/config");
+        const data = await r.json();
+        setConfig(data);
+      } catch (e) {
+        console.error("Failed to load config:", e);
+      }
+    }
+    loadConfig();
   }, []);
 
   const fetchProjects = useCallback(async (searchQuery: string): Promise<void> => {

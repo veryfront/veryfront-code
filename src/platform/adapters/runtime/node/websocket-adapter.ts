@@ -20,12 +20,15 @@ export class NodeServerAdapter implements ServerAdapter {
     const protocol = request.headers.get("sec-websocket-protocol");
     const socket = new NodeWebSocket();
 
-    void registerWebSocketUpgrade(key)
-      .then((ws) => socket._attachRealSocket(ws))
-      .catch((error) => {
+    void (async () => {
+      try {
+        const ws = await registerWebSocketUpgrade(key);
+        socket._attachRealSocket(ws);
+      } catch (error) {
         serverLogger.error("WebSocket upgrade failed:", error);
-        socket._emitError(error);
-      });
+        socket._emitError(error instanceof Error ? error : new Error(String(error)));
+      }
+    })();
 
     const headers: Record<string, string> = {
       Upgrade: "websocket",

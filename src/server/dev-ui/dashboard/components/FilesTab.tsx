@@ -109,16 +109,20 @@ function FileDetail({ path }: { path: string }): React.ReactElement {
   const ext = useMemo((): string => path.split(".").pop()?.toLowerCase() ?? "", [path]);
 
   useEffect(() => {
-    setLoading(true);
-
-    fetch(`/_dev/api/file-content?path=${encodeURIComponent(path)}`)
-      .then((res) => res.json())
-      .then(setContent)
-      .catch((e: unknown) => {
+    async function loadContent(): Promise<void> {
+      setLoading(true);
+      try {
+        const res = await fetch(`/_dev/api/file-content?path=${encodeURIComponent(path)}`);
+        const data = await res.json();
+        setContent(data);
+      } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
         setContent({ error: message });
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadContent();
   }, [path]);
 
   const title = !loading && content?.content !== undefined ? "Contents" : undefined;

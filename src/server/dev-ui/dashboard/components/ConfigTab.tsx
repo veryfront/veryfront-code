@@ -26,32 +26,34 @@ export function ConfigTab(): React.JSX.Element {
   const [debugContent, setDebugContent] = useState<string>("");
   const [debugLoading, setDebugLoading] = useState<boolean>(true);
 
-  function loadConfig(): void {
+  async function loadConfig(): Promise<void> {
     setLoading(true);
 
-    fetch("/_dev/api/config")
-      .then((res) => res.json())
-      .then((d) => {
-        setData(d);
-        setError(null);
-      })
-      .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => setLoading(false));
+    try {
+      const res = await fetch("/_dev/api/config");
+      const d = await res.json();
+      setData(d);
+      setError(null);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function loadDebug(): void {
+  async function loadDebug(): Promise<void> {
     setDebugLoading(true);
 
-    fetch("/_vf_debug/context")
-      .then((res) => res.json())
-      .then((d) => setDebugContent(JSON.stringify(d, null, 2)))
-      .catch((e: unknown) => {
-        const message = e instanceof Error ? e.message : String(e);
-        setDebugContent(`Error: ${message}`);
-      })
-      .finally(() => setDebugLoading(false));
+    try {
+      const res = await fetch("/_vf_debug/context");
+      const d = await res.json();
+      setDebugContent(JSON.stringify(d, null, 2));
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      setDebugContent(`Error: ${message}`);
+    } finally {
+      setDebugLoading(false);
+    }
   }
 
   function refresh(): void {

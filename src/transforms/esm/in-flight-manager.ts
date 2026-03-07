@@ -127,14 +127,17 @@ export function trackBundleAccumulator(
 ): void {
   const accumulator = bundleAccumulatorStorage.getStore();
   if (accumulator) {
-    void createFileSystem().stat(cachePath).then((stat) => {
-      accumulator.push({
-        hash: String(hash),
-        url: normalizedUrl,
-        sizeBytes: stat?.size ?? 0,
-      });
-    }).catch(() => {
-      // Ignore stat errors
-    });
+    void (async () => {
+      try {
+        const stat = await createFileSystem().stat(cachePath);
+        accumulator.push({
+          hash: String(hash),
+          url: normalizedUrl,
+          sizeBytes: stat?.size ?? 0,
+        });
+      } catch {
+        // Ignore stat errors
+      }
+    })();
   }
 }
