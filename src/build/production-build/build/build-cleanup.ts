@@ -13,13 +13,6 @@ export async function cleanupCaches(): Promise<void> {
   } catch (_) {
     /* expected: transform cache module may not be available */
   }
-
-  try {
-    const { destroyVendorCache } = await import("../../../build/vendor-cache.ts");
-    destroyVendorCache();
-  } catch (_) {
-    /* expected: vendor cache module may not be available */
-  }
 }
 
 export async function performCleanup(renderer: VeryfrontRenderer): Promise<void> {

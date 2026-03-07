@@ -10,8 +10,6 @@
 
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 
-const MAX_KEY_DISPLAY_LENGTH = 100;
-
 /**
  * Cache operation types for metrics tracking.
  */

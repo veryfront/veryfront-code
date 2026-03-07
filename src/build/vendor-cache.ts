@@ -28,6 +28,3 @@ export async function generateVendorCacheKey(
   return `vendor:${projectId}:${hash}`;
 }
 
-export function destroyVendorCache(): void {
-  // No-op: vendor cache manager was removed
-}
