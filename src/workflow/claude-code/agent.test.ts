@@ -85,7 +85,11 @@ const sdkMockAvailable = await (async () => {
 
 describe("resolvePermissionMode (via executeAgent)", () => {
   if (!sdkMockAvailable) {
-    it("skipped — SDK mock not wired up", () => {});
+    it("requires SDK mock to be wired up", () => {
+      throw new Error(
+        "SDK mock not available — ensure opaque-deps.ts checks globalThis.__vfMockClaudeSDK and tests run with --allow-env",
+      );
+    });
     return;
   }
 

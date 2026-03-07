@@ -256,6 +256,8 @@ export async function executeAgent(
 export function createAgent(
   defaults: AgentConfig = {},
 ): (task: string, overrides?: AgentConfig) => Promise<ClaudeCodeResult> {
-  return (task: string, overrides: AgentConfig = {}) =>
-    executeAgent(task, { ...defaults, ...overrides });
+  return (task: string, overrides: AgentConfig = {}) => {
+    const { bypassPermissions: _, ...safeOverrides } = overrides;
+    return executeAgent(task, { ...defaults, ...safeOverrides });
+  };
 }
