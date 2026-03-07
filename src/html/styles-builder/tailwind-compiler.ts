@@ -264,4 +264,3 @@ export function formatCSSError(error: Error | string): CSSErrorInfo {
   const message = typeof error === "string" ? error : error.message;
   return formatCSSErrorMessage(message);
 }
-
