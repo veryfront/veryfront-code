@@ -14,8 +14,7 @@ export interface StateStore {
 interface ReactHooksSubset {
   useState: <S>(initialState: S | (() => S)) => [S, Dispatch<SetStateAction<S>>];
   useEffect: (effect: EffectCallback, deps?: DependencyList) => void;
-  // deno-lint-ignore ban-types
-  useCallback: <T extends Function>(callback: T, deps: DependencyList) => T;
+  useCallback: <T extends (...args: never[]) => unknown>(callback: T, deps: DependencyList) => T;
 }
 
 class StateBridge implements StateStore {

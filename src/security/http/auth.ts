@@ -36,7 +36,7 @@ function encodeBase64(value: string): string {
 }
 
 function sanitizeRealm(realm: unknown): string {
-  // deno-lint-ignore no-control-regex
+  // deno-lint-ignore no-control-regex -- intentional: strips control chars and special chars from HTTP realm header
   return String(realm).replace(/[\x00-\x1f\x7f"\\]/g, "");
 }
 

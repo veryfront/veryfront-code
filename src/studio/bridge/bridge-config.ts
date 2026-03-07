@@ -23,8 +23,7 @@ export interface BridgeConfig {
 let config: BridgeConfig | null = null;
 
 export function initConfig(): void {
-  // deno-lint-ignore no-explicit-any -- accessing injected global property
-  const raw = (window as any).__VF_BRIDGE_CONFIG__;
+  const raw = (window as unknown as Record<string, unknown>).__VF_BRIDGE_CONFIG__;
 
   // studioMode can come from the injected config or from a query parameter
   // (Studio sets vf_studio_mode on the iframe URL).
@@ -47,15 +46,16 @@ export function initConfig(): void {
     };
     return;
   }
+  const cfg = raw as Record<string, unknown>;
   config = {
-    projectId: raw.projectId ?? "",
-    pageId: raw.pageId ?? "",
-    pagePath: raw.pagePath ?? raw.pageId ?? "",
-    wsUrl: raw.wsUrl ?? "",
-    yjsGuid: raw.yjsGuid ?? "",
-    studioMode: resolveMode(raw.studioMode),
-    debugSkipInit: !!raw.debugSkipInit,
-    debugExposeInternals: !!raw.debugExposeInternals,
+    projectId: (cfg.projectId as string) ?? "",
+    pageId: (cfg.pageId as string) ?? "",
+    pagePath: (cfg.pagePath as string) ?? (cfg.pageId as string) ?? "",
+    wsUrl: (cfg.wsUrl as string) ?? "",
+    yjsGuid: (cfg.yjsGuid as string) ?? "",
+    studioMode: resolveMode(cfg.studioMode),
+    debugSkipInit: !!cfg.debugSkipInit,
+    debugExposeInternals: !!cfg.debugExposeInternals,
   };
 }
 

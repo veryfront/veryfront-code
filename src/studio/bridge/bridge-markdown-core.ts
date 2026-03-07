@@ -496,11 +496,10 @@ export function extractRawBlocksForEditor(
   // capture groups. In a .replace() callback, the last two args are
   // always (offset, inputText), and the first capture group is always
   // the leading newline.
-  const replaceWithToken = function (...args: unknown[]): string {
-    const match = args[0] as string;
-    const leadingNewline = args[1] as string;
-    const offset = args[args.length - 2] as number;
-    const inputText = args[args.length - 1] as string;
+  const replaceWithToken = function (match: string, ...rest: (string | number)[]): string {
+    const leadingNewline = rest[0] as string;
+    const offset = rest[rest.length - 2] as number;
+    const inputText = rest[rest.length - 1] as string;
     const safeLeading = typeof leadingNewline === "string" ? leadingNewline : "";
     const tokenIndex = rawBlocks.length;
     const rawBlock = typeof match === "string" ? match.trimStart() : "";
@@ -533,17 +532,13 @@ export function extractRawBlocksForEditor(
     "g",
   );
 
-  // deno-lint-ignore no-explicit-any -- .replace() callback with variadic capture groups
-  let editorBody = source.replace(mermaidFencePattern, replaceWithToken as any);
+  let editorBody = source.replace(mermaidFencePattern, replaceWithToken);
 
-  // deno-lint-ignore no-explicit-any -- .replace() callback with variadic capture groups
-  editorBody = editorBody.replace(tsxFencePattern, replaceWithToken as any);
+  editorBody = editorBody.replace(tsxFencePattern, replaceWithToken);
 
-  // deno-lint-ignore no-explicit-any -- .replace() callback with variadic capture groups
-  editorBody = editorBody.replace(htmlBlockPattern, replaceWithToken as any);
+  editorBody = editorBody.replace(htmlBlockPattern, replaceWithToken);
 
-  // deno-lint-ignore no-explicit-any -- .replace() callback with variadic capture groups
-  editorBody = editorBody.replace(htmlSelfClosingPattern, replaceWithToken as any);
+  editorBody = editorBody.replace(htmlSelfClosingPattern, replaceWithToken);
 
   return {
     editorBody: editorBody,

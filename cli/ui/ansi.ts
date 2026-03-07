@@ -77,7 +77,7 @@ export function bg16(color: number): string {
   return `${CSI}${40 + color}m`;
 }
 
-// deno-lint-ignore no-control-regex
+// deno-lint-ignore no-control-regex -- intentional: matches ANSI escape sequences for terminal color stripping
 export const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
 
 export function stripAnsi(text: string): string {

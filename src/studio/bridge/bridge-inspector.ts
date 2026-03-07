@@ -207,8 +207,7 @@ export function sendTreeUpdate(): void {
     id: config.pageId,
     url: window.location.href,
     tree: buildNavigatorTree(root),
-    // deno-lint-ignore no-explicit-any -- accessing injected global property
-    sourceHash: (window as any).__VERYFRONT_SOURCE_HASH__ || null,
+    sourceHash: (window as unknown as Record<string, unknown>).__VERYFRONT_SOURCE_HASH__ || null,
   });
 }
 

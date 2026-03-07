@@ -12,8 +12,7 @@ export class DataFetcher {
   private staticFetcher: StaticDataFetcher;
   private pathsFetcher: StaticPathsFetcher;
 
-  // deno-lint-ignore no-unused-vars -- adapter kept for public API compatibility
-  constructor(adapter?: unknown) {
+  constructor(_adapter?: unknown) {
     this.cacheManager = new CacheManager();
     this.serverFetcher = new ServerDataFetcher();
     this.staticFetcher = new StaticDataFetcher(this.cacheManager);

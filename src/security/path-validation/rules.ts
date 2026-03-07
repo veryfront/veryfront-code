@@ -16,8 +16,7 @@ import { PathValidationError, type ValidationResult } from "./types.ts";
  * Validate path for security issues (basic checks)
  */
 export function validatePathBasics(path: string): ValidationResult {
-  // deno-lint-ignore no-control-regex
-  if (path.includes("\0") || /\x00/.test(path)) {
+  if (path.includes("\0")) {
     return {
       valid: false,
       error: "Path contains null bytes",

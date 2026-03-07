@@ -26,7 +26,6 @@ interface BabelGeneratorResult {
   map?: unknown;
 }
 
-// deno-lint-ignore no-explicit-any
 type TraverseFunction = (ast: t.Node, opts: Record<string, unknown>) => void;
 type GenerateFunction = (ast: t.Node, opts?: Record<string, unknown>) => BabelGeneratorResult;
 

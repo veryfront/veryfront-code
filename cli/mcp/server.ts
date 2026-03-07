@@ -26,6 +26,21 @@ import {
   ToolsCallParamsSchema,
 } from "./jsonrpc.ts";
 
+/** Minimal shape of a Zod schema's internal _def for JSON Schema conversion */
+interface ZodDef {
+  description?: string;
+  typeName?: string;
+  shape?: () => Record<string, unknown>;
+  type?: unknown;
+  values?: unknown[];
+  innerType?: unknown;
+  defaultValue?: () => unknown;
+  value?: unknown;
+  options?: unknown[];
+  valueType?: unknown;
+  keyType?: unknown;
+}
+
 export interface MCPServerConfig {
   /** Enable stdio transport (for Claude Code, Cursor, etc.) */
   stdio?: boolean;
@@ -408,9 +423,8 @@ export class MCPDevServer {
     );
   }
 
-  // deno-lint-ignore no-explicit-any
-  private zodToJsonSchema(schema: any): Record<string, unknown> {
-    const def = schema?._def;
+  private zodToJsonSchema(schema: unknown): Record<string, unknown> {
+    const def = (schema as { _def?: ZodDef } | null)?._def;
     if (!def) return { type: "object", properties: {} };
 
     const desc = def.description ? { description: def.description } : {};
@@ -422,8 +436,7 @@ export class MCPDevServer {
         const required: string[] = [];
 
         for (const [key, value] of Object.entries(shape)) {
-          // deno-lint-ignore no-explicit-any
-          const fieldDef = (value as any)?._def;
+          const fieldDef = (value as { _def?: ZodDef } | null)?._def;
           const fieldSchema = this.zodToJsonSchema(value);
 
           if (fieldDef?.description) fieldSchema.description = fieldDef.description;

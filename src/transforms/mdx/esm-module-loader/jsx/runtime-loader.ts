@@ -6,8 +6,7 @@ export interface JSXRuntime {
 }
 
 export async function loadJSXRuntime(): Promise<JSXRuntime> {
-  // deno-lint-ignore no-explicit-any -- react/jsx-dev-runtime has no type declarations in Deno; module shape is untyped
-  const runtime = (await import("react/jsx-dev-runtime")) as any;
+  const runtime = (await import("react/jsx-dev-runtime")) as unknown as Partial<JSXRuntime>;
 
   return {
     Fragment: runtime.Fragment,

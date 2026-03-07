@@ -6,8 +6,7 @@ import type { ContentContextProvider } from "./read-operations.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { StatOperations } from "./stat-operations.ts";
 
-// deno-lint-ignore no-explicit-any
-function createMockClient(overrides: Record<string, any> = {}): VeryfrontApiClient {
+function createMockClient(overrides: Record<string, unknown> = {}): VeryfrontApiClient {
   return {
     getRequestBranch: () => "main",
     listAllFiles: () => Promise.resolve([]),
