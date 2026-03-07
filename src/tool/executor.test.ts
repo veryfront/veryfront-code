@@ -1,4 +1,4 @@
-import { describe, it, afterEach } from "#veryfront/testing/bdd";
+import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { z } from "zod";
 import { tool } from "./factory.ts";

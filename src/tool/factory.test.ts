@@ -1,9 +1,5 @@
 import { describe, it } from "#veryfront/testing/bdd";
-import {
-  assertEquals,
-  assertRejects,
-  assertStringIncludes,
-} from "#veryfront/testing/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
 import { z } from "zod";
 import { dynamicTool, tool } from "./factory.ts";
 

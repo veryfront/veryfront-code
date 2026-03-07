@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "#veryfront/testing/bdd";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
   assert,
   assertEquals,
@@ -16,7 +16,11 @@ function mockFetch(responses: Array<Response | (() => Response)>) {
   fetchResponses = responses.map((r) => (typeof r === "function" ? r() : r));
   fetchCalls = [];
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = typeof input === "string"
+      ? input
+      : input instanceof URL
+      ? input.toString()
+      : input.url;
     fetchCalls.push({ url, init });
     const response = fetchResponses.shift();
     if (!response) throw new Error(`No mock response for: ${url}`);
@@ -56,7 +60,11 @@ describe("Sandbox", () => {
   describe("create()", () => {
     it("should create a sandbox and return instance", async () => {
       mockFetch([
-        jsonResponse({ id: "session-1", endpoint: "https://sandbox.example.com", status: "running" }),
+        jsonResponse({
+          id: "session-1",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "test-token" });
@@ -70,11 +78,22 @@ describe("Sandbox", () => {
 
     it("should poll until ready when not running", async () => {
       mockFetch([
-        jsonResponse({ id: "session-2", endpoint: "https://sandbox.example.com", status: "starting" }),
-        jsonResponse({ id: "session-2", endpoint: "https://sandbox.example.com", status: "running" }),
+        jsonResponse({
+          id: "session-2",
+          endpoint: "https://sandbox.example.com",
+          status: "starting",
+        }),
+        jsonResponse({
+          id: "session-2",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
       ]);
 
-      const sandbox = await Sandbox.create({ authToken: "test-token", apiUrl: "https://api.test.com" });
+      const sandbox = await Sandbox.create({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
       assertEquals(sandbox.id, "session-2");
       assertEquals(fetchCalls.length, 2);
     });
@@ -93,7 +112,11 @@ describe("Sandbox", () => {
 
     it("should throw when sandbox fails to start", async () => {
       mockFetch([
-        jsonResponse({ id: "session-3", endpoint: "https://sandbox.example.com", status: "pending" }),
+        jsonResponse({
+          id: "session-3",
+          endpoint: "https://sandbox.example.com",
+          status: "pending",
+        }),
         jsonResponse({ id: "session-3", status: "error" }),
       ]);
 
@@ -126,7 +149,8 @@ describe("Sandbox", () => {
       ]);
 
       await assertRejects(
-        () => Sandbox.get("nonexistent", { authToken: "test-token", apiUrl: "https://api.test.com" }),
+        () =>
+          Sandbox.get("nonexistent", { authToken: "test-token", apiUrl: "https://api.test.com" }),
         Error,
         "Failed to get sandbox",
       );
