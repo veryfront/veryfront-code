@@ -19,7 +19,7 @@ const config = getConfig();
 
 // Expose debug internals when configured
 if (config.debugExposeInternals && typeof window !== "undefined") {
-  (window as unknown as Record<string, unknown>).__VF_STUDIO_BRIDGE_DEBUG = {
+  (globalThis as Record<string, unknown>).__VF_STUDIO_BRIDGE_DEBUG = {
     parseMdxImportMap: parseMdxImportMap,
     extractRawBlocksForEditor: extractRawBlocksForEditor,
     getMdxBlockOpenUiState: getMdxBlockOpenUiState,

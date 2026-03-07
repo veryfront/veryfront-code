@@ -207,7 +207,7 @@ export function sendTreeUpdate(): void {
     id: config.pageId,
     url: window.location.href,
     tree: buildNavigatorTree(root),
-    sourceHash: (window as unknown as Record<string, unknown>).__VERYFRONT_SOURCE_HASH__ || null,
+    sourceHash: ((globalThis as Record<string, unknown>).__VERYFRONT_SOURCE_HASH__ as string) || null,
   });
 }
 

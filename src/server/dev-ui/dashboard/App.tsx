@@ -87,10 +87,12 @@ export function App(): JSX.Element {
           fetchJson("/_dev/api/agents"),
         ]);
 
-        setTools((t as any)?.tools ?? []);
-        setResources((r as any)?.resources ?? []);
-        setPrompts((p as any)?.prompts ?? []);
-        setAgents((a as any)?.agents ?? []);
+        const asRecord = (v: unknown): Record<string, unknown> =>
+          v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+        setTools((asRecord(t).tools as Tool[]) ?? []);
+        setResources((asRecord(r).resources as Resource[]) ?? []);
+        setPrompts((asRecord(p).prompts as Prompt[]) ?? []);
+        setAgents((asRecord(a).agents as Agent[]) ?? []);
       } catch (e) {
         console.error("Failed to fetch data:", e);
       }

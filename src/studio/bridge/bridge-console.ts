@@ -10,9 +10,10 @@ import { hideOverlay } from "./bridge-inspector.ts";
 
 export function setupConsoleCapture(): void {
   type ConsoleFn = (...args: unknown[]) => void;
+  const consoleObj: Record<string, ConsoleFn> = console as unknown as Record<string, ConsoleFn>;
   CONSOLE_METHODS.forEach((method) => {
-    state.originalConsole[method] = (console as unknown as Record<string, ConsoleFn>)[method]!;
-    (console as unknown as Record<string, ConsoleFn>)[method] = function (...args: unknown[]) {
+    state.originalConsole[method] = consoleObj[method] as ConsoleFn;
+    consoleObj[method] = function (...args: unknown[]) {
       state.originalConsole[method]!.apply(console, args);
 
       const logId = "vf-" + Date.now() + "-" + ++state.logCounter;

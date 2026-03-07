@@ -41,8 +41,7 @@ export const InputBox = React.forwardRef<
   if (multiline) {
     return (
       <textarea
-        // deno-lint-ignore no-explicit-any
-        ref={textareaRef as any}
+        ref={textareaRef as React.RefObject<HTMLTextAreaElement>}
         className={className}
         style={{ resize: "none", border: "none", outline: "none" }}
         value={value}
@@ -58,8 +57,7 @@ export const InputBox = React.forwardRef<
 
   return (
     <input
-      // deno-lint-ignore no-explicit-any
-      ref={ref as any}
+      ref={ref as React.RefObject<HTMLInputElement>}
       type="text"
       className={className}
       value={value}

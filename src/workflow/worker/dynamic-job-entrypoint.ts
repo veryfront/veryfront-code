@@ -30,6 +30,7 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { discoverWorkflows } from "../discovery/index.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import type { WorkflowBackend } from "../backends/types.ts";
 import { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { CapturedTenantContext } from "../types.ts";
@@ -160,8 +161,7 @@ export async function runDynamicWorkflowJob(
         const discoveryResult = await discoverWorkflows({
           projectDir: "", // Root of project (relative paths with API)
           adapter,
-          // deno-lint-ignore no-explicit-any -- fsConfig is a partial VeryfrontConfig subset
-          config: fsConfig as any,
+          config: fsConfig as Partial<VeryfrontConfig> as VeryfrontConfig,
           debug,
         });
 
