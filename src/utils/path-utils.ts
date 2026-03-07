@@ -1,13 +1,14 @@
+import { normalize } from "#veryfront/compat/path/index.ts";
 import { logger } from "./logger/logger.ts";
 
+function stripTrailingSlash(pathname: string): string {
+  if (pathname === "/") return pathname;
+  return pathname.replace(/\/+$/, "");
+}
+
 export function normalizePath(pathname: string): string {
-  let normalized = pathname.replace(/\\+/g, "/").replace(/\/\.+\//g, "/");
-
-  if (normalized !== "/" && normalized.endsWith("/")) {
-    normalized = normalized.slice(0, -1);
-  }
-
-  return normalized;
+  if (!pathname) return pathname;
+  return stripTrailingSlash(normalize(pathname.replace(/\\+/g, "/")));
 }
 
 export function joinPath(a: string, b: string): string {
@@ -17,9 +18,10 @@ export function joinPath(a: string, b: string): string {
 }
 
 export function isWithinDirectory(root: string, target: string): boolean {
-  const normalizedRoot = normalizePath(root);
-  const normalizedTarget = normalizePath(target);
+  const normalizedRoot = stripTrailingSlash(normalizePath(root));
+  const normalizedTarget = stripTrailingSlash(normalizePath(target));
 
+  if (normalizedRoot === "/") return normalizedTarget.startsWith("/");
   return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}/`);
 }
 
