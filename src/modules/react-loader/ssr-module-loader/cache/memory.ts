@@ -113,7 +113,7 @@ export async function tryAcquireTransformSlot(
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    await new Promise<void>((resolve) => setTimeout(resolve, PROJECT_SLOT_RETRY_INTERVAL_MS));
+    await new Promise<void>((resolve) => setTimeout(resolve, PROJECT_SLOT_RETRY_INTERVAL_MS)); // no cleanup needed: one-shot
     if (acquireTransformSlot(projectId)) return true;
   }
 

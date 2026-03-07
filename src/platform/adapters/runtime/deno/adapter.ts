@@ -234,6 +234,7 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
       }
 
       while (!closed && !signal?.aborted) {
+        // no cleanup needed: one-shot
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
         if (closed || signal?.aborted) break;
 

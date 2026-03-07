@@ -4,6 +4,7 @@ import * as React from "react";
 import { renderToString } from "react-dom/server";
 import {
   compatHooks,
+  createTransitionFallbackScheduler,
   useDeferredValueCompat,
   useFormStatusCompat,
   useIdCompat,
@@ -676,6 +677,42 @@ describe("hooks-adapter", () => {
       }
 
       assertEquals(typeof startTransition, "function");
+    });
+
+    it("fallback queues multiple transitions instead of debouncing them", () => {
+      const originalSetTimeout = globalThis.setTimeout;
+      const originalClearTimeout = globalThis.clearTimeout;
+      const scheduled = new Map<number, () => void>();
+      let nextTimerId = 1;
+
+      try {
+        globalThis.setTimeout = ((callback: Parameters<typeof setTimeout>[0]) => {
+          const timerId = nextTimerId++;
+          scheduled.set(timerId, () => {
+            scheduled.delete(timerId);
+            if (typeof callback === "function") callback();
+          });
+          return timerId as ReturnType<typeof setTimeout>;
+        }) as typeof setTimeout;
+
+        globalThis.clearTimeout = ((timerId?: ReturnType<typeof setTimeout>) => {
+          if (typeof timerId === "number") scheduled.delete(timerId);
+        }) as typeof clearTimeout;
+
+        const callbacks: string[] = [];
+        const scheduler = createTransitionFallbackScheduler(() => {});
+        scheduler.startTransition(() => callbacks.push("first"));
+        scheduler.startTransition(() => callbacks.push("second"));
+
+        assertEquals(scheduled.size, 2);
+
+        for (const run of Array.from(scheduled.values())) run();
+
+        assertEquals(callbacks, ["first", "second"]);
+      } finally {
+        globalThis.setTimeout = originalSetTimeout;
+        globalThis.clearTimeout = originalClearTimeout;
+      }
     });
   });
 

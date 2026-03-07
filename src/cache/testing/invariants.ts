@@ -175,7 +175,7 @@ export async function runCacheInvariantTests<T = string>(
       await cache.set(key, value, 0.001);
 
       // Wait for expiry
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50)); // no cleanup needed: one-shot
 
       const result = await cache.get(key);
       assertEquals(result, null);

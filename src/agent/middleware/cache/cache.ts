@@ -1,4 +1,4 @@
-import type { AgentResponse } from "../../types.ts";
+import type { AgentMiddleware, AgentResponse } from "../../types.ts";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const DEFAULT_LRU_MAX_SIZE = 100;
@@ -203,6 +203,7 @@ export function createCache(config: CacheConfig): {
   delete(input: string, context?: Record<string, unknown>): void;
   clear(): void;
   size(): number;
+  destroy(): void;
 } {
   const cache = createCacheByStrategy(config);
   const keyGenerator = config.keyGenerator ?? defaultKeyGenerator;
@@ -229,6 +230,13 @@ export function createCache(config: CacheConfig): {
     },
     size() {
       return cache.size();
+    },
+    destroy() {
+      if ("destroy" in cache && typeof cache.destroy === "function") {
+        cache.destroy();
+      } else {
+        cache.clear();
+      }
     },
   };
 }
@@ -267,13 +275,10 @@ function defaultKeyGenerator(input: string, context?: Record<string, unknown>): 
 
 export function cacheMiddleware(
   config: CacheConfig,
-): (
-  context: Record<string, unknown>,
-  next: () => Promise<AgentResponse>,
-) => Promise<AgentResponse> {
+): AgentMiddleware & { destroy(): void } {
   const cache = createCache(config);
 
-  return (context, next) =>
+  const middleware = ((context, next) =>
     withSpan(
       "agent.middleware.cache",
       async () => {
@@ -302,5 +307,11 @@ export function cacheMiddleware(
         return result;
       },
       { "cache.strategy": config.strategy },
-    );
+    )) as AgentMiddleware & { destroy(): void };
+
+  middleware.destroy = () => {
+    cache.destroy();
+  };
+
+  return middleware;
 }

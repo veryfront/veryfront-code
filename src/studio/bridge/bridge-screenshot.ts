@@ -77,6 +77,7 @@ export async function captureScreenshot(options?: {
 
     if (typeof scrollTo === "number") {
       window.scrollTo(0, scrollTo);
+      // no cleanup needed: one-shot delay awaited inline
       await new Promise((r) => setTimeout(r, 150));
     }
 
@@ -91,6 +92,7 @@ export async function captureScreenshot(options?: {
       canvasOptions.windowHeight = document.documentElement.scrollHeight;
       canvasOptions.y = 0;
       window.scrollTo(0, 0);
+      // no cleanup needed: one-shot delay awaited inline
       await new Promise((r) => setTimeout(r, 100));
     }
 

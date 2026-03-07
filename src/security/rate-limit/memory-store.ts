@@ -1,4 +1,5 @@
 import type { RateLimitState, RateLimitStore } from "./types.ts";
+import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 
 const MAX_TIMESTAMPS_PER_KEY = 1_000;
 const WINDOW_MS = 60_000;
@@ -10,6 +11,7 @@ export class MemoryRateLimitStore implements RateLimitStore {
   constructor(private cleanupIntervalMs = WINDOW_MS) {
     if (typeof setInterval === "undefined") return;
     this.cleanupInterval = setInterval(() => this.cleanup(), cleanupIntervalMs);
+    unrefTimer(this.cleanupInterval);
   }
 
   increment(key: string): Promise<number> {

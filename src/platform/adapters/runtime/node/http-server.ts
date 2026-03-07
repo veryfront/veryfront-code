@@ -39,15 +39,24 @@ function createRequestId(req: { headers: Record<string, string | string[] | unde
 
 export function registerWebSocketUpgrade(requestId: string): Promise<WSWebSocket> {
   return new Promise((resolve, reject) => {
-    pendingWebSocketUpgrades.set(requestId, { resolve, reject });
-
-    setTimeout(() => {
+    const timeoutId = setTimeout(() => {
       const pending = pendingWebSocketUpgrades.get(requestId);
       if (!pending) return;
 
       pendingWebSocketUpgrades.delete(requestId);
       pending.reject(TIMEOUT_ERROR.create({ detail: "WebSocket upgrade timed out" }));
     }, 30000);
+
+    pendingWebSocketUpgrades.set(requestId, {
+      resolve: (ws) => {
+        clearTimeout(timeoutId);
+        resolve(ws);
+      },
+      reject: (error) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      },
+    });
   });
 }
 

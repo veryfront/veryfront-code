@@ -311,6 +311,7 @@ export class WorkflowWorker {
    * Sleep for specified milliseconds
    */
   private sleep(ms: number): Promise<void> {
+    // no cleanup needed: one-shot
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
