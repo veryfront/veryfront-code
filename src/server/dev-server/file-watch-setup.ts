@@ -30,6 +30,8 @@ const IGNORED_PATH_PATTERNS = [
   ".git\\",
   ".veryfront/",
   ".veryfront\\",
+  "data/",
+  "data\\",
 ];
 
 /**
