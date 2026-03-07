@@ -100,7 +100,7 @@ describe("logger", () => {
     it("should switch to JSON after NODE_ENV changes post-startup", () => {
       const previousNodeEnv = Deno.env.get("NODE_ENV");
       const previousLogFormat = Deno.env.get("LOG_FORMAT");
-      const { getOutput, restore } = captureConsoleLog();
+      const { getOutput, reset, restore } = captureConsoleLog();
 
       try {
         Deno.env.delete("NODE_ENV");
@@ -112,6 +112,7 @@ describe("logger", () => {
 
         Deno.env.set("NODE_ENV", "production");
         refreshLoggerConfig();
+        reset();
 
         serverLogger.info("JSON after refresh");
 
