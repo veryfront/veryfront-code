@@ -7,6 +7,7 @@
 export type { BuildOptions, BuildResult, TransformOptions, TransformResult } from "esbuild";
 
 import nodeProcess from "node:process";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getEnv, setEnv } from "./process.ts";
 import { isDenoCompiled } from "./runtime.ts";
 import { ESBUILD_VERSION, getEsbuildBinaryName, getVFSBasePath } from "./esbuild-shared.ts";
@@ -115,7 +116,7 @@ async function ensureEsbuildBinary(): Promise<void> {
       setEnv("ESBUILD_BINARY_PATH", binaryPath);
       nodeProcess.env.ESBUILD_BINARY_PATH = binaryPath;
     } catch (error) {
-      console.warn(`[esbuild] Binary extraction failed:`, error);
+      serverLogger.warn("[esbuild] Binary extraction failed", error);
     } finally {
       setupComplete = true;
     }

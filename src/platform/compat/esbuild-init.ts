@@ -4,6 +4,7 @@
  */
 
 import process from "node:process";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { isDenoCompiled } from "./runtime.ts";
 import { ESBUILD_VERSION, getEsbuildBinaryName, getVFSBasePath } from "./esbuild-shared.ts";
 
@@ -55,7 +56,7 @@ async function extractEsbuildBinary(): Promise<string | null> {
   await Deno.mkdir(cacheDir, { recursive: true });
   await Deno.writeFile(targetPath, await Deno.readFile(vfsPath), { mode: 0o755 });
 
-  console.log(`[esbuild] Extracted binary from VFS to ${targetPath}`);
+  serverLogger.info("[esbuild] Extracted binary from VFS", { targetPath });
   return targetPath;
 }
 
@@ -69,6 +70,6 @@ if (!Deno.env.get("ESBUILD_BINARY_PATH") && isDenoCompiled) {
       process.env.ESBUILD_BINARY_PATH = binaryPath;
     }
   } catch (error) {
-    console.warn(`[esbuild] Binary extraction failed:`, error);
+    serverLogger.warn("[esbuild] Binary extraction failed", error);
   }
 }
