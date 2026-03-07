@@ -203,6 +203,7 @@ export function createCache(config: CacheConfig): {
   delete(input: string, context?: Record<string, unknown>): void;
   clear(): void;
   size(): number;
+  destroy(): void;
 } {
   const cache = createCacheByStrategy(config);
   const keyGenerator = config.keyGenerator ?? defaultKeyGenerator;
@@ -229,6 +230,13 @@ export function createCache(config: CacheConfig): {
     },
     size() {
       return cache.size();
+    },
+    destroy() {
+      if ("destroy" in cache && typeof cache.destroy === "function") {
+        cache.destroy();
+      } else {
+        cache.clear();
+      }
     },
   };
 }

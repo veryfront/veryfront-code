@@ -578,6 +578,7 @@ export class WorkflowExecutor {
         throw ORCHESTRATION_ERROR.create({ detail: "Workflow was cancelled" });
       }
 
+      // no cleanup needed: one-shot
       await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
   }

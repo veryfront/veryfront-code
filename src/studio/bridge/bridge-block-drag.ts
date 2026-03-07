@@ -592,6 +592,7 @@ export function moveMarkdownCurrentBlockByDelta(delta: number): boolean {
 
   const moved = moveMarkdownLexicalBlock(index, targetSlot);
   if (moved) {
+    // no cleanup needed: one-shot UI repositioning after block move
     setTimeout(function () {
       const nextBlocks = getMarkdownTopLevelBlocks();
       const nextIndex = Math.max(0, Math.min(nextBlocks.length - 1, index + step));

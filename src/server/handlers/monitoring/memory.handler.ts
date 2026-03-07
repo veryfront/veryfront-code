@@ -122,7 +122,7 @@ export class MemoryDebugHandler extends BaseHandler {
     const beforeHeap = getHeapStats();
     const gcTriggered = await forceGC();
 
-    await new Promise((resolve) => setTimeout(resolve, GC_SETTLE_DELAY_MS));
+    await new Promise((resolve) => setTimeout(resolve, GC_SETTLE_DELAY_MS)); // no cleanup needed: one-shot
 
     const afterHeap = getHeapStats();
     const freedMB = Math.round((beforeHeap.usedHeapSizeMB - afterHeap.usedHeapSizeMB) * 100) / 100;

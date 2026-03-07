@@ -133,7 +133,7 @@ export async function forceGC(): Promise<boolean> {
   try {
     const buffer = new Uint8Array(100 * 1024 * 1024);
     buffer.fill(0);
-    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    await new Promise<void>((resolve) => setTimeout(resolve, 100)); // no cleanup needed: one-shot
     return true;
   } catch (error) {
     logger.debug("forceGC allocation failed", { error });

@@ -91,10 +91,14 @@ export function useTransitionCompat(): ReturnType<typeof React.useTransition> {
 
   const [isPending, setIsPending] = React.useState(false);
 
+  const timerRef = React.useRef<ReturnType<typeof setTimeout>>(undefined);
+  React.useEffect(() => () => clearTimeout(timerRef.current), []);
+
   const startTransition = React.useCallback((callback: () => void) => {
     setIsPending(true);
 
-    setTimeout(() => {
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
       callback();
       setIsPending(false);
     }, 0);

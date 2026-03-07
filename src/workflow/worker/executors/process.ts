@@ -49,6 +49,7 @@ interface TrackedJob {
   startedAt?: Date;
   completedAt?: Date;
   error?: string;
+  timeoutId?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -178,6 +179,7 @@ export class ProcessJobExecutor implements JobExecutor {
       }
     }
 
+    if (job.timeoutId) clearTimeout(job.timeoutId);
     this.activeJobs.delete(jobId);
 
     if (this.config.debug) {
@@ -188,8 +190,9 @@ export class ProcessJobExecutor implements JobExecutor {
   }
 
   destroy(): Promise<void> {
-    // Kill all active processes
+    // Kill all active processes and clear their timers
     for (const job of this.activeJobs.values()) {
+      if (job.timeoutId) clearTimeout(job.timeoutId);
       if (job.status === "running" || job.status === "pending") {
         try {
           job.process.kill("SIGTERM");
@@ -209,7 +212,8 @@ export class ProcessJobExecutor implements JobExecutor {
    */
   private monitorProcess(job: TrackedJob, timeout: number): void {
     // Set up timeout
-    const timeoutId = setTimeout(() => {
+    job.timeoutId = setTimeout(() => {
+      job.timeoutId = undefined;
       if (job.status === "running") {
         try {
           job.process.kill("SIGTERM");
@@ -228,7 +232,8 @@ export class ProcessJobExecutor implements JobExecutor {
     void (async () => {
       try {
         const status = await job.process.status;
-        clearTimeout(timeoutId);
+        clearTimeout(job.timeoutId);
+        job.timeoutId = undefined;
 
         job.completedAt = new Date();
 
@@ -250,7 +255,8 @@ export class ProcessJobExecutor implements JobExecutor {
           logger.error(`Job ${job.jobId} failed with code ${status.code}`);
         }
       } catch (error) {
-        clearTimeout(timeoutId);
+        clearTimeout(job.timeoutId);
+        job.timeoutId = undefined;
 
         job.status = "failed";
         job.error = error instanceof Error ? error.message : String(error);

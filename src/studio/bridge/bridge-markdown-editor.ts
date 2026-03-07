@@ -342,6 +342,7 @@ export function applyMarkdownContent(content: unknown): void {
     // Reset flags after all synchronous Lexical reconciliation completes.
     // setTimeout(0) is more reliable than queueMicrotask for catching
     // secondary updates from list normalization, etc.
+    // no cleanup needed: one-shot guarded by remoteUpdateToken staleness check
     setTimeout(function () {
       // Ignore stale reset callbacks from earlier remote applies.
       if (state.markdownRemoteUpdateToken !== remoteUpdateToken) {

@@ -102,6 +102,7 @@ export class Sandbox {
   ): Promise<void> {
     const start = Date.now();
     while (Date.now() - start < maxWaitMs) {
+      // no cleanup needed: one-shot
       await new Promise((r) => setTimeout(r, pollIntervalMs));
 
       const res = await fetch(`${apiUrl}/sandbox-sessions/${id}`, {

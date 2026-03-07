@@ -108,12 +108,14 @@ export async function waitFor(
 
   while (Date.now() - start < timeout) {
     if (await condition()) return;
+    // no cleanup needed: one-shot
     await new Promise<void>((resolve) => setTimeout(resolve, interval));
   }
 
   throw TIMEOUT_ERROR.create({ detail: `${message} (timeout: ${timeout}ms)` });
 }
 
+// no cleanup needed: one-shot
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, scaleMs(ms)));
 }

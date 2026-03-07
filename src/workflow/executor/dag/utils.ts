@@ -11,5 +11,6 @@ export function shouldCheckpoint(node: WorkflowNode): boolean {
 }
 
 export function sleep(ms: number): Promise<void> {
+  // no cleanup needed: one-shot
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

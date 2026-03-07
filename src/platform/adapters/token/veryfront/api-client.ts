@@ -229,6 +229,7 @@ export class TokenStorageApiClient {
           timeout: isTimeout,
         });
 
+        // no cleanup needed: one-shot
         await new Promise<void>((resolve) => setTimeout(resolve, delay));
       } finally {
         clearTimeout(timeoutId);

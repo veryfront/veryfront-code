@@ -377,7 +377,7 @@ function forwardToServer(req: Request): Promise<Response> {
                   method: req.method,
                 },
               );
-              await new Promise((resolve) => setTimeout(resolve, VERYFRONT_SERVER_RETRY_DELAY_MS));
+              await new Promise((resolve) => setTimeout(resolve, VERYFRONT_SERVER_RETRY_DELAY_MS)); // no cleanup needed: one-shot
             }
 
             const abortController = new AbortController();

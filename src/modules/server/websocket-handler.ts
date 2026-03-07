@@ -122,7 +122,7 @@ export async function closeAllConnections(
   // Alternate between microtasks and macrotasks to ensure all I/O completes.
   for (let i = 0; i < 10; i++) {
     await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 50)); // no cleanup needed: one-shot
   }
 
   for (const client of clients) {

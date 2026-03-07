@@ -193,6 +193,17 @@ function createTreeSignature(root: Element): string {
 let treeUpdateTimer: ReturnType<typeof setTimeout> | null = null;
 let mutationObserver: MutationObserver | null = null;
 
+export function disposeInspectorTimers(): void {
+  if (treeUpdateTimer) {
+    clearTimeout(treeUpdateTimer);
+    treeUpdateTimer = null;
+  }
+  if (mutationObserver) {
+    mutationObserver.disconnect();
+    mutationObserver = null;
+  }
+}
+
 function sendTreeUpdate(): void {
   const config = getConfig();
   const root = document.getElementById("root") || document.body;

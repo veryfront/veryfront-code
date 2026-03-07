@@ -137,7 +137,7 @@ export class MockCacheBackend implements CacheBackend {
 
   private async maybeDelay(): Promise<void> {
     if (this.options.latencyMs && this.options.latencyMs > 0) {
-      await new Promise((r) => setTimeout(r, this.options.latencyMs));
+      await new Promise((r) => setTimeout(r, this.options.latencyMs)); // no cleanup needed: one-shot
     }
   }
 

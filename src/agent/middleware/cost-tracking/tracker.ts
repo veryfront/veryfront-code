@@ -232,6 +232,7 @@ export function createCostTracker(config: CostConfig): {
   getMonthlySummary: () => UsageSummary;
   getAllRecords: () => UsageRecord[];
   clear: () => void;
+  destroy: () => void;
 } {
   const tracker = new CostTracker(config);
 
@@ -242,6 +243,7 @@ export function createCostTracker(config: CostConfig): {
     getMonthlySummary: tracker.getMonthlySummary.bind(tracker),
     getAllRecords: tracker.getAllRecords.bind(tracker),
     clear: tracker.clear.bind(tracker),
+    destroy: tracker.destroy.bind(tracker),
   };
 }
 

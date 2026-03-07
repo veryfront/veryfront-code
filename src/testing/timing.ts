@@ -20,6 +20,7 @@ export function scaleMs(ms: number, minMs = 1): number {
   return Math.max(minMs, Math.round(ms * readScale()));
 }
 
+// no cleanup needed: one-shot
 export function testDelay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, scaleMs(ms)));
 }

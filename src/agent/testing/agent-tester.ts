@@ -80,13 +80,16 @@ async function runTestCase(agent: Agent, testCase: TestCase): Promise<TestResult
 
   try {
     const timeoutMs = testCase.timeout ?? 30000;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     const response = await Promise.race<AgentResponse>([
       agent.generate({ input: testCase.input }),
       new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("Test timeout")), timeoutMs);
+        timeoutId = setTimeout(() => reject(new Error("Test timeout")), timeoutMs);
       }),
     ]);
+
+    clearTimeout(timeoutId);
 
     const executionTime = Date.now() - startTime;
     const toolCalls = response.toolCalls.map((tc) => tc.name);

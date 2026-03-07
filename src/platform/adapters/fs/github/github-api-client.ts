@@ -222,6 +222,7 @@ export class GitHubApiClient {
     return delay + Math.random() * RETRY_JITTER_MAX_MS;
   }
 
+  // no cleanup needed: one-shot
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }

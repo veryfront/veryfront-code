@@ -129,6 +129,7 @@ function applyMarkdownSlashCommand(index: number): boolean {
     scheduleMarkdownSync(nextFullContent);
   }
 
+  // no cleanup needed: one-shot UI update after slash command apply
   setTimeout(function () {
     focusMarkdownEditor();
     setMarkdownEditorSelection(nextCaret, nextCaret);

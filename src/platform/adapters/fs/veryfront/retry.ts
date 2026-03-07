@@ -52,6 +52,7 @@ export async function withRetryOnTransient<T>(
       error: error instanceof Error ? error.message : String(error),
     });
 
+    // no cleanup needed: one-shot
     await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
 
     return fn();

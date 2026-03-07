@@ -74,6 +74,7 @@ export async function retryWithBackoff<T>(
         continue;
       }
 
+      // no cleanup needed: one-shot
       await new Promise<void>((resolve) => setTimeout(resolve, delay));
       delay = Math.min(delay * 2, maxDelay);
     }

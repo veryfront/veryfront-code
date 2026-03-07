@@ -363,6 +363,7 @@ export function createWindowStub(): {
     clearTimeout: globalThis.clearTimeout,
     setInterval: globalThis.setInterval,
     clearInterval: globalThis.clearInterval,
+    // SSR stub: fire-and-forget timer simulating rAF; cleanup via cancelAnimationFrame
     requestAnimationFrame: (cb: () => void) => globalThis.setTimeout(cb, 16),
     cancelAnimationFrame: globalThis.clearTimeout,
 
