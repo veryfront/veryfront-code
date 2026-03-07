@@ -277,15 +277,13 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       assertEquals(result!.status, 404);
     });
 
-    it("returns 404 for path traversal attempts", async () => {
-      // NOTE: normalizePath in path-utils.ts strips /../ segments textually
-      // rather than resolving them, so isWithinDirectory can be bypassed by
-      // paths like /root/../../etc/passwd (the raw path still starts with
-      // the root prefix). The file won't exist on the mock fs so we get 404,
-      // but this is defense-by-absence, not defense-by-validation.
-      // See path-utils.ts normalizePath for the underlying issue.
+    it("returns 400 for path traversal attempts without touching the filesystem", async () => {
+      const attemptedPaths: string[] = [];
       const adapter = createMockAdapter({
-        exists: () => Promise.resolve(false),
+        exists: (path: string) => {
+          attemptedPaths.push(path);
+          return Promise.resolve(true);
+        },
       });
 
       const result = await handleRSCEndpoint(
@@ -300,7 +298,10 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         }),
       );
       assertEquals(result instanceof Response, true);
-      assertEquals(result!.status, 404);
+      assertEquals(result!.status, 400);
+      assertEquals(attemptedPaths, []);
+      const body = await result!.text();
+      assertStringIncludes(body, "Invalid rel query parameter");
     });
   });
 

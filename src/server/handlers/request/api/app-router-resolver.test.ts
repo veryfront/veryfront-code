@@ -147,10 +147,7 @@ describe("resolveAppRouteFile", () => {
     });
   });
 
-  // Note: [...slug] is matched by the dynamic segment regex before the
-  // catch-all regex is checked, so it behaves as a single-segment dynamic
-  // param with key "...slug". For true catch-all behavior, use [[...slug]].
-  it("matches [...slug] as dynamic segment for single segment path", async () => {
+  it("matches catch-all [...slug] for multi-segment paths", async () => {
     const ctx = createMockCtx({
       statMap: {
         "/project/app": { isFile: false, isDirectory: true },
@@ -163,11 +160,10 @@ describe("resolveAppRouteFile", () => {
         "/project/app/api/docs/[...slug]": [],
       },
     });
-    // Single remaining segment works via dynamic match
-    const result = await resolveAppRouteFile("/api/docs/a", ctx);
+    const result = await resolveAppRouteFile("/api/docs/a/b", ctx);
     assertEquals(result, {
       file: "/project/app/api/docs/[...slug]/route.ts",
-      params: { "...slug": "a" },
+      params: { slug: ["a", "b"] },
     });
   });
 
@@ -187,7 +183,49 @@ describe("resolveAppRouteFile", () => {
     const result = await resolveAppRouteFile("/api/search/x/y", ctx);
     assertEquals(result, {
       file: "/project/app/api/search/[[...slug]]/route.ts",
-      params: { slug: "x/y" },
+      params: { slug: ["x", "y"] },
+    });
+  });
+
+  it("matches optional catch-all [[...slug]] without segments", async () => {
+    const ctx = createMockCtx({
+      statMap: {
+        "/project/app": { isFile: false, isDirectory: true },
+        "/project/app/api/search/[[...slug]]/route.ts": { isFile: true, isDirectory: false },
+      },
+      dirMap: {
+        "/project/app": [dir("api")],
+        "/project/app/api": [dir("search")],
+        "/project/app/api/search": [dir("[[...slug]]")],
+        "/project/app/api/search/[[...slug]]": [],
+      },
+    });
+    const result = await resolveAppRouteFile("/api/search", ctx);
+    assertEquals(result, {
+      file: "/project/app/api/search/[[...slug]]/route.ts",
+      params: { slug: [] },
+    });
+  });
+
+  it("falls back to catch-all when a dynamic route cannot consume the full path", async () => {
+    const ctx = createMockCtx({
+      statMap: {
+        "/project/app": { isFile: false, isDirectory: true },
+        "/project/app/api/files/[id]/route.ts": { isFile: true, isDirectory: false },
+        "/project/app/api/files/[...slug]/route.ts": { isFile: true, isDirectory: false },
+      },
+      dirMap: {
+        "/project/app": [dir("api")],
+        "/project/app/api": [dir("files")],
+        "/project/app/api/files": [dir("[id]"), dir("[...slug]")],
+        "/project/app/api/files/[id]": [],
+        "/project/app/api/files/[...slug]": [],
+      },
+    });
+    const result = await resolveAppRouteFile("/api/files/a/b", ctx);
+    assertEquals(result, {
+      file: "/project/app/api/files/[...slug]/route.ts",
+      params: { slug: ["a", "b"] },
     });
   });
 

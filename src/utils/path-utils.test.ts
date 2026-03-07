@@ -39,6 +39,10 @@ describe("path-utils", () => {
     it("should handle empty segments", () => {
       assertEquals(normalizePath("/a/./b/./c"), "/a/b/c");
     });
+
+    it("should resolve parent segments", () => {
+      assertEquals(normalizePath("/root/../../etc/passwd"), "/etc/passwd");
+    });
   });
 
   describe("joinPath", () => {
@@ -82,6 +86,10 @@ describe("path-utils", () => {
 
     it("should return false for unrelated path", () => {
       assertEquals(isWithinDirectory("/root", "/other"), false);
+    });
+
+    it("should return false for parent traversal outside the root", () => {
+      assertEquals(isWithinDirectory("/root", "/root/../../etc/passwd"), false);
     });
   });
 

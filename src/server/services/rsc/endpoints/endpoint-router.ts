@@ -6,7 +6,7 @@
 import { HTTP_SERVER_ERROR, isRSCEnabled, serverLogger } from "#veryfront/utils";
 import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
 import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
-import { isWithinDirectory, joinPath } from "#veryfront/utils/path-utils.ts";
+import { isWithinDirectory, joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { RSCDevServerHandler } from "../orchestrators/index.ts";
@@ -161,6 +161,14 @@ async function handleModuleEndpoint({
   }
 
   const normalizedRel = relParam.replace(/\\+/g, "/");
+  const relSegments = normalizedRel.split("/").filter(Boolean);
+  if (relSegments.includes("..")) {
+    return new Response("Invalid rel query parameter", {
+      status: HttpStatus.BAD_REQUEST,
+      headers: { "content-type": "text/plain" },
+    });
+  }
+
   const rel = normalizedRel.startsWith("/") ? normalizedRel : `/${normalizedRel}`;
   const candidateRoots = [
     joinPath(projectDir, "app"),
@@ -170,7 +178,7 @@ async function handleModuleEndpoint({
   ];
 
   for (const root of candidateRoots) {
-    const modulePath = joinPath(root, rel);
+    const modulePath = normalizePath(joinPath(root, rel));
     if (!isWithinDirectory(root, modulePath)) {
       continue;
     }

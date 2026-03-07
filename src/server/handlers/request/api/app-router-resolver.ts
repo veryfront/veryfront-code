@@ -6,8 +6,145 @@
  */
 
 import { joinPath } from "#veryfront/utils/path-utils.ts";
+import { extractParamName } from "#veryfront/utils/route-path-utils.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { AppRouteMatch } from "./types.ts";
+
+const STANDARD_DYNAMIC_SEGMENT_RE = /^\[[^\]]+\]$/;
+const CATCH_ALL_SEGMENT_RE = /^\[\.\.\.[^\]]+\]$/;
+const OPTIONAL_CATCH_ALL_SEGMENT_RE = /^\[\[\.\.\.[^\]]+\]\]$/;
+
+function isStandardDynamicSegment(name: string): boolean {
+  return STANDARD_DYNAMIC_SEGMENT_RE.test(name) &&
+    !CATCH_ALL_SEGMENT_RE.test(name) &&
+    !OPTIONAL_CATCH_ALL_SEGMENT_RE.test(name);
+}
+
+async function readDirectoryNames(current: string, ctx: HandlerContext): Promise<string[] | null> {
+  const names: string[] = [];
+
+  try {
+    for await (const entry of ctx.adapter.fs.readDir(current)) {
+      if (entry.isDirectory) names.push(entry.name);
+    }
+  } catch {
+    return null;
+  }
+
+  return names;
+}
+
+async function findRouteFile(current: string, ctx: HandlerContext): Promise<string | null> {
+  const candidates = ["route.tsx", "route.ts", "route.jsx", "route.js"].map(
+    (name) => joinPath(current, name),
+  );
+
+  for (const filePath of candidates) {
+    try {
+      const st = await ctx.adapter.fs.stat(filePath);
+      if (st.isFile) return filePath;
+    } catch {
+      // continue
+    }
+  }
+
+  return null;
+}
+
+async function resolveFromDirectory(
+  current: string,
+  segments: string[],
+  index: number,
+  params: Record<string, string | string[]>,
+  ctx: HandlerContext,
+): Promise<AppRouteMatch | null> {
+  if (index >= segments.length) {
+    const file = await findRouteFile(current, ctx);
+    if (file) return { file, params };
+
+    const names = await readDirectoryNames(current, ctx);
+    if (!names) return null;
+
+    for (
+      const optionalCatchAll of names.filter((name) => OPTIONAL_CATCH_ALL_SEGMENT_RE.test(name))
+    ) {
+      const optionalFile = await findRouteFile(joinPath(current, optionalCatchAll), ctx);
+      if (optionalFile) {
+        return {
+          file: optionalFile,
+          params: {
+            ...params,
+            [extractParamName(optionalCatchAll)]: [],
+          },
+        };
+      }
+    }
+
+    return null;
+  }
+
+  const names = await readDirectoryNames(current, ctx);
+  if (!names) return null;
+
+  const seg = segments[index]!;
+
+  if (names.includes(seg)) {
+    const exactMatch = await resolveFromDirectory(
+      joinPath(current, seg),
+      segments,
+      index + 1,
+      params,
+      ctx,
+    );
+    if (exactMatch) return exactMatch;
+  }
+
+  for (const dynamicSegment of names.filter(isStandardDynamicSegment)) {
+    const dynamicMatch = await resolveFromDirectory(
+      joinPath(current, dynamicSegment),
+      segments,
+      index + 1,
+      {
+        ...params,
+        [extractParamName(dynamicSegment)]: seg,
+      },
+      ctx,
+    );
+    if (dynamicMatch) return dynamicMatch;
+  }
+
+  const remainingSegments = segments.slice(index);
+
+  for (const catchAllSegment of names.filter((name) => CATCH_ALL_SEGMENT_RE.test(name))) {
+    const catchAllMatch = await resolveFromDirectory(
+      joinPath(current, catchAllSegment),
+      segments,
+      segments.length,
+      {
+        ...params,
+        [extractParamName(catchAllSegment)]: remainingSegments,
+      },
+      ctx,
+    );
+    if (catchAllMatch) return catchAllMatch;
+  }
+
+  for (const optionalCatchAll of names.filter((name) => OPTIONAL_CATCH_ALL_SEGMENT_RE.test(name))) {
+    const optionalMatch = await resolveFromDirectory(
+      joinPath(current, optionalCatchAll),
+      segments,
+      segments.length,
+      {
+        ...params,
+        [extractParamName(optionalCatchAll)]: remainingSegments,
+      },
+      ctx,
+    );
+    if (optionalMatch) return optionalMatch;
+  }
+
+  return null;
+}
 
 export async function resolveAppRouteFile(
   path: string,
@@ -24,64 +161,5 @@ export async function resolveAppRouteFile(
 
   const normalized = path === "/" ? "/" : path.replace(/\/$/, "");
   const segments = normalized.split("/").filter(Boolean);
-
-  let current = appRoot;
-  const params: Record<string, string | string[]> = {};
-
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    if (!seg) continue;
-
-    const names: string[] = [];
-    try {
-      for await (const e of ctx.adapter.fs.readDir(current)) {
-        if (e.isDirectory) names.push(e.name);
-      }
-    } catch {
-      return null;
-    }
-
-    if (names.includes(seg)) {
-      current = joinPath(current, seg);
-      continue;
-    }
-
-    const dyn = names.find((n) => /^\[[^\]]+\]$/.test(n));
-    if (dyn) {
-      params[dyn.slice(1, -1)] = seg;
-      current = joinPath(current, dyn);
-      continue;
-    }
-
-    const ca = names.find((n) => /^\[\.\.\.[^\]]+\]$/.test(n));
-    if (ca) {
-      params[ca.slice(4, -1)] = segments.slice(i).join("/");
-      current = joinPath(current, ca);
-      break;
-    }
-
-    const opt = names.find((n) => /^\[\[\.\.\.[^\]]+\]\]$/.test(n));
-    if (opt) {
-      params[opt.slice(5, -2)] = segments.slice(i).join("/");
-      current = joinPath(current, opt);
-      break;
-    }
-
-    return null;
-  }
-
-  const candidates = ["route.tsx", "route.ts", "route.jsx", "route.js"].map(
-    (n) => joinPath(current, n),
-  );
-
-  for (const f of candidates) {
-    try {
-      const st = await ctx.adapter.fs.stat(f);
-      if (st.isFile) return { file: f, params };
-    } catch {
-      // continue
-    }
-  }
-
-  return null;
+  return resolveFromDirectory(appRoot, segments, 0, {}, ctx);
 }
