@@ -127,6 +127,20 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
     return `${this.config.channelPrefix}:events:${runId}`;
   }
 
+  private getPublishClient(): RedisClient {
+    if (!this.publishClient) {
+      throw new Error("Redis publish client not initialized");
+    }
+    return this.publishClient;
+  }
+
+  private getSubscribeClient(): RedisClient {
+    if (!this.subscribeClient) {
+      throw new Error("Redis subscribe client not initialized");
+    }
+    return this.subscribeClient;
+  }
+
   async publish(event: ClaudeCodeEvent): Promise<void> {
     await this.ensureInitialized();
 
@@ -136,7 +150,7 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
 
     const message = JSON.stringify(event);
 
-    await this.publishClient.publish(channel, message);
+    await this.getPublishClient().publish(channel, message);
 
     if (this.config.debug) {
       console.log(`[RedisEventPublisher] Published to ${channel}:`, event.type);
@@ -147,6 +161,7 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
     await this.ensureInitialized();
 
     const channel = this.getChannel(runId);
+    const subscribeClient = this.getSubscribeClient();
 
     const listener = (message: string) => {
       try {
@@ -157,14 +172,14 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
       }
     };
 
-    await this.subscribeClient.subscribe(channel, listener);
+    await subscribeClient.subscribe(channel, listener);
 
     if (this.config.debug) {
       console.log(`[RedisEventPublisher] Subscribed to ${channel}`);
     }
 
     return async () => {
-      await this.subscribeClient.unsubscribe(channel);
+      await subscribeClient.unsubscribe(channel);
     };
   }
 
@@ -176,6 +191,8 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
       this.subscribeClient?.quit(),
     ]);
 
+    this.publishClient = null;
+    this.subscribeClient = null;
     this.initialized = false;
   }
 }

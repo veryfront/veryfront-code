@@ -42,7 +42,8 @@ describe("constantTimeEqual", () => {
     const sameLenWrong = "b".repeat(1000);
     const diffLenWrong = "b".repeat(500);
 
-    const iterations = 5000;
+    const iterations = 2000;
+    const rounds = 7;
 
     // Warm up JIT
     for (let i = 0; i < 1000; i++) {
@@ -50,25 +51,35 @@ describe("constantTimeEqual", () => {
       constantTimeEqual(secret, diffLenWrong);
     }
 
-    // Measure same-length comparison
-    const t1 = performance.now();
-    for (let i = 0; i < iterations; i++) {
-      constantTimeEqual(secret, sameLenWrong);
-    }
-    const sameLenTime = performance.now() - t1;
+    const measure = (candidate: string): number => {
+      const start = performance.now();
+      for (let i = 0; i < iterations; i++) {
+        constantTimeEqual(secret, candidate);
+      }
+      return performance.now() - start;
+    };
 
-    // Measure different-length comparison
-    const t2 = performance.now();
-    for (let i = 0; i < iterations; i++) {
-      constantTimeEqual(secret, diffLenWrong);
+    const ratios: number[] = [];
+    for (let round = 0; round < rounds; round++) {
+      const sameFirst = round % 2 === 0;
+      const firstCandidate = sameFirst ? sameLenWrong : diffLenWrong;
+      const secondCandidate = sameFirst ? diffLenWrong : sameLenWrong;
+      const firstTime = measure(firstCandidate);
+      const secondTime = measure(secondCandidate);
+      const sameLenTime = sameFirst ? firstTime : secondTime;
+      const diffLenTime = sameFirst ? secondTime : firstTime;
+
+      ratios.push(diffLenTime / sameLenTime);
     }
-    const diffLenTime = performance.now() - t2;
+
+    const sortedRatios = [...ratios].sort((a, b) => a - b);
+    const medianRatio = sortedRatios[Math.floor(sortedRatios.length / 2)];
 
     // The different-length comparison should take at least as long as same-length
-    // (it iterates over max length). Allow generous margin for JIT variance.
-    // The key assertion: diffLenTime should NOT be significantly faster than sameLenTime,
-    // which would indicate an early-return on length mismatch.
-    const ratio = diffLenTime / sameLenTime;
-    expect(ratio).toBeGreaterThan(0.5);
+    // (it iterates over max length). Use the median across alternating rounds
+    // so scheduler noise in one direction doesn't make this test flaky.
+    // The key assertion: length mismatch should NOT be dramatically faster
+    // than same-length mismatch, which would indicate an early return.
+    expect(medianRatio).toBeGreaterThan(0.5);
   });
 });

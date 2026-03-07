@@ -18,10 +18,10 @@ const claudeCodeInputSchema = z.object({
 
   /** Tool mode */
   mode: z
-    .enum(["code", "analysis", "full", "custom"])
+    .enum(["code", "analysis", "custom"])
     .optional()
     .default("code")
-    .describe("Tool mode: code (read-write), analysis (read-only), full (all tools)"),
+    .describe("Tool mode: code (read-write), analysis (read-only), custom (user-specified)"),
 
   /** Maximum turns */
   maxTurns: z
@@ -102,7 +102,7 @@ export const claudeCodeTool: Tool<ClaudeCodeInput, ClaudeCodeResult> = {
       task: { type: "string", description: "The task for the agent" },
       mode: {
         type: "string",
-        enum: ["code", "analysis", "full", "custom"],
+        enum: ["code", "analysis", "custom"],
         default: "code",
       },
       maxTurns: { type: "number", default: 20 },
