@@ -92,8 +92,8 @@ export function clearAll(): void {
   for (const client of clientsMap.values()) {
     try {
       client.socket.close();
-    } catch {
-      // Ignore close errors
+    } catch (_) {
+      /* expected: socket may already be closed */
     }
   }
   clientsMap.clear();

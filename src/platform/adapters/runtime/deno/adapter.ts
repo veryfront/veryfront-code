@@ -56,7 +56,8 @@ async function collectPathSnapshot(
   let info: Deno.FileInfo;
   try {
     info = await Deno.stat(path);
-  } catch {
+  } catch (_) {
+    /* expected: path may not exist or be inaccessible */
     return;
   }
 
@@ -81,12 +82,12 @@ async function collectPathSnapshot(
       try {
         const entryInfo = await Deno.stat(entryPath);
         if (entryInfo.isFile) snapshot.set(entryPath, toSnapshotEntry(entryInfo));
-      } catch {
-        // Ignore files that disappear during traversal
+      } catch (_) {
+        /* expected: files may disappear during traversal */
       }
     }
-  } catch {
-    // Ignore readDir failures (e.g., permission or transient removal)
+  } catch (_) {
+    /* expected: readDir may fail due to permissions or transient removal */
   }
 }
 
@@ -148,7 +149,8 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
     try {
       await Deno.stat(path);
       return true;
-    } catch {
+    } catch (_) {
+      /* expected: stat throws when file does not exist */
       return false;
     }
   }

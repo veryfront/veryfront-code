@@ -85,8 +85,8 @@ async function tryDynamicMatch(
         currentDir = exactPath;
         continue;
       }
-    } catch {
-      // Exact match failed, try dynamic segments
+    } catch (_) {
+      /* expected: exact path may not exist, try dynamic segments */
     }
 
     const dynamic = await findDynamicDir(currentDir, adapter);
@@ -115,8 +115,8 @@ async function findDynamicDir(
       if (!entry.isDirectory || !isDynamicSegment(entry.name)) continue;
       return { name: entry.name, isCatchAll: entry.name.startsWith("[...") };
     }
-  } catch {
-    // adapter.fs.readDir failed - no fallback to Deno for npm compatibility
+  } catch (_) {
+    /* expected: adapter.fs.readDir may fail for npm compatibility */
   }
 
   return null;
@@ -130,14 +130,16 @@ async function tryLoadPageFile(
   try {
     const info = await adapter.fs.stat(file);
     if (!info.isFile) return null;
-  } catch {
+  } catch (_) {
+    /* expected: file may not exist */
     return null;
   }
 
   let raw: string;
   try {
     raw = await adapter.fs.readFile(file);
-  } catch {
+  } catch (_) {
+    /* expected: file may not be readable */
     return null;
   }
 
@@ -149,9 +151,8 @@ async function tryLoadPageFile(
       const ex = extract(raw);
       content = ex.body;
       fm = (ex.attrs as Record<string, unknown>) ?? {};
-    } catch {
-      // Malformed frontmatter - use raw content as-is
-      // This allows pages with invalid YAML to still render
+    } catch (_) {
+      /* expected: malformed frontmatter - use raw content as-is */
       content = raw;
     }
   }

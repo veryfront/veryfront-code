@@ -258,8 +258,8 @@ export class StaticDataFetcher {
           });
         }
       });
-    } catch {
-      // Semaphore timeout - too many concurrent revalidations, skip this one
+    } catch (_) {
+      // expected: semaphore timeout when too many concurrent revalidations
       serverLogger.warn("DATA_REVALIDATION_SKIPPED semaphore timeout", {
         pathname,
         cacheKey,

@@ -82,8 +82,8 @@ export async function validateBundleDepsExist(
           for (const dep of extractBundleDeps(code)) {
             if (!seen.has(dep.hash)) pending.push(dep);
           }
-        } catch {
-          /* ignore read errors */
+        } catch (_) {
+          /* expected: cached bundle file may be unreadable */
         }
       }
       continue;
@@ -168,7 +168,8 @@ export async function findParentBundleWithEmbeddedUrl(
             return { path: filePath, sourceUrl };
           }
         }
-      } catch {
+      } catch (_) {
+        /* expected: individual bundle file may be unreadable */
         continue;
       }
     }

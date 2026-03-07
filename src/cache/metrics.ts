@@ -270,8 +270,8 @@ class CacheMetricsCollector {
     for (const listener of this.listeners) {
       try {
         listener(domain, op, key);
-      } catch {
-        // Ignore listener errors
+      } catch (_) {
+        // expected: listener errors must not disrupt metric collection
       }
     }
   }

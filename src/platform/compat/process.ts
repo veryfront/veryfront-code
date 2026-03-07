@@ -271,7 +271,8 @@ export function getTerminalSize(): { columns: number; rows: number } {
     try {
       const { columns, rows } = Deno.consoleSize();
       return { columns, rows };
-    } catch {
+    } catch (_) {
+      /* expected: Deno.consoleSize() fails when not attached to a terminal */
       return defaultSize;
     }
   }
@@ -562,15 +563,15 @@ function createProcessTimeout(
       timedOut = true;
       try {
         terminate();
-      } catch {
-        // Best-effort terminate.
+      } catch (_) {
+        /* expected: best-effort terminate may fail if process already exited */
       }
 
       forceKillId = setTimeout(() => {
         try {
           forceTerminate();
-        } catch {
-          // Best-effort force terminate.
+        } catch (_) {
+          /* expected: best-effort force terminate may fail if process already exited */
         }
       }, FORCE_KILL_GRACE_MS);
     }, timeoutMs);

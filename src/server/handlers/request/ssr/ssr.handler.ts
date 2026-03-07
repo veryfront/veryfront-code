@@ -135,8 +135,8 @@ export class SSRHandler extends BaseHandler {
 
           const prodMode = isProductionMode(ctx, url);
           fsAdapter.setProductionMode(prodMode, ctx.releaseId);
-        } catch {
-          // Some operations may not be supported, continue anyway
+        } catch (_) {
+          // expected: some fs operations may not be supported in this adapter
         }
       }
 

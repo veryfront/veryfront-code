@@ -43,8 +43,8 @@ function resolveReactSpecifier(specifier: string): string | undefined {
       const resolved = require.resolve(specifier);
       return pathToFileURL(resolved).href;
     }
-  } catch {
-    // Resolution failed, return undefined
+  } catch (_) {
+    /* expected: module resolution may fail in some runtimes */
   }
 
   return undefined;

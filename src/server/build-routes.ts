@@ -117,8 +117,8 @@ async function walkAppSSG(
         segmentDirs: [...segDirs],
       });
       break;
-    } catch {
-      // continue
+    } catch (_) {
+      /* expected: file may not exist for this candidate */
     }
   }
 

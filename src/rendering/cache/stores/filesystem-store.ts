@@ -28,7 +28,8 @@ export class FilesystemCacheStore implements CacheStore {
 
     try {
       return JSON.parse(file) as CachePayload;
-    } catch {
+    } catch (_) {
+      /* expected: cached file may contain malformed JSON */
       return undefined;
     }
   }
@@ -47,8 +48,8 @@ export class FilesystemCacheStore implements CacheStore {
     try {
       const fs = await this.getLocalFS();
       await fs.remove(filePath);
-    } catch {
-      // ignore missing files
+    } catch (_) {
+      /* expected: file may not exist */
     }
   }
 
@@ -65,8 +66,8 @@ export class FilesystemCacheStore implements CacheStore {
         await fs.remove(join(this.baseDir, entry.name));
         deleted++;
       }
-    } catch {
-      // ignore missing dir or read errors
+    } catch (_) {
+      /* expected: directory may not exist or read errors */
     }
 
     return deleted;
@@ -76,8 +77,8 @@ export class FilesystemCacheStore implements CacheStore {
     try {
       const fs = await this.getLocalFS();
       await fs.remove(this.baseDir, { recursive: true });
-    } catch {
-      // ignore
+    } catch (_) {
+      /* expected: directory may not exist */
     }
   }
 
@@ -105,7 +106,8 @@ export class FilesystemCacheStore implements CacheStore {
     try {
       const fs = await this.getLocalFS();
       return await fs.readFile(filePath);
-    } catch {
+    } catch (_) {
+      /* expected: cache file may not exist */
       return null;
     }
   }

@@ -42,7 +42,8 @@ function nodeExistsSync(path: string): boolean {
   try {
     statSync(path);
     return true;
-  } catch {
+  } catch (_) {
+    /* expected: stat fails when path does not exist */
     return false;
   }
 }
@@ -52,7 +53,8 @@ async function nodeExists(path: string): Promise<boolean> {
   try {
     await stat(path);
     return true;
-  } catch {
+  } catch (_) {
+    /* expected: stat fails when path does not exist */
     return false;
   }
 }
@@ -95,7 +97,8 @@ async function* nodeWalk(
         isDirectory: () => e.isDirectory(),
         isSymbolicLink: () => e.isSymbolicLink(),
       }));
-    } catch {
+    } catch (_) {
+      /* expected: readdir may fail on inaccessible directories */
       return;
     }
 
@@ -114,7 +117,8 @@ async function* nodeWalk(
           const stats = await stat(path);
           isFile = stats.isFile();
           isDirectory = stats.isDirectory();
-        } catch {
+        } catch (_) {
+          /* expected: symlink target may not exist */
           continue;
         }
       }

@@ -43,7 +43,8 @@ export function useUploads(options: UseUploadsOptions): UseUploadsResult {
       if (!res.ok) return;
       const data = await res.json();
       setUploads(data.uploads ?? []);
-    } catch {
+    } catch (error) {
+      console.debug("useUploads: failed to load uploads", error);
       setError("Failed to load uploads");
     }
   }, [options.api]);
@@ -88,7 +89,8 @@ export function useUploads(options: UseUploadsOptions): UseUploadsResult {
       try {
         await fetch(`${options.api}/${id}`, { method: "DELETE" });
         await refresh();
-      } catch {
+      } catch (error) {
+        console.debug("useUploads: failed to delete upload", error);
         setError("Failed to delete upload");
       }
     },

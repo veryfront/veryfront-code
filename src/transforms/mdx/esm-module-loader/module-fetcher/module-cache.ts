@@ -71,8 +71,8 @@ export async function cacheModule(
       recordModuleToSession(normalizedPath);
       return cachePath;
     }
-  } catch {
-    // Not cached, write it
+  } catch (_) {
+    /* expected: cached file may not exist yet */
   }
 
   await localFs.mkdir(esmCacheDir, { recursive: true });

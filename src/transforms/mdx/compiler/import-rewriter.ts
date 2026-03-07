@@ -17,7 +17,8 @@ function toAbsPath(spec: string, basedir: string): string {
     if (!spec.startsWith(".") && !spec.startsWith("/")) return spec;
 
     return pathResolve(join(basedir, spec));
-  } catch {
+  } catch (_) {
+    /* expected: specifier may not be a valid URL or path */
     return spec;
   }
 }

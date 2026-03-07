@@ -33,7 +33,8 @@ export function deepEquals(a: unknown, b: unknown, seen: WeakSet<object> = new W
 export function safeStringify(value: unknown): string {
   try {
     return JSON.stringify(value);
-  } catch {
+  } catch (_) {
+    /* expected: value may contain circular references or non-serializable types */
     if (value === null) return "null";
     if (value === undefined) return "undefined";
     if (typeof value === "function") return "[Function]";

@@ -29,7 +29,8 @@ export async function getCachedImportMap(
 
   try {
     return await cached;
-  } catch {
+  } catch (_) {
+    /* expected: cached import map promise may have been rejected */
     return undefined;
   }
 }

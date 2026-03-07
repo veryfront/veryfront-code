@@ -39,7 +39,8 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
     try {
       await stat(path);
       return true;
-    } catch {
+    } catch (_) {
+      /* expected: stat throws when file does not exist */
       return false;
     }
   }
@@ -70,7 +71,8 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
         isSymlink: stats.isSymbolicLink(),
         mtime: stats.mtime,
       };
-    } catch {
+    } catch (_) {
+      /* expected: stat fails when file does not exist */
       throw FILE_NOT_FOUND.create({ detail: `File not found: ${path}`, context: { path } });
     }
   }

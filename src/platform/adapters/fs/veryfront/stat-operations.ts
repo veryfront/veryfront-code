@@ -331,7 +331,8 @@ export class StatOperations extends VeryfrontOperationsBase {
     try {
       await this.stat(normalizedPath);
       return true;
-    } catch {
+    } catch (_) {
+      /* expected: stat throws when file does not exist */
       return false;
     }
   }

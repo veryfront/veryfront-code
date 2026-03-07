@@ -12,8 +12,8 @@ function safeLog(logFn: () => void): void {
   } catch (error) {
     try {
       logger.warn("Logging failed:", error);
-    } catch {
-      // Silently ignore if even warning fails
+    } catch (_) {
+      // expected: last-resort fallback; nothing left to do if logging itself fails
     }
   }
 }

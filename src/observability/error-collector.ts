@@ -96,8 +96,8 @@ export class ErrorCollector {
     for (const subscriber of this.subscribers) {
       try {
         subscriber(fullError);
-      } catch {
-        // Ignore subscriber errors
+      } catch (_) {
+        /* expected: subscriber errors must not break error collection */
       }
     }
 

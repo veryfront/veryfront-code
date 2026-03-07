@@ -86,7 +86,8 @@ export class PrefetchQueue {
     let parsedUrl: URL;
     try {
       parsedUrl = new URL(url);
-    } catch {
+    } catch (_) {
+      /* expected: URL may be invalid */
       prefetchLogger.debug?.(`Invalid prefetch URL ${url}`);
       return;
     }

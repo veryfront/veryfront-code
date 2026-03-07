@@ -182,8 +182,8 @@ export class CloudScriptExecutor implements SkillScriptExecutor {
         // races the timer, it doesn't terminate the sandbox command.
         try {
           await sandbox.executeCommand("kill -9 -1 2>/dev/null || true");
-        } catch {
-          // Best-effort kill; sandbox.close() in finally will clean up.
+        } catch (_) {
+          // expected: best-effort kill; sandbox.close() in finally will clean up
         }
         return timeoutResult(timeoutMs);
       }
@@ -196,8 +196,8 @@ export class CloudScriptExecutor implements SkillScriptExecutor {
     } finally {
       try {
         await sandbox.close();
-      } catch {
-        // Best-effort cleanup.
+      } catch (_) {
+        // expected: best-effort cleanup
       }
     }
   }

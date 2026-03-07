@@ -16,7 +16,8 @@ async function fileExists(adapter: RuntimeAdapter, filePath: string): Promise<bo
   try {
     const st = await adapter.fs.stat(filePath);
     return st.isFile;
-  } catch {
+  } catch (_) {
+    /* expected: file may not exist */
     return false;
   }
 }

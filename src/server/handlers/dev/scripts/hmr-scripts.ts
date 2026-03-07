@@ -114,7 +114,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
   const debugPreamble = debugMode
     ? `
   const HMR_DEBUG = (() => {
-    try { return window.localStorage.getItem('VERYFRONT_DEBUG_HMR') === '1'; } catch { return false; }
+    try { return window.localStorage.getItem('VERYFRONT_DEBUG_HMR') === '1'; } catch (_) { return false; }
   })();
   const dlog = (...args) => { if (HMR_DEBUG) console.log(...args); };`
     : "";
@@ -134,7 +134,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
         isInitialLoad: true,
         url: window.location.href
       }, '*');
-    } catch { /* cross-origin iframe - expected */ }
+    } catch (_) { /* cross-origin iframe - expected */ }
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -165,7 +165,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
     if (window.parent === window) return;
     try {
       window.parent.postMessage({ action: 'appUpdated', url: window.location.href }, '*');
-    } catch { /* ignore */ }
+    } catch (_) { /* expected: cross-origin iframe */ }
   }
 
   function notifyStudioAndReload(reason) {
@@ -201,7 +201,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       if (Date.now() - lastPongAt > PONG_TIMEOUT_MS) {
         console.warn('${logPrefix} Pong timeout, reconnecting...');
-        try { ws.close(); } catch { /* ignore */ }
+        try { ws.close(); } catch (_) { /* expected: socket already closed */ }
         return;
       }
       try { ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() })); }
@@ -242,7 +242,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
             break;
           case 'ping':
             lastPongAt = Date.now();
-            try { ws.send(JSON.stringify({ type: 'pong' })); } catch { /* ignore */ }
+            try { ws.send(JSON.stringify({ type: 'pong' })); } catch (_) { /* expected: socket closed */ }
             break;
           case 'update':
             handleUpdate(data);
@@ -320,7 +320,7 @@ ${getUpdateJSFunction(logPrefix)}
       clearTimeout(reconnectTimerId);
       reconnectTimerId = null;
     }
-    try { ws && ws.close(); } catch { /* ignore */ }
+    try { ws && ws.close(); } catch (_) { /* expected: socket already closed */ }
   });
 
   window.__veryfrontHMR = { getSocket: () => ws };

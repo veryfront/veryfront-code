@@ -27,7 +27,8 @@ async function isFile(path: string): Promise<boolean> {
   try {
     const stat = await Deno.stat(path);
     return stat.isFile;
-  } catch {
+  } catch (_) {
+    /* expected: file may not exist */
     return false;
   }
 }
@@ -57,8 +58,8 @@ async function findEsbuildInVFS(): Promise<string | null> {
       const binPath = `${nodeModulesPath}/${entry.name}/bin/esbuild`;
       if (await isFile(binPath)) return binPath;
     }
-  } catch {
-    // Can't read node_modules
+  } catch (_) {
+    /* expected: node_modules directory may not be readable in VFS */
   }
 
   return null;
@@ -71,8 +72,8 @@ async function extractEsbuildBinary(): Promise<string> {
   try {
     const stat = await Deno.stat(targetPath);
     if (stat.isFile && stat.mode && (stat.mode & 0o111)) return targetPath;
-  } catch {
-    // Doesn't exist, need to extract
+  } catch (_) {
+    /* expected: cached binary does not exist yet, need to extract */
   }
 
   const vfsPath = await findEsbuildInVFS();

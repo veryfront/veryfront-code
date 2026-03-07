@@ -618,7 +618,8 @@ export class RedisBackend implements WorkflowBackend {
       const client = await this.ensureClient();
       await client.set("__health_check__", "ok", { ex: 1 });
       return true;
-    } catch {
+    } catch (error) {
+      logger.debug("Redis health check failed", { error });
       return false;
     }
   }

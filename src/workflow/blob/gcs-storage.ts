@@ -54,7 +54,7 @@ export class GCSBlobStorage implements BlobStorage {
     let sa: Record<string, unknown>;
     try {
       sa = JSON.parse(this.config.serviceAccountKey);
-    } catch {
+    } catch (_) {
       throw new Error("GCSBlobStorage: serviceAccountKey must be a valid JSON string.");
     }
 

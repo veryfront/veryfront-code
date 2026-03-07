@@ -79,8 +79,8 @@ export class EnvironmentVariableCache {
       this.cache.set(environmentId, { vars, fetchedAt: Date.now() });
       this.evictIfNeeded();
       return vars;
-    } catch {
-      // Stale-on-error: return stale data if available
+    } catch (_) {
+      /* expected: stale-on-error fallback when fetch fails */
       if (stale) return stale.vars;
       return {};
     }

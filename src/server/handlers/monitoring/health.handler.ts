@@ -34,7 +34,8 @@ export class HealthHandler extends BaseHandler {
 
       const projectDirStat = await ctx.adapter.fs.stat(ctx.projectDir);
       return !!projectDirStat?.isDirectory;
-    } catch {
+    } catch (_) {
+      /* expected: project directory may not exist */
       return false;
     }
   }
@@ -87,7 +88,8 @@ export class HealthHandler extends BaseHandler {
     try {
       const st = await ctx.adapter.fs.stat(joinPath(ctx.projectDir, "dist"));
       return !!st?.isDirectory;
-    } catch {
+    } catch (_) {
+      /* expected: dist directory may not exist */
       return false;
     }
   }

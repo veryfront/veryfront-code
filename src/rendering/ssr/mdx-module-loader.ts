@@ -178,7 +178,7 @@ async function cleanupTempModule(modulePath: string): Promise<void> {
   try {
     const adapter = await runtime.get();
     await adapter.fs.remove(modulePath);
-  } catch {
-    // Best-effort cleanup
+  } catch (_) {
+    /* expected: best-effort cleanup of temp module */
   }
 }

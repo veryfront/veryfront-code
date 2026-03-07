@@ -177,7 +177,8 @@ export function injectNodePositions(source: string, options: TransformOptions): 
       retainLines: true,
       compact: false,
     }).code;
-  } catch {
+  } catch (_) {
+    /* expected: source may not be parseable TSX/JSX */
     return source;
   }
 }

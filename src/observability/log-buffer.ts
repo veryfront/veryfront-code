@@ -49,8 +49,8 @@ export class LogBuffer {
     for (const subscriber of this.subscribers) {
       try {
         subscriber(fullEntry);
-      } catch {
-        // Ignore subscriber errors
+      } catch (_) {
+        /* expected: subscriber errors must not break log buffering */
       }
     }
 
@@ -187,7 +187,8 @@ export function interceptConsole(buffer: LogBuffer, source = "console"): () => v
 
         try {
           return JSON.stringify(a);
-        } catch {
+        } catch (_) {
+          /* expected: circular references or non-serializable values */
           return String(a);
         }
       })

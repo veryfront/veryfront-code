@@ -47,15 +47,15 @@ async function readUiSource(
   const tsxPath = `${uiDir}/${resolvedPath}.tsx`;
   try {
     return { filePath: tsxPath, source: await readTextFile(tsxPath) };
-  } catch {
-    // try .ts from filesystem
+  } catch (_) {
+    /* expected: .tsx file may not exist, try .ts */
   }
 
   const tsPath = `${uiDir}/${resolvedPath}.ts`;
   try {
     return { filePath: tsPath, source: await readTextFile(tsPath) };
-  } catch {
-    // Filesystem failed, try embedded manifest (for compiled binary)
+  } catch (_) {
+    /* expected: filesystem files may not exist, try embedded manifest */
   }
 
   // Try embedded manifest - paths match the resolved path

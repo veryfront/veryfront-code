@@ -214,8 +214,8 @@ export class FileWatchSetup {
         if (this.contentHashes.get(path) === hash) continue;
         this.contentHashes.set(path, hash);
         changed.push(path);
-      } catch {
-        // File deleted or unreadable — treat as changed
+      } catch (_) {
+        /* expected: file may be deleted or unreadable — treat as changed */
         this.contentHashes.delete(path);
         changed.push(path);
       }

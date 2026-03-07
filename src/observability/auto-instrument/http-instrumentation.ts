@@ -92,8 +92,8 @@ export function createInstrumentedFetch(
       fetchAttrs["http.target"] = parsed.pathname;
       fetchAttrs["http.host"] = parsed.host;
       fetchAttrs["http.scheme"] = parsed.protocol.replace(":", "");
-    } catch {
-      // Relative URLs are fine; leave defaults
+    } catch (_) {
+      /* expected: relative URLs cannot be parsed, leave defaults */
     }
 
     try {

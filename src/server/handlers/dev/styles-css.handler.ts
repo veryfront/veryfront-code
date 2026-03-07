@@ -134,7 +134,8 @@ body::before {
     const globalsPath = joinPath(ctx.projectDir, "globals.css");
     try {
       return await ctx.adapter.fs.readFile(globalsPath);
-    } catch {
+    } catch (_) {
+      /* expected: globals.css may not exist */
       logger.debug("No stylesheet found, using default");
       return DEFAULT_STYLESHEET;
     }

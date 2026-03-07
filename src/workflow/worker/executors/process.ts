@@ -173,8 +173,8 @@ export class ProcessJobExecutor implements JobExecutor {
     if (job.status === "running" || job.status === "pending") {
       try {
         job.process.kill("SIGTERM");
-      } catch {
-        // Process may already be dead
+      } catch (_) {
+        /* expected: process may already be dead */
       }
     }
 
@@ -193,8 +193,8 @@ export class ProcessJobExecutor implements JobExecutor {
       if (job.status === "running" || job.status === "pending") {
         try {
           job.process.kill("SIGTERM");
-        } catch {
-          // Ignore
+        } catch (_) {
+          /* expected: process may already be dead */
         }
       }
     }
@@ -218,8 +218,8 @@ export class ProcessJobExecutor implements JobExecutor {
           job.completedAt = new Date();
 
           logger.warn(`Job ${job.jobId} timed out`);
-        } catch {
-          // Process may already be dead
+        } catch (_) {
+          /* expected: process may already be dead */
         }
       }
     }, timeout);

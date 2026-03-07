@@ -62,7 +62,8 @@ export function parseJsonish(value: string): unknown {
 
   try {
     return JSON.parse(jsonish);
-  } catch {
+  } catch (_) {
+    /* expected: value may not be valid JSON */
     return value;
   }
 }

@@ -364,7 +364,8 @@ export class LayoutCollector {
         try {
           const stat = await this.adapter.fs.stat(path);
           return stat.isFile;
-        } catch {
+        } catch (_) {
+          /* expected: file may not exist */
           return false;
         }
       },

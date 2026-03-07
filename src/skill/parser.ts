@@ -34,8 +34,8 @@ export async function parseSkillFrontmatter(content: string): Promise<ParsedSkil
     const { extract } = await import("#std/front-matter/yaml.ts");
     const result = extract<Record<string, unknown>>(content);
     return { frontmatter: result.attrs, body: result.body };
-  } catch {
-    // Fall through to fallback
+  } catch (_) {
+    // expected: front-matter parser unavailable, fall through to regex fallback
   }
 
   // Fallback: regex-based parser

@@ -224,7 +224,8 @@ export class K8sJobExecutor implements JobExecutor {
       }
 
       return this.parseJobInfo(k8sJob, jobId);
-    } catch {
+    } catch (error) {
+      logger.debug("Failed to get K8s job status", { error });
       return null;
     }
   }

@@ -99,7 +99,8 @@ async function findMissingFileDependencies(code: string): Promise<string[]> {
       if (!stat?.isFile) {
         missing.push(cleanPath);
       }
-    } catch {
+    } catch (_) {
+      /* expected: file dependency may not exist on disk */
       missing.push(cleanPath);
     }
   }
@@ -162,8 +163,8 @@ export async function getModulePathCache(cacheDir: string): Promise<Map<string, 
       cache.set(path, cachePath);
     }
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Loaded module index: ${cache.size} entries`);
-  } catch {
-    // Index doesn't exist yet
+  } catch (_) {
+    /* expected: _index.json may not exist yet */
   }
 
   modulePathCacheLoaded.add(cacheDir);
@@ -269,8 +270,8 @@ export function invalidateModulePaths(changedPaths: string[]): void {
       try {
         await localFs.remove(mjsPath);
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Deleted stale cached module`, { mjsPath });
-      } catch {
-        // File may already be gone — not an error
+      } catch (_) {
+        /* expected: file may already be gone */
       }
     }
   };
@@ -370,8 +371,8 @@ export async function lookupMdxEsmCache(
 
       try {
         await getLocalFs().remove(cachedPath);
-      } catch {
-        // ignore removal errors
+      } catch (_) {
+        /* expected: cached file may already be removed */
       }
 
       return {
@@ -394,7 +395,7 @@ export async function lookupMdxEsmCache(
       // Delete the stale file so it gets recreated
       try {
         await getLocalFs().remove(cachedPath);
-      } catch { /* ignore removal errors */ }
+      } catch (_) { /* expected: stale cached file may already be removed */ }
       return {
         status: "corrupted",
         reason: "Unresolved _vf_modules imports in cached code",
@@ -415,7 +416,7 @@ export async function lookupMdxEsmCache(
       // Delete the stale file so it gets recreated
       try {
         await getLocalFs().remove(cachedPath);
-      } catch { /* ignore removal errors */ }
+      } catch (_) { /* expected: stale cached file may already be removed */ }
       return {
         status: "corrupted",
         reason: `Missing file dependencies: ${missingDeps.slice(0, 3).join(", ")}`,
@@ -438,7 +439,8 @@ export async function lookupMdxEsmCache(
       `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache: ${filePath} -> ${cachedPath}`,
     );
     return { status: "hit", path: cachedPath };
-  } catch {
+  } catch (_) {
+    /* expected: cached file may be inaccessible or deleted between checks */
     cache.delete(cacheKey);
     return { status: "corrupted", reason: "Cached file inaccessible", filePath };
   }

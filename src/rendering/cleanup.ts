@@ -21,8 +21,8 @@ export async function cleanupBundler(): Promise<void> {
       "../server/services/rsc/endpoints/handler-registry.ts"
     );
     __destroyRSCHandlerForTests();
-  } catch {
-    // RSC handler registry might not be loaded
+  } catch (_) {
+    /* expected: RSC handler registry might not be loaded */
   }
 }
 
@@ -30,7 +30,7 @@ export async function configureRendererNamespace(namespace: string): Promise<voi
   try {
     const { setCacheNamespace } = await import("#veryfront/utils/cache/keys/namespace.ts");
     setCacheNamespace(namespace);
-  } catch {
-    // Cache namespace configuration is optional
+  } catch (_) {
+    /* expected: cache namespace configuration is optional */
   }
 }

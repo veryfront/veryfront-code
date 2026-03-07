@@ -392,7 +392,8 @@ export class VeryfrontApiClient {
         try {
           const content = await this.getFileContent(path);
           return { path, content };
-        } catch {
+        } catch (error) {
+          logger.debug("Failed to fetch file content during search", { path, error });
           return null;
         }
       }),

@@ -78,7 +78,8 @@ export class DebugContextHandler extends BaseHandler {
     try {
       const fs = ctx.adapter?.fs as { isMultiProjectMode?: () => boolean } | undefined;
       return fs?.isMultiProjectMode?.() ?? false;
-    } catch {
+    } catch (_) {
+      /* expected: adapter may not support multi-project mode */
       return false;
     }
   }
@@ -97,7 +98,8 @@ export class DebugContextHandler extends BaseHandler {
       }
 
       return underlying.getManagerStats();
-    } catch {
+    } catch (_) {
+      /* expected: adapter may not support getManagerStats */
       return null;
     }
   }

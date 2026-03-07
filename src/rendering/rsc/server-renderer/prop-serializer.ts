@@ -62,7 +62,8 @@ function isSerializable(value: unknown, seen: WeakSet<object> = new WeakSet()): 
       if (!isSerializable(v, seen)) return false;
     }
     return true;
-  } catch {
+  } catch (_) {
+    /* expected: object may have non-enumerable or throwing getters */
     return false;
   }
 }

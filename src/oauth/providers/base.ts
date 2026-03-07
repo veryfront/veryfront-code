@@ -277,7 +277,8 @@ export class OAuthProvider {
       });
 
       return response.ok;
-    } catch {
+    } catch (_) {
+      // expected: network failure during token revocation
       return false;
     }
   }

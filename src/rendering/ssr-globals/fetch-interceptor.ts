@@ -32,7 +32,8 @@ function rewriteFetchUrlForSSR(url: string): string {
     const parsed = new URL(url);
     if (!isProjectDomain(parsed.hostname)) return url;
     return `http://localhost:${serverPort}${parsed.pathname}${parsed.search}`;
-  } catch {
+  } catch (_) {
+    /* expected: URL may be invalid or relative */
     return url;
   }
 }
@@ -49,7 +50,8 @@ function isClientOnlyApiUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     return parsed.hostname === "localhost" && parsed.pathname.startsWith("/api/");
-  } catch {
+  } catch (_) {
+    /* expected: URL may be invalid */
     return false;
   }
 }
@@ -75,8 +77,8 @@ function createSSRFetch(): typeof fetch {
       spanAttributes["http.target"] = `${parsed.pathname}${parsed.search}`;
       spanAttributes["http.host"] = parsed.host;
       spanAttributes["http.scheme"] = parsed.protocol.replace(":", "");
-    } catch {
-      // Ignore - non-absolute URLs won't provide host/scheme
+    } catch (_) {
+      /* expected: non-absolute URLs won't provide host/scheme */
     }
 
     return withSpan(

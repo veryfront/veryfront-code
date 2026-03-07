@@ -33,8 +33,8 @@ export const MessageActions = React.forwardRef<HTMLDivElement, MessageActionsPro
     const handleCopy = React.useCallback(async (): Promise<void> => {
       try {
         await navigator.clipboard.writeText(content);
-      } catch {
-        // Fallback for older browsers
+      } catch (_) {
+        /* expected: clipboard API unavailable in older browsers */
         fallbackCopy();
       } finally {
         setCopiedWithTimeout();

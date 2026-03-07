@@ -49,8 +49,8 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
           try {
             const st = await adapter.fs.stat(f);
             if (st.isFile) return { path: f };
-          } catch {
-            // next
+          } catch (_) {
+            // expected: candidate path doesn't exist, try next
           }
         }
 
@@ -147,7 +147,7 @@ async function loadFromLockfile(
 
     logger.warn(`integrity mismatch, refetching: ${url}`);
     return null;
-  } catch {
+  } catch (_) {
     logger.warn(`cached URL failed, refetching: ${url}`);
     return null;
   }

@@ -608,8 +608,8 @@ export class ReadOperations {
         if (shouldCache) this.cache.set(cacheKey, content);
         setRequestScopedFile(cacheKey, content);
         return content;
-      } catch {
-        // This extension failed, try next priority
+      } catch (_) {
+        /* expected: this extension variant does not exist, try next priority */
         continue;
       }
     }

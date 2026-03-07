@@ -222,8 +222,8 @@ async function resolveVersions(
       if (deps.veryfront) {
         veryfrontVersion = stripSemverRange(deps.veryfront);
       }
-    } catch {
-      // Fall through to default
+    } catch (_) {
+      /* expected: package.json may not exist or be unreadable */
     }
   }
 

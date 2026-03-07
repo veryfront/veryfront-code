@@ -31,7 +31,8 @@ export async function preflightLocalImports(
           reason: `Pre-flight: not a file on disk: ${imp.absolutePath}`,
         });
       }
-    } catch {
+    } catch (_) {
+      /* expected: file may not be accessible on disk */
       missingImports.push({
         specifier: imp.specifier,
         fromFile: filePath,

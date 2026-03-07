@@ -31,7 +31,8 @@ async function getWatchableDirectories(projectDir: string): Promise<string[]> {
     try {
       const stat = await fs.stat(dir);
       if (stat.isDirectory) dirsToWatch.push(dir);
-    } catch {
+    } catch (_) {
+      /* expected: directory may not exist */
       continue;
     }
   }

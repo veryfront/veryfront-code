@@ -192,6 +192,56 @@ describe("logger", () => {
         restore();
       }
     });
+
+    it("should serialize Error values provided inside context.error", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Nested error", {
+            path: "/tmp/file.ts",
+            error: new Error("boom"),
+          });
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.message, "Nested error");
+          assertEquals(entry.context?.path, "/tmp/file.ts");
+          assertEquals(entry.context?.error, undefined);
+          assertEquals(entry.error?.name, "Error");
+          assertEquals(entry.error?.message, "boom");
+        });
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("text output format", () => {
+    it("should render Error values provided inside context.error as err=", () => {
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("NO_COLOR", "1");
+      __resetLoggerConfigForTests();
+
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        serverLogger.info("Nested text error", {
+          path: "/tmp/file.ts",
+          error: new Error("boom"),
+        });
+
+        const output = getOutput();
+        assertEquals(output.includes("Nested text error"), true);
+        assertEquals(output.includes("path=/tmp/file.ts"), true);
+        assertEquals(output.includes("err=Error: boom"), true);
+        assertEquals(output.includes("error={}"), false);
+      } finally {
+        restore();
+        Deno.env.delete("LOG_FORMAT");
+        Deno.env.delete("NO_COLOR");
+        __resetLoggerConfigForTests();
+      }
+    });
   });
 
   describe("component() logger", () => {

@@ -84,8 +84,8 @@ async function ensureDir(adapter: RuntimeAdapter, dir: string): Promise<void> {
 
   try {
     await adapter.fs.mkdir(dir, { recursive: true });
-  } catch {
-    // Directory might already exist, ignore errors
+  } catch (_) {
+    /* expected: directory might already exist */
   } finally {
     createdDirs.add(dir);
     pruneCreatedDirs();
@@ -213,8 +213,8 @@ export async function transformModuleWithDeps(
       } else {
         return cachedPath;
       }
-    } catch {
-      // File doesn't exist or can't be read - fall through to re-transform
+    } catch (_) {
+      /* expected: cached file may no longer exist on disk */
       moduleCache.delete(cacheKey);
     }
   }

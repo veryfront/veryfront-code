@@ -86,8 +86,8 @@ export async function extractAllHttpBundlePathsRecursive(
           pendingVfModules.push(nestedPath);
         }
       }
-    } catch {
-      // Ignore read errors for VF modules
+    } catch (_) {
+      /* expected: VF module file may fail to read */
     }
   }
 

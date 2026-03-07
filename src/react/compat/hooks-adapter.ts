@@ -22,7 +22,7 @@ export function useFormStatusCompat(): FormStatus {
 
   try {
     return (React as typeof React & { useFormStatus: () => FormStatus }).useFormStatus();
-  } catch {
+  } catch (_) {
     logger.warn("useFormStatus not available in current React version");
     return { pending: false, data: null, method: null, action: null };
   }
@@ -42,7 +42,7 @@ export function useOptimisticCompat<State, OptimisticState = State>(
           ) => [S, (action: OptimisticStateAction<O>) => void];
         }
       ).useOptimistic(state, updateFn);
-    } catch {
+    } catch (_) {
       logger.warn("useOptimistic not available in current React version");
     }
   }
@@ -84,7 +84,7 @@ export function useTransitionCompat(): ReturnType<typeof React.useTransition> {
   if (versionInfo.isReact18 || versionInfo.isReact19) {
     try {
       return React.useTransition();
-    } catch {
+    } catch (_) {
       logger.warn("useTransition not available, falling back to mock");
     }
   }
@@ -109,7 +109,7 @@ export function useDeferredValueCompat<T>(value: T): T {
   if (versionInfo.isReact18 || versionInfo.isReact19) {
     try {
       return React.useDeferredValue(value);
-    } catch {
+    } catch (_) {
       logger.warn("useDeferredValue not available, returning value directly");
     }
   }
@@ -125,7 +125,7 @@ export function useIdCompat(): string {
   if (versionInfo.isReact18 || versionInfo.isReact19) {
     try {
       return React.useId();
-    } catch {
+    } catch (_) {
       logger.warn("useId not available, using fallback");
     }
   }

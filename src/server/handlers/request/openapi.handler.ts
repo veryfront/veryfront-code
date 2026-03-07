@@ -162,8 +162,8 @@ export class OpenAPIHandler extends BaseHandler {
   private async tryDiscover(fn: () => Promise<void>): Promise<void> {
     try {
       await fn();
-    } catch {
-      // Ignore - directory may not exist
+    } catch (_) {
+      /* expected: directory may not exist */
     }
   }
 }

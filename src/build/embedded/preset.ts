@@ -132,8 +132,8 @@ export async function buildEmbeddedPreset(
   if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
     try {
       esbuild.stop();
-    } catch {
-      // ignore
+    } catch (_) {
+      /* expected: esbuild service may not be running */
     }
   }
 
@@ -268,8 +268,8 @@ async function discoverAppRoutes(
 
   try {
     await walk(base);
-  } catch {
-    // no app directory
+  } catch (_) {
+    /* expected: no app directory */
   }
 
   return results;
@@ -307,8 +307,8 @@ async function discoverPagesRoutes(
 
   try {
     await walk(base);
-  } catch {
-    // no pages directory
+  } catch (_) {
+    /* expected: no pages directory */
   }
 
   return results;

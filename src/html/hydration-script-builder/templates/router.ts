@@ -662,7 +662,8 @@ export const getRouterScript = () => `
     window.useRouter = () => {
       try {
         return useRouterFromModule();
-      } catch {
+      } catch (_) {
+        /* expected: useRouterFromModule may not be available, fall back to global router */
         return window.__veryfrontRouter;
       }
     };

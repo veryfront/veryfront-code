@@ -143,8 +143,8 @@ export async function transformJsxImports(
               };
             }
           }
-        } catch {
-          // Not cached
+        } catch (_) {
+          /* expected: cached JSX module may not exist yet */
         }
 
         const isFrameworkFile = filePath.startsWith(FRAMEWORK_ROOT);

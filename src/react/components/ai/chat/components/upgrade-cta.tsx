@@ -11,7 +11,8 @@ export function UpgradeCTA({ inferenceMode }: UpgradeCTAProps): React.ReactEleme
   const [dismissed, setDismissed] = React.useState(() => {
     try {
       return localStorage.getItem(DISMISS_KEY) === "1";
-    } catch {
+    } catch (_) {
+      /* expected: localStorage may be unavailable */
       return false;
     }
   });
@@ -22,8 +23,8 @@ export function UpgradeCTA({ inferenceMode }: UpgradeCTAProps): React.ReactEleme
     setDismissed(true);
     try {
       localStorage.setItem(DISMISS_KEY, "1");
-    } catch {
-      // localStorage may be unavailable
+    } catch (_) {
+      /* expected: localStorage may be unavailable */
     }
   };
 

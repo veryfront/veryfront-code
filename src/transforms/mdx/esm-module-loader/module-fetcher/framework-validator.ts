@@ -88,7 +88,8 @@ export async function hasIncompatibleFrameworkPaths(code: string, log: Logger): 
         log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path does not exist`, { path });
         return true;
       }
-    } catch {
+    } catch (_) {
+      /* expected: framework file may not exist in this environment */
       log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path not accessible`, { path });
       return true;
     }
@@ -128,7 +129,8 @@ export async function findMissingFileDependenciesInCode(
         log.debug(`${LOG_PREFIX_MDX_LOADER} File dependency does not exist`, { path: cleanPath });
         missing.push(cleanPath);
       }
-    } catch {
+    } catch (_) {
+      /* expected: file dependency may not exist on this pod */
       log.debug(`${LOG_PREFIX_MDX_LOADER} File dependency not accessible`, { path: cleanPath });
       missing.push(cleanPath);
     }
@@ -168,8 +170,8 @@ export async function validateCachedModule(
     pathCache.delete(versionedKey);
     try {
       await getLocalFs().remove(cachedPath);
-    } catch {
-      /* ignore removal errors */
+    } catch (_) {
+      /* expected: cached file may already be removed */
     }
     return false;
   }
@@ -200,8 +202,8 @@ export async function validateCachedModule(
   pathCache.delete(versionedKey);
   try {
     await getLocalFs().remove(cachedPath);
-  } catch {
-    /* ignore removal errors */
+  } catch (_) {
+    /* expected: cached file may already be removed */
   }
   return false;
 }

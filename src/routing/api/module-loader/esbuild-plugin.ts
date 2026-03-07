@@ -77,7 +77,8 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           const resolved = new URL(args.path, args.importer).toString();
           resolvedUrls.push(resolved);
           return { path: resolved, namespace: "http-url" };
-        } catch {
+        } catch (_) {
+          /* expected: relative URL resolution may fail */
           return undefined;
         }
       });
@@ -144,7 +145,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
 
                 logger.warn(`[http] integrity mismatch, refetching: ${args.path}`);
               }
-            } catch {
+            } catch (_error) {
               logger.warn(`[http] cached URL failed, refetching: ${args.path}`);
             }
           }

@@ -100,7 +100,8 @@ export class LocalBlobStorage implements BlobStorage {
   async getText(id: string): Promise<string | null> {
     try {
       return await this.fs.readTextFile(this.getPath(id));
-    } catch {
+    } catch (_) {
+      /* expected: file not found returns null */
       return null;
     }
   }
@@ -108,7 +109,8 @@ export class LocalBlobStorage implements BlobStorage {
   async getBytes(id: string): Promise<Uint8Array | null> {
     try {
       return await this.fs.readFile(this.getPath(id));
-    } catch {
+    } catch (_) {
+      /* expected: file not found returns null */
       return null;
     }
   }
@@ -117,8 +119,8 @@ export class LocalBlobStorage implements BlobStorage {
     try {
       await this.fs.remove(this.getPath(id));
       await this.fs.remove(this.getMetadataPath(id));
-    } catch {
-      // Ignore if not found
+    } catch (_) {
+      /* expected: file may not exist during cleanup */
     }
   }
 
@@ -135,7 +137,8 @@ export class LocalBlobStorage implements BlobStorage {
         createdAt: new Date(data.createdAt),
         expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
       };
-    } catch {
+    } catch (_) {
+      /* expected: metadata file not found or invalid JSON */
       return null;
     }
   }
@@ -163,8 +166,8 @@ export class LocalBlobStorage implements BlobStorage {
           logger.debug(`Deleting expired blob: ${id}`);
           await this.delete(id);
         }
-      } catch {
-        // Directory not found is fine, skip
+      } catch (_) {
+        /* expected: directory may not exist yet */
       }
     }
   }

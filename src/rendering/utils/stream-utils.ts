@@ -121,8 +121,8 @@ export async function streamToString(
     clearTimeout(timeoutId);
     try {
       reader.releaseLock();
-    } catch {
-      // Ignore if already released
+    } catch (_) {
+      /* expected: reader lock may already be released */
     }
   }
 }

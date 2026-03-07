@@ -134,7 +134,8 @@ function formatValue(value: unknown): string {
   let text: string | undefined;
   try {
     text = JSON.stringify(value);
-  } catch {
+  } catch (_) {
+    /* expected: non-serializable value */
     text = String(value);
   }
 
@@ -201,8 +202,8 @@ function isTty(): boolean {
     if (typeof Deno !== "undefined" && typeof Deno.stdout?.isTerminal === "function") {
       return Deno.stdout.isTerminal();
     }
-  } catch {
-    // ignore
+  } catch (_) {
+    // expected: TTY detection may be unavailable
   }
 
   const stdout = (globalThis as { process?: { stdout?: { isTTY?: boolean } } }).process?.stdout;

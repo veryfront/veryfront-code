@@ -79,7 +79,8 @@ export function getObjectKeys(obj: unknown): string[] {
 export function getObjectSample(obj: unknown): string {
   try {
     return JSON.stringify(obj, null, 2).slice(0, 500);
-  } catch {
+  } catch (_) {
+    /* expected: object may contain circular references or non-serializable values */
     return "[Unable to stringify]";
   }
 }

@@ -114,7 +114,8 @@ export async function rewriteDiscoveryImports(
               "index.js";
 
           return pathToFileURL(pathHelper.join(packagePath, entryPoint)).href;
-        } catch {
+        } catch (_) {
+          /* expected: package.json not found at this level, walk up */
           const parent = pathHelper.dirname(searchDir);
           if (parent === searchDir) break;
           searchDir = parent;
@@ -164,7 +165,8 @@ export async function rewriteDiscoveryImports(
       const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
       const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
       exportsMap = pkgJson.exports || {};
-    } catch {
+    } catch (_) {
+      /* expected: veryfront package.json not found, fallback to deno.json search */
       // Search for deno.json in parent directories
       let searchDir = projectDir;
 
@@ -177,8 +179,8 @@ export async function rewriteDiscoveryImports(
             vfPackagePath = searchDir;
             break;
           }
-        } catch {
-          // continue searching
+        } catch (_) {
+          /* expected: deno.json not found at this level */
         }
         searchDir = pathHelper.dirname(searchDir);
       }
@@ -211,7 +213,8 @@ export async function rewriteDiscoveryImports(
       const resolvedPath = pathHelper.join(vfPackagePath, exportPath);
       return `from "${pathToFileURL(resolvedPath).href}"`;
     });
-  } catch {
+  } catch (_) {
+    /* expected: Node.js URL module unavailable in non-Node runtime */
     return transformed;
   }
 

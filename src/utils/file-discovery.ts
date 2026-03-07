@@ -196,12 +196,12 @@ async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<Fil
           isDirectory: false,
           depth: currentDepth,
         };
-      } catch {
-        // Ignore broken symlinks
+      } catch (_) {
+        /* expected: broken symlinks cannot be stat'd */
       }
     }
-  } catch {
-    // Silently skip missing/inaccessible directories
+  } catch (_) {
+    /* expected: directory may be missing or inaccessible */
   }
 }
 

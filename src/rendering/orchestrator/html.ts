@@ -142,7 +142,8 @@ export class HTMLGenerator {
       }
 
       return isClientPage;
-    } catch {
+    } catch (_) {
+      /* expected: file may not exist for directive detection */
       logger.debug(
         `[HTMLGenerator] Could not read page file for directive detection: ${pagePath}`,
       );
@@ -301,7 +302,8 @@ export class HTMLGenerator {
       const content = await this.config.adapter.fs.readFile(filePath);
       logger.debug(`Loaded ${filename}`, { length: content.length });
       return content;
-    } catch {
+    } catch (_) {
+      /* expected: project file may not exist */
       logger.debug(`No ${filename} found, using default`);
       return undefined;
     }
@@ -422,7 +424,8 @@ export class HTMLGenerator {
         } else {
           regularCssSegments.push(content);
         }
-      } catch {
+      } catch (_) {
+        /* expected: imported CSS file may not exist */
         logger.debug("Could not load imported CSS file", { cssPath });
       }
     }

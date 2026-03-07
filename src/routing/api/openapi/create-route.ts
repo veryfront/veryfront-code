@@ -25,24 +25,24 @@ export function createRoute<
   if (openApiConfig.params) {
     try {
       metadata.params = zodToJsonSchema(openApiConfig.params);
-    } catch {
-      // Silently skip invalid schemas - route still works, just no docs
+    } catch (_) {
+      /* expected: zodToJsonSchema may fail on unsupported schemas */
     }
   }
 
   if (openApiConfig.query) {
     try {
       metadata.query = zodToJsonSchema(openApiConfig.query);
-    } catch {
-      // Silently skip invalid schemas
+    } catch (_) {
+      /* expected: zodToJsonSchema may fail on unsupported schemas */
     }
   }
 
   if (openApiConfig.body) {
     try {
       metadata.body = zodToJsonSchema(openApiConfig.body);
-    } catch {
-      // Silently skip invalid schemas
+    } catch (_) {
+      /* expected: zodToJsonSchema may fail on unsupported schemas */
     }
   }
 
@@ -73,7 +73,8 @@ export function createRoute<
             },
           },
         };
-      } catch {
+      } catch (_) {
+        /* expected: zodToJsonSchema may fail on unsupported schemas */
         metadata.responses[statusCode] = {
           description: getDefaultStatusDescription(status),
         };

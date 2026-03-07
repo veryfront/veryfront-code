@@ -16,7 +16,8 @@ export function validateHTTPImports(source: string, allowedHosts: string[]): voi
     try {
       const u = new URL(url);
       hostUrl = `${u.protocol}//${u.host}`;
-    } catch {
+    } catch (_) {
+      /* expected: URL may be malformed */
       continue;
     }
 

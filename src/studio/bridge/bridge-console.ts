@@ -31,7 +31,8 @@ export function setupConsoleCapture(): void {
           if (typeof arg === "symbol") return { __isSymbol: true, description: arg.description };
           if (typeof arg === "object") return JSON.parse(JSON.stringify(arg));
           return arg;
-        } catch {
+        } catch (_) {
+          /* expected: serialization of non-cloneable objects */
           return String(arg);
         }
       });

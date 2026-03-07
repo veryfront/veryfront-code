@@ -43,7 +43,8 @@ export class RedisRateLimitStore implements RateLimitStore {
       const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");
       const mod = await import(redisClientModule);
       createClient = mod.createClient as (options: { url?: string }) => RedisClient;
-    } catch {
+    } catch (_) {
+      // expected: redis client module may not be installed
       this.clientPromise = null;
       throw toError(
         createError({

@@ -84,8 +84,8 @@ export class DevServer {
       const rsc = isRSCEnabled(this.appConfig);
       const stub = this.adapter.env.get("VERYFRONT_FORCE_FLIGHT_STUB") === "1" ? " (stub)" : "";
       rscLog.debug(`${rsc ? "enabled" : "disabled"}${rsc ? stub : ""}`);
-    } catch {
-      /* optional */
+    } catch (_) {
+      /* expected: optional feature detection for RSC */
     }
   }
 
@@ -371,7 +371,8 @@ export class DevServer {
         }
       }
       return false;
-    } catch {
+    } catch (_) {
+      /* expected: directory may not exist */
       return false;
     }
   }

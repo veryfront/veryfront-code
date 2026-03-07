@@ -43,7 +43,8 @@ export async function handleActionRequest(
   try {
     const st = await adapter.fs.stat(file);
     if (!st.isFile) return jsonErrorResponse(HttpStatus.NOT_FOUND, "action not found");
-  } catch {
+  } catch (_) {
+    /* expected: action file may not exist */
     return jsonErrorResponse(HttpStatus.NOT_FOUND, "action not found");
   }
 

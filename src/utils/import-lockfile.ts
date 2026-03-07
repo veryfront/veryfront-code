@@ -264,7 +264,8 @@ export function resolveImportUrl(specifier: string, baseUrl: string): string | n
 
   try {
     return new URL(specifier, baseUrl).toString();
-  } catch {
+  } catch (_) {
+    /* expected: specifier may not be a valid relative URL */
     return null;
   }
 }

@@ -19,7 +19,8 @@ export class NodeHttpServer implements HttpServer {
     try {
       this.http = (await import("node:http")) as NodeHttpModule;
       this.url = (await import("node:url")) as NodeUrlModule;
-    } catch {
+    } catch (_) {
+      /* expected: node:http/node:url not available in non-Node runtimes */
       throw toError(
         createError({
           type: "not_supported",
@@ -67,7 +68,8 @@ export class NodeHttpServer implements HttpServer {
           }
 
           res.end();
-        } catch {
+        } catch (_error) {
+          /* Request handler error - respond with 500 */
           res.statusCode = 500;
           res.end("Internal Server Error");
         }

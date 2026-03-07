@@ -30,8 +30,8 @@ export async function validateFileExists(filePath: string, content: string): Pro
 
   try {
     if (await fs.exists(filePath)) return;
-  } catch {
-    // fall through to error below
+  } catch (_) {
+    /* expected: filesystem check may fail for missing files */
   }
 
   throw toError(
@@ -45,7 +45,8 @@ export async function validateFileExists(filePath: string, content: string): Pro
 export async function pathExists(path: string): Promise<boolean> {
   try {
     return await fs.exists(path);
-  } catch {
+  } catch (_) {
+    /* expected: path may not exist */
     return false;
   }
 }

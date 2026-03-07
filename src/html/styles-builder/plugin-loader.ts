@@ -181,7 +181,7 @@ export async function loadPlugin(
         logger.debug("Plugin not found in node_modules, falling back to esm.sh", { id });
         try {
           mod = await loadModuleFromEsmSh(id);
-        } catch {
+        } catch (_) {
           const errorMsg = `Failed to load plugin "${id}": plugin not installed`;
           logger.warn("Plugin not installed", {
             id,

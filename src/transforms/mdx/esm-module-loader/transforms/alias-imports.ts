@@ -64,7 +64,8 @@ function createFileReader(fs: FSAdapter): (path: string) => Promise<string | nul
     try {
       const content = await fs.readFile(path);
       return typeof content === "string" ? content : decoder.decode(content);
-    } catch {
+    } catch (_) {
+      /* expected: file may not exist at this path */
       return null;
     }
   };

@@ -81,7 +81,8 @@ async function scanLocalFiles(projectDir: string, ctx: HandlerContext): Promise<
     let entries: AsyncIterable<{ name: string; isDirectory: boolean; isFile: boolean }>;
     try {
       entries = fs.readDir(dir);
-    } catch {
+    } catch (_) {
+      /* expected: directory may not exist */
       return;
     }
 
@@ -99,8 +100,8 @@ async function scanLocalFiles(projectDir: string, ctx: HandlerContext): Promise<
       try {
         const content = await ctx.adapter.fs.readFile(fullPath);
         for (const cls of extractCandidates(content)) candidates.add(cls);
-      } catch {
-        // Skip files that can't be read
+      } catch (_) {
+        /* expected: skip files that can't be read */
       }
     }
   };

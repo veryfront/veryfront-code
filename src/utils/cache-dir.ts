@@ -59,8 +59,8 @@ export async function ensureCacheNodeModules(): Promise<void> {
     try {
       lstatSync(targetLink);
       return;
-    } catch {
-      // Doesn't exist yet
+    } catch (_) {
+      /* expected: symlink doesn't exist yet */
     }
 
     const require = createRequire(import.meta.url);
@@ -74,8 +74,7 @@ export async function ensureCacheNodeModules(): Promise<void> {
 
     mkdirSync(cacheBase, { recursive: true });
     symlinkSync(nodeModulesDir, targetLink, "dir");
-  } catch {
-    // Best-effort: if symlink fails (permissions, platform), bare specifier
-    // resolution will fall through to Node.js defaults.
+  } catch (_) {
+    /* expected: best-effort symlink may fail due to permissions or platform */
   }
 }

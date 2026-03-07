@@ -16,7 +16,8 @@ export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
     const handleCopy = React.useCallback(async (): Promise<void> => {
       try {
         await navigator.clipboard.writeText(code);
-      } catch {
+      } catch (_) {
+        /* expected: clipboard API unavailable, using fallback */
         const textarea = document.createElement("textarea");
         textarea.value = code;
         document.body.appendChild(textarea);

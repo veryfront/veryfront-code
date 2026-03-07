@@ -65,7 +65,8 @@ async function fileExists(filePath: string, fsAdapter?: FileSystemAdapter): Prom
   try {
     const stat = fsAdapter ? await fsAdapter.stat(filePath) : await fs.stat(filePath);
     return stat.isFile;
-  } catch {
+  } catch (_) {
+    /* expected: file may not exist */
     return false;
   }
 }

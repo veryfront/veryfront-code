@@ -98,9 +98,10 @@ export function extractSkillPolicy(result: unknown): string[] | undefined {
   // Validate each pattern against the regex
   try {
     return validateAllowedToolPatterns(raw);
-  } catch {
+  } catch (error) {
     logger.warn(
       "load-skill returned invalid tool patterns; falling back to empty policy (no tools)",
+      { error },
     );
     return [];
   }

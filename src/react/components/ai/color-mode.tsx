@@ -48,7 +48,8 @@ export function ColorModeProvider({
     if (typeof window === "undefined") return defaultMode;
     try {
       return (localStorage.getItem(storageKey) as ColorMode) || defaultMode;
-    } catch {
+    } catch (_) {
+      /* expected: localStorage may be unavailable */
       return defaultMode;
     }
   });
@@ -59,8 +60,8 @@ export function ColorModeProvider({
     setModeState(newMode);
     try {
       localStorage.setItem(storageKey, newMode);
-    } catch {
-      // Storage unavailable
+    } catch (_) {
+      /* expected: localStorage may be unavailable */
     }
   }, [storageKey]);
 

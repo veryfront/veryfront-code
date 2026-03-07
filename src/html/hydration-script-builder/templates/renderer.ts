@@ -6,7 +6,8 @@ export const getRendererScript = () => `
         const input = typeof pathname === 'string' ? pathname : window.location.pathname;
         try {
           return new URL(input, window.location.origin).pathname || '/';
-        } catch {
+        } catch (_) {
+          /* expected: invalid URL input, fall back to string splitting */
           const [pathOnly] = String(input || '/').split(/[?#]/);
           return pathOnly || '/';
         }
@@ -155,8 +156,8 @@ export const getRendererScript = () => `
           window.history.replaceState({ pageData, scrollY: 0 }, '', window.location.href);
           log('Stored initial page data in history state');
         }
-      } catch {
-        // ignore parse errors
+      } catch (_) {
+        /* expected: hydration data JSON parse errors are non-critical */
       }
     }
 

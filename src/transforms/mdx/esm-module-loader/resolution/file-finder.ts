@@ -54,7 +54,8 @@ async function tryReadFile(
   try {
     const content = await readFile(path);
     return { sourceCode: decodeContent(content), actualFilePath: path };
-  } catch {
+  } catch (_) {
+    /* expected: file may not exist at this path */
     return null;
   }
 }
@@ -171,8 +172,8 @@ export async function resolveModuleFile(
           lookupDir,
         });
         return { sourceCode: content, actualFilePath: frameworkPath };
-      } catch {
-        // Continue trying other extensions/directories
+      } catch (_) {
+        /* expected: file may not exist with this extension/directory combination */
       }
     }
   }

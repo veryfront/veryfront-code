@@ -89,7 +89,8 @@ function tryParseStructuredCSSCacheEntry(
       candidates: isStringArray(parsed.candidates) ? parsed.candidates : [],
       stylesheet: typeof parsed.stylesheet === "string" ? parsed.stylesheet : defaultStylesheet,
     };
-  } catch {
+  } catch (_) {
+    /* expected: malformed JSON in CSS cache entry */
     return undefined;
   }
 }
@@ -110,7 +111,8 @@ export function parseProjectCSSCacheEntry(raw: string): ParsedProjectCSSCacheEnt
       hash: parsed.hash,
       candidatesHash: parsed.candidatesHash,
     };
-  } catch {
+  } catch (_) {
+    /* expected: malformed JSON in project CSS cache entry */
     return undefined;
   }
 }

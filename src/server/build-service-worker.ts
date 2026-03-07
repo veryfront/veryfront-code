@@ -134,7 +134,8 @@ async function handleRequest(request, strategy) {
         const response = await fetch(request);
         if (response.ok) cache.put(request, response.clone());
         return response;
-      } catch {
+      } catch (_) {
+        // expected: network unavailable, fall back to cache
         return cache.match(request);
       }
 

@@ -45,7 +45,8 @@ export async function tryErrorPageFallback(
     try {
       const st = await ctx.adapter.fs.stat(pagesDir);
       if (!st.isDirectory) return null;
-    } catch {
+    } catch (_) {
+      // expected: pages directory doesn't exist
       return null;
     }
 
@@ -135,7 +136,8 @@ async function tryLoadErrorPage(
 
     try {
       return await loadErrorComponent(cachedPath, ctx);
-    } catch {
+    } catch (_) {
+      // expected: cached path no longer valid, clear and re-resolve
       await deleteCachedPath(cacheKey);
     }
   }
@@ -156,8 +158,8 @@ async function tryLoadErrorPage(
         await setCachedPath(cacheKey, fullPath);
         return component;
       }
-    } catch {
-      // fall through
+    } catch (_) {
+      // expected: resolveFile may fail, fall through to extension probing
     }
 
     await setCachedPath(cacheKey, null);
@@ -175,8 +177,8 @@ async function tryLoadErrorPage(
         await setCachedPath(cacheKey, filePath);
         return component;
       }
-    } catch {
-      // ignore
+    } catch (_) {
+      // expected: file with this extension doesn't exist
     }
   }
 

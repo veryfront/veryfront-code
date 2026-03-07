@@ -295,8 +295,8 @@ async function loadAndTransformModule(
 
       const source = await secureFs.readFile(fullPath);
       return transformModule(source, fullPath, projectDir, adapter, options);
-    } catch {
-      // Continue trying
+    } catch (_) {
+      /* expected: file may not exist at this extension */
     }
   }
 
@@ -318,8 +318,8 @@ async function loadAndTransformModule(
 
         const source = await platformFs.readTextFile(frameworkPath);
         return transformModule(source, frameworkPath, projectDir, adapter, options);
-      } catch {
-        // Continue trying
+      } catch (_) {
+        /* expected: framework file may not exist at this extension */
       }
     }
   }

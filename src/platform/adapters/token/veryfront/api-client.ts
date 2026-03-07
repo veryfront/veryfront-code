@@ -134,7 +134,8 @@ export class TokenStorageApiClient {
     try {
       await this.list();
       return true;
-    } catch {
+    } catch (_) {
+      /* expected: ping returns false when API is unreachable */
       return false;
     }
   }

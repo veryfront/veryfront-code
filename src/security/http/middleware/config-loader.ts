@@ -51,7 +51,8 @@ export function loadSecurityConfig(
         }
 
         return securityConfig;
-      } catch {
+      } catch (error) {
+        serverLogger.debug("Failed to load security config", { error });
         return null;
       }
     },

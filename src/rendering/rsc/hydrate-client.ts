@@ -64,7 +64,8 @@ async function fetchManifest(): Promise<Manifest | null> {
     const res = await fetch("/_veryfront/rsc/manifest");
     if (!res.ok) return null;
     return (await res.json()) as Manifest;
-  } catch {
+  } catch (_) {
+    /* expected: manifest fetch may fail when RSC is not configured */
     return null;
   }
 }

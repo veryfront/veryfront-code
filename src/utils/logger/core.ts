@@ -99,7 +99,8 @@ export function formatValue(value: unknown): string {
   let text: string | undefined;
   try {
     text = JSON.stringify(value);
-  } catch {
+  } catch (_) {
+    /* expected: JSON.stringify fails on circular references */
     text = String(value);
   }
 

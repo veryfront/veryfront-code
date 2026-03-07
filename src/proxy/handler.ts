@@ -161,7 +161,8 @@ function extractUserIdFromToken(token: string): string | undefined {
     else if (remainder === 3) base64 += "=";
     const decoded = JSON.parse(atob(base64));
     return decoded?.userId;
-  } catch {
+  } catch (_) {
+    /* expected: malformed JWT token */
     return undefined;
   }
 }
@@ -192,7 +193,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       candidatePaths.map(async (projectPath) => {
         try {
           return (await fs.exists(projectPath)) ? projectPath : null;
-        } catch {
+        } catch (_) {
+          /* expected: filesystem check may fail */
           return null;
         }
       }),
@@ -213,8 +215,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         localProjects[slug] = projectPath;
         logger?.debug("Dynamically discovered local project", { slug, projectPath });
         return projectPath;
-      } catch {
-        // continue
+      } catch (_) {
+        // expected: filesystem check may fail
       }
     }
 

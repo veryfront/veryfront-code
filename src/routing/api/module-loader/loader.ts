@@ -82,7 +82,8 @@ async function readProjectDependencies(
     const content = await fs.readTextFile(pathHelper.join(projectDir, "package.json"));
     const pkg = JSON.parse(content) as { dependencies?: Record<string, string> };
     return new Map(Object.entries(pkg.dependencies ?? {}));
-  } catch {
+  } catch (_) {
+    /* expected: package.json may not exist */
     return new Map();
   }
 }
@@ -127,7 +128,7 @@ function __vf_loadCjs(id, parentDir) {
     if (!resolved.match(/\\.[a-zA-Z0-9]+$/)) {
       var exts = [".js", ".cjs", ".json", "/index.js", "/index.cjs", "/index.json"];
       for (var i = 0; i < exts.length; i++) {
-        try { Deno.statSync(resolved + exts[i]); resolved += exts[i]; break; } catch {}
+        try { Deno.statSync(resolved + exts[i]); resolved += exts[i]; break; } catch (_) { /* expected: probing file extensions */ }
       }
     }
     __vf_assertContained(resolved);
@@ -599,8 +600,8 @@ async function readFileWithExtensions(
     try {
       const contents = await adapter.fs.readFile(filePath);
       return { filePath, contents };
-    } catch {
-      // try next
+    } catch (_) {
+      /* expected: trying next file extension candidate */
     }
   }
 
@@ -697,7 +698,8 @@ async function rewriteExternalImports(
           if (!entryPoint) return null;
 
           return pathToFileURL(pathHelper.join(packagePath, entryPoint)).href;
-        } catch {
+        } catch (_) {
+          /* expected: package.json may not exist or be invalid */
           return null;
         }
       };
@@ -770,7 +772,7 @@ async function rewriteExternalImports(
       try {
         const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
         exportsMap = pkgJson.exports || {};
-      } catch {
+      } catch (_error) {
         logger.debug(`Could not read veryfront package.json: `);
       }
 
@@ -949,8 +951,8 @@ async function rewriteExternalImports(
           const pkgContent = await fs.readTextFile(pkgPath);
           const pkg = JSON.parse(pkgContent) as { version?: string };
           if (pkg.version) resolvedVersion = pkg.version;
-        } catch {
-          // Fall back to declared range
+        } catch (_) {
+          /* expected: installed package.json may not exist, fall back to declared range */
         }
         // Static: from "pkg" and from "pkg/sub"
         transformed = transformed.replace(
