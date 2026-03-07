@@ -1,11 +1,11 @@
 # Refactoring Progress Tracker
 
 > Tracks per-module refactoring progress across sessions.
-> Last updated: 2026-03-06 18:45
+> Last updated: 2026-03-06 17:15
 
 ## Summary
 - Total modules: 54 (43 src + 11 cli)
-- Completed: 49 (ALL modules complete)
+- Completed: 33 (Batches 1-6 done)
 - In progress: 0
 - Skipped: 5 (4 barrels + cli/templates)
 
@@ -90,36 +90,36 @@
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 38 | src/utils/ | 70 | 42 | MERGED | — | — | Deleted dead file, improved type safety, cleaned lint ignores |
-| 39 | src/workflow/ | 81 | 19 | MERGED | — | — | Deleted 11 dead files, replaced 3 any with structural types |
-| 40 | src/build/ | 81 | 31 | MERGED | — | — | Removed dead exports/functions, narrowed scope, simplified |
+| 38 | src/utils/ | 70 | 42 | QUEUED | — | — | Split by subdir |
+| 39 | src/workflow/ | 81 | 19 | QUEUED | — | — | Split by subdir |
+| 40 | src/build/ | 81 | 31 | QUEUED | — | — | Split by subdir |
 
 ## Batch 8: XL Modules (120+ files) — Split into sub-batches
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 41 | src/rendering/ | 120 | 49 | MERGED | — | — | Interface extraction to eliminate any, dead export, cache cleanup |
-| 42 | src/transforms/ | 122 | 36 | MERGED | — | — | Removed ~15 dead functions, fixed any cast |
-| 43 | src/server/ | 158 | 35 | MERGED | — | — | Removed 6 dead functions, deduped proxy validation |
-| 44 | src/platform/ | 171 | 93 | MERGED | — | — | Removed dead fns, eliminated 5 any casts with typed interfaces |
+| 41 | src/rendering/ | 120 | 49 | QUEUED | — | — | Split by subdir |
+| 42 | src/transforms/ | 122 | 36 | QUEUED | — | — | Split by subdir |
+| 43 | src/server/ | 158 | 35 | QUEUED | — | — | Split by subdir |
+| 44 | src/platform/ | 171 | 93 | QUEUED | — | — | Split by subdir |
 
 ## Batch 9: CLI Small Modules
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 45 | cli/test-utils/ | 1 | 0 | MERGED | — | — | Spec only, already clean |
-| 46 | cli/sync/ | 3 | 2 | MERGED | — | — | Added readonly types, extracted named helper |
-| 47 | cli/auth/ | 6 | 6 | MERGED | — | — | Merged import, simplified ternary, canonical type |
-| 48 | cli/shared/ | 8 | 3 | MERGED | — | — | Removed duplicate getApiUrl, fixed stale docs |
-| 49 | cli/utils/ | 8 | 5 | MERGED | — | — | Reused cached FS, removed unreachable default |
-| 50 | cli/help/ | 8 | 6 | MERGED | — | — | Eliminated duplicate computation |
-| 51 | cli/mcp/ | 15 | 13 | MERGED | — | — | Removed duplicate re-export, consolidated imports |
-| 52 | cli/ui/ | 16 | 12 | MERGED | — | — | Removed dead matrix animation, deduped spinner |
-| 53 | cli/app/ | 25 | 3 | MERGED | — | — | Deleted dead examples view + 6 functions (-231 lines) |
+| 45 | cli/test-utils/ | 1 | 0 | QUEUED | — | — | |
+| 46 | cli/sync/ | 3 | 2 | QUEUED | — | — | |
+| 47 | cli/auth/ | 6 | 6 | QUEUED | — | — | |
+| 48 | cli/shared/ | 8 | 3 | QUEUED | — | — | |
+| 49 | cli/utils/ | 8 | 5 | QUEUED | — | — | |
+| 50 | cli/help/ | 8 | 6 | QUEUED | — | — | |
+| 51 | cli/mcp/ | 15 | 13 | QUEUED | — | — | |
+| 52 | cli/ui/ | 16 | 12 | QUEUED | — | — | |
+| 53 | cli/app/ | 25 | 3 | QUEUED | — | — | |
 
 ## Batch 10: CLI Large
 
 | # | Module | Files | Tests | Status | Spec PR | Refactor PR | Notes |
 |---|--------|-------|-------|--------|---------|-------------|-------|
-| 54 | cli/commands/ | 117 | 72 | MERGED | — | — | Fixed OAuth bug, deleted dead new/ dir, moved test |
+| 54 | cli/commands/ | 117 | 72 | QUEUED | — | — | Split by subdir |
 | 55 | cli/templates/ | 427 | 1 | SKIPPED | — | — | Generated content |
