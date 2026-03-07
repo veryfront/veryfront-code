@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import type { AgentStatus, Message, ToolCall } from "#veryfront/agent/types.ts";
+import type { AgentStatus, Message as AgentMessage, ToolCall } from "#veryfront/agent/types.ts";
 import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export interface UseAgentOptions {
@@ -18,7 +18,7 @@ export interface UseAgentOptions {
 
 export interface UseAgentResult {
   /** Message history */
-  messages: Message[];
+  messages: AgentMessage[];
 
   /** Active tool calls */
   toolCalls: ToolCall[];
@@ -43,7 +43,7 @@ export interface UseAgentResult {
 }
 
 export function useAgent(options: UseAgentOptions): UseAgentResult {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
   const [status, setStatus] = useState<AgentStatus>("idle");
   const [thinking, setThinking] = useState<string | undefined>();
@@ -79,7 +79,7 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
         }
 
         const data = (await response.json()) as {
-          messages?: Message[];
+          messages?: AgentMessage[];
           toolCalls?: ToolCall[];
           status?: AgentStatus;
           thinking?: string;

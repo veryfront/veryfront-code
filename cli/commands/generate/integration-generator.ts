@@ -31,9 +31,22 @@ export interface IntegrationGeneratorOptions {
   tokenUrl?: string;
   /** OAuth scopes (comma-separated) */
   scopes?: string;
+  /** OAuth token auth method */
+  tokenAuthMethod?: TokenAuthMethod;
+  /** Additional OAuth auth URL params (comma-separated key=value pairs) */
+  additionalAuthParams?: string;
+  /** Enable PKCE for OAuth authorization code flow */
+  usePKCE?: boolean;
   /** Skip interactive prompts */
   skipPrompts?: boolean;
 }
+
+type TokenAuthMethod =
+  | "basic"
+  | "body"
+  | "client_secret_basic"
+  | "client_secret_post"
+  | "request_body";
 
 interface IntegrationConfig {
   name: string;
@@ -43,6 +56,9 @@ interface IntegrationConfig {
   authorizationUrl?: string;
   tokenUrl?: string;
   scopes: string[];
+  tokenAuthMethod: TokenAuthMethod;
+  additionalAuthParams: Record<string, string>;
+  usePKCE: boolean;
   envVarPrefix: string;
 }
 
@@ -59,6 +75,76 @@ function promptText(question: string, defaultValue?: string): Promise<string> {
 
 function parseScopes(scopes?: string): string[] {
   return scopes?.split(",").map((s) => s.trim()) || [];
+}
+
+function parseAdditionalAuthParams(params?: string): Record<string, string> {
+  if (!params?.trim()) return {};
+
+  return Object.fromEntries(
+    params.split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const separatorIndex = entry.indexOf("=");
+        if (separatorIndex === -1) {
+          throw new Error(
+            "Additional auth params must use key=value pairs separated by commas",
+          );
+        }
+
+        const key = entry.slice(0, separatorIndex).trim();
+        const value = entry.slice(separatorIndex + 1).trim();
+
+        if (!key || !value) {
+          throw new Error(
+            "Additional auth params must use non-empty key=value pairs",
+          );
+        }
+
+        return [key, value];
+      }),
+  );
+}
+
+function normalizeTokenAuthMethod(method?: string): TokenAuthMethod {
+  switch (method?.trim().toLowerCase()) {
+    case "basic":
+      return "basic";
+    case "body":
+      return "body";
+    case "client_secret_basic":
+      return "client_secret_basic";
+    case "client_secret_post":
+      return "client_secret_post";
+    case "request_body":
+    case undefined:
+    case "":
+      return "request_body";
+    default:
+      throw new Error(
+        "OAuth token auth method must be one of: request_body, body, basic, client_secret_basic, client_secret_post",
+      );
+  }
+}
+
+function parseBooleanOption(value: string | boolean | undefined, defaultValue = false): boolean {
+  if (typeof value === "boolean") return value;
+  if (!value?.trim()) return defaultValue;
+
+  switch (value.trim().toLowerCase()) {
+    case "y":
+    case "yes":
+    case "true":
+    case "1":
+      return true;
+    case "n":
+    case "no":
+    case "false":
+    case "0":
+      return false;
+    default:
+      throw new Error("Boolean option must be yes/no, true/false, or 1/0");
+  }
 }
 
 function validateIntegrationName(name: string): void {
@@ -115,7 +201,10 @@ function getNonInteractiveConfig(options: IntegrationGeneratorOptions): Integrat
     authorizationUrl: options.authorizationUrl,
     tokenUrl: options.tokenUrl,
     scopes: parseScopes(options.scopes),
-    envVarPrefix: name.toUpperCase(),
+    tokenAuthMethod: normalizeTokenAuthMethod(options.tokenAuthMethod),
+    additionalAuthParams: parseAdditionalAuthParams(options.additionalAuthParams),
+    usePKCE: parseBooleanOption(options.usePKCE, false),
+    envVarPrefix: name.toUpperCase().replace(/-/g, "_"),
   };
 }
 
@@ -155,6 +244,11 @@ async function getInteractiveConfig(
   let authorizationUrl: string | undefined;
   let tokenUrl: string | undefined;
   let scopes: string[] = [];
+  let tokenAuthMethod: TokenAuthMethod = normalizeTokenAuthMethod(options.tokenAuthMethod);
+  let additionalAuthParams: Record<string, string> = parseAdditionalAuthParams(
+    options.additionalAuthParams,
+  );
+  let usePKCE = parseBooleanOption(options.usePKCE, false);
 
   if (authType === "oauth2") {
     authorizationUrl = options.authorizationUrl ??
@@ -169,6 +263,30 @@ async function getInteractiveConfig(
     const scopesInput = options.scopes ??
       await promptText("OAuth scopes (comma-separated, or leave empty):");
     scopes = scopesInput ? parseScopes(scopesInput) : [];
+
+    tokenAuthMethod = options.tokenAuthMethod
+      ? normalizeTokenAuthMethod(options.tokenAuthMethod)
+      : normalizeTokenAuthMethod(
+        await promptText(
+          "OAuth token auth method (request_body, body, basic, client_secret_basic, client_secret_post):",
+          "request_body",
+        ),
+      );
+
+    usePKCE = options.usePKCE !== undefined
+      ? parseBooleanOption(options.usePKCE, false)
+      : parseBooleanOption(
+        await promptText("Use PKCE? (y/N):", "n"),
+        false,
+      );
+
+    additionalAuthParams = options.additionalAuthParams
+      ? parseAdditionalAuthParams(options.additionalAuthParams)
+      : parseAdditionalAuthParams(
+        await promptText(
+          "Additional auth URL params (key=value,key=value, or leave empty):",
+        ),
+      );
   }
 
   return {
@@ -179,6 +297,9 @@ async function getInteractiveConfig(
     authorizationUrl,
     tokenUrl,
     scopes,
+    tokenAuthMethod,
+    additionalAuthParams,
+    usePKCE,
     envVarPrefix: name.toUpperCase().replace(/-/g, "_"),
   };
 }
@@ -211,9 +332,21 @@ async function createOAuth2Files(
   baseDir: string,
   config: IntegrationConfig,
 ): Promise<void> {
+  const tokenAuthMethodLiteral = JSON.stringify(config.tokenAuthMethod);
+  const additionalAuthParamsLiteral = JSON.stringify(config.additionalAuthParams, null, 2);
+  const usePKCELiteral = JSON.stringify(config.usePKCE);
+  const pkceCookieName = `${config.name}_pkce_verifier`;
+
   const tokenStore = `/**
  * Token storage for ${config.displayName} OAuth
  */
+
+type TokenAuthMethod =
+  | "basic"
+  | "body"
+  | "client_secret_basic"
+  | "client_secret_post"
+  | "request_body";
 
 interface TokenData {
   accessToken: string;
@@ -221,7 +354,14 @@ interface TokenData {
   expiresAt?: number;
 }
 
+interface TokenResponse {
+  accessToken: string;
+  refreshToken?: string;
+  expiresIn?: number;
+}
+
 let tokenData: TokenData | null = null;
+const TOKEN_AUTH_METHOD: TokenAuthMethod = ${tokenAuthMethodLiteral};
 
 export function setTokens(access: string, refresh?: string, expiresIn?: number): void {
   tokenData = {
@@ -234,13 +374,134 @@ export function setTokens(access: string, refresh?: string, expiresIn?: number):
 export async function getAccessToken(): Promise<string | null> {
   if (!tokenData) return null;
 
-  // Check if token is expired
+  // Check if token is expired and attempt refresh
   if (tokenData.expiresAt && Date.now() > tokenData.expiresAt) {
-    // TODO: Implement token refresh
+    if (tokenData.refreshToken) {
+      const refreshed = await refreshAccessToken(tokenData.refreshToken);
+      if (refreshed) {
+        setTokens(refreshed.accessToken, refreshed.refreshToken, refreshed.expiresIn);
+        return refreshed.accessToken;
+      }
+    }
+    clearTokens();
     return null;
   }
 
   return tokenData.accessToken;
+}
+
+function getClientCredentials(): { clientId: string; clientSecret: string } | null {
+  const clientId = process.env.${config.envVarPrefix}_CLIENT_ID;
+  const clientSecret = process.env.${config.envVarPrefix}_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) return null;
+  return { clientId, clientSecret };
+}
+
+function buildTokenRequest(
+  body: Record<string, string>,
+): { headers: HeadersInit; body: URLSearchParams } | null {
+  const credentials = getClientCredentials();
+  if (!credentials) return null;
+
+  const { clientId, clientSecret } = credentials;
+  const headers: HeadersInit = {
+    "Content-Type": "application/x-www-form-urlencoded",
+  };
+  const params = new URLSearchParams(body);
+
+  switch (TOKEN_AUTH_METHOD) {
+    case "basic":
+    case "client_secret_basic":
+      headers.Authorization = \`Basic \${btoa(\`\${clientId}:\${clientSecret}\`)}\`;
+      break;
+    case "body":
+    case "client_secret_post":
+    case "request_body":
+      params.set("client_id", clientId);
+      params.set("client_secret", clientSecret);
+      break;
+  }
+
+  return { headers, body: params };
+}
+
+function toTokenResponse(data: any, fallbackRefreshToken?: string): TokenResponse | null {
+  const accessToken = typeof data?.access_token === "string" ? data.access_token : null;
+  if (!accessToken) return null;
+
+  const expiresIn = typeof data?.expires_in === "number"
+    ? data.expires_in
+    : typeof data?.expires_in === "string"
+    ? Number(data.expires_in)
+    : undefined;
+
+  return {
+    accessToken,
+    refreshToken: typeof data?.refresh_token === "string"
+      ? data.refresh_token
+      : fallbackRefreshToken,
+    expiresIn: Number.isFinite(expiresIn) ? expiresIn : undefined,
+  };
+}
+
+async function requestToken(
+  body: Record<string, string>,
+  fallbackRefreshToken?: string,
+): Promise<TokenResponse | null> {
+  const request = buildTokenRequest(body);
+  if (!request) return null;
+
+  try {
+    const response = await fetch("${config.tokenUrl}", {
+      method: "POST",
+      headers: request.headers,
+      body: request.body,
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    return toTokenResponse(data, fallbackRefreshToken);
+  } catch {
+    return null;
+  }
+}
+
+export async function exchangeCodeForTokens(
+  code: string,
+  redirectUri: string,
+  codeVerifier?: string,
+): Promise<TokenResponse | null> {
+  const body: Record<string, string> = {
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: redirectUri,
+  };
+
+  if (codeVerifier) {
+    body.code_verifier = codeVerifier;
+  }
+
+  return await requestToken(body);
+}
+
+export async function refreshAccessToken(
+  refreshToken: string,
+): Promise<TokenResponse | null> {
+  const refreshed = await requestToken(
+    {
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    },
+    refreshToken,
+  );
+
+  if (!refreshed) {
+    clearTokens();
+  }
+
+  return refreshed;
 }
 
 export function clearTokens(): void {
@@ -255,9 +516,37 @@ export function clearTokens(): void {
  * ${config.displayName} OAuth initialization route
  */
 
-import { redirect } from "veryfront";
+const SCOPE = ${JSON.stringify(config.scopes.join(" "))};
+const ADDITIONAL_AUTH_PARAMS = ${additionalAuthParamsLiteral};
+const USE_PKCE = ${usePKCELiteral};
+const PKCE_COOKIE_NAME = ${JSON.stringify(pkceCookieName)};
 
-export function GET(): Response {
+function redirectWithCookie(location: string, cookie?: string): Response {
+  const headers = new Headers({ Location: location });
+  if (cookie) headers.append("Set-Cookie", cookie);
+  return new Response(null, { status: 302, headers });
+}
+
+function toBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
+}
+
+async function createPKCEPair(): Promise<{ verifier: string; challenge: string }> {
+  const verifierBytes = crypto.getRandomValues(new Uint8Array(32));
+  const verifier = toBase64Url(verifierBytes);
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(verifier),
+  );
+  const challenge = toBase64Url(new Uint8Array(digest));
+  return { verifier, challenge };
+}
+
+export async function GET(): Promise<Response> {
   const clientId = process.env.${config.envVarPrefix}_CLIENT_ID;
 
   if (!clientId) {
@@ -275,10 +564,26 @@ export function GET(): Response {
     redirect_uri: redirectUri,
     response_type: "code",
     state,
-    ${config.scopes.length > 0 ? `scope: "${config.scopes.join(" ")}",` : '// scope: "read write",'}
   });
 
-  return redirect(\`${config.authorizationUrl}?\${params}\`);
+  if (SCOPE) {
+    params.set("scope", SCOPE);
+  }
+
+  for (const [key, value] of Object.entries(ADDITIONAL_AUTH_PARAMS)) {
+    params.set(key, value);
+  }
+
+  let pkceCookie: string | undefined;
+  if (USE_PKCE) {
+    const { verifier, challenge } = await createPKCEPair();
+    params.set("code_challenge", challenge);
+    params.set("code_challenge_method", "S256");
+    pkceCookie =
+      \`\${PKCE_COOKIE_NAME}=\${encodeURIComponent(verifier)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600\`;
+  }
+
+  return redirectWithCookie(\`${config.authorizationUrl}?\${params}\`, pkceCookie);
 }
 `;
   await fs.writeTextFile(
@@ -291,8 +596,46 @@ export function GET(): Response {
  * ${config.displayName} OAuth callback route
  */
 
-import { redirect } from "veryfront";
-import { setTokens } from "../../../../ai/integrations/${config.name}/lib/token-store.ts";
+import {
+  exchangeCodeForTokens,
+  setTokens,
+} from "../../../../ai/integrations/${config.name}/lib/token-store.ts";
+
+const USE_PKCE = ${usePKCELiteral};
+const PKCE_COOKIE_NAME = ${JSON.stringify(pkceCookieName)};
+
+function redirectWithCookie(location: string, cookie?: string): Response {
+  const headers = new Headers({ Location: location });
+  if (cookie) headers.append("Set-Cookie", cookie);
+  return new Response(null, { status: 302, headers });
+}
+
+function clearPKCECookie(): string {
+  return \`\${PKCE_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0\`;
+}
+
+function parseCookies(cookieHeader: string): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  if (!cookieHeader) return cookies;
+
+  for (const part of cookieHeader.split(";")) {
+    const trimmed = part.trim();
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex === -1) continue;
+
+    const name = trimmed.slice(0, separatorIndex).trim();
+    const value = trimmed.slice(separatorIndex + 1);
+    if (!name) continue;
+
+    try {
+      cookies[name] = decodeURIComponent(value);
+    } catch {
+      cookies[name] = value;
+    }
+  }
+
+  return cookies;
+}
 
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -301,45 +644,37 @@ export async function GET(request: Request): Promise<Response> {
 
   if (error) {
     console.error("${config.displayName} OAuth error:", error);
-    return redirect("/?error=" + encodeURIComponent(error));
+    return redirectWithCookie("/?error=" + encodeURIComponent(error), clearPKCECookie());
   }
 
   if (!code) {
-    return redirect("/?error=no_code");
+    return redirectWithCookie("/?error=no_code", clearPKCECookie());
   }
 
-  const clientId = process.env.${config.envVarPrefix}_CLIENT_ID;
-  const clientSecret = process.env.${config.envVarPrefix}_CLIENT_SECRET;
   const redirectUri = \`\${process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/auth/${config.name}/callback\`;
+  let codeVerifier: string | undefined;
+
+  if (USE_PKCE) {
+    codeVerifier = parseCookies(request.headers.get("cookie") ?? "")[PKCE_COOKIE_NAME];
+    if (!codeVerifier) {
+      return redirectWithCookie("/?error=missing_pkce_verifier", clearPKCECookie());
+    }
+  }
 
   try {
-    const response = await fetch("${config.tokenUrl}", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        client_id: clientId!,
-        client_secret: clientSecret!,
-        redirect_uri: redirectUri,
-      }),
-    });
+    const tokens = await exchangeCodeForTokens(code, redirectUri, codeVerifier);
 
-    if (!response.ok) {
-      const errorData = await response.text();
-      console.error("Token exchange failed:", errorData);
-      return redirect("/?error=token_exchange_failed");
+    if (!tokens) {
+      console.error("Token exchange failed");
+      return redirectWithCookie("/?error=token_exchange_failed", clearPKCECookie());
     }
 
-    const data = await response.json();
-    setTokens(data.access_token, data.refresh_token, data.expires_in);
+    setTokens(tokens.accessToken, tokens.refreshToken, tokens.expiresIn);
 
-    return redirect("/?connected=${config.name}");
+    return redirectWithCookie("/?connected=${config.name}", clearPKCECookie());
   } catch (error) {
     console.error("OAuth callback error:", error);
-    return redirect("/?error=callback_failed");
+    return redirectWithCookie("/?error=callback_failed", clearPKCECookie());
   }
 }
 `;

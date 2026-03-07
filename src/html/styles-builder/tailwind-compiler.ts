@@ -2,7 +2,7 @@ import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
-import { extractCandidates, hashCSS } from "./candidate-extractor.ts";
+import { hashCSS } from "./candidate-extractor.ts";
 import { formatCSSErrorMessage } from "./tailwind-compiler-utils.ts";
 import { getCompiler } from "./tailwind-compiler-cache.ts";
 import {
@@ -263,11 +263,4 @@ export async function generateTailwindCSS(
 export function formatCSSError(error: Error | string): CSSErrorInfo {
   const message = typeof error === "string" ? error : error.message;
   return formatCSSErrorMessage(message);
-}
-
-/** @deprecated Use generateTailwindCSS with explicit candidates instead */
-export async function generateTailwind4CSS(html: string): Promise<string> {
-  const candidates = extractCandidates(html);
-  const result = await generateTailwindCSS(undefined, candidates);
-  return result.css;
 }

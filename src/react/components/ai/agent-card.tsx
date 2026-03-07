@@ -6,12 +6,12 @@ import {
   ToolInvocation,
   ToolResult,
 } from "../../primitives/index.ts";
-import type { AgentStatus, Message, ToolCall } from "#veryfront/agent";
+import type { AgentMessage, AgentStatus, ToolCall } from "#veryfront/agent";
 import { type AgentTheme, cn, defaultAgentTheme, mergeThemes } from "./theme.ts";
 
 export interface AgentCardProps {
   /** Agent messages */
-  messages?: Message[];
+  messages?: AgentMessage[];
 
   /** Tool calls */
   toolCalls?: ToolCall[];

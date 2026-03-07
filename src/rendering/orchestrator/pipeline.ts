@@ -43,7 +43,7 @@ import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 import type { LayoutItem } from "#veryfront/types";
 import { withTimeout, withTimeoutThrow } from "../utils/stream-utils.ts";
-import { generateTailwind4CSS } from "#veryfront/html/styles-builder/index.ts";
+import { extractCandidates, generateTailwindCSS } from "#veryfront/html/styles-builder/index.ts";
 import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
 import type { ModuleLoaderConfig } from "./module-loader/index.ts";
 import {
@@ -677,7 +677,8 @@ export class RenderPipeline {
         );
 
         if (renderResult?.html) {
-          css = await generateTailwind4CSS(renderResult.html);
+          const candidates = extractCandidates(renderResult.html);
+          css = (await generateTailwindCSS(undefined, candidates)).css;
           if (css) cachePageCss(cssCacheKey, css);
 
           resolvePageDataLog.debug("Generated and cached CSS", {

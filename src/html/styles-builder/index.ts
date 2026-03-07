@@ -11,7 +11,6 @@ export {
   extractCandidates,
   extractCandidatesFromFiles,
   formatCSSError,
-  generateTailwind4CSS,
   generateTailwindCSS,
   getCSSByHash,
   getProjectCSS,

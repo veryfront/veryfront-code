@@ -1,6 +1,7 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { IntegrationGeneratorOptions } from "./integration-generator.ts";
+import { join } from "#std/path.ts";
+import { generateIntegration, type IntegrationGeneratorOptions } from "./integration-generator.ts";
 
 describe("cli/commands/generate/integration-generator", () => {
   describe("IntegrationGeneratorOptions type", () => {
@@ -18,12 +19,16 @@ describe("cli/commands/generate/integration-generator", () => {
         authorizationUrl: "https://twilio.com/oauth/authorize",
         tokenUrl: "https://twilio.com/oauth/token",
         scopes: "messages:read,messages:write",
+        tokenAuthMethod: "client_secret_basic",
+        additionalAuthParams: "access_type=offline,prompt=consent",
+        usePKCE: true,
         skipPrompts: true,
       };
 
       assertEquals(options.name, "twilio");
       assertEquals(options.authType, "oauth2");
       assertEquals(options.skipPrompts, true);
+      assertEquals(options.usePKCE, true);
     });
 
     it("should accept api-key auth type", () => {
@@ -143,7 +148,10 @@ describe("cli/commands/generate/integration-generator", () => {
         authorizationUrl: options.authorizationUrl,
         tokenUrl: options.tokenUrl,
         scopes: options.scopes?.split(",").map((s) => s.trim()) ?? [],
-        envVarPrefix: options.name.toUpperCase(),
+        tokenAuthMethod: options.tokenAuthMethod ?? "request_body",
+        additionalAuthParams: options.additionalAuthParams ?? "",
+        usePKCE: options.usePKCE ?? false,
+        envVarPrefix: options.name.toUpperCase().replace(/-/g, "_"),
       };
     }
 
@@ -166,6 +174,9 @@ describe("cli/commands/generate/integration-generator", () => {
         authorizationUrl: "https://twilio.com/oauth/authorize",
         tokenUrl: "https://twilio.com/oauth/token",
         scopes: "messages:read,messages:write",
+        tokenAuthMethod: "basic",
+        additionalAuthParams: "access_type=offline,prompt=consent",
+        usePKCE: true,
         skipPrompts: true,
       });
 
@@ -175,6 +186,9 @@ describe("cli/commands/generate/integration-generator", () => {
       assertEquals(config.apiBaseUrl, "https://api.twilio.com");
       assertEquals(config.envVarPrefix, "TWILIO");
       assertEquals(config.scopes.length, 2);
+      assertEquals(config.tokenAuthMethod, "basic");
+      assertEquals(config.additionalAuthParams, "access_type=offline,prompt=consent");
+      assertEquals(config.usePKCE, true);
     });
 
     it("should default apiBaseUrl from name", () => {
@@ -201,7 +215,7 @@ describe("cli/commands/generate/integration-generator", () => {
         displayName: "My API",
         authType: "api-key",
       });
-      assertEquals(config.envVarPrefix, "MY-API");
+      assertEquals(config.envVarPrefix, "MY_API");
     });
 
     it("should throw when name is missing", () => {
@@ -238,6 +252,64 @@ describe("cli/commands/generate/integration-generator", () => {
         authType: "api-key",
       });
       assertEquals(config.scopes, []);
+    });
+  });
+
+  describe("generateIntegration", () => {
+    it("generates OAuth scaffold with configurable auth method, extra auth params, and PKCE", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-integration-generator-" });
+
+      try {
+        await generateIntegration(projectDir, {
+          name: "figma",
+          displayName: "Figma",
+          authType: "oauth2",
+          apiBaseUrl: "https://api.figma.com/v1",
+          authorizationUrl: "https://www.figma.com/oauth",
+          tokenUrl: "https://api.figma.com/v1/oauth/token",
+          scopes: "file_content:read",
+          tokenAuthMethod: "client_secret_basic",
+          additionalAuthParams: "access_type=offline,prompt=consent",
+          usePKCE: true,
+          skipPrompts: true,
+        });
+
+        const tokenStore = await Deno.readTextFile(
+          join(projectDir, "ai", "integrations", "figma", "lib", "token-store.ts"),
+        );
+        const authRoute = await Deno.readTextFile(
+          join(projectDir, "app", "api", "auth", "figma", "route.ts"),
+        );
+        const callbackRoute = await Deno.readTextFile(
+          join(projectDir, "app", "api", "auth", "figma", "callback", "route.ts"),
+        );
+
+        assertStringIncludes(
+          tokenStore,
+          'const TOKEN_AUTH_METHOD: TokenAuthMethod = "client_secret_basic";',
+        );
+        assertStringIncludes(
+          tokenStore,
+          "headers.Authorization = `Basic ${btoa(`${clientId}:${clientSecret}`)}`;",
+        );
+        assertStringIncludes(tokenStore, "clearTokens();");
+        assertStringIncludes(
+          authRoute,
+          'const ADDITIONAL_AUTH_PARAMS = {\n  "access_type": "offline",\n  "prompt": "consent"\n};',
+        );
+        assertStringIncludes(authRoute, 'params.set("code_challenge", challenge);');
+        assertStringIncludes(authRoute, 'const PKCE_COOKIE_NAME = "figma_pkce_verifier";');
+        assertStringIncludes(
+          callbackRoute,
+          'codeVerifier = parseCookies(request.headers.get("cookie") ?? "")[PKCE_COOKIE_NAME];',
+        );
+        assertStringIncludes(
+          callbackRoute,
+          "await exchangeCodeForTokens(code, redirectUri, codeVerifier);",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
   });
 

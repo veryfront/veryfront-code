@@ -213,16 +213,90 @@ export async function discoverTasks(
 }
 
 /**
- * Find a specific task by ID
- *
- * TODO: Optimise by short-circuiting discovery once the target task is found
- * instead of discovering all tasks first. This is consistent with the workflow
- * pattern but could be improved for large projects with many task files.
+ * Find a specific task by ID, short-circuiting discovery once found.
  */
 export async function findTaskById(
   taskId: string,
   options: TaskDiscoveryOptions,
 ): Promise<DiscoveredTask | null> {
-  const { tasks } = await discoverTasks(options);
-  return tasks.find((t) => t.id === taskId) ?? null;
+  const {
+    projectDir,
+    adapter,
+    config,
+    tasksDir = "tasks",
+    debug = false,
+  } = options;
+
+  const fsType = config?.fs?.type ?? "local";
+  const useRelativePaths = fsType === "github" || fsType === "veryfront-api";
+  const baseDir = useRelativePaths ? tasksDir : join(projectDir, tasksDir);
+
+  try {
+    const dirExists = await adapter.fs.exists(baseDir);
+    if (!dirExists) return null;
+
+    const files = await collectFiles({
+      baseDir,
+      extensions: [".ts", ".tsx", ".js", ".jsx"],
+      recursive: true,
+      ignorePatterns: ["node_modules", ".git", "__tests__", "*.test.*", "*.spec.*"],
+      adapter,
+    });
+
+    for (const file of files) {
+      const id = deriveTaskId(file.path, baseDir);
+      if (id !== taskId) continue;
+
+      try {
+        const module = await loadHandlerModule({
+          projectDir,
+          modulePath: file.path,
+          adapter,
+          config,
+        });
+
+        if (!module) continue;
+
+        const defaultExport = (module as Record<string, unknown>).default;
+        if (isTaskDefinition(defaultExport)) {
+          if (debug) {
+            logger.info(`Found task "${id}" in ${file.path} (export: default)`);
+          }
+          return {
+            id,
+            name: defaultExport.name || id,
+            filePath: file.path,
+            exportName: "default",
+            definition: defaultExport,
+          };
+        }
+
+        for (const [exportName, value] of Object.entries(module)) {
+          if (exportName === "default") continue;
+          if (isTaskDefinition(value)) {
+            if (debug) {
+              logger.info(`Found task "${id}" in ${file.path} (export: ${exportName})`);
+            }
+            return {
+              id,
+              name: value.name || id,
+              filePath: file.path,
+              exportName,
+              definition: value,
+            };
+          }
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        if (debug) {
+          logger.warn(`Failed to load ${file.path}: ${errorMsg}`);
+        }
+      }
+    }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logger.error(`Task discovery failed while finding "${taskId}": ${errorMsg}`);
+  }
+
+  return null;
 }
