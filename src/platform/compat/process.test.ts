@@ -6,6 +6,7 @@
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { runWithProjectEnv } from "../../server/project-env/storage.ts";
 import {
   chdir,
   cwd,
@@ -18,6 +19,7 @@ import {
   getEnvNumber,
   getEnvOverlayStorage,
   getEnvString,
+  getHostEnv,
   getOsType,
   getRuntimeVersion,
   getStdout,
@@ -90,6 +92,27 @@ describe("Process Compat", () => {
       const specialValue = "hello=world&foo=bar;baz";
       setEnv(testKey, specialValue);
       assertEquals(getEnv(testKey), specialValue);
+    });
+  });
+
+  describe("getHostEnv", () => {
+    const testKey = "__TEST_HOST_ENV__";
+
+    afterEach(() => {
+      try {
+        deleteEnv(testKey);
+      } catch {
+        // Ignore if not supported
+      }
+    });
+
+    it("should bypass project env overlays", () => {
+      setEnv(testKey, "host-value");
+
+      runWithProjectEnv({ [testKey]: "project-value" }, () => {
+        assertEquals(getEnv(testKey), "project-value");
+        assertEquals(getHostEnv(testKey), "host-value");
+      });
     });
   });
 

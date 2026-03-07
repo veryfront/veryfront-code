@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
+import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { runWithProjectEnv } from "../server/project-env/storage.ts";
 import type { ExecStreamEvent } from "./sandbox.ts";
 import { Sandbox } from "./sandbox.ts";
 
@@ -158,6 +160,28 @@ describe("Sandbox", () => {
         Error,
         "Sandbox failed to start",
       );
+    });
+
+    it("should use host VERYFRONT_API_URL even when project env overlay is active", async () => {
+      setEnv("VERYFRONT_API_URL", "https://internal.api.test");
+      try {
+        mockFetch([
+          jsonResponse({
+            id: "session-host-env",
+            endpoint: "https://sandbox.example.com",
+            status: "running",
+          }),
+        ]);
+
+        await runWithProjectEnv({}, async () => {
+          const sandbox = await Sandbox.create({ authToken: "test-token" });
+          assertEquals(sandbox.id, "session-host-env");
+        });
+
+        assertStringIncludes(call(0).url, "https://internal.api.test/sandbox-sessions");
+      } finally {
+        deleteEnv("VERYFRONT_API_URL");
+      }
     });
   });
 

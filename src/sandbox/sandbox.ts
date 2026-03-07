@@ -8,7 +8,7 @@
  */
 
 import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 /** Options for creating a sandbox session. */
 export interface SandboxOptions {
@@ -43,7 +43,7 @@ export class Sandbox {
 
   private static resolveApiUrl(options: SandboxOptions): string {
     return options.apiUrl ||
-      getEnv("VERYFRONT_API_URL") ||
+      getHostEnv("VERYFRONT_API_URL") ||
       "https://api.veryfront.com";
   }
 

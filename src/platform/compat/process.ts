@@ -62,6 +62,16 @@ export function env(): Record<string, string> {
   return {};
 }
 
+/**
+ * Read a host-level environment variable without consulting any project env overlay.
+ * Use this for framework-owned runtime configuration that should not be shadowed by tenant env.
+ */
+export function getHostEnv(key: string): string | undefined {
+  if (IS_DENO) return Deno.env.get(key);
+  if (runtimeProcess) return runtimeProcess.env[key];
+  return undefined;
+}
+
 // Lazy-loaded references to project-env/storage.ts functions.
 // Uses globalThis to avoid circular imports (process.ts is low-level, project-env is high-level).
 // IMPORTANT: Only cache when the real getter is found. If storage.ts hasn't loaded yet,
@@ -107,9 +117,7 @@ export function getEnv(key: string): string | undefined {
   // reading host-level secrets like AWS_SECRET_ACCESS_KEY, DATABASE_URL, etc.
   if (isProjectEnvActiveSafe()) return undefined;
 
-  if (IS_DENO) return Deno.env.get(key);
-  if (runtimeProcess) return runtimeProcess.env[key];
-  return undefined;
+  return getHostEnv(key);
 }
 
 const DEFAULT_ENV_TRUE_VALUES = ["1", "true", "yes"] as const;

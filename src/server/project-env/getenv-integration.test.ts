@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 // Import storage to ensure globalThis.__vfProjectEnvGetter and __vfProjectEnvActiveChecker are registered
 import { runWithProjectEnv } from "./storage.ts";
@@ -45,5 +45,13 @@ describe("getEnv with project env overlay", () => {
     });
     // Outside overlay, host env is accessible again
     assertEquals(typeof getEnv("PATH"), "string");
+  });
+
+  it("getHostEnv still reads host env when overlay is active", () => {
+    runWithProjectEnv({}, () => {
+      assertEquals(getEnv("PATH"), undefined);
+      assertEquals(typeof getHostEnv("PATH"), "string");
+      assertEquals((getHostEnv("PATH")?.length ?? 0) > 0, true);
+    });
   });
 });
