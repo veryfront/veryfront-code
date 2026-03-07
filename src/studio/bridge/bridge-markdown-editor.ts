@@ -86,7 +86,7 @@ function setupMarkdownLexicalEditor(): void {
   }
 
   // deno-lint-ignore no-explicit-any -- dynamic ESM CDN imports have no static types
-  state.markdownLexicalSetupPromise = (async function (): Promise<void> {
+  state.markdownLexicalSetupPromise = (async () => {
     try {
       const modules: any[] = await Promise.all([
         import("https://esm.sh/lexical@0.21.0?target=es2022"),

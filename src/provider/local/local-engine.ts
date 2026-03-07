@@ -241,40 +241,38 @@ export async function* generateStream(
   let resolveWaiting: (() => void) | null = null;
   let done = false;
 
+  function flushWaiting(): void {
+    if (resolveWaiting) {
+      resolveWaiting();
+      resolveWaiting = null;
+    }
+  }
+
   const streamer = new transformers.TextStreamer(pipe.tokenizer, {
     skip_prompt: true,
     skip_special_tokens: true,
     callback_function: (text: string) => {
       tokenQueue.push(text);
-      if (resolveWaiting) {
-        resolveWaiting();
-        resolveWaiting = null;
-      }
+      flushWaiting();
     },
   });
 
   // Start generation in the background
-  const generatePromise = pipe(messages, {
-    max_new_tokens: maxNewTokens,
-    temperature,
-    top_p: topP,
-    top_k: topK,
-    do_sample: temperature > 0,
-    streamer,
-  }).then(() => {
-    done = true;
-    if (resolveWaiting) {
-      resolveWaiting();
-      resolveWaiting = null;
+  const generatePromise = (async () => {
+    try {
+      await pipe(messages, {
+        max_new_tokens: maxNewTokens,
+        temperature,
+        top_p: topP,
+        top_k: topK,
+        do_sample: temperature > 0,
+        streamer,
+      });
+    } finally {
+      done = true;
+      flushWaiting();
     }
-  }).catch((error: Error) => {
-    done = true;
-    if (resolveWaiting) {
-      resolveWaiting();
-      resolveWaiting = null;
-    }
-    throw error;
-  });
+  })();
 
   // Yield tokens as they arrive
   while (true) {

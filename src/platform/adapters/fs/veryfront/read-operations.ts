@@ -578,13 +578,14 @@ export class ReadOperations {
     const candidates = EXTENSION_PRIORITY.filter((ext) => ext !== originalExt);
     const startTime = performance.now();
 
-    const promises = candidates.map((ext) =>
-      this.client.getPublishedFileContent(
+    const promises = candidates.map(async (ext) => {
+      const content = await this.client.getPublishedFileContent(
         basePath + ext,
         releaseId ?? undefined,
         environmentName ?? undefined,
-      ).then((content) => ({ ext, content }))
-    );
+      );
+      return { ext, content };
+    });
 
     // Mark all promises as handled to prevent unhandled rejection errors
     // when we return early after a high-priority success (skipping lower-priority promises).

@@ -42,9 +42,17 @@ export function ServerTab(): React.ReactElement {
       setLoading(true);
 
       try {
+        const fetchHandlers = async (): Promise<{ handlers?: Handler[] }> => {
+          const r = await fetch("/_dev/api/handlers");
+          return await r.json();
+        };
+        const fetchBuild = async (): Promise<BuildInfo> => {
+          const r = await fetch("/_dev/api/build");
+          return await r.json();
+        };
         const [handlersRes, buildRes] = await Promise.all([
-          fetch("/_dev/api/handlers").then((r) => r.json()),
-          fetch("/_dev/api/build").then((r) => r.json()),
+          fetchHandlers(),
+          fetchBuild(),
         ]);
 
         if (cancelled) return;

@@ -210,19 +210,22 @@ export function writeDistributedCache(
   const bundlePaths = extractHttpBundlePaths(moduleCode);
   if (bundlePaths.length > 0) {
     const entries = bundlePaths.map((b) => ({ hash: b.hash, url: "", sizeBytes: 0 }));
-    void createBundleManifest(entries).then(async (manifest) => {
-      await storeBundleManifest(manifest);
-      const bundleManifestKey = `${transformCacheKey}:bm`;
-      await distributedCache.set(
-        bundleManifestKey,
-        manifest.manifestId,
-        TRANSFORM_CACHE_TTL_SECONDS,
-      );
-    }).catch((error) => {
-      log.debug(`${LOG_PREFIX_MDX_LOADER} Bundle manifest creation failed`, {
-        normalizedPath,
-        error,
-      });
-    });
+    void (async () => {
+      try {
+        const manifest = await createBundleManifest(entries);
+        await storeBundleManifest(manifest);
+        const bundleManifestKey = `${transformCacheKey}:bm`;
+        await distributedCache.set(
+          bundleManifestKey,
+          manifest.manifestId,
+          TRANSFORM_CACHE_TTL_SECONDS,
+        );
+      } catch (error) {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} Bundle manifest creation failed`, {
+          normalizedPath,
+          error,
+        });
+      }
+    })();
   }
 }

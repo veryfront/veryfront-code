@@ -88,10 +88,13 @@ export class RequestHandler {
     });
   }
 
-  private incrementRequestMetrics(): void {
-    void import("#veryfront/observability/simple-metrics/index.ts")
-      .then(({ metrics }) => metrics.incRequest())
-      .catch((error: unknown) => logger.debug("[dev] metrics.incRequest failed", error));
+  private async incrementRequestMetrics(): Promise<void> {
+    try {
+      const { metrics } = await import("#veryfront/observability/simple-metrics/index.ts");
+      metrics.incRequest();
+    } catch (error) {
+      logger.debug("[dev] metrics.incRequest failed", error);
+    }
   }
 
   private handleDevEndpoint(req: Request, pathname: string): Response | null {

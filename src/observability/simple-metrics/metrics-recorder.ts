@@ -11,11 +11,14 @@ import type { RSCRequestKind } from "./types.ts";
 function recordObservability(
   fn: (obs: Awaited<ReturnType<typeof getObservabilityMetrics>>) => void,
 ): void {
-  void getObservabilityMetrics()
-    .then(fn)
-    .catch(() => {
+  void (async () => {
+    try {
+      const obs = await getObservabilityMetrics();
+      fn(obs);
+    } catch {
       /* metrics recording failure - non-critical */
-    });
+    }
+  })();
 }
 
 /**

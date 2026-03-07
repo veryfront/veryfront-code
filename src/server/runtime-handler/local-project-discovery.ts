@@ -54,10 +54,19 @@ async function isValidLocalProjectPath(path: string, adapter: RuntimeAdapter): P
     throw error; // Unexpected errors (permissions, I/O) propagate to caller
   }
 
+  const checkDir = async (subPath: string): Promise<boolean> => {
+    try {
+      const s = await adapter.fs.stat(subPath);
+      return s?.isDirectory ?? false;
+    } catch {
+      return false;
+    }
+  };
+
   const [hasApp, hasPages, hasComponents] = await Promise.all([
-    adapter.fs.stat(`${path}/app`).then((s) => s?.isDirectory).catch(() => false),
-    adapter.fs.stat(`${path}/pages`).then((s) => s?.isDirectory).catch(() => false),
-    adapter.fs.stat(`${path}/components`).then((s) => s?.isDirectory).catch(() => false),
+    checkDir(`${path}/app`),
+    checkDir(`${path}/pages`),
+    checkDir(`${path}/components`),
   ]);
 
   return hasApp || hasPages || hasComponents;

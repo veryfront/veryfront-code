@@ -114,23 +114,20 @@ export function getStdinReader(): StdinReader {
  * Works in both Deno and Node.js.
  */
 export function waitForKeypress(): Promise<void> {
-  return new Promise((resolve) => {
-    if (isDeno) {
+  if (isDeno) {
+    return (async () => {
       Deno.stdin.setRaw(true);
       const reader = Deno.stdin.readable.getReader();
-
-      void reader.read().then(() => {
+      try {
+        await reader.read();
+      } finally {
         Deno.stdin.setRaw(false);
         reader.releaseLock();
-        resolve();
-      }).catch(() => {
-        Deno.stdin.setRaw(false);
-        reader.releaseLock();
-        resolve();
-      });
-      return;
-    }
+      }
+    })();
+  }
 
+  return new Promise((resolve) => {
     const stdin = process?.stdin;
     if (!stdin) {
       resolve();

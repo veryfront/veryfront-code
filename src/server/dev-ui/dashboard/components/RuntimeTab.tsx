@@ -40,20 +40,30 @@ export function RuntimeTab(): React.JSX.Element {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  function loadData(): void {
+  async function loadData(): Promise<void> {
     setLoading(true);
 
-    Promise.all([
-      fetch("/_dev/api/metrics").then((r) => r.json()),
-      fetch("/_dev/api/memory").then((r) => r.json()),
-    ])
-      .then(([m, mem]) => {
-        setMetrics(m.counters || {});
-        setMemory(mem);
-        setError(null);
-      })
-      .catch((e) => setError((e as Error).message))
-      .finally(() => setLoading(false));
+    try {
+      const fetchMetrics = async (): Promise<{ counters?: Record<string, number | unknown> }> => {
+        const r = await fetch("/_dev/api/metrics");
+        return await r.json();
+      };
+      const fetchMemory = async (): Promise<MemoryData> => {
+        const r = await fetch("/_dev/api/memory");
+        return await r.json();
+      };
+      const [m, mem] = await Promise.all([
+        fetchMetrics(),
+        fetchMemory(),
+      ]);
+      setMetrics(m.counters || {});
+      setMemory(mem);
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {

@@ -225,37 +225,40 @@ export class ProcessJobExecutor implements JobExecutor {
     }, timeout);
 
     // Wait for process to complete (fire-and-forget with error handling)
-    void job.process.status.then((status) => {
-      clearTimeout(timeoutId);
+    void (async () => {
+      try {
+        const status = await job.process.status;
+        clearTimeout(timeoutId);
 
-      job.completedAt = new Date();
+        job.completedAt = new Date();
 
-      if (job.status === "failed") {
-        // Already marked as failed (e.g. timeout) — don't overwrite
-        return;
-      }
-
-      if (status.success) {
-        job.status = "succeeded";
-
-        if (this.config.debug) {
-          logger.info(`Job ${job.jobId} succeeded`);
+        if (job.status === "failed") {
+          // Already marked as failed (e.g. timeout) — don't overwrite
+          return;
         }
-      } else {
+
+        if (status.success) {
+          job.status = "succeeded";
+
+          if (this.config.debug) {
+            logger.info(`Job ${job.jobId} succeeded`);
+          }
+        } else {
+          job.status = "failed";
+          job.error = `Process exited with code ${status.code}`;
+
+          logger.error(`Job ${job.jobId} failed with code ${status.code}`);
+        }
+      } catch (error) {
+        clearTimeout(timeoutId);
+
         job.status = "failed";
-        job.error = `Process exited with code ${status.code}`;
+        job.error = error instanceof Error ? error.message : String(error);
+        job.completedAt = new Date();
 
-        logger.error(`Job ${job.jobId} failed with code ${status.code}`);
+        logger.error(`Job ${job.jobId} error:`, error);
       }
-    }).catch((error) => {
-      clearTimeout(timeoutId);
-
-      job.status = "failed";
-      job.error = error instanceof Error ? error.message : String(error);
-      job.completedAt = new Date();
-
-      logger.error(`Job ${job.jobId} error:`, error);
-    });
+    })();
 
     // Log stdout/stderr in debug mode
     if (this.config.debug) {

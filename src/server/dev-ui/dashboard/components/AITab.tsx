@@ -58,23 +58,34 @@ export function AITab({ tools, resources, prompts, agents }: AITabProps): React.
   const [workflowsError, setWorkflowsError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/_dev/api/infrastructure")
-      .then((res) => res.json())
-      .then((d) => {
+    async function loadProviders(): Promise<void> {
+      try {
+        const res = await fetch("/_dev/api/infrastructure");
+        const d = await res.json();
         setProviders(d.providers ?? []);
         setProvidersError(null);
-      })
-      .catch((e: unknown) => setProvidersError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setProvidersLoading(false));
+      } catch (e: unknown) {
+        setProvidersError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setProvidersLoading(false);
+      }
+    }
 
-    fetch("/_dev/api/workflows")
-      .then((res) => res.json())
-      .then((d) => {
+    async function loadWorkflows(): Promise<void> {
+      try {
+        const res = await fetch("/_dev/api/workflows");
+        const d = await res.json();
         setWorkflows(d.workflows ?? []);
         setWorkflowsError(null);
-      })
-      .catch((e: unknown) => setWorkflowsError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setWorkflowsLoading(false));
+      } catch (e: unknown) {
+        setWorkflowsError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setWorkflowsLoading(false);
+      }
+    }
+
+    loadProviders();
+    loadWorkflows();
   }, []);
 
   function navigateToMCP(mcpSubTab: "tools" | "resources" | "prompts", itemId: string): void {

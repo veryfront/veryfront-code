@@ -116,10 +116,11 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
   useEffect(() => {
     if (state.PageComponent || !initialData.pagePath) return;
 
-    loadComponent(initialData.pagePath).then((Component) => {
+    (async () => {
+      const Component = await loadComponent(initialData.pagePath);
       if (!Component) return;
       setState((prev) => ({ ...prev, PageComponent: Component }));
-    });
+    })();
   }, [initialData.pagePath, state.PageComponent]);
 
   useEffect(() => {
