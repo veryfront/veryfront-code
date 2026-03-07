@@ -22,10 +22,15 @@ export class MemoryDebugHandler extends BaseHandler {
     name: "MemoryDebugHandler",
     priority: PRIORITY_HIGH as HandlerPriority,
     patterns: [{ pattern: "/_debug/memory", prefix: true }],
+    enabled: (ctx) => !!ctx.isLocalProject,
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const pathname = new URL(req.url).pathname;
+
+    if (!ctx.isLocalProject) {
+      return this.continue();
+    }
 
     if (!pathname.startsWith("/_debug/memory")) {
       return this.continue();

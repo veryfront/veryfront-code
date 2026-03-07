@@ -125,6 +125,20 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         await stopServer(server);
       });
     });
+
+    it("serves metrics for local dev servers", async () => {
+      await withTestContext("dev-server-metrics", async (context) => {
+        const { server, port } = await createTestDevServer(context);
+
+        const response = await fetch(`http://127.0.0.1:${port}/_metrics`);
+
+        assertEquals(response.status, 200);
+        const json = await response.json();
+        assertExists(json?.counters);
+
+        await stopServer(server);
+      });
+    });
   });
 
   describe("DevServer - Dev Endpoint Handler", {}, () => {

@@ -25,7 +25,7 @@ describe("request-utils", () => {
       assertEquals(MONITORING_PATHS.has("/healthz"), true);
       assertEquals(MONITORING_PATHS.has("/readyz"), true);
       assertEquals(MONITORING_PATHS.has("/_health"), true);
-      assertEquals(MONITORING_PATHS.has("/_metrics"), true);
+      assertEquals(MONITORING_PATHS.has("/_metrics"), false);
     });
 
     it("LIGHTWEIGHT_PATH_PREFIXES includes module paths", () => {
@@ -81,7 +81,7 @@ describe("request-utils", () => {
       assertEquals(isMonitoringPath("/healthz"), true);
       assertEquals(isMonitoringPath("/readyz"), true);
       assertEquals(isMonitoringPath("/_health"), true);
-      assertEquals(isMonitoringPath("/_metrics"), true);
+      assertEquals(isMonitoringPath("/_metrics"), false);
     });
 
     it("returns false for non-monitoring paths", () => {
