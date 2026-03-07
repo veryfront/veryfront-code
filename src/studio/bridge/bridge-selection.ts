@@ -303,7 +303,7 @@ export function buildEditorRenderedMaps(
   // mapping failure that will cause visible selection offset bugs.
   if (ri < trimmed.length) {
     logger.warn(
-      "[StudioBridge] Offset mapping divergence: rendered text has unconsumed characters",
+      "Offset mapping divergence: rendered text has unconsumed characters",
       { unconsumedCount: trimmed.length - ri, startIndex: ri },
     );
   }

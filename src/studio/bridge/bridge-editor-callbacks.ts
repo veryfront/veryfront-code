@@ -28,7 +28,7 @@ let callbacks: EditorCallbacks | null = null;
 
 export function registerEditorCallbacks(cb: EditorCallbacks): void {
   if (callbacks) {
-    logger.warn("[StudioBridge] EditorCallbacks already registered, overwriting");
+    logger.warn("EditorCallbacks already registered, overwriting");
   }
   callbacks = cb;
 }

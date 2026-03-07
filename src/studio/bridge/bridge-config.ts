@@ -34,7 +34,7 @@ export function initConfig(): void {
     value === "simple" || qsMode === "simple" ? "simple" : "advanced";
 
   if (!raw || typeof raw !== "object") {
-    logger.warn("[StudioBridge] No bridge config found on window.__VF_BRIDGE_CONFIG__");
+    logger.warn("No bridge config found on window.__VF_BRIDGE_CONFIG__");
     config = {
       projectId: "",
       pageId: "",

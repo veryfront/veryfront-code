@@ -151,7 +151,7 @@ export function handleStudioMessage(event: MessageEvent): void {
       return;
 
     default:
-      logger.debug("[StudioBridge] Unknown action", { action: message.action });
+      logger.debug("Unknown action", { action: message.action });
       return;
   }
 }

@@ -79,9 +79,9 @@ export class WebSocketPublisher implements BidirectionalPublisher {
       this.stopPingInterval();
     };
 
-    socket.onerror = (error) => {
+    socket.onerror = (event) => {
       if (this.config.debug) {
-        logger.error("Socket error", error);
+        logger.error("Socket error", { event: String(event) });
       }
       // Stop ping interval on error to prevent resource leak
       // The socket may or may not close after an error, but we should

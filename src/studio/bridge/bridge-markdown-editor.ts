@@ -115,9 +115,10 @@ export function setupMarkdownLexicalEditor(): void {
           listModule.ListItemNode,
         ],
         onError: function (error: unknown) {
-          logger.error("[StudioBridge] Markdown Lexical error", {
-            error: error instanceof Error ? error.message : String(error),
-          });
+          logger.error(
+            "Markdown Lexical error",
+            error instanceof Error ? error : { error: String(error) },
+          );
         },
       });
 
@@ -200,8 +201,8 @@ export function setupMarkdownLexicalEditor(): void {
     })
     .catch(function (error: unknown) {
       logger.warn(
-        "[StudioBridge] Failed to load Lexical markdown editor; falling back to textarea",
-        { error: error instanceof Error ? error.message : String(error) },
+        "Failed to load Lexical markdown editor; falling back to textarea",
+        error instanceof Error ? error : { error: String(error) },
       );
       if (state.markdownEditorSurface) {
         state.markdownEditorSurface.style.display = "none";
@@ -268,7 +269,7 @@ export function applyMarkdownContent(content: unknown): void {
     state.markdownLexicalRenderedContent === content
   ) {
     logger.debug(
-      "[StudioBridge] applyMarkdownContent: skipped (content unchanged)",
+      "applyMarkdownContent: skipped (content unchanged)",
     );
     state.markdownCurrentContent = content;
     scheduleMarkdownSelectionOverlayRender();
@@ -279,7 +280,7 @@ export function applyMarkdownContent(content: unknown): void {
   }
 
   logger.debug(
-    "[StudioBridge] applyMarkdownContent: rebuilding Lexical DOM",
+    "applyMarkdownContent: rebuilding Lexical DOM",
     {
       contentLength: content.length,
       renderedMatch: state.markdownLexicalRenderedContent === content,

@@ -833,13 +833,13 @@ export function injectOverlayStyles(): void {
   try {
     document.head.appendChild(style);
     if (!style.sheet) {
-      logger.warn("[StudioBridge] Inline style injection may be blocked by CSP (style-src)");
+      logger.warn("Inline style injection may be blocked by CSP (style-src)");
     }
   } catch (error) {
     logger.warn(
-      "[StudioBridge] Failed to inject bridge styles. This may be caused by CSP style-src restrictions.",
-      {
-        error: error instanceof Error ? error.message : String(error),
+      "Failed to inject bridge styles. This may be caused by CSP style-src restrictions.",
+      error instanceof Error ? error : {
+        error: String(error),
       },
     );
   }

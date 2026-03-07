@@ -101,7 +101,7 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
       const WebsocketProvider = modules[1].WebsocketProvider;
       state.markdownYjsY = Y as unknown as import("./bridge-editor-state.ts").YjsModule;
 
-      logger.debug("[StudioBridge] Yjs setup", {
+      logger.debug("Yjs setup", {
         wsUrl: config.wsUrl,
         guid: config.guid,
         fileId: config.fileId,
@@ -130,7 +130,7 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
         if (!isCurrentSetup()) {
           return;
         }
-        logger.debug("[StudioBridge] Yjs status", {
+        logger.debug("Yjs status", {
           status: event.status,
           hasWs: !!provider.ws,
           wsReadyState: provider.ws?.readyState,
@@ -144,7 +144,7 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
           const origOnMessage = ws.onmessage;
           ws.onmessage = function (wsEvent: MessageEvent) {
             if (typeof wsEvent.data === "string") {
-              logger.debug("[StudioBridge] Yjs filtered string message", {
+              logger.debug("Yjs filtered string message", {
                 preview: (wsEvent.data as string).slice(0, 120),
               });
               return;
@@ -279,7 +279,7 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
         if (!isCurrentSetup()) {
           return;
         }
-        logger.debug("[StudioBridge] Yjs sync", {
+        logger.debug("Yjs sync", {
           synced,
           ytextLength: ytext.length,
           contentPreview: ytext.toString().slice(0, 80),
@@ -330,7 +330,7 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
               }
               const fullContent = ytext.toString();
               const contentMatch = fullContent === state.markdownCurrentContent;
-              logger.debug("[StudioBridge] Yjs Y.Text observer", {
+              logger.debug("Yjs Y.Text observer", {
                 origin: String(origin),
                 contentMatch,
                 ytextLength: fullContent.length,
@@ -345,16 +345,17 @@ export function setupMarkdownYjsConnection(config: MarkdownYjsConnectionOptions)
           // Initial awareness sync after Yjs is connected
           syncAwareness();
 
-          logger.debug("[StudioBridge] Yjs synced, bound to Y.Text for fileId", {
+          logger.debug("Yjs synced, bound to Y.Text for fileId", {
             fileId: config.fileId,
           });
         }
       });
     })
     .catch((error) => {
-      logger.error("[StudioBridge] Failed to setup Yjs connection", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        "Failed to setup Yjs connection",
+        error instanceof Error ? error : { error: String(error) },
+      );
     });
 }
 
@@ -372,7 +373,7 @@ export function writeToYText(
   options?: { position?: number; origin?: string },
 ): boolean {
   if (!state.markdownYText || !state.markdownYDoc || !state.markdownYjsConnected) {
-    logger.warn("[StudioBridge] writeToYText: Yjs not connected or not synced");
+    logger.warn("writeToYText: Yjs not connected or not synced");
     return false;
   }
 
@@ -394,7 +395,7 @@ export function writeToYText(
  */
 export function replaceYTextContent(content: string): boolean {
   if (!state.markdownYText || !state.markdownYDoc || !state.markdownYjsConnected) {
-    logger.warn("[StudioBridge] replaceYTextContent: Yjs not connected or not synced");
+    logger.warn("replaceYTextContent: Yjs not connected or not synced");
     return false;
   }
 

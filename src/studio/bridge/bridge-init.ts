@@ -64,7 +64,7 @@ export function init(): void {
     }
   }
 
-  logger.debug("[StudioBridge] Initializing...");
+  logger.debug("Initializing...");
 
   // Only set up Studio interaction features when embedded in Studio
   if (!isStandalone) {
@@ -132,9 +132,9 @@ export function init(): void {
     const inspectModeParam = params.get("inspect_mode");
     if (inspectModeParam === "true") {
       state.inspectMode = true;
-      logger.debug("[StudioBridge] Inspect mode enabled from query param");
+      logger.debug("Inspect mode enabled from query param");
     }
   }
 
-  logger.debug("[StudioBridge] Initialized successfully");
+  logger.debug("Initialized successfully");
 }

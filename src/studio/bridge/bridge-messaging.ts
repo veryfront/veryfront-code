@@ -16,9 +16,7 @@ export function postToStudio(message: Record<string, unknown>): void {
   try {
     window.parent.postMessage(message, studioOrigin || "*");
   } catch (e) {
-    logger.debug("[StudioBridge] postMessage failed", {
-      error: e instanceof Error ? e.message : String(e),
-    });
+    logger.debug("postMessage failed", e instanceof Error ? e : { error: String(e) });
   }
 }
 

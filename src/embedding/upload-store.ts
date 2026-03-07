@@ -86,7 +86,7 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
       if (isNotFoundError(err)) {
         return { uploads: [], chunks: [] };
       }
-      serverLogger.warn("[upload-store] Failed to load store, resetting:", err);
+      serverLogger.warn("[upload-store] Failed to load store, resetting", err);
       return { uploads: [], chunks: [] };
     }
   }
