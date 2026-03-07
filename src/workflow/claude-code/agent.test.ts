@@ -13,13 +13,14 @@ function createMockSDK(): {
   uninstall: () => void;
 } {
   let capturedOptions: Record<string, unknown> | null = null;
-  const original = (globalThis as Record<string, unknown>).__vfMockClaudeSDK;
+  let original: unknown;
 
   return {
     get capturedOptions() {
       return capturedOptions;
     },
     install() {
+      original = (globalThis as Record<string, unknown>).__vfMockClaudeSDK;
       (globalThis as Record<string, unknown>).__vfMockClaudeSDK = {
         query(args: { prompt: string; options: Record<string, unknown> }) {
           capturedOptions = args.options;
@@ -66,32 +67,29 @@ async function capturePermissionMode(
   }
 }
 
-// Check if the SDK mock mechanism is wired up in opaque-deps.
-// If not, fall back to testing the schema only. The mock requires
-// opaque-deps.ts to check globalThis.__vfMockClaudeSDK first.
+// Verify the SDK mock mechanism is wired up in opaque-deps.
+// Hard-fail if the mock doesn't work — silent skips hide regressions.
 const sdkMockAvailable = await (async () => {
+  const mock = createMockSDK();
+  mock.install();
   try {
-    const mock = createMockSDK();
-    mock.install();
     const { executeAgent } = await import("./agent.ts");
     await executeAgent("probe", { cwd: "/tmp" });
-    const ok = mock.capturedOptions !== null;
-    mock.uninstall();
-    return ok;
+    return mock.capturedOptions !== null;
   } catch {
     return false;
+  } finally {
+    mock.uninstall();
   }
 })();
 
+if (!sdkMockAvailable) {
+  throw new Error(
+    "SDK mock not available — ensure opaque-deps.ts checks globalThis.__vfMockClaudeSDK and tests run with --allow-env",
+  );
+}
+
 describe("resolvePermissionMode (via executeAgent)", () => {
-  if (!sdkMockAvailable) {
-    it("requires SDK mock to be wired up", () => {
-      throw new Error(
-        "SDK mock not available — ensure opaque-deps.ts checks globalThis.__vfMockClaudeSDK and tests run with --allow-env",
-      );
-    });
-    return;
-  }
 
   it("maps 'code' mode to acceptEdits", async () => {
     assertEquals(await capturePermissionMode({ mode: "code" }), "acceptEdits");
