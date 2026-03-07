@@ -33,6 +33,7 @@ import {
   HMR_CLOSE_RATE_LIMIT,
   HMR_MAX_MESSAGE_SIZE_BYTES,
   HMR_MAX_MESSAGES_PER_MINUTE,
+  serverLogger,
 } from "#veryfront/utils";
 
 /** Default server port when no port is specified */
