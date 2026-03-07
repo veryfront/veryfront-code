@@ -43,6 +43,18 @@ describe("tool factory", () => {
       assertEquals(t.inputSchemaJson?.required?.includes("age"), true);
     });
 
+    it("should fall back to permissive schema with allowUnknownSchema", () => {
+      const t = tool({
+        id: "permissive-tool",
+        description: "desc",
+        inputSchema: {} as z.ZodSchema<unknown>,
+        execute: async () => null,
+        allowUnknownSchema: true,
+      });
+      assertEquals(t.inputSchemaJson?.type, "object");
+      assertEquals(t.inputSchemaJson?.additionalProperties, true);
+    });
+
     it("should preserve mcp config", () => {
       const t = tool({
         id: "mcp-tool",
@@ -123,7 +135,7 @@ describe("tool factory", () => {
       assertEquals(t.inputSchemaJson?.additionalProperties, true);
     });
 
-    it("should apply toModelOutput transform", async () => {
+    it("should apply toModelOutput transform in execute return value", async () => {
       const t = dynamicTool({
         id: "transform",
         description: "desc",

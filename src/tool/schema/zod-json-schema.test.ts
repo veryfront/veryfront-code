@@ -115,6 +115,18 @@ describe("zodToJsonSchema", () => {
       const result = zodToJsonSchema(z.union([z.string(), z.number()]));
       assertEquals(result, { anyOf: [{ type: "string" }, { type: "number" }] });
     });
+
+    it("should convert z.discriminatedUnion()", () => {
+      const result = zodToJsonSchema(
+        z.discriminatedUnion("type", [
+          z.object({ type: z.literal("a"), value: z.string() }),
+          z.object({ type: z.literal("b"), count: z.number() }),
+        ]),
+      );
+      assertEquals(result.anyOf?.length, 2);
+      assertEquals(result.anyOf?.[0]?.type, "object");
+      assertEquals(result.anyOf?.[1]?.type, "object");
+    });
   });
 
   describe("record types", () => {
@@ -131,6 +143,25 @@ describe("zodToJsonSchema", () => {
     it("should include default in schema", () => {
       const result = zodToJsonSchema(z.string().default("hello"));
       assertEquals(result, { type: "string", default: "hello" });
+    });
+  });
+
+  describe("lazy types", () => {
+    it("should convert z.lazy()", () => {
+      const result = zodToJsonSchema(z.lazy(() => z.string()));
+      assertEquals(result, { type: "string" });
+    });
+  });
+
+  describe("effects types", () => {
+    it("should convert z.string().refine() (ZodEffects)", () => {
+      const result = zodToJsonSchema(z.string().refine((s) => s.length > 0));
+      assertEquals(result, { type: "string" });
+    });
+
+    it("should convert z.string().transform() (ZodEffects)", () => {
+      const result = zodToJsonSchema(z.string().transform((s) => s.toUpperCase()));
+      assertEquals(result, { type: "string" });
     });
   });
 

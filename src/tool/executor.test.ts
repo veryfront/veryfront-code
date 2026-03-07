@@ -1,5 +1,5 @@
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { z } from "zod";
 import { tool } from "./factory.ts";
 import { toolRegistry } from "./registry.ts";
@@ -40,9 +40,9 @@ describe("executeTool", () => {
     assertEquals((receivedContext as Record<string, unknown>).agentId, "test-agent");
   });
 
-  it("should throw when tool not found", () => {
-    assertThrows(
-      () => executeTool("nonexistent", {}),
+  it("should throw when tool not found", async () => {
+    await assertRejects(
+      async () => await executeTool("nonexistent", {}),
       Error,
       'Tool "nonexistent" not found',
     );

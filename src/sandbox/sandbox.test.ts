@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
+import type { ExecStreamEvent } from "./sandbox.ts";
 import { Sandbox } from "./sandbox.ts";
 
 // Mock fetch for testing
 const originalFetch = globalThis.fetch;
 let fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
-let fetchResponses: Array<Response> = [];
+let fetchResponses: Array<Response | (() => Response)> = [];
 
 function mockFetch(responses: Array<Response | (() => Response)>) {
-  fetchResponses = responses.map((r) => (typeof r === "function" ? r() : r));
+  fetchResponses = [...responses];
   fetchCalls = [];
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string"
@@ -17,10 +18,23 @@ function mockFetch(responses: Array<Response | (() => Response)>) {
       ? input.toString()
       : input.url;
     fetchCalls.push({ url, init });
-    const response = fetchResponses.shift();
-    if (!response) throw new Error(`No mock response for: ${url}`);
-    return response;
+    const entry = fetchResponses.shift();
+    if (!entry) throw new Error(`No mock response for: ${url}`);
+    return typeof entry === "function" ? entry() : entry;
   }) as typeof fetch;
+}
+
+// Zero-delay setTimeout mock to avoid real polling delays (cross-runtime)
+const originalSetTimeout = globalThis.setTimeout;
+function mockTimers() {
+  // deno-lint-ignore no-explicit-any
+  (globalThis as any).setTimeout = (fn: () => void, _ms?: number) => {
+    return originalSetTimeout(fn, 0);
+  };
+}
+function restoreTimers() {
+  // deno-lint-ignore no-explicit-any
+  (globalThis as any).setTimeout = originalSetTimeout;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -55,6 +69,7 @@ describe("Sandbox", () => {
   });
 
   afterEach(() => {
+    restoreTimers();
     globalThis.fetch = originalFetch;
   });
 
@@ -77,6 +92,7 @@ describe("Sandbox", () => {
     });
 
     it("should poll until ready when not running", async () => {
+      mockTimers();
       mockFetch([
         jsonResponse({
           id: "session-2",
@@ -111,6 +127,7 @@ describe("Sandbox", () => {
     });
 
     it("should throw when sandbox fails to start", async () => {
+      mockTimers();
       mockFetch([
         jsonResponse({
           id: "session-3",
@@ -190,6 +207,81 @@ describe("Sandbox", () => {
       assertEquals(result.stdout, "");
       assertEquals(result.stderr, "error occurred\n");
       assertEquals(result.exitCode, 1);
+    });
+  });
+
+  describe("executeStream()", () => {
+    it("should stream events directly", async () => {
+      mockFetch([
+        jsonResponse({ id: "stream-1", endpoint: "https://sb.test", status: "running" }),
+        ndjsonResponse([
+          { type: "stdout", data: "line1\n" },
+          { type: "stderr", data: "warn\n" },
+          { type: "exit", exitCode: 0 },
+        ]),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const events: ExecStreamEvent[] = [];
+      for await (const event of sandbox.executeStream("cmd")) {
+        events.push(event);
+      }
+
+      assertEquals(events.length, 3);
+      assertEquals(events[0]!.type, "stdout");
+      assertEquals(events[0]!.data, "line1\n");
+      assertEquals(events[1]!.type, "stderr");
+      assertEquals(events[2]!.type, "exit");
+      assertEquals(events[2]!.exitCode, 0);
+    });
+
+    it("should throw on non-OK response", async () => {
+      mockFetch([
+        jsonResponse({ id: "stream-2", endpoint: "https://sb.test", status: "running" }),
+        textResponse("Internal Server Error", 500),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      await assertRejects(
+        async () => {
+          for await (const _event of sandbox.executeStream("bad-cmd")) {
+            // consume
+          }
+        },
+        Error,
+        "Exec failed",
+      );
+    });
+
+    it("should handle chunked NDJSON delivery", async () => {
+      // Simulate a response where JSON lines are split across chunks
+      const chunk1 = '{"type":"stdout","data":"part1\\n"}\n{"type":"stde';
+      const chunk2 = 'rr","data":"err\\n"}\n{"type":"exit","exitCode":0}\n';
+      const encoder = new TextEncoder();
+
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(chunk1));
+          controller.enqueue(encoder.encode(chunk2));
+          controller.close();
+        },
+      });
+
+      mockFetch([
+        jsonResponse({ id: "stream-3", endpoint: "https://sb.test", status: "running" }),
+        new Response(stream, { status: 200 }),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const events: ExecStreamEvent[] = [];
+      for await (const event of sandbox.executeStream("cmd")) {
+        events.push(event);
+      }
+
+      assertEquals(events.length, 3);
+      assertEquals(events[0]!.type, "stdout");
+      assertEquals(events[1]!.type, "stderr");
+      assertEquals(events[2]!.type, "exit");
     });
   });
 
