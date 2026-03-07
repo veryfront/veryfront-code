@@ -51,7 +51,7 @@ describe("014.1 NODE_ENV Validation", () => {
       const content = await readBootstrap();
 
       assert(
-        content.includes("throw new Error("),
+        content.includes("throw") && content.includes("NODE_ENV must be set"),
         "Should throw error when NODE_ENV missing in proxy mode",
       );
       assert(
