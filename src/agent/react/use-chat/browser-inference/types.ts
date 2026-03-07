@@ -2,7 +2,7 @@
  * Worker ↔ main thread message protocol for browser-side inference.
  */
 
-export interface WorkerGenerateRequest {
+interface WorkerGenerateRequest {
   type: "generate";
   id: string;
   messages: Array<{ role: string; content: string }>;
@@ -15,30 +15,30 @@ export interface WorkerGenerateRequest {
 
 export type WorkerRequest = WorkerGenerateRequest;
 
-export interface WorkerStatusResponse {
+interface WorkerStatusResponse {
   type: "status";
   status: "loading-runtime" | "downloading-model" | "ready" | "generating";
 }
 
-export interface WorkerDownloadProgressResponse {
+interface WorkerDownloadProgressResponse {
   type: "download-progress";
   progress: number; // 0–100
   file?: string;
 }
 
-export interface WorkerTokenResponse {
+interface WorkerTokenResponse {
   type: "token";
   id: string;
   token: string;
 }
 
-export interface WorkerDoneResponse {
+interface WorkerDoneResponse {
   type: "done";
   id: string;
   text: string;
 }
 
-export interface WorkerErrorResponse {
+interface WorkerErrorResponse {
   type: "error";
   id: string;
   error: string;

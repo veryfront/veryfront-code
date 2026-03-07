@@ -41,7 +41,7 @@ export function hasHttpImports(code: string): boolean {
 }
 
 /** Strip Deno shim from esm.sh bundles (if present) */
-export function stripDenoShim(code: string): string {
+function stripDenoShim(code: string): string {
   if (!isDeno) return code;
 
   return code.replace(
@@ -54,7 +54,7 @@ export function stripDenoShim(code: string): string {
 export { getReactUrls };
 
 /** Alias for getReactUrls - used by esbuild bundling */
-export function getReactAliases(): Record<string, string> {
+function getReactAliases(): Record<string, string> {
   return getReactUrls();
 }
 

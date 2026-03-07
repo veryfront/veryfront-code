@@ -22,7 +22,7 @@ const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("middleware");
 
-export function createRequestLoggerMiddleware(): MiddlewareFunction {
+function createRequestLoggerMiddleware(): MiddlewareFunction {
   return async (c, next) => {
     const start = performance.now();
     const { pathname } = new URL(c.req.url);

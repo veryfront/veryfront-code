@@ -135,7 +135,7 @@ export interface ProxyLogger {
   error: (msg: string, error?: Error, extra?: Record<string, unknown>) => void;
 }
 
-export interface ProxyHandlerOptions {
+interface ProxyHandlerOptions {
   config: ProxyConfig;
   cache?: TokenCache;
   logger?: ProxyLogger;
@@ -620,7 +620,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   };
 }
 
-export type ProxyHandler = ReturnType<typeof createProxyHandler>;
+type ProxyHandler = ReturnType<typeof createProxyHandler>;
 
 export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
   const headers = new Headers(req.headers);

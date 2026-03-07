@@ -1,7 +1,7 @@
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 
-export interface TransformUiModuleOptions {
+interface TransformUiModuleOptions {
   spanName: string;
   importBasePath: string;
 }

@@ -17,7 +17,7 @@ import {
 } from "./types.ts";
 
 /** Result of parsing a SKILL.md file */
-export interface ParsedSkillContent {
+interface ParsedSkillContent {
   frontmatter: Record<string, unknown>;
   body: string;
 }

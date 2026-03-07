@@ -440,7 +440,7 @@ export function afterAll(fn: HookFn): void {
 
 export const test = it;
 
-export async function initBdd(): Promise<void> {
+async function initBdd(): Promise<void> {
   if (denoBdd) return;
   await getImpl();
 }

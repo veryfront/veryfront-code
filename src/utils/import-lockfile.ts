@@ -4,14 +4,14 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 const logger = serverLogger.component("lockfile");
 
-export interface LockfileEntry {
+interface LockfileEntry {
   resolved: string;
   integrity: string;
   dependencies?: string[];
   fetchedAt?: string;
 }
 
-export interface LockfileData {
+interface LockfileData {
   version: 1;
   imports: Record<string, LockfileEntry>;
 }
@@ -153,14 +153,14 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   return { read, write, get, set, has, clear, flush };
 }
 
-export interface FetchWithLockOptions {
+interface FetchWithLockOptions {
   lockfile: LockfileManager;
   url: string;
   fetchFn?: typeof fetch;
   strict?: boolean;
 }
 
-export interface FetchWithLockResult {
+interface FetchWithLockResult {
   content: string;
   resolvedUrl: string;
   fromCache: boolean;
@@ -169,7 +169,7 @@ export interface FetchWithLockResult {
 
 const USER_AGENT_HEADERS = { "user-agent": "Mozilla/5.0 Veryfront/1.0" };
 
-export async function fetchWithLock(options: FetchWithLockOptions): Promise<FetchWithLockResult> {
+async function fetchWithLock(options: FetchWithLockOptions): Promise<FetchWithLockResult> {
   const { lockfile, url, fetchFn = fetch, strict = false } = options;
 
   const entry = await lockfile.get(url);
@@ -228,7 +228,7 @@ export async function fetchWithLock(options: FetchWithLockOptions): Promise<Fetc
   return { content, resolvedUrl, fromCache: false, integrity };
 }
 
-export interface ParsedImport {
+interface ParsedImport {
   specifier: string;
   type: "static" | "dynamic";
 }

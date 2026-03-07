@@ -19,7 +19,7 @@ import type { HttpCacheLike } from "./http-cache-helpers.ts";
 
 const logger = rendererLogger.component("http-cache");
 
-export const DISTRIBUTED_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const DISTRIBUTED_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 /** Per-request accumulator for bundle metadata during cacheHttpImportsToLocal. */
 export const bundleAccumulatorStorage = new AsyncLocalStorage<BundleEntry[]>();
@@ -29,7 +29,7 @@ export const processingStackStorage = new AsyncLocalStorage<Set<string>>();
 export const inFlightHttpFetches = new Map<string, Promise<string | null>>();
 
 /** Maximum time to wait for an in-flight fetch from another request before retrying */
-export const IN_FLIGHT_WAIT_TIMEOUT_MS = 30_000;
+const IN_FLIGHT_WAIT_TIMEOUT_MS = 30_000;
 
 /**
  * Clear all in-flight HTTP fetches.
@@ -40,7 +40,7 @@ export function __clearInFlightHttpFetches(): void {
 }
 
 /** Jitter to spread out timeout retries and prevent thundering herd (0-5s) */
-export const IN_FLIGHT_JITTER_MS = 5_000;
+const IN_FLIGHT_JITTER_MS = 5_000;
 
 /**
  * Wait for an in-flight fetch with timeout + jitter.

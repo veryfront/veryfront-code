@@ -338,7 +338,7 @@ export type { RequestContext };
  * Registered on globalThis to avoid circular dependencies between
  * cache-key-builder / cache backends and the FS adapter layer.
  */
-export interface VfMultiProjectAdapterGlobal {
+interface VfMultiProjectAdapterGlobal {
   getCurrentRequestContext: () => RequestContext | null;
   getRequestScopedFile: (cacheKey: string) => string | undefined;
   setRequestScopedFile: (cacheKey: string, content: string) => void;

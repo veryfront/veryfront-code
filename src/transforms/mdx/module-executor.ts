@@ -4,7 +4,7 @@ import { jsx as jsxRuntimeJsx, jsxs as jsxRuntimeJsxs } from "react/jsx-runtime"
 import type { MDXComponents, MDXExecutionContext, MDXModule, MDXModuleFactory } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
-export function executeModule(
+function executeModule(
   factory: MDXModuleFactory | string,
   context: MDXExecutionContext,
 ): MDXModule {
@@ -34,7 +34,7 @@ export function executeModule(
 
 type MDXComponent = React.ComponentType<{ components?: MDXComponents; children?: React.ReactNode }>;
 
-export function selectComponent(module: MDXModule, extractLayout: boolean): MDXComponent | null {
+function selectComponent(module: MDXModule, extractLayout: boolean): MDXComponent | null {
   if (typeof module === "function") return module as MDXComponent;
 
   if (extractLayout) {

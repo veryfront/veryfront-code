@@ -17,7 +17,7 @@ export interface ReactVersionConfig {
   imports: Record<string, string>;
 }
 
-export interface ReactVersionSwitcher {
+interface ReactVersionSwitcher {
   switchTo(version: ReactVersion): Promise<void>;
   getCurrentVersion(): Promise<ReactVersion | null>;
   getAvailableVersions(): ReactVersion[];

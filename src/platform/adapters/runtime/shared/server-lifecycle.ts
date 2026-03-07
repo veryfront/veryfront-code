@@ -13,7 +13,7 @@ export function createServeHandler(createServer: ServerFactory, setActive: Serve
   };
 }
 
-export async function startManagedServer(
+async function startManagedServer(
   createServer: ServerFactory,
   handler: RequestHandler,
   options: ServeOptions,

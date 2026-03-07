@@ -18,7 +18,7 @@ export {
   toFileUrl,
 } from "../path/index.ts";
 
-export interface PosixPath {
+interface PosixPath {
   join(...paths: string[]): string;
   resolve(...paths: string[]): string;
   normalize(path: string): string;

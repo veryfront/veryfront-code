@@ -272,7 +272,7 @@ export type ClientCommandType =
 /**
  * Base client command interface
  */
-export interface ClientCommandBase {
+interface ClientCommandBase {
   type: ClientCommandType;
   timestamp: number;
   runId: string;
@@ -289,7 +289,7 @@ export interface CancelCommand extends ClientCommandBase {
 /**
  * Approve a pending tool call
  */
-export interface ApproveCommand extends ClientCommandBase {
+interface ApproveCommand extends ClientCommandBase {
   type: "approve";
   toolCallId: string;
 }
@@ -297,7 +297,7 @@ export interface ApproveCommand extends ClientCommandBase {
 /**
  * Reject a pending tool call
  */
-export interface RejectCommand extends ClientCommandBase {
+interface RejectCommand extends ClientCommandBase {
   type: "reject";
   toolCallId: string;
   reason?: string;
@@ -336,7 +336,7 @@ export type ClientCommandHandler = (command: ClientCommand) => void | Promise<vo
 /**
  * Extended event type including bidirectional events
  */
-export type ClaudeCodeEventTypeExtended =
+type ClaudeCodeEventTypeExtended =
   | ClaudeCodeEventType
   | "approval_request"
   | "input_request"
@@ -346,7 +346,7 @@ export type ClaudeCodeEventTypeExtended =
 /**
  * Base interface for extended events (bidirectional communication)
  */
-export interface ClaudeCodeEventBaseExtended {
+interface ClaudeCodeEventBaseExtended {
   type: ClaudeCodeEventTypeExtended;
   timestamp: number;
   runId?: string;

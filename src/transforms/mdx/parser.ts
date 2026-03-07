@@ -4,7 +4,7 @@ import { extractFrontmatter, extractMetadata } from "./esm-module-loader/metadat
 
 export type { ParsedMDX };
 
-export function parseMDXCode(compiledCode: string): ParsedMDX {
+function parseMDXCode(compiledCode: string): ParsedMDX {
   logger.debug("Parsing MDX code, first 200 chars:", compiledCode.substring(0, 200));
 
   const importRegex = /^\s*import\s+(?:{([^}]+)}|(\w+))\s+from\s+['"]([^'"]+)['"]\s*;?\s*$/gm;

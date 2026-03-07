@@ -10,7 +10,7 @@ import type { Message, Plugin } from "esbuild";
 
 const logger = serverLogger.component("api");
 
-export interface HTTPPluginOptions {
+interface HTTPPluginOptions {
   allowedHosts: string[];
   lockfile?: LockfileManager;
   projectDir?: string;

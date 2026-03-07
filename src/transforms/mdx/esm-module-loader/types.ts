@@ -28,12 +28,12 @@ export interface FSAdapter {
   makeTempDir(prefix: string): Promise<string>;
 }
 
-export interface ImportMatch {
+interface ImportMatch {
   original: string;
   path: string;
 }
 
-export interface ModuleFetchResult {
+interface ModuleFetchResult {
   original: string;
   filePath: string | null;
   path: string;
@@ -76,7 +76,7 @@ export interface ModuleFetcherContext {
   transformDeadline?: number;
 }
 
-export interface JSXTransform {
+interface JSXTransform {
   original: string;
   transformed: string;
 }

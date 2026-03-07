@@ -16,7 +16,7 @@ import type { BackendConfig, WorkflowBackend } from "./types.ts";
 
 const logger = baseLogger.component("temporal-adapter");
 
-export interface TemporalAdapterConfig extends BackendConfig {
+interface TemporalAdapterConfig extends BackendConfig {
   /** Temporal server address */
   address?: string;
   /** Temporal namespace */
@@ -36,7 +36,7 @@ export interface TemporalAdapterConfig extends BackendConfig {
 /**
  * Stub implementation - requires Temporal SDK and worker setup.
  */
-export class TemporalAdapter implements WorkflowBackend {
+class TemporalAdapter implements WorkflowBackend {
   private config: TemporalAdapterConfig;
 
   constructor(config: TemporalAdapterConfig = {}) {

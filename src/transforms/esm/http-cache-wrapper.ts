@@ -130,7 +130,7 @@ function decodeGzip(content: string): DecodeResult {
 /**
  * Result of getting code from distributed cache.
  */
-export interface GetCodeResult {
+interface GetCodeResult {
   /** The local module code (detokenized), or null if not found/invalid */
   code: LocalModuleCode | null;
   /** Whether the content was gzip-compressed in cache */
@@ -149,7 +149,7 @@ export interface GetCodeResult {
  * This class is the ONLY authorized way to interact with distributed cache
  * for HTTP bundle code.
  */
-export class HttpBundleCache {
+class HttpBundleCache {
   /**
    * Get module code from distributed cache by hash.
    * ALWAYS returns LocalModuleCode (detokenized) or null.

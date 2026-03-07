@@ -1,4 +1,4 @@
-export type StreamState = "streaming" | "done";
+type StreamState = "streaming" | "done";
 
 /** Where inference is happening */
 export type InferenceMode = "cloud" | "server-local" | "browser";
@@ -80,7 +80,7 @@ export interface UIMessage {
   createdAt?: Date | string;
 }
 
-export type ToolOutputState = "output-available" | "output-error";
+type ToolOutputState = "output-available" | "output-error";
 
 export interface ToolOutput {
   tool: string;

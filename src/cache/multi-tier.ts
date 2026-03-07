@@ -49,7 +49,7 @@ export interface CacheTier<T = string> {
 /**
  * Configuration for multi-tier cache.
  */
-export interface MultiTierCacheConfig<T = string> {
+interface MultiTierCacheConfig<T = string> {
   /** Cache name for logging */
   name: string;
 

@@ -35,7 +35,7 @@ export function matchesAllowedTool(toolName: string, pattern: string): boolean {
 }
 
 /** Minimal tool definition shape for filtering */
-export interface FilterableToolDefinition {
+interface FilterableToolDefinition {
   name: string;
   description: string;
   parameters: unknown;

@@ -71,7 +71,7 @@ type LexicalNode = any;
 // deno-lint-ignore no-explicit-any -- opaque CDN types (see above)
 type LexicalSelection = any;
 
-export interface LexicalEditor {
+interface LexicalEditor {
   focus(): void;
   update(fn: () => void, options?: { discrete?: boolean }): void;
   dispatchCommand(command: LexicalCommand, payload: unknown): void;
@@ -80,7 +80,7 @@ export interface LexicalEditor {
   setRootElement(element: HTMLElement | null): void;
 }
 
-export interface LexicalModule {
+interface LexicalModule {
   createEditor(config: Record<string, unknown>): LexicalEditor;
   $getRoot(): LexicalNode;
   $getSelection(): LexicalSelection | null;
@@ -89,7 +89,7 @@ export interface LexicalModule {
   FORMAT_TEXT_COMMAND: LexicalCommand;
 }
 
-export interface LexicalRichTextModule {
+interface LexicalRichTextModule {
   HeadingNode: unknown;
   QuoteNode: unknown;
   registerRichText(editor: LexicalEditor): () => void;
@@ -97,7 +97,7 @@ export interface LexicalRichTextModule {
   $createQuoteNode(): LexicalNode;
 }
 
-export interface LexicalListModule {
+interface LexicalListModule {
   ListNode: unknown;
   ListItemNode: unknown;
   registerList(editor: LexicalEditor): () => void;
@@ -105,7 +105,7 @@ export interface LexicalListModule {
   INSERT_ORDERED_LIST_COMMAND: LexicalCommand;
 }
 
-export interface LexicalMarkdownModule {
+interface LexicalMarkdownModule {
   TRANSFORMERS: unknown[];
   $convertToMarkdownString(
     transformers: unknown[],
@@ -120,11 +120,11 @@ export interface LexicalMarkdownModule {
   ): void;
 }
 
-export interface LexicalSelectionModule {
+interface LexicalSelectionModule {
   $setBlocksType(selection: LexicalSelection, factory: () => LexicalNode): void;
 }
 
-export interface LexicalHistoryModule {
+interface LexicalHistoryModule {
   registerHistory(editor: LexicalEditor, state: unknown, delay: number): () => void;
   createEmptyHistoryState(): unknown;
 }

@@ -13,7 +13,7 @@ import { buildComponentCacheKey } from "#veryfront/cache/keys.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 
-export interface ComponentPageResult {
+interface ComponentPageResult {
   pageElement: BundledReact.ReactElement;
   pageBundle: PageBundle;
 }

@@ -14,7 +14,7 @@ import { ComponentRegistry } from "./ssr/component-registry.ts";
 import type { RenderResult } from "./orchestrator/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-export interface PageRenderOptions {
+interface PageRenderOptions {
   params?: Record<string, string | string[]>;
   props?: ComponentProps;
   nonce?: string;
@@ -28,7 +28,7 @@ export interface PageRenderOptions {
   contentSourceId?: string;
 }
 
-export interface PageBundleResult {
+interface PageBundleResult {
   pageElement?: React.ReactElement;
   pageBundle?: PageBundle;
   clientModuleCode?: string;

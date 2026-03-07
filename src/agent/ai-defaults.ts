@@ -11,40 +11,40 @@ export const STREAMING_DEFAULTS = {
   chunkSize: 16_384,
 } as const;
 
-export const MEMORY_DEFAULTS = {
+const MEMORY_DEFAULTS = {
   bufferSize: 10,
   summaryThreshold: 20,
   redisTtl: 86_400, // 24 hours
   redisKeyPrefix: "veryfront:agent:memory:",
 } as const;
 
-export const RATE_LIMIT_DEFAULTS = {
+const RATE_LIMIT_DEFAULTS = {
   requestsPerMinute: 60,
   tokensPerMinute: 100_000,
   windowMs: 60_000,
 } as const;
 
-export const COST_TRACKING_DEFAULTS = {
+const COST_TRACKING_DEFAULTS = {
   dailyBudget: 100,
   monthlyBudget: 1_000,
   warningThreshold: 0.8,
 } as const;
 
-export const RETRY_DEFAULTS = {
+const RETRY_DEFAULTS = {
   maxAttempts: 3,
   initialDelayMs: 1_000,
   maxDelayMs: 30_000,
   backoffMultiplier: 2,
 } as const;
 
-export const WORKFLOW_DEFAULTS = {
+const WORKFLOW_DEFAULTS = {
   timeoutMs: 300_000, // 5 minutes
   maxParallel: 10,
   checkpointIntervalMs: 5_000,
   approvalTimeoutMs: 86_400_000, // 24 hours
 } as const;
 
-export const PROVIDER_DEFAULTS = {
+const PROVIDER_DEFAULTS = {
   models: {
     openai: "gpt-4o",
     anthropic: "claude-sonnet-4-20250514",
@@ -53,13 +53,13 @@ export const PROVIDER_DEFAULTS = {
   requestTimeoutMs: 120_000, // 2 minutes
 } as const;
 
-export const SECURITY_DEFAULTS = {
+const SECURITY_DEFAULTS = {
   maxInputLength: 100_000,
   maxOutputLength: 100_000,
   redactPii: false,
 } as const;
 
-export const AI_DEFAULTS = {
+const AI_DEFAULTS = {
   agent: AGENT_DEFAULTS,
   streaming: STREAMING_DEFAULTS,
   memory: MEMORY_DEFAULTS,

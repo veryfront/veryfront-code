@@ -16,7 +16,7 @@ function generateHMRScript(
   return `<script type="module" src="/_veryfront/hmr.js"${nonceAttr}></script>`;
 }
 
-export interface DevScriptsOptions {
+interface DevScriptsOptions {
   /** Skip hmr.js when preview-hmr.js will be used (proxy mode) */
   skipDevHMR?: boolean;
   /** Skip error logger when endpoint is not available (preview mode) */

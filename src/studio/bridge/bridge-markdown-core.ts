@@ -24,19 +24,19 @@ import {
 // Re-export shared types for consumers
 export type { MdxBlock, MdxImportEntry };
 
-export interface ExtractedRawBlocks {
+interface ExtractedRawBlocks {
   editorBody: string;
   rawBlocks: string[];
   mdxBlocks: MdxBlock[];
   tokenPrefix: string;
 }
 
-export interface MarkdownParts {
+interface MarkdownParts {
   frontmatter: string;
   body: string;
 }
 
-export interface TextDiff {
+interface TextDiff {
   index: number;
   deleteCount: number;
   insertText: string;
@@ -95,7 +95,7 @@ export function openFilePathInStudio(
   );
 }
 
-export function openMarkdownSourceInStudio(lineNumber?: number): void {
+function openMarkdownSourceInStudio(lineNumber?: number): void {
   openFilePathInStudio(getConfig().pagePath, lineNumber);
 }
 
@@ -116,7 +116,7 @@ export function normalizePathSegments(segments: string[]): string[] {
   return stack;
 }
 
-export function resolveImportPathForPage(importPath: string): string {
+function resolveImportPathForPage(importPath: string): string {
   const sourcePath = typeof importPath === "string" ? importPath.trim() : "";
   if (!sourcePath) {
     return "";
@@ -145,7 +145,7 @@ export function resolveImportPathForPage(importPath: string): string {
   return resolved.join("/");
 }
 
-export function isLikelyProjectImportPath(importPath: string): boolean {
+function isLikelyProjectImportPath(importPath: string): boolean {
   if (typeof importPath !== "string") {
     return false;
   }
@@ -161,7 +161,7 @@ export function isLikelyProjectImportPath(importPath: string): boolean {
   );
 }
 
-export function guessStudioFilePath(filePath: string): string {
+function guessStudioFilePath(filePath: string): string {
   const sourcePath = typeof filePath === "string" ? filePath.trim() : "";
   if (!sourcePath) {
     return "";

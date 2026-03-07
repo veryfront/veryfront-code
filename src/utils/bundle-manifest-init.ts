@@ -118,7 +118,7 @@ export function getBundleManifestTTL(
   return BUNDLE_MANIFEST_DEV_TTL_MS;
 }
 
-export async function warmupBundleManifest(
+async function warmupBundleManifest(
   store: BundleManifestStore,
   keys: string[],
 ): Promise<void> {

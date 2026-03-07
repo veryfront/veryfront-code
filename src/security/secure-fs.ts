@@ -45,7 +45,7 @@ export interface SecurityEvent {
   timestamp: Date;
 }
 
-export interface ContextOptions {
+interface ContextOptions {
   allowedImportDirs?: string[];
 }
 

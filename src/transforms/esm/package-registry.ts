@@ -58,7 +58,7 @@ export function esmShReact(
 /**
  * Generate esm.sh URL for browser.
  */
-export function getEsmShUrl(
+function getEsmShUrl(
   pkg: string,
   version: string,
   external?: readonly string[],
@@ -93,7 +93,7 @@ export function getReactImportMap(version?: string): Record<string, string> {
 /**
  * Get React esm.sh URLs for Deno SSR.
  */
-export function getDenoNpmReactMap(version?: string): Record<string, string> {
+function getDenoNpmReactMap(version?: string): Record<string, string> {
   return getReactUrls(version);
 }
 

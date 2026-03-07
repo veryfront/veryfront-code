@@ -88,7 +88,7 @@ export default {};
  *
  * @throws Error if any required polyfill is missing from EMBEDDED_POLYFILLS
  */
-export async function validateEmbeddedPolyfills(): Promise<void> {
+async function validateEmbeddedPolyfills(): Promise<void> {
   if (!isDenoCompiled) return; // Only validate in compiled mode
 
   // Dynamic import to avoid circular dependency at module load time

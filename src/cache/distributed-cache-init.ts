@@ -10,7 +10,7 @@ import { isApiCacheAvailable, isDiskCacheConfigured } from "./backend.ts";
 
 const logger = baseLogger.component("distributed-cache");
 
-export interface DistributedCacheStatus {
+interface DistributedCacheStatus {
   backend: "api" | "redis" | "disk" | "memory";
   transformCache: boolean;
   ssrModuleCache: boolean;

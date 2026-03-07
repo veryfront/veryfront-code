@@ -2,7 +2,7 @@ import { serverLogger } from "#veryfront/utils";
 
 const logger = serverLogger.component("reload-notifier");
 
-export interface ReloadProjectInfo {
+interface ReloadProjectInfo {
   projectSlug?: string;
   projectId?: string;
   projectDir?: string;

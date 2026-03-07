@@ -340,7 +340,7 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
 }
 
 /** Result of cacheHttpImportsToLocal including bundle manifest info. */
-export interface CacheHttpImportsResult {
+interface CacheHttpImportsResult {
   code: string;
   bundleManifestId?: string;
 }
@@ -428,5 +428,5 @@ export function invalidateHttpBundle(hash: string, cacheDir: string): Promise<bo
 export const __test_extractBundleDeps = extractBundleDeps;
 
 // Export URL embedding functions for testing
-export const __test_embedSourceUrl = embedSourceUrl;
-export const __test_extractSourceUrl = extractSourceUrl;
+const __test_embedSourceUrl = embedSourceUrl;
+const __test_extractSourceUrl = extractSourceUrl;

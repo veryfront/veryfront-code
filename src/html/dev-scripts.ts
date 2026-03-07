@@ -52,7 +52,7 @@ export function getProdScripts(slug: string, nonce?: string): string {
   <script type="module" src="/_veryfront/hydrate.js?slug=${encodedSlug}"${nonceAttr}></script>`;
 }
 
-export interface StudioScriptOptions {
+interface StudioScriptOptions {
   projectId: string;
   pageId: string;
   pagePath?: string;

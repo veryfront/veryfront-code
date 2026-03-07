@@ -17,5 +17,5 @@ export interface CompileResult {
   imports: string[];
 }
 
-export type UnifiedPlugin = unknown | [unknown, ...unknown[]];
+type UnifiedPlugin = unknown | [unknown, ...unknown[]];
 export type PluginList = UnifiedPlugin[];

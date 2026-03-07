@@ -24,7 +24,7 @@ export interface OAuthConfig {
   previewApiClientSecret: string;
 }
 
-export interface TokenManagerOptions {
+interface TokenManagerOptions {
   cache?: TokenCache;
   refreshBuffer?: number; // ms before expiry to trigger refresh
 }

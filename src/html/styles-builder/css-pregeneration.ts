@@ -11,7 +11,7 @@ import { extractCandidatesFromFiles, getProjectCSS } from "./tailwind-compiler.t
 
 const logger = serverLogger.component("css-pregeneration");
 
-export interface CSSPregenerationOptions {
+interface CSSPregenerationOptions {
   /** Project slug for cache keying */
   projectSlug: string;
   /** List of files with content to extract candidates from */

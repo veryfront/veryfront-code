@@ -155,7 +155,7 @@ export async function stop(): Promise<void> {
   esbuild.stop();
 }
 
-export function isEsbuildReady(): boolean {
+function isEsbuildReady(): boolean {
   return setupComplete;
 }
 

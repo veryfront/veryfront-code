@@ -720,7 +720,7 @@ function createTimerTracker(): { install: () => void; clear: () => void } {
   };
 }
 
-export async function installTestIsolation(hooks: HookRegistration): Promise<void> {
+async function installTestIsolation(hooks: HookRegistration): Promise<void> {
   const globalAny = globalThis as Record<string, unknown>;
   if (globalAny[installedKey]) return;
   globalAny[installedKey] = true;

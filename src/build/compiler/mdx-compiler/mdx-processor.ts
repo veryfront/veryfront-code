@@ -4,7 +4,7 @@ import type { CompileOptions } from "./types.ts";
 
 type MDXPluggable = NonNullable<MDXCompileOptions["remarkPlugins"]>[number];
 
-export interface ProcessedMDX {
+interface ProcessedMDX {
   code: string;
   imports: string[];
 }

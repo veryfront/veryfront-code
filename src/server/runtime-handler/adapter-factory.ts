@@ -22,7 +22,7 @@ const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("adapter-factory");
 
-export interface AdapterResolutionResult {
+interface AdapterResolutionResult {
   /** The effective project directory to use */
   projectDir: string;
   /** The adapter to use for this request */
@@ -33,7 +33,7 @@ export interface AdapterResolutionResult {
   isLocalProject: boolean;
 }
 
-export interface AdapterResolutionOptions {
+interface AdapterResolutionOptions {
   /** Base project directory */
   projectDir: string;
   /** Base adapter */

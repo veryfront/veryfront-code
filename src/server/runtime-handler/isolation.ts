@@ -15,7 +15,7 @@ export type { IsolationCheckResult } from "./project-isolation.ts";
 /**
  * Injection interface for testing isolation dependencies
  */
-export interface IsolationDeps {
+interface IsolationDeps {
   checkRequest?: typeof projectIsolation.checkRequest;
   startRequest?: typeof projectIsolation.startRequest;
   completeRequest?: typeof projectIsolation.completeRequest;

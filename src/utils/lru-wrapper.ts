@@ -7,7 +7,7 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 /** Default interval between expired-entry cleanup sweeps (1 minute) */
 const DEFAULT_CLEANUP_INTERVAL_MS = 60_000;
 
-export interface LRUOptions {
+interface LRUOptions {
   maxEntries?: number;
   ttlMs?: number;
   cleanupIntervalMs?: number;

@@ -65,12 +65,12 @@ const FrontmatterValueSchema = z.union([
   z.undefined(),
 ]);
 
-export const FrontmatterSchema: z.ZodType<Frontmatter> = z.record(
+const FrontmatterSchema: z.ZodType<Frontmatter> = z.record(
   z.string(),
   FrontmatterValueSchema,
 );
 
-export const EntitySchema: z.ZodType<Entity> = z.object({
+const EntitySchema: z.ZodType<Entity> = z.object({
   id: z.string().uuid("Entity id must be a valid UUID"),
   path: z
     .string()
@@ -89,11 +89,11 @@ export const EntitySchema: z.ZodType<Entity> = z.object({
   isPage: z.boolean().optional(),
 });
 
-export function validateEntity(entity: unknown): Entity {
+function validateEntity(entity: unknown): Entity {
   return EntitySchema.parse(entity);
 }
 
-export function safeValidateEntity(entity: unknown): Entity | null {
+function safeValidateEntity(entity: unknown): Entity | null {
   const result = EntitySchema.safeParse(entity);
   return result.success ? result.data : null;
 }

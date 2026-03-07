@@ -24,7 +24,7 @@ export interface MissingImport {
   reason: string;
 }
 
-export interface ParseLocalImportsResult {
+interface ParseLocalImportsResult {
   imports: LocalImport[];
   cssImports: LocalImport[];
   crossProjectImports: CrossProjectImport[];

@@ -179,7 +179,7 @@ export function resetCompatHooksContext(): void {
   compatHooksContext = null;
 }
 
-export const CompatHooksContext = {
+const CompatHooksContext = {
   get Provider(): React.Provider<CompatHooks> {
     return getCompatHooksContext().Provider;
   },

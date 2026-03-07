@@ -51,7 +51,7 @@ function setClientModCache(key: string, mod: ClientModule): void {
   globalThis.__VF_CLIENT_MOD_CACHE.set(key, mod);
 }
 
-export function parseClientRef(ref: string): { rel: string; exportName: string } | null {
+function parseClientRef(ref: string): { rel: string; exportName: string } | null {
   const m = ref.match(/^\/app\/(.+)#([A-Za-z0-9_]+)$/);
   if (!m) return null;
   return { rel: `/${m[1] || ""}`, exportName: m[2] || "default" };

@@ -10,7 +10,7 @@
  * Check if a file path is inside pages/ or app/ directories.
  * Files in these directories are routed normally, not as standalone markdown.
  */
-export function isInRoutableDir(filePath: string | undefined): boolean {
+function isInRoutableDir(filePath: string | undefined): boolean {
   if (!filePath) return false;
 
   return (

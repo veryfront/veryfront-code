@@ -11,7 +11,7 @@
 import { escapeHtml } from "veryfront/utils/html-escape";
 
 /** Options for generating markdown preview HTML. */
-export interface MarkdownHtmlOptions {
+interface MarkdownHtmlOptions {
   /** Rendered HTML content from the markdown compiler. */
   rawHtml: string;
   /** Page title (from frontmatter or file path). */

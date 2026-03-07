@@ -9,14 +9,14 @@ import type {
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 import { agentLogger as logger } from "#veryfront/utils";
 
-export interface InngestAdapterConfig extends BackendConfig {
+interface InngestAdapterConfig extends BackendConfig {
   eventKey?: string;
   signingKey?: string;
   baseUrl?: string;
   debug?: boolean;
 }
 
-export class InngestAdapter implements WorkflowBackend {
+class InngestAdapter implements WorkflowBackend {
   private config: InngestAdapterConfig;
 
   constructor(config: InngestAdapterConfig = {}) {

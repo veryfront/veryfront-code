@@ -143,7 +143,7 @@ export async function findMissingFileDependenciesInCode(
  * Check if code contains raw HTTP URLs that would fail in compiled binary mode.
  * Compiled binaries cannot do dynamic HTTP imports.
  */
-export function hasRawHttpImports(code: string): boolean {
+function hasRawHttpImports(code: string): boolean {
   // Match HTTP URLs in import statements: from "https://..." or from 'https://...'
   const httpImportPattern = /from\s+["'](https?:\/\/[^"']+)["']/gi;
   return httpImportPattern.test(code);

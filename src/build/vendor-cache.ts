@@ -19,7 +19,7 @@ interface VendorCacheEntry {
   };
 }
 
-export class VendorCacheManager {
+class VendorCacheManager {
   private cache: LRUCache<string, VendorCacheEntry>;
 
   constructor() {

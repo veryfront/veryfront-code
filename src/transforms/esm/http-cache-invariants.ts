@@ -41,7 +41,7 @@ export const hasHardcodedCachePaths = baseHasHardcodedCachePaths;
  * @param code - The code string to check
  * @returns true if code contains __VF_CACHE_DIR__ tokens
  */
-export function hasPortableTokens(code: string): boolean {
+function hasPortableTokens(code: string): boolean {
   return code.includes(CACHE_DIR_TOKEN);
 }
 
@@ -135,7 +135,7 @@ export function asLocalModuleCode(code: string): LocalModuleCode {
  * @returns Branded PortableModuleCode
  * @throws VeryfrontError (cache-invariant-violation) if code contains hardcoded paths
  */
-export function asPortableModuleCode(code: string): PortableModuleCode {
+function asPortableModuleCode(code: string): PortableModuleCode {
   if (hasHardcodedCachePaths(code)) {
     throw CACHE_INVARIANT_VIOLATION.create({
       detail:
@@ -152,6 +152,6 @@ export function asPortableModuleCode(code: string): PortableModuleCode {
  * @param code - The branded code
  * @returns Plain string
  */
-export function unwrapCode(code: LocalModuleCode | PortableModuleCode): string {
+function unwrapCode(code: LocalModuleCode | PortableModuleCode): string {
   return code as unknown as string;
 }

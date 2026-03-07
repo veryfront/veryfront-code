@@ -32,7 +32,7 @@ export interface YText {
   observe(fn: (event: unknown) => void): void;
 }
 
-export interface YjsAwareness {
+interface YjsAwareness {
   clientID: number;
   setLocalStateField(field: string, value: unknown): void;
   getStates(): Map<number, Record<string, unknown>>;

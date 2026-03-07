@@ -5,7 +5,7 @@ import type {
   BundleMetadata,
 } from "./bundle-manifest.ts";
 
-export interface RedisBundleManifestStoreOptions {
+interface RedisBundleManifestStoreOptions {
   url?: string;
   keyPrefix?: string;
 }

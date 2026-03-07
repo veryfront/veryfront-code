@@ -95,9 +95,9 @@ export const BORDER_STYLES = {
   },
 } as const;
 
-export type BorderStyle = keyof typeof BORDER_STYLES;
+type BorderStyle = keyof typeof BORDER_STYLES;
 
-export interface BoxOptions {
+interface BoxOptions {
   /** Border style (default: "rounded") */
   style?: BorderStyle;
   /** Box width (default: auto-fit content) */

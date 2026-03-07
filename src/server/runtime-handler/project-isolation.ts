@@ -3,7 +3,7 @@ import { getEnvNumber, unrefTimer } from "#veryfront/compat/process.ts";
 
 const logger = serverLogger.component("project-isolation");
 
-export interface ProjectIsolationConfig {
+interface ProjectIsolationConfig {
   maxConcurrentPerProject: number;
   circuitBreakerThreshold: number;
   circuitResetTimeMs: number;

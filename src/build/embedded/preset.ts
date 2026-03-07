@@ -7,7 +7,7 @@ import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { EmbeddedBundleManifest } from "../renderer/types/bundler-types.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
-export interface BuildEmbeddedOptions {
+interface BuildEmbeddedOptions {
   projectDir: string;
   outDir: string;
   runtime: "deno" | "node" | "bun";

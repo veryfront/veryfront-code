@@ -1,6 +1,6 @@
 import grayMatterImport from "gray-matter";
 
-export interface FrontMatterResult<T = Record<string, unknown>> {
+interface FrontMatterResult<T = Record<string, unknown>> {
   attrs: T;
   body: string;
   frontMatter: string;
@@ -27,7 +27,7 @@ export function test(content: string): boolean {
   return /^---\r?\n/.test(content);
 }
 
-export function extractAsync<T = Record<string, unknown>>(
+function extractAsync<T = Record<string, unknown>>(
   content: string,
 ): Promise<FrontMatterResult<T>> {
   return Promise.resolve(extract(content));

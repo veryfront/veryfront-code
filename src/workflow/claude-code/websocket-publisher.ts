@@ -243,7 +243,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
  * - Events are published to Redis, then broadcast to connected WebSockets
  * - Commands from WebSocket are published to Redis for the worker to receive
  */
-export interface RedisWebSocketBridgeConfig {
+interface RedisWebSocketBridgeConfig {
   /** Redis URL */
   redisUrl: string;
 

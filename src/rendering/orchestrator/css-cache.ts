@@ -62,7 +62,7 @@ export function getCachedPageCss(cacheKey: string): string | undefined {
 }
 
 /** Cache CSS for a page - async to support injected repo */
-export async function cachePageCssAsync(cacheKey: string, css: string): Promise<void> {
+async function cachePageCssAsync(cacheKey: string, css: string): Promise<void> {
   if (injectedCssCacheRepo) {
     await injectedCssCacheRepo.set(cacheKey, css);
     return;

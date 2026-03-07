@@ -23,7 +23,7 @@ export type { APIContext, APIRoute };
 /**
  * Injection interface for testing APIRouteHandler dependencies
  */
-export interface APIRouteHandlerDeps {
+interface APIRouteHandlerDeps {
   loadHandlerModule?: typeof loadHandlerModule;
   discoverPagesRoutes?: typeof discoverPagesRoutes;
   discoverAppRoutes?: typeof discoverAppRoutes;

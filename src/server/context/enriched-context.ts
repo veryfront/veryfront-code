@@ -4,9 +4,9 @@ import type { HandlerContext, ParsedDomain } from "#veryfront/types";
 import { buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
 
 export type Environment = "preview" | "production";
-export type RenderMode = "development" | "production";
+type RenderMode = "development" | "production";
 
-export interface ProjectData {
+interface ProjectData {
   id: string;
   slug: string;
   name?: string;
@@ -43,7 +43,7 @@ export interface EnrichedContext {
   createdAt: number;
 }
 
-export interface BuildEnrichedContextOptions {
+interface BuildEnrichedContextOptions {
   projectId: string;
   projectSlug: string;
   projectDir: string;

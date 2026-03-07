@@ -3,7 +3,7 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { bundlerLogger as logger } from "#veryfront/utils";
 import type { MDXFrontmatter } from "./types.ts";
 
-export interface ParsedContent {
+interface ParsedContent {
   frontmatter: MDXFrontmatter;
   content: string;
 }

@@ -53,6 +53,6 @@ export function resolveVeryfrontModuleUrl(specifier: string): string | null {
   return veryfrontModuleUrlMap.get(specifier) ?? null;
 }
 
-export function getVeryfrontModuleUrlMap(): Record<string, string> {
+function getVeryfrontModuleUrlMap(): Record<string, string> {
   return Object.fromEntries(veryfrontModuleUrlMap);
 }

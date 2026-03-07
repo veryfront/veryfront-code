@@ -8,7 +8,7 @@
 import * as esbuild from "esbuild"; // Native esbuild
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
-export interface VendorBundleConfig {
+interface VendorBundleConfig {
   /** Project identifier for cache isolation */
   projectId: string;
   /** React version to bundle */
@@ -40,7 +40,7 @@ export interface VendorBundleResult {
  * @param config Vendor bundle configuration
  * @returns Vendor bundle result
  */
-export async function buildVendorBundle(
+async function buildVendorBundle(
   config: VendorBundleConfig,
 ): Promise<VendorBundleResult> {
   const { reactVersion, dependencies, dev = true } = config;

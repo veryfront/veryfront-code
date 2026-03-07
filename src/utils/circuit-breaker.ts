@@ -23,9 +23,9 @@ const DEFAULT_SUCCESS_THRESHOLD = 3;
 /** Maximum concurrent attempts allowed while the circuit is HALF_OPEN */
 const MAX_HALF_OPEN_ATTEMPTS = 3;
 
-export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
+type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
-export interface CircuitBreakerOptions {
+interface CircuitBreakerOptions {
   /** Failures before opening (default: 5) */
   failureThreshold?: number;
   /** Ms to wait before retry (default: 30000) */
@@ -216,7 +216,7 @@ export function getCircuitBreaker(
 }
 
 /** Get circuit breaker registry stats for monitoring */
-export function getCircuitBreakerStats(): {
+function getCircuitBreakerStats(): {
   total: number;
   open: number;
   halfOpen: number;

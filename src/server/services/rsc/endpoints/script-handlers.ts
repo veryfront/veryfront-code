@@ -54,10 +54,10 @@ async function buildOrServeScript(
 }
 
 // Placeholder for build-time injection
-export const CLIENT_BOOT_BUNDLE = "";
+const CLIENT_BOOT_BUNDLE = "";
 
 // Placeholder for build-time injection
-export const CLIENT_DOM_BUNDLE = "";
+const CLIENT_DOM_BUNDLE = "";
 
 export async function handleClientScript(
   adapter: RuntimeAdapter,

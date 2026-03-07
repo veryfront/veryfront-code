@@ -15,7 +15,7 @@ export function EmptyState({ message }: EmptyStateProps): ReactNode {
   );
 }
 
-export function LoadingSpinner(): ReactNode {
+function LoadingSpinner(): ReactNode {
   return (
     <div className="w-4 h-4 border-2 border-gray-200 border-t-sky-500 rounded-full animate-spin" />
   );

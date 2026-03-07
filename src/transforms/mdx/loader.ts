@@ -6,7 +6,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { MDXComponents, MDXFrontmatter, MDXModule } from "./types.ts";
 
-export function loadCompiledMDX(modulePath: string): Promise<MDXModule | null> {
+function loadCompiledMDX(modulePath: string): Promise<MDXModule | null> {
   return withSpan(
     "transforms.mdx.loadCompiledMDX",
     async () => {
@@ -21,7 +21,7 @@ export function loadCompiledMDX(modulePath: string): Promise<MDXModule | null> {
   );
 }
 
-export function getCompiledMDXPath(
+function getCompiledMDXPath(
   projectDir: string,
   slug: string,
   type: "pages" | "layouts" | "providers" = "pages",
@@ -30,7 +30,7 @@ export function getCompiledMDXPath(
   return join(projectDir, ".veryfront", "compiled", type, `${fileName}.js`);
 }
 
-export function renderCompiledMDX(
+function renderCompiledMDX(
   projectDir: string,
   slug: string,
   components: MDXComponents = {},
@@ -65,7 +65,7 @@ export function renderCompiledMDX(
   );
 }
 
-export function hasCompiledMDX(
+function hasCompiledMDX(
   projectDir: string,
   slug: string,
   type: "pages" | "layouts" | "providers" = "pages",

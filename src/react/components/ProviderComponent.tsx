@@ -5,7 +5,7 @@ import type { MDXComponents } from "#veryfront/types";
 import type { MdxBundle } from "./LayoutComponent.tsx";
 import { rendererLogger as logger } from "#veryfront/utils";
 
-export interface ProviderComponentProps {
+interface ProviderComponentProps {
   mdxBundle: MdxBundle;
   children: React.ReactNode;
   components?: MDXComponents;

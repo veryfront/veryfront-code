@@ -10,13 +10,13 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { globalCrossProjectCache } from "./cache/index.ts";
 import type { SSRModuleLoaderOptions } from "./types.ts";
 
-export interface CrossProjectImportCache {
+interface CrossProjectImportCache {
   hashContentAsync(content: string): Promise<string>;
   getTempPath(filePath: string, contentHash?: string): Promise<string>;
   getFs(): FileSystem;
 }
 
-export interface TransformCrossProjectImportFlowOptions {
+interface TransformCrossProjectImportFlowOptions {
   crossProjectImport: CrossProjectImport;
   options: Pick<
     SSRModuleLoaderOptions,

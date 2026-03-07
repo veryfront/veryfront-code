@@ -15,7 +15,7 @@ import type {
 /** Default assumed image width when metadata has no width */
 const DEFAULT_IMAGE_WIDTH = 1_920;
 
-export function generateVariant(
+function generateVariant(
   sharp: SharpConstructor,
   image: SharpInstance,
   relPath: string,

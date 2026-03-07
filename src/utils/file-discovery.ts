@@ -25,7 +25,7 @@ async function getDefaultAdapter(): Promise<RuntimeAdapter> {
   return nodeAdapter;
 }
 
-export interface FileDiscoveryOptions {
+interface FileDiscoveryOptions {
   baseDir: string;
   extensions?: string[];
   patterns?: string[];
@@ -37,7 +37,7 @@ export interface FileDiscoveryOptions {
   adapter?: RuntimeAdapter;
 }
 
-export interface FileDiscoveryResult {
+interface FileDiscoveryResult {
   path: string;
   name: string;
   isFile: boolean;

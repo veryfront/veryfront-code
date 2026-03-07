@@ -13,27 +13,27 @@ export interface SharpMetadata {
   hasAlpha?: boolean;
 }
 
-export type SharpResizeFit = "cover" | "contain" | "fill" | "inside" | "outside";
+type SharpResizeFit = "cover" | "contain" | "fill" | "inside" | "outside";
 
-export interface SharpResizeOptions {
+interface SharpResizeOptions {
   fit?: SharpResizeFit;
   withoutEnlargement?: boolean;
 }
 
-export interface SharpWebpOptions {
+interface SharpWebpOptions {
   quality?: number;
 }
 
-export interface SharpAvifOptions {
+interface SharpAvifOptions {
   quality?: number;
 }
 
-export interface SharpJpegOptions {
+interface SharpJpegOptions {
   quality?: number;
   progressive?: boolean;
 }
 
-export interface SharpPngOptions {
+interface SharpPngOptions {
   compressionLevel?: number;
   adaptiveFiltering?: boolean;
 }

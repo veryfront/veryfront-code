@@ -25,7 +25,7 @@ const logger = baseLogger.component("project-resolution");
 /**
  * Injection interface for testing project resolution dependencies
  */
-export interface ProjectResolutionDeps {
+interface ProjectResolutionDeps {
   lookupProjectByDomain?: typeof lookupProjectByDomain;
   parseProjectDomain?: typeof parseProjectDomain;
   getEnvironmentType?: typeof getEnvironmentType;
@@ -48,7 +48,7 @@ function getDeps(): Required<ProjectResolutionDeps> {
   };
 }
 
-export interface RequestHeaders {
+interface RequestHeaders {
   /** Project slug from x-project-slug header */
   projectSlug: string | undefined;
   /** Project ID from x-project-id header */
@@ -90,7 +90,7 @@ export function extractRequestHeaders(req: Request, url: URL): RequestHeaders {
   };
 }
 
-export interface ProjectResolutionResult {
+interface ProjectResolutionResult {
   /** Resolved project slug */
   projectSlug: string | undefined;
   /** Resolved project ID */
@@ -105,7 +105,7 @@ export interface ProjectResolutionResult {
   parsedDomain: ParsedDomain;
 }
 
-export interface ProjectResolutionOptions {
+interface ProjectResolutionOptions {
   /** Config from veryfront.config.ts */
   config: VeryfrontConfig | undefined;
   /** Request context from createRequestContext */

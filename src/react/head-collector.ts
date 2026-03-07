@@ -23,7 +23,7 @@ export interface HeadLink {
   [key: string]: string | undefined;
 }
 
-export interface HeadScript {
+interface HeadScript {
   /** Inline script content */
   content?: string;
   /** Script src URL */

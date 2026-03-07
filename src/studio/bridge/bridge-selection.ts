@@ -103,7 +103,7 @@ export function getMarkdownEditorSelection(): { start: number; end: number } | n
   return null;
 }
 
-export function getMarkdownRawBlockLength(index: number): number {
+function getMarkdownRawBlockLength(index: number): number {
   const rawBlock = state.markdownRawBlocks[index];
   if (typeof rawBlock !== "string") {
     return 0;
@@ -134,7 +134,7 @@ export function getMarkdownRawBlockTokenPattern(): RegExp {
   return new RegExp("\\[\\[" + escapedPrefix + "_(\\d+)\\]\\]", "g");
 }
 
-export function editorOffsetToBodyOffset(
+function editorOffsetToBodyOffset(
   editorOffset: number,
   bias?: "start" | "end",
 ): number {
@@ -176,7 +176,7 @@ export function editorOffsetToBodyOffset(
   return safeOffset + diffBefore;
 }
 
-export function bodyOffsetToEditorOffset(
+function bodyOffsetToEditorOffset(
   bodyOffset: number,
   bias?: "start" | "end",
 ): number {
@@ -217,7 +217,7 @@ export function bodyOffsetToEditorOffset(
   return Math.max(0, Math.min(editorContent.length, mappedOffset));
 }
 
-export function editorOffsetToSourceOffset(
+function editorOffsetToSourceOffset(
   renderedOffset: number,
   bias?: "start" | "end",
 ): number {
@@ -508,7 +508,7 @@ export function clearMarkdownSelectionOverlay(): void {
   state.markdownSelectionOverlayRoot.style.display = "none";
 }
 
-export function resolveMarkdownTextPoint(
+function resolveMarkdownTextPoint(
   root: Node,
   rawOffset: number,
 ): { node: Node; offset: number } {
@@ -557,7 +557,7 @@ export function resolveMarkdownTextPoint(
   };
 }
 
-export function createMarkdownEditorRange(
+function createMarkdownEditorRange(
   start: number,
   end: number,
 ): Range | null {
@@ -587,7 +587,7 @@ export function createMarkdownEditorRange(
   }
 }
 
-export function toMarkdownOverlayRect(
+function toMarkdownOverlayRect(
   rect: { left: number; top: number; width: number; height: number },
   surfaceRect: { left: number; top: number; width: number; height: number },
 ): { left: number; top: number; width: number; height: number } | null {
@@ -615,7 +615,7 @@ export function toMarkdownOverlayRect(
   };
 }
 
-export function renderMarkdownSelectionOverlay(): void {
+function renderMarkdownSelectionOverlay(): void {
   if (!state.markdownSelectionOverlayRoot) {
     return;
   }

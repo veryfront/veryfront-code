@@ -54,18 +54,18 @@ export interface OpenAPISpec {
   servers?: OpenAPIServer[];
 }
 
-export interface OpenAPIInfo {
+interface OpenAPIInfo {
   title: string;
   version: string;
   description?: string;
 }
 
-export interface OpenAPITag {
+interface OpenAPITag {
   name: string;
   description?: string;
 }
 
-export interface OpenAPIServer {
+interface OpenAPIServer {
   url: string;
   description?: string;
 }
@@ -99,7 +99,7 @@ export interface OpenAPIParameter {
   schema: JsonSchema;
 }
 
-export interface OpenAPIRequestBody {
+interface OpenAPIRequestBody {
   required?: boolean;
   description?: string;
   content: {
@@ -107,7 +107,7 @@ export interface OpenAPIRequestBody {
   };
 }
 
-export interface OpenAPIResponse {
+interface OpenAPIResponse {
   description: string;
   content?: {
     "application/json"?: { schema: JsonSchema };

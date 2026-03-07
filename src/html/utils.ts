@@ -230,7 +230,7 @@ async function resolveVersions(
   return { react: reactVersion, veryfront: veryfrontVersion };
 }
 
-export interface BuildImportMapOptions {
+interface BuildImportMapOptions {
   projectDir?: string;
   config?: VeryfrontConfig;
   customImports?: Record<string, string>;

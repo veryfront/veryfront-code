@@ -41,7 +41,7 @@ export function hideMarkdownSlashMenu(): void {
 // Command insert helpers
 // ---------------------------------------------------------------------------
 
-export function getMarkdownSlashCommandInsert(
+function getMarkdownSlashCommandInsert(
   id: string,
   indent?: string,
 ): { text: string; caretOffset: number } | null {
@@ -98,7 +98,7 @@ export function getMarkdownSlashCommandInsert(
 // Apply a slash command
 // ---------------------------------------------------------------------------
 
-export function applyMarkdownSlashCommand(index: number): boolean {
+function applyMarkdownSlashCommand(index: number): boolean {
   if (!state.markdownSlashMenuContext || state.markdownSlashMenuCommands.length === 0) {
     return false;
   }
@@ -145,7 +145,7 @@ export function applyMarkdownSlashCommand(index: number): boolean {
 // Render the slash-menu DOM
 // ---------------------------------------------------------------------------
 
-export function renderMarkdownSlashMenu(): void {
+function renderMarkdownSlashMenu(): void {
   if (
     !state.markdownSlashMenuRoot ||
     !state.markdownSlashMenuContext ||
@@ -218,7 +218,7 @@ export function renderMarkdownSlashMenu(): void {
 // Update – re-compute context from caret position
 // ---------------------------------------------------------------------------
 
-export function updateMarkdownSlashMenu(): void {
+function updateMarkdownSlashMenu(): void {
   if (
     !state.markdownEditorRoot ||
     state.markdownEditorRoot.style.display !== "block" ||

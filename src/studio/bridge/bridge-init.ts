@@ -21,7 +21,7 @@ import { setupConsoleCapture, setupErrorHandling } from "./bridge-console.ts";
 import { setupMarkdownEditor } from "./bridge-markdown-editor.ts";
 import { handleStudioMessage } from "./bridge-message-handler.ts";
 
-export function notifyAppLoaded(): void {
+function notifyAppLoaded(): void {
   const config = getConfig();
 
   postToStudio({ action: "appLoaded", url: window.location.href });
@@ -44,7 +44,7 @@ export function notifyAppLoaded(): void {
   });
 }
 
-export function notifyAppUnloaded(): void {
+function notifyAppUnloaded(): void {
   postToStudio({ action: "appUnloaded", url: window.location.href });
 }
 

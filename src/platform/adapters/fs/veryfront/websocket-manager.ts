@@ -23,7 +23,7 @@ const WS_RECONNECT_MAX_FAILURES = 10;
 const WS_HEARTBEAT_INTERVAL_MS = 60000;
 const WS_HEARTBEAT_TIMEOUT_MS = 300000;
 
-export interface WebSocketDeps {
+interface WebSocketDeps {
   apiBaseUrl: string;
   apiToken: string;
   projectSlug: string;

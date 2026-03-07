@@ -1,12 +1,12 @@
 import type { NodeState, WorkflowNode } from "../../types.ts";
 
-export interface DAGGraph {
+interface DAGGraph {
   adjList: Map<string, string[]>;
   inDegree: Map<string, number>;
   nodeMap: Map<string, WorkflowNode>;
 }
 
-export function hasAnyDependents(nodes: WorkflowNode[], nodeId: string): boolean {
+function hasAnyDependents(nodes: WorkflowNode[], nodeId: string): boolean {
   return nodes.some((n) => n.dependsOn?.includes(nodeId));
 }
 

@@ -9,7 +9,7 @@
 
 import { isDeno } from "../runtime.ts";
 
-export interface ParseOptions {
+interface ParseOptions {
   alias?: Record<string, string | string[]>;
   boolean?: string | string[] | boolean;
   string?: string | string[];

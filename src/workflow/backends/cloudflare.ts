@@ -9,7 +9,7 @@ import type {
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 
-export interface CloudflareAdapterConfig extends BackendConfig {
+interface CloudflareAdapterConfig extends BackendConfig {
   /** Durable Object namespace binding name */
   durableObjectBinding?: string;
   /** KV namespace binding name (for auxiliary storage) */

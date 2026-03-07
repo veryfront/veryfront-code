@@ -44,7 +44,7 @@ export interface CSSCacheEntry {
  * CSS inputs cache entry - stores the inputs needed to regenerate CSS.
  * Keyed by CSS hash, stores candidates and stylesheet for JIT regeneration.
  */
-export interface CSSInputsCacheEntry {
+interface CSSInputsCacheEntry {
   candidates: string[];
   stylesheet: string;
 }

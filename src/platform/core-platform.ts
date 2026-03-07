@@ -1,6 +1,6 @@
 export type Platform = "deno" | "node" | "bun" | "cloudflare-workers" | "unknown";
 
-export interface PlatformCapabilities {
+interface PlatformCapabilities {
   canRunMCPServer: boolean;
   maxAgentSteps: number;
   cpuTimeLimit: number | null;
@@ -151,7 +151,7 @@ export function getPlatformWarnings(): string[] {
   return warnings;
 }
 
-export interface CompatibilityConfig {
+interface CompatibilityConfig {
   maxSteps?: number;
   streaming?: boolean;
   requiresFileSystem?: boolean;

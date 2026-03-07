@@ -5,7 +5,7 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { getGoogleGenAIEnvConfig, getOpenAIEnvConfig } from "#veryfront/config/env.ts";
 import { createLocalEmbeddingModel } from "#veryfront/provider/local/local-embedding-adapter.ts";
 
-export type EmbeddingProviderFactory = (modelId: string) => EmbeddingModel;
+type EmbeddingProviderFactory = (modelId: string) => EmbeddingModel;
 
 const providers = new Map<string, EmbeddingProviderFactory>();
 let autoInitialized = false;

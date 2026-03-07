@@ -6,7 +6,7 @@
 
 import type { Tool } from "../types.ts";
 
-export interface ToolTestCase {
+interface ToolTestCase {
   /** Test name */
   name: string;
 
@@ -26,7 +26,7 @@ export interface ToolTestCase {
   expectedError?: RegExp | string;
 }
 
-export interface ToolTestResult {
+interface ToolTestResult {
   /** Test case name */
   name: string;
 
@@ -43,7 +43,7 @@ export interface ToolTestResult {
   executionTime: number;
 }
 
-export async function testTool(
+async function testTool(
   tool: Tool,
   testCases: ToolTestCase[],
 ): Promise<ToolTestResult[]> {
@@ -181,7 +181,7 @@ function deepMatch(actual: unknown, expected: unknown): boolean {
   return true;
 }
 
-export function printToolTestResults(
+function printToolTestResults(
   toolId: string,
   results: ToolTestResult[],
 ): void {

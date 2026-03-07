@@ -15,7 +15,7 @@
 import type { Element, Root } from "hast";
 import { visit } from "unist-util-visit";
 
-export interface RehypeNodePositionsOptions {
+interface RehypeNodePositionsOptions {
   filePath?: string;
 }
 

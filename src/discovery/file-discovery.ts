@@ -63,7 +63,7 @@ export async function findTypeScriptFiles(
  *
  * Only called when no fsAdapter is present — callers must guard accordingly.
  */
-export async function getNodeDeps(
+async function getNodeDeps(
   context: FileDiscoveryContext,
 ): Promise<{ fs: typeof import("node:fs"); path: typeof import("node:path") }> {
   if (context.nodeDeps) return context.nodeDeps;

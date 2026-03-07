@@ -41,7 +41,7 @@ export function hideOverlay(overlay: HTMLElement | null): void {
   if (overlay) overlay.style.display = "none";
 }
 
-export function positionOverlay(
+function positionOverlay(
   overlay: HTMLElement | null,
   element: Element,
   nodeName: string,
@@ -70,13 +70,13 @@ export function positionOverlay(
   }
 }
 
-export function getNodeName(element: Element): string {
+function getNodeName(element: Element): string {
   const vfId = element.getAttribute(DATA_VF_ID);
   if (vfId) return vfId.split("_")[0] ?? vfId;
   return element.tagName.toLowerCase();
 }
 
-export function findElementById(nodeId: string | null): Element | null {
+function findElementById(nodeId: string | null): Element | null {
   if (!nodeId) return null;
   return (
     document.querySelector("[" + DATA_VF_ID + '="' + nodeId + '"]') ||
@@ -119,7 +119,7 @@ function getNodeType(el: Element): string {
   return "element";
 }
 
-export function buildNavigatorTree(root: Element): NavigatorTreeNode {
+function buildNavigatorTree(root: Element): NavigatorTreeNode {
   const config = getConfig();
   let nodeIndex = 0;
 
@@ -193,7 +193,7 @@ function createTreeSignature(root: Element): string {
 let treeUpdateTimer: ReturnType<typeof setTimeout> | null = null;
 let mutationObserver: MutationObserver | null = null;
 
-export function sendTreeUpdate(): void {
+function sendTreeUpdate(): void {
   const config = getConfig();
   const root = document.getElementById("root") || document.body;
   if (!root) return;
@@ -243,7 +243,7 @@ export function setupMutationObserver(): void {
 
 // --- Show/hide overlays for specific nodes ---
 
-export function showOverlay(overlay: HTMLElement | null, nodeId: string | null): void {
+function showOverlay(overlay: HTMLElement | null, nodeId: string | null): void {
   if (!nodeId) {
     hideOverlay(overlay);
     return;

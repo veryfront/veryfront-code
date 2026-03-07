@@ -137,7 +137,7 @@ export class LocalScriptExecutor implements SkillScriptExecutor {
  * Cloud script executor using sandbox.
  * Requires SANDBOX_AUTH_TOKEN environment variable.
  */
-export class CloudScriptExecutor implements SkillScriptExecutor {
+class CloudScriptExecutor implements SkillScriptExecutor {
   async execute(input: SkillScriptExecutorInput): Promise<SkillScriptResult> {
     const timeoutMs = resolveTimeoutMs(input.timeoutMs);
     // NOTE: In SSR contexts, getEnv() reads through the project-env overlay

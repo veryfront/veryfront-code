@@ -5,13 +5,13 @@ import type { ResolvedContentContext } from "./types.ts";
 
 export { READ_OPERATION_EXTENSION_PRIORITY };
 
-export interface ReadContextProviderLike {
+interface ReadContextProviderLike {
   isProductionMode: () => boolean;
   isPersistentCacheInvalidated?: (prefix: string) => boolean;
   isReleaseBeingInvalidated?: (releaseId: string) => boolean;
 }
 
-export interface ReadFetchState {
+interface ReadFetchState {
   apiPath: string;
   cacheKeyPrefix: string;
   cacheKey: string;
