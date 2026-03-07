@@ -17,7 +17,7 @@ The security module provides core security primitives and policies for Veryfront
 
 ### What this module does NOT do:
 
-- HTTP-level security enforcement (see `server/handlers/security/`)
+- HTTP-level security enforcement (see `security/http/`)
 - Middleware execution (see `middleware/builtin/security/`)
 - Runtime sandboxing (see `runtime/security/`)
 

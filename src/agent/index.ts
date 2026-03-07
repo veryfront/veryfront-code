@@ -94,6 +94,7 @@ export type {
   AgentStreamResult,
   EdgeConfig,
   MemoryConfig,
+  Message,
   Message as AgentMessage,
   MessagePart,
   ModelProvider,
