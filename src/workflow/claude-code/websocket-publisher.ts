@@ -92,7 +92,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
 
   private handleCommand(command: ClientCommand): void {
     if (this.config.debug) {
-      logger.debug("Received command", { commandType: command.type });
+      logger.info("Received command", { commandType: command.type });
     }
 
     // Handle ping internally
@@ -176,7 +176,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
     socket.send(JSON.stringify(event));
 
     if (this.config.debug) {
-      logger.debug("Sent event", { eventType: event.type });
+      logger.info("Sent event", { eventType: event.type });
     }
   }
 

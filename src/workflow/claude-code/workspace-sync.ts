@@ -175,7 +175,7 @@ export class WorkspaceSync {
     let bytesDownloaded = 0;
 
     if (this.config.debug) {
-      logger.debug("Initializing workspace", { workspaceDir: this.workspaceDir });
+      logger.info("Initializing workspace", { workspaceDir: this.workspaceDir });
     }
 
     // Create workspace directory
@@ -185,7 +185,7 @@ export class WorkspaceSync {
     const files = await api.files.listAll();
 
     if (this.config.debug) {
-      logger.debug("Found files in project", { count: files.length });
+      logger.info("Found files in project", { count: files.length });
     }
 
     // Download each file
@@ -214,7 +214,7 @@ export class WorkspaceSync {
         if (content.length > this.config.maxFileSize) {
           skippedFiles.push(path);
           if (this.config.debug) {
-            logger.debug("Skipping large file", { path, size: content.length });
+            logger.info("Skipping large file", { path, size: content.length });
           }
           continue;
         }
@@ -233,7 +233,7 @@ export class WorkspaceSync {
         bytesDownloaded += content.length;
 
         if (this.config.debug) {
-          logger.debug("Downloaded file", { path });
+          logger.info("Downloaded file", { path });
         }
       } catch (error) {
         if (this.config.debug) {
@@ -254,7 +254,7 @@ export class WorkspaceSync {
     };
 
     if (this.config.debug) {
-      logger.debug("Workspace initialized", {
+      logger.info("Workspace initialized", {
         duration: result.duration,
         filesDownloaded,
         bytesDownloaded,
@@ -300,7 +300,7 @@ export class WorkspaceSync {
     }
 
     if (this.config.debug) {
-      logger.debug("Detected changes", { count: changes.length });
+      logger.info("Detected changes", { count: changes.length });
     }
 
     return changes;
@@ -391,7 +391,7 @@ export class WorkspaceSync {
         } else {
           // No upload handler - just log the change
           if (this.config.debug) {
-            logger.debug("Would upload file", { path: change.path, type: change.type });
+            logger.info("Would upload file", { path: change.path, type: change.type });
           }
           // Mark as uploaded for tracking, even though we didn't actually upload
           uploaded.push(change);
@@ -477,7 +477,7 @@ export class WorkspaceSync {
    */
   async cleanup(): Promise<void> {
     if (this.config.debug) {
-      logger.debug("Cleaning up workspace", { workspaceDir: this.workspaceDir });
+      logger.info("Cleaning up workspace", { workspaceDir: this.workspaceDir });
     }
 
     try {

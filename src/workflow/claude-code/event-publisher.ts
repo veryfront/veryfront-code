@@ -156,7 +156,7 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
     await this.getPublishClient().publish(channel, message);
 
     if (this.config.debug) {
-      logger.debug("Published event", { channel, eventType: event.type });
+      logger.info("Published event", { channel, eventType: event.type });
     }
   }
 
@@ -178,7 +178,7 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
     await subscribeClient.subscribe(channel, listener);
 
     if (this.config.debug) {
-      logger.debug("Subscribed to channel", { channel });
+      logger.info("Subscribed to channel", { channel });
     }
 
     return async () => {
