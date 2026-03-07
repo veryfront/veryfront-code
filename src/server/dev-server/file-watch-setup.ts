@@ -134,7 +134,9 @@ export class FileWatchSetup {
 
         try {
           // Filter out paths that shouldn't trigger HMR (cache, node_modules, runtime data, etc.)
-          const relevantPaths = paths.filter((p) => !shouldIgnorePath(p) && !this.isRuntimeDataPath(p));
+          const relevantPaths = paths.filter((p) =>
+            !shouldIgnorePath(p) && !this.isRuntimeDataPath(p)
+          );
           if (relevantPaths.length === 0) continue;
 
           if (this.optimizedWatcher) {
