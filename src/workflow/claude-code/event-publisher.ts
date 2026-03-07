@@ -196,16 +196,17 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
       this.subscribeClient?.quit(),
     ]);
 
-    this.publishClient = null;
-    this.subscribeClient = null;
-    this.initialized = false;
-
-    // Re-throw the first error if any quit failed
+    // Re-throw the first error if any quit failed, keeping initialized=true
+    // so close() can be retried on transient failures
     for (const result of results) {
       if (result.status === "rejected") {
         throw result.reason;
       }
     }
+
+    this.publishClient = null;
+    this.subscribeClient = null;
+    this.initialized = false;
   }
 }
 
