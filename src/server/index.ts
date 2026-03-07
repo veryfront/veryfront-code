@@ -33,7 +33,6 @@ import {
   HMR_CLOSE_RATE_LIMIT,
   HMR_MAX_MESSAGE_SIZE_BYTES,
   HMR_MAX_MESSAGES_PER_MINUTE,
-  serverLogger,
 } from "#veryfront/utils";
 
 /** Default server port when no port is specified */
@@ -51,8 +50,6 @@ export type {
 import { ReloadNotifier } from "./reload-notifier.ts";
 export { ReloadNotifier };
 export type { BuildOptions, BuildStats } from "./build-types.ts";
-
-const serverApiLog = serverLogger.component("server-api");
 
 /** Shared options for both development and production server modes. */
 interface BaseServerOptions {
@@ -75,8 +72,6 @@ interface BaseServerOptions {
 
 export interface StartDevModeOptions extends BaseServerOptions {
   mode?: "development";
-  /** @deprecated Ignored: HMR now uses /_ws on the main server port. */
-  hmrPort?: number;
   moduleServerPort?: number;
   enableHMR?: boolean;
   enableFastRefresh?: boolean;
@@ -400,13 +395,6 @@ export async function startServer(
   }
 
   // Development mode (default)
-  if ("hmrPort" in options && options.hmrPort !== undefined) {
-    serverApiLog.warn(
-      "`hmrPort` is deprecated and ignored. HMR now uses /_ws on the main server port.",
-      { hmrPort: options.hmrPort, serverPort: port },
-    );
-  }
-
   const devServer = await startDevServer({
     port,
     projectDir,
@@ -432,5 +420,5 @@ export async function startServer(
 }
 
 // Note: Wildcard re-exports removed to prevent circular dependency risks.
-// Import from "#veryfront/routing" for Route, RouteMatch, DynamicRouter, etc.
+// Import from "#veryfront/routing" for Route, RouteMatch, PageRouteMatcher, etc.
 // Import from "#veryfront/observability" for tracing and metrics utilities.

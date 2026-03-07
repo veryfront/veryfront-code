@@ -1,11 +1,11 @@
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { DynamicRouter } from "./api-route-matcher.ts";
+import { ApiRouteMatcher } from "./api-route-matcher.ts";
 
-const routers: DynamicRouter[] = [];
+const routers: ApiRouteMatcher[] = [];
 
-function createRouter(): DynamicRouter {
-  const router = new DynamicRouter();
+function createRouter(): ApiRouteMatcher {
+  const router = new ApiRouteMatcher();
   routers.push(router);
   return router;
 }
@@ -14,7 +14,7 @@ afterEach((): void => {
   for (const router of routers.splice(0)) router.destroy();
 });
 
-describe("DynamicRouter - Basic Route Matching", () => {
+describe("ApiRouteMatcher - Basic Route Matching", () => {
   describe("addRoute() and match()", () => {
     it("should match exact static routes", () => {
       const router = createRouter();
@@ -72,7 +72,7 @@ describe("DynamicRouter - Basic Route Matching", () => {
   });
 });
 
-describe("DynamicRouter - Dynamic Parameters", () => {
+describe("ApiRouteMatcher - Dynamic Parameters", () => {
   describe("Single parameter routes [param]", () => {
     it("should match and extract single parameter", () => {
       const router = createRouter();
@@ -205,7 +205,7 @@ describe("DynamicRouter - Dynamic Parameters", () => {
   });
 });
 
-describe("DynamicRouter - Route Priority", () => {
+describe("ApiRouteMatcher - Route Priority", () => {
   describe("Static routes have priority over dynamic", () => {
     it("should match static route before dynamic", () => {
       const router = createRouter();
@@ -265,7 +265,7 @@ describe("DynamicRouter - Route Priority", () => {
   });
 });
 
-describe("DynamicRouter - Cache Management", () => {
+describe("ApiRouteMatcher - Cache Management", () => {
   describe("Route caching", () => {
     it("should cache successful matches", () => {
       const router = createRouter();
@@ -309,7 +309,7 @@ describe("DynamicRouter - Cache Management", () => {
   });
 });
 
-describe("DynamicRouter - Utility Methods", () => {
+describe("ApiRouteMatcher - Utility Methods", () => {
   describe("listRoutes()", () => {
     it("should list all registered routes", () => {
       const router = createRouter();

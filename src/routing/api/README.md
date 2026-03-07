@@ -17,7 +17,7 @@ import { APIRouteHandler, json, notFound } from "./api/index.ts";
 The API module exports:
 
 - **`APIRouteHandler`** - Main class for API route discovery and execution
-- **`DynamicRouter`** - File-based dynamic route matching with parameters
+- **`ApiRouteMatcher`** - File-based dynamic route matching with parameters
 - **Response helpers** - `json()`, `redirect()`, `notFound()`, `badRequest()`, etc.
 - **CORS utilities** - CORS preflight and header handling
 - **Context utilities** - Request context creation and parsing
@@ -29,7 +29,7 @@ api/
 ├── index.ts                    # Public API (barrel file) ← USE THIS
 ├── README.md                   # This file
 ├── handler.ts                  # APIRouteHandler implementation
-├── api-route-matcher.ts        # DynamicRouter implementation
+├── api-route-matcher.ts        # ApiRouteMatcher implementation
 ├── responses.ts                # Response helper functions
 ├── cors-handler.ts             # CORS utilities
 ├── context-builder.ts          # Context creation utilities

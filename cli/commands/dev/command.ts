@@ -107,7 +107,6 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         devServer = await startDevServer({
           port: finalPort,
           projectDir,
-          hmrPort: finalPort + 1,
           enableHMR,
           enableFastRefresh: true,
           signal: shutdownController.signal,

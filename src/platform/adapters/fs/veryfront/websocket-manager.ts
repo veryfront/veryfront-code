@@ -651,16 +651,12 @@ export class WebSocketManager {
 
     if (this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject && projectDir) {
       this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject(projectDir);
-    } else {
-      this.deps.invalidationCallbacks.clearRouterDetectionCache?.();
     }
 
     this.deps.invalidationCallbacks.clearModulePathCache?.();
 
     if (this.deps.invalidationCallbacks.clearSnippetCacheForProject && this.deps.projectSlug) {
       this.deps.invalidationCallbacks.clearSnippetCacheForProject(this.deps.projectSlug);
-    } else {
-      this.deps.invalidationCallbacks.clearSnippetCache?.();
     }
 
     if (this.deps.invalidationCallbacks.clearRendererCacheForProject && projectId) {

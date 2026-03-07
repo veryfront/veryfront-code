@@ -1,7 +1,7 @@
 import { serverLogger } from "#veryfront/utils";
 import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { DynamicRouter } from "#veryfront/routing/api/index.ts";
+import type { ApiRouteMatcher } from "#veryfront/routing/api/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RouteDirectory } from "./types.ts";
 import { withFallback } from "#veryfront/platform/adapters/fallback-wrapper.ts";
@@ -36,7 +36,7 @@ export class RouteDiscovery {
   constructor(
     private projectDir: string,
     private adapter: RuntimeAdapter,
-    private router: DynamicRouter,
+    private router: ApiRouteMatcher,
     private config?: VeryfrontConfig,
   ) {
     const fsType = config?.fs?.type;

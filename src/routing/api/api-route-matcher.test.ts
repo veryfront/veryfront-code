@@ -1,11 +1,11 @@
 import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { DynamicRouter } from "./api-route-matcher.ts";
+import { ApiRouteMatcher } from "./api-route-matcher.ts";
 
-const routers: DynamicRouter[] = [];
+const routers: ApiRouteMatcher[] = [];
 
-function createRouter(): DynamicRouter {
-  const router = new DynamicRouter();
+function createRouter(): ApiRouteMatcher {
+  const router = new ApiRouteMatcher();
   routers.push(router);
   return router;
 }
@@ -14,7 +14,7 @@ afterEach((): void => {
   while (routers.length) routers.pop()?.destroy();
 });
 
-describe("DynamicRouter", () => {
+describe("ApiRouteMatcher", () => {
   describe("Static routes", () => {
     it("matches exact static routes", () => {
       const router = createRouter();

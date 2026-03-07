@@ -8,7 +8,7 @@
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import type { DynamicRouter, RouteEntry } from "../api-route-matcher.ts";
+import type { ApiRouteMatcher, RouteEntry } from "../api-route-matcher.ts";
 import { loadHandlerModule } from "../module-loader/loader.ts";
 import {
   getDefaultStatusDescription,
@@ -41,7 +41,7 @@ interface GenerateSpecOptions {
 }
 
 export async function generateOpenAPISpec(
-  router: DynamicRouter,
+  router: ApiRouteMatcher,
   projectDir: string,
   adapter: RuntimeAdapter,
   config?: VeryfrontConfig,
@@ -213,7 +213,7 @@ function buildOperation(
 }
 
 export async function generateOpenAPIJson(
-  router: DynamicRouter,
+  router: ApiRouteMatcher,
   projectDir: string,
   adapter: RuntimeAdapter,
   config?: VeryfrontConfig,

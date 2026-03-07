@@ -183,9 +183,6 @@ export class ApiRouteMatcher {
   }
 }
 
-/** @deprecated Use ApiRouteMatcher instead - kept for backwards compatibility */
-export { ApiRouteMatcher as DynamicRouter };
-
 function shouldDisableLruInterval(): boolean {
   if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) return true;
 

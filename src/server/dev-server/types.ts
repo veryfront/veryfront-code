@@ -5,8 +5,6 @@ export interface DevServerOptions {
   handlerOnly?: boolean;
   /** 0.0.0.0 = all interfaces, 127.0.0.1 = localhost only */
   bindAddress?: string;
-  /** @deprecated Ignored: HMR now uses /_ws on the main dev server port. */
-  hmrPort?: number;
   moduleServerPort?: number;
   enableHMR?: boolean;
   enableFastRefresh?: boolean;

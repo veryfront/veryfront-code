@@ -217,7 +217,6 @@ export async function startCommand(options: StartOptions): Promise<void> {
     server = await startCliDevServer({
       port,
       projectDir,
-      hmrPort: port + 1,
       enableHMR: true,
       enableFastRefresh: true,
       signal: shutdownController.signal,

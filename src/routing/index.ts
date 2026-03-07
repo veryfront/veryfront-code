@@ -7,10 +7,10 @@
 
 export type { Route, RouteMatch } from "./matchers/index.ts";
 export {
-  DynamicRouter,
   getSpecificityScore,
   matchRoute,
   normalizePath,
+  PageRouteMatcher,
   parseRoute,
 } from "./matchers/index.ts";
 

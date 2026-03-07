@@ -1,7 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
-import { detectRuntime, getAdapter } from "./detect.ts";
+import { getAdapter } from "./detect.ts";
 import type { RuntimeId } from "./base.ts";
 
 function getExpectedRuntime(): RuntimeId {
@@ -12,30 +12,8 @@ function getExpectedRuntime(): RuntimeId {
 }
 
 const expectedRuntime = getExpectedRuntime();
-const validRuntimes: Array<RuntimeId | "unknown"> = [
-  "deno",
-  "node",
-  "bun",
-  "cloudflare",
-  "unknown",
-];
 
 describe("detect.ts", () => {
-  describe("detectRuntime", () => {
-    it("should return a valid runtime identifier", () => {
-      const runtime = detectRuntime();
-      assertEquals(validRuntimes.includes(runtime), true);
-    });
-
-    it("should detect current runtime in this test environment", () => {
-      assertEquals(detectRuntime(), expectedRuntime);
-    });
-
-    it("should return string type", () => {
-      assertEquals(typeof detectRuntime(), "string");
-    });
-  });
-
   describe("getAdapter", () => {
     it("should return a valid RuntimeAdapter", async () => {
       const adapter = await getAdapter();
