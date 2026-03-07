@@ -254,8 +254,8 @@ export function waitForEnterOrExit(): Promise<boolean> {
     };
 
     const onData = (data: Uint8Array) => {
-      const key = data[0] as number | undefined;
-      if (key === undefined) return;
+      if (data.length === 0) return;
+      const key = data[0];
       if (key === CTRL_C) {
         cleanup(false);
         return;
