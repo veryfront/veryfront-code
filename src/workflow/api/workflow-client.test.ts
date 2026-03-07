@@ -1,5 +1,6 @@
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { createWorkflowClient, WorkflowClient } from "./workflow-client.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import { workflow } from "../dsl/workflow.ts";
@@ -81,6 +82,19 @@ describe("WorkflowClient", () => {
         Error,
         "Workflow not found",
       );
+    });
+
+    it("should use resource-not-found for unregistered workflow", async () => {
+      try {
+        await client.start("non-existent", {});
+        throw new Error("Expected start() to throw");
+      } catch (error) {
+        assertEquals(error instanceof VeryfrontError, true);
+        if (!(error instanceof VeryfrontError)) throw error;
+
+        assertEquals(error.slug, "resource-not-found");
+        assertEquals(error.status, 404);
+      }
     });
   });
 

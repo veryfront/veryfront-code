@@ -11,7 +11,13 @@ import plugin from "tailwindcss/plugin";
 import defaultTheme from "tailwindcss/defaultTheme";
 import colors from "tailwindcss/colors";
 import { serverLogger } from "#veryfront/utils";
-import { DEPENDENCY_MISSING, IMPORT_RESOLUTION_ERROR, NETWORK_ERROR } from "#veryfront/errors";
+import {
+  type ErrorSlug,
+  getErrorBySlug,
+  IMPORT_RESOLUTION_ERROR,
+  NETWORK_ERROR,
+  VeryfrontError,
+} from "#veryfront/errors";
 
 const logger = serverLogger.component("tailwind");
 
@@ -162,11 +168,12 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
 export async function loadPlugin(
   id: string,
   pluginCache: Map<string, unknown>,
-  pluginErrors: Map<string, string>,
+  pluginErrors: Map<string, Error>,
 ): Promise<unknown> {
+  const cachedError = pluginErrors.get(id);
+  if (cachedError) throw cachedError;
+
   if (pluginCache.has(id)) {
-    const errorMsg = pluginErrors.get(id);
-    if (errorMsg) throw DEPENDENCY_MISSING.create({ detail: errorMsg });
     return pluginCache.get(id);
   }
 
@@ -182,20 +189,9 @@ export async function loadPlugin(
       logger.debug("Loading plugin from node_modules", { id });
       try {
         mod = await import(id);
-      } catch (importError) {
+      } catch {
         logger.debug("Plugin not found in node_modules, falling back to esm.sh", { id });
-        try {
-          mod = await loadModuleFromEsmSh(id);
-        } catch (_) {
-          const errorMsg = `Failed to load plugin "${id}": plugin not installed`;
-          logger.warn("Plugin not installed", {
-            id,
-            error: importError instanceof Error ? importError.message : String(importError),
-          });
-          pluginErrors.set(id, errorMsg);
-          pluginCache.set(id, null);
-          throw DEPENDENCY_MISSING.create({ detail: errorMsg, cause: importError });
-        }
+        mod = await loadModuleFromEsmSh(id);
       }
     }
 
@@ -203,11 +199,31 @@ export async function loadPlugin(
     pluginCache.set(id, pluginExport);
     return pluginExport;
   } catch (error) {
-    const errorMsg = `Failed to load plugin "${id}": ${
-      error instanceof Error ? error.message : String(error)
-    }`;
-    logger.warn(`${errorMsg}`);
-    pluginErrors.set(id, errorMsg);
-    throw DEPENDENCY_MISSING.create({ detail: errorMsg, cause: error });
+    const wrappedError = wrapPluginError(id, error);
+    logger.warn(wrappedError.message);
+    pluginErrors.set(id, wrappedError);
+    throw wrappedError;
   }
+}
+
+function wrapPluginError(id: string, error: unknown): Error {
+  const detail = `Failed to load plugin "${id}": ${
+    error instanceof Error ? error.message : String(error)
+  }`;
+
+  if (error instanceof VeryfrontError) {
+    return getErrorBySlug(error.slug as ErrorSlug).create({
+      detail,
+      cause: error.cause,
+      context: error.context,
+      instance: error.instance,
+      status: error.status,
+    });
+  }
+
+  if (error instanceof Error) {
+    return new Error(detail, { cause: error });
+  }
+
+  return IMPORT_RESOLUTION_ERROR.create({ detail });
 }

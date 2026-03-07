@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { loadModuleFromEsmSh, loadPlugin } from "./plugin-loader.ts";
 
 describe("styles-builder/plugin-loader", () => {
@@ -94,9 +95,17 @@ describe("styles-builder/plugin-loader", () => {
 
     try {
       const pluginCache = new Map<string, unknown>();
-      const pluginErrors = new Map<string, string>();
-      pluginCache.set("cached-bad-plugin", null);
-      pluginErrors.set("cached-bad-plugin", "cached plugin load failure");
+      const pluginErrors = new Map<string, Error>();
+      pluginErrors.set(
+        "cached-bad-plugin",
+        new VeryfrontError("cached plugin load failure", {
+          slug: "network-error",
+          category: "SERVER",
+          status: 502,
+          title: "Network operation failed",
+          detail: "cached plugin load failure",
+        }),
+      );
 
       await assertRejects(
         () => loadPlugin("cached-bad-plugin", pluginCache, pluginErrors),
@@ -104,6 +113,31 @@ describe("styles-builder/plugin-loader", () => {
         "cached plugin load failure",
       );
       assertEquals(fetchCallCount, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("preserves structured upstream errors when plugin loading fails", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch =
+      (() => Promise.resolve(new Response("upstream failure", { status: 503 }))) as typeof fetch;
+
+    try {
+      try {
+        await loadPlugin("broken-plugin@1.0.0", new Map(), new Map());
+        throw new Error("Expected loadPlugin to throw");
+      } catch (error) {
+        assertEquals(error instanceof VeryfrontError, true);
+        if (!(error instanceof VeryfrontError)) throw error;
+
+        assertEquals(error.slug, "network-error");
+        assertEquals(error.status, 502);
+        assertEquals(
+          error.message.includes('Failed to load plugin "broken-plugin@1.0.0"'),
+          true,
+        );
+      }
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -126,7 +160,7 @@ describe("styles-builder/plugin-loader", () => {
 
     try {
       const pluginCache = new Map<string, unknown>();
-      const pluginErrors = new Map<string, string>();
+      const pluginErrors = new Map<string, Error>();
 
       const first = await loadPlugin("good-plugin@1.0.0", pluginCache, pluginErrors);
       const second = await loadPlugin("good-plugin@1.0.0", pluginCache, pluginErrors);

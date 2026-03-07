@@ -14,7 +14,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import {
   BUILD_FAILED,
   BUNDLE_ERROR,
-  FILE_NOT_FOUND,
+  CACHE_ERROR,
   IMPORT_RESOLUTION_ERROR,
   INVALID_ARGUMENT,
 } from "#veryfront/errors";
@@ -377,7 +377,7 @@ export async function doLoadModuleESM(
     // Verify the cache file exists before attempting dynamic import
     const fileExists = await verifyCacheFileExists(localFs, filePath, "MDX-ESM-LOADER");
     if (!fileExists) {
-      throw FILE_NOT_FOUND.create({
+      throw CACHE_ERROR.create({
         detail: `MDX module cache file missing before import: ${filePath}`,
       });
     }

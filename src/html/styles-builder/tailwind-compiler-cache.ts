@@ -26,7 +26,7 @@ interface CompilerCacheEntry {
   compiler: Awaited<ReturnType<typeof compile>>;
   createdAt: number;
   pluginCache: Map<string, unknown>;
-  pluginErrors: Map<string, string>;
+  pluginErrors: Map<string, Error>;
 }
 
 const compilerCache = new Map<string, CompilerCacheEntry>();
@@ -98,7 +98,7 @@ export async function getCompiler(
 
   const tailwindBase = await getTailwindBaseCSS();
   const pluginCache = new Map<string, unknown>();
-  const pluginErrors = new Map<string, string>();
+  const pluginErrors = new Map<string, Error>();
 
   const newCompiler = await compile(stylesheet, {
     base: "/",

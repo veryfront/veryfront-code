@@ -9,6 +9,7 @@ describe("errors/catalog/general-errors", () => {
         "unknown-error",
         "permission-denied",
         "file-not-found",
+        "resource-not-found",
         "invalid-argument",
         "timeout-error",
       ];
@@ -33,8 +34,8 @@ describe("errors/catalog/general-errors", () => {
       }
     });
 
-    it("should have 5 entries", () => {
-      assertEquals(Object.keys(GENERAL_ERROR_CATALOG).length, 5);
+    it("should have 6 entries", () => {
+      assertEquals(Object.keys(GENERAL_ERROR_CATALOG).length, 6);
     });
 
     it("unknown-error should suggest running veryfront doctor", () => {

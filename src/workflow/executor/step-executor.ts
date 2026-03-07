@@ -3,9 +3,11 @@ import type { Agent, AgentResponse } from "#veryfront/agent";
 import type { Tool } from "#veryfront/tool";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import {
-  CONFIG_NOT_FOUND,
+  AGENT_NOT_FOUND,
+  INITIALIZATION_ERROR,
   INVALID_ARGUMENT,
   ORCHESTRATION_ERROR,
+  RESOURCE_NOT_FOUND,
   TIMEOUT_ERROR,
 } from "#veryfront/errors";
 import type {
@@ -278,7 +280,7 @@ export class StepExecutor {
     const label = type.charAt(0).toUpperCase() + type.slice(1);
 
     if (!registry) {
-      throw CONFIG_NOT_FOUND.create({
+      throw INITIALIZATION_ERROR.create({
         detail: `${label} registry not configured. Cannot resolve ${type} "${id}"`,
       });
     }
@@ -291,7 +293,10 @@ export class StepExecutor {
       ? this.formatAvailableItems(available)
       : ` No ${type}s are registered.`;
 
-    throw ORCHESTRATION_ERROR.create({ detail: `${label} not found: "${id}".${suggestion}` });
+    const detail = `${label} not found: "${id}".${suggestion}`;
+    throw (type === "agent"
+      ? AGENT_NOT_FOUND.create({ detail })
+      : RESOURCE_NOT_FOUND.create({ detail }));
   }
 
   private getAgent(id: string): Agent {

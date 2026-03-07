@@ -9,7 +9,7 @@ import type {
 import { generateId, parseDuration } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
-import { INVALID_ARGUMENT, ORCHESTRATION_ERROR, PERMISSION_DENIED } from "#veryfront/errors";
+import { INVALID_ARGUMENT, PERMISSION_DENIED, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 
 const logger = baseLogger.component("approval-manager");
 
@@ -148,7 +148,7 @@ export class ApprovalManager {
 
     const approval = await this.getApproval(runId, approvalId);
     if (!approval) {
-      throw ORCHESTRATION_ERROR.create({ detail: `Approval not found: ${approvalId}` });
+      throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
 
     if (approval.status !== "pending") {
@@ -168,7 +168,7 @@ export class ApprovalManager {
 
     const run = await this.config.backend.getRun(runId);
     if (!run) {
-      throw ORCHESTRATION_ERROR.create({ detail: `Run not found: ${runId}` });
+      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
     }
 
     const decidedAt = new Date();

@@ -16,7 +16,7 @@ import type {
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 import { requeueRun } from "./shared/requeue-run.ts";
-import { ORCHESTRATION_ERROR } from "#veryfront/errors";
+import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 
 const logger = baseLogger.component("memory-backend");
 
@@ -66,7 +66,7 @@ export class MemoryBackend implements WorkflowBackend {
 
   updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
     const run = this.runs.get(runId);
-    if (!run) throw ORCHESTRATION_ERROR.create({ detail: `Run not found: ${runId}` });
+    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
     logger.debug(`Updating run: ${runId}`, patch);
 
@@ -211,12 +211,12 @@ export class MemoryBackend implements WorkflowBackend {
   ): Promise<void> {
     const approvals = this.approvals.get(runId);
     if (!approvals) {
-      throw ORCHESTRATION_ERROR.create({ detail: `No approvals found for run: ${runId}` });
+      throw RESOURCE_NOT_FOUND.create({ detail: `No approvals found for run: ${runId}` });
     }
 
     const approval = approvals.find((a) => a.id === approvalId);
     if (!approval) {
-      throw ORCHESTRATION_ERROR.create({ detail: `Approval not found: ${approvalId}` });
+      throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
 
     logger.debug("Updating approval", { approvalId, decision });

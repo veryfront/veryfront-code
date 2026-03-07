@@ -36,6 +36,17 @@ export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = {
     ],
   ),
 
+  "resource-not-found": createSimpleError(
+    "resource-not-found",
+    "Resource not found",
+    "The requested resource does not exist.",
+    [
+      "Verify the referenced workflow, run, approval, or tool ID",
+      "Check for typos in the resource name",
+      "Confirm the resource has not been deleted",
+    ],
+  ),
+
   "invalid-argument": createSimpleError(
     "invalid-argument",
     "Invalid argument",

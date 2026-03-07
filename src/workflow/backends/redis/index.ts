@@ -19,7 +19,7 @@ import type {
 import type { WorkflowBackend } from "../types.ts";
 import { agentLogger } from "#veryfront/utils";
 import { requeueRun } from "../shared/requeue-run.ts";
-import { INITIALIZATION_ERROR, INVALID_ARGUMENT, ORCHESTRATION_ERROR } from "#veryfront/errors";
+import { INITIALIZATION_ERROR, INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import {
@@ -440,12 +440,12 @@ export class RedisBackend implements WorkflowBackend {
     });
 
     if (targetIndex === -1) {
-      throw ORCHESTRATION_ERROR.create({ detail: `Approval not found: ${approvalId}` });
+      throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
 
     const rawTarget = rawList[targetIndex];
     if (!rawTarget) {
-      throw ORCHESTRATION_ERROR.create({ detail: `Approval data not found: ${approvalId}` });
+      throw RESOURCE_NOT_FOUND.create({ detail: `Approval data not found: ${approvalId}` });
     }
 
     const data = JSON.parse(rawTarget);

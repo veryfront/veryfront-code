@@ -12,6 +12,7 @@ import {
   getErrorBySlug,
   getErrorsByCategory,
   INPUT_VALIDATION_FAILED,
+  RESOURCE_NOT_FOUND,
   SECURITY_VIOLATION,
   TOKEN_STORAGE_ERROR,
 } from "./error-registry.ts";
@@ -25,9 +26,9 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 77 registered errors", () => {
+    it("should have 78 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 77);
+      assertEquals(slugs.length, 78);
     });
   });
 
@@ -297,10 +298,14 @@ describe("error-registry", () => {
       DEV: 5,
       DEPLOY: 4,
       AGENT: 5,
-      GENERAL: 9,
+      GENERAL: 10,
     };
 
-    for (const [category, count] of Object.entries(expectedCategoryCounts)) {
+    for (
+      const [category, count] of Object.entries(
+        expectedCategoryCounts,
+      ) as Array<[ErrorCategory, number]>
+    ) {
       it(`should have ${count} errors in ${category} category`, () => {
         const errors = getErrorsByCategory(category);
         assertEquals(
@@ -363,6 +368,17 @@ describe("error-registry", () => {
       });
       assertEquals(error.slug, "input-validation-failed");
       assertEquals(error.status, 400);
+    });
+  });
+
+  describe("RESOURCE_NOT_FOUND", () => {
+    it("should default to status 404", () => {
+      const error = RESOURCE_NOT_FOUND.create({
+        detail: "Workflow not found: test-workflow",
+      });
+      assertEquals(error.slug, "resource-not-found");
+      assertEquals(error.status, 404);
+      assertEquals(error.detail, "Workflow not found: test-workflow");
     });
   });
 
