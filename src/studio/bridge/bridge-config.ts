@@ -23,8 +23,8 @@ export interface BridgeConfig {
 let config: BridgeConfig | null = null;
 
 export function initConfig(): void {
-  const raw: Record<string, unknown> | undefined =
-    (globalThis as Record<string, unknown>).__VF_BRIDGE_CONFIG__ as
+  const raw: Record<string, unknown> | undefined = (globalThis as Record<string, unknown>)
+    .__VF_BRIDGE_CONFIG__ as
       | Record<string, unknown>
       | undefined;
 

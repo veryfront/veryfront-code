@@ -184,7 +184,8 @@ export class OAuthProvider {
         return {
           success: false,
           error: (typeof data.error === "string" ? data.error : "") || errorFallback,
-          errorDescription: (typeof data.error_description === "string" ? data.error_description : "") ||
+          errorDescription:
+            (typeof data.error_description === "string" ? data.error_description : "") ||
             (errorDescriptionFallback ? errorDescriptionFallback(response.status) : undefined),
         };
       }
