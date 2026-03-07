@@ -14,8 +14,13 @@ import { getTransformers } from "./local-engine.ts";
 
 const logger = serverLogger.component("local-embedding");
 
-// deno-lint-ignore no-explicit-any
-type Pipeline = any;
+interface EmbeddingOutput {
+  tolist(): number[][];
+}
+
+interface Pipeline {
+  (texts: string[], options: { pooling: string; normalize: boolean }): Promise<EmbeddingOutput>;
+}
 
 /** Cached pipeline instances keyed by HuggingFace model ID */
 const pipelineCache = new Map<string, Pipeline>();
@@ -43,14 +48,14 @@ async function loadPipeline(modelInfo: ModelInfo): Promise<Pipeline> {
       `Loading local embedding model: ${modelInfo.hfId} (${modelInfo.dtype}, ~${modelInfo.sizeMB}MB)...`,
     );
 
-    const pipe = await transformers.pipeline(
+    const pipe = (await transformers.pipeline(
       "feature-extraction",
       modelInfo.hfId,
       {
         dtype: modelInfo.dtype,
         device: "cpu",
       },
-    );
+    )) as Pipeline;
 
     logger.info(`Embedding model loaded: ${modelInfo.hfId}`);
     pipelineCache.set(cacheKey, pipe);
@@ -84,5 +89,5 @@ export async function embedTexts(
   const pooling = modelInfo.pooling ?? "mean";
   const output = await pipe(texts, { pooling, normalize: true });
 
-  return output.tolist() as number[][];
+  return output.tolist();
 }

@@ -63,9 +63,8 @@ function convertPrompt(prompt: ReadonlyArray<PromptMessage>): ChatMessage[] {
   return messages;
 }
 
-/** AI SDK LanguageModelV2 generation options that both doGenerate and doStream receive. */
 interface LocalModelOptions {
-  prompt: unknown[];
+  prompt: ReadonlyArray<PromptMessage>;
   maxOutputTokens?: number;
   temperature?: number;
   topP?: number;
@@ -105,7 +104,7 @@ export function createLocalModel(modelId?: string): LanguageModel {
     supportedUrls: {},
 
     async doGenerate(options: LocalModelOptions) {
-      const messages = convertPrompt(options.prompt as ReadonlyArray<PromptMessage>);
+      const messages = convertPrompt(options.prompt);
       const genOptions = toGenerateOptions(options);
 
       logger.debug(`[local] doGenerate: ${messages.length} messages → ${resolvedId}`);
@@ -139,7 +138,7 @@ export function createLocalModel(modelId?: string): LanguageModel {
         );
       }
 
-      const messages = convertPrompt(options.prompt as ReadonlyArray<PromptMessage>);
+      const messages = convertPrompt(options.prompt);
       const genOptions = toGenerateOptions(options);
 
       logger.debug(`[local] doStream: ${messages.length} messages → ${resolvedId}`);

@@ -87,6 +87,19 @@ export function findElementById(nodeId: string | null): Element | null {
 
 // --- Tree building ---
 
+interface NavigatorTreeNode {
+  id: string;
+  name: string;
+  type: string;
+  path: string;
+  parentId: string;
+  start: { line: number; column: number };
+  end: { line: number; column: number };
+  children: NavigatorTreeNode[];
+  text?: string;
+  isRemote: boolean;
+}
+
 function isValidElement(el: Element): boolean {
   return (
     !!el &&
@@ -106,13 +119,13 @@ function getNodeType(el: Element): string {
   return "element";
 }
 
-export function buildNavigatorTree(root: Element): any {
+export function buildNavigatorTree(root: Element): NavigatorTreeNode {
   const config = getConfig();
   let nodeIndex = 0;
 
-  function processElement(el: Element, parentId: string): any[] {
+  function processElement(el: Element, parentId: string): NavigatorTreeNode[] {
     if (!isValidElement(el)) {
-      const children: any[] = [];
+      const children: NavigatorTreeNode[] = [];
       Array.from(el.children || []).forEach((child) => {
         children.push(...processElement(child, parentId));
       });
@@ -130,9 +143,9 @@ export function buildNavigatorTree(root: Element): any {
     const vfId = el.getAttribute(DATA_VF_ID);
     const name = vfId ? vfId.split("_")[0] : el.tagName.toLowerCase();
 
-    const node: any = {
+    const node: NavigatorTreeNode = {
       id: id,
-      name: name,
+      name: name!,
       type: getNodeType(el),
       path: config.pagePath,
       parentId: parentId,
@@ -153,7 +166,7 @@ export function buildNavigatorTree(root: Element): any {
     return [node];
   }
 
-  const rootNode: any = {
+  const rootNode: NavigatorTreeNode = {
     id: "root",
     name: "root",
     type: "root",
@@ -162,6 +175,7 @@ export function buildNavigatorTree(root: Element): any {
     start: { line: 0, column: 0 },
     end: { line: 0, column: 0 },
     children: [],
+    isRemote: false,
   };
 
   Array.from(root.children || []).forEach((child) => {
@@ -193,6 +207,7 @@ export function sendTreeUpdate(): void {
     id: config.pageId,
     url: window.location.href,
     tree: buildNavigatorTree(root),
+    // deno-lint-ignore no-explicit-any -- accessing injected global property
     sourceHash: (window as any).__VERYFRONT_SOURCE_HASH__ || null,
   });
 }

@@ -15,6 +15,7 @@ const logger = serverLogger.component("rsc");
 
 /** Recursively renders a component tree to RSC nodes */
 export async function renderTree(
+  // deno-lint-ignore no-explicit-any -- RSC components accept arbitrary props at runtime
   Component: React.ComponentType<any> | React.ReactElement | string | number | null | undefined,
   props: Record<string, unknown>,
   clientManifest: Map<string, ClientComponentMeta>,

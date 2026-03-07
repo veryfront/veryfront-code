@@ -80,8 +80,7 @@ function convertSchemaToJson(
 ): JsonSchema {
   if (hasValidZodTypeName(schema)) {
     const result = tryConvert(
-      // deno-lint-ignore no-explicit-any
-      () => zodToJsonSchema(schema as any),
+      () => zodToJsonSchema(schema as z.ZodTypeAny),
       toolId,
       logPrefix,
       permissive,

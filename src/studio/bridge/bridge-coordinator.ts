@@ -19,6 +19,7 @@ const config = getConfig();
 
 // Expose debug internals when configured
 if (config.debugExposeInternals && typeof window !== "undefined") {
+  // deno-lint-ignore no-explicit-any -- exposing debug internals on window global
   (window as any).__VF_STUDIO_BRIDGE_DEBUG = {
     parseMdxImportMap: parseMdxImportMap,
     extractRawBlocksForEditor: extractRawBlocksForEditor,

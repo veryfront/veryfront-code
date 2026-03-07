@@ -1,6 +1,7 @@
 import type * as React from "react";
 import type { ClientComponentMeta } from "../types.ts";
 
+// deno-lint-ignore no-explicit-any -- RSC components accept arbitrary props at runtime
 export type RSCComponent = React.ComponentType<any> & {
   __rsc_client?: boolean;
   __rsc_id?: string;

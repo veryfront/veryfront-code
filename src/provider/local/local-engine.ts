@@ -34,10 +34,42 @@ export interface GenerateOptions {
   stopSequences?: string[];
 }
 
-// deno-lint-ignore no-explicit-any
-type TransformersModule = any;
-// deno-lint-ignore no-explicit-any
-type Pipeline = any;
+interface TransformersEnv {
+  cacheDir: string;
+  useBrowserCache: boolean;
+}
+
+interface TransformersModule {
+  env: TransformersEnv;
+  pipeline: (
+    task: string,
+    model: string,
+    options: { dtype: string; device: string },
+  ) => Promise<unknown>;
+  TextStreamer: new (
+    tokenizer: unknown,
+    options: {
+      skip_prompt: boolean;
+      skip_special_tokens: boolean;
+      callback_function: (text: string) => void;
+    },
+  ) => unknown;
+}
+
+interface Pipeline {
+  tokenizer: unknown;
+  (
+    messages: ChatMessage[],
+    options: {
+      max_new_tokens: number;
+      temperature: number;
+      top_p?: number;
+      top_k?: number;
+      do_sample: boolean;
+      streamer: unknown;
+    },
+  ): Promise<void>;
+}
 
 /** Cached pipeline instances keyed by HuggingFace model ID */
 const pipelineCache = new Map<string, Pipeline>();
@@ -45,7 +77,6 @@ const pipelineCache = new Map<string, Pipeline>();
 /** Whether a model is currently being loaded (prevents concurrent loads) */
 const loadingLocks = new Map<string, Promise<Pipeline>>();
 
-/** Lazily loaded @huggingface/transformers module */
 let transformersModule: TransformersModule | null = null;
 
 /**
@@ -66,8 +97,9 @@ export async function getTransformers(): Promise<TransformersModule> {
 
   logger.info("Loading @huggingface/transformers...");
 
+  let mod: TransformersModule;
   try {
-    transformersModule = await importTransformers();
+    mod = await importTransformers();
   } catch {
     throw toError(
       createError({
@@ -81,11 +113,12 @@ export async function getTransformers(): Promise<TransformersModule> {
   }
 
   // Configure cache directory for model files
-  transformersModule.env.cacheDir = "./.cache/models";
+  mod.env.cacheDir = "./.cache/models";
   // Disable browser-specific features in Node/Deno
-  transformersModule.env.useBrowserCache = false;
+  mod.env.useBrowserCache = false;
 
-  return transformersModule;
+  transformersModule = mod;
+  return mod;
 }
 
 /**
@@ -111,14 +144,14 @@ async function loadPipeline(modelInfo: ModelInfo): Promise<Pipeline> {
       `Loading local model: ${modelInfo.hfId} (${modelInfo.dtype}, ~${modelInfo.sizeMB}MB)...`,
     );
 
-    const pipe = await transformers.pipeline(
+    const pipe = (await transformers.pipeline(
       "text-generation",
       modelInfo.hfId,
       {
         dtype: modelInfo.dtype,
         device: "cpu",
       },
-    );
+    )) as Pipeline;
 
     logger.info(`Model loaded: ${modelInfo.hfId}`);
     pipelineCache.set(cacheKey, pipe);

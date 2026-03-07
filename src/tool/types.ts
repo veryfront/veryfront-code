@@ -9,7 +9,7 @@ import type { BlobStorage } from "#veryfront/workflow/blob/types.ts";
 /**
  * Tool configuration options
  */
-// deno-lint-ignore no-explicit-any
+// deno-lint-ignore no-explicit-any -- generic erasure: interface must accept any concrete ToolConfig instantiation
 export interface ToolConfig<TInput = any, TOutput = any> {
   /** Tool identifier (optional, inferred from filename) */
   id?: string;
@@ -70,7 +70,7 @@ export type ToolType = "function" | "dynamic";
 /**
  * Tool instance (returned by tool() function)
  */
-// deno-lint-ignore no-explicit-any
+// deno-lint-ignore no-explicit-any -- generic erasure: interface must accept any concrete Tool instantiation
 export interface Tool<TInput = any, TOutput = any> {
   /** Tool ID */
   id: string;

@@ -230,8 +230,7 @@ export class LayoutApplicator {
           const appSource = await this.adapter.fs.readFile(appPath);
           const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
 
-          // deno-lint-ignore no-explicit-any
-          let App: any;
+          let App: BundledReact.ComponentType<Record<string, unknown>> | null;
 
           if (isMdx) {
             App = await this.loadMdxAppComponent(appSource, appPath);
@@ -270,8 +269,10 @@ export class LayoutApplicator {
     );
   }
 
-  // deno-lint-ignore no-explicit-any
-  private async loadMdxAppComponent(source: string, appPath: string): Promise<any> {
+  private async loadMdxAppComponent(
+    source: string,
+    appPath: string,
+  ): Promise<BundledReact.ComponentType<Record<string, unknown>> | null> {
     try {
       const { compile } = await import("@mdx-js/mdx");
       const { getRehypePlugins, getRemarkPlugins } = await import(

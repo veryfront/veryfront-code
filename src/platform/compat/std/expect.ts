@@ -47,9 +47,8 @@ interface Matchers<T> {
   not: Matchers<T>;
 }
 
-// deno-lint-ignore no-explicit-any
-type ExternalExpectFn = (actual: any) => any;
-// deno-lint-ignore no-explicit-any
+type ExternalExpectFn = (actual: unknown) => unknown;
+// deno-lint-ignore no-explicit-any -- external matchers (Deno std, Bun) may expose additional methods beyond our Matchers<T> interface
 type ExpectFn = <T>(actual: T) => Matchers<T> & Record<string, any>;
 
 function createNodeExpect(): ExpectFn {

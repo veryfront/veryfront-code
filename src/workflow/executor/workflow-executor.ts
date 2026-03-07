@@ -82,6 +82,7 @@ export class WorkflowExecutor {
   private stepExecutor: StepExecutor;
   private checkpointManager: CheckpointManager;
   private dagExecutor: DAGExecutor;
+  // deno-lint-ignore no-explicit-any -- type-erased registry: register() accepts WorkflowDefinition<TInput, TOutput> with arbitrary type params
   private workflows = new Map<string, WorkflowDefinition<any, any>>();
   private blobResolver?: BlobResolver;
 
@@ -150,6 +151,7 @@ export class WorkflowExecutor {
   /**
    * Get a registered workflow
    */
+  // deno-lint-ignore no-explicit-any -- type-erased registry lookup
   getWorkflow(id: string): WorkflowDefinition<any, any> | undefined {
     return this.workflows.get(id);
   }

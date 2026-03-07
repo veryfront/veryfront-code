@@ -83,6 +83,7 @@ docs/api/
 
 # Local working files
 .local/
+.refactor/
 
 # Claude Octopus plugin state
 .claude-octopus/

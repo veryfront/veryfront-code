@@ -126,7 +126,15 @@ export async function validateSkillPath(
     );
   }
 
-  const canonicalPath = result.canonicalPath!;
+  if (!result.canonicalPath) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Path validation succeeded but canonical path is undefined for: ${requestedPath}`,
+      }),
+    );
+  }
+  const canonicalPath = result.canonicalPath;
 
   // Verify the path exists and points to a file.
   if (!(await pathExists(canonicalPath, fsAdapter))) {

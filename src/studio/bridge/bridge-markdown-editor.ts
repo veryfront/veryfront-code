@@ -11,6 +11,7 @@
  */
 
 import { editorState as state } from "./bridge-editor-state.ts";
+import type { RemoteSelection } from "./bridge-state.ts";
 import { getConfig, isMarkdownPage } from "./bridge-config.ts";
 import { btn, el } from "./bridge-dom-helpers.ts";
 
@@ -91,6 +92,7 @@ export function setupMarkdownLexicalEditor(): void {
     import("https://esm.sh/@lexical/history@0.21.0?target=es2022"),
     import("https://esm.sh/@lexical/selection@0.21.0?target=es2022"),
   ])
+    // deno-lint-ignore no-explicit-any -- dynamic ESM CDN imports have no static types
     .then(function (modules: any[]) {
       if (!state.markdownEditorSurface) {
         return;
@@ -124,7 +126,7 @@ export function setupMarkdownLexicalEditor(): void {
         1000,
       );
       const unregisterUpdate = editor.registerUpdateListener(function (
-        update: any,
+        update: { editorState: { read(fn: () => void): void } },
       ) {
         if (state.markdownApplyingRemoteUpdate) {
           // Reconcile once remote apply settles so local edits during this window
@@ -229,7 +231,7 @@ export function focusMarkdownEditor(): void {
 // applyMarkdownHistoryCommand
 // ---------------------------------------------------------------------------
 
-export function applyMarkdownHistoryCommand(command: any): void {
+export function applyMarkdownHistoryCommand(command: unknown): void {
   if (
     !state.markdownLexicalApi ||
     !state.markdownLexicalApi.editor ||
@@ -455,7 +457,7 @@ export function applyMarkdownContent(content: unknown): void {
  * the cursor overlay render. No toolbar pill DOM — overlays show
  * cursors/highlights directly on the editor surface.
  */
-export function updateMarkdownOverlaySelections(selections: any[]): void {
+export function updateMarkdownOverlaySelections(selections: RemoteSelection[]): void {
   state.markdownLatestSelections = Array.isArray(selections) ? selections : [];
   state.markdownOverlaySelections = [];
 
@@ -465,7 +467,7 @@ export function updateMarkdownOverlaySelections(selections: any[]): void {
   }
 
   const validSelections = selections
-    .filter(function (selection: any) {
+    .filter(function (selection: RemoteSelection) {
       return (
         selection &&
         typeof selection.name === "string" &&

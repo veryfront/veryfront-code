@@ -2,7 +2,7 @@ import "./init.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { deepEquals, safeStringify } from "./utils.ts";
 
-// deno-lint-ignore no-explicit-any
+// deno-lint-ignore no-explicit-any -- any[] required: constructor params are contravariant
 type ErrorClass = new (...args: any[]) => Error;
 
 interface AssertImpl {
@@ -25,18 +25,17 @@ interface AssertImpl {
   ): Promise<unknown>;
   assertStringIncludes(actual: string, expected: string, msg?: string): void;
   assertMatch(actual: string, expected: RegExp, msg?: string): void;
-  // deno-lint-ignore no-explicit-any
   assertInstanceOf<T>(
     actual: unknown,
+    // deno-lint-ignore no-explicit-any -- any[] required: constructor params are contravariant
     expectedType: abstract new (...args: any[]) => T,
     msg?: string,
   ): void;
   fail(msg?: string): never;
   assertNotStrictEquals<T>(actual: T, expected: T, msg?: string): void;
-  // deno-lint-ignore no-explicit-any
   assertObjectMatch(
-    actual: Record<string, any>,
-    expected: Record<string, any>,
+    actual: Record<string, unknown>,
+    expected: Record<string, unknown>,
     msg?: string,
   ): void;
   assertGreater(actual: number, expected: number, msg?: string): void;
@@ -79,8 +78,8 @@ function createNodeAssertImpl(): AssertImpl {
   }
 
   function assertObjectMatch(
-    actual: Record<string, any>,
-    expected: Record<string, any>,
+    actual: Record<string, unknown>,
+    expected: Record<string, unknown>,
     msg?: string,
   ): void {
     for (const key of Object.keys(expected)) {
@@ -92,7 +91,11 @@ function createNodeAssertImpl(): AssertImpl {
           throw new Error(msg || `Expected ${key} to be an object`);
         }
 
-        assertObjectMatch(actualVal, expectedVal, msg);
+        assertObjectMatch(
+          actualVal as Record<string, unknown>,
+          expectedVal as Record<string, unknown>,
+          msg,
+        );
         continue;
       }
 
@@ -306,9 +309,9 @@ export function assertMatch(actual: string, expected: RegExp, msg?: string): voi
   impl.assertMatch(actual, expected, msg);
 }
 
-// deno-lint-ignore no-explicit-any
 export function assertInstanceOf<T>(
   actual: unknown,
+  // deno-lint-ignore no-explicit-any -- any[] required: constructor params are contravariant
   expectedType: abstract new (...args: any[]) => T,
   msg?: string,
 ): asserts actual is T {
@@ -323,10 +326,9 @@ export function assertNotStrictEquals<T>(actual: T, expected: T, msg?: string): 
   impl.assertNotStrictEquals(actual, expected, msg);
 }
 
-// deno-lint-ignore no-explicit-any
 export function assertObjectMatch(
-  actual: Record<string, any>,
-  expected: Record<string, any>,
+  actual: Record<string, unknown>,
+  expected: Record<string, unknown>,
   msg?: string,
 ): void {
   impl.assertObjectMatch(actual, expected, msg);

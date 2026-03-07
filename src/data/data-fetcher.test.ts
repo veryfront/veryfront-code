@@ -25,7 +25,7 @@ describe("DataFetcher", () => {
     });
 
     it("should create instance with adapter", () => {
-      const mockAdapter = { env: { get: () => undefined } } as any;
+      const mockAdapter = { env: { get: () => undefined } };
       assertExists(new DataFetcher(mockAdapter));
     });
   });

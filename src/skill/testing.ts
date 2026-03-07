@@ -6,7 +6,7 @@
  * @module
  */
 
-import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { FileSystemAdapter, FileWatcher } from "#veryfront/platform/adapters/base.ts";
 
 /**
  * Create a lightweight in-memory FileSystemAdapter for tests.
@@ -68,7 +68,7 @@ export function createSkillTestAdapter(files: Record<string, string>): FileSyste
       const isFile = path in files;
       const isDirectory = !isFile && allPaths.some((filePath) => filePath.startsWith(`${path}/`));
       return {
-        size: isFile ? files[path]!.length : 0,
+        size: isFile ? (files[path] ?? "").length : 0,
         isFile,
         isDirectory,
         isSymlink: false,
@@ -81,8 +81,11 @@ export function createSkillTestAdapter(files: Record<string, string>): FileSyste
     async makeTempDir() {
       return "/tmp/mock";
     },
-    watch() {
-      return null as never;
+    watch(): FileWatcher {
+      return {
+        close() {},
+        async *[Symbol.asyncIterator]() {},
+      };
     },
   } satisfies FileSystemAdapter;
 }

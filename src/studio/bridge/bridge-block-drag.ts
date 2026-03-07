@@ -6,6 +6,7 @@
  */
 
 import { editorState as state } from "./bridge-editor-state.ts";
+import type { MdxBlock } from "./bridge-state.ts";
 import { getConfig, isMdxPage } from "./bridge-config.ts";
 import { DATA_VF_IGNORE } from "./bridge-constants.ts";
 import { btn, el } from "./bridge-dom-helpers.ts";
@@ -180,7 +181,7 @@ export function createMarkdownDragGhost(block: Element): HTMLElement {
 // MDX helpers
 // ---------------------------------------------------------------------------
 
-export function getMdxBlockOpenUiState(block: any): {
+export function getMdxBlockOpenUiState(block: Record<string, unknown> | null | undefined): {
   hasResolvedTarget: boolean;
   buttonLabel: string;
   showUnresolvedNote: boolean;
@@ -201,7 +202,7 @@ export function getMdxBlockOpenUiState(block: any): {
 // MDX blocks panel
 // ---------------------------------------------------------------------------
 
-export function setMarkdownMdxBlocks(blocks: any[]): void {
+export function setMarkdownMdxBlocks(blocks: MdxBlock[]): void {
   const PAGE_PATH = getConfig().pagePath;
 
   state.markdownLatestMdxBlocks = Array.isArray(blocks) ? blocks : [];

@@ -64,7 +64,7 @@ export function isDynamicTool(name: string): boolean {
  * Tool configuration entry from agent config.
  * Can be a boolean (true to enable from registry) or a Tool instance.
  */
-// deno-lint-ignore no-explicit-any
+// deno-lint-ignore no-explicit-any -- generic erasure: accepts Tool with any input/output types
 export type ToolConfigEntry = Tool<any, any> | boolean;
 
 function logToolDefinition(name: string, def: ToolDefinition): void {
@@ -77,6 +77,7 @@ function logToolDefinition(name: string, def: ToolDefinition): void {
 function addToolDefinition(
   tools: ToolDefinition[],
   name: string,
+  // deno-lint-ignore no-explicit-any -- generic erasure: accepts Tool with any input/output types
   tool: Tool<any, any>,
 ): void {
   const def = toolToProviderDefinition(tool);

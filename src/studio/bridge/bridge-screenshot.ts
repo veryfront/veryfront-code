@@ -7,9 +7,24 @@
 import { state } from "./bridge-state.ts";
 
 declare const window: Window & {
+  // deno-lint-ignore no-explicit-any -- third-party html2canvas loaded via CDN script tag
   html2canvas: any;
   devicePixelRatio: number;
 };
+
+interface ScreenshotResult {
+  success: boolean;
+  data?: string;
+  width?: number;
+  height?: number;
+  scrollY?: number;
+  totalHeight?: number;
+  viewportHeight?: number;
+  url?: string;
+  error?: string;
+  section?: number;
+  totalSections?: number;
+}
 
 function loadHtml2Canvas(): Promise<void> {
   if (state.html2canvasLoaded) return Promise.resolve();
@@ -49,7 +64,7 @@ export async function captureScreenshot(options?: {
   scrollTo?: number;
   fullPage?: boolean;
   quality?: number;
-}): Promise<any> {
+}): Promise<ScreenshotResult> {
   const { scrollTo, fullPage, quality = 0.8 } = options || {};
   const originalScrollY = window.scrollY;
 
@@ -61,7 +76,7 @@ export async function captureScreenshot(options?: {
       await new Promise((r) => setTimeout(r, 150));
     }
 
-    const canvasOptions: any = {
+    const canvasOptions: Record<string, unknown> = {
       useCORS: true,
       logging: false,
       scale: window.devicePixelRatio || 1,
@@ -118,19 +133,19 @@ export async function captureScreenshot(options?: {
       viewportHeight: window.innerHeight,
       url: window.location.href,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[bridge] html2canvas error:", error);
     window.scrollTo(0, originalScrollY);
     return {
       success: false,
-      error: error.message || String(error),
+      error: error instanceof Error ? error.message : String(error),
     };
   }
 }
 
-export async function captureMultipleSections(sectionCount?: number): Promise<any[]> {
+export async function captureMultipleSections(sectionCount?: number): Promise<ScreenshotResult[]> {
   const originalScrollY = window.scrollY;
-  const results: any[] = [];
+  const results: ScreenshotResult[] = [];
   const totalHeight = document.documentElement.scrollHeight;
   const viewportHeight = window.innerHeight;
   const sections = sectionCount || Math.ceil(totalHeight / viewportHeight);

@@ -2,7 +2,7 @@
  * Cross-platform environment helpers for local AI provider.
  *
  * Abstracts Deno/Node env access so all local-AI checks go through
- * a single function — no duplicated `(globalThis as any).Deno?.env` patterns.
+ * a single function — no duplicated `globalThis.Deno?.env` patterns.
  *
  * @module provider/local
  */
@@ -12,9 +12,11 @@
  * Works in Deno, Node, and compiled binaries.
  */
 export function isLocalAIDisabled(): boolean {
-  // deno-lint-ignore no-explicit-any
-  const denoVal = (globalThis as any).Deno?.env?.get?.("VERYFRONT_DISABLE_LOCAL_AI");
-  if (denoVal === "1") return true;
+  const denoVal = (globalThis as Record<string, unknown>).Deno as
+    | { env?: { get?: (key: string) => string | undefined } }
+    | undefined;
+  const denoEnvVal = denoVal?.env?.get?.("VERYFRONT_DISABLE_LOCAL_AI");
+  if (denoEnvVal === "1") return true;
 
   if (
     typeof process !== "undefined" &&

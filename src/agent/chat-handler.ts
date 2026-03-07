@@ -86,13 +86,10 @@ type ToolPartWithOutput = {
 function isToolPartWithOutput(part: unknown): part is ToolPartWithOutput {
   if (!part || typeof part !== "object") return false;
 
-  const p = part as Record<string, unknown>;
-  const type = p.type;
+  if (!("type" in part) || typeof part.type !== "string") return false;
+  if (!part.type.startsWith("tool-") || part.type === "tool-result") return false;
 
-  if (typeof type !== "string") return false;
-  if (!type.startsWith("tool-") || type === "tool-result") return false;
-
-  return p.output !== undefined;
+  return "output" in part && part.output !== undefined;
 }
 
 /**
@@ -133,7 +130,7 @@ function transformUIMessages(messages: ParsedMessage[]): Message[] {
 }
 
 function isTextPart(part: unknown): part is ParsedTextPart {
-  return typeof part === "object" && part !== null && (part as { type?: string }).type === "text";
+  return typeof part === "object" && part !== null && "type" in part && part.type === "text";
 }
 
 function extractLastUserText(messages: ParsedMessage[]): string {
@@ -157,9 +154,12 @@ function isResponseLike(value: unknown): value is Response {
   return (
     typeof value === "object" &&
     value !== null &&
-    typeof (value as Response).status === "number" &&
-    typeof (value as Response).headers === "object" &&
-    typeof (value as Response).bodyUsed === "boolean"
+    "status" in value &&
+    typeof value.status === "number" &&
+    "headers" in value &&
+    typeof value.headers === "object" &&
+    "bodyUsed" in value &&
+    typeof value.bodyUsed === "boolean"
   );
 }
 
@@ -248,17 +248,26 @@ function isRequest(obj: unknown): obj is Request {
   return (
     typeof obj === "object" &&
     obj !== null &&
-    typeof (obj as Request).json === "function" &&
-    typeof (obj as Request).url === "string" &&
-    typeof (obj as Request).method === "string"
+    "json" in obj &&
+    typeof obj.json === "function" &&
+    "url" in obj &&
+    typeof obj.url === "string" &&
+    "method" in obj &&
+    typeof obj.method === "string"
   );
 }
 
 function extractRequest(requestOrCtx: unknown): Request {
   if (isRequest(requestOrCtx)) return requestOrCtx;
   // Pages Router APIContext — has a .request property
-  const ctx = requestOrCtx as { request?: Request };
-  if (isRequest(ctx.request)) return ctx.request;
+  if (
+    typeof requestOrCtx === "object" &&
+    requestOrCtx !== null &&
+    "request" in requestOrCtx
+  ) {
+    const candidate = (requestOrCtx as Record<string, unknown>).request;
+    if (isRequest(candidate)) return candidate;
+  }
   throw new Error("Invalid handler argument: expected Request or APIContext");
 }
 
@@ -279,8 +288,7 @@ export function createChatHandler(
   agentId: string,
   options?: ChatHandlerOptions,
 ) {
-  // deno-lint-ignore no-explicit-any
-  return async function POST(requestOrCtx: any): Promise<Response> {
+  return async function POST(requestOrCtx: unknown): Promise<Response> {
     const request = extractRequest(requestOrCtx);
     let agent: ReturnType<typeof getAgent> | undefined;
     try {
