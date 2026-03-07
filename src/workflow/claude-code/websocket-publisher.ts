@@ -14,6 +14,7 @@ import type {
   ClientCommandHandler,
   PongEvent,
 } from "./types.ts";
+import { ORCHESTRATION_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 
 const logger = baseLogger.component("websocket-publisher");
 
@@ -359,14 +360,14 @@ export class AgentController {
     // Reject all pending approvals
     for (const [, pending] of this.pendingApprovals) {
       if (pending.timeout) clearTimeout(pending.timeout);
-      pending.reject(new Error("Cancelled"));
+      pending.reject(ORCHESTRATION_ERROR.create({ detail: "Cancelled" }));
     }
     this.pendingApprovals.clear();
 
     // Reject all pending inputs
     for (const pending of this.inputResolvers) {
       if (pending.timeout) clearTimeout(pending.timeout);
-      pending.reject(new Error("Cancelled"));
+      pending.reject(ORCHESTRATION_ERROR.create({ detail: "Cancelled" }));
     }
     this.inputResolvers = [];
   }
@@ -409,7 +410,7 @@ export class AgentController {
     reason: string,
   ): Promise<boolean> {
     if (this.cancelled) {
-      return Promise.reject(new Error("Agent cancelled"));
+      return Promise.reject(ORCHESTRATION_ERROR.create({ detail: "Agent cancelled" }));
     }
 
     const timeout = this.config.approvalTimeout || DEFAULT_APPROVAL_TIMEOUT_MS;
@@ -445,7 +446,7 @@ export class AgentController {
    */
   requestInput(prompt: string, defaultValue?: string): Promise<string> {
     if (this.cancelled) {
-      return Promise.reject(new Error("Agent cancelled"));
+      return Promise.reject(ORCHESTRATION_ERROR.create({ detail: "Agent cancelled" }));
     }
 
     const timeout = this.config.inputTimeout || DEFAULT_INPUT_TIMEOUT_MS;
@@ -468,7 +469,7 @@ export class AgentController {
         if (defaultValue !== undefined) {
           resolve(defaultValue);
         } else {
-          reject(new Error("Input timeout"));
+          reject(TIMEOUT_ERROR.create({ detail: "Input timeout" }));
         }
       }, timeout);
 

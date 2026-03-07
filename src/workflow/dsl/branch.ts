@@ -6,6 +6,7 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { validateNodeId } from "./validation.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 export interface BranchOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   condition: (context: WorkflowContext) => boolean | Promise<boolean>;
@@ -30,8 +31,12 @@ function prefixNodes(id: string, branch: "then" | "else", nodes: WorkflowNode[])
 export function branch(id: string, options: BranchOptions): WorkflowNode {
   validateNodeId(id);
 
-  if (!options.condition) throw new Error(`Branch "${id}" must specify a condition`);
-  if (!options.then?.length) throw new Error(`Branch "${id}" must have at least one 'then' node`);
+  if (!options.condition) {
+    throw INVALID_ARGUMENT.create({ detail: `Branch "${id}" must specify a condition` });
+  }
+  if (!options.then?.length) {
+    throw INVALID_ARGUMENT.create({ detail: `Branch "${id}" must have at least one 'then' node` });
+  }
 
   const config: BranchNodeConfig = {
     type: "branch",

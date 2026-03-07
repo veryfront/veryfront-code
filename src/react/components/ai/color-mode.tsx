@@ -7,6 +7,7 @@
  */
 
 import * as React from "react";
+import { COMPONENT_ERROR } from "#veryfront/errors";
 
 type ColorMode = "light" | "dark" | "system";
 type ResolvedColorMode = "light" | "dark";
@@ -105,7 +106,9 @@ ColorModeProvider.displayName = "ColorModeProvider";
 export function useColorMode(): ColorModeContextValue {
   const context = React.useContext(ColorModeContext);
   if (!context) {
-    throw new Error("useColorMode must be used within a ColorModeProvider");
+    throw COMPONENT_ERROR.create({
+      detail: "useColorMode must be used within a ColorModeProvider",
+    });
   }
   return context;
 }

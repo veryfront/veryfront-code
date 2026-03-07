@@ -10,6 +10,7 @@
 
 import { compile } from "tailwindcss";
 import { serverLogger } from "#veryfront/utils";
+import { DEPENDENCY_MISSING, NETWORK_ERROR } from "#veryfront/errors";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { hashString } from "./candidate-extractor.ts";
@@ -48,7 +49,9 @@ async function getTailwindBaseCSS(): Promise<string> {
   try {
     const response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`Failed to fetch Tailwind CSS: ${response.status} ${response.statusText}`);
+      throw NETWORK_ERROR.create({
+        detail: `Failed to fetch Tailwind CSS: ${response.status} ${response.statusText}`,
+      });
     }
     tailwindBaseCSS = await response.text();
   } catch (error) {
@@ -108,8 +111,13 @@ export async function getCompiler(
     },
     loadModule: async (id: string) => {
       const loaded = await loadPlugin(id, pluginCache, pluginErrors);
-      if (!loaded) throw new Error(`Failed to load plugin "${id}": plugin not installed`);
-      return { module: loaded as Record<string, unknown>, base: "/", path: "/" };
+      if (!loaded) {
+        throw DEPENDENCY_MISSING.create({
+          detail: `Failed to load plugin "${id}": plugin not installed`,
+        });
+      }
+      // deno-lint-ignore no-explicit-any -- dynamically loaded plugin cannot be statically verified against Tailwind's Plugin | Config type
+      return { module: loaded as any, base: "/", path: "/" };
     },
   });
 

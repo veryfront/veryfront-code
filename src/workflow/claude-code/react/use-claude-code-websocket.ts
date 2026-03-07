@@ -12,6 +12,7 @@ import type {
   ClaudeCodeResult,
   InputRequestEvent,
 } from "../types.ts";
+import { NETWORK_ERROR, REQUEST_ERROR } from "#veryfront/errors";
 
 /** Default delay before reconnecting after disconnect */
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
@@ -419,12 +420,12 @@ export function useClaudeCodeWebSocket(
           connect();
         }, reconnectDelay * reconnectAttemptsRef.current);
       } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-        onError?.(new Error("Connection failed after max retries"));
+        onError?.(REQUEST_ERROR.create({ detail: "Connection failed after max retries" }));
       }
     };
 
     socket.onerror = () => {
-      onError?.(new Error("WebSocket error"));
+      onError?.(NETWORK_ERROR.create({ detail: "WebSocket error" }));
     };
 
     socketRef.current = socket;

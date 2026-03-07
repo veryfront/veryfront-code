@@ -3,6 +3,7 @@
  */
 
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
+import { REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -68,12 +69,14 @@ export async function fetchOAuthToken(
         }
 
         const errorText = await response.text().catch((): string => "Unknown error");
-        throw new Error(
-          `OAuth token request failed: ${response.status} - ${errorText}`,
-        );
+        throw REQUEST_ERROR.create({
+          detail: `OAuth token request failed: ${response.status} - ${errorText}`,
+        });
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") {
-          throw new Error(`OAuth token request timed out after ${timeoutMs}ms`);
+          throw TIMEOUT_ERROR.create({
+            detail: `OAuth token request timed out after ${timeoutMs}ms`,
+          });
         }
         throw error;
       } finally {

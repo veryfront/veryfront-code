@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { HandlerContext } from "#veryfront/types";
 import { type CacheKeyContext, CacheKeyContextSchema } from "./schemas/index.ts";
 import { buildContentHashCacheKey } from "./keys.ts";
+import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 
 type MultiProjectRequestContextType = {
   projectSlug: string;
@@ -40,10 +41,10 @@ export function getCurrentCacheKeyContext(): CacheKeyContext {
   const ctx = cacheKeyContextStorage.getStore();
   if (ctx) return ctx;
 
-  throw new Error(
-    "[CacheKeyBuilder] No cache context available. " +
+  throw CACHE_INVARIANT_VIOLATION.create({
+    detail: "[CacheKeyBuilder] No cache context available. " +
       "Ensure runWithCacheKeyContext() was called at request entry.",
-  );
+  });
 }
 
 function getRequestContextFn(): (() => MultiProjectRequestContextType | null) | null {

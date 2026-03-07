@@ -11,6 +11,7 @@ import { VERSION } from "#veryfront/utils/version.ts";
 import { CacheKeyPrefix } from "../prefixes.ts";
 import type { QueryParamCacheOptions } from "../prefixes.ts";
 import { sanitizeQueryParamsForCacheKey } from "../utils.ts";
+import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 
 export function buildRenderCachePrefix(
   projectId: string,
@@ -45,7 +46,9 @@ export function computeContentSourceId(
 
   if (environment === "production") {
     if (!releaseId) {
-      throw new Error("Missing releaseId for production contentSourceId");
+      throw CACHE_INVARIANT_VIOLATION.create({
+        detail: "Missing releaseId for production contentSourceId",
+      });
     }
     return `release-${releaseId}`;
   }
@@ -92,7 +95,9 @@ export function buildProxyManagerCacheKey(
 
   if (productionMode) {
     if (!releaseId) {
-      throw new Error(`Missing releaseId in production for ${projectSlug}`);
+      throw CACHE_INVARIANT_VIOLATION.create({
+        detail: `Missing releaseId in production for ${projectSlug}`,
+      });
     }
     return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${releaseId}`;
   }

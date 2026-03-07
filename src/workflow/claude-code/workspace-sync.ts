@@ -14,6 +14,7 @@ import { logger as baseLogger } from "#veryfront/utils";
 import { api } from "../api.ts";
 import type { CapturedTenantContext } from "../types.ts";
 import { join, relative, resolve } from "@std/path";
+import { INITIALIZATION_ERROR, INVALID_ARGUMENT, SECURITY_VIOLATION } from "#veryfront/errors";
 
 const logger = baseLogger.component("workspace-sync");
 
@@ -148,9 +149,9 @@ export class WorkspaceSync {
   constructor(config: WorkspaceConfig) {
     // SECURITY: Validate runId to prevent path traversal
     if (!/^[a-zA-Z0-9_-]+$/.test(config.runId)) {
-      throw new Error(
-        `Invalid runId: must contain only alphanumeric, underscore, or hyphen characters`,
-      );
+      throw INVALID_ARGUMENT.create({
+        detail: `Invalid runId: must contain only alphanumeric, underscore, or hyphen characters`,
+      });
     }
 
     this.config = {
@@ -275,7 +276,9 @@ export class WorkspaceSync {
     const changes: FileChange[] = [];
 
     if (!this.initialized) {
-      throw new Error("Workspace not initialized. Call initialize() first.");
+      throw INITIALIZATION_ERROR.create({
+        detail: "Workspace not initialized. Call initialize() first.",
+      });
     }
 
     // Walk the workspace directory
@@ -427,7 +430,7 @@ export class WorkspaceSync {
     // Verify the resolved path is within the workspace
     const relativePath = relative(this.workspaceDir, fullPath);
     if (relativePath.startsWith("..") || !relativePath || relativePath === "..") {
-      throw new Error(`Path traversal detected: ${path}`);
+      throw SECURITY_VIOLATION.create({ detail: `Path traversal detected: ${path}` });
     }
 
     return fullPath;

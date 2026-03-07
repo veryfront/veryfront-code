@@ -16,6 +16,7 @@ import type {
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 import { requeueRun } from "./shared/requeue-run.ts";
+import { AGENT_NOT_FOUND, ORCHESTRATION_ERROR } from "#veryfront/errors";
 
 const logger = baseLogger.component("memory-backend");
 
@@ -65,7 +66,7 @@ export class MemoryBackend implements WorkflowBackend {
 
   updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
     const run = this.runs.get(runId);
-    if (!run) throw new Error(`Run not found: ${runId}`);
+    if (!run) throw AGENT_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
     logger.debug(`Updating run: ${runId}`, patch);
 
@@ -209,10 +210,12 @@ export class MemoryBackend implements WorkflowBackend {
     decision: ApprovalDecision,
   ): Promise<void> {
     const approvals = this.approvals.get(runId);
-    if (!approvals) throw new Error(`No approvals found for run: ${runId}`);
+    if (!approvals) {
+      throw AGENT_NOT_FOUND.create({ detail: `No approvals found for run: ${runId}` });
+    }
 
     const approval = approvals.find((a) => a.id === approvalId);
-    if (!approval) throw new Error(`Approval not found: ${approvalId}`);
+    if (!approval) throw AGENT_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
 
     logger.debug("Updating approval", { approvalId, decision });
     approval.status = decision.approved ? "approved" : "rejected";
@@ -265,7 +268,9 @@ export class MemoryBackend implements WorkflowBackend {
     const maxSize = this.config.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
     if (this.queue.length >= maxSize) {
       return Promise.reject(
-        new Error(`Queue full (max: ${maxSize}). Cannot enqueue job: ${job.runId}`),
+        ORCHESTRATION_ERROR.create({
+          detail: `Queue full (max: ${maxSize}). Cannot enqueue job: ${job.runId}`,
+        }),
       );
     }
 

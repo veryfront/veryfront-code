@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors";
+import { createError, NOT_SUPPORTED, toError } from "#veryfront/errors";
 import { join } from "#veryfront/compat/path";
 import type {
   DirEntry,
@@ -37,7 +37,9 @@ type FileSnapshotEntry = {
 
 function assertDenoRuntime(adapterName: string, method: string): void {
   if (typeof Deno === "undefined") {
-    throw new Error(`${adapterName}.${method}() can only be used in Deno runtime`);
+    throw NOT_SUPPORTED.create({
+      detail: `${adapterName}.${method}() can only be used in Deno runtime`,
+    });
   }
 }
 
@@ -274,7 +276,9 @@ class DenoEnvironmentAdapter implements EnvironmentAdapter {
 
   set(key: string, value: string): void {
     if (typeof Deno === "undefined" || typeof Deno.env === "undefined") {
-      throw new Error("DenoEnvironmentAdapter.set() can only be used in Deno runtime");
+      throw NOT_SUPPORTED.create({
+        detail: "DenoEnvironmentAdapter.set() can only be used in Deno runtime",
+      });
     }
     Deno.env.set(key, value);
   }
@@ -288,7 +292,9 @@ class DenoEnvironmentAdapter implements EnvironmentAdapter {
 class DenoServerAdapter implements ServerAdapter {
   upgradeWebSocket(request: Request): WebSocketUpgrade {
     if (typeof Deno === "undefined") {
-      throw new Error("DenoServerAdapter.upgradeWebSocket() can only be used in Deno runtime");
+      throw NOT_SUPPORTED.create({
+        detail: "DenoServerAdapter.upgradeWebSocket() can only be used in Deno runtime",
+      });
     }
     const { socket, response } = Deno.upgradeWebSocket(request);
     return { socket, response };
@@ -375,7 +381,9 @@ export class DenoAdapter implements RuntimeAdapter {
     options: ServeOptions = {},
   ): Promise<Server> {
     if (typeof Deno === "undefined") {
-      throw new Error("DenoAdapter.serve() can only be used in Deno runtime");
+      throw NOT_SUPPORTED.create({
+        detail: "DenoAdapter.serve() can only be used in Deno runtime",
+      });
     }
 
     const { port = DEFAULT_PORT, hostname = "localhost", onListen } = options;

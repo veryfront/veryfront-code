@@ -8,6 +8,7 @@
  */
 
 import { VERSION } from "#veryfront/utils/version.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { buildSSRModuleCacheKey } from "#veryfront/cache/keys.ts";
 import { computeConfigHashSync } from "#veryfront/cache/config-hash.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -59,9 +60,10 @@ export class SSRCacheManager {
 
   getCacheKey(filePath: string): string {
     if (!this.options.contentSourceId) {
-      throw new Error(
-        `Missing contentSourceId for SSR module cache (project: ${this.options.projectId}, file: ${filePath})`,
-      );
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Missing contentSourceId for SSR module cache (project: ${this.options.projectId}, file: ${filePath})`,
+      });
     }
 
     const reactVersion = this.options.reactVersion ?? "default";
@@ -256,12 +258,14 @@ export class SSRCacheManager {
     const { projectId, contentSourceId } = this.options;
 
     if (!projectId) {
-      throw new Error(
-        `Missing projectId for SSR temp directory (projectDir: ${this.options.projectDir})`,
-      );
+      throw INVALID_ARGUMENT.create({
+        detail: `Missing projectId for SSR temp directory (projectDir: ${this.options.projectDir})`,
+      });
     }
     if (!contentSourceId) {
-      throw new Error(`Missing contentSourceId for SSR temp directory (project: ${projectId})`);
+      throw INVALID_ARGUMENT.create({
+        detail: `Missing contentSourceId for SSR temp directory (project: ${projectId})`,
+      });
     }
 
     const baseCacheDir = getMdxEsmCacheDir();

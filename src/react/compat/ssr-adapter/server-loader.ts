@@ -1,4 +1,5 @@
 import { getReactVersionInfo } from "../version-detector/index.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { cacheModuleToLocal } from "#veryfront/transforms/esm/http-cache.ts";
 import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
@@ -43,7 +44,9 @@ export function getProjectReact(): Promise<typeof import("react")> {
     // This prevents "multiple React instances" errors in SSR.
     const reactUrl = getReactUrls().react;
     if (!reactUrl) {
-      throw new Error("[server-loader] React URL not found in getReactUrls()");
+      throw INITIALIZATION_ERROR.create({
+        detail: "[server-loader] React URL not found in getReactUrls()",
+      });
     }
 
     const reactModule = await loadFromCachedHttpModule<{ default?: typeof import("react") }>(
@@ -70,7 +73,9 @@ export function getReactDOMServer(): Promise<ReactDOMServer> {
     // where components use React from one source and react-dom/server from another.
     const serverUrl = getReactUrls()["react-dom/server"];
     if (!serverUrl) {
-      throw new Error("[server-loader] react-dom/server URL not found in getReactUrls()");
+      throw INITIALIZATION_ERROR.create({
+        detail: "[server-loader] react-dom/server URL not found in getReactUrls()",
+      });
     }
     const serverModule = await loadFromCachedHttpModule<typeof import("react-dom/server")>(
       serverUrl,

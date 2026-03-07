@@ -10,6 +10,7 @@ import type { WorkflowBackend } from "../backends/types.ts";
 import { hasWorkerSupport } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
 import { generateId } from "../types.ts";
+import { CONFIG_INVALID, ORCHESTRATION_ERROR } from "#veryfront/errors";
 
 const logger = baseLogger.component("workflow-worker");
 
@@ -104,12 +105,12 @@ export class WorkflowWorker {
   constructor(config: WorkflowWorkerConfig) {
     // Validate backend supports worker features
     if (!hasWorkerSupport(config.backend)) {
-      throw new Error(
-        "Backend does not support worker features. " +
+      throw CONFIG_INVALID.create({
+        detail: "Backend does not support worker features. " +
           "Required methods: enqueue, dequeue, acknowledge, acquireLock, releaseLock, " +
           "findStalledRuns, claimStalledRun. " +
           "Use RedisBackend with worker support enabled.",
-      );
+      });
     }
 
     this.config = {
@@ -135,7 +136,7 @@ export class WorkflowWorker {
    */
   start(): void {
     if (this.status === "running") {
-      throw new Error("Worker is already running");
+      throw ORCHESTRATION_ERROR.create({ detail: "Worker is already running" });
     }
 
     this.status = "running";

@@ -6,8 +6,9 @@
  */
 
 import { logger } from "./bridge-logger.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 
-type StudioMode = "simple" | "advanced";
+export type StudioMode = "simple" | "advanced";
 
 interface BridgeConfig {
   projectId: string;
@@ -63,7 +64,9 @@ export function initConfig(): void {
 
 export function getConfig(): BridgeConfig {
   if (!config) {
-    throw new Error("[StudioBridge] Config not initialized. Call initConfig() first.");
+    throw INITIALIZATION_ERROR.create({
+      detail: "[StudioBridge] Config not initialized. Call initConfig() first.",
+    });
   }
   return config;
 }

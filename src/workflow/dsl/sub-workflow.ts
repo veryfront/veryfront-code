@@ -6,6 +6,7 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { validateNodeId } from "./validation.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 export interface SubWorkflowOptions extends BaseNodeConfig {
   workflow: WorkflowDefinition;
@@ -18,7 +19,9 @@ export function subWorkflow(id: string, options: SubWorkflowOptions): WorkflowNo
   validateNodeId(id);
 
   if (!options.workflow) {
-    throw new Error(`SubWorkflow node "${id}" must have a 'workflow' configured`);
+    throw INVALID_ARGUMENT.create({
+      detail: `SubWorkflow node "${id}" must have a 'workflow' configured`,
+    });
   }
 
   const config: SubWorkflowNodeConfig = {

@@ -2,6 +2,7 @@ import { fetchOAuthToken, type TokenResponse } from "./oauth-client.ts";
 import type { TokenCache, TokenCacheEntry } from "./cache/types.ts";
 import { MemoryCache } from "./cache/memory-cache.ts";
 import { ProxySpanNames, withSpan } from "./tracing.ts";
+import { CACHE_ERROR } from "#veryfront/errors";
 
 export type TokenScope = "preview" | "production";
 
@@ -57,7 +58,7 @@ export class TokenManager {
         const negEntry = this.negativeCache.get(cacheKey);
         if (negEntry) {
           if (Date.now() - negEntry.cachedAt < NEGATIVE_CACHE_TTL_MS) {
-            throw new Error(negEntry.message);
+            throw CACHE_ERROR.create({ detail: negEntry.message });
           }
           this.negativeCache.delete(cacheKey);
         }

@@ -12,6 +12,7 @@
  */
 
 import { rendererLogger } from "#veryfront/utils";
+import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
 import { initializeTransform, isUsingEsbuild } from "#veryfront/platform/compat/transform.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -85,7 +86,9 @@ export async function initializeSharedServices(
 
 export function getSharedServices(): SharedServices {
   if (!sharedServices) {
-    throw new Error("SharedServices not initialized. Call initializeSharedServices() first.");
+    throw INITIALIZATION_ERROR.create({
+      detail: "SharedServices not initialized. Call initializeSharedServices() first.",
+    });
   }
   return sharedServices;
 }

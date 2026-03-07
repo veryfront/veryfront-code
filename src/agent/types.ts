@@ -3,6 +3,7 @@
  **************************/
 
 import type { Tool } from "#veryfront/tool";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { Memory } from "./memory/memory-interface.ts";
 
 // Re-export schema-based types
@@ -99,9 +100,10 @@ export function getToolArguments(part: ToolCallPart): Record<string, unknown> {
   if (hasInput(part)) return part.input;
 
   const basePart = part as ToolCallPart;
-  throw new Error(
-    `Tool call part for "${basePart.toolName}" (${basePart.toolCallId}) missing both 'args' and 'input' fields`,
-  );
+  throw INVALID_ARGUMENT.create({
+    detail:
+      `Tool call part for "${basePart.toolName}" (${basePart.toolCallId}) missing both 'args' and 'input' fields`,
+  });
 }
 
 export interface AgentStreamResult {

@@ -14,6 +14,7 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { workflowRegistry } from "../registry.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 export type { Workflow } from "../types.ts";
 
@@ -39,8 +40,10 @@ export interface WorkflowOptions<TInput = unknown, TOutput = unknown> {
 export function workflow<TInput = unknown, TOutput = unknown>(
   options: WorkflowOptions<TInput, TOutput>,
 ): Workflow<TInput, TOutput> {
-  if (!options.id) throw new Error("Workflow must have an 'id'");
-  if (!options.steps) throw new Error(`Workflow "${options.id}" must have 'steps'`);
+  if (!options.id) throw INVALID_ARGUMENT.create({ detail: "Workflow must have an 'id'" });
+  if (!options.steps) {
+    throw INVALID_ARGUMENT.create({ detail: `Workflow "${options.id}" must have 'steps'` });
+  }
 
   const definition: WorkflowDefinition<TInput, TOutput> = {
     id: options.id,
@@ -93,7 +96,7 @@ export function dag(nodes: Record<string, DagNodeInput>): WorkflowNode[] {
     const nodeId = baseNode.id || id;
 
     if (seenIds.has(nodeId)) {
-      throw new Error(`Duplicate node ID detected in dag: "${nodeId}"`);
+      throw INVALID_ARGUMENT.create({ detail: `Duplicate node ID detected in dag: "${nodeId}"` });
     }
 
     seenIds.add(nodeId);

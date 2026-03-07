@@ -1,4 +1,5 @@
 import { serverLogger as logger } from "#veryfront/utils";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { buildLocalhostUrl, LOCALHOST } from "#veryfront/config";
 import { basename } from "#veryfront/compat/path";
 import type { RuntimeAdapter, Server } from "#veryfront/platform/adapters/base.ts";
@@ -272,7 +273,9 @@ export class DevServer {
 
   /** Returns the request handler for use with external HTTP servers. */
   get handler(): (req: Request) => Promise<Response> {
-    if (!this._handler) throw new Error("DevServer not started. Call start() first.");
+    if (!this._handler) {
+      throw INITIALIZATION_ERROR.create({ detail: "DevServer not started. Call start() first." });
+    }
     return this._handler;
   }
 

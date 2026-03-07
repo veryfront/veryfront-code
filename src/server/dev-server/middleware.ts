@@ -1,4 +1,5 @@
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
+import { COMPILATION_ERROR } from "#veryfront/errors";
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -153,7 +154,9 @@ async function loadMiddlewareFromVirtualFS(
   });
 
   const firstError = result.errors?.[0]?.text;
-  if (firstError) throw new Error(`Failed to transpile middleware: ${firstError}`);
+  if (firstError) {
+    throw COMPILATION_ERROR.create({ detail: `Failed to transpile middleware: ${firstError}` });
+  }
 
   const js = result.outputFiles?.[0]?.text ?? "export default []";
 

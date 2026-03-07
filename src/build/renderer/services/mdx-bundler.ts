@@ -5,6 +5,7 @@ import { extract } from "#std/front-matter/yaml.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { getRehypePlugins, getRemarkPlugins } from "#veryfront/transforms/plugins/plugin-loader.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { MODULE_NOT_FOUND } from "#veryfront/errors";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type {
@@ -56,7 +57,9 @@ async function validateLocalImport(
     }
   }
 
-  result.errors.push(new Error(`Cannot find module '${importPath}' from '${sourcePath}'`));
+  result.errors.push(
+    MODULE_NOT_FOUND.create({ detail: `Cannot find module '${importPath}' from '${sourcePath}'` }),
+  );
 }
 
 /**

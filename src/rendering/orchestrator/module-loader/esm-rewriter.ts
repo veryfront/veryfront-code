@@ -1,4 +1,5 @@
 import { rendererLogger } from "#veryfront/utils";
+import { MODULE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { generateHash } from "./cache.ts";
 
@@ -59,7 +60,9 @@ export async function fetchEsmModule(
   logger.debug("Fetching esm.sh module:", url);
 
   const response = await fetch(url);
-  if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.status}`);
+  if (!response.ok) {
+    throw MODULE_NOT_FOUND.create({ detail: `Failed to fetch ${url}: ${response.status}` });
+  }
 
   let code = await response.text();
 

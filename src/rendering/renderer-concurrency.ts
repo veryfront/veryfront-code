@@ -11,6 +11,7 @@
 
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { getEnvNumber } from "#veryfront/compat/process.ts";
+import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -77,7 +78,7 @@ export class Mutex {
           settled = true;
           const idx = this.queue.indexOf(onAcquire);
           if (idx !== -1) this.queue.splice(idx, 1);
-          reject(new Error(`Lock acquisition timeout after ${timeoutMs}ms`));
+          reject(RENDER_ERROR.create({ detail: `Lock acquisition timeout after ${timeoutMs}ms` }));
         }, timeoutMs);
       }
 

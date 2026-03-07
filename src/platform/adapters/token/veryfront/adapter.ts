@@ -6,6 +6,7 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
+import { TOKEN_STORAGE_ERROR } from "#veryfront/errors";
 import { TokenStorageApiClient } from "./api-client.ts";
 import {
   createTokenConfig,
@@ -36,7 +37,9 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
 
     const connected = await this.client.ping();
     if (!connected) {
-      throw new Error("Failed to connect to Veryfront token storage API");
+      throw TOKEN_STORAGE_ERROR.create({
+        detail: "Failed to connect to Veryfront token storage API",
+      });
     }
 
     this.initialized = true;

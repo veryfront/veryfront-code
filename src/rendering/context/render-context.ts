@@ -2,6 +2,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { HandlerContext } from "#veryfront/types";
 import type { EnrichedContext } from "#veryfront/server/context/enriched-context.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
 import {
   buildRenderCacheKey,
   buildRenderCachePrefix,
@@ -42,10 +43,12 @@ export function createRenderContext(
 ): RenderContext {
   if (ctx.enriched) return createRenderContextFromEnriched(ctx.enriched, options);
 
-  if (!ctx.config) throw new Error("RenderContext requires config to be pre-loaded");
-  if (!ctx.adapter) throw new Error("RenderContext requires adapter");
+  if (!ctx.config) {
+    throw INVALID_ARGUMENT.create({ detail: "RenderContext requires config to be pre-loaded" });
+  }
+  if (!ctx.adapter) throw INVALID_ARGUMENT.create({ detail: "RenderContext requires adapter" });
   if (!ctx.projectSlug && !ctx.projectId) {
-    throw new Error("RenderContext requires projectSlug or projectId");
+    throw INVALID_ARGUMENT.create({ detail: "RenderContext requires projectSlug or projectId" });
   }
 
   const environment: RenderEnvironment = ctx.requestContext?.mode ?? "preview";
@@ -98,10 +101,16 @@ export function createRenderContextFromEnriched(
   enriched: EnrichedContext,
   options?: CreateRenderContextOptions,
 ): RenderContext {
-  if (!enriched.config) throw new Error("EnrichedContext is missing required config");
-  if (!enriched.adapter) throw new Error("EnrichedContext is missing required adapter");
+  if (!enriched.config) {
+    throw INVALID_ARGUMENT.create({ detail: "EnrichedContext is missing required config" });
+  }
+  if (!enriched.adapter) {
+    throw INVALID_ARGUMENT.create({ detail: "EnrichedContext is missing required adapter" });
+  }
   if (!enriched.contentSourceId) {
-    throw new Error("EnrichedContext is missing required contentSourceId");
+    throw INVALID_ARGUMENT.create({
+      detail: "EnrichedContext is missing required contentSourceId",
+    });
   }
 
   return {

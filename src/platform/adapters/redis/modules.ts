@@ -1,5 +1,6 @@
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import type { DenoRedisModule, NodeRedisModule } from "./types.ts";
 
 let DenoRedis: DenoRedisModule | null = null;
@@ -28,12 +29,17 @@ export function getRedisModule(): Promise<{
         const message = error instanceof Error ? error.message : String(error);
 
         if (isDeno) {
-          throw new Error(`Failed to load Deno Redis module. Error: ${message}`);
+          throw INITIALIZATION_ERROR.create({
+            detail: `Failed to load Deno Redis module. Error: ${message}`,
+            cause: error instanceof Error ? error : undefined,
+          });
         }
 
-        throw new Error(
-          `Failed to load 'redis' package. Please install it with: npm install redis\nError: ${message}`,
-        );
+        throw INITIALIZATION_ERROR.create({
+          detail:
+            `Failed to load 'redis' package. Please install it with: npm install redis\nError: ${message}`,
+          cause: error instanceof Error ? error : undefined,
+        });
       }
 
       return { DenoRedis, NodeRedis };

@@ -8,6 +8,7 @@
  */
 
 import * as React from "react";
+import { COMPONENT_ERROR } from "#veryfront/errors";
 import type { BranchInfo, UIMessage } from "#veryfront/agent/react";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
 import type { PartGroup } from "../utils/message-parts.ts";
@@ -37,7 +38,9 @@ const MessageContext = React.createContext<MessageContextValue | null>(null);
 export function useMessageContext(): MessageContextValue {
   const context = React.useContext(MessageContext);
   if (!context) {
-    throw new Error("useMessageContext must be used within a Message component");
+    throw COMPONENT_ERROR.create({
+      detail: "useMessageContext must be used within a Message component",
+    });
   }
   return context;
 }

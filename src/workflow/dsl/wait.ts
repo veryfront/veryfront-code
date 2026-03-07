@@ -1,5 +1,6 @@
 import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
 import { validateNodeId } from "./validation.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 export interface WaitForApprovalOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   message?: string;
@@ -42,7 +43,7 @@ export function waitForEvent(id: string, options: WaitForEventOptions): Workflow
   validateNodeId(id);
 
   if (!options.eventName) {
-    throw new Error(`waitForEvent "${id}" must specify an eventName`);
+    throw INVALID_ARGUMENT.create({ detail: `waitForEvent "${id}" must specify an eventName` });
   }
 
   return {

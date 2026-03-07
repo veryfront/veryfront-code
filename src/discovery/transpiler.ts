@@ -13,6 +13,7 @@ import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
+import { COMPILATION_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 // Static import ensures deno compile includes embedding in the binary.
 // Other modules (agent, tool, etc.) are statically imported elsewhere;
@@ -157,7 +158,10 @@ export async function importModule(
       ? await context.fsAdapter.readFile(filePath)
       : await createFileSystem().readTextFile(filePath);
   } catch (error) {
-    throw new Error(`Failed to read file ${filePath}: ${error}`);
+    throw FILE_NOT_FOUND.create({
+      detail: `Failed to read file ${filePath}: ${error}`,
+      cause: error,
+    });
   }
 
   const loader = getEsbuildLoader(filePath);
@@ -206,9 +210,9 @@ export async function importModule(
   });
 
   if (result.errors.length > 0) {
-    throw new Error(
-      `Failed to transpile ${filePath}: ${result.errors[0]?.text ?? "unknown error"}`,
-    );
+    throw COMPILATION_ERROR.create({
+      detail: `Failed to transpile ${filePath}: ${result.errors[0]?.text ?? "unknown error"}`,
+    });
   }
 
   const js = result.outputFiles?.[0]?.text ?? "export {}";

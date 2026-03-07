@@ -7,6 +7,7 @@
  */
 
 import * as React from "react";
+import { COMPONENT_ERROR } from "#veryfront/errors";
 import type { UIMessage } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
 import type { ModelOption } from "../../model-selector.tsx";
@@ -66,7 +67,9 @@ const ChatContext = React.createContext<ChatContextValue | null>(null);
 export function useChatContext(): ChatContextValue {
   const context = React.useContext(ChatContext);
   if (!context) {
-    throw new Error("useChatContext must be used within a ChatRoot or Chat component");
+    throw COMPONENT_ERROR.create({
+      detail: "useChatContext must be used within a ChatRoot or Chat component",
+    });
   }
   return context;
 }

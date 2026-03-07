@@ -1,4 +1,5 @@
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
+import { INVALID_IMPORT } from "#veryfront/errors";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 import { READ_OPERATION_EXTENSION_PRIORITY } from "./extension-priority.ts";
 import type { ResolvedContentContext } from "./types.ts";
@@ -35,10 +36,10 @@ interface BuildReadFetchStateOptions {
 export function assertProjectSourcePath(normalizedPath: string): void {
   if (!isFrameworkSourcePath(normalizedPath)) return;
 
-  throw new Error(
-    `[ReadOperations] Framework path "${normalizedPath}" cannot be fetched from API. ` +
+  throw INVALID_IMPORT.create({
+    detail: `[ReadOperations] Framework path "${normalizedPath}" cannot be fetched from API. ` +
       `Framework modules must be served from local filesystem.`,
-  );
+  });
 }
 
 export function buildReadFetchState(options: BuildReadFetchStateOptions): ReadFetchState {

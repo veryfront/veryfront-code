@@ -1,4 +1,5 @@
 import type { NodeState, WorkflowNode } from "../../types.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 interface DAGGraph {
   adjList: Map<string, string[]>;
@@ -25,7 +26,9 @@ export function buildGraph(nodes: WorkflowNode[]): DAGGraph {
     for (const dep of node.dependsOn ?? []) {
       const dependents = adjList.get(dep);
       if (!dependents) {
-        throw new Error(`Node "${node.id}" depends on unknown node "${dep}"`);
+        throw INVALID_ARGUMENT.create({
+          detail: `Node "${node.id}" depends on unknown node "${dep}"`,
+        });
       }
       dependents.push(node.id);
       inDegree.set(node.id, (inDegree.get(node.id) ?? 0) + 1);

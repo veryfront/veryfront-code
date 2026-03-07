@@ -2,6 +2,7 @@ import { DEFAULT_SANDBOX_TIMEOUT_MS } from "./constants.ts";
 import { isCompiledBinary, serverLogger } from "#veryfront/utils";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { INVALID_ARGUMENT, NOT_SUPPORTED, TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors";
 
 export interface SandboxOptions {
   timeoutMs?: number;
@@ -31,9 +32,15 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
       const { memoryLimitMb } = options;
       if (typeof memoryLimitMb === "number") {
         if (!Number.isFinite(memoryLimitMb) || memoryLimitMb <= 0) {
-          throw new Error("Sandbox memoryLimitMb must be a positive, finite number");
+          throw INVALID_ARGUMENT.create({
+            detail: "Sandbox memoryLimitMb must be a positive, finite number",
+          });
         }
-        if (!isNode) throw new Error("Sandbox memory limits are not supported in this runtime");
+        if (!isNode) {
+          throw NOT_SUPPORTED.create({
+            detail: "Sandbox memory limits are not supported in this runtime",
+          });
+        }
 
         workerOptions.resourceLimits = {
           ...workerOptions.resourceLimits,
@@ -72,14 +79,14 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
       const promise = new Promise<T>((resolve, reject) => {
         const timer = setTimeout(() => {
           safeTerminate("[sandbox] worker terminate failed");
-          reject(new Error("Sandbox timeout"));
+          reject(TIMEOUT_ERROR.create({ detail: "Sandbox timeout" }));
         }, timeoutMs);
 
         worker.onmessage = (e: MessageEvent) => {
           clearTimeout(timer);
 
           const { result, error } = e.data ?? {};
-          if (error) reject(new Error(error));
+          if (error) reject(UNKNOWN_ERROR.create({ detail: error }));
           else resolve(result as T);
 
           safeTerminate("[sandbox] worker terminate failed");
@@ -87,7 +94,7 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
 
         worker.onerror = (e) => {
           clearTimeout(timer);
-          reject(new Error(String(e.message || e.error || "Worker error")));
+          reject(UNKNOWN_ERROR.create({ detail: String(e.message || e.error || "Worker error") }));
           safeTerminate("[sandbox] worker terminate failed on error");
         };
       });

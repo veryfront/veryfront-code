@@ -31,6 +31,7 @@ export { createSplitterPlugin } from "./esbuild-plugin.ts";
 import type { ChunkManifest, SplitOptions } from "./types.ts";
 import { CodeSplitter } from "./splitter.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { BUILD_FAILED } from "#veryfront/errors";
 
 export function createCodeSplitter(options: SplitOptions): CodeSplitter {
   return new CodeSplitter(options);
@@ -44,7 +45,7 @@ export async function loadChunkManifest(manifestPath: string): Promise<ChunkMani
     return JSON.parse(content) as ChunkManifest;
   } catch (_) {
     /* expected: invalid JSON triggers a clearer error message */
-    throw new Error(`Failed to parse chunk manifest: ${manifestPath}`);
+    throw BUILD_FAILED.create({ detail: `Failed to parse chunk manifest: ${manifestPath}` });
   }
 }
 

@@ -3,6 +3,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { agentLogger } from "#veryfront/utils";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 const logger = agentLogger.component("local-blob-storage");
 
@@ -81,7 +82,7 @@ export class LocalBlobStorage implements BlobStorage {
       return { bytes, size: bytes.length };
     }
 
-    throw new Error("Unsupported data type for LocalBlobStorage");
+    throw INVALID_ARGUMENT.create({ detail: "Unsupported data type for LocalBlobStorage" });
   }
 
   async getStream(id: string): Promise<ReadableStream | null> {

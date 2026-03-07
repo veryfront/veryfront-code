@@ -196,7 +196,10 @@ export class TokenStorageApiClient {
         }
 
         if (!response.ok && (response.status >= 500 || response.status === 429)) {
-          throw new Error(`Server error: ${response.status}`);
+          throw TOKEN_STORAGE_ERROR.create({
+            detail: `Server error: ${response.status}`,
+            status: response.status,
+          });
         }
 
         return response;

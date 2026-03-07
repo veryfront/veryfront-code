@@ -1,4 +1,5 @@
 import { logger } from "#veryfront/utils";
+import { CONFIG_INVALID } from "#veryfront/errors";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import type { FSAdapter, FSAdapterConfig } from "../veryfront/types.ts";
@@ -30,7 +31,7 @@ export class GitHubFSAdapter implements FSAdapter {
   constructor(adapterConfig: FSAdapterConfig) {
     const githubConfig = adapterConfig.github;
     if (!githubConfig) {
-      throw new Error("GitHub adapter requires github configuration");
+      throw CONFIG_INVALID.create({ detail: "GitHub adapter requires github configuration" });
     }
 
     this.projectDir = adapterConfig.projectDir ?? "";

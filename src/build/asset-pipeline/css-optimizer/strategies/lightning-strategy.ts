@@ -6,6 +6,7 @@ import type {
   LightningCSSModule,
 } from "../types/index.ts";
 import { parseBrowserTargets } from "../utils.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 
 export class LightningCSSStrategy implements CSSOptimizationStrategy {
   readonly name = "lightning-css";
@@ -40,7 +41,9 @@ export class LightningCSSStrategy implements CSSOptimizationStrategy {
     filename: string,
     options: CSSOptimizationOptions,
   ): Promise<CSSProcessingResult> {
-    if (!this.lightningCSS) throw new Error("Lightning CSS not initialized");
+    if (!this.lightningCSS) {
+      throw INITIALIZATION_ERROR.create({ detail: "Lightning CSS not initialized" });
+    }
 
     try {
       const result = this.lightningCSS.transform({

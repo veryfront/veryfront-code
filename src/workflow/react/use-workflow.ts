@@ -5,6 +5,7 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "#veryfront/workflow/types.ts";
+import { ORCHESTRATION_ERROR, REQUEST_ERROR } from "#veryfront/errors";
 
 /** Default polling interval for workflow status updates */
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
@@ -74,7 +75,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch workflow: ${response.status}`);
+        throw REQUEST_ERROR.create({ detail: `Failed to fetch workflow: ${response.status}` });
       }
 
       const workflowRun = (await response.json()) as WorkflowRun;
@@ -88,7 +89,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
       if (workflowRun.status === "completed") {
         onComplete?.(workflowRun);
       } else if (workflowRun.status === "failed") {
-        onError?.(new Error("Workflow failed"), workflowRun);
+        onError?.(ORCHESTRATION_ERROR.create({ detail: "Workflow failed" }), workflowRun);
       }
 
       for (const approval of workflowRun.pendingApprovals ?? []) {
@@ -104,7 +105,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
 
-      const fetchError = err instanceof Error ? err : new Error(String(err));
+      const fetchError = err instanceof Error ? err : REQUEST_ERROR.create({ detail: String(err) });
       setError(fetchError);
       onError?.(fetchError);
     }
@@ -122,11 +123,13 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     try {
       const response = await fetch(`${apiBase}/runs/${runId}/cancel`, { method: "POST" });
       if (!response.ok) {
-        throw new Error(`Failed to cancel workflow: ${response.status}`);
+        throw REQUEST_ERROR.create({ detail: `Failed to cancel workflow: ${response.status}` });
       }
       await refresh();
     } catch (err) {
-      const cancelError = err instanceof Error ? err : new Error(String(err));
+      const cancelError = err instanceof Error
+        ? err
+        : REQUEST_ERROR.create({ detail: String(err) });
       setError(cancelError);
       throw cancelError;
     }
@@ -138,11 +141,11 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     try {
       const response = await fetch(`${apiBase}/runs/${runId}/retry`, { method: "POST" });
       if (!response.ok) {
-        throw new Error(`Failed to retry workflow: ${response.status}`);
+        throw REQUEST_ERROR.create({ detail: `Failed to retry workflow: ${response.status}` });
       }
       await refresh();
     } catch (err) {
-      const retryError = err instanceof Error ? err : new Error(String(err));
+      const retryError = err instanceof Error ? err : REQUEST_ERROR.create({ detail: String(err) });
       setError(retryError);
       throw retryError;
     }

@@ -16,6 +16,7 @@
 
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { scaleMs } from "./timing.ts";
+import { TIMEOUT_ERROR } from "#veryfront/errors";
 
 export {
   chmod,
@@ -110,7 +111,7 @@ export async function waitFor(
     await new Promise<void>((resolve) => setTimeout(resolve, interval));
   }
 
-  throw new Error(`${message} (timeout: ${timeout}ms)`);
+  throw TIMEOUT_ERROR.create({ detail: `${message} (timeout: ${timeout}ms)` });
 }
 
 export function delay(ms: number): Promise<void> {

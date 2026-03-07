@@ -8,6 +8,7 @@
  */
 
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
+import { SECURITY_VIOLATION } from "#veryfront/errors";
 
 export { escapeHtml };
 
@@ -66,7 +67,9 @@ export function validateTrustedHtml(
     if (!pattern.test(html)) continue;
 
     if (warn) console.warn(`[Security] Suspicious ${name} detected in server HTML`);
-    if (strict || !isDevMode()) throw new Error(`Potentially unsafe HTML: ${name} detected`);
+    if (strict || !isDevMode()) {
+      throw SECURITY_VIOLATION.create({ detail: `Potentially unsafe HTML: ${name} detected` });
+    }
   }
 
   return html;

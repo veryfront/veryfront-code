@@ -1,4 +1,5 @@
 import { computeHash, rendererLogger } from "#veryfront/utils";
+import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { RenderMetadata } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { wrapInHTMLShell } from "#veryfront/html/html-shell-generator.ts";
@@ -263,7 +264,9 @@ export function renderSnippet(
 
         const module = await import(snippetUrl);
         const MDXContent = module.default || module.MDXContent;
-        if (!MDXContent) throw new Error("No MDXContent export found in compiled snippet");
+        if (!MDXContent) {
+          throw RENDER_ERROR.create({ detail: "No MDXContent export found in compiled snippet" });
+        }
 
         const [{ renderToString }, React] = await Promise.all([
           import("react-dom/server"),

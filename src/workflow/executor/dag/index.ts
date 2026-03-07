@@ -23,6 +23,7 @@ import type {
   WorkflowRun,
 } from "../../types.ts";
 import { generateId, parseDuration } from "../../types.ts";
+import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors";
 
 export type { DAGExecutionResult, DAGExecutorConfig, NodeExecutionResult } from "./types.ts";
 
@@ -190,10 +191,11 @@ export class DAGExecutor {
       case "loop":
         return this.executeLoopNode(node, config, context, nodeStates);
       default:
-        throw new Error(
-          `Unknown node type "${(config as WorkflowNodeConfig).type}" for node "${node.id}". ` +
+        throw INVALID_ARGUMENT.create({
+          detail:
+            `Unknown node type "${(config as WorkflowNodeConfig).type}" for node "${node.id}". ` +
             "Valid types are: step, parallel, map, branch, wait, subWorkflow, loop",
-        );
+        });
     }
   }
 
@@ -276,7 +278,7 @@ export class DAGExecutor {
     const items = typeof config.items === "function" ? await config.items(context) : config.items;
 
     if (!Array.isArray(items)) {
-      throw new Error(`Map node "${node.id}" items must be an array`);
+      throw INVALID_ARGUMENT.create({ detail: `Map node "${node.id}" items must be an array` });
     }
 
     if (items.length === 0) {
@@ -463,9 +465,10 @@ export class DAGExecutor {
     const startTime = Date.now();
 
     if (typeof config.workflow === "string") {
-      throw new Error(
-        "Resolving workflow by ID is not yet supported in this execution context. Pass the WorkflowDefinition object.",
-      );
+      throw NOT_SUPPORTED.create({
+        detail:
+          "Resolving workflow by ID is not yet supported in this execution context. Pass the WorkflowDefinition object.",
+      });
     }
 
     const workflowDef = config.workflow;

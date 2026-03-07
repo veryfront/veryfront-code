@@ -2,6 +2,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { HandlerContext, ParsedDomain } from "#veryfront/types";
 import { buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 export type Environment = "preview" | "production";
 type RenderMode = "development" | "production";
@@ -67,7 +68,7 @@ interface BuildEnrichedContextOptions {
 
 export function buildEnrichedContext(options: BuildEnrichedContextOptions): EnrichedContext {
   if (!options.contentSourceId) {
-    throw new Error(`Missing contentSourceId for ${options.projectSlug}`);
+    throw INVALID_ARGUMENT.create({ detail: `Missing contentSourceId for ${options.projectSlug}` });
   }
 
   const releaseKey = options.environment === "production"

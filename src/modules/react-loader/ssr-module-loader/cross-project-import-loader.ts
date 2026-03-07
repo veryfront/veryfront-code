@@ -1,4 +1,5 @@
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
+import { CACHE_ERROR, NETWORK_ERROR } from "#veryfront/errors";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { transformToESM } from "#veryfront/transforms/esm/index.ts";
@@ -83,9 +84,9 @@ export async function transformCrossProjectImportFlow(
     clearTimeout(timeout);
 
     if (!response.ok) {
-      throw new Error(
-        `Failed to fetch ${registryUrl}: ${response.status} ${response.statusText}`,
-      );
+      throw NETWORK_ERROR.create({
+        detail: `Failed to fetch ${registryUrl}: ${response.status} ${response.statusText}`,
+      });
     }
 
     const sourceCode = await response.text();
@@ -124,7 +125,9 @@ export async function transformCrossProjectImportFlow(
         "SSR-MODULE-LOADER",
       );
       if (!written) {
-        throw new Error(`Failed to write cross-project import cache file: ${tempPath}`);
+        throw CACHE_ERROR.create({
+          detail: `Failed to write cross-project import cache file: ${tempPath}`,
+        });
       }
 
       globalCrossProjectCache.set(cacheKey, { tempPath, contentHash });

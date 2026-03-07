@@ -1,15 +1,16 @@
 import { isDeno } from "../runtime.ts";
 import type { WebSocketUpgradeOptions, WebSocketUpgradeResult } from "./types.ts";
+import { NOT_SUPPORTED } from "#veryfront/errors";
 
 export function upgradeWebSocket(
   request: Request,
   options?: WebSocketUpgradeOptions,
 ): WebSocketUpgradeResult {
   if (!isDeno) {
-    throw new Error(
-      "WebSocket upgrade on Node.js requires server-level handling. " +
+    throw NOT_SUPPORTED.create({
+      detail: "WebSocket upgrade on Node.js requires server-level handling. " +
         "Use a WebSocket library like 'ws' with server.on('upgrade').",
-    );
+    });
   }
 
   return upgradeWebSocketDeno(request, options);

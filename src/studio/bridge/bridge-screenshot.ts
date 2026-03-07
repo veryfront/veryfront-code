@@ -6,6 +6,7 @@
 
 import { logger } from "./bridge-logger.ts";
 import { state } from "./bridge-state.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 
 type Html2CanvasFn = (
   element: HTMLElement,
@@ -46,7 +47,7 @@ function loadHtml2Canvas(): Promise<void> {
         "Failed to load html2canvas script. This may be caused by CSP script-src restrictions.",
         { event: String(event) },
       );
-      reject(new Error("Failed to load html2canvas script"));
+      reject(INITIALIZATION_ERROR.create({ detail: "Failed to load html2canvas script" }));
     };
     try {
       document.head.appendChild(script);
@@ -56,7 +57,10 @@ function loadHtml2Canvas(): Promise<void> {
         error instanceof Error ? error : { error: String(error) },
       );
       reject(
-        error instanceof Error ? error : new Error("Failed to append html2canvas script element"),
+        error instanceof Error ? error : INITIALIZATION_ERROR.create({
+          detail: "Failed to append html2canvas script element",
+          cause: error,
+        }),
       );
     }
   });

@@ -8,6 +8,7 @@
  */
 
 import * as React from "react";
+import { COMPONENT_ERROR } from "#veryfront/errors";
 import type { Thread } from "../hooks/use-threads.ts";
 
 export interface ThreadListContextValue {
@@ -28,7 +29,9 @@ const ThreadListContext = React.createContext<ThreadListContextValue | null>(nul
 export function useThreadListContext(): ThreadListContextValue {
   const context = React.useContext(ThreadListContext);
   if (!context) {
-    throw new Error("useThreadListContext must be used within a ThreadList provider");
+    throw COMPONENT_ERROR.create({
+      detail: "useThreadListContext must be used within a ThreadList provider",
+    });
   }
   return context;
 }

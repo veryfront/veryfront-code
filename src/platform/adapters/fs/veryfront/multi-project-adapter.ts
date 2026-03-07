@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { logger as baseLogger } from "#veryfront/utils";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
 import type { FileInfo } from "../../base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
@@ -130,10 +131,10 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
       if (this.defaultAdapter) return this.defaultAdapter;
 
-      throw new Error(
-        "[MultiProjectFSAdapter] No request context available. " +
+      throw INITIALIZATION_ERROR.create({
+        detail: "[MultiProjectFSAdapter] No request context available. " +
           "Use runWithContext() to set project context before accessing files.",
-      );
+      });
     }
 
     const productionMode = context.productionMode ?? false;

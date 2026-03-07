@@ -1,4 +1,5 @@
 import { logger as baseLogger } from "#veryfront/utils";
+import { CACHE_INVARIANT_VIOLATION, INVALID_ARGUMENT } from "#veryfront/errors";
 import { buildProxyManagerCacheKey } from "#veryfront/cache";
 import { VeryfrontFSAdapter } from "./index.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
@@ -111,9 +112,10 @@ export class ProxyFSAdapterManager {
           branch: effectiveBranch,
         },
       });
-      throw new Error(
-        `[ProxyFSAdapterManager] Invalid getAdapter parameters: ${validationResult.error.message}`,
-      );
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `[ProxyFSAdapterManager] Invalid getAdapter parameters: ${validationResult.error.message}`,
+      });
     }
 
     const cacheKey = buildProxyManagerCacheKey(
@@ -211,11 +213,11 @@ export class ProxyFSAdapterManager {
   ): void {
     if (!currentContext) {
       logger.error("Null context detected", { cacheKey });
-      throw new Error(
-        `[ProxyFSAdapterManager] FATAL: Cached adapter has null context. ` +
+      throw CACHE_INVARIANT_VIOLATION.create({
+        detail: `[ProxyFSAdapterManager] FATAL: Cached adapter has null context. ` +
           `This indicates a critical bug in adapter initialization. ` +
           `CacheKey: ${cacheKey}`,
-      );
+      });
     }
 
     const mismatchReason = this.getContextMismatchReason(currentContext, expected);
@@ -228,14 +230,14 @@ export class ProxyFSAdapterManager {
       mismatchReason,
     });
 
-    throw new Error(
-      `[ProxyFSAdapterManager] FATAL: Context mismatch for cached adapter. ` +
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: `[ProxyFSAdapterManager] FATAL: Context mismatch for cached adapter. ` +
         `This indicates a critical bug in adapter caching. ` +
         `Reason: ${mismatchReason}. ` +
         `Expected: ${JSON.stringify(expected)} ` +
         `Got: ${JSON.stringify(currentContext)} ` +
         `CacheKey: ${cacheKey}`,
-    );
+    });
   }
 
   private getContextMismatchReason(
