@@ -4,7 +4,7 @@ import { Markdown } from "../../markdown.tsx";
 import { BrainIcon, ChevronDownIcon } from "../../icons/index.ts";
 import { Shimmer } from "./animations.tsx";
 
-export type ReasoningCardProps = {
+type ReasoningCardProps = {
   text: string;
   isStreaming?: boolean;
   className?: string;

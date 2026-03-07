@@ -179,18 +179,6 @@ export function resetCompatHooksContext(): void {
   compatHooksContext = null;
 }
 
-export const CompatHooksContext = {
-  get Provider(): React.Provider<CompatHooks> {
-    return getCompatHooksContext().Provider;
-  },
-  get Consumer(): React.Consumer<CompatHooks> {
-    return getCompatHooksContext().Consumer;
-  },
-  get displayName(): string | undefined {
-    return getCompatHooksContext().displayName;
-  },
-};
-
 export function useCompatHooks(): CompatHooks {
   return React.useContext(getCompatHooksContext());
 }

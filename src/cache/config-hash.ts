@@ -16,7 +16,7 @@ import {
 /**
  * Configuration that affects transform output.
  */
-export interface TransformConfig {
+interface TransformConfig {
   /** React version for esm.sh URLs */
   reactVersion?: string;
   /** JSX import source */

@@ -5,7 +5,7 @@
 
 import type { SplitOptions } from "./types.ts";
 
-export interface EntryPointsResult {
+interface EntryPointsResult {
   entryPoints: Record<string, string>;
   routeMap: Map<string, string>;
 }

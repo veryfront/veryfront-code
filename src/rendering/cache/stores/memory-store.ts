@@ -13,7 +13,7 @@ import type { CachePayload, CacheStore } from "../types.ts";
 
 const DEFAULT_MAX_ENTRIES = 100;
 
-export interface CacheLike<K, V> {
+interface CacheLike<K, V> {
   get(key: K): V | undefined;
   set(key: K, value: V): void;
   delete(key: K): void;

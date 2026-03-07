@@ -39,7 +39,7 @@ type DistributedCache = NonNullable<Awaited<ReturnType<typeof getDistributedTran
  * Always returns the `distributedCache` handle (if available) so it can be
  * reused for writing after transform, even when the read was a miss.
  */
-export interface DistributedCacheReadResult {
+interface DistributedCacheReadResult {
   /** The validated module code, or null if cache miss / validation failure */
   code: string | null;
   /** The distributed cache backend (for subsequent writes) */

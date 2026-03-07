@@ -14,7 +14,7 @@
 
 import { computeHash, simpleHash } from "#veryfront/utils/hash-utils.ts";
 
-export type CacheKeyType =
+type CacheKeyType =
   | "http"
   | "mod"
   | "esm"

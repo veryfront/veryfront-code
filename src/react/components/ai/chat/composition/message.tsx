@@ -163,7 +163,7 @@ MessageRoot.displayName = "Message.Root";
 // Message.Avatar
 // ---------------------------------------------------------------------------
 
-export interface MessageAvatarProps {
+interface MessageAvatarProps {
   className?: string;
 }
 
@@ -267,7 +267,7 @@ MessageContent.displayName = "Message.Content";
 // Message.Actions
 // ---------------------------------------------------------------------------
 
-export interface MessageActionsWrapperProps {
+interface MessageActionsWrapperProps {
   className?: string;
 }
 
@@ -284,7 +284,7 @@ MessageActionsWrapper.displayName = "Message.Actions";
 // Message.Feedback
 // ---------------------------------------------------------------------------
 
-export interface MessageFeedbackWrapperProps {
+interface MessageFeedbackWrapperProps {
   className?: string;
 }
 

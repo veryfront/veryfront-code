@@ -29,7 +29,7 @@ const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"
 type HttpMethod = (typeof HTTP_METHODS)[number];
 type HttpMethodLower = Lowercase<HttpMethod>;
 
-export interface GenerateSpecOptions {
+interface GenerateSpecOptions {
   /** API title for OpenAPI info */
   title?: string;
   /** API version */

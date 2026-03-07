@@ -7,7 +7,7 @@ export interface GraphIds {
   server: { id: string; path: string; rel: string }[];
 }
 
-export interface ManifestModule {
+interface ManifestModule {
   id: string; // stable id
   clientRef: string; // client module reference + export
   exports: string[];

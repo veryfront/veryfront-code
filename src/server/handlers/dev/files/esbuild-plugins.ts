@@ -85,7 +85,7 @@ const ESM_PACKAGE_MAP: Record<string, string> = {
   "react/jsx-dev-runtime": getReactJSXDevRuntimeCDNUrl(REACT_DEFAULT_VERSION),
 };
 
-export interface BareExternalPluginOptions {
+interface BareExternalPluginOptions {
   bundle?: boolean;
   lockfile?: LockfileManager;
   projectDir?: string;

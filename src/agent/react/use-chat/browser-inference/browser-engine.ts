@@ -15,7 +15,7 @@ const DEFAULT_BROWSER_MAX_TOKENS = 512;
 /** Default temperature for browser-side inference */
 const DEFAULT_BROWSER_TEMPERATURE = 0.7;
 
-export interface BrowserInferenceCallbacks {
+interface BrowserInferenceCallbacks {
   onUpdate: (parts: UIMessagePart[], messageId: string) => void;
   onMessage: (message: UIMessage) => void;
   onStatusChange: (status: BrowserInferenceStatus) => void;

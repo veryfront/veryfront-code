@@ -127,11 +127,3 @@ export class StudioBridgeModulesHandler extends BaseHandler {
     }
   }
 }
-
-/**
- * Invalidate the bundle cache.
- * Used by dev file watchers to bust the cache on source changes.
- */
-export function invalidateBridgeModuleCache(): void {
-  bundleCache = null;
-}

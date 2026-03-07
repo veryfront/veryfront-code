@@ -8,16 +8,12 @@
  * @module cache/metrics
  */
 
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
-import type { Span } from "@opentelemetry/api";
-
-const MAX_KEY_DISPLAY_LENGTH = 100;
 
 /**
  * Cache operation types for metrics tracking.
  */
-export type CacheOperation = "get" | "set" | "delete" | "clear" | "evict" | "expire";
+type CacheOperation = "get" | "set" | "delete" | "clear" | "evict" | "expire";
 
 /**
  * Cache domains - each has different correctness invariants.
@@ -36,12 +32,12 @@ export type CacheDomain =
 /**
  * Eviction reason for metrics tracking.
  */
-export type EvictionReason = "lru" | "ttl" | "size" | "manual" | "memory-pressure";
+type EvictionReason = "lru" | "ttl" | "size" | "manual" | "memory-pressure";
 
 /**
  * Statistics for a single cache domain.
  */
-export interface CacheDomainStats {
+interface CacheDomainStats {
   readonly domain: CacheDomain;
   readonly gets: number;
   readonly hits: number;
@@ -58,7 +54,7 @@ export interface CacheDomainStats {
 /**
  * Aggregated stats across all domains.
  */
-export interface CacheAggregateStats {
+interface CacheAggregateStats {
   readonly totalGets: number;
   readonly totalHits: number;
   readonly totalMisses: number;
@@ -286,7 +282,7 @@ export const cacheMetrics = new CacheMetricsCollector();
  * Instrumented cache wrapper that automatically reports metrics.
  * Wraps any cache-like object to add unified metrics collection.
  */
-export interface InstrumentedCache<T> {
+interface InstrumentedCache<T> {
   get(key: string): Promise<T | null>;
   set(key: string, value: T, ttl?: number): Promise<void>;
   delete(key: string): Promise<void>;
@@ -345,28 +341,6 @@ export function instrumentCache<T>(
       }
     },
   };
-}
-
-/**
- * Record a cache operation with OpenTelemetry span.
- */
-export function withCacheSpan<T>(
-  domain: CacheDomain,
-  operation: CacheOperation,
-  key: string,
-  fn: (span?: Span) => Promise<T>,
-): Promise<T> {
-  return withSpan(
-    `cache.${domain}.${operation}`,
-    fn,
-    {
-      "cache.domain": domain,
-      "cache.operation": operation,
-      "cache.key": key.length > MAX_KEY_DISPLAY_LENGTH
-        ? key.slice(0, MAX_KEY_DISPLAY_LENGTH) + "..."
-        : key,
-    },
-  );
 }
 
 /**

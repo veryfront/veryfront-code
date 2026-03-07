@@ -12,20 +12,6 @@ import { escapeHtml } from "#veryfront/html/html-escape.ts";
 export { escapeHtml };
 
 /**
- * Create text node safely (alternative to innerHTML for simple text).
- */
-export function createSafeTextNode(text: string): Text {
-  return document.createTextNode(text);
-}
-
-/**
- * Set text content safely (never interprets HTML).
- */
-export function setSafeTextContent(element: HTMLElement, text: string): void {
-  element.textContent = text;
-}
-
-/**
  * Patterns that RSC should never generate.
  * These indicate potential server compromise or misconfiguration.
  */
@@ -51,7 +37,7 @@ function isDevMode(): boolean {
   return g.__VERYFRONT_DEV__ === true || g.Deno?.env?.get?.("VERYFRONT_ENV") === "development";
 }
 
-export interface ValidateTrustedHtmlOptions {
+interface ValidateTrustedHtmlOptions {
   /** Throw on suspicious patterns even in dev mode */
   strict?: boolean;
   /** Log warnings for suspicious patterns */

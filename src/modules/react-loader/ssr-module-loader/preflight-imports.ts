@@ -1,7 +1,7 @@
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { LocalImport, MissingImport } from "#veryfront/transforms/esm/import-parser.ts";
 
-export interface PreflightImportsResult {
+interface PreflightImportsResult {
   validImports: LocalImport[];
   missingImports: MissingImport[];
 }

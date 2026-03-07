@@ -7,7 +7,7 @@
  * keepalive pings, debounced updates, and CSS hot-swap.
  */
 
-export interface HMRScriptOptions {
+interface HMRScriptOptions {
   /** Log prefix for console messages */
   logPrefix: string;
   /** Whether to use debug-gated logging (localStorage VERYFRONT_DEBUG_HMR) */

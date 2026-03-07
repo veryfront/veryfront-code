@@ -22,7 +22,7 @@ const logger = baseLogger.component("memory-backend");
 /**
  * Memory backend configuration
  */
-export interface MemoryBackendConfig extends BackendConfig {
+interface MemoryBackendConfig extends BackendConfig {
   /** Maximum queue size (default: 10000) */
   maxQueueSize?: number;
 }

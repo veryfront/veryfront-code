@@ -38,4 +38,3 @@ export {
 };
 
 export const SEPARATOR = sep;
-export const SEPARATOR_PATTERN = sep === "/" ? /\/+/ : /[\\/]+/;

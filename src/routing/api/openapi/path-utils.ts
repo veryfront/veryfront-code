@@ -9,7 +9,7 @@
 /**
  * Path parameter extracted from route pattern.
  */
-export interface PathParam {
+interface PathParam {
   /** Parameter name (e.g., "id", "slug") */
   name: string;
   /** Whether the parameter is required */

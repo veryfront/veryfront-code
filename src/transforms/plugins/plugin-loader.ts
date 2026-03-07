@@ -8,7 +8,7 @@ import remarkGfm from "remark-gfm";
 import { remarkMdxHeadings } from "./remark-headings.ts";
 import { remarkCodeBlocks, remarkMdxRemoveParagraphs } from "./remark-mdx-utils.ts";
 
-export type PluginFunction = (
+type PluginFunction = (
   tree: MdastRoot | HastRoot,
   file?: unknown,
 ) =>

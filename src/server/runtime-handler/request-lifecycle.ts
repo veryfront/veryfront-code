@@ -22,7 +22,7 @@ import {
 import { requestTracker } from "./request-tracker.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
 
-export interface RequestLifecycleContext {
+interface RequestLifecycleContext {
   /** Request ID for tracking */
   requestId: string;
   /** Performance request ID (only set if perf tracking enabled) */

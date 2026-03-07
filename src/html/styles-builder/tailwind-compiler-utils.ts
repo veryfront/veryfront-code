@@ -2,25 +2,25 @@
  * Pure helper utilities for Tailwind compiler cache parsing and error classification.
  */
 
-export interface ParsedCSSCacheEntry {
+interface ParsedCSSCacheEntry {
   css: string;
   candidates: string[];
   stylesheet: string;
 }
 
-export interface ParsedProjectCSSCacheEntry {
+interface ParsedProjectCSSCacheEntry {
   css: string;
   hash: string;
   candidatesHash: string;
 }
 
-export interface CSSErrorDescriptor {
+interface CSSErrorDescriptor {
   title: string;
   message: string;
   suggestion: string;
 }
 
-export type ProjectCSSLocalCacheState = "miss" | "expired" | "mismatch" | "hit";
+type ProjectCSSLocalCacheState = "miss" | "expired" | "mismatch" | "hit";
 
 interface RawCSSCacheEntry {
   css?: unknown;

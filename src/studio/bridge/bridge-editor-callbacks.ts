@@ -8,7 +8,7 @@
 
 import { logger } from "./bridge-logger.ts";
 
-export interface EditorCallbacks {
+interface EditorCallbacks {
   onContentChange(
     fileId: string | null,
     filePath: string,

@@ -1,6 +1,6 @@
 import { isDeno } from "./runtime.ts";
 
-export interface CryptoCompat {
+interface CryptoCompat {
   getRandomValues(array: Uint8Array): Uint8Array;
   randomUUID(): string;
   subtle: SubtleCrypto;

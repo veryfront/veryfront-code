@@ -117,28 +117,3 @@ export function getBundleManifestTTL(
   if (mode === "production") return BUNDLE_MANIFEST_PROD_TTL_MS;
   return BUNDLE_MANIFEST_DEV_TTL_MS;
 }
-
-export async function warmupBundleManifest(
-  store: BundleManifestStore,
-  keys: string[],
-): Promise<void> {
-  logger.debug("Warming up cache", { keys: keys.length });
-
-  let loaded = 0;
-  let failed = 0;
-
-  for (const key of keys) {
-    try {
-      const metadata = await store.getBundleMetadata(key);
-      if (!metadata) continue;
-
-      await store.getBundleCode(metadata.codeHash);
-      loaded++;
-    } catch (error) {
-      logger.debug("Failed to warm up key", { key, error });
-      failed++;
-    }
-  }
-
-  logger.debug("Cache warmup complete", { loaded, failed });
-}

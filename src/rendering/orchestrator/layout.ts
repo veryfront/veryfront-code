@@ -35,14 +35,14 @@ export interface LayoutCollectionResult {
   nestedLayouts: LayoutItem[];
 }
 
-export interface LayoutPreloadResult {
+interface LayoutPreloadResult {
   type: "tsx" | "mdx" | "importMap";
   path?: string;
   success: boolean;
   error?: string;
 }
 
-export interface LayoutPreloadSummary {
+interface LayoutPreloadSummary {
   tsxTotal: number;
   tsxSuccess: number;
   tsxFailures: Array<{ path: string; error: string }>;

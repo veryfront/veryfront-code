@@ -31,7 +31,7 @@ export interface BundleEntry {
 }
 
 /** A manifest tracking all HTTP bundles from a single transform. */
-export interface BundleManifest {
+interface BundleManifest {
   manifestId: string;
   bundles: BundleEntry[];
   createdAt: number;
@@ -39,7 +39,7 @@ export interface BundleManifest {
 }
 
 /** Result of manifest validation. */
-export interface ManifestValidationResult {
+interface ManifestValidationResult {
   valid: boolean;
   failedHashes: string[];
 }
@@ -114,7 +114,7 @@ export async function storeBundleManifest(manifest: BundleManifest): Promise<voi
 /**
  * Load a bundle manifest from the distributed cache.
  */
-export async function loadBundleManifest(manifestId: string): Promise<BundleManifest | null> {
+async function loadBundleManifest(manifestId: string): Promise<BundleManifest | null> {
   const cache = await getCache();
   if (!cache) return null;
 

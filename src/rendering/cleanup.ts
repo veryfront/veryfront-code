@@ -25,12 +25,3 @@ export async function cleanupBundler(): Promise<void> {
     /* expected: RSC handler registry might not be loaded */
   }
 }
-
-export async function configureRendererNamespace(namespace: string): Promise<void> {
-  try {
-    const { setCacheNamespace } = await import("#veryfront/utils/cache/keys/namespace.ts");
-    setCacheNamespace(namespace);
-  } catch (_) {
-    /* expected: cache namespace configuration is optional */
-  }
-}

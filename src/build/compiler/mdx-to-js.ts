@@ -12,7 +12,7 @@ export interface MDXFrontmatter {
   [key: string]: unknown;
 }
 
-export interface CompileToJSOptions {
+interface CompileToJSOptions {
   projectDir: string;
   mode: "development" | "production";
   components?: string[];

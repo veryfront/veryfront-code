@@ -12,7 +12,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * Request context for proxy logging.
  * Stored in AsyncLocalStorage to propagate through the call stack.
  */
-export interface ProxyRequestContext {
+interface ProxyRequestContext {
   requestId: string;
   projectSlug?: string;
   projectId?: string;
@@ -39,7 +39,7 @@ export function runWithProxyRequestContext<T>(
 /**
  * Get the current proxy request context (if any).
  */
-export function getProxyRequestContext(): ProxyRequestContext | undefined {
+function getProxyRequestContext(): ProxyRequestContext | undefined {
   return requestContextStore.getStore();
 }
 

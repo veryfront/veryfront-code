@@ -65,7 +65,7 @@ export async function discoverComponentsLayoutPath(
 /**
  * Result from discovering a components layout file.
  */
-export interface ComponentsLayoutDiscoveryResult {
+interface ComponentsLayoutDiscoveryResult {
   layoutPath: string;
   extension: LayoutExtension;
 }

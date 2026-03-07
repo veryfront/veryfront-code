@@ -39,7 +39,7 @@ export const RENDER_PER_PROJECT_LIMIT = getEnvNumber("RENDER_PER_PROJECT_LIMIT")
 export const RENDER_ACQUIRE_TIMEOUT_MS = 5_000;
 
 /** Maximum time to wait for a project lock before giving up (10 seconds) */
-export const LOCK_TIMEOUT_MS = 10_000;
+const LOCK_TIMEOUT_MS = 10_000;
 
 // ---------------------------------------------------------------------------
 // Mutex
@@ -107,7 +107,7 @@ export class Mutex {
  * Global render semaphore - limits concurrent renders across all projects per pod.
  * This is a last-line defense against resource exhaustion.
  */
-export const RENDER_MAX_QUEUE_SIZE = 100;
+const RENDER_MAX_QUEUE_SIZE = 100;
 
 export const renderSemaphore = new Semaphore(RENDER_MAX_CONCURRENT, {
   maxQueueSize: RENDER_MAX_QUEUE_SIZE,
@@ -142,7 +142,7 @@ function getProjectMutex(projectId: string): Mutex {
 /**
  * Acquire a lock for a specific project. Returns a release function.
  */
-export function acquireProjectLock(
+function acquireProjectLock(
   projectId: string,
 ): Promise<() => void> {
   return getProjectMutex(projectId).acquire(LOCK_TIMEOUT_MS);

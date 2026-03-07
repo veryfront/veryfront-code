@@ -66,7 +66,7 @@ const mdxWriteFlight = new Singleflight<void>();
  * Note: We always cache HTTP imports for consistency between compiled and
  * non-compiled modes, allowing them to share the same cache.
  */
-export async function cacheHttpImports(code: string, importMap: ImportMapConfig): Promise<string> {
+async function cacheHttpImports(code: string, importMap: ImportMapConfig): Promise<string> {
   const result = await cacheHttpImportsToLocal(code, {
     cacheDir: getHttpBundleCacheDir(),
     importMap,

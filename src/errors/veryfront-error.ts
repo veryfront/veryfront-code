@@ -54,7 +54,7 @@ export interface FileContext {
   permissions?: string;
 }
 
-export interface NetworkContext {
+interface NetworkContext {
   url?: string;
   timeout?: number;
   retryCount?: number;
@@ -93,7 +93,6 @@ export const isBuildError = isErrorType("build");
 export const isAPIError = isErrorType("api");
 export const isRenderError = isErrorType("render");
 export const isConfigError = isErrorType("config");
-export const isAgentError = isErrorType("agent");
 export const isFileError = isErrorType("file");
 export const isNetworkError = isErrorType("network");
 

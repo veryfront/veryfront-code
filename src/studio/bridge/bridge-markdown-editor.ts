@@ -76,7 +76,7 @@ import {
 // setupMarkdownLexicalEditor
 // ---------------------------------------------------------------------------
 
-export function setupMarkdownLexicalEditor(): void {
+function setupMarkdownLexicalEditor(): void {
   if (
     !state.markdownEditorSurface ||
     state.markdownLexicalApi ||
@@ -231,30 +231,6 @@ export function focusMarkdownEditor(): void {
   if (state.markdownEditorTextarea) {
     state.markdownEditorTextarea.focus();
   }
-}
-
-// ---------------------------------------------------------------------------
-// applyMarkdownHistoryCommand
-// ---------------------------------------------------------------------------
-
-export function applyMarkdownHistoryCommand(command: unknown): void {
-  if (
-    !state.markdownLexicalApi ||
-    !state.markdownLexicalApi.editor ||
-    !state.markdownLexicalApi.lexicalModule
-  ) {
-    return;
-  }
-  if (!command) {
-    return;
-  }
-
-  state.markdownLexicalApi.editor.focus();
-  state.markdownLexicalApi.editor.dispatchCommand(command, undefined);
-  scheduleMarkdownSelectionSync();
-  scheduleMarkdownSelectionOverlayRender();
-  scheduleMarkdownSlashMenuUpdate();
-  scheduleMarkdownInlineToolbarUpdate();
 }
 
 // ---------------------------------------------------------------------------
@@ -518,7 +494,7 @@ export function updateMarkdownOverlaySelections(selections: RemoteSelection[]): 
 // ensureMarkdownEditor
 // ---------------------------------------------------------------------------
 
-export function ensureMarkdownEditor(): HTMLElement | undefined {
+function ensureMarkdownEditor(): HTMLElement | undefined {
   if (state.markdownEditorRoot) {
     return state.markdownEditorRoot;
   }
@@ -944,7 +920,7 @@ function registerMarkdownGlobalListeners(): void {
   );
 }
 
-export function setMarkdownEditMode(enabled: boolean): void {
+function setMarkdownEditMode(enabled: boolean): void {
   const markdownBody = document.getElementById("markdown-body");
   if (!markdownBody || !isMarkdownPage()) {
     return;
@@ -1016,7 +992,7 @@ export function setMarkdownEditMode(enabled: boolean): void {
 // ensureMarkdownEditButton
 // ---------------------------------------------------------------------------
 
-export function ensureMarkdownEditButton(): void {
+function ensureMarkdownEditButton(): void {
   if (state.markdownEditButton || !isMarkdownPage()) {
     return;
   }

@@ -18,7 +18,7 @@ export interface RedisClient {
   isOpen?: boolean;
 }
 
-export interface RedisClientOptions {
+interface RedisClientOptions {
   url?: string;
   connectTimeout?: number;
   autoReconnect?: boolean;
@@ -96,33 +96,6 @@ async function createClient(options: RedisClientOptions): Promise<RedisClient> {
   return client;
 }
 
-export function isRedisAvailable(): boolean {
-  return sharedClient !== null && sharedClient.isOpen !== false && !connectionFailed;
-}
-
 export function isRedisConfigured(): boolean {
   return Boolean(getEnv("REDIS_URL"));
-}
-
-export async function disconnectRedis(): Promise<void> {
-  if (sharedClient) {
-    try {
-      await sharedClient.disconnect();
-    } catch (error) {
-      logger.debug("Redis disconnect error (ignored)", { error });
-    }
-    sharedClient = null;
-  }
-
-  connectionFailed = false;
-  isConnecting = false;
-  connectionPromise = null;
-}
-
-export function resetRedisState(): void {
-  sharedClient = null;
-  connectionFailed = false;
-  isConnecting = false;
-  connectionPromise = null;
-  lastConnectionAttempt = 0;
 }

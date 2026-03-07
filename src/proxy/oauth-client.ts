@@ -12,7 +12,7 @@ export interface TokenResponse {
   expires_in?: number;
 }
 
-export interface OAuthTokenConfig {
+interface OAuthTokenConfig {
   apiBaseUrl: string;
   apiClientId: string;
   apiClientSecret: string;

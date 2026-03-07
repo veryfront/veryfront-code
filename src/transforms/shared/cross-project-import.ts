@@ -1,4 +1,4 @@
-export interface ParsedCrossProjectImport {
+interface ParsedCrossProjectImport {
   projectSlug: string;
   version: string;
   path: string;

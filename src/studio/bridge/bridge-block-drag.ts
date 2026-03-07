@@ -71,7 +71,7 @@ export function hideMarkdownBlockDragUi(): void {
 // Block element lookups
 // ---------------------------------------------------------------------------
 
-export function getMarkdownBlockElementFromNode(node: Node | null): Element | null {
+function getMarkdownBlockElementFromNode(node: Node | null): Element | null {
   if (!state.markdownEditorSurface || !node) {
     return null;
   }
@@ -93,7 +93,7 @@ export function getMarkdownBlockElementFromNode(node: Node | null): Element | nu
 // Block type info
 // ---------------------------------------------------------------------------
 
-export function getMarkdownBlockTypeInfo(block: Element | null): { label: string; color: string } {
+function getMarkdownBlockTypeInfo(block: Element | null): { label: string; color: string } {
   if (!block || !(block as Element).tagName) {
     return { label: "block", color: "#0081f8" };
   }
@@ -130,7 +130,7 @@ export function getMarkdownBlockTypeInfo(block: Element | null): { label: string
 // Block preview text
 // ---------------------------------------------------------------------------
 
-export function getMarkdownBlockPreviewText(block: Element | null): string {
+function getMarkdownBlockPreviewText(block: Element | null): string {
   if (!block) {
     return "";
   }
@@ -540,7 +540,7 @@ export function moveMarkdownLexicalBlock(sourceIndex: number, targetSlotIndex: n
 // Selection-based block index
 // ---------------------------------------------------------------------------
 
-export function getMarkdownCurrentBlockIndexFromSelection(): number {
+function getMarkdownCurrentBlockIndexFromSelection(): number {
   if (!state.markdownEditorSurface) {
     return -1;
   }

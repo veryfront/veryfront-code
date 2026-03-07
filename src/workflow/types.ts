@@ -41,7 +41,7 @@ import type {
 } from "./schemas/index.ts";
 
 // Duration string type alias
-export type DurationString = string;
+type DurationString = string;
 
 /**
  * Workflow context - accumulates node outputs during execution

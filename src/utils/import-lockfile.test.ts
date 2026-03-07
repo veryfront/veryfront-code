@@ -1,10 +1,11 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   computeIntegrity,
   createEmptyLockfile,
   createLockfileManager,
   extractImports,
+  fetchWithLock,
   type FSAdapter,
   resolveImportUrl,
   verifyIntegrity,
@@ -238,6 +239,77 @@ describe("import-lockfile", () => {
       const result = await mgr.read();
       assertEquals(result?.version, 1);
       assertEquals(Object.keys(result!.imports).length, 0);
+    });
+  });
+
+  describe("fetchWithLock", () => {
+    it("should return cached content when integrity matches", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const resolved = "https://esm.sh/mod.ts";
+      const content = "export const value = 1;";
+      const integrity = await computeIntegrity(content);
+      const mgr = createLockfileManager("/project", createMockFS());
+
+      await mgr.set(url, { resolved, integrity });
+
+      const result = await fetchWithLock({
+        lockfile: mgr,
+        url,
+        fetchFn: (input: string | URL | Request) => {
+          assertEquals(String(input), resolved);
+          return Promise.resolve(new Response(content, { status: 200 }));
+        },
+      });
+
+      assertEquals(result.fromCache, true);
+      assertEquals(result.resolvedUrl, resolved);
+      assertEquals(result.content, content);
+      assertEquals(result.integrity, integrity);
+    });
+
+    it("should fetch fresh content and persist the resolved entry on cache miss", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const content = "export const value = 2;";
+      const mgr = createLockfileManager("/project", createMockFS());
+
+      const result = await fetchWithLock({
+        lockfile: mgr,
+        url,
+        fetchFn: (input: string | URL | Request) => {
+          assertEquals(String(input), url);
+          return Promise.resolve(new Response(content, { status: 200 }));
+        },
+      });
+
+      const saved = await mgr.get(url);
+      assertExists(saved);
+      assertEquals(result.fromCache, false);
+      assertEquals(result.resolvedUrl, url);
+      assertEquals(result.content, content);
+      assertEquals(saved.resolved, url);
+      assertEquals(saved.integrity, result.integrity);
+    });
+
+    it("should throw in strict mode when cached integrity mismatches", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const mgr = createLockfileManager("/project", createMockFS());
+
+      await mgr.set(url, {
+        resolved: url,
+        integrity: await computeIntegrity("old"),
+      });
+
+      await assertRejects(
+        () =>
+          fetchWithLock({
+            lockfile: mgr,
+            url,
+            strict: true,
+            fetchFn: () => Promise.resolve(new Response("new", { status: 200 })),
+          }),
+        Error,
+        "Integrity mismatch",
+      );
     });
   });
 });

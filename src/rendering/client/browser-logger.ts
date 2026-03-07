@@ -5,7 +5,7 @@ export enum LogLevel {
   ERROR = 3,
 }
 
-export interface BrowserLogger {
+interface BrowserLogger {
   debug(message: string, ...args: unknown[]): void;
   info(message: string, ...args: unknown[]): void;
   warn(message: string, ...args: unknown[]): void;

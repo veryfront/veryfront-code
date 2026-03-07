@@ -12,14 +12,14 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { SecurityConfig } from "#veryfront/types";
 
 /** CSP user header type (from SecurityConfigLoader, string or null) */
-export type CspUserHeader = string | null;
+type CspUserHeader = string | null;
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { buildEnrichedContext } from "../context/enriched-context.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 
-export interface HandlerContextOptions {
+interface HandlerContextOptions {
   /** Project directory */
   projectDir: string;
   /** Runtime adapter */

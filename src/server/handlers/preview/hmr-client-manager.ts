@@ -13,7 +13,7 @@ export interface HMRClientInfo {
 }
 
 /** Detailed client info for the status endpoint (no socket reference) */
-export interface HMRClientDetail {
+interface HMRClientDetail {
   id: string;
   connectedAt: number;
   projectSlug?: string;
@@ -77,15 +77,6 @@ export function getOpenSockets(projectSlug?: string): WebSocket[] {
     sockets.push(client.socket);
   }
   return sockets;
-}
-
-/** Get count of open sockets (may differ from clientsMap.size if some are closing) */
-export function getOpenSocketCount(): number {
-  let count = 0;
-  for (const client of clientsMap.values()) {
-    if (client.socket.readyState === WebSocket.OPEN) count++;
-  }
-  return count;
 }
 
 export function clearAll(): void {

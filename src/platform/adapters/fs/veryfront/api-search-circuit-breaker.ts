@@ -1,4 +1,4 @@
-export interface ApiSearchCircuitBreakerOptions {
+interface ApiSearchCircuitBreakerOptions {
   threshold: number;
   cooldownMs: number;
 }

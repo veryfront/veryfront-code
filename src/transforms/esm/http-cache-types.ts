@@ -31,7 +31,7 @@ export type PortableModuleCode = Brand<string, "PortableModuleCode">;
  * Has not been validated for tokenization state.
  * Must be explicitly converted to Local or Portable.
  */
-export type RawModuleCode = string;
+type RawModuleCode = string;
 
 /**
  * Hash identifier for a cached bundle (e.g., "974671618").
@@ -58,7 +58,7 @@ export interface DecodeResult {
 /**
  * Bundle dependency reference extracted from code.
  */
-export interface BundleDep {
+interface BundleDep {
   /** Original path string from the import (may be absolute or relative) */
   path: string;
   /** Numeric hash extracted from the filename */

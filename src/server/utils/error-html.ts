@@ -1,4 +1,4 @@
-export interface ErrorHtmlOptions {
+interface ErrorHtmlOptions {
   statusCode: number;
   title: string;
   message: string;

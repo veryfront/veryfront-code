@@ -11,7 +11,7 @@ import { isWebSocketPath } from "./request-utils.ts";
 
 const logger = serverLogger.component("request-tracker");
 
-export interface TrackedRequest {
+interface TrackedRequest {
   requestId: string;
   projectSlug: string | undefined;
   path: string;

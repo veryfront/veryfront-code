@@ -2,7 +2,7 @@ import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.t
 import { rscLogger } from "../client/browser-logger.ts";
 import { RSC_ROOT_ID } from "./constants.ts";
 
-export type SlotMessage = { type: "slot"; id: string; html: string };
+type SlotMessage = { type: "slot"; id: string; html: string };
 
 export function getContainer(doc: Document, id: string): HTMLElement {
   const elementId = id === "root" ? RSC_ROOT_ID : `rsc-slot-${id}`;
@@ -16,7 +16,7 @@ export function getContainer(doc: Document, id: string): HTMLElement {
   return el;
 }
 
-export function applySlotMessage(doc: Document, msg: SlotMessage): void {
+function applySlotMessage(doc: Document, msg: SlotMessage): void {
   if (msg.type !== "slot") return;
 
   const el = getContainer(doc, msg.id);
@@ -24,7 +24,7 @@ export function applySlotMessage(doc: Document, msg: SlotMessage): void {
   el.innerHTML = validateTrustedHtml(String(msg.html ?? ""));
 }
 
-export function processNdjsonChunk(doc: Document, buffered: string): string {
+function processNdjsonChunk(doc: Document, buffered: string): string {
   const parts = buffered.split("\n");
   const remainder = parts.pop() ?? "";
 
@@ -56,10 +56,6 @@ export function processNdjsonChunk(doc: Document, buffered: string): string {
   }
 
   return remainder;
-}
-
-export function processNdjsonLines(doc: Document, ndjson: string): void {
-  processNdjsonChunk(doc, ndjson.endsWith("\n") ? ndjson : `${ndjson}\n`);
 }
 
 function createAbortPromise(signal: AbortSignal): Promise<never> {
@@ -143,7 +139,7 @@ export async function consumeNdjsonStream(
   }
 }
 
-export function findClientBoundaries(doc: Document, slotId: string): HTMLElement[] {
+function findClientBoundaries(doc: Document, slotId: string): HTMLElement[] {
   const root = getContainer(doc, slotId);
   const out: HTMLElement[] = [];
 
@@ -157,7 +153,7 @@ export function findClientBoundaries(doc: Document, slotId: string): HTMLElement
   return out;
 }
 
-export function hydrateClientBoundaries(doc: Document, slotId: string): void {
+function hydrateClientBoundaries(doc: Document, slotId: string): void {
   const nodes = findClientBoundaries(doc, slotId);
 
   for (const el of nodes) {

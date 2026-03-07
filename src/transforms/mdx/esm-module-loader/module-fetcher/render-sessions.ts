@@ -80,7 +80,7 @@ export function endRenderSession(sessionId: string): void {
  * Get the current active render session (if any).
  * Used to record modules during fetch and for per-session in-flight deduplication.
  */
-export function getCurrentSession(): RenderSession | null {
+function getCurrentSession(): RenderSession | null {
   const firstSession = renderSessions.values().next();
   return firstSession.done ? null : firstSession.value;
 }

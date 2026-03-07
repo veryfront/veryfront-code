@@ -20,7 +20,7 @@ export async function compileAllMDX(options: CompileOptions): Promise<Map<string
   return results;
 }
 
-export async function compileMDXDirectory(
+async function compileMDXDirectory(
   dir: string,
   options: CompileOptions,
   results: Map<string, CompileResult>,

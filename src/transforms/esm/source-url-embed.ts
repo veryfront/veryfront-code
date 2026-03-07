@@ -8,8 +8,8 @@
  */
 
 /** Preserved comment format that survives minification */
-export const VF_SOURCE_PREFIX = "/*! @vf-source: ";
-export const VF_SOURCE_SUFFIX = " */\n";
+const VF_SOURCE_PREFIX = "/*! @vf-source: ";
+const VF_SOURCE_SUFFIX = " */\n";
 
 /**
  * Embed the source URL in bundle code as a preserved comment.

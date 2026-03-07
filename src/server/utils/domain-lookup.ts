@@ -23,7 +23,7 @@ export interface DomainLookupResult {
   release_id: string | null;
 }
 
-export interface DomainLookupConfig {
+interface DomainLookupConfig {
   apiBaseUrl: string;
   apiToken: string;
 }

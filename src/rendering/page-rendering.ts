@@ -9,7 +9,7 @@ import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { ensureError, getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-export interface MDXPageResult {
+interface MDXPageResult {
   pageElement: BundledReact.ReactElement;
   pageBundle: PageBundle;
   collectedMetadata: Record<string, unknown>;

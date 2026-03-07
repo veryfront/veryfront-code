@@ -14,7 +14,6 @@ const logger = baseLogger.component("transform-cache");
 
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes
 const FALLBACK_MAX_ENTRIES = 500;
-const WARMUP_TTL_SECONDS = 3_600; // 1 hour
 
 /**
  * Pattern to match unresolved /_vf_modules/_veryfront/ imports.
@@ -26,7 +25,7 @@ const WARMUP_TTL_SECONDS = 3_600; // 1 hour
 const UNRESOLVED_VF_MODULES_PATTERN =
   /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/_veryfront\/[^"']+)["']/;
 
-export interface TransformCacheEntry {
+interface TransformCacheEntry {
   code: string;
   hash: string;
   timestamp: number;
@@ -40,7 +39,7 @@ let cacheInitPromise: Promise<void> | null = null;
 
 const defaultLocalFallback = new Map<string, TransformCacheEntry>();
 
-export interface LocalFallbackLike<K, V> {
+interface LocalFallbackLike<K, V> {
   get(key: K): V | undefined;
   set(key: K, value: V): this;
   delete(key: K): boolean;
@@ -86,7 +85,7 @@ export function __injectCachesForTests(
  * Reset initialization state for testing.
  * This allows tests to simulate fresh initialization.
  */
-export function __resetInitStateForTests(): void {
+function __resetInitStateForTests(): void {
   cacheInitialized = false;
   cacheInitPromise = null;
   cacheGateway = null;
@@ -124,17 +123,7 @@ export async function initializeTransformCache(): Promise<boolean> {
   return cacheGateway?.type !== "memory";
 }
 
-export function isDistributedCacheEnabled(): boolean {
-  const gateway = getEffectiveCacheGateway();
-  if (!gateway) return false;
-  // Use gateway's isDistributed() if available, otherwise check type
-  if ("isDistributed" in gateway && typeof gateway.isDistributed === "function") {
-    return (gateway as TokenizingCacheGateway).isDistributed();
-  }
-  return gateway.type !== "memory";
-}
-
-export interface CacheKeyOptions {
+interface CacheKeyOptions {
   depsHash?: string;
   configHash?: string;
   projectId?: string;
@@ -285,7 +274,7 @@ export async function getDistributedTransformBackend(): Promise<CacheBackend | n
   return gateway as CacheBackend;
 }
 
-export interface TransformCacheResult {
+interface TransformCacheResult {
   code: string;
   /** Bundle manifest ID if the cached entry has one (for manifest-based validation) */
   bundleManifestId?: string;
@@ -325,143 +314,4 @@ export async function getOrComputeTransform(
   });
 
   return { code, cacheHit: false };
-}
-
-export function getTransformCacheStats(): {
-  fallbackEntries: number;
-  maxFallbackEntries: number;
-  backend: string;
-} {
-  return {
-    fallbackEntries: getLocalFallback().size,
-    maxFallbackEntries: FALLBACK_MAX_ENTRIES,
-    backend: getEffectiveCacheGateway()?.type ?? "uninitialized",
-  };
-}
-
-export interface WarmupEntry {
-  key: string;
-  code: string;
-  hash: string;
-  bundleManifestId?: string;
-}
-
-export interface WarmupResult {
-  success: number;
-  failed: number;
-  skipped: number;
-  durationMs: number;
-}
-
-export async function warmupTransformCache(
-  entries: WarmupEntry[],
-  ttlSeconds: number = WARMUP_TTL_SECONDS,
-): Promise<WarmupResult> {
-  const start = performance.now();
-  let success = 0;
-  let failed = 0;
-  let skipped = 0;
-
-  await initializeTransformCache();
-
-  if (!isDistributedCacheEnabled()) {
-    logger.warn("Warmup skipped - no distributed cache available");
-    return {
-      success: 0,
-      failed: 0,
-      skipped: entries.length,
-      durationMs: Math.round(performance.now() - start),
-    };
-  }
-
-  const BATCH_SIZE = 50;
-  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-    const batch = entries.slice(i, i + BATCH_SIZE);
-    const results = await Promise.allSettled(
-      batch.map(async (entry) => {
-        const existing = await getCachedTransformAsync(entry.key);
-        if (existing && existing.hash === entry.hash) {
-          skipped++;
-          return;
-        }
-
-        await setCachedTransformAsync(
-          entry.key,
-          entry.code,
-          entry.hash,
-          ttlSeconds,
-          entry.bundleManifestId,
-        );
-        success++;
-      }),
-    );
-
-    for (const result of results) {
-      if (result.status === "rejected") {
-        failed++;
-        logger.debug("Warmup entry failed", { error: result.reason });
-      }
-    }
-  }
-
-  const durationMs = Math.round(performance.now() - start);
-  logger.info("Warmup complete", {
-    success,
-    failed,
-    skipped,
-    total: entries.length,
-    durationMs,
-    backend: getEffectiveCacheGateway()?.type,
-  });
-
-  return { success, failed, skipped, durationMs };
-}
-
-export async function prewarmProjectTransforms(
-  projectId: string,
-  filePaths: string[],
-): Promise<number> {
-  await initializeTransformCache();
-  const gateway = getEffectiveCacheGateway();
-
-  if (!gateway || gateway.type === "memory") {
-    logger.debug("Prewarm skipped - no distributed cache");
-    return 0;
-  }
-
-  let prewarmed = 0;
-  for (const filePath of filePaths) {
-    try {
-      const pattern = `v*:${projectId}:${filePath}:*:ssr`;
-      const scan =
-        (gateway as unknown as { scan?: (pattern: string, count: number) => Promise<string[]> })
-          .scan;
-      if (typeof scan !== "function") continue;
-
-      const keys = await scan.call(gateway, pattern, 10);
-      for (const key of keys) {
-        const cached = await getCachedTransformAsync(key);
-        if (!cached) continue;
-
-        setLocalFallback(key, cached);
-        prewarmed++;
-      }
-    } catch (error) {
-      logger.error("Prewarm failed for path", {
-        projectId,
-        filePath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  const logFn = prewarmed < filePaths.length ? logger.warn : logger.info;
-  logFn.call(logger, "Prewarm complete", {
-    projectId,
-    prewarmed,
-    total: filePaths.length,
-    incomplete: prewarmed < filePaths.length,
-  });
-
-  return prewarmed;
 }

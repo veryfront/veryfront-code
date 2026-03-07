@@ -9,7 +9,6 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import type { Plugin } from "esbuild";
 import { replaceSpecifiers } from "./lexer.ts";
 import { DEFAULT_REACT_VERSION, getReactUrls } from "./package-registry.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import {
   type EnvironmentConfig,
   getEnvironmentConfig,
@@ -40,23 +39,8 @@ export function hasHttpImports(code: string): boolean {
   return /['"]https?:\/\/[^'"]+['"]/.test(code);
 }
 
-/** Strip Deno shim from esm.sh bundles (if present) */
-export function stripDenoShim(code: string): string {
-  if (!isDeno) return code;
-
-  return code.replace(
-    /globalThis\.Deno\s*=\s*globalThis\.Deno\s*\|\|\s*\{[\s\S]*?env:\s*\{[\s\S]*?\}\s*\};?/g,
-    "/* Deno shim stripped */",
-  );
-}
-
 /** Re-export getReactUrls for backwards compatibility */
 export { getReactUrls };
-
-/** Alias for getReactUrls - used by esbuild bundling */
-export function getReactAliases(): Record<string, string> {
-  return getReactUrls();
-}
 
 /**
  * NOOP plugin for esbuild.

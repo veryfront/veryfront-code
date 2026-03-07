@@ -16,7 +16,7 @@ import { resetApiHandlerForProject } from "#veryfront/server/handlers/request/ap
 
 const logger = serverLogger.component("cache-invalidation");
 
-export interface InvalidationOptions {
+interface InvalidationOptions {
   /** Environment scope: only invalidate caches for this environment */
   environment?: "production" | "preview";
   /** Branch ID for preview mode scoping */

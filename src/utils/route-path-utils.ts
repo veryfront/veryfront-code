@@ -12,7 +12,7 @@ export const PAGE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"] as 
 export const COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"] as const;
 
 /** Regex for matching and removing file extensions */
-export const EXTENSION_REGEX = /\.(tsx|jsx|ts|js|mdx|md)$/;
+const EXTENSION_REGEX = /\.(tsx|jsx|ts|js|mdx|md)$/;
 
 /** Patterns for dynamic segment detection */
 const DYNAMIC_SEGMENT_PATTERNS = {
@@ -74,7 +74,7 @@ export function extractParamName(segment: string): string {
 /**
  * Router type detection result
  */
-export interface RouterBasePath {
+interface RouterBasePath {
   type: "app" | "pages" | null;
   relativePath: string | null;
 }
@@ -100,7 +100,7 @@ export function extractRouterBasePath(pageEntityId: string): RouterBasePath {
 /**
  * Result of route parameter extraction
  */
-export interface ExtractedRouteParams {
+interface ExtractedRouteParams {
   params: Record<string, string | string[]>;
   matched: boolean;
 }

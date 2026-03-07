@@ -142,7 +142,7 @@ interface ToolbarState {
   [key: string]: boolean | string;
 }
 
-export function getMarkdownToolbarState(): ToolbarState {
+function getMarkdownToolbarState(): ToolbarState {
   const toolbarState: ToolbarState = {
     bold: false,
     italic: false,
@@ -209,7 +209,7 @@ export function getMarkdownToolbarState(): ToolbarState {
 // updateMarkdownInlineToolbar
 // ---------------------------------------------------------------------------
 
-export function updateMarkdownInlineToolbar(): void {
+function updateMarkdownInlineToolbar(): void {
   if (
     !state.markdownInlineToolbarRoot ||
     !state.markdownEditorRoot ||

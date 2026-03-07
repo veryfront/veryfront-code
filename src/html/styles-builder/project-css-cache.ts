@@ -27,7 +27,7 @@ const tailwindLog = logger.component("tailwind");
 // Types
 // ============================================================================
 
-export interface ProjectCSSCacheEntry {
+interface ProjectCSSCacheEntry {
   css: string;
   hash: string;
   candidatesHash: string;
@@ -37,7 +37,7 @@ interface ProjectCSSLocalEntry extends ProjectCSSCacheEntry {
   expiresAt: number;
 }
 
-export interface ProjectCSSRequestContext {
+interface ProjectCSSRequestContext {
   projectSlug: string;
   stylesheet: string;
   candidatesHash: string;
@@ -46,7 +46,7 @@ export interface ProjectCSSRequestContext {
   cacheKey: string;
 }
 
-export interface ProjectCSSProfile {
+interface ProjectCSSProfile {
   minify?: boolean;
   environment?: string;
   buildMode?: "development" | "production";

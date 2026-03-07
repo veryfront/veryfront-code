@@ -5,7 +5,7 @@ import type {
   BundleMetadata,
 } from "./bundle-manifest.ts";
 
-export interface KVBundleManifestStoreOptions {
+interface KVBundleManifestStoreOptions {
   keyPrefix?: string;
 }
 

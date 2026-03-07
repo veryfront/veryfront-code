@@ -78,7 +78,7 @@ interface FileSystemLike {
 /**
  * Injection interface for testing StaticFileService dependencies
  */
-export interface StaticFileServiceDeps {
+interface StaticFileServiceDeps {
   manifestCache?: Map<string, ManifestIndex>;
   manifestLoading?: Map<string, Promise<ManifestIndex | null>>;
 }

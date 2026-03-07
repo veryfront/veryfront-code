@@ -17,7 +17,7 @@ import {
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
-export interface SpanInfo {
+interface SpanInfo {
   /** The server span (unknown type from OTLP setup) */
   span: unknown;
   /** The span context (unknown type from OTLP setup) */

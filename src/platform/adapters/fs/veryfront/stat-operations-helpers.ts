@@ -1,6 +1,6 @@
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
 
-export interface NormalizedIndexedPath {
+interface NormalizedIndexedPath {
   normalizedPath: string;
   originalPath?: string;
 }

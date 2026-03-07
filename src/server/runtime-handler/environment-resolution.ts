@@ -15,7 +15,7 @@ const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("environment-resolution");
 
-export interface EnvironmentResolutionResult {
+interface EnvironmentResolutionResult {
   /** Resolved environment (preview/production) */
   resolvedEnvironment: "preview" | "production" | undefined;
   /** Resolved release ID (may be synthetic for standalone mode) */
@@ -24,7 +24,7 @@ export interface EnvironmentResolutionResult {
   errorResponse: Response | undefined;
 }
 
-export interface EnvironmentResolutionOptions {
+interface EnvironmentResolutionOptions {
   /** Environment from proxy headers */
   proxyEnv: ProxyEnvironment | undefined;
   /** Mode from request context */

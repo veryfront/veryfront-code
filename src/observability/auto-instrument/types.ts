@@ -1,8 +1,8 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
-export type AttributeValue = string | number | boolean;
+type AttributeValue = string | number | boolean;
 
-export type SpanAttributes = Record<string, AttributeValue>;
+type SpanAttributes = Record<string, AttributeValue>;
 export type ErrorAttributes = Record<string, AttributeValue>;
 export type HttpAttributes = Record<string, AttributeValue>;
 
@@ -29,7 +29,7 @@ export interface AutoInstrumentConfig {
   captureErrors?: boolean;
 }
 
-export interface InstrumentationContext {
+interface InstrumentationContext {
   config: AutoInstrumentConfig;
   adapter?: RuntimeAdapter;
   initialized: boolean;

@@ -9,7 +9,7 @@
 
 import { isDeno } from "../runtime.ts";
 
-export interface LoadOptions {
+interface LoadOptions {
   envPath?: string;
   export?: boolean;
   examplePath?: string | null;

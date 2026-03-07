@@ -3,7 +3,7 @@ import { getClientCount, getOpenSockets } from "./hmr-client-manager.ts";
 
 const logger = serverLogger.component("hmr-handler");
 
-export interface HMRMetrics {
+interface HMRMetrics {
   broadcastsSent: number;
   messagesForwarded: number;
   lastBroadcastTime: number;
@@ -19,7 +19,7 @@ export function getMetrics(): { clients: number } & HMRMetrics {
   return { clients: getClientCount(), ...metrics };
 }
 
-export function requiresFullReload(path: string): boolean {
+function requiresFullReload(path: string): boolean {
   const ext = path.split(".").pop()?.toLowerCase();
   return ext === "mdx" || ext === "md" || path.includes("veryfront.config");
 }
@@ -55,7 +55,7 @@ export function broadcastUpdate(changedPaths?: string[], projectSlug?: string): 
   }
 }
 
-export function broadcastMessage(message: string, projectSlug?: string): void {
+function broadcastMessage(message: string, projectSlug?: string): void {
   const sockets = getOpenSockets(projectSlug);
   let sentCount = 0;
 

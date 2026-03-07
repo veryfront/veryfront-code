@@ -1,15 +1,15 @@
-export interface InFlightEntry<T> {
+interface InFlightEntry<T> {
   promise: Promise<T>;
   startedAt: number;
 }
 
-export interface InFlightDeduperOptions {
+interface InFlightDeduperOptions {
   timeoutMs: number;
   maxEntries: number;
   cleanupIntervalMs: number;
 }
 
-export interface InFlightCleanupResult {
+interface InFlightCleanupResult {
   cleanedCount: number;
   remainingCount: number;
 }

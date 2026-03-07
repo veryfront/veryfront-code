@@ -8,7 +8,7 @@
 import type { WorkerRequest, WorkerResponse } from "./types.ts";
 import { WORKER_SCRIPT } from "./worker-script.ts";
 
-export interface GenerateCallbacks {
+interface GenerateCallbacks {
   onStatus?: (status: "loading-runtime" | "downloading-model" | "ready" | "generating") => void;
   onDownloadProgress?: (progress: number, file?: string) => void;
   onToken?: (token: string) => void;

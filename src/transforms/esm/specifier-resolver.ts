@@ -28,7 +28,7 @@ export type CacheHttpModuleFn = (url: string, options: CacheOptions) => Promise<
  * Handles npm:, http(s)://, relative, and bare specifiers.
  * Returns null if the specifier should not be rewritten.
  */
-export async function resolveSpecifier(
+async function resolveSpecifier(
   specifier: string,
   baseUrl: string | undefined,
   options: CacheOptions,

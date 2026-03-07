@@ -13,17 +13,17 @@ export type ImageFormat = "jpeg" | "jpg" | "png" | "webp" | "avif" | "gif" | "sv
 /**
  * Supported script formats
  */
-export type ScriptFormat = "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs";
+type ScriptFormat = "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs";
 
 /**
  * Supported style formats
  */
-export type StyleFormat = "css" | "scss" | "sass" | "less";
+type StyleFormat = "css" | "scss" | "sass" | "less";
 
 /**
  * Supported document formats
  */
-export type DocumentFormat = "md" | "mdx";
+type DocumentFormat = "md" | "mdx";
 
 /**
  * All supported file extensions
@@ -38,7 +38,7 @@ export const FILE_EXTENSIONS = {
 /**
  * esbuild loader types mapping
  */
-export const ESBUILD_LOADERS = {
+const ESBUILD_LOADERS = {
   ".js": "js",
   ".jsx": "jsx",
   ".ts": "ts",
@@ -126,7 +126,7 @@ export function getEsbuildLoader(filePath: string): string {
 /**
  * Get file type category
  */
-export type FileCategory = "image" | "script" | "style" | "document" | "other";
+type FileCategory = "image" | "script" | "style" | "document" | "other";
 
 export function getFileCategory(filePath: string): FileCategory {
   if (isImageFile(filePath)) return "image";

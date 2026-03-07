@@ -19,7 +19,7 @@ export { cva, type VariantProps } from "class-variance-authority";
  * Light-mode defaults that match the Veryfront Studio `:root` values.
  * Uses OKLch for perceptual uniformity.
  */
-export const TOKENS_LIGHT = {
+const TOKENS_LIGHT = {
   "--background": "oklch(0.9512 0.008 98.88)",
   "--foreground": "oklch(0.2768 0 0)",
   "--card": "oklch(1 0 0)",
@@ -54,7 +54,7 @@ export const TOKENS_LIGHT = {
 /**
  * Dark-mode defaults that match the Studio `[data-theme="dark"]` values.
  */
-export const TOKENS_DARK = {
+const TOKENS_DARK = {
   "--background": "oklch(0.2768 0 0)",
   "--foreground": "oklch(0.9512 0.008 98.88)",
   "--card": "oklch(0.3211 0 0)",

@@ -17,7 +17,7 @@ const VERIFIED_BUNDLE_CACHE_MAX_ENTRIES = 2_000;
  * Extract VF module paths (veryfront-mdx-esm/*.mjs) from code.
  * These are user project modules that may import HTTP bundles.
  */
-export function extractVfModulePaths(code: string): string[] {
+function extractVfModulePaths(code: string): string[] {
   // Create regex per call to avoid shared lastIndex state across concurrent calls.
   const vfModulePattern = /file:\/\/([^"'\s]+veryfront-mdx-esm\/[^"'\s]+\.mjs)/gi;
   const paths: string[] = [];

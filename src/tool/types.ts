@@ -65,7 +65,7 @@ export interface ToolExecutionContext {
  * - 'function': Standard tool with known input/output types (default)
  * - 'dynamic': Dynamic tool with unknown types (MCP tools, user-defined functions)
  */
-export type ToolType = "function" | "dynamic";
+type ToolType = "function" | "dynamic";
 
 /**
  * Tool instance (returned by tool() function)
@@ -115,7 +115,7 @@ export interface ToolDefinition {
 /**
  * Tool registry entry
  */
-export interface ToolRegistryEntry {
+interface ToolRegistryEntry {
   /** Tool ID */
   id: string;
 

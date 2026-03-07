@@ -115,7 +115,7 @@ export function endRequestMetrics(
   });
 }
 
-export type ContentMetricEvent =
+type ContentMetricEvent =
   | "REQUEST_SCOPED_HIT"
   | "PERSISTENT_CACHE_HIT"
   | "FILE_LIST_HIT"

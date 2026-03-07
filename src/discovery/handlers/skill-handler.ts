@@ -17,12 +17,12 @@ import type { FileDiscoveryContext } from "../types.ts";
 
 const logger = agentLogger.component("skill-discovery");
 
-export interface SkillDiscoveryError {
+interface SkillDiscoveryError {
   file: string;
   error: Error;
 }
 
-export interface SkillDiscoveryResult {
+interface SkillDiscoveryResult {
   skills: Map<string, Skill>;
   errors: SkillDiscoveryError[];
 }
