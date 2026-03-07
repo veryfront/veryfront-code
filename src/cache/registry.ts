@@ -6,6 +6,9 @@ import type { Span } from "@opentelemetry/api";
 
 const logger = rendererLogger.component("cache-registry");
 
+const DEFAULT_REDIS_SCAN_LIMIT = 1_000;
+const REDIS_SCAN_BATCH_COUNT = 100;
+
 export interface CacheStore {
   readonly name: string;
   get(key: string): unknown;
@@ -207,7 +210,7 @@ class CacheRegistry {
     this.stores.clear();
   }
 
-  scanRedisKeys(pattern: string, limit = 1000): Promise<string[]> {
+  scanRedisKeys(pattern: string, limit = DEFAULT_REDIS_SCAN_LIMIT): Promise<string[]> {
     if (!isRedisConfigured()) return Promise.resolve([]);
 
     return withSpan(
@@ -219,7 +222,10 @@ class CacheRegistry {
           let cursor = 0;
 
           do {
-            const result = await client.scan(cursor, { MATCH: pattern, COUNT: 100 });
+            const result = await client.scan(cursor, {
+              MATCH: pattern,
+              COUNT: REDIS_SCAN_BATCH_COUNT,
+            });
             cursor = typeof result.cursor === "string"
               ? parseInt(result.cursor, 10)
               : result.cursor;

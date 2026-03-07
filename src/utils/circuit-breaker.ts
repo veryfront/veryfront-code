@@ -11,14 +11,26 @@ import { logger as baseLogger } from "#veryfront/utils";
 
 const logger = baseLogger.component("circuit-breaker");
 
+/** Default number of consecutive failures before the circuit opens */
+const DEFAULT_FAILURE_THRESHOLD = 5;
+
+/** Default time to wait in OPEN state before attempting recovery (30 seconds) */
+const DEFAULT_RESET_TIMEOUT_MS = 30_000;
+
+/** Default number of successes in HALF_OPEN required to close the circuit */
+const DEFAULT_SUCCESS_THRESHOLD = 3;
+
+/** Maximum concurrent attempts allowed while the circuit is HALF_OPEN */
+const MAX_HALF_OPEN_ATTEMPTS = 3;
+
 export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
 export interface CircuitBreakerOptions {
-  /** Failures before opening (default: 5) */
+  /** Failures before opening (default: DEFAULT_FAILURE_THRESHOLD) */
   failureThreshold?: number;
-  /** Ms to wait before retry (default: 30000) */
+  /** Ms to wait before retry (default: DEFAULT_RESET_TIMEOUT_MS) */
   resetTimeoutMs?: number;
-  /** Successes to close (default: 3) */
+  /** Successes to close (default: DEFAULT_SUCCESS_THRESHOLD) */
   successThreshold?: number;
   /** Optional name for logging */
   name?: string;
@@ -52,9 +64,9 @@ export class CircuitBreaker {
   private readonly breakerName: string;
 
   constructor(options: CircuitBreakerOptions = {}) {
-    this.failureThreshold = options.failureThreshold ?? 5;
-    this.resetTimeoutMs = options.resetTimeoutMs ?? 30000;
-    this.successThreshold = options.successThreshold ?? 3;
+    this.failureThreshold = options.failureThreshold ?? DEFAULT_FAILURE_THRESHOLD;
+    this.resetTimeoutMs = options.resetTimeoutMs ?? DEFAULT_RESET_TIMEOUT_MS;
+    this.successThreshold = options.successThreshold ?? DEFAULT_SUCCESS_THRESHOLD;
     this.breakerName = options.name ?? "default";
   }
 
@@ -67,7 +79,7 @@ export class CircuitBreaker {
     }
 
     if (this.state === "HALF_OPEN") {
-      if (this.halfOpenAttempts >= 3) {
+      if (this.halfOpenAttempts >= MAX_HALF_OPEN_ATTEMPTS) {
         this.transitionTo("OPEN");
         this.lastFailureTime = Date.now();
         throw new CircuitBreakerOpen(this.breakerName, this.resetTimeoutMs);
@@ -145,7 +157,7 @@ export class CircuitBreaker {
 }
 
 /** Maximum number of circuit breakers to keep in registry */
-const MAX_BREAKERS = 1000;
+const MAX_BREAKERS = 1_000;
 
 /** Minimum age (ms) before a breaker can be evicted (1 hour) */
 const MIN_EVICTION_AGE_MS = 60 * 60 * 1000;

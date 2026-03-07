@@ -20,6 +20,9 @@ import type {
   UploadStoreData,
 } from "./types.ts";
 
+/** Default number of top results returned by similarity search. */
+const DEFAULT_TOP_K = 5;
+
 /**
  * Creates a persistent upload store with lazy embedding and similarity search.
  *
@@ -198,7 +201,7 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
         if (updated) await save(data);
 
         const queryEmbedding = await embedder.embed(query);
-        const topK = options?.topK ?? 5;
+        const topK = options?.topK ?? DEFAULT_TOP_K;
         const threshold = options?.threshold;
 
         const docMap = new Map(data.uploads.map((d) => [d.id, d]));

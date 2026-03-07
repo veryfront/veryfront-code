@@ -23,6 +23,9 @@ import { GetAdapterParamsSchema } from "./schemas/index.ts";
 
 const logger = baseLogger.component("proxy-fs-adapter-manager");
 
+const DEFAULT_MAX_ADAPTERS = 100;
+const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
+
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;
   lastAccessed: number;
@@ -46,8 +49,8 @@ export class ProxyFSAdapterManager {
 
   constructor(config: ProxyFSAdapterManagerConfig) {
     this.baseConfig = config.baseConfig;
-    this.maxAdapters = config.maxAdapters ?? 100;
-    this.maxIdleMs = config.maxIdleMs ?? 30 * 60 * 1000;
+    this.maxAdapters = config.maxAdapters ?? DEFAULT_MAX_ADAPTERS;
+    this.maxIdleMs = config.maxIdleMs ?? DEFAULT_MAX_IDLE_MS;
 
     if (config.cleanupIntervalMs) {
       this.cleanupTimer = setInterval(

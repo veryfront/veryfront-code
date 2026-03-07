@@ -6,7 +6,7 @@ import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/strea
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 
-const PAGE_DATA_TIMEOUT_MS = 25000;
+const PAGE_DATA_TIMEOUT_MS = 25_000;
 
 export function handlePageDataEndpoint(
   req: Request,

@@ -17,6 +17,9 @@ import { join, relative, resolve } from "@std/path";
 
 const logger = baseLogger.component("workspace-sync");
 
+/** Maximum file size for workspace sync (10 MB) */
+const MAX_WORKSPACE_FILE_SIZE = 10 * 1024 * 1024;
+
 /**
  * Workspace configuration
  */
@@ -152,7 +155,7 @@ export class WorkspaceSync {
 
     this.config = {
       baseDir: "/tmp/veryfront-workspaces",
-      maxFileSize: 10 * 1024 * 1024, // 10MB
+      maxFileSize: MAX_WORKSPACE_FILE_SIZE,
       debug: false,
       ...config,
     };

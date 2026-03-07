@@ -11,8 +11,10 @@ interface NegativeCacheEntry {
   cachedAt: number;
 }
 
-const NEGATIVE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-const NEGATIVE_CACHE_MAX_SIZE = 1000;
+const NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1_000; // 5 minutes
+const NEGATIVE_CACHE_MAX_SIZE = 1_000;
+const DEFAULT_REFRESH_BUFFER_MS = 2 * 60 * 1_000; // 2 minutes before expiry
+const DEFAULT_TOKEN_TTL_MS = 3_600 * 1_000; // 1 hour
 
 export interface OAuthConfig {
   apiBaseUrl: string;
@@ -38,7 +40,7 @@ export class TokenManager {
     options: TokenManagerOptions = {},
   ) {
     this.cache = options.cache ?? new MemoryCache();
-    this.refreshBuffer = options.refreshBuffer ?? 2 * 60 * 1000; // 2 minutes before expiry
+    this.refreshBuffer = options.refreshBuffer ?? DEFAULT_REFRESH_BUFFER_MS;
   }
 
   async getToken(
@@ -54,7 +56,7 @@ export class TokenManager {
       async () => {
         const negEntry = this.negativeCache.get(cacheKey);
         if (negEntry) {
-          if (Date.now() - negEntry.cachedAt < NEGATIVE_CACHE_TTL) {
+          if (Date.now() - negEntry.cachedAt < NEGATIVE_CACHE_TTL_MS) {
             throw new Error(negEntry.message);
           }
           this.negativeCache.delete(cacheKey);
@@ -172,7 +174,7 @@ export class TokenManager {
 
     try {
       const payload = response.access_token.split(".")[1];
-      if (!payload) return Date.now() + 3600 * 1000;
+      if (!payload) return Date.now() + DEFAULT_TOKEN_TTL_MS;
 
       const decoded = JSON.parse(atob(payload));
       if (decoded?.exp) return decoded.exp * 1000;
@@ -180,6 +182,6 @@ export class TokenManager {
       // Fall through to default
     }
 
-    return Date.now() + 3600 * 1000;
+    return Date.now() + DEFAULT_TOKEN_TTL_MS;
   }
 }

@@ -88,7 +88,9 @@ const logger = rendererLogger.component("renderer");
  * Configurable via RENDER_TIMEOUT_MS env var for cold-start scenarios.
  * Default increased to 60s to handle cold-start module transforms.
  */
-const RENDER_PIPELINE_TIMEOUT_MS = getEnvNumber("RENDER_TIMEOUT_MS") ?? 60000;
+const DEFAULT_RENDER_PIPELINE_TIMEOUT_MS = 60_000;
+const RENDER_PIPELINE_TIMEOUT_MS = getEnvNumber("RENDER_TIMEOUT_MS") ??
+  DEFAULT_RENDER_PIPELINE_TIMEOUT_MS;
 
 /**
  * Options for initializing the Renderer

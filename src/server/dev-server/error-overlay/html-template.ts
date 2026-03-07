@@ -1,6 +1,15 @@
 import { type ErrorInfo, formatErrorType } from "./error-formatter.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 
+/** Base delay multiplied by attempt count for WebSocket reconnection */
+const WS_RECONNECT_BASE_DELAY_MS = 1_000;
+
+/** Maximum delay between WebSocket reconnection attempts */
+const WS_RECONNECT_MAX_DELAY_MS = 5_000;
+
+/** Maximum number of WebSocket reconnection attempts before giving up */
+const WS_MAX_RECONNECT_ATTEMPTS = 10;
+
 export function generateRuntimeScript(): string {
   return `
     // Veryfront Error Overlay Runtime
@@ -279,7 +288,7 @@ export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): st
       const wsUrl = protocol + '//' + window.location.host + '/_ws';
       let ws = null;
       let reconnectAttempts = 0;
-      const maxReconnectAttempts = 10;
+      const maxReconnectAttempts = ${WS_MAX_RECONNECT_ATTEMPTS};
 
       function connect() {
         if (reconnectAttempts >= maxReconnectAttempts) return;
@@ -295,7 +304,7 @@ export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): st
         };
         ws.onclose = () => {
           reconnectAttempts++;
-          setTimeout(connect, Math.min(1000 * reconnectAttempts, 5000));
+          setTimeout(connect, Math.min(${WS_RECONNECT_BASE_DELAY_MS} * reconnectAttempts, ${WS_RECONNECT_MAX_DELAY_MS}));
         };
       }
       connect();

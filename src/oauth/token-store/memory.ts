@@ -1,11 +1,11 @@
 import type { OAuthState, OAuthTokens, TokenStore } from "../types.ts";
 
+/** How long an OAuth state nonce remains valid (10 minutes). */
+const STATE_EXPIRATION_MS = 10 * 60 * 1_000;
+
 export class MemoryTokenStore implements TokenStore {
   private tokens = new Map<string, OAuthTokens>();
   private states = new Map<string, OAuthState>();
-
-  /** State expiration time in ms (10 minutes) */
-  private stateExpirationMs = 10 * 60 * 1000;
 
   async getTokens(serviceId: string): Promise<OAuthTokens | null> {
     return this.tokens.get(serviceId) ?? null;
@@ -23,7 +23,7 @@ export class MemoryTokenStore implements TokenStore {
     const oauthState = this.states.get(state);
     if (!oauthState) return null;
 
-    if (Date.now() - oauthState.createdAt > this.stateExpirationMs) {
+    if (Date.now() - oauthState.createdAt > STATE_EXPIRATION_MS) {
       this.states.delete(state);
       return null;
     }
@@ -43,7 +43,7 @@ export class MemoryTokenStore implements TokenStore {
   private cleanupExpiredStates(): void {
     const now = Date.now();
     for (const [state, oauthState] of this.states) {
-      if (now - oauthState.createdAt > this.stateExpirationMs) {
+      if (now - oauthState.createdAt > STATE_EXPIRATION_MS) {
         this.states.delete(state);
       }
     }

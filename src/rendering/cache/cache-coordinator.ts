@@ -4,6 +4,9 @@ import type { CachePayload, CacheStore } from "./types.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "./stores/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
+/** Default TTL for cache entries (5 minutes) */
+const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1_000;
+
 export interface CacheCoordinatorOptions {
   store?: CacheStore;
   memory?: MemoryCacheStoreOptions;
@@ -37,7 +40,7 @@ export interface CacheLookupResult {
 export class CacheCoordinator {
   private store: CacheStore;
   private ttlMs: number | undefined;
-  private readonly defaultTtlMs = 5 * 60 * 1000; // 5 minutes
+  private readonly defaultTtlMs = DEFAULT_CACHE_TTL_MS;
   private readonly projectId: string | undefined;
   private readonly contentSourceId: string | undefined;
   private readonly cachePrefix: string;

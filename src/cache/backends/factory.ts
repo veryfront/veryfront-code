@@ -17,6 +17,8 @@ import { getEnvValue } from "./helpers.ts";
 
 const logger = baseLogger.component("cache-backend");
 
+const DEFAULT_MEMORY_MAX_ENTRIES = 500;
+
 // Re-export gateway types for backward compatibility
 export type { CodeCacheGateway, TokenizingCacheGateway };
 
@@ -47,7 +49,7 @@ export function isDiskCacheConfigured(): boolean {
 export function createCacheBackend(config: CacheBackendConfig = {}): Promise<CacheBackend> {
   const {
     keyPrefix = "",
-    memoryMaxEntries = 500,
+    memoryMaxEntries = DEFAULT_MEMORY_MAX_ENTRIES,
     preferredBackend,
     apiBaseUrl,
     circuitBreakerName,

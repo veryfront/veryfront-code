@@ -4,6 +4,9 @@ import { DEFAULT_LRU_MAX_ENTRIES } from "#veryfront/utils";
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 
+/** Default interval between expired-entry cleanup sweeps (1 minute) */
+const DEFAULT_CLEANUP_INTERVAL_MS = 60_000;
+
 export interface LRUOptions {
   maxEntries?: number;
   ttlMs?: number;
@@ -24,7 +27,7 @@ export class LRUCache<K, V> {
 
     this.adapter = new LRUCacheAdapter(adapterOptions);
     this.ttlMs = options.ttlMs;
-    this.cleanupIntervalMs = options.cleanupIntervalMs ?? 60000;
+    this.cleanupIntervalMs = options.cleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL_MS;
 
     if (this.ttlMs && this.ttlMs > 0) {
       this.startPeriodicCleanup();

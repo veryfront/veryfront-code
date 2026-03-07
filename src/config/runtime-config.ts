@@ -11,6 +11,9 @@ import type { VeryfrontConfig } from "./schemas/index.ts";
 import type { EnvironmentConfig } from "./environment-config.ts";
 import { createTestEnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
 
+/** Maximum entries in the default render cache */
+const DEFAULT_RENDER_CACHE_MAX_ENTRIES = 500;
+
 /**
  * Runtime-specific configuration derived from environment.
  */
@@ -70,7 +73,7 @@ export const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
     dir: ".veryfront",
     render: {
       type: "memory",
-      maxEntries: 500,
+      maxEntries: DEFAULT_RENDER_CACHE_MAX_ENTRIES,
     },
   },
   dev: {

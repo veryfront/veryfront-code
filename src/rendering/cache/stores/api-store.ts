@@ -5,6 +5,11 @@ import { type CacheBackend, createCacheBackend } from "#veryfront/cache/backend.
 
 const logger = rendererLogger.component("api-cache-store");
 
+/** Default TTL for distributed cache entries (1 hour) */
+const DEFAULT_TTL_SECONDS = 3_600;
+/** Default max entries for the local memory cache (fast reads) */
+const DEFAULT_LOCAL_MAX_ENTRIES = 200;
+
 export interface APICacheStoreOptions {
   /** Key prefix for cache entries */
   keyPrefix?: string;
@@ -47,12 +52,12 @@ export class APICacheStore implements CacheStore {
 
   constructor(options: APICacheStoreOptions = {}) {
     this.keyPrefix = options.keyPrefix ?? "render";
-    this.ttlSeconds = options.ttlSeconds ?? 3600; // 1 hour default
+    this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TTL_SECONDS;
 
     const enableLocalCache = options.enableLocalCache ?? true;
     this.localCache = enableLocalCache
       ? new MemoryCacheStore({
-        maxEntries: options.localMaxEntries ?? 200,
+        maxEntries: options.localMaxEntries ?? DEFAULT_LOCAL_MAX_ENTRIES,
         ttlMs: this.ttlSeconds * 1000,
       })
       : null;

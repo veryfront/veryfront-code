@@ -12,6 +12,9 @@ import {
 
 const LOG_PREFIX = "[GitHubApiClient]";
 
+const RATE_LIMIT_WARNING_THRESHOLD = 100;
+const RETRY_JITTER_MAX_MS = 1_000;
+
 interface RateLimitInfo {
   limit: number;
   remaining: number;
@@ -138,7 +141,7 @@ export class GitHubApiClient {
       used: used ? parseInt(used, 10) : 0,
     };
 
-    if (this.rateLimitInfo.remaining < 100) {
+    if (this.rateLimitInfo.remaining < RATE_LIMIT_WARNING_THRESHOLD) {
       logger.warn(`${LOG_PREFIX} Approaching rate limit`, {
         remaining: this.rateLimitInfo.remaining,
         reset: this.rateLimitInfo.reset.toISOString(),
@@ -216,7 +219,7 @@ export class GitHubApiClient {
       this.config.retry.maxDelay,
     );
 
-    return delay + Math.random() * 1000;
+    return delay + Math.random() * RETRY_JITTER_MAX_MS;
   }
 
   private sleep(ms: number): Promise<void> {

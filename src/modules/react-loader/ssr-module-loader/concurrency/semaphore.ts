@@ -1,3 +1,6 @@
+/** Default timeout for acquiring a semaphore permit (ms) */
+const DEFAULT_ACQUIRE_TIMEOUT_MS = 100;
+
 export class Semaphore {
   private permits: number;
   private readonly maxQueueSize: number;
@@ -8,7 +11,7 @@ export class Semaphore {
     this.maxQueueSize = options?.maxQueueSize ?? Infinity;
   }
 
-  tryAcquire(timeoutMs = 100): Promise<boolean> {
+  tryAcquire(timeoutMs = DEFAULT_ACQUIRE_TIMEOUT_MS): Promise<boolean> {
     if (this.permits > 0) {
       this.permits--;
       return Promise.resolve(true);

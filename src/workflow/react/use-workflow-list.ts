@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import type { RunFilter, WorkflowRun, WorkflowStatus } from "#veryfront/workflow/types.ts";
 
+/** Default interval for auto-refreshing the workflow list */
+const DEFAULT_REFRESH_INTERVAL_MS = 5_000;
+
 export interface UseWorkflowListOptions {
   workflowId?: string;
   status?: WorkflowStatus | WorkflowStatus[];
@@ -36,7 +39,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     pageSize = 20,
     apiBase = "/api/workflows",
     autoRefresh = false,
-    refreshInterval = 5000,
+    refreshInterval = DEFAULT_REFRESH_INTERVAL_MS,
   } = options;
 
   const [runs, setRuns] = useState<WorkflowRun[]>([]);

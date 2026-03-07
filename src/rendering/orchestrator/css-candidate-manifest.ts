@@ -25,7 +25,7 @@ interface RouteCandidateOptions {
 
 const logger = rendererLogger.component("css-candidate-manifest");
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
-const DEV_MANIFEST_TTL_MS = 2000;
+const DEV_MANIFEST_TTL_MS = 2_000;
 
 const manifestCache = new Map<string, CandidateManifest>();
 const routeCandidateCache = new Map<string, Set<string>>();

@@ -31,6 +31,12 @@ const VERY_SLOW_REQUEST_THRESHOLD_MS = 25_000; // 25 seconds
 /** How often to log the current state of in-flight requests */
 const STATUS_LOG_INTERVAL_MS = 30_000; // 30 seconds
 
+/** How often to log drain progress during graceful shutdown */
+const DRAIN_PROGRESS_LOG_INTERVAL_MS = 5_000; // 5 seconds
+
+/** Only log module requests that exceed this duration (to reduce noise) */
+const MODULE_REQUEST_LOG_THRESHOLD_MS = 100;
+
 class RequestTracker {
   private inFlight = new Map<string, TrackedRequest>();
   private statusInterval: ReturnType<typeof setInterval> | undefined;
@@ -148,7 +154,7 @@ class RequestTracker {
       tracked.path.startsWith("/_veryfront/");
 
     if (isModuleRequest) {
-      if (durationMs > 100) {
+      if (durationMs > MODULE_REQUEST_LOG_THRESHOLD_MS) {
         logger.debug(`${tracked.method} ${tracked.path} ${statusCode} ${durationMs}ms`);
       }
       return;
@@ -219,7 +225,7 @@ class RequestTracker {
         return false;
       }
 
-      if (elapsedMs > 0 && elapsedMs % 5000 < pollIntervalMs) {
+      if (elapsedMs > 0 && elapsedMs % DRAIN_PROGRESS_LOG_INTERVAL_MS < pollIntervalMs) {
         logger.info("Drain progress", {
           inFlightCount: this.inFlight.size,
           elapsedMs,

@@ -4,6 +4,9 @@ import { Header } from "./components/Header.tsx";
 import { ProjectCard } from "./components/ProjectCard.tsx";
 import { SearchInput } from "./components/SearchInput.tsx";
 
+/** Maximum projects to fetch per request */
+const PROJECTS_FETCH_LIMIT = 100;
+
 interface Project {
   id: string;
   name: string;
@@ -45,7 +48,7 @@ export function App(): React.JSX.Element {
       const params = new URLSearchParams({
         sort_by: "updated_at",
         sort_order: "desc",
-        limit: "100",
+        limit: String(PROJECTS_FETCH_LIMIT),
       });
 
       if (searchQuery) params.set("search", searchQuery);

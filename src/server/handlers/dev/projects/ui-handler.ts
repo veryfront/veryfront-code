@@ -7,7 +7,7 @@ import devUiManifest from "#veryfront/server/dev-ui/manifest.json" with { type: 
 const logger = baseLogger.component("projects");
 
 const moduleCache = new Map<string, { code: string; timestamp: number }>();
-const CACHE_TTL = 5000;
+const CACHE_TTL_MS = 5_000;
 
 const JS_HEADERS = {
   "Content-Type": "application/javascript",
@@ -105,7 +105,7 @@ export function handleProjectsUI(req: Request): Promise<Response | null> {
 
       const cached = moduleCache.get(filePath);
       const now = Date.now();
-      if (cached && now - cached.timestamp < CACHE_TTL) {
+      if (cached && now - cached.timestamp < CACHE_TTL_MS) {
         return new Response(cached.code, { headers: JS_HEADERS });
       }
 

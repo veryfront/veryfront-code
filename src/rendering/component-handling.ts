@@ -24,7 +24,7 @@ export interface ComponentPageResult {
  * Safe for multi-tenant use (project-scoped + content-hashed).
  * Evicted when exceeding MAX_COMPONENT_CACHE_SIZE to prevent unbounded memory growth.
  */
-const MAX_COMPONENT_CACHE_SIZE = 5000;
+const MAX_COMPONENT_CACHE_SIZE = 5_000;
 const componentHydrationCache = new LRUCache<string, string>({
   maxEntries: MAX_COMPONENT_CACHE_SIZE,
 });

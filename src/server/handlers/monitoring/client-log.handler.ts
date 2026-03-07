@@ -11,6 +11,12 @@ const logger = serverLogger.component("client-log-handler");
 /** Max body size for client log payloads (64 KB) */
 const CLIENT_LOG_MAX_BODY_BYTES = 64 * 1024;
 
+/** Max length of the log message field */
+const CLIENT_LOG_MESSAGE_MAX_LENGTH = 5_000;
+
+/** Max chars of raw body shown in parse-error diagnostics */
+const CLIENT_LOG_BODY_PREVIEW_LENGTH = 500;
+
 export class ClientLogHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "ClientLogHandler",
@@ -36,7 +42,7 @@ export class ClientLogHandler extends BaseHandler {
 
       const level = typeof logData?.level === "string" ? logData.level : "info";
       const message = typeof logData?.message === "string"
-        ? logData.message.slice(0, 5000)
+        ? logData.message.slice(0, CLIENT_LOG_MESSAGE_MAX_LENGTH)
         : "[invalid message]";
       const details = logData?.details && typeof logData.details === "object"
         ? logData.details
@@ -91,8 +97,8 @@ export class ClientLogHandler extends BaseHandler {
       getErrorMessage(e),
     );
     serverLogger.error(
-      "[ClientLogHandler] Raw body received (first 500 chars):",
-      body.slice(0, 500),
+      `[ClientLogHandler] Raw body received (first ${CLIENT_LOG_BODY_PREVIEW_LENGTH} chars):`,
+      body.slice(0, CLIENT_LOG_BODY_PREVIEW_LENGTH),
     );
     logger.error("Body length:", body.length);
 

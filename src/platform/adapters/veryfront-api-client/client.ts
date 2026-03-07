@@ -10,6 +10,11 @@ import { API_CLIENT_ERROR, type VeryfrontAPIConfig } from "./types.ts";
 
 const logger = baseLogger.component("veryfront-api-client");
 
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
+const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
+const DEFAULT_SEARCH_LIMIT = 100;
+
 /**
  * File context for API operations.
  * - branch: Draft/working copy from a specific branch
@@ -37,9 +42,9 @@ export class VeryfrontApiClient {
 
   constructor(config: VeryfrontAPIConfig) {
     const retryConfig = {
-      maxRetries: config.retry?.maxRetries ?? 3,
-      initialDelay: config.retry?.initialDelay ?? 1000,
-      maxDelay: config.retry?.maxDelay ?? 10000,
+      maxRetries: config.retry?.maxRetries ?? DEFAULT_MAX_RETRIES,
+      initialDelay: config.retry?.initialDelay ?? DEFAULT_INITIAL_RETRY_DELAY_MS,
+      maxDelay: config.retry?.maxDelay ?? DEFAULT_MAX_RETRY_DELAY_MS,
     };
 
     this.config = { ...config, retry: retryConfig };
@@ -350,7 +355,7 @@ export class VeryfrontApiClient {
   }
 
   async searchFiles(pattern: string): Promise<{ id?: string; path: string }[]> {
-    const result = await this.listFiles({ pattern, limit: 100 });
+    const result = await this.listFiles({ pattern, limit: DEFAULT_SEARCH_LIMIT });
     return result.files.map((f) => ({ id: f.id, path: f.path }));
   }
 
@@ -367,7 +372,7 @@ export class VeryfrontApiClient {
   async searchFilesWithContent(
     pattern: string,
   ): Promise<Array<{ path: string; content: string }>> {
-    const result = await this.listFiles({ pattern, limit: 100 });
+    const result = await this.listFiles({ pattern, limit: DEFAULT_SEARCH_LIMIT });
 
     const filesWithContent: Array<{ path: string; content: string }> = [];
     const filesNeedingContent: string[] = [];

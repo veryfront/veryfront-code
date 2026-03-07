@@ -1,5 +1,11 @@
 import type { ChunkOptions } from "./types.ts";
 
+/** Default maximum characters per chunk (~512 tokens). */
+const DEFAULT_CHUNK_MAX_CHARS = 2_000;
+
+/** Default character overlap between consecutive chunks. */
+const DEFAULT_CHUNK_OVERLAP = 200;
+
 /**
  * Splits text into overlapping chunks for embedding.
  *
@@ -16,8 +22,8 @@ import type { ChunkOptions } from "./types.ts";
  * ```
  */
 export async function chunk(text: string, options?: ChunkOptions): Promise<string[]> {
-  const maxChars = options?.maxChars ?? 2000;
-  const overlap = options?.overlap ?? 200;
+  const maxChars = options?.maxChars ?? DEFAULT_CHUNK_MAX_CHARS;
+  const overlap = options?.overlap ?? DEFAULT_CHUNK_OVERLAP;
   const separators = options?.separators ?? ["\n\n", "\n", " ", ""];
 
   return splitRecursive(text, separators, maxChars, overlap);

@@ -15,6 +15,9 @@ import { discoverAppRoutes, discoverPagesRoutes } from "./route-discovery.ts";
 import { executeAppRoute, executePagesRoute } from "./route-executor.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
+/** Max entries in the loaded-handler LRU cache */
+const HANDLER_CACHE_MAX_ENTRIES = 256;
+
 export type { APIContext, APIRoute };
 
 /**
@@ -55,7 +58,7 @@ export type APIHandler = (ctx: APIContext) => Promise<Response> | Response;
 
 export class APIRouteHandler {
   private router = new DynamicRouter();
-  private routeCache = new LRUCache<string, APIRoute>({ maxEntries: 256 });
+  private routeCache = new LRUCache<string, APIRoute>({ maxEntries: HANDLER_CACHE_MAX_ENTRIES });
   private lastErrorMessage: string | null = null;
 
   private adapter: RuntimeAdapter | null;

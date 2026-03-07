@@ -147,10 +147,10 @@ function generateHMRClient(opts: HMRScriptOptions): string {
   let lastReloadAt = 0;
 
   const RECONNECT_BASE_DELAY_MS = 500;
-  const RECONNECT_MAX_DELAY_MS = 5000;
-  const RELOAD_THROTTLE_MS = 2000;
-  const PING_INTERVAL_MS = 30000;
-  const PONG_TIMEOUT_MS = 90000;
+  const RECONNECT_MAX_DELAY_MS = 5_000;
+  const RELOAD_THROTTLE_MS = 2_000;
+  const PING_INTERVAL_MS = 30_000;
+  const PONG_TIMEOUT_MS = 90_000;
 
   let pingIntervalId = null;
   let lastPongAt = Date.now();

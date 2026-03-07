@@ -63,6 +63,9 @@ import {
   recoverHttpBundleByHash as recoverHttpBundleByHashImpl,
 } from "./bundle-recovery.ts";
 
+/** Threshold in ms above which an HTTP module fetch is considered slow */
+const SLOW_HTTP_FETCH_THRESHOLD_MS = 500;
+
 const httpCacheLog = logger.component("http-cache");
 const contentMetricsLog = logger.component("content-metrics");
 
@@ -248,7 +251,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       host: urlObj.host,
       duration_ms: httpFetchDuration,
       status: response.status,
-      slow: httpFetchDuration > 500,
+      slow: httpFetchDuration > SLOW_HTTP_FETCH_THRESHOLD_MS,
     });
 
     if (!response.ok) {

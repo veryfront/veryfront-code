@@ -43,9 +43,15 @@ const SLOW_REQUEST_THRESHOLD_MS = 500;
 /** Slow module transform threshold in milliseconds */
 const SLOW_TRANSFORM_THRESHOLD_MS = 100;
 
+/** Max entries in the per-project transform LRU cache */
+const TRANSFORM_CACHE_MAX_ENTRIES = 1_000;
+
+/** Immutable cache max-age in seconds (1 year) */
+const IMMUTABLE_CACHE_MAX_AGE_SECONDS = 31_536_000;
+
 /** Cache for transformed modules (path -> code) */
 const transformCache = new LRUCache<string, string>({
-  maxEntries: 1000,
+  maxEntries: TRANSFORM_CACHE_MAX_ENTRIES,
 });
 
 // Register cache for monitoring
@@ -248,7 +254,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         status: HTTP_OK,
         headers: {
           "Content-Type": "application/javascript; charset=utf-8",
-          "Cache-Control": "public, max-age=31536000, immutable",
+          "Cache-Control": `public, max-age=${IMMUTABLE_CACHE_MAX_AGE_SECONDS}, immutable`,
           "X-Batch-Modules": String(successes.length),
           "X-Batch-Duration": String(Math.round(duration)),
           "X-Batch-Slow": isSlow ? "true" : "false",

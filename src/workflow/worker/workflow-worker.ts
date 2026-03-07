@@ -13,6 +13,12 @@ import { generateId } from "../types.ts";
 
 const logger = baseLogger.component("workflow-worker");
 
+/** Default interval between poll cycles */
+const DEFAULT_POLL_INTERVAL_MS = 5_000;
+
+/** Default threshold after which a run is considered stalled */
+const DEFAULT_STALLED_THRESHOLD_MS = 60_000;
+
 /**
  * Configuration for the workflow worker
  */
@@ -107,8 +113,8 @@ export class WorkflowWorker {
     }
 
     this.config = {
-      pollInterval: 5000, // 5 seconds
-      stalledThreshold: 60000, // 60 seconds
+      pollInterval: DEFAULT_POLL_INTERVAL_MS,
+      stalledThreshold: DEFAULT_STALLED_THRESHOLD_MS,
       concurrency: 3,
       workerId: generateId("worker"),
       debug: false,

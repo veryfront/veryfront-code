@@ -75,6 +75,11 @@ export interface EnvironmentConfig {
   veryfrontVersion: string | undefined;
 }
 
+/** Default timeout for incoming HTTP requests (used when REQUEST_TIMEOUT_MS is set but unparseable) */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+/** Default timeout for outgoing HTTP fetch calls (used when VF_HTTP_FETCH_TIMEOUT is set but unparseable) */
+const DEFAULT_HTTP_FETCH_TIMEOUT_MS = 30_000;
+
 const DEFAULTS = {
   apiBaseUrl: "https://api.veryfront.com",
   port: 3001,
@@ -142,8 +147,12 @@ function readEnvSnapshot(): EnvironmentConfig {
     appUrl: getEnv("APP_URL") || getEnv("NEXT_PUBLIC_APP_URL") || undefined,
 
     port: parseNumber(getEnv("PORT"), DEFAULTS.port),
-    requestTimeoutMs: requestTimeoutRaw ? parseNumber(requestTimeoutRaw, 30000) : undefined,
-    httpFetchTimeoutMs: httpFetchTimeoutRaw ? parseNumber(httpFetchTimeoutRaw, 30000) : undefined,
+    requestTimeoutMs: requestTimeoutRaw
+      ? parseNumber(requestTimeoutRaw, DEFAULT_REQUEST_TIMEOUT_MS)
+      : undefined,
+    httpFetchTimeoutMs: httpFetchTimeoutRaw
+      ? parseNumber(httpFetchTimeoutRaw, DEFAULT_HTTP_FETCH_TIMEOUT_MS)
+      : undefined,
     ssrMaxConcurrentTransforms: parseNumber(
       getEnv("SSR_MAX_CONCURRENT_TRANSFORMS"),
       DEFAULTS.ssrMaxConcurrentTransforms,

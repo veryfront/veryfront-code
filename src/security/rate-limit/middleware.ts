@@ -3,6 +3,21 @@ import type { RateLimitConfig, RateLimitStore } from "./types.ts";
 import { MemoryRateLimitStore } from "./memory-store.ts";
 import { fixedWindowStrategy, slidingWindowStrategy, tokenBucketStrategy } from "./strategies.ts";
 
+/** Rate limit preset: window durations */
+const STRICT_WINDOW_MS = 60_000; // 1 minute
+const MODERATE_WINDOW_MS = 60_000; // 1 minute
+const LENIENT_WINDOW_MS = 3_600_000; // 1 hour
+const AUTH_WINDOW_MS = 900_000; // 15 minutes
+
+/** Rate limit preset: max requests per window */
+const STRICT_MAX_REQUESTS = 10;
+const MODERATE_MAX_REQUESTS = 100;
+const LENIENT_MAX_REQUESTS = 1_000;
+const AUTH_MAX_REQUESTS = 5;
+
+/** Default Retry-After header value in seconds */
+const DEFAULT_RETRY_AFTER_SECONDS = "60";
+
 function defaultKeyGenerator(request: Request): string {
   const forwardedFor = request.headers.get("x-forwarded-for");
   if (forwardedFor) {
@@ -22,7 +37,7 @@ function defaultRateLimitExceeded(_request: Request, _key: string, message: stri
       status: 429,
       headers: {
         "Content-Type": "application/json",
-        "Retry-After": "60",
+        "Retry-After": DEFAULT_RETRY_AFTER_SECONDS,
       },
     },
   );
@@ -111,32 +126,32 @@ export function createRateLimiter(
 export const RateLimitPresets = {
   strict: (store?: RateLimitStore) =>
     createRateLimiter({
-      maxRequests: 10,
-      windowMs: 60000,
+      maxRequests: STRICT_MAX_REQUESTS,
+      windowMs: STRICT_WINDOW_MS,
       strategy: "sliding-window",
       store,
     }),
 
   moderate: (store?: RateLimitStore) =>
     createRateLimiter({
-      maxRequests: 100,
-      windowMs: 60000,
+      maxRequests: MODERATE_MAX_REQUESTS,
+      windowMs: MODERATE_WINDOW_MS,
       strategy: "fixed-window",
       store,
     }),
 
   lenient: (store?: RateLimitStore) =>
     createRateLimiter({
-      maxRequests: 1000,
-      windowMs: 3600000,
+      maxRequests: LENIENT_MAX_REQUESTS,
+      windowMs: LENIENT_WINDOW_MS,
       strategy: "fixed-window",
       store,
     }),
 
   auth: (store?: RateLimitStore) =>
     createRateLimiter({
-      maxRequests: 5,
-      windowMs: 900000,
+      maxRequests: AUTH_MAX_REQUESTS,
+      windowMs: AUTH_WINDOW_MS,
       strategy: "sliding-window",
       message: "Too many authentication attempts. Please try again later.",
       store,

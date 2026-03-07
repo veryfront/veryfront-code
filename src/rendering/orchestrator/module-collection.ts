@@ -8,7 +8,7 @@
  */
 
 /** Timeout for module loading in resolvePageData (prevents hanging on slow transforms) */
-export const MODULE_LOAD_TIMEOUT_MS = 10000;
+export const MODULE_LOAD_TIMEOUT_MS = 10_000;
 
 /** Timeout for data fetching (getStaticData, getServerData) */
 export const DATA_FETCH_TIMEOUT_MS = 15_000;

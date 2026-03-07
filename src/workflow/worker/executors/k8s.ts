@@ -10,6 +10,9 @@ import type { JobConfig, JobExecutor, JobInfo, JobStatus } from "./types.ts";
 
 const logger = baseLogger.component("k8s-job-executor");
 
+/** Default TTL for completed K8s Jobs before automatic cleanup (seconds) */
+const DEFAULT_TTL_AFTER_FINISHED_SECONDS = 300;
+
 /**
  * K8s Job Executor configuration
  */
@@ -139,7 +142,7 @@ export class K8sJobExecutor implements JobExecutor {
     this.config = {
       namespace: "default",
       imagePullPolicy: "IfNotPresent",
-      ttlAfterFinished: 300,
+      ttlAfterFinished: DEFAULT_TTL_AFTER_FINISHED_SECONDS,
       debug: false,
       ...config,
     };

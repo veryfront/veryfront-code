@@ -17,6 +17,9 @@ import { rendererLogger } from "#veryfront/utils";
 
 const logger = rendererLogger.component("memory-debug-handler");
 
+/** Delay after forcing GC before re-measuring heap, so the runtime can settle */
+const GC_SETTLE_DELAY_MS = 200;
+
 export class MemoryDebugHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "MemoryDebugHandler",
@@ -119,7 +122,7 @@ export class MemoryDebugHandler extends BaseHandler {
     const beforeHeap = getHeapStats();
     const gcTriggered = await forceGC();
 
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, GC_SETTLE_DELAY_MS));
 
     const afterHeap = getHeapStats();
     const freedMB = Math.round((beforeHeap.usedHeapSizeMB - afterHeap.usedHeapSizeMB) * 100) / 100;

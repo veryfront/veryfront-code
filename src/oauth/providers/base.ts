@@ -10,6 +10,12 @@ import type {
 } from "../types.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 
+/** Buffer before token expiry to trigger proactive refresh (5 minutes). */
+const TOKEN_REFRESH_BUFFER_MS = 300_000;
+
+/** Multiplier to convert `expires_in` (seconds) to milliseconds. */
+const SECONDS_TO_MS = 1_000;
+
 export type EnvReader = (key: string) => string | undefined;
 
 function generateRandomString(length: number): string {
@@ -145,7 +151,7 @@ export class OAuthProvider {
       : typeof rawExpiresIn === "string"
       ? Number(rawExpiresIn) || undefined
       : undefined;
-    if (expiresIn) tokens.expiresAt = Date.now() + expiresIn * 1000;
+    if (expiresIn) tokens.expiresAt = Date.now() + expiresIn * SECONDS_TO_MS;
 
     return tokens;
   }
@@ -308,7 +314,7 @@ export class OAuthService extends OAuthProvider {
     const tokens = await this.tokenStore?.getTokens(this.serviceId);
     if (!tokens) return null;
 
-    const isExpired = tokens.expiresAt && Date.now() > tokens.expiresAt - 300000;
+    const isExpired = tokens.expiresAt && Date.now() > tokens.expiresAt - TOKEN_REFRESH_BUFFER_MS;
     if (!isExpired) return tokens.accessToken;
 
     if (!tokens.refreshToken) return null;

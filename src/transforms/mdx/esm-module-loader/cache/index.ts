@@ -27,7 +27,11 @@ export type CacheLookupResult =
   | { status: "miss" }
   | { status: "corrupted"; reason: string; filePath: string };
 
-export const verifiedModuleDeps = new LRUCache<string, true>({ maxEntries: 2000 });
+const MAX_VERIFIED_MODULE_DEPS = 2_000;
+
+export const verifiedModuleDeps = new LRUCache<string, true>({
+  maxEntries: MAX_VERIFIED_MODULE_DEPS,
+});
 
 const FILE_PATH_PATTERN = /file:\/\/([^"'\s]+)/gi;
 

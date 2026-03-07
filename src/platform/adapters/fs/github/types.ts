@@ -61,6 +61,13 @@ export interface FileIndexEntry {
   type: "blob" | "tree";
 }
 
+const DEFAULT_CACHE_TTL_MS = 60_000;
+const DEFAULT_CACHE_MAX_ENTRIES = 1_000;
+const DEFAULT_CACHE_MAX_MEMORY_BYTES = 100 * 1024 * 1024;
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
+const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
+
 export function createGitHubConfig(config: GitHubConfig): ResolvedGitHubConfig {
   if (!config.token) {
     throw toError(
@@ -89,14 +96,14 @@ export function createGitHubConfig(config: GitHubConfig): ResolvedGitHubConfig {
     ref: config.ref ?? "main",
     cache: {
       enabled: config.cache?.enabled ?? true,
-      ttl: config.cache?.ttl ?? 60_000,
-      maxSize: config.cache?.maxSize ?? 1000,
-      maxMemory: config.cache?.maxMemory ?? 100 * 1024 * 1024,
+      ttl: config.cache?.ttl ?? DEFAULT_CACHE_TTL_MS,
+      maxSize: config.cache?.maxSize ?? DEFAULT_CACHE_MAX_ENTRIES,
+      maxMemory: config.cache?.maxMemory ?? DEFAULT_CACHE_MAX_MEMORY_BYTES,
     },
     retry: {
-      maxRetries: config.retry?.maxRetries ?? 3,
-      initialDelay: config.retry?.initialDelay ?? 1000,
-      maxDelay: config.retry?.maxDelay ?? 10_000,
+      maxRetries: config.retry?.maxRetries ?? DEFAULT_MAX_RETRIES,
+      initialDelay: config.retry?.initialDelay ?? DEFAULT_INITIAL_RETRY_DELAY_MS,
+      maxDelay: config.retry?.maxDelay ?? DEFAULT_MAX_RETRY_DELAY_MS,
     },
   };
 }

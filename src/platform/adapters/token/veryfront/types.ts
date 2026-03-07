@@ -91,6 +91,10 @@ function requireVeryfrontConfig(
 /**
  * Create verified config from adapter config
  */
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
+const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
+
 export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontTokenConfig {
   const veryfront = requireVeryfrontConfig(config);
 
@@ -121,9 +125,9 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
     apiToken,
     projectSlug,
     retry: {
-      maxRetries: retry?.maxRetries ?? 3,
-      initialDelay: retry?.initialDelay ?? 1000,
-      maxDelay: retry?.maxDelay ?? 10000,
+      maxRetries: retry?.maxRetries ?? DEFAULT_MAX_RETRIES,
+      initialDelay: retry?.initialDelay ?? DEFAULT_INITIAL_RETRY_DELAY_MS,
+      maxDelay: retry?.maxDelay ?? DEFAULT_MAX_RETRY_DELAY_MS,
     },
   };
 }

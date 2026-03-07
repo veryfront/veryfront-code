@@ -1,47 +1,47 @@
 export const AGENT_DEFAULTS = {
-  maxTokens: 4096,
+  maxTokens: 4_096,
   temperature: 0.7,
   maxSteps: 20,
   memoryType: "conversation",
-  memoryMaxTokens: 4000,
+  memoryMaxTokens: 4_000,
 } as const;
 
 export const STREAMING_DEFAULTS = {
-  maxBufferSize: 1024 * 1024,
-  chunkSize: 16384,
+  maxBufferSize: 1_024 * 1_024, // 1 MB
+  chunkSize: 16_384,
 } as const;
 
 export const MEMORY_DEFAULTS = {
   bufferSize: 10,
   summaryThreshold: 20,
-  redisTtl: 86400,
+  redisTtl: 86_400, // 24 hours
   redisKeyPrefix: "veryfront:agent:memory:",
 } as const;
 
 export const RATE_LIMIT_DEFAULTS = {
   requestsPerMinute: 60,
-  tokensPerMinute: 100000,
-  windowMs: 60000,
+  tokensPerMinute: 100_000,
+  windowMs: 60_000,
 } as const;
 
 export const COST_TRACKING_DEFAULTS = {
   dailyBudget: 100,
-  monthlyBudget: 1000,
+  monthlyBudget: 1_000,
   warningThreshold: 0.8,
 } as const;
 
 export const RETRY_DEFAULTS = {
   maxAttempts: 3,
-  initialDelayMs: 1000,
-  maxDelayMs: 30000,
+  initialDelayMs: 1_000,
+  maxDelayMs: 30_000,
   backoffMultiplier: 2,
 } as const;
 
 export const WORKFLOW_DEFAULTS = {
-  timeoutMs: 300000,
+  timeoutMs: 300_000, // 5 minutes
   maxParallel: 10,
-  checkpointIntervalMs: 5000,
-  approvalTimeoutMs: 86400000,
+  checkpointIntervalMs: 5_000,
+  approvalTimeoutMs: 86_400_000, // 24 hours
 } as const;
 
 export const PROVIDER_DEFAULTS = {
@@ -50,12 +50,12 @@ export const PROVIDER_DEFAULTS = {
     anthropic: "claude-sonnet-4-20250514",
     google: "gemini-1.5-pro",
   },
-  requestTimeoutMs: 120000,
+  requestTimeoutMs: 120_000, // 2 minutes
 } as const;
 
 export const SECURITY_DEFAULTS = {
-  maxInputLength: 100000,
-  maxOutputLength: 100000,
+  maxInputLength: 100_000,
+  maxOutputLength: 100_000,
   redactPii: false,
 } as const;
 

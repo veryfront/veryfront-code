@@ -1,6 +1,5 @@
+import { FNV1A_PRIME_32 } from "./constants/crypto.ts";
 import { HASH_SEED_FNV1A } from "./constants/hash.ts";
-
-const FNV_PRIME = 16777619;
 
 export class MemoCache<V> {
   private cache = new Map<string, V>();
@@ -93,7 +92,7 @@ export function simpleHash(...values: unknown[]): string {
 
     for (let i = 0; i < str.length; i++) {
       hash ^= str.charCodeAt(i);
-      hash = Math.imul(hash, FNV_PRIME);
+      hash = Math.imul(hash, FNV1A_PRIME_32);
     }
   }
 

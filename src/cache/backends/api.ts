@@ -8,6 +8,12 @@ import { getEnvValue } from "./helpers.ts";
 
 const logger = baseLogger.component("api-cache-backend");
 
+const DEFAULT_TIMEOUT_MS = 10_000;
+const CIRCUIT_BREAKER_RESET_TIMEOUT_MS = 15_000;
+const CIRCUIT_BREAKER_FAILURE_THRESHOLD = 10;
+const CIRCUIT_BREAKER_SUCCESS_THRESHOLD = 2;
+const ERROR_BODY_MAX_LENGTH = 500;
+
 type CacheRequestContext = {
   token?: string;
   projectId?: string;
@@ -40,13 +46,13 @@ export class ApiCacheBackend implements CacheBackend {
       getEnvValue("VERYFRONT_API_BASE_URL") ??
       "https://api.veryfront.com";
     this.keyPrefix = options.keyPrefix ?? "";
-    this.timeoutMs = options.timeoutMs ?? 10000;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     const breakerName = options.circuitBreakerName ?? "api-cache";
     this.circuitBreaker = getCircuitBreaker(breakerName, {
-      failureThreshold: 10,
-      resetTimeoutMs: 15000,
-      successThreshold: 2,
+      failureThreshold: CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+      resetTimeoutMs: CIRCUIT_BREAKER_RESET_TIMEOUT_MS,
+      successThreshold: CIRCUIT_BREAKER_SUCCESS_THRESHOLD,
     });
   }
 
@@ -113,7 +119,9 @@ export class ApiCacheBackend implements CacheBackend {
                 error: bodyError instanceof Error ? bodyError.message : String(bodyError),
               });
             }
-            throw new Error(`HTTP ${response.status}: ${responseBody.slice(0, 500)}`);
+            throw new Error(
+              `HTTP ${response.status}: ${responseBody.slice(0, ERROR_BODY_MAX_LENGTH)}`,
+            );
           }
 
           return (await response.json()) as T;

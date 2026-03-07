@@ -10,6 +10,9 @@
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
+/** Max entries in the verified HTTP bundle paths LRU cache */
+const VERIFIED_BUNDLE_CACHE_MAX_ENTRIES = 2_000;
+
 /**
  * Extract VF module paths (veryfront-mdx-esm/*.mjs) from code.
  * These are user project modules that may import HTTP bundles.
@@ -154,4 +157,6 @@ export function extractAllFilePaths(code: string): string[] {
  * Bounded LRU to prevent unbounded memory growth in long-running pods.
  * Keying by contentHash ensures verification is re-done when content changes at the same path.
  */
-export const verifiedHttpBundlePaths = new LRUCache<string, true>({ maxEntries: 2000 });
+export const verifiedHttpBundlePaths = new LRUCache<string, true>({
+  maxEntries: VERIFIED_BUNDLE_CACHE_MAX_ENTRIES,
+});

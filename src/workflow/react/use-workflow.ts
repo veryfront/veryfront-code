@@ -6,6 +6,9 @@ import type {
   WorkflowStatus,
 } from "#veryfront/workflow/types.ts";
 
+/** Default polling interval for workflow status updates */
+const DEFAULT_POLL_INTERVAL_MS = 2_000;
+
 export interface UseWorkflowOptions {
   runId: string;
   apiBase?: string;
@@ -35,7 +38,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
   const {
     runId,
     apiBase = "/api/workflows",
-    pollInterval = 2000,
+    pollInterval = DEFAULT_POLL_INTERVAL_MS,
     autoRefresh = true,
     onStatusChange,
     onComplete,

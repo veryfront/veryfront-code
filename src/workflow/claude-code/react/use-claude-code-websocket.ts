@@ -13,6 +13,12 @@ import type {
   InputRequestEvent,
 } from "../types.ts";
 
+/** Default delay before reconnecting after disconnect */
+const DEFAULT_RECONNECT_DELAY_MS = 1_000;
+
+/** Default interval for WebSocket ping messages */
+const DEFAULT_PING_INTERVAL_MS = 30_000;
+
 /**
  * Pending approval state
  */
@@ -192,8 +198,8 @@ export function useClaudeCodeWebSocket(
     autoConnect = true,
     autoReconnect = true,
     maxReconnectAttempts = 5,
-    reconnectDelay = 1000,
-    pingInterval = 30000,
+    reconnectDelay = DEFAULT_RECONNECT_DELAY_MS,
+    pingInterval = DEFAULT_PING_INTERVAL_MS,
     onEvent,
     onConnect,
     onDisconnect,

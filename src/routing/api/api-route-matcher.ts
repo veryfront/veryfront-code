@@ -2,6 +2,12 @@ import type { Route, RouteMatch } from "#veryfront/routing/matchers/types.ts";
 import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
+/** Max entries in the route-match LRU cache */
+const ROUTE_CACHE_MAX_ENTRIES = 500;
+
+/** Time-to-live for cached route matches (5 minutes) */
+const ROUTE_CACHE_TTL_MS = 5 * 60 * 1_000;
+
 export type { Route, RouteMatch };
 
 /** Route entry with compiled regex and metadata */
@@ -25,8 +31,8 @@ export class ApiRouteMatcher {
   constructor() {
     const disableIntervals = shouldDisableLruInterval();
     this.routeCache = new LRUCache<string, RouteMatch | null>({
-      maxEntries: 500,
-      ttlMs: disableIntervals ? undefined : 5 * 60 * 1000,
+      maxEntries: ROUTE_CACHE_MAX_ENTRIES,
+      ttlMs: disableIntervals ? undefined : ROUTE_CACHE_TTL_MS,
     });
   }
 

@@ -1,5 +1,12 @@
 import { getEnvironmentFromEnv } from "#veryfront/config/env.ts";
 
+/** Max cache entries for development builds */
+const DEV_CACHE_MAX_ENTRIES = 10;
+/** Max cache entries for production builds */
+const PROD_CACHE_MAX_ENTRIES = 100;
+/** Cache TTL for production builds (1 hour) */
+const PROD_CACHE_TTL_MS = 3_600_000;
+
 export type Environment = "development" | "production" | "test";
 
 function isEnvironment(value: unknown): value is Environment {
@@ -47,8 +54,8 @@ export function getBuildConfig(): BuildEnvironmentConfig {
     isDevelopment,
     isProduction,
     isTest,
-    cacheMaxEntries: isDevelopment ? 10 : 100,
-    cacheTTLMs: isDevelopment ? 0 : 3600000,
+    cacheMaxEntries: isDevelopment ? DEV_CACHE_MAX_ENTRIES : PROD_CACHE_MAX_ENTRIES,
+    cacheTTLMs: isDevelopment ? 0 : PROD_CACHE_TTL_MS,
     minify: isProduction,
     sourcemaps: isDevelopment ? "inline" : false,
     treeShaking: isProduction,

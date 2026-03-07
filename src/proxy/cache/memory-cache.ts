@@ -6,7 +6,7 @@ import type { CacheStats, MemoryCacheOptions, TokenCache, TokenCacheEntry } from
 import { proxyLogger } from "../logger.ts";
 import { withSpan } from "../tracing.ts";
 
-const DEFAULT_MAX_SIZE = 1000;
+const DEFAULT_MAX_SIZE = 1_000;
 const DEFAULT_CLEANUP_INTERVAL = 60_000;
 
 export class MemoryCache implements TokenCache {

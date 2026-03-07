@@ -1,7 +1,7 @@
 import type { RateLimitState, RateLimitStore } from "./types.ts";
 
-const MAX_TIMESTAMPS_PER_KEY = 1000;
-const WINDOW_MS = 60000;
+const MAX_TIMESTAMPS_PER_KEY = 1_000;
+const WINDOW_MS = 60_000;
 
 export class MemoryRateLimitStore implements RateLimitStore {
   private store = new Map<string, RateLimitState>();

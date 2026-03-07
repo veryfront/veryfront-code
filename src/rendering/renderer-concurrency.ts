@@ -36,7 +36,7 @@ export const RENDER_PER_PROJECT_LIMIT = getEnvNumber("RENDER_PER_PROJECT_LIMIT")
  * Timeout for acquiring render permit (ms).
  * If semaphore cannot be acquired within this time, request fails fast with 503.
  */
-export const RENDER_ACQUIRE_TIMEOUT_MS = 5000;
+export const RENDER_ACQUIRE_TIMEOUT_MS = 5_000;
 
 /** Maximum time to wait for a project lock before giving up (10 seconds) */
 export const LOCK_TIMEOUT_MS = 10_000;

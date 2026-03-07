@@ -27,6 +27,9 @@ import {
   SKILL_SCRIPTS_DIR,
 } from "./types.ts";
 
+/** Maximum allowed script execution timeout in milliseconds (5 minutes) */
+const MAX_SCRIPT_TIMEOUT_MS = 300_000;
+
 /**
  * Read a file from a skill directory.
  * Uses skill.fsAdapter if available (VFS/cloud), otherwise falls back to compat readTextFile.
@@ -159,9 +162,9 @@ export function createExecuteSkillScriptTool(): Tool {
         .number()
         .int()
         .positive()
-        .max(300_000)
+        .max(MAX_SCRIPT_TIMEOUT_MS)
         .optional()
-        .describe("Optional execution timeout in milliseconds (max 300000)"),
+        .describe(`Optional execution timeout in milliseconds (max ${MAX_SCRIPT_TIMEOUT_MS})`),
     }),
     execute: async (input) => {
       const skill = skillRegistry.get(input.skillId);

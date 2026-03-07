@@ -1,6 +1,10 @@
 import type { AgentContext, AgentResponse } from "../../types.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
+const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1_000;
+const RESET_CHECK_INTERVAL_MS = 60_000;
+
 export interface CostConfig {
   /** Provider pricing (cost per 1M tokens) */
   pricing: {
@@ -155,12 +159,12 @@ class CostTracker {
 
   getDailySummary(): UsageSummary {
     const now = Date.now();
-    return this.getSummary(now - 24 * 60 * 60 * 1000, now);
+    return this.getSummary(now - ONE_DAY_MS, now);
   }
 
   getMonthlySummary(): UsageSummary {
     const now = Date.now();
-    return this.getSummary(now - 30 * 24 * 60 * 60 * 1000, now);
+    return this.getSummary(now - THIRTY_DAYS_MS, now);
   }
 
   private checkLimits(): void {
@@ -179,16 +183,16 @@ class CostTracker {
     this.resetInterval = setInterval(() => {
       const now = Date.now();
 
-      if (now - this.lastDayReset >= 24 * 60 * 60 * 1000) {
+      if (now - this.lastDayReset >= ONE_DAY_MS) {
         this.dailyTotal = 0;
         this.lastDayReset = now;
       }
 
-      if (now - this.lastMonthReset >= 30 * 24 * 60 * 60 * 1000) {
+      if (now - this.lastMonthReset >= THIRTY_DAYS_MS) {
         this.monthlyTotal = 0;
         this.lastMonthReset = now;
       }
-    }, 60_000);
+    }, RESET_CHECK_INTERVAL_MS);
   }
 
   destroy(): void {
