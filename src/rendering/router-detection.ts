@@ -9,11 +9,14 @@
 
 import { join } from "#veryfront/compat/path";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+
+const logger = rendererLogger.component("router-detection");
 
 // Re-export from app-route-resolver for backward compatibility
 export { getAppRouteEntity } from "./app-route-resolver.ts";
@@ -26,6 +29,8 @@ const routerDetectionCache = new LRUCache<string, boolean>({
   ttlMs: ROUTER_DETECTION_CACHE_TTL_MS,
 });
 
+let warnedMissingProjectId = false;
+
 /**
  * Clear the router detection cache. Call when filesystem changes.
  * @deprecated Use clearRouterDetectionCacheForProject for multi-tenant deployments
@@ -37,34 +42,55 @@ export function clearRouterDetectionCache(): void {
 /**
  * Clear the router detection cache for a specific project.
  * Use this in multi-tenant deployments to avoid clearing other projects' caches.
+ *
+ * @param projectId - The project ID used as cache key. Falls back to projectDir for local dev.
  */
-export function clearRouterDetectionCacheForProject(projectDir: string): void {
-  routerDetectionCache.delete(projectDir);
+export function clearRouterDetectionCacheForProject(projectId: string): void {
+  routerDetectionCache.delete(projectId);
+}
+
+export interface DetectAppRouterOptions {
+  /** Project ID for cache isolation in multi-tenant deployments */
+  projectId?: string;
 }
 
 /**
- * Detect if app router should be used based on config and directory structure
+ * Detect if app router should be used based on config and directory structure.
+ *
+ * In multi-tenant proxy mode, `projectDir` is the same for all projects ("/app"),
+ * so the cache key must use `projectId` to avoid cross-project cache poisoning.
  */
 export async function detectAppRouter(
   projectDir: string,
   config: VeryfrontConfig,
   adapter: RuntimeAdapter,
+  options?: DetectAppRouterOptions,
 ): Promise<boolean> {
   if (config?.router === "app") return true;
   if (config?.router === "pages") return false;
 
-  const cached = routerDetectionCache.get(projectDir);
+  const cacheKey = options?.projectId ?? projectDir;
+  const cached = routerDetectionCache.get(cacheKey);
   if (cached !== undefined) return cached;
+
+  if (!options?.projectId && config?.fs?.type === "veryfront-api" && !warnedMissingProjectId) {
+    warnedMissingProjectId = true;
+    logger.warn(
+      "detectAppRouter called without projectId in multi-tenant mode — cache key falls back to projectDir which may cause cross-tenant poisoning",
+      { projectDir },
+    );
+  }
 
   return await withSpan(
     SpanNames.ROUTER_DETECT_APP,
     async () => {
       const result = await detectAppRouterImpl(projectDir, config, adapter);
-      routerDetectionCache.set(projectDir, result);
+      routerDetectionCache.set(cacheKey, result);
       return result;
     },
     {
       "router.project_dir": projectDir,
+      "router.cache_key": cacheKey,
       "router.config_router": config?.router ?? "auto",
     },
   );

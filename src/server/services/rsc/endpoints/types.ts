@@ -16,6 +16,7 @@ export interface RSCEndpointParams {
   req: Request;
   pathname: string;
   projectDir: string;
+  projectId?: string;
   adapter: RuntimeAdapter;
   config?: VeryfrontConfig;
 }

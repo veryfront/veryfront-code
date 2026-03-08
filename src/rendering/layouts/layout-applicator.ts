@@ -89,7 +89,9 @@ export class LayoutApplicator {
           layoutDataMap,
         );
 
-        const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
+        const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter, {
+          projectId: this.projectId,
+        });
         const pageFilePath = pageInfo.entity.path;
 
         const isDotPath = pageFilePath

@@ -124,7 +124,7 @@ export interface InvalidationProjectContext {
 export interface InvalidationCallbacks {
   clearSSRModuleCache?: () => void;
   clearSSRModuleCacheForProject?: (projectId: string) => void;
-  clearRouterDetectionCacheForProject?: (projectDir: string) => void;
+  clearRouterDetectionCacheForProject?: (projectId: string) => void;
   clearModulePathCache?: () => void;
   invalidateModulePaths?: (changedPaths: string[]) => void;
   clearSnippetCacheForProject?: (projectSlug: string) => void;

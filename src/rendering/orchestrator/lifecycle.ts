@@ -143,6 +143,7 @@ export class RendererLifecycle {
 
     const layoutCollector = new LayoutCollector({
       projectDir,
+      projectId: this.projectId,
       adapter: this.adapter,
       config,
       compileMDX: compileMDXProxy,
@@ -158,7 +159,7 @@ export class RendererLifecycle {
       debugMode,
     });
 
-    const ssrRenderer = new SSRRenderer(mode, this.adapter, projectDir);
+    const ssrRenderer = new SSRRenderer(mode, this.adapter, projectDir, this.projectId);
 
     const pageRenderer = new PageRenderer({
       projectDir,
@@ -172,6 +173,7 @@ export class RendererLifecycle {
 
     const pageResolver = new PageResolver({
       projectDir,
+      projectId: this.projectId,
       config,
       adapter: this.adapter,
     });

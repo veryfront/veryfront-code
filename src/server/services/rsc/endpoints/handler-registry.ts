@@ -53,13 +53,17 @@ function getHandlersCache(): HandlerCache<RSCDevServerHandler> {
   return rscHandlersByProject;
 }
 
-export function getRSCHandler(projectDir: string): RSCDevServerHandler {
+export function getRSCHandler(
+  projectDir: string,
+  projectId?: string,
+): RSCDevServerHandler {
+  const cacheKey = projectId ?? projectDir;
   const cache = getHandlersCache();
-  const existing = cache.get(projectDir);
+  const existing = cache.get(cacheKey);
   if (existing) return existing;
 
   const handler = new RSCDevServerHandler(projectDir);
-  cache.set(projectDir, handler);
+  cache.set(cacheKey, handler);
   return handler;
 }
 

@@ -78,6 +78,7 @@ export interface LayoutCollectionResult {
 
 export interface LayoutCollectorOptions {
   projectDir: string;
+  projectId?: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   compileMDX: (
@@ -89,6 +90,7 @@ export interface LayoutCollectorOptions {
 
 export class LayoutCollector {
   private projectDir: string;
+  private projectId?: string;
   private adapter: RuntimeAdapter;
   private config: VeryfrontConfig;
   private compileMDX: (
@@ -99,6 +101,7 @@ export class LayoutCollector {
 
   constructor(options: LayoutCollectorOptions) {
     this.projectDir = options.projectDir;
+    this.projectId = options.projectId;
     this.adapter = options.adapter;
     this.config = options.config;
     this.compileMDX = options.compileMDX;
@@ -303,7 +306,9 @@ export class LayoutCollector {
 
   private async collectNestedLayouts(pageInfo: EntityInfo): Promise<LayoutItem[]> {
     const pageFilePath = pageInfo.entity.path;
-    const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
+    const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter, {
+      projectId: this.projectId,
+    });
 
     // Unified path for ALL adapters - discoverNestedLayouts uses adapter.fs.stat()
     // which works for both filesystem and API adapters

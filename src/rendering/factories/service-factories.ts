@@ -11,6 +11,7 @@ import { PageRenderer } from "../page-renderer.ts";
 export function createPageResolver(ctx: RenderContext): PageResolver {
   return new PageResolver({
     projectDir: ctx.projectDir,
+    projectId: ctx.projectId,
     config: ctx.config,
     adapter: ctx.adapter,
   });
@@ -22,6 +23,7 @@ export function createLayoutCollector(
 ): LayoutCollector {
   return new LayoutCollector({
     projectDir: ctx.projectDir,
+    projectId: ctx.projectId,
     adapter: ctx.adapter,
     config: ctx.config,
     compileMDX,
@@ -39,7 +41,7 @@ export function createLayoutCompiler(
 }
 
 export function createSSRRenderer(ctx: RenderContext): SSRRenderer {
-  return new SSRRenderer(ctx.mode, ctx.adapter, ctx.projectDir);
+  return new SSRRenderer(ctx.mode, ctx.adapter, ctx.projectDir, ctx.projectId);
 }
 
 export function createComponentRegistry(

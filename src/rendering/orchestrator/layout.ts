@@ -74,7 +74,7 @@ export class LayoutOrchestrator {
       this.config.layoutCache.clear();
     }
     clearSSRModuleCacheForProject(this.config.projectId);
-    clearImportMapCache(this.config.projectDir);
+    clearImportMapCache(this.config.projectId);
     this._preloadedImportMap = null;
   }
 
@@ -130,6 +130,7 @@ export class LayoutOrchestrator {
                 const importMap = await preloadImportMap(
                   this.config.projectDir,
                   this.config.adapter,
+                  this.config.projectId,
                 );
                 this._preloadedImportMap = importMap;
                 return { type: "importMap" as const, success: true };
