@@ -77,7 +77,7 @@ export async function detectAppRouter(
     },
     {
       "router.project_dir": projectDir,
-      "router.project_id": cacheKey,
+      "router.cache_key": cacheKey,
       "router.config_router": config?.router ?? "auto",
     },
   );
