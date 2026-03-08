@@ -9,11 +9,14 @@
 
 import { join } from "#veryfront/compat/path";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+
+const logger = rendererLogger.component("router-detection");
 
 // Re-export from app-route-resolver for backward compatibility
 export { getAppRouteEntity } from "./app-route-resolver.ts";
@@ -65,6 +68,14 @@ export async function detectAppRouter(
   if (config?.router === "pages") return false;
 
   const cacheKey = options?.projectId ?? projectDir;
+
+  if (!options?.projectId && config?.fs?.type === "veryfront-api") {
+    logger.warn(
+      "detectAppRouter called without projectId in multi-tenant mode — cache key falls back to projectDir which may cause cross-tenant poisoning",
+      { projectDir },
+    );
+  }
+
   const cached = routerDetectionCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
