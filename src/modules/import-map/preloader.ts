@@ -7,24 +7,26 @@ const importMapCache = new Map<string, Promise<ImportMapConfig>>();
 export function preloadImportMap(
   projectDir: string,
   adapter: RuntimeAdapter,
+  projectId?: string,
 ): Promise<ImportMapConfig> {
-  const cached = importMapCache.get(projectDir);
+  const cacheKey = projectId ?? projectDir;
+  const cached = importMapCache.get(cacheKey);
   if (cached) return cached;
 
   const promise = loadImportMap(projectDir, adapter);
-  importMapCache.set(projectDir, promise);
+  importMapCache.set(cacheKey, promise);
 
   promise.catch(() => {
-    importMapCache.delete(projectDir);
+    importMapCache.delete(cacheKey);
   });
 
   return promise;
 }
 
 export async function getCachedImportMap(
-  projectDir: string,
+  cacheKey: string,
 ): Promise<ImportMapConfig | undefined> {
-  const cached = importMapCache.get(projectDir);
+  const cached = importMapCache.get(cacheKey);
   if (!cached) return undefined;
 
   try {
@@ -35,9 +37,9 @@ export async function getCachedImportMap(
   }
 }
 
-export function clearImportMapCache(projectDir?: string): void {
-  if (projectDir) {
-    importMapCache.delete(projectDir);
+export function clearImportMapCache(cacheKey?: string): void {
+  if (cacheKey) {
+    importMapCache.delete(cacheKey);
     return;
   }
 

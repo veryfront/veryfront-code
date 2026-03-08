@@ -29,6 +29,8 @@ const routerDetectionCache = new LRUCache<string, boolean>({
   ttlMs: ROUTER_DETECTION_CACHE_TTL_MS,
 });
 
+let warnedMissingProjectId = false;
+
 /**
  * Clear the router detection cache. Call when filesystem changes.
  * @deprecated Use clearRouterDetectionCacheForProject for multi-tenant deployments
@@ -68,16 +70,16 @@ export async function detectAppRouter(
   if (config?.router === "pages") return false;
 
   const cacheKey = options?.projectId ?? projectDir;
+  const cached = routerDetectionCache.get(cacheKey);
+  if (cached !== undefined) return cached;
 
-  if (!options?.projectId && config?.fs?.type === "veryfront-api") {
+  if (!options?.projectId && config?.fs?.type === "veryfront-api" && !warnedMissingProjectId) {
+    warnedMissingProjectId = true;
     logger.warn(
       "detectAppRouter called without projectId in multi-tenant mode — cache key falls back to projectDir which may cause cross-tenant poisoning",
       { projectDir },
     );
   }
-
-  const cached = routerDetectionCache.get(cacheKey);
-  if (cached !== undefined) return cached;
 
   return await withSpan(
     SpanNames.ROUTER_DETECT_APP,

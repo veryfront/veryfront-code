@@ -48,6 +48,7 @@ export class RSCHandler extends BaseHandler {
           req,
           pathname,
           projectDir: ctx.projectDir,
+          projectId: ctx.projectId,
           adapter: ctx.adapter,
           config: ctx.config,
         });

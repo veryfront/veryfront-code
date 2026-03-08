@@ -76,12 +76,19 @@ export class SSRRenderer {
   private readonly mode: string;
   private readonly adapter?: RuntimeAdapter;
   private readonly projectDir?: string;
+  private readonly projectId?: string;
   private versionInfo: ReturnType<typeof getReactVersionInfo> | null = null;
 
-  constructor(mode: string, adapter?: RuntimeAdapter, projectDir?: string) {
+  constructor(
+    mode: string,
+    adapter?: RuntimeAdapter,
+    projectDir?: string,
+    projectId?: string,
+  ) {
     this.mode = mode;
     this.adapter = adapter;
     this.projectDir = projectDir;
+    this.projectId = projectId;
   }
 
   private async getVersionInfo(): Promise<ReturnType<typeof getReactVersionInfo>> {
@@ -93,7 +100,7 @@ export class SSRRenderer {
     }
 
     const { getReactVersionInfoForProject } = await import("#veryfront/react");
-    this.versionInfo = await getReactVersionInfoForProject(this.projectDir);
+    this.versionInfo = await getReactVersionInfoForProject(this.projectDir, this.projectId);
     return this.versionInfo;
   }
 

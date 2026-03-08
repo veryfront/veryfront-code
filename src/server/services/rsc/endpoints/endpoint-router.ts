@@ -24,7 +24,7 @@ const rscLog = serverLogger.component("rsc");
  * @returns Response or null if not an RSC endpoint
  */
 export async function handleRSCEndpoint(
-  { req, pathname, projectDir, adapter, config }: RSCEndpointParams,
+  { req, pathname, projectDir, projectId, adapter, config }: RSCEndpointParams,
 ): Promise<Response | null> {
   if (!pathname.startsWith("/_veryfront/rsc/")) {
     return null;
@@ -52,7 +52,7 @@ export async function handleRSCEndpoint(
   }
 
   const url = new URL(req.url);
-  const handler = getRSCHandler(projectDir);
+  const handler = getRSCHandler(projectDir, projectId);
 
   try {
     if (sub.startsWith("render/")) {
