@@ -10,7 +10,10 @@ import {
 } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
 import { cacheRegistry } from "#veryfront/cache";
 import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
-import { clearRouterDetectionCache } from "#veryfront/rendering/router-detection.ts";
+import {
+  clearRouterDetectionCache,
+  clearRouterDetectionCacheForProject,
+} from "#veryfront/rendering/router-detection.ts";
 import { clearSnippetCacheForProject } from "#veryfront/rendering/snippet-renderer.ts";
 import { resetApiHandlerForProject } from "#veryfront/server/handlers/request/api/pages-api-handler.ts";
 
@@ -72,8 +75,12 @@ export async function invalidateProjectCaches(
     clearSSRModuleCache();
   }
 
-  logger.debug("Clearing router detection cache", { projectSlug });
-  clearRouterDetectionCache();
+  logger.debug("Clearing router detection cache", { projectSlug, projectId });
+  if (projectId) {
+    clearRouterDetectionCacheForProject(projectId);
+  } else {
+    clearRouterDetectionCache();
+  }
 
   if (!hasRealProjectSlug) {
     logger.error(

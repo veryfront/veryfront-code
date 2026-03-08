@@ -39,17 +39,20 @@ function appDirToSlug(dirPath: string, appDirName: string): string {
 
 export interface PageResolverOptions {
   projectDir: string;
+  projectId?: string;
   config: VeryfrontConfig;
   adapter: RuntimeAdapter;
 }
 
 export class PageResolver {
   private projectDir: string;
+  private projectId?: string;
   private config: VeryfrontConfig;
   private adapter: RuntimeAdapter;
 
   constructor(options: PageResolverOptions) {
     this.projectDir = options.projectDir;
+    this.projectId = options.projectId;
     this.config = options.config;
     this.adapter = options.adapter;
   }
@@ -62,6 +65,7 @@ export class PageResolver {
           this.projectDir,
           this.config,
           this.adapter,
+          { projectId: this.projectId },
         );
 
         const appDirName = this.config.directories?.app ?? "app";
@@ -207,6 +211,7 @@ export class PageResolver {
       this.projectDir,
       this.config,
       this.adapter,
+      { projectId: this.projectId },
     );
     return useAppRouter ? "app" : "pages";
   }

@@ -641,7 +641,6 @@ export class WebSocketManager {
     this.deps.invalidationCallbacks.clearDomainCache?.();
 
     const projectId = this.deps.client.getProjectId();
-    const projectDir = this.deps.getProjectDir();
 
     if (this.deps.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
       this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId);
@@ -649,8 +648,8 @@ export class WebSocketManager {
       this.deps.invalidationCallbacks.clearSSRModuleCache?.();
     }
 
-    if (this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject && projectDir) {
-      this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject(projectDir);
+    if (this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject && projectId) {
+      this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject(projectId);
     }
 
     this.deps.invalidationCallbacks.clearModulePathCache?.();

@@ -37,34 +37,47 @@ export function clearRouterDetectionCache(): void {
 /**
  * Clear the router detection cache for a specific project.
  * Use this in multi-tenant deployments to avoid clearing other projects' caches.
+ *
+ * @param projectId - The project ID used as cache key. Falls back to projectDir for local dev.
  */
-export function clearRouterDetectionCacheForProject(projectDir: string): void {
-  routerDetectionCache.delete(projectDir);
+export function clearRouterDetectionCacheForProject(projectId: string): void {
+  routerDetectionCache.delete(projectId);
+}
+
+export interface DetectAppRouterOptions {
+  /** Project ID for cache isolation in multi-tenant deployments */
+  projectId?: string;
 }
 
 /**
- * Detect if app router should be used based on config and directory structure
+ * Detect if app router should be used based on config and directory structure.
+ *
+ * In multi-tenant proxy mode, `projectDir` is the same for all projects ("/app"),
+ * so the cache key must use `projectId` to avoid cross-project cache poisoning.
  */
 export async function detectAppRouter(
   projectDir: string,
   config: VeryfrontConfig,
   adapter: RuntimeAdapter,
+  options?: DetectAppRouterOptions,
 ): Promise<boolean> {
   if (config?.router === "app") return true;
   if (config?.router === "pages") return false;
 
-  const cached = routerDetectionCache.get(projectDir);
+  const cacheKey = options?.projectId ?? projectDir;
+  const cached = routerDetectionCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
   return await withSpan(
     SpanNames.ROUTER_DETECT_APP,
     async () => {
       const result = await detectAppRouterImpl(projectDir, config, adapter);
-      routerDetectionCache.set(projectDir, result);
+      routerDetectionCache.set(cacheKey, result);
       return result;
     },
     {
       "router.project_dir": projectDir,
+      "router.project_id": cacheKey,
       "router.config_router": config?.router ?? "auto",
     },
   );
