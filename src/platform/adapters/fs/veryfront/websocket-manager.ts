@@ -86,10 +86,27 @@ export class WebSocketManager {
       this.wsConsecutiveFailures = 0;
     }
 
-    const wsUrl = this.deps.apiBaseUrl
+    let wsUrl = this.deps.apiBaseUrl
       .replace(/^http:/, "ws:")
       .replace(/^https:/, "wss:")
       .replace(/\/api$/, "");
+
+    // Enforce TLS for non-localhost connections to protect the auth token
+    if (wsUrl.startsWith("ws://")) {
+      try {
+        const host = new URL(wsUrl.replace(/^ws:/, "http:")).hostname;
+        const isLocal = host === "localhost" || host === "127.0.0.1" ||
+          host === "::1" || host === "[::1]";
+        if (!isLocal) {
+          wsUrl = wsUrl.replace(/^ws:/, "wss:");
+          logger.warn("Upgraded WebSocket connection to wss:// for non-localhost host", { host });
+        }
+      } catch {
+        // If URL parsing fails, upgrade to be safe
+        wsUrl = wsUrl.replace(/^ws:/, "wss:");
+      }
+    }
+
     const url = `${wsUrl}/ws/${projectId}/events?token=${this.deps.apiToken}`;
 
     logger.debug("Connecting to WebSocket", {
