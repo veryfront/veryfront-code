@@ -157,4 +157,85 @@ describe("WebSocketManager", () => {
 
     manager.dispose();
   });
+
+  it("should upgrade ws:// to wss:// for non-localhost connections", () => {
+    const cache = {
+      deleteByPrefixAsync: async () => 0,
+      deleteByPrefixAndSuffixAsync: async () => 0,
+    } as unknown as FileCache;
+
+    const client = {
+      getProjectId: () => "project-1",
+      listAllFiles: async () => [],
+    } as unknown as VeryfrontApiClient;
+
+    const manager = new WebSocketManager({
+      apiBaseUrl: "http://api.example.com/api",
+      apiToken: "test-token",
+      projectSlug: "test-project",
+      cache,
+      client,
+      invalidationCallbacks: {},
+      getContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      }),
+      getContentSource: () => ({ type: "branch", branch: "main" }),
+      getProjectDir: () => undefined,
+      clearMemoryCaches: () => {},
+      clearFileListIndex: () => {},
+      setFileListCache: async () => {},
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances.at(-1);
+    assertExists(socket);
+
+    // http:// should be upgraded to wss:// for non-localhost
+    assertEquals(socket.url.startsWith("wss://"), true);
+    assertEquals(socket.url.includes("token=test-token"), true);
+
+    manager.dispose();
+  });
+
+  it("should keep ws:// for localhost connections", () => {
+    const cache = {
+      deleteByPrefixAsync: async () => 0,
+      deleteByPrefixAndSuffixAsync: async () => 0,
+    } as unknown as FileCache;
+
+    const client = {
+      getProjectId: () => "project-1",
+      listAllFiles: async () => [],
+    } as unknown as VeryfrontApiClient;
+
+    const manager = new WebSocketManager({
+      apiBaseUrl: "http://localhost:8080/api",
+      apiToken: "test-token",
+      projectSlug: "test-project",
+      cache,
+      client,
+      invalidationCallbacks: {},
+      getContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      }),
+      getContentSource: () => ({ type: "branch", branch: "main" }),
+      getProjectDir: () => undefined,
+      clearMemoryCaches: () => {},
+      clearFileListIndex: () => {},
+      setFileListCache: async () => {},
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances.at(-1);
+    assertExists(socket);
+
+    // localhost should stay as ws://
+    assertEquals(socket.url.startsWith("ws://"), true);
+
+    manager.dispose();
+  });
 });
