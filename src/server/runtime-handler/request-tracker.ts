@@ -20,6 +20,7 @@ interface TrackedRequest {
   env?: string;
   releaseId?: string;
   slowTimer?: ReturnType<typeof setTimeout>;
+  verySlowTimer?: ReturnType<typeof setTimeout>;
 }
 
 /** Threshold in ms before logging a warning about a slow request */
@@ -110,7 +111,7 @@ class RequestTracker {
           inFlightCount: this.inFlight.size,
         });
 
-        tracked.slowTimer = setTimeout(() => {
+        tracked.verySlowTimer = setTimeout(() => {
           const verySlowElapsedMs = Math.round(performance.now() - startTime);
           logger.error("Very slow request - likely stuck", {
             requestId,
@@ -121,7 +122,7 @@ class RequestTracker {
             inFlightCount: this.inFlight.size,
           });
         }, VERY_SLOW_REQUEST_THRESHOLD_MS - SLOW_REQUEST_THRESHOLD_MS);
-        if (tracked.slowTimer) unrefTimer(tracked.slowTimer);
+        if (tracked.verySlowTimer) unrefTimer(tracked.verySlowTimer);
       }, SLOW_REQUEST_THRESHOLD_MS);
       if (tracked.slowTimer) unrefTimer(tracked.slowTimer);
     }
@@ -142,6 +143,7 @@ class RequestTracker {
     if (!tracked) return;
 
     if (tracked.slowTimer) clearTimeout(tracked.slowTimer);
+    if (tracked.verySlowTimer) clearTimeout(tracked.verySlowTimer);
 
     this.inFlight.delete(requestId);
 
@@ -247,6 +249,7 @@ class RequestTracker {
 
     for (const tracked of this.inFlight.values()) {
       if (tracked.slowTimer) clearTimeout(tracked.slowTimer);
+      if (tracked.verySlowTimer) clearTimeout(tracked.verySlowTimer);
     }
 
     this.inFlight.clear();
