@@ -2,6 +2,7 @@ import type { LanguageModel } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
@@ -47,5 +48,15 @@ export function createVeryfrontCloudModel(modelId: string): LanguageModel {
         name: "veryfront-cloud",
         fetch,
       })(upstreamModelId);
+
+    default: {
+      const _exhaustive: never = provider;
+      throw toError(
+        createError({
+          type: "config",
+          message: `Language provider "${_exhaustive}" is not supported for veryfront-cloud.`,
+        }),
+      );
+    }
   }
 }

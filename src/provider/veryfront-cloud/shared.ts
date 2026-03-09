@@ -111,15 +111,23 @@ export function getVeryfrontCloudGatewayBaseUrl(
   return joinUrl(apiBaseUrl, GATEWAY_PATHS[provider]);
 }
 
+/**
+ * Creates a fetch wrapper that replaces all SDK-injected auth headers with
+ * a single `Authorization: Bearer` header for the Veryfront Cloud gateway.
+ *
+ * AI SDK providers set their own native auth headers (`x-api-key` for
+ * Anthropic, `x-goog-api-key` for Google, `Authorization` for OpenAI).
+ * The gateway expects only Bearer auth, so we strip all provider-specific
+ * headers to prevent credential leakage to the wrong auth path.
+ */
 export function createVeryfrontCloudFetch(apiToken: string): typeof fetch {
   return (input, init) => {
     const request = new Request(input, init);
     const headers = new Headers(request.headers);
 
-    // Always authenticate to Veryfront API using bearer auth, regardless of
-    // the upstream provider's native auth header convention.
     headers.delete("x-api-key");
     headers.delete("x-goog-api-key");
+    headers.delete("Authorization");
     headers.set("Authorization", `Bearer ${apiToken}`);
 
     return fetch(new Request(request, { headers }));

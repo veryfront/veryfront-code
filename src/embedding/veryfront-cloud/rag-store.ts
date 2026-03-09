@@ -145,7 +145,7 @@ function toStringValue(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
-function buildManifestChunks(serialized: string, existingChunkCount = 0): ChunkMutationInput[] {
+function buildManifestContentChunks(serialized: string): ChunkMutationInput[] {
   const chunks: ChunkMutationInput[] = [];
   for (
     let start = 0, index = 0;
@@ -165,20 +165,28 @@ function buildManifestChunks(serialized: string, existingChunkCount = 0): ChunkM
     });
   }
 
-  for (let index = chunks.length; index < existingChunkCount; index++) {
-    const startOffset = serialized.length + (index - chunks.length);
+  return chunks;
+}
+
+function buildManifestPaddingChunks(
+  startIndex: number,
+  endIndex: number,
+  baseOffset: number,
+): ChunkMutationInput[] {
+  const chunks: ChunkMutationInput[] = [];
+  for (let index = startIndex; index < endIndex; index++) {
+    const offset = baseOffset + (index - startIndex);
     chunks.push({
       chunk_index: index,
       content: " ",
-      start_offset: startOffset,
-      end_offset: startOffset + 1,
+      start_offset: offset,
+      end_offset: offset + 1,
       token_count: 1,
       metadata: {
-        kind: "rag-manifest",
+        kind: "rag-manifest-padding",
       },
     });
   }
-
   return chunks;
 }
 
@@ -377,7 +385,10 @@ async function loadManifest(context: CloudStoreContext): Promise<CloudRagManifes
     return { version: 1, documents: [] };
   }
 
-  const serialized = chunks.map((chunk) => chunk.content).join("");
+  const serialized = chunks
+    .filter((c) => c.metadata?.kind !== "rag-manifest-padding")
+    .map((chunk) => chunk.content)
+    .join("");
   if (!serialized.trim()) {
     return { version: 1, documents: [] };
   }
@@ -410,23 +421,32 @@ async function saveManifest(
   context: CloudStoreContext,
   manifest: CloudRagManifest,
 ): Promise<void> {
-  const serialized = JSON.stringify(
-    {
-      version: 1,
-      documents: manifest.documents,
-    },
-    null,
-    2,
-  );
+  const serialized = manifest.documents.length === 0
+    ? ""
+    : JSON.stringify({ version: 1, documents: manifest.documents }, null, 2);
 
+  const contentChunks = buildManifestContentChunks(serialized);
   const existingChunks = await listAllFileChunks(context, MANIFEST_FILE_PATH);
-  const chunks = buildManifestChunks(
-    manifest.documents.length === 0 ? "" : serialized,
-    existingChunks.length,
-  );
 
-  if (chunks.length === 0) return;
-  await upsertFileChunks(context, MANIFEST_FILE_PATH, chunks);
+  // Step 1: Pad stale trailing chunks first.
+  // If the process crashes after this step but before step 2, loadManifest
+  // will see the OLD content chunks (still valid JSON) plus padding chunks
+  // (filtered out by loadManifest). The manifest remains consistent.
+  if (existingChunks.length > contentChunks.length) {
+    const paddingChunks = buildManifestPaddingChunks(
+      contentChunks.length,
+      existingChunks.length,
+      serialized.length,
+    );
+    await upsertFileChunks(context, MANIFEST_FILE_PATH, paddingChunks);
+  }
+
+  // Step 2: Upsert new content chunks.
+  // If the process crashes here, the manifest is either fully old (padding
+  // already written) or partially new — both are recoverable states.
+  if (contentChunks.length > 0) {
+    await upsertFileChunks(context, MANIFEST_FILE_PATH, contentChunks);
+  }
 }
 
 async function listContentFiles(
@@ -597,7 +617,10 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       );
 
       const results = (response?.data ?? [])
-        .filter((result) => result.chunk.metadata?.kind !== "rag-manifest")
+        .filter((result) =>
+          result.chunk.metadata?.kind !== "rag-manifest" &&
+          result.chunk.metadata?.kind !== "rag-manifest-padding"
+        )
         .map((result) => {
           const metadata = isRecord(result.chunk.metadata) ? result.chunk.metadata : {};
 

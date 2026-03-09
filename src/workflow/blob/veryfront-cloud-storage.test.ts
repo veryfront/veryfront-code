@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { VeryfrontCloudBlobStorage } from "./veryfront-cloud-storage.ts";
@@ -308,5 +308,31 @@ describe("VeryfrontCloudBlobStorage", () => {
     } finally {
       service.restore();
     }
+  });
+
+  it("rejects blob IDs containing path traversal sequences", async () => {
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://api.test",
+      apiToken: "vf_test",
+      projectSlug: "my-project",
+    });
+
+    await assertRejects(
+      () => storage.put("hello", { id: "../../etc/passwd" }),
+      Error,
+      "Invalid blob id",
+    );
+
+    await assertRejects(
+      () => storage.stat("../secret"),
+      Error,
+      "Invalid blob id",
+    );
+
+    await assertRejects(
+      () => storage.delete("foo/bar"),
+      Error,
+      "Invalid blob id",
+    );
   });
 });
