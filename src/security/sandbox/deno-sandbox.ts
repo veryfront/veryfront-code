@@ -21,15 +21,16 @@ type ExtendedWorkerOptions = WorkerOptions & {
 
 export function runInWorker<T = unknown>(code: string, options: SandboxOptions = {}): Promise<T> {
   if (typeof code !== "string") {
-    throw INVALID_ARGUMENT.create({ message: "Sandbox code must be a string" });
+    return Promise.reject(INVALID_ARGUMENT.create({ message: "Sandbox code must be a string" }));
   }
   if (code.length === 0) {
-    throw INVALID_ARGUMENT.create({ message: "Sandbox code cannot be empty" });
+    return Promise.reject(INVALID_ARGUMENT.create({ message: "Sandbox code cannot be empty" }));
   }
-  if (code.length > MAX_SANDBOX_CODE_SIZE) {
-    throw INVALID_ARGUMENT.create({
+  const codeByteLength = new TextEncoder().encode(code).byteLength;
+  if (codeByteLength > MAX_SANDBOX_CODE_SIZE) {
+    return Promise.reject(INVALID_ARGUMENT.create({
       message: `Sandbox code exceeds maximum size (${MAX_SANDBOX_CODE_SIZE} bytes)`,
-    });
+    }));
   }
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_SANDBOX_TIMEOUT_MS;
