@@ -95,7 +95,8 @@ export class WebSocketManager {
     if (wsUrl.startsWith("ws://")) {
       try {
         const host = new URL(wsUrl.replace(/^ws:/, "http:")).hostname;
-        const isLocal = host === "localhost" || host === "127.0.0.1" || host === "::1";
+        const isLocal = host === "localhost" || host === "127.0.0.1" ||
+          host === "::1" || host === "[::1]";
         if (!isLocal) {
           wsUrl = wsUrl.replace(/^ws:/, "wss:");
           logger.warn("Upgraded WebSocket connection to wss:// for non-localhost host", { host });

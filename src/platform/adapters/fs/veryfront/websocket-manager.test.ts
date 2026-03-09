@@ -238,4 +238,44 @@ describe("WebSocketManager", () => {
 
     manager.dispose();
   });
+
+  it("should keep ws:// for IPv6 loopback connections", () => {
+    const cache = {
+      deleteByPrefixAsync: async () => 0,
+      deleteByPrefixAndSuffixAsync: async () => 0,
+    } as unknown as FileCache;
+
+    const client = {
+      getProjectId: () => "project-1",
+      listAllFiles: async () => [],
+    } as unknown as VeryfrontApiClient;
+
+    const manager = new WebSocketManager({
+      apiBaseUrl: "http://[::1]:8080/api",
+      apiToken: "test-token",
+      projectSlug: "test-project",
+      cache,
+      client,
+      invalidationCallbacks: {},
+      getContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      }),
+      getContentSource: () => ({ type: "branch", branch: "main" }),
+      getProjectDir: () => undefined,
+      clearMemoryCaches: () => {},
+      clearFileListIndex: () => {},
+      setFileListCache: async () => {},
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances.at(-1);
+    assertExists(socket);
+
+    // IPv6 loopback should stay as ws://
+    assertEquals(socket.url.startsWith("ws://"), true);
+
+    manager.dispose();
+  });
 });
