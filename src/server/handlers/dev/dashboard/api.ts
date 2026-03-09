@@ -28,6 +28,14 @@ import type { HandlerContext } from "../../types.ts";
 
 const WORKFLOW_EXECUTION_TIMEOUT_MS = 30_000;
 
+/** Validate a relative path for directory traversal and null bytes.
+ *  Note: searchParams.get() already percent-decodes, so no extra decoding needed. */
+function isValidRelativePath(path: string): boolean {
+  if (path.includes("\0")) return false;
+  if (path.includes("..")) return false;
+  return true;
+}
+
 const JSON_HEADERS = {
   "Content-Type": "application/json",
   "Cache-Control": "no-cache",
@@ -386,7 +394,7 @@ async function handleListFiles(req: Request, ctx: HandlerContext): Promise<Respo
   if (!projectDir) return errorResponse("No project directory configured", 500);
 
   const relativePath = new URL(req.url).searchParams.get("path") ?? "";
-  if (relativePath.includes("..")) return errorResponse("Invalid path", 400);
+  if (!isValidRelativePath(relativePath)) return errorResponse("Invalid path", 400);
 
   const fullPath = relativePath ? `${projectDir}/${relativePath}` : projectDir;
 
@@ -422,7 +430,7 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
 
   const relativePath = new URL(req.url).searchParams.get("path") ?? "";
   if (!relativePath) return errorResponse("path parameter is required", 400);
-  if (relativePath.includes("..")) return errorResponse("Invalid path", 400);
+  if (!isValidRelativePath(relativePath)) return errorResponse("Invalid path", 400);
 
   try {
     const content = await adapter.fs.readFile(`${projectDir}/${relativePath}`);

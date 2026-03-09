@@ -33,10 +33,25 @@ describe("RedisCacheStore", () => {
         }),
       ).toBeDefined();
     });
+
+    it("should accept custom TTL seconds", () => {
+      expect(createStore({ ttlSeconds: 7200 })).toBeDefined();
+    });
+
+    it("should accept combined options", () => {
+      expect(
+        createStore({
+          url: "redis://localhost:6379",
+          keyPrefix: "custom:",
+          enableFallback: true,
+          ttlSeconds: 1800,
+        }),
+      ).toBeDefined();
+    });
   });
 
   describe("destroy", () => {
-    it("should clean up resources on destroy when not connected", async () => {
+    it("should be safe to call destroy when not connected", async () => {
       await createStore().destroy();
     });
 
@@ -44,16 +59,6 @@ describe("RedisCacheStore", () => {
       const store = createStore();
       await store.destroy();
       await store.destroy();
-    });
-  });
-
-  describe("configuration", () => {
-    it("should use default prefix 'veryfront:render:'", () => {
-      expect(createStore()).toBeDefined();
-    });
-
-    it("should create store with default options", () => {
-      expect(createStore()).toBeDefined();
     });
   });
 });

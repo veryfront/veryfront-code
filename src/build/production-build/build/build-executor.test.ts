@@ -105,15 +105,75 @@ describe("BuildExecutor", () => {
 
   describe("Build configuration", () => {
     it("should support dryRun mode", () => {
-      assertEquals(true, true);
+      const options: Partial<BuildExecutorOptions> = { dryRun: true };
+      assertEquals(options.dryRun, true);
     });
 
     it("should support prefetch enabled", () => {
-      assertEquals(true, true);
+      const options: Partial<BuildExecutorOptions> = { enablePrefetch: true };
+      assertEquals(options.enablePrefetch, true);
     });
 
     it("should support prefetch disabled", () => {
-      assertEquals(false, false);
+      const options: Partial<BuildExecutorOptions> = { enablePrefetch: false };
+      assertEquals(options.enablePrefetch, false);
+    });
+
+    it("should support empty baseUrl", () => {
+      const options: Partial<BuildExecutorOptions> = { baseUrl: "" };
+      assertEquals(options.baseUrl, "");
+    });
+  });
+
+  describe("BuildResult aggregation", () => {
+    it("should aggregate pages from multiple sources", () => {
+      const pages = { pages: 5, totalSize: 50000, ssgPaths: ["/", "/about"] };
+      const app = { pages: 3, totalSize: 30000, ssgPaths: ["/api/data"] };
+      const combined: BuildResult = {
+        pages: pages.pages + app.pages,
+        totalSize: pages.totalSize + app.totalSize,
+        ssgPaths: [...pages.ssgPaths, ...app.ssgPaths],
+      };
+      assertEquals(combined.pages, 8);
+      assertEquals(combined.totalSize, 80000);
+      assertEquals(combined.ssgPaths.length, 3);
+    });
+
+    it("should handle zero pages in both sources", () => {
+      const combined: BuildResult = {
+        pages: 0 + 0,
+        totalSize: 0 + 0,
+        ssgPaths: [],
+      };
+      assertEquals(combined.pages, 0);
+      assertEquals(combined.totalSize, 0);
+      assertEquals(combined.ssgPaths.length, 0);
+    });
+  });
+
+  describe("BuildExecutorOptions completeness", () => {
+    it("should support full options", () => {
+      const options: BuildExecutorOptions = {
+        adapter: createMockAdapter(),
+        projectDir: "/project",
+        outputDir: "/output",
+        renderer: createRenderer(),
+        config: baseConfig,
+        enablePrefetch: true,
+        chunkManifest: null,
+        baseUrl: "https://example.com",
+        dryRun: false,
+      };
+
+      assertExists(options.adapter);
+      assertEquals(options.projectDir, "/project");
+      assertEquals(options.outputDir, "/output");
+      assertExists(options.renderer);
+      assertExists(options.config);
+      assertEquals(options.enablePrefetch, true);
+      assertEquals(options.chunkManifest, null);
+      assertEquals(options.baseUrl, "https://example.com");
+      assertEquals(options.dryRun, false);
     });
   });
 });

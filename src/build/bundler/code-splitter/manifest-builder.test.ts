@@ -4,6 +4,7 @@ import {
   calculateFileHash,
   extractChunkName,
   extractEntryName,
+  getPreloadHints,
   isCriticalImport,
 } from "./manifest-builder.ts";
 
@@ -85,6 +86,73 @@ describe("build/bundler/code-splitter/manifest-builder", () => {
     it("should not mark other imports as critical", () => {
       assertEquals(isCriticalImport("lodash/debounce.js"), false);
       assertEquals(isCriticalImport("components/button.js"), false);
+    });
+
+    it("should handle partial matches", () => {
+      assertEquals(isCriticalImport("my-react-lib/index.js"), true);
+      assertEquals(isCriticalImport("chunks/veryfront-app.js"), true);
+    });
+  });
+
+  describe("getPreloadHints", () => {
+    it("should return hints for critical imports", () => {
+      const output = {
+        imports: [
+          { path: "/out/chunks/react-abc.js", kind: "import-statement" as const },
+          { path: "/out/chunks/lodash-xyz.js", kind: "import-statement" as const },
+        ],
+        bytes: 100,
+        inputs: {},
+        exports: [],
+      };
+      const hints = getPreloadHints(output, "/out");
+      assertEquals(hints.length, 1);
+      assertEquals(hints[0].includes("react"), true);
+    });
+
+    it("should return empty array when no critical imports", () => {
+      const output = {
+        imports: [
+          { path: "/out/chunks/lodash-xyz.js", kind: "import-statement" as const },
+          { path: "/out/chunks/date-fns-abc.js", kind: "import-statement" as const },
+        ],
+        bytes: 100,
+        inputs: {},
+        exports: [],
+      };
+      const hints = getPreloadHints(output, "/out");
+      assertEquals(hints.length, 0);
+    });
+
+    it("should return empty array when no imports", () => {
+      const output = {
+        imports: [],
+        bytes: 100,
+        inputs: {},
+        exports: [],
+      };
+      const hints = getPreloadHints(output, "/out");
+      assertEquals(hints.length, 0);
+    });
+  });
+
+  describe("extractEntryName edge cases", () => {
+    it("should handle .js extension", () => {
+      assertEquals(extractEntryName("src/app.js"), "app");
+    });
+
+    it("should handle files with multiple dots", () => {
+      assertEquals(extractEntryName("src/my.component.tsx"), "my.component");
+    });
+  });
+
+  describe("extractChunkName edge cases", () => {
+    it("should handle hashed chunk names", () => {
+      assertEquals(extractChunkName("chunks/shared-A1B2C3D4.js"), "shared-A1B2C3D4");
+    });
+
+    it("should handle paths with multiple segments", () => {
+      assertEquals(extractChunkName("a/b/c/d/file.js"), "file");
     });
   });
 });

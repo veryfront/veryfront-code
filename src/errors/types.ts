@@ -43,6 +43,8 @@ export interface ErrorDefinition {
  * Options for creating an error instance
  */
 export interface ErrorCreateOptions {
+  /** Override the error message (defaults to detail or definition title) */
+  message?: string;
   detail?: string;
   cause?: unknown;
   instance?: string;
@@ -65,7 +67,7 @@ export function defineError(definition: ErrorDefinition): RegisteredError {
   return {
     ...definition,
     create(options?: ErrorCreateOptions): VeryfrontError {
-      return new VeryfrontError(options?.detail || definition.title, {
+      return new VeryfrontError(options?.message || options?.detail || definition.title, {
         slug: definition.slug,
         category: definition.category,
         status: options?.status ?? definition.status,

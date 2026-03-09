@@ -1,4 +1,4 @@
-import { DEFAULT_SANDBOX_TIMEOUT_MS } from "./constants.ts";
+import { DEFAULT_SANDBOX_TIMEOUT_MS, MAX_SANDBOX_CODE_SIZE } from "./constants.ts";
 import { isCompiledBinary, serverLogger } from "#veryfront/utils";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -20,6 +20,19 @@ type ExtendedWorkerOptions = WorkerOptions & {
 };
 
 export function runInWorker<T = unknown>(code: string, options: SandboxOptions = {}): Promise<T> {
+  if (typeof code !== "string") {
+    return Promise.reject(INVALID_ARGUMENT.create({ message: "Sandbox code must be a string" }));
+  }
+  if (code.length === 0) {
+    return Promise.reject(INVALID_ARGUMENT.create({ message: "Sandbox code cannot be empty" }));
+  }
+  const codeByteLength = new TextEncoder().encode(code).byteLength;
+  if (codeByteLength > MAX_SANDBOX_CODE_SIZE) {
+    return Promise.reject(INVALID_ARGUMENT.create({
+      message: `Sandbox code exceeds maximum size (${MAX_SANDBOX_CODE_SIZE} bytes)`,
+    }));
+  }
+
   const timeoutMs = options.timeoutMs ?? DEFAULT_SANDBOX_TIMEOUT_MS;
 
   return withSpan(

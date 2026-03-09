@@ -34,5 +34,24 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       const code = `const x = 1;\nconst y = 2;`;
       assertEquals(rewriteEsmPaths(code, urlBase), code);
     });
+
+    it("should not rewrite veryfront module paths via from", () => {
+      const code = `import { something } from "/_vf_modules/my-module.js"`;
+      const result = rewriteEsmPaths(code, urlBase);
+      assertEquals(result.includes("/_vf_modules/my-module.js"), true);
+    });
+
+    it("should not rewrite _veryfront paths via from", () => {
+      const code = `import { something } from "/_veryfront/modules/component.js"`;
+      const result = rewriteEsmPaths(code, urlBase);
+      assertEquals(result.includes("/_veryfront/modules/component.js"), true);
+    });
+
+    it("should handle code with mixed import types", () => {
+      const code = `import React from "react"\nconst x = 42;`;
+      const result = rewriteEsmPaths(code, urlBase);
+      // Bare specifiers should be untouched
+      assertEquals(result.includes('"react"'), true);
+    });
   });
 });

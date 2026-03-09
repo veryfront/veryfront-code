@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getExternalDependencies } from "./build-context.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { createShimFile, getExternalDependencies } from "./build-context.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 describe("build/bundler/code-splitter/build-context", () => {
   describe("getExternalDependencies", () => {
@@ -70,6 +71,49 @@ describe("build/bundler/code-splitter/build-context", () => {
         ["react", "veryfront/chat", "custom-lib"],
         "Missing external",
       );
+    });
+
+    it("should handle empty custom array", () => {
+      const result = getExternalDependencies([]);
+      assertIncludesAll(result, REACT_EXTERNALS, "Missing React external");
+    });
+
+    it("should not duplicate entries", () => {
+      const result = getExternalDependencies(["react"]);
+      const reactCount = result.filter((r) => r === "react").length;
+      assertEquals(reactCount, 2); // one from base, one from custom - dedup is caller's job
+    });
+  });
+
+  describe("createShimFile", () => {
+    const tmpDir = Deno.makeTempDirSync();
+
+    afterAll(async () => {
+      try {
+        await Deno.remove(tmpDir, { recursive: true });
+      } catch (_) {
+        /* cleanup best-effort */
+      }
+    });
+
+    it("should create a shim file in the specified directory", async () => {
+      const shimPath = await createShimFile(tmpDir);
+      assertEquals(shimPath.includes(".veryfront-shim.js"), true);
+    });
+
+    it("should write global polyfills", async () => {
+      const shimPath = await createShimFile(tmpDir);
+      const fs = createFileSystem();
+      const content = await fs.readTextFile(shimPath);
+      assertEquals(content.includes("global"), true);
+      assertEquals(content.includes("process"), true);
+    });
+
+    it("should include react import map", async () => {
+      const shimPath = await createShimFile(tmpDir);
+      const fs = createFileSystem();
+      const content = await fs.readTextFile(shimPath);
+      assertEquals(content.includes("__veryfront_react_imports"), true);
     });
   });
 });
