@@ -1,7 +1,35 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { runInWorker } from "./deno-sandbox.ts";
+import { MAX_SANDBOX_CODE_SIZE } from "./constants.ts";
+
+// Input validation tests work in all runtimes (no Worker needed)
+describe("deno-sandbox input validation", () => {
+  it("rejects empty code", () => {
+    assertThrows(
+      () => runInWorker(""),
+      Error,
+      "empty",
+    );
+  });
+
+  it("rejects non-string code", () => {
+    assertThrows(
+      () => runInWorker(123 as unknown as string),
+      Error,
+      "string",
+    );
+  });
+
+  it("rejects oversized code", () => {
+    assertThrows(
+      () => runInWorker("x".repeat(MAX_SANDBOX_CODE_SIZE + 1)),
+      Error,
+      "maximum size",
+    );
+  });
+});
 
 const testSuite = isDeno ? describe : describe.skip;
 

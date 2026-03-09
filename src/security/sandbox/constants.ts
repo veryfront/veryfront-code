@@ -1,1 +1,2 @@
 export const DEFAULT_SANDBOX_TIMEOUT_MS = 5000;
+export const MAX_SANDBOX_CODE_SIZE = 1_000_000; // 1 MB
