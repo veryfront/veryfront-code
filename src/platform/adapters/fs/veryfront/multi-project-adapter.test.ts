@@ -1,6 +1,14 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isMultiProjectAdapter, MultiProjectFSAdapter } from "./multi-project-adapter.ts";
+import {
+  getCurrentRequestContext,
+  getRequestScopedFile,
+  isMultiProjectAdapter,
+  MultiProjectFSAdapter,
+  runWithRequestContext,
+  setRequestScopedFile,
+  wrapWithCurrentContext,
+} from "./multi-project-adapter.ts";
 
 function createAdapter(): MultiProjectFSAdapter {
   return new MultiProjectFSAdapter({
@@ -129,5 +137,179 @@ describe("isMultiProjectAdapter", () => {
     assertEquals(isMultiProjectAdapter(null), false);
     assertEquals(isMultiProjectAdapter(undefined), false);
     assertEquals(isMultiProjectAdapter("string"), false);
+  });
+});
+
+describe("getCurrentRequestContext", () => {
+  it("should return null when no context is active", () => {
+    assertEquals(getCurrentRequestContext(), null);
+  });
+
+  it("should return context within runWithRequestContext", async () => {
+    await runWithRequestContext(
+      { projectSlug: "test-project", token: "test-token" },
+      async () => {
+        const ctx = getCurrentRequestContext();
+        assertExists(ctx);
+        assertEquals(ctx!.projectSlug, "test-project");
+        assertEquals(ctx!.token, "test-token");
+        assertEquals(ctx!.productionMode, false);
+      },
+    );
+  });
+
+  it("should return null after context exits", async () => {
+    await runWithRequestContext(
+      { projectSlug: "test", token: "token" },
+      async () => {},
+    );
+    assertEquals(getCurrentRequestContext(), null);
+  });
+});
+
+describe("runWithRequestContext", () => {
+  it("should set productionMode from options", async () => {
+    await runWithRequestContext(
+      { projectSlug: "proj", token: "tok", productionMode: true },
+      async () => {
+        const ctx = getCurrentRequestContext();
+        assertEquals(ctx!.productionMode, true);
+      },
+    );
+  });
+
+  it("should set releaseId from options", async () => {
+    await runWithRequestContext(
+      { projectSlug: "proj", token: "tok", releaseId: "rel-123" },
+      async () => {
+        const ctx = getCurrentRequestContext();
+        assertEquals(ctx!.releaseId, "rel-123");
+      },
+    );
+  });
+
+  it("should set projectId from options", async () => {
+    await runWithRequestContext(
+      { projectSlug: "proj", token: "tok", projectId: "pid-456" },
+      async () => {
+        const ctx = getCurrentRequestContext();
+        assertEquals(ctx!.projectId, "pid-456");
+      },
+    );
+  });
+
+  it("should default releaseId to null", async () => {
+    await runWithRequestContext(
+      { projectSlug: "proj", token: "tok" },
+      async () => {
+        const ctx = getCurrentRequestContext();
+        assertEquals(ctx!.releaseId, null);
+      },
+    );
+  });
+
+  it("should return the callback result", async () => {
+    const result = await runWithRequestContext(
+      { projectSlug: "proj", token: "tok" },
+      async () => 42,
+    );
+    assertEquals(result, 42);
+  });
+
+  it("should provide a fileCache map", async () => {
+    await runWithRequestContext(
+      { projectSlug: "proj", token: "tok" },
+      async () => {
+        const ctx = getCurrentRequestContext();
+        assertExists(ctx!.fileCache);
+        assertEquals(ctx!.fileCache instanceof Map, true);
+      },
+    );
+  });
+});
+
+describe("getRequestScopedFile / setRequestScopedFile", () => {
+  it("should return undefined when no context is active", () => {
+    assertEquals(getRequestScopedFile("key"), undefined);
+  });
+
+  it("should set and get files within context", async () => {
+    await runWithRequestContext(
+      { projectSlug: "proj", token: "tok" },
+      async () => {
+        setRequestScopedFile("file:test.ts", "content");
+        assertEquals(getRequestScopedFile("file:test.ts"), "content");
+      },
+    );
+  });
+
+  it("should return undefined for non-existent keys within context", async () => {
+    await runWithRequestContext(
+      { projectSlug: "proj", token: "tok" },
+      async () => {
+        assertEquals(getRequestScopedFile("nonexistent"), undefined);
+      },
+    );
+  });
+
+  it("should not persist across contexts", async () => {
+    await runWithRequestContext(
+      { projectSlug: "proj", token: "tok" },
+      async () => {
+        setRequestScopedFile("key1", "value1");
+      },
+    );
+
+    await runWithRequestContext(
+      { projectSlug: "proj", token: "tok" },
+      async () => {
+        assertEquals(getRequestScopedFile("key1"), undefined);
+      },
+    );
+  });
+});
+
+describe("wrapWithCurrentContext", () => {
+  it("should return the same function when no context is active", () => {
+    const fn = () => "hello";
+    const wrapped = wrapWithCurrentContext(fn);
+    assertEquals(wrapped, fn);
+  });
+
+  it("should preserve context in wrapped function", async () => {
+    let wrappedFn: (() => string | null) | null = null;
+
+    await runWithRequestContext(
+      { projectSlug: "proj", token: "tok" },
+      async () => {
+        wrappedFn = wrapWithCurrentContext(() => {
+          return getCurrentRequestContext()?.projectSlug ?? null;
+        });
+      },
+    );
+
+    assertExists(wrappedFn);
+    assertEquals(wrappedFn!(), "proj");
+  });
+});
+
+describe("globalThis.__vf_multi_project_adapter", () => {
+  it("should be registered on globalThis", () => {
+    assertExists(globalThis.__vf_multi_project_adapter);
+  });
+
+  it("should have getCurrentRequestContext function", () => {
+    assertEquals(
+      typeof globalThis.__vf_multi_project_adapter!.getCurrentRequestContext,
+      "function",
+    );
+  });
+
+  it("should have getRequestScopedFile function", () => {
+    assertEquals(typeof globalThis.__vf_multi_project_adapter!.getRequestScopedFile, "function");
+  });
+
+  it("should have setRequestScopedFile function", () => {
+    assertEquals(typeof globalThis.__vf_multi_project_adapter!.setRequestScopedFile, "function");
   });
 });
