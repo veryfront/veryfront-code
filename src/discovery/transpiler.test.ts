@@ -70,10 +70,6 @@ describe("embedding module static import", () => {
     assertEquals(typeof embeddingMod.ragStore, "function");
   });
 
-  it("exports uploadStore", () => {
-    assertEquals(typeof embeddingMod.uploadStore, "function");
-  });
-
   it("exports embedding", () => {
     assertEquals(typeof embeddingMod.embedding, "function");
   });

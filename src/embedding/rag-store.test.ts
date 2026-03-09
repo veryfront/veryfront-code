@@ -160,6 +160,14 @@ describe("ragStore", () => {
         metadata?: Record<string, unknown>;
       }>
     >();
+    const ragDocuments = new Map<string, {
+      id: string;
+      title: string;
+      source: string;
+      type: string;
+      created_at: string;
+      metadata?: Record<string, unknown>;
+    }>();
     const embeddingVectors = new Map<string, number[]>();
     const authHeaders: Array<string | null> = [];
 
@@ -172,6 +180,38 @@ describe("ragStore", () => {
 
         const fileMatch = path.match(/^\/projects\/[^/]+\/branches\/[^/]+\/files\/(.+)\/chunks$/);
         const filePath = fileMatch ? decodeURIComponent(fileMatch[1]!) : null;
+
+        // RAG document management routes
+        const ragDocMatch = path.match(/^\/projects\/[^/]+\/rag\/documents(?:\/(.+))?$/);
+        if (ragDocMatch !== null) {
+          const docId = ragDocMatch[1] ? decodeURIComponent(ragDocMatch[1]) : null;
+
+          if (request.method === "GET" && !docId) {
+            return Response.json({
+              documents: [...ragDocuments.values()],
+            });
+          }
+
+          if (request.method === "POST" && !docId) {
+            const body = await request.json() as {
+              id: string;
+              title: string;
+              source: string;
+              type: string;
+              metadata?: Record<string, unknown>;
+            };
+            ragDocuments.set(body.id, {
+              ...body,
+              created_at: new Date().toISOString(),
+            });
+            return Response.json({ id: body.id });
+          }
+
+          if (request.method === "DELETE" && docId) {
+            ragDocuments.delete(docId);
+            return Response.json({ deleted: 1 });
+          }
+        }
 
         if (request.method === "GET" && filePath) {
           const chunks = fileChunks.get(filePath);
@@ -340,6 +380,15 @@ describe("ragStore", () => {
           });
         }
 
+        // RAG document management
+        if (url.pathname.match(/\/rag\/documents(\/|$)/)) {
+          if (request.method === "POST") {
+            const body = await request.json() as { id: string };
+            return Response.json({ id: body.id });
+          }
+          return Response.json({ documents: [] });
+        }
+
         throw new Error(`Unhandled ${request.method} ${url.pathname}`);
       },
       async () => {
@@ -360,9 +409,11 @@ describe("ragStore", () => {
           },
         );
 
+        // All requests should target the request-scoped project, not any env-based slug
         assertEquals(
-          urls[0],
-          "https://api.veryfront.com/projects/request-project/branches/main/files/.veryfront%2Frag%2Fmanifest.json/chunks?limit=100",
+          urls.every((u) => u.includes("/projects/request-project/")),
+          true,
+          `Expected all URLs to target request-project, got: ${urls[0]}`,
         );
       },
     );

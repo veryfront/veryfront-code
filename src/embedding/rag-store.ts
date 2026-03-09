@@ -23,10 +23,21 @@ import type {
   RagStoreBackend,
   RagStoreConfig,
   RagStoreData,
-  StoredChunk,
-  UploadMeta,
-  UploadStoreData,
 } from "./types.ts";
+
+// Legacy data shapes used only for migrating old upload-store JSON files.
+interface LegacyStoredChunk {
+  id: string;
+  uploadId: string;
+  text: string;
+  embedding: number[];
+  index: number;
+}
+
+interface LegacyUploadStoreData {
+  uploads: RagDocumentMeta[];
+  chunks: LegacyStoredChunk[];
+}
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 type ResolvedRagStoreConfig = RagStoreConfig & { model: string };
@@ -168,16 +179,16 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     });
   }
 
-  function isLegacyUploadStoreData(value: unknown): value is UploadStoreData {
+  function isLegacyUploadStoreData(value: unknown): value is LegacyUploadStoreData {
     if (!value || typeof value !== "object") return false;
     const data = value as { uploads?: unknown; chunks?: unknown };
     return Array.isArray(data.uploads) && Array.isArray(data.chunks);
   }
 
-  function migrateLegacyUploadStoreData(data: UploadStoreData): RagStoreData {
+  function migrateLegacyUploadStoreData(data: LegacyUploadStoreData): RagStoreData {
     return {
-      documents: data.uploads.map((upload: UploadMeta) => ({ ...upload })),
-      chunks: data.chunks.map((chunk: StoredChunk) => ({
+      documents: data.uploads.map((upload) => ({ ...upload })),
+      chunks: data.chunks.map((chunk: LegacyStoredChunk) => ({
         id: chunk.id,
         documentId: chunk.uploadId,
         text: chunk.text,

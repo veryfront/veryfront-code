@@ -295,7 +295,7 @@ describe("runtime inference mode metadata", () => {
         throw toError(
           createError({
             type: "config",
-            message: "OPENAI_API_KEY missing",
+            message: "OPENAI_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
           }),
         );
       });
