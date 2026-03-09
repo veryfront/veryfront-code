@@ -53,6 +53,7 @@ export class WebSocketManager {
 
   private wsConnectionId: string | null = null;
   private wsConsecutiveFailures = 0;
+  private wsErrorLogged = false;
   private disposed = false;
   private pokeMetrics = {
     received: 0,
@@ -117,6 +118,7 @@ export class WebSocketManager {
     try {
       this.ws = new WebSocket(url);
       this.wsConnectionId = crypto.randomUUID().slice(0, 8);
+      this.wsErrorLogged = false;
 
       this.ws.onopen = () => {
         this.wsConsecutiveFailures = 0;
@@ -153,13 +155,14 @@ export class WebSocketManager {
       };
 
       this.ws.onerror = (event) => {
-        // Only log the first error per reconnect cycle to avoid flooding logs.
-        // The onclose handler already schedules reconnection with backoff.
-        if (this.wsConsecutiveFailures === 0) {
+        // Log once per connection attempt to avoid flooding logs.
+        if (!this.wsErrorLogged) {
+          this.wsErrorLogged = true;
           logger.warn("WebSocket error", {
             type: event.type,
             url: (event.target as WebSocket)?.url?.replace(/token=[^&]+/, "token=***"),
             readyState: (event.target as WebSocket)?.readyState,
+            consecutiveFailures: this.wsConsecutiveFailures,
           });
         }
       };
