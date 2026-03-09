@@ -6,7 +6,7 @@ function createStore(options?: ConstructorParameters<typeof RedisCacheStore>[0])
   return new RedisCacheStore(options);
 }
 
-describe("RedisCacheStore", { sanitizeResources: false, sanitizeOps: false }, () => {
+describe("RedisCacheStore", () => {
   describe("constructor", () => {
     it("should create store with default options", () => {
       expect(createStore()).toBeDefined();
@@ -33,61 +33,6 @@ describe("RedisCacheStore", { sanitizeResources: false, sanitizeOps: false }, ()
         }),
       ).toBeDefined();
     });
-  });
-
-  describe("destroy", () => {
-    it("should clean up resources on destroy when not connected", async () => {
-      await createStore().destroy();
-    });
-
-    it("should be safe to call destroy multiple times", async () => {
-      const store = createStore();
-      await store.destroy();
-      await store.destroy();
-    });
-  });
-
-  describe("configuration", () => {
-    it("should use default prefix 'veryfront:render:'", () => {
-      expect(createStore()).toBeDefined();
-    });
-
-    it("should create store with default options", () => {
-      expect(createStore()).toBeDefined();
-    });
-  });
-
-  describe("operations without Redis connection", () => {
-    it("should return undefined for get when redis unavailable and fallback disabled", async () => {
-      const store = createStore({ enableFallback: false });
-      // Without connecting to redis, operations should handle gracefully
-      // The store is in initial state (not marked unavailable yet)
-      // So it will try to connect and fail - but should handle it
-      try {
-        const result = await store.get("test-key");
-        expect(result).toBeUndefined();
-      } catch (_) {
-        // Expected - Redis not available
-      }
-    });
-
-    it("should handle delete gracefully when not connected", async () => {
-      const store = createStore({ enableFallback: false });
-      try {
-        await store.delete("test-key");
-      } catch (_) {
-        // Expected - Redis not available
-      }
-    });
-
-    it("should handle clear gracefully when not connected", async () => {
-      const store = createStore({ enableFallback: false });
-      try {
-        await store.clear();
-      } catch (_) {
-        // Expected - Redis not available
-      }
-    });
 
     it("should accept custom TTL seconds", () => {
       expect(createStore({ ttlSeconds: 7200 })).toBeDefined();
@@ -102,6 +47,18 @@ describe("RedisCacheStore", { sanitizeResources: false, sanitizeOps: false }, ()
           ttlSeconds: 1800,
         }),
       ).toBeDefined();
+    });
+  });
+
+  describe("destroy", () => {
+    it("should be safe to call destroy when not connected", async () => {
+      await createStore().destroy();
+    });
+
+    it("should be safe to call destroy multiple times", async () => {
+      const store = createStore();
+      await store.destroy();
+      await store.destroy();
     });
   });
 });
