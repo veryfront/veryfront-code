@@ -124,6 +124,75 @@ describe("Rate Limiting Middleware", () => {
     });
   });
 
+  it("should ignore X-Forwarded-For when trustProxy is false (default)", async () => {
+    await withStore(async (store) => {
+      const limiter = createRateLimiter({
+        maxRequests: 1,
+        windowMs: 60000,
+        store,
+      });
+
+      const next = createNext();
+
+      // Two requests with different X-Forwarded-For values should share the same key
+      // because trustProxy defaults to false, so headers are ignored
+      const req1 = createRequest({ "x-forwarded-for": "1.2.3.4" });
+      const req2 = createRequest({ "x-forwarded-for": "5.6.7.8" });
+
+      const res1 = await limiter(req1, next);
+      assertEquals(res1.status, 200);
+
+      // Second request should be blocked — both map to "unknown"
+      const res2 = await limiter(req2, next);
+      assertEquals(res2.status, 429);
+    });
+  });
+
+  it("should use X-Forwarded-For when trustProxy is true", async () => {
+    await withStore(async (store) => {
+      const limiter = createRateLimiter({
+        maxRequests: 1,
+        windowMs: 60000,
+        trustProxy: true,
+        store,
+      });
+
+      const next = createNext();
+
+      const req1 = createRequest({ "x-forwarded-for": "1.2.3.4" });
+      const req2 = createRequest({ "x-forwarded-for": "5.6.7.8" });
+
+      const res1 = await limiter(req1, next);
+      assertEquals(res1.status, 200);
+
+      // Different forwarded IP = different key, so should be allowed
+      const res2 = await limiter(req2, next);
+      assertEquals(res2.status, 200);
+    });
+  });
+
+  it("should use first IP from X-Forwarded-For chain when trustProxy is true", async () => {
+    await withStore(async (store) => {
+      const limiter = createRateLimiter({
+        maxRequests: 1,
+        windowMs: 60000,
+        trustProxy: true,
+        store,
+      });
+
+      const next = createNext();
+
+      const req = createRequest({ "x-forwarded-for": "1.2.3.4, 10.0.0.1, 172.16.0.1" });
+      const res = await limiter(req, next);
+      assertEquals(res.status, 200);
+
+      // Same first IP should be rate limited
+      const req2 = createRequest({ "x-forwarded-for": "1.2.3.4, 99.99.99.99" });
+      const res2 = await limiter(req2, next);
+      assertEquals(res2.status, 429);
+    });
+  });
+
   it("should work with preset configurations", async () => {
     await withStore(async (store) => {
       const limiter = RateLimitPresets.strict(store);

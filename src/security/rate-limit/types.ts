@@ -9,6 +9,9 @@ export interface RateLimitConfig {
   skip?: (request: Request) => boolean | Promise<boolean>;
   message?: string;
   store?: RateLimitStore;
+  /** When true, trust X-Forwarded-For / X-Real-IP headers for client identification.
+   *  Only enable when the server is behind a trusted reverse proxy. Defaults to false. */
+  trustProxy?: boolean;
 }
 
 export interface RateLimitStore {

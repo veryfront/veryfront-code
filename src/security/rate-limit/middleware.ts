@@ -18,13 +18,18 @@ const AUTH_MAX_REQUESTS = 5;
 /** Default Retry-After header value in seconds */
 const DEFAULT_RETRY_AFTER_SECONDS = "60";
 
-function defaultKeyGenerator(request: Request): string {
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  if (forwardedFor) {
-    return forwardedFor.split(",")[0]?.trim() || "unknown";
+function defaultKeyGenerator(request: Request, trustProxy: boolean): string {
+  if (trustProxy) {
+    const forwardedFor = request.headers.get("x-forwarded-for");
+    if (forwardedFor) {
+      return forwardedFor.split(",")[0]?.trim() || "unknown";
+    }
+
+    const realIp = request.headers.get("x-real-ip");
+    if (realIp) return realIp;
   }
 
-  return request.headers.get("x-real-ip") || "unknown";
+  return "unknown";
 }
 
 function defaultRateLimitExceeded(_request: Request, _key: string, message: string): Response {
@@ -68,12 +73,16 @@ export function createRateLimiter(
     maxRequests,
     windowMs,
     strategy = "fixed-window",
-    keyGenerator = defaultKeyGenerator,
+    keyGenerator,
     onRateLimitExceeded,
     skip,
     message = "Too many requests. Please try again later.",
     store = new MemoryRateLimitStore(),
+    trustProxy = false,
   } = config;
+
+  const resolvedKeyGenerator = keyGenerator ??
+    ((req: Request) => defaultKeyGenerator(req, trustProxy));
 
   const strategyFn = getStrategy(strategy);
 
@@ -86,7 +95,7 @@ export function createRateLimiter(
         return next(request);
       }
 
-      const key = keyGenerator(request);
+      const key = resolvedKeyGenerator(request);
       const result = await strategyFn(key, { ...config, maxRequests, windowMs }, store);
 
       const headers = new Headers({
