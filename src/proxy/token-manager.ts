@@ -55,6 +55,10 @@ export class TokenManager {
     return withSpan(
       ProxySpanNames.PROXY_TOKEN_FETCH,
       async () => {
+        // Fast path: if a fetch is already in flight, return it immediately
+        const existing = this.pendingRequests.get(cacheKey);
+        if (existing) return existing;
+
         const negEntry = this.negativeCache.get(cacheKey);
         if (negEntry) {
           if (Date.now() - negEntry.cachedAt < NEGATIVE_CACHE_TTL_MS) {
@@ -66,6 +70,7 @@ export class TokenManager {
         const cached = await this.cache.get(cacheKey);
         if (cached && this.isTokenValid(cached)) return cached.token;
 
+        // Re-check after await: another concurrent call may have started a fetch
         const pending = this.pendingRequests.get(cacheKey);
         if (pending) return pending;
 
