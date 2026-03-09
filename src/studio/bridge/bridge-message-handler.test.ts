@@ -17,7 +17,7 @@
 import { assertEquals } from "@std/assert";
 import { setConfigForTest } from "./bridge-config.ts";
 import { editorState } from "./bridge-editor-state.ts";
-import { handleStudioMessage } from "./bridge-message-handler.ts";
+import { handleStudioMessage, isSafeNavigationUrl } from "./bridge-message-handler.ts";
 
 // ---------------------------------------------------------------------------
 // Browser API polyfills for Deno test environment
@@ -250,4 +250,93 @@ Deno.test("contentChanged: null content in edit mode does NOT apply", () => {
 
   // null content should NOT be applied even in edit mode with Yjs disconnected
   assertEquals(editorState.markdownCurrentContent, "original");
+});
+
+// ---------------------------------------------------------------------------
+// isSafeNavigationUrl
+// ---------------------------------------------------------------------------
+
+Deno.test("isSafeNavigationUrl: allows relative URLs", () => {
+  assertEquals(isSafeNavigationUrl("/page"), true);
+  assertEquals(isSafeNavigationUrl("/some/deep/path"), true);
+});
+
+Deno.test("isSafeNavigationUrl: allows https URLs", () => {
+  assertEquals(isSafeNavigationUrl("https://example.com/page"), true);
+});
+
+Deno.test("isSafeNavigationUrl: allows http URLs", () => {
+  assertEquals(isSafeNavigationUrl("http://example.com/page"), true);
+});
+
+Deno.test("isSafeNavigationUrl: blocks javascript: URLs", () => {
+  assertEquals(isSafeNavigationUrl("javascript:alert(1)"), false);
+  assertEquals(isSafeNavigationUrl("JavaScript:alert(1)"), false);
+});
+
+Deno.test("isSafeNavigationUrl: blocks data: URLs", () => {
+  assertEquals(isSafeNavigationUrl("data:text/html,<script>alert(1)</script>"), false);
+});
+
+Deno.test("isSafeNavigationUrl: blocks vbscript: URLs", () => {
+  assertEquals(isSafeNavigationUrl("vbscript:msgbox"), false);
+});
+
+Deno.test("isSafeNavigationUrl: blocks non-web protocols", () => {
+  assertEquals(isSafeNavigationUrl("mailto:user@example.com"), false);
+  assertEquals(isSafeNavigationUrl("intent://example.com"), false);
+  assertEquals(isSafeNavigationUrl("ftp://example.com/file"), false);
+});
+
+// ---------------------------------------------------------------------------
+// routeChange: URL validation
+// ---------------------------------------------------------------------------
+
+Deno.test("routeChange: navigates for safe relative URL", () => {
+  resetState();
+  let navigatedTo = "";
+  (globalThis as any).location.href = "https://test.veryfront.com/test";
+  Object.defineProperty(globalThis.location, "href", {
+    set(v: string) {
+      navigatedTo = v;
+    },
+    get() {
+      return "https://test.veryfront.com/test";
+    },
+    configurable: true,
+  });
+
+  handleStudioMessage(makeEvent({ action: "routeChange", url: "/new-page" }));
+  assertEquals(navigatedTo, "/new-page");
+
+  // Restore
+  Object.defineProperty(globalThis.location, "href", {
+    value: "https://test.veryfront.com/test",
+    writable: true,
+    configurable: true,
+  });
+});
+
+Deno.test("routeChange: blocks javascript: URL", () => {
+  resetState();
+  let navigatedTo = "";
+  Object.defineProperty(globalThis.location, "href", {
+    set(v: string) {
+      navigatedTo = v;
+    },
+    get() {
+      return "https://test.veryfront.com/test";
+    },
+    configurable: true,
+  });
+
+  handleStudioMessage(makeEvent({ action: "routeChange", url: "javascript:alert(1)" }));
+  assertEquals(navigatedTo, ""); // Should NOT navigate
+
+  // Restore
+  Object.defineProperty(globalThis.location, "href", {
+    value: "https://test.veryfront.com/test",
+    writable: true,
+    configurable: true,
+  });
 });
