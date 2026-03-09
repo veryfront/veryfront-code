@@ -40,9 +40,8 @@ describe("rendering/cache/stores/kv-store", () => {
       const payload = createPayload("<p>test</p>");
       await store.set("test-key", payload);
       const result = await store.get("test-key");
-      if (result) {
-        assertEquals(result.result.html, "<p>test</p>");
-      }
+      assertEquals(result !== undefined, true);
+      assertEquals(result!.result.html, "<p>test</p>");
     });
 
     it("should delete a value", async () => {
