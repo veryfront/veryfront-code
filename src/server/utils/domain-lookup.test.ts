@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getEnvironmentType } from "./domain-lookup.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { __injectCacheForTests, clearDomainCache, getEnvironmentType } from "./domain-lookup.ts";
 import type { DomainLookupResult } from "./domain-lookup.ts";
 
 function makeResult(envName: string | null): DomainLookupResult | null {
@@ -59,6 +59,70 @@ describe("server/utils/domain-lookup", () => {
 
     it("should return production for unrecognized env names", () => {
       assertEquals(getEnvironmentType(makeResult("custom")), "production");
+    });
+
+    it("should return production for env containing 'production' substring", () => {
+      assertEquals(getEnvironmentType(makeResult("my-production-env")), "production");
+    });
+
+    it("should return preview for env containing 'preview' substring", () => {
+      assertEquals(getEnvironmentType(makeResult("my-preview-env")), "preview");
+    });
+
+    it("should return preview for env containing 'staging' substring", () => {
+      assertEquals(getEnvironmentType(makeResult("staging-us-east")), "preview");
+    });
+
+    it("should return preview for env containing 'development' substring", () => {
+      assertEquals(getEnvironmentType(makeResult("development-local")), "preview");
+    });
+  });
+
+  describe("clearDomainCache", () => {
+    afterEach(() => {
+      __injectCacheForTests(null);
+    });
+
+    it("clears the cache without throwing", () => {
+      // Should not throw even when no injected cache
+      clearDomainCache();
+    });
+
+    it("clears injected cache repository", () => {
+      let clearCalled = false;
+      const mockRepo = {
+        get: () => Promise.resolve(null),
+        set: () => Promise.resolve(),
+        delete: () => Promise.resolve(),
+        clear: () => {
+          clearCalled = true;
+          return Promise.resolve();
+        },
+      };
+      __injectCacheForTests(mockRepo as any);
+      clearDomainCache();
+      assertEquals(clearCalled, true);
+    });
+  });
+
+  describe("__injectCacheForTests", () => {
+    afterEach(() => {
+      __injectCacheForTests(null);
+    });
+
+    it("can inject a mock cache repository", () => {
+      const mockRepo = {
+        get: () => Promise.resolve(null),
+        set: () => Promise.resolve(),
+        delete: () => Promise.resolve(),
+      };
+      // Should not throw
+      __injectCacheForTests(mockRepo as any);
+    });
+
+    it("can reset to null", () => {
+      __injectCacheForTests(null);
+      // Should not throw
     });
   });
 });
