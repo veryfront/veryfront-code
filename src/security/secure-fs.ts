@@ -15,6 +15,7 @@ import {
 } from "./path-validation.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = baseLogger.component("secure-fs");
 
@@ -282,6 +283,11 @@ export class SecureFs {
   }
 
   getUnsafeAdapter(): RuntimeAdapter {
+    if (getHostEnv("NODE_ENV") === "production") {
+      throw SECURITY_VIOLATION.create({
+        detail: "getUnsafeAdapter() is not allowed in production",
+      });
+    }
     logger.warn("Using unsafe adapter - security checks bypassed!");
     return this.config.adapter;
   }
