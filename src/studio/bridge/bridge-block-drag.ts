@@ -279,9 +279,11 @@ export function getMarkdownBlockHoverIndexFromPointer(
   }
 
   const directBlock = getMarkdownBlockElementFromNode(targetNode);
-  const directIndex = blocks.indexOf(directBlock!);
-  if (directIndex >= 0) {
-    return directIndex;
+  if (directBlock) {
+    const directIndex = blocks.indexOf(directBlock);
+    if (directIndex >= 0) {
+      return directIndex;
+    }
   }
 
   if (!state.markdownEditorSurface) {
