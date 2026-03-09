@@ -336,7 +336,7 @@ export function createVeryfrontHandler(
             : null;
 
           if (missingHeader) {
-            logger.error(missingHeader.detail, {
+            logger.warn(missingHeader.detail, {
               pathname: url.pathname,
               domain,
               projectSlug: headers.projectSlug,

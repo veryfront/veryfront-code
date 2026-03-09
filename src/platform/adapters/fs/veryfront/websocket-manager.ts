@@ -153,12 +153,15 @@ export class WebSocketManager {
       };
 
       this.ws.onerror = (event) => {
-        logger.warn("WebSocket error", {
-          type: event.type,
-          url: (event.target as WebSocket)?.url?.replace(/token=[^&]+/, "token=***"),
-          readyState: (event.target as WebSocket)?.readyState,
-          consecutiveFailures: this.wsConsecutiveFailures,
-        });
+        // Only log the first error per reconnect cycle to avoid flooding logs.
+        // The onclose handler already schedules reconnection with backoff.
+        if (this.wsConsecutiveFailures === 0) {
+          logger.warn("WebSocket error", {
+            type: event.type,
+            url: (event.target as WebSocket)?.url?.replace(/token=[^&]+/, "token=***"),
+            readyState: (event.target as WebSocket)?.readyState,
+          });
+        }
       };
     } catch (error) {
       this.wsConsecutiveFailures++;
