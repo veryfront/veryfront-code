@@ -18,10 +18,15 @@ const AUTH_MAX_REQUESTS = 5;
 /** Default Retry-After header value in seconds */
 const DEFAULT_RETRY_AFTER_SECONDS = "60";
 
-function defaultKeyGenerator(request: Request): string {
+function defaultKeyGenerator(request: Request, trustProxy: boolean): string {
   const forwardedFor = request.headers.get("x-forwarded-for");
   if (forwardedFor) {
-    return forwardedFor.split(",")[0]?.trim() || "unknown";
+    const parts = forwardedFor.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length > 0) {
+      // When trustProxy is true, use the leftmost IP (the original client).
+      // When false, use the rightmost IP (added by the nearest proxy, not spoofable).
+      return trustProxy ? parts[0]! : parts[parts.length - 1]!;
+    }
   }
 
   return request.headers.get("x-real-ip") || "unknown";
@@ -68,12 +73,16 @@ export function createRateLimiter(
     maxRequests,
     windowMs,
     strategy = "fixed-window",
-    keyGenerator = defaultKeyGenerator,
+    keyGenerator,
     onRateLimitExceeded,
     skip,
     message = "Too many requests. Please try again later.",
     store = new MemoryRateLimitStore(),
+    trustProxy = false,
   } = config;
+
+  const resolvedKeyGenerator = keyGenerator ??
+    ((req: Request) => defaultKeyGenerator(req, trustProxy));
 
   const strategyFn = getStrategy(strategy);
 
@@ -86,7 +95,7 @@ export function createRateLimiter(
         return next(request);
       }
 
-      const key = keyGenerator(request);
+      const key = resolvedKeyGenerator(request);
       const result = await strategyFn(key, { ...config, maxRequests, windowMs }, store);
 
       const headers = new Headers({
