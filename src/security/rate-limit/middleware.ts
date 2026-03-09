@@ -19,17 +19,17 @@ const AUTH_MAX_REQUESTS = 5;
 const DEFAULT_RETRY_AFTER_SECONDS = "60";
 
 function defaultKeyGenerator(request: Request, trustProxy: boolean): string {
-  if (trustProxy) {
-    const forwardedFor = request.headers.get("x-forwarded-for");
-    if (forwardedFor) {
-      return forwardedFor.split(",")[0]?.trim() || "unknown";
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  if (forwardedFor) {
+    const parts = forwardedFor.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length > 0) {
+      // When trustProxy is true, use the leftmost IP (the original client).
+      // When false, use the rightmost IP (added by the nearest proxy, not spoofable).
+      return trustProxy ? parts[0]! : parts[parts.length - 1]!;
     }
-
-    const realIp = request.headers.get("x-real-ip");
-    if (realIp) return realIp;
   }
 
-  return "unknown";
+  return request.headers.get("x-real-ip") || "unknown";
 }
 
 function defaultRateLimitExceeded(_request: Request, _key: string, message: string): Response {
