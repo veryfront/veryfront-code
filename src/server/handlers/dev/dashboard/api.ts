@@ -28,17 +28,11 @@ import type { HandlerContext } from "../../types.ts";
 
 const WORKFLOW_EXECUTION_TIMEOUT_MS = 30_000;
 
-/** Validate a relative path for directory traversal, null bytes, and encoding tricks */
+/** Validate a relative path for directory traversal and null bytes.
+ *  Note: searchParams.get() already percent-decodes, so no extra decoding needed. */
 function isValidRelativePath(path: string): boolean {
   if (path.includes("\0")) return false;
-  // Decode to catch %2e%2e and similar encoding bypasses, then check for traversal
-  try {
-    const decoded = decodeURIComponent(path);
-    if (decoded.includes("..")) return false;
-    if (decoded.includes("\0")) return false;
-  } catch {
-    return false; // Malformed encoding
-  }
+  if (path.includes("..")) return false;
   return true;
 }
 

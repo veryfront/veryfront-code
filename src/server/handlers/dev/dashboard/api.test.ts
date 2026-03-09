@@ -66,6 +66,13 @@ describe("Dashboard API path validation", () => {
     assertEquals(res?.status, 400);
   });
 
+  it("allows filenames with percent signs (no double-decoding)", async () => {
+    const req = new Request("http://localhost/_dev/api/files?path=reports%2F100%25done");
+    const res = await handleDashboardAPI(req, createMockCtx());
+    // searchParams.get decodes to "reports/100%done" — should not fail
+    assertEquals(res?.status, 200);
+  });
+
   it("requires path parameter for file-content", async () => {
     const req = new Request("http://localhost/_dev/api/file-content");
     const res = await handleDashboardAPI(req, createMockCtx());
