@@ -181,6 +181,15 @@ const CLOUD_UPGRADE_CANDIDATES: Array<{
   },
 ];
 
+function isMissingProviderConfiguration(errorData: ReturnType<typeof fromError>): boolean {
+  if (errorData?.type !== "config") return false;
+
+  const message = errorData.message.toLowerCase();
+  return message.includes("not set") ||
+    message.includes("missing credentials") ||
+    message.includes("missing configuration");
+}
+
 /**
  * Find the first cloud provider with a valid API key.
  *
@@ -255,7 +264,11 @@ export function resolveModel(modelString: string): LanguageModel {
     // Auto-fallback: when a cloud provider fails due to missing API key,
     // transparently switch to the local model so chat works out of the box.
     const errorData = fromError(error);
-    if (errorData?.type === "config" && providerName !== "local" && manager.has("local")) {
+    if (
+      isMissingProviderConfiguration(errorData) &&
+      providerName !== "local" &&
+      manager.has("local")
+    ) {
       // Check if local AI is explicitly disabled (e.g., for testing)
       if (isLocalAIDisabled()) {
         throw toError(

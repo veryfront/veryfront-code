@@ -145,9 +145,7 @@ function toStringValue(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
-function buildManifestChunks(serialized: string): ChunkMutationInput[] {
-  if (!serialized) return [];
-
+function buildManifestChunks(serialized: string, existingChunkCount = 0): ChunkMutationInput[] {
   const chunks: ChunkMutationInput[] = [];
   for (
     let start = 0, index = 0;
@@ -166,6 +164,21 @@ function buildManifestChunks(serialized: string): ChunkMutationInput[] {
       },
     });
   }
+
+  for (let index = chunks.length; index < existingChunkCount; index++) {
+    const startOffset = serialized.length + (index - chunks.length);
+    chunks.push({
+      chunk_index: index,
+      content: " ",
+      start_offset: startOffset,
+      end_offset: startOffset + 1,
+      token_count: 1,
+      metadata: {
+        kind: "rag-manifest",
+      },
+    });
+  }
+
   return chunks;
 }
 
@@ -397,11 +410,6 @@ async function saveManifest(
   context: CloudStoreContext,
   manifest: CloudRagManifest,
 ): Promise<void> {
-  if (manifest.documents.length === 0) {
-    await deleteFileChunks(context, MANIFEST_FILE_PATH);
-    return;
-  }
-
   const serialized = JSON.stringify(
     {
       version: 1,
@@ -411,8 +419,14 @@ async function saveManifest(
     2,
   );
 
-  await deleteFileChunks(context, MANIFEST_FILE_PATH);
-  await upsertFileChunks(context, MANIFEST_FILE_PATH, buildManifestChunks(serialized));
+  const existingChunks = await listAllFileChunks(context, MANIFEST_FILE_PATH);
+  const chunks = buildManifestChunks(
+    manifest.documents.length === 0 ? "" : serialized,
+    existingChunks.length,
+  );
+
+  if (chunks.length === 0) return;
+  await upsertFileChunks(context, MANIFEST_FILE_PATH, chunks);
 }
 
 async function listContentFiles(
@@ -458,12 +472,7 @@ async function ingestDocument(
 
   const documentId = crypto.randomUUID();
   const filePath = buildDocumentFilePath(documentId, meta?.type);
-  const embedder = embedding({
-    model: config.model,
-    documentPrefix: config.documentPrefix,
-    queryPrefix: config.queryPrefix,
-    batchSize: config.batchSize,
-  });
+  const embedder = createEmbedder(config);
   const vectors = await embedder.embedMany(chunkTexts);
   const dimension = toSupportedDimension(vectors[0]?.length ?? 0);
   const chunkInputs = buildDocumentChunks(text, chunkTexts, {
@@ -509,16 +518,25 @@ async function ingestDocument(
   return document;
 }
 
-export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig): RagStore {
-  const context = getCloudStoreContext(config);
-  const contentDir = config.contentDir;
-  const contentExtensions = new Set(config.contentExtensions ?? [".md", ".mdx", ".txt"]);
-  const queryEmbedder = embedding({
+function createEmbedder(config: ResolvedCloudRagStoreConfig) {
+  return embedding({
     model: config.model,
     documentPrefix: config.documentPrefix,
     queryPrefix: config.queryPrefix,
     batchSize: config.batchSize,
   });
+}
+
+function cloneManifest(manifest: CloudRagManifest): CloudRagManifest {
+  return {
+    version: manifest.version,
+    documents: manifest.documents.map((document) => ({ ...document })),
+  };
+}
+
+export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig): RagStore {
+  const contentDir = config.contentDir;
+  const contentExtensions = new Set(config.contentExtensions ?? [".md", ".mdx", ".txt"]);
 
   let mutex: Promise<void> = Promise.resolve();
   function withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -539,10 +557,18 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       meta?: { source?: string; type?: string },
     ): Promise<string> {
       return withLock(async () => {
+        const context = getCloudStoreContext(config);
         const manifest = await loadManifest(context);
+        const originalManifest = cloneManifest(manifest);
         const document = await ingestDocument(context, manifest, config, title, text, meta);
-        await saveManifest(context, manifest);
-        return document.id;
+        try {
+          await saveManifest(context, manifest);
+          return document.id;
+        } catch (error) {
+          await deleteFileChunks(context, document.filePath).catch(() => undefined);
+          await saveManifest(context, originalManifest).catch(() => undefined);
+          throw error;
+        }
       });
     },
 
@@ -550,6 +576,8 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       query: string,
       options?: RagSearchOptions,
     ): Promise<RagSearchResult[]> {
+      const context = getCloudStoreContext(config);
+      const queryEmbedder = createEmbedder(config);
       const vector = await queryEmbedder.embed(query);
       const topK = options?.topK ?? DEFAULT_TOP_K;
       const limit = Math.min(MAX_SEARCH_LIMIT, topK + SEARCH_OVERSCAN);
@@ -588,6 +616,7 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
 
     async listDocuments(): Promise<RagDocumentMeta[]> {
       return withLock(async () => {
+        const context = getCloudStoreContext(config);
         const manifest = await loadManifest(context);
         return manifest.documents.map(({ filePath: _filePath, ...document }) => document);
       });
@@ -595,13 +624,23 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
 
     async removeDocument(id: string): Promise<void> {
       return withLock(async () => {
+        const context = getCloudStoreContext(config);
         const manifest = await loadManifest(context);
         const target = manifest.documents.find((document) => document.id === id);
         if (!target) return;
 
-        await deleteFileChunks(context, target.filePath);
-        manifest.documents = manifest.documents.filter((document) => document.id !== id);
-        await saveManifest(context, manifest);
+        const nextManifest: CloudRagManifest = {
+          version: manifest.version,
+          documents: manifest.documents.filter((document) => document.id !== id),
+        };
+
+        await saveManifest(context, nextManifest);
+        try {
+          await deleteFileChunks(context, target.filePath);
+        } catch (error) {
+          await saveManifest(context, manifest).catch(() => undefined);
+          throw error;
+        }
       });
     },
 
@@ -609,7 +648,10 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       if (!contentDir) return;
 
       return withLock(async () => {
+        const context = getCloudStoreContext(config);
         const manifest = await loadManifest(context);
+        const originalManifest = cloneManifest(manifest);
+        const addedDocuments: CloudRagDocumentMeta[] = [];
         const indexedSources = new Set(manifest.documents.map((document) => document.source));
         const files = await listContentFiles(contentDir, contentExtensions);
         const newFiles = files.filter((file) => !indexedSources.has(file));
@@ -631,13 +673,22 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
             : file.replace(/\.[^.]+$/, "");
           const type = extname(file).slice(1);
 
-          await ingestDocument(context, manifest, config, title, content, {
+          const document = await ingestDocument(context, manifest, config, title, content, {
             source: file,
             type,
           });
+          addedDocuments.push(document);
         }
 
-        await saveManifest(context, manifest);
+        try {
+          await saveManifest(context, manifest);
+        } catch (error) {
+          for (const document of addedDocuments) {
+            await deleteFileChunks(context, document.filePath).catch(() => undefined);
+          }
+          await saveManifest(context, originalManifest).catch(() => undefined);
+          throw error;
+        }
       });
     },
   };

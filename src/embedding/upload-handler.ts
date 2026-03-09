@@ -229,16 +229,13 @@ export function createUploadHandler(
       if (!id) {
         return Response.json({ error: "Missing upload ID" }, { status: 400 });
       }
-      await store.removeDocument(id);
 
       const sourceBlobStorage = getSourceBlobStorage();
       if (sourceBlobStorage) {
-        try {
-          await sourceBlobStorage.delete(id);
-        } catch (error) {
-          serverLogger.warn("Upload source cleanup failed:", error);
-        }
+        await sourceBlobStorage.delete(id);
       }
+
+      await store.removeDocument(id);
 
       return Response.json({ success: true });
     } catch (error) {

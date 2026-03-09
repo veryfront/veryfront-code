@@ -3,6 +3,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, readTextFile, withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { join } from "#veryfront/compat/path";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { ragStore } from "./rag-store.ts";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "./resolve.ts";
 
@@ -102,6 +103,46 @@ describe("ragStore", () => {
       assertEquals(Array.isArray(parsed.documents), true);
       assertEquals(Array.isArray(parsed.chunks), true);
       assertEquals(await exists(storagePath + ".tmp"), false);
+    });
+  });
+
+  it("migrates legacy upload-store data from data/index.json", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      await Deno.writeTextFile(
+        storagePath,
+        JSON.stringify({
+          uploads: [{
+            id: "upload-1",
+            title: "Legacy Doc",
+            source: "upload:legacy.txt",
+            type: "txt",
+            createdAt: 1,
+          }],
+          chunks: [{
+            id: "chunk-1",
+            uploadId: "upload-1",
+            text: "legacy content",
+            embedding: [],
+            index: 0,
+          }],
+        }),
+      );
+
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      const documents = await store.listDocuments();
+      assertEquals(documents, [{
+        id: "upload-1",
+        title: "Legacy Doc",
+        source: "upload:legacy.txt",
+        type: "txt",
+        createdAt: 1,
+      }]);
     });
   });
 
@@ -247,6 +288,82 @@ describe("ragStore", () => {
 
         await store.removeDocument(id);
         assertEquals(await store.listDocuments(), []);
+      },
+    );
+  });
+
+  it("resolves cloud backend from request-scoped credentials at call time", async () => {
+    registerTestEmbeddingProvider();
+
+    const urls: string[] = [];
+    const fileChunks = new Map<string, Array<{ id: string; index: number; content: string }>>();
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        urls.push(url.toString());
+
+        const fileMatch = url.pathname.match(
+          /^\/projects\/([^/]+)\/branches\/([^/]+)\/files\/(.+)\/chunks$/,
+        );
+        const filePath = fileMatch ? decodeURIComponent(fileMatch[3] ?? "") : null;
+
+        if (request.method === "GET" && filePath) {
+          const chunks = fileChunks.get(filePath);
+          if (!chunks) return new Response("Not found", { status: 404 });
+          return Response.json({ data: chunks, page_info: { next: null } });
+        }
+
+        if (request.method === "POST" && filePath) {
+          const body = await request.json() as {
+            chunks: Array<{ chunk_index: number; content: string }>;
+          };
+          const stored = body.chunks.map((chunk) => ({
+            id: `${filePath}:${chunk.chunk_index}`,
+            index: chunk.chunk_index,
+            content: chunk.content,
+          }));
+          fileChunks.set(filePath, stored);
+          return Response.json({
+            chunks: stored.map(({ id, index }) => ({ id, index })),
+            created: stored.length,
+            updated: 0,
+          });
+        }
+
+        if (request.method === "POST" && url.pathname.endsWith("/embeddings")) {
+          return Response.json({
+            embeddings: [{ id: "embedding-1", model: "test/demo", status: "ready" }],
+            created: 1,
+            updated: 0,
+          });
+        }
+
+        throw new Error(`Unhandled ${request.method} ${url.pathname}`);
+      },
+      async () => {
+        const store = ragStore({
+          model: "test/demo",
+        });
+
+        await runWithRequestContext(
+          {
+            projectSlug: "request-project",
+            token: "vf_request_token",
+          },
+          async () => {
+            await store.ingest("Scoped Doc", "request scoped content", {
+              source: "upload:scoped.txt",
+              type: "txt",
+            });
+          },
+        );
+
+        assertEquals(
+          urls[0],
+          "https://api.veryfront.com/projects/request-project/branches/main/files/.veryfront%2Frag%2Fmanifest.json/chunks?limit=100",
+        );
       },
     );
   });

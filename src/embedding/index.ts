@@ -19,6 +19,7 @@ export { embedding } from "./embedding.ts";
 export { chunk } from "./chunk.ts";
 export { cosineSimilarity as similarity } from "ai";
 export { vectorStore } from "./vector-store.ts";
+export { uploadStore } from "./upload-store.ts";
 export { ragStore } from "./rag-store.ts";
 export { createUploadHandler } from "./upload-handler.ts";
 export { loadUpload } from "./upload-loader.ts";
@@ -43,6 +44,13 @@ export type {
   RagStoreData,
   SearchOptions,
   SearchResult,
+  StoredChunk,
+  UploadMeta,
+  UploadSearchOptions,
+  UploadSearchResult,
+  UploadStore,
+  UploadStoreConfig,
+  UploadStoreData,
   VectorStore,
   VectorStoreConfig,
 } from "./types.ts";

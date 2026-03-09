@@ -68,6 +68,16 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(findAvailableCloudModel(), "veryfront-cloud/openai/gpt-5.2");
   });
 
+  it("fails fast on malformed veryfront-cloud model IDs", () => {
+    setCloudBootstrap();
+
+    assertThrows(
+      () => resolveModel("veryfront-cloud/openai"),
+      Error,
+      'Invalid veryfront-cloud model string: "openai"',
+    );
+  });
+
   it("rejects unsupported embedding providers for veryfront-cloud", () => {
     setCloudBootstrap();
 

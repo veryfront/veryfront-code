@@ -24,7 +24,7 @@ import { agentRegistry } from "./composition/index.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { normalizeAgentModelConfig } from "./runtime/model-resolution.ts";
+import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -65,7 +65,7 @@ export function agent(config: AgentConfig): Agent {
 
   const publicConfig: ResolvedAgentConfig = {
     ...config,
-    model: normalizeAgentModelConfig(config.model),
+    model: resolveConfiguredAgentModel(config.model),
   };
 
   if (config.tools && config.tools !== true) {

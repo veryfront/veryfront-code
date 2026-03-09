@@ -23,6 +23,9 @@ import type {
   RagStoreBackend,
   RagStoreConfig,
   RagStoreData,
+  StoredChunk,
+  UploadMeta,
+  UploadStoreData,
 } from "./types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
@@ -56,11 +59,39 @@ const DEFAULT_TOP_K = 5;
  * ```
  */
 export function ragStore(config: RagStoreConfig): RagStore {
-  const resolvedConfig = resolveRagStoreConfig(config);
-  const backend = resolveRagStoreBackend(resolvedConfig);
-  return backend === "veryfront-cloud"
-    ? createVeryfrontCloudRagStore(resolvedConfig)
-    : createLocalJsonRagStore(resolvedConfig);
+  const storeCache = new Map<string, RagStore>();
+
+  function getStore(): RagStore {
+    const resolvedConfig = resolveRagStoreConfig(config);
+    const backend = resolveRagStoreBackend(config);
+    const cacheKey = JSON.stringify({ backend, config: resolvedConfig });
+    const cached = storeCache.get(cacheKey);
+    if (cached) return cached;
+
+    const store = backend === "veryfront-cloud"
+      ? createVeryfrontCloudRagStore(resolvedConfig)
+      : createLocalJsonRagStore(resolvedConfig);
+    storeCache.set(cacheKey, store);
+    return store;
+  }
+
+  return {
+    ingest(title, text, meta) {
+      return getStore().ingest(title, text, meta);
+    },
+    search(query, options) {
+      return getStore().search(query, options);
+    },
+    listDocuments() {
+      return getStore().listDocuments();
+    },
+    removeDocument(id) {
+      return getStore().removeDocument(id);
+    },
+    indexContentDir() {
+      return getStore().indexContentDir();
+    },
+  };
 }
 
 function resolveRagStoreConfig(config: RagStoreConfig): ResolvedRagStoreConfig {
@@ -126,17 +157,41 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     return result;
   }
 
-  const embedder = embedding({
-    model: config.model,
-    documentPrefix: config.documentPrefix,
-    queryPrefix: config.queryPrefix,
-    batchSize: config.batchSize,
-  });
+  function createEmbedder() {
+    return embedding({
+      model: config.model,
+      documentPrefix: config.documentPrefix,
+      queryPrefix: config.queryPrefix,
+      batchSize: config.batchSize,
+    });
+  }
+
+  function isLegacyUploadStoreData(value: unknown): value is UploadStoreData {
+    if (!value || typeof value !== "object") return false;
+    const data = value as { uploads?: unknown; chunks?: unknown };
+    return Array.isArray(data.uploads) && Array.isArray(data.chunks);
+  }
+
+  function migrateLegacyUploadStoreData(data: UploadStoreData): RagStoreData {
+    return {
+      documents: data.uploads.map((upload: UploadMeta) => ({ ...upload })),
+      chunks: data.chunks.map((chunk: StoredChunk) => ({
+        id: chunk.id,
+        documentId: chunk.uploadId,
+        text: chunk.text,
+        embedding: chunk.embedding,
+        index: chunk.index,
+      })),
+    };
+  }
 
   async function load(): Promise<RagStoreData> {
     try {
       const data = await readTextFile(storagePath);
       const parsed = JSON.parse(data);
+      if (isLegacyUploadStoreData(parsed)) {
+        return migrateLegacyUploadStoreData(parsed);
+      }
       if (!parsed || !Array.isArray(parsed.documents) || !Array.isArray(parsed.chunks)) {
         serverLogger.warn("[rag-store] Corrupted store file, resetting", { storagePath });
         return { documents: [], chunks: [] };
@@ -178,6 +233,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     const unembedded = data.chunks.filter((c) => c.embedding.length === 0);
     if (unembedded.length === 0) return false;
 
+    const embedder = createEmbedder();
     const embeddings = await embedder.embedMany(unembedded.map((c) => c.text));
     for (let i = 0; i < unembedded.length; i++) {
       unembedded[i]!.embedding = embeddings[i]!;
@@ -258,6 +314,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
         const updated = await ensureEmbeddings(data);
         if (updated) await save(data);
 
+        const embedder = createEmbedder();
         const queryEmbedding = await embedder.embed(query);
         const topK = options?.topK ?? DEFAULT_TOP_K;
         const threshold = options?.threshold;

@@ -288,6 +288,37 @@ describe("createUploadHandler", () => {
     });
   });
 
+  it("fails delete without removing the document when blob cleanup fails", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+    setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
+
+    const removed: string[] = [];
+    const store = createStubStore({
+      async removeDocument(id: string): Promise<void> {
+        removed.push(id);
+      },
+    });
+    const { DELETE } = createUploadHandler(store);
+
+    await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.method === "DELETE") {
+        return new Response("boom", { status: 500 });
+      }
+
+      throw new Error(`Unexpected fetch: ${request.method} ${request.url}`);
+    }, async () => {
+      const response = await DELETE(
+        new Request("http://test/uploads/doc-123", { method: "DELETE" }),
+        { params: { id: "doc-123" } },
+      );
+
+      assertEquals(response.status, 500);
+      assertEquals(removed, []);
+    });
+  });
+
   it("does not use cloud uploads without bootstrap", async () => {
     const store = createStubStore();
     const { POST } = createUploadHandler(store);
