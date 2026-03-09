@@ -67,7 +67,10 @@ export async function requestWithRetry(
           if (!response.ok) {
             const text = await response.text();
 
-            veryfrontApiClientLog.error("Request failed", {
+            // 4xx = client errors (expected, e.g. 404 for missing deno.json) → warn
+            // 5xx = server errors (unexpected) → error
+            const logLevel = response.status >= 500 ? "error" : "warn";
+            veryfrontApiClientLog[logLevel]("Request failed", {
               url: url.replace(/token=[^&]+/, "token=***"),
               status: response.status,
               statusText: response.statusText,
