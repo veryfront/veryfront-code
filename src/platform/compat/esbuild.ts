@@ -116,7 +116,7 @@ async function ensureEsbuildBinary(): Promise<void> {
       setEnv("ESBUILD_BINARY_PATH", binaryPath);
       nodeProcess.env.ESBUILD_BINARY_PATH = binaryPath;
     } catch (error) {
-      serverLogger.warn("[esbuild] Binary extraction failed", error);
+      serverLogger.error("[esbuild] Binary extraction failed", error);
     } finally {
       setupComplete = true;
     }

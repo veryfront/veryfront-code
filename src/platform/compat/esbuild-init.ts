@@ -70,6 +70,6 @@ if (!Deno.env.get("ESBUILD_BINARY_PATH") && isDenoCompiled) {
       process.env.ESBUILD_BINARY_PATH = binaryPath;
     }
   } catch (error) {
-    serverLogger.warn("[esbuild] Binary extraction failed", error);
+    serverLogger.error("[esbuild] Binary extraction failed", error);
   }
 }

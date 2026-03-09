@@ -12,7 +12,7 @@ import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integratio
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { logger, refreshLoggerConfig } from "#veryfront/utils";
+import { logger } from "#veryfront/utils";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import {
   getEnvSource,
@@ -60,7 +60,6 @@ async function ensureEnvLoaded(projectDir: string, adapter: RuntimeAdapter): Pro
         debug: isDebugEnabled(adapter.env),
       });
       refreshEnvironmentConfig();
-      refreshLoggerConfig();
     } catch (error) {
       bootstrapLog.warn("Failed to load .env files", {
         error: getErrorMessage(error),

@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { __resetEnvLoaderForTests, loadEnv, supportsEnvFiles } from "./env-loader.ts";
+import { __resetLoggerConfigForTests, type LogEntry, serverLogger } from "./logger/index.ts";
 
 describe("env-loader", () => {
   let tempDir: string;
@@ -21,6 +22,29 @@ describe("env-loader", () => {
 
   async function writeEnvFile(name: string, content: string): Promise<void> {
     await Deno.writeTextFile(`${tempDir}/${name}`, content);
+  }
+
+  function captureConsoleLog(): {
+    getOutput: () => string;
+    reset: () => void;
+    restore: () => void;
+  } {
+    const originalLog = console.log;
+    let capturedOutput = "";
+
+    console.log = (message: string) => {
+      capturedOutput = message;
+    };
+
+    return {
+      getOutput: () => capturedOutput,
+      reset: () => {
+        capturedOutput = "";
+      },
+      restore: () => {
+        console.log = originalLog;
+      },
+    };
   }
 
   function cleanupKeys(...keys: string[]): void {
@@ -183,6 +207,38 @@ describe("env-loader", () => {
       assertEquals(Deno.env.get(key), "value");
 
       cleanupKeys(key);
+    });
+
+    it("should refresh logger format after loading NODE_ENV from .env", async () => {
+      const previousNodeEnv = Deno.env.get("NODE_ENV");
+      const previousLogFormat = Deno.env.get("LOG_FORMAT");
+      const { getOutput, reset, restore } = captureConsoleLog();
+
+      try {
+        Deno.env.delete("NODE_ENV");
+        Deno.env.delete("LOG_FORMAT");
+        __resetLoggerConfigForTests();
+
+        serverLogger.info("Text before loadEnv");
+        assertEquals(getOutput().startsWith("{"), false);
+
+        await writeEnvFile(".env", "NODE_ENV=production");
+        await loadEnv({ cwd: tempDir, override: true });
+
+        reset();
+        serverLogger.info("JSON after loadEnv");
+
+        const entry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(entry.level, "info");
+        assertEquals(entry.message, "JSON after loadEnv");
+      } finally {
+        restore();
+        if (previousNodeEnv === undefined) Deno.env.delete("NODE_ENV");
+        else Deno.env.set("NODE_ENV", previousNodeEnv);
+        if (previousLogFormat === undefined) Deno.env.delete("LOG_FORMAT");
+        else Deno.env.set("LOG_FORMAT", previousLogFormat);
+        __resetLoggerConfigForTests();
+      }
     });
   });
 });
