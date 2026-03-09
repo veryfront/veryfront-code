@@ -558,6 +558,10 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
   const contentDir = config.contentDir;
   const contentExtensions = new Set(config.contentExtensions ?? [".md", ".mdx", ".txt"]);
 
+  // Serialize all load→modify→save operations to prevent concurrent overwrites.
+  // NOTE: This is a single-process, single-instance mutex. In multi-pod
+  // deployments, concurrent stores from different instances targeting the
+  // same project/branch can race on the manifest (last writer wins).
   let mutex: Promise<void> = Promise.resolve();
   function withLock<T>(fn: () => Promise<T>): Promise<T> {
     const result = mutex.then(fn);

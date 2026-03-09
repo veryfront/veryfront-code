@@ -67,27 +67,39 @@ interface UploadHandlerConfig {
   maxFileSize?: number;
 }
 
+const MAX_CONCURRENT_URL_LOOKUPS = 5;
+
 async function enrichUploadsWithSourceUrls(
   uploads: Awaited<ReturnType<RagStore["listDocuments"]>>,
 ): Promise<Awaited<ReturnType<RagStore["listDocuments"]>>> {
   const sourceBlobStorage = getSourceBlobStorage();
   if (!sourceBlobStorage) return uploads;
 
-  return await Promise.all(
-    uploads.map(async (upload) => {
-      if (!upload.source.startsWith("upload:")) {
-        return upload;
-      }
+  const cloudUploads = uploads.filter((u) => u.source.startsWith("upload:"));
+  if (cloudUploads.length === 0) return uploads;
 
-      try {
+  // Resolve signed URLs with bounded concurrency to avoid thundering herd
+  // against the uploads API when the document list is large.
+  const urlMap = new Map<string, string>();
+  for (let i = 0; i < cloudUploads.length; i += MAX_CONCURRENT_URL_LOOKUPS) {
+    const batch = cloudUploads.slice(i, i + MAX_CONCURRENT_URL_LOOKUPS);
+    const results = await Promise.allSettled(
+      batch.map(async (upload) => {
         const blob = await sourceBlobStorage.stat(upload.id);
-        return blob?.url ? { ...upload, url: blob.url } : upload;
-      } catch (error) {
-        serverLogger.warn("Upload source URL lookup failed:", error);
-        return upload;
+        if (blob?.url) urlMap.set(upload.id, blob.url);
+      }),
+    );
+    for (const result of results) {
+      if (result.status === "rejected") {
+        serverLogger.warn("Upload source URL lookup failed:", result.reason);
       }
-    }),
-  );
+    }
+  }
+
+  return uploads.map((upload) => {
+    const url = urlMap.get(upload.id);
+    return url ? { ...upload, url } : upload;
+  });
 }
 
 function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
@@ -230,12 +242,16 @@ export function createUploadHandler(
         return Response.json({ error: "Missing upload ID" }, { status: 400 });
       }
 
+      await store.removeDocument(id);
+
       const sourceBlobStorage = getSourceBlobStorage();
       if (sourceBlobStorage) {
-        await sourceBlobStorage.delete(id);
+        try {
+          await sourceBlobStorage.delete(id);
+        } catch (error) {
+          serverLogger.warn("Upload source blob cleanup failed:", error);
+        }
       }
-
-      await store.removeDocument(id);
 
       return Response.json({ success: true });
     } catch (error) {

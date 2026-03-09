@@ -288,7 +288,7 @@ describe("createUploadHandler", () => {
     });
   });
 
-  it("fails delete without removing the document when blob cleanup fails", async () => {
+  it("removes the document even when blob cleanup fails", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
     setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
@@ -314,8 +314,9 @@ describe("createUploadHandler", () => {
         { params: { id: "doc-123" } },
       );
 
-      assertEquals(response.status, 500);
-      assertEquals(removed, []);
+      // Document is removed even though blob cleanup failed (best-effort)
+      assertEquals(response.status, 200);
+      assertEquals(removed, ["doc-123"]);
     });
   });
 

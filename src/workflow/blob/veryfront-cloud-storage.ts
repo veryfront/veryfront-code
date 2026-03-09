@@ -327,7 +327,8 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
   private assertSafeBlobId(id: string): void {
     if (!SAFE_BLOB_ID_PATTERN.test(id)) {
       throw INVALID_ARGUMENT.create({
-        detail: `Invalid blob id: "${id}". IDs must contain only alphanumeric characters, hyphens, and underscores.`,
+        detail:
+          `Invalid blob id: "${id}". IDs must contain only alphanumeric characters, hyphens, and underscores.`,
       });
     }
   }

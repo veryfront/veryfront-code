@@ -145,6 +145,8 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
   const MAX_TEXT_LENGTH = 5 * 1024 * 1024; // 5 MB text limit per document
 
   // Serialize all load→modify→save operations to prevent concurrent overwrites.
+  // NOTE: This is a single-process, single-instance mutex. In multi-instance
+  // deployments, concurrent stores targeting the same file will race.
   let mutex: Promise<void> = Promise.resolve();
   function withLock<T>(fn: () => Promise<T>): Promise<T> {
     const result = mutex.then(fn);
