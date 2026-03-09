@@ -282,6 +282,11 @@ export class SecureFs {
   }
 
   getUnsafeAdapter(): RuntimeAdapter {
+    if (typeof Deno !== "undefined" && Deno.env.get("NODE_ENV") === "production") {
+      throw SECURITY_VIOLATION.create({
+        detail: "getUnsafeAdapter() is not allowed in production",
+      });
+    }
     logger.warn("Using unsafe adapter - security checks bypassed!");
     return this.config.adapter;
   }
