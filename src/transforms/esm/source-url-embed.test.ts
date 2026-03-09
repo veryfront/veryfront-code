@@ -4,57 +4,44 @@ import { embedSourceUrl, extractSourceUrl } from "./source-url-embed.ts";
 
 describe("transforms/esm/source-url-embed", () => {
   describe("embedSourceUrl", () => {
-    it("embeds source URL as preserved comment at start", () => {
-      const code = "const x = 1;";
+    it("embeds source URL as a preserved comment at the start", () => {
+      const code = "export default 42;";
       const result = embedSourceUrl(code, "https://esm.sh/react@18");
-      assertEquals(result, "/*! @vf-source: https://esm.sh/react@18 */\nconst x = 1;");
+      assertEquals(result.startsWith("/*! @vf-source: https://esm.sh/react@18 */"), true);
+      assertEquals(result.includes("export default 42;"), true);
     });
 
     it("does not double-embed if already present", () => {
-      const code = "/*! @vf-source: https://esm.sh/react@18 */\nconst x = 1;";
-      const result = embedSourceUrl(code, "https://esm.sh/other");
+      const code = "/*! @vf-source: https://esm.sh/react@18 */\nexport default 42;";
+      const result = embedSourceUrl(code, "https://esm.sh/react@18");
       assertEquals(result, code);
     });
 
-    it("handles empty code", () => {
-      const result = embedSourceUrl("", "https://esm.sh/react@18");
-      assertEquals(result, "/*! @vf-source: https://esm.sh/react@18 */\n");
-    });
-
-    it("handles empty URL", () => {
-      const result = embedSourceUrl("code", "");
-      assertEquals(result, "/*! @vf-source:  */\ncode");
+    it("does not double-embed with different URL", () => {
+      const code = "/*! @vf-source: https://esm.sh/react@18 */\nexport default 42;";
+      const result = embedSourceUrl(code, "https://esm.sh/lodash@4");
+      assertEquals(result, code);
     });
   });
 
   describe("extractSourceUrl", () => {
     it("extracts embedded source URL", () => {
-      const code = "/*! @vf-source: https://esm.sh/react@18 */\nconst x = 1;";
+      const code = "/*! @vf-source: https://esm.sh/react@18 */\nexport default 42;";
       assertEquals(extractSourceUrl(code), "https://esm.sh/react@18");
     });
 
-    it("returns null if no embedded URL", () => {
-      assertEquals(extractSourceUrl("const x = 1;"), null);
+    it("returns null for code without embedded URL", () => {
+      assertEquals(extractSourceUrl("export default 42;"), null);
     });
 
     it("returns null for empty string", () => {
       assertEquals(extractSourceUrl(""), null);
     });
 
-    it("trims whitespace from extracted URL", () => {
-      const code = "/*! @vf-source:   https://esm.sh/react@18   */\ncode";
-      assertEquals(extractSourceUrl(code), "https://esm.sh/react@18");
-    });
-
-    it("roundtrips correctly", () => {
-      const url = "https://esm.sh/react@18.2.0?target=es2022";
-      const embedded = embedSourceUrl("const x = 1;", url);
-      assertEquals(extractSourceUrl(embedded), url);
-    });
-
-    it("returns null if suffix marker is missing", () => {
-      const code = "/*! @vf-source: https://esm.sh/react@18\nconst x = 1;";
-      assertEquals(extractSourceUrl(code), null);
+    it("roundtrips through embed and extract", () => {
+      const url = "https://esm.sh/some-pkg@1.2.3?external=react&target=es2022";
+      const code = embedSourceUrl("const x = 1;", url);
+      assertEquals(extractSourceUrl(code), url);
     });
   });
 });

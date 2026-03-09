@@ -119,7 +119,9 @@ describe("transforms/esm/specifier-resolver", () => {
           `import foo from "https://esm.sh/foo";`,
           "https://esm.sh/parent",
           defaultOptions,
-          async () => { throw new Error("cache failed"); },
+          async () => {
+            throw new Error("cache failed");
+          },
         );
       } catch (e) {
         caught = e as Error;

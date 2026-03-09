@@ -66,5 +66,19 @@ describe("transforms/esm/bundle-deps-validator", () => {
       assertEquals(deps.length, 1);
       assertEquals(deps[0]!.hash, "99999");
     });
+
+    it("extracts deps from from-style imports", () => {
+      const code = `import { foo } from "file:///cache/veryfront-http-bundle/http-42.mjs";`;
+      const deps = extractBundleDeps(code);
+      assertEquals(deps.length, 1);
+      assertEquals(deps[0]!.hash, "42");
+    });
+
+    it("handles very large hash numbers", () => {
+      const code = `import "file:///cache/veryfront-http-bundle/http-999999999.mjs";`;
+      const deps = extractBundleDeps(code);
+      assertEquals(deps.length, 1);
+      assertEquals(deps[0]!.hash, "999999999");
+    });
   });
 });

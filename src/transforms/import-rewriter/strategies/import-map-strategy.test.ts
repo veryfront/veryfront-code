@@ -1,7 +1,12 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ImportMapStrategy, importMapStrategy, resolveImportWithMap } from "./import-map-strategy.ts";
-import type { ImportMapConfig, ImportSpecifierInfo, ImportSpecifier, RewriteContext } from "../types.ts";
+import { importMapStrategy, resolveImportWithMap } from "./import-map-strategy.ts";
+import type {
+  ImportMapConfig,
+  ImportSpecifier,
+  ImportSpecifierInfo,
+  RewriteContext,
+} from "../types.ts";
 
 function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
@@ -24,7 +29,15 @@ function makeInfo(specifier: string): ImportSpecifierInfo {
     end: specifier.length,
     statementStart: 0,
     statementEnd: specifier.length,
-    raw: { n: specifier, s: 0, e: specifier.length, ss: 0, se: specifier.length, d: -1, a: -1 } as ImportSpecifier,
+    raw: {
+      n: specifier,
+      s: 0,
+      e: specifier.length,
+      ss: 0,
+      se: specifier.length,
+      d: -1,
+      a: -1,
+    } as ImportSpecifier,
   };
 }
 

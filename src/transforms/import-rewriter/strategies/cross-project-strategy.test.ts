@@ -1,7 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { CrossProjectStrategy, crossProjectStrategy } from "./cross-project-strategy.ts";
-import type { RewriteContext, ImportSpecifierInfo, ImportSpecifier } from "../types.ts";
+import { crossProjectStrategy } from "./cross-project-strategy.ts";
+import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 
 function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
@@ -23,7 +23,15 @@ function makeInfo(specifier: string): ImportSpecifierInfo {
     end: specifier.length,
     statementStart: 0,
     statementEnd: specifier.length,
-    raw: { n: specifier, s: 0, e: specifier.length, ss: 0, se: specifier.length, d: -1, a: -1 } as ImportSpecifier,
+    raw: {
+      n: specifier,
+      s: 0,
+      e: specifier.length,
+      ss: 0,
+      se: specifier.length,
+      d: -1,
+      a: -1,
+    } as ImportSpecifier,
   };
 }
 
@@ -40,7 +48,10 @@ describe("transforms/import-rewriter/strategies/cross-project-strategy", () => {
 
   describe("matches", () => {
     it("matches versioned cross-project import", () => {
-      assertEquals(crossProjectStrategy.matches("my-project@1.0.0/@/components/Button", makeCtx()), true);
+      assertEquals(
+        crossProjectStrategy.matches("my-project@1.0.0/@/components/Button", makeCtx()),
+        true,
+      );
     });
 
     it("matches latest cross-project import", () => {
