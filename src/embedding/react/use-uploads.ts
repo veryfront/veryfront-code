@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { UploadMeta } from "../types.ts";
+import type { RagDocumentMeta } from "../types.ts";
 import { API_ERROR } from "#veryfront/errors";
 
 export interface UseUploadsOptions {
@@ -16,7 +16,7 @@ export interface UseUploadsOptions {
 
 export interface UseUploadsResult {
   /** All uploads from the server */
-  uploads: UploadMeta[];
+  uploads: RagDocumentMeta[];
   /** True while an upload is in progress */
   uploading: boolean;
   /** User-facing error message, cleared on next action */
@@ -33,7 +33,7 @@ export interface UseUploadsResult {
  * useUploads hook for managing RAG upload lifecycle.
  */
 export function useUploads(options: UseUploadsOptions): UseUploadsResult {
-  const [uploads, setUploads] = useState<UploadMeta[]>([]);
+  const [uploads, setUploads] = useState<RagDocumentMeta[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);

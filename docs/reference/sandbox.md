@@ -19,7 +19,7 @@ import { Sandbox } from "veryfront/sandbox";
 ```ts
 import { Sandbox } from "veryfront/sandbox";
 
-const sandbox = await Sandbox.create({ authToken: "<your-jwt>" });
+const sandbox = await Sandbox.create();
 const result = await sandbox.executeCommand("echo hello");
 console.log(result.stdout); // "hello\n"
 await sandbox.close();
@@ -27,13 +27,13 @@ await sandbox.close();
 
 ## API
 
-### `Sandbox.create(options)`
+### `Sandbox.create(options?)`
 
 Create a new sandbox session. Claims a warm pod or creates a new one.
 
 **Returns:** <code>Promise&lt;Sandbox&gt;</code>
 
-### `Sandbox.get(id, options)`
+### `Sandbox.get(id, options?)`
 
 Reconnect to an existing sandbox session.
 
@@ -93,46 +93,46 @@ Get the sandbox endpoint URL.
 
 Options for creating a sandbox session.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `apiUrl?` | `string` | Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL env. |
-| `authToken` | `string` | User's JWT for authentication. |
+| Property     | Type     | Description                                                                                                         |
+| ------------ | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `apiUrl?`    | `string` | Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL env.                                                   |
+| `authToken?` | `string` | Explicit Veryfront auth token or API key override. Defaults to request-scoped credentials or `VERYFRONT_API_TOKEN`. |
 
 ### `ExecResult`
 
 Result of a command execution: stdout, stderr, and exit code.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `stdout` | `string` | Buffered standard output from command execution. |
-| `stderr` | `string` | Buffered standard error from command execution. |
-| `exitCode` | `number` | Process exit code. |
+| Property   | Type     | Description                                      |
+| ---------- | -------- | ------------------------------------------------ |
+| `stdout`   | `string` | Buffered standard output from command execution. |
+| `stderr`   | `string` | Buffered standard error from command execution.  |
+| `exitCode` | `number` | Process exit code.                               |
 
 ### `ExecStreamEvent`
 
 Streaming event emitted during command execution.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `type` | `"stdout" \| "stderr" \| "exit" \| "error"` | Event type (`stdout`, `stderr`, `exit`, `error`). |
-| `data?` | `string` | Chunk payload for stdout/stderr/error events. |
-| `exitCode?` | `number` | Exit code for `exit` events. |
+| Property    | Type                                        | Description                                       |
+| ----------- | ------------------------------------------- | ------------------------------------------------- |
+| `type`      | `"stdout" \| "stderr" \| "exit" \| "error"` | Event type (`stdout`, `stderr`, `exit`, `error`). |
+| `data?`     | `string`                                    | Chunk payload for stdout/stderr/error events.     |
+| `exitCode?` | `number`                                    | Exit code for `exit` events.                      |
 
 ## Exports
 
 ### Classes
 
-| Name | Description |
-|------|-------------|
+| Name      | Description                                                                             |
+| --------- | --------------------------------------------------------------------------------------- |
 | `Sandbox` | Client for isolated ephemeral compute environments with command execution and file I/O. |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `ExecResult` | Result of a command execution: stdout, stderr, and exit code. |
-| `ExecStreamEvent` | Streaming event emitted during command execution. |
-| `SandboxOptions` | Options for creating a sandbox session. |
+| Name              | Description                                                   |
+| ----------------- | ------------------------------------------------------------- |
+| `ExecResult`      | Result of a command execution: stdout, stderr, and exit code. |
+| `ExecStreamEvent` | Streaming event emitted during command execution.             |
+| `SandboxOptions`  | Options for creating a sandbox session.                       |
 
 ## Related
 

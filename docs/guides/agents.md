@@ -8,6 +8,10 @@ order: 6
 
 Create an AI agent with a system prompt, tools, and memory.
 
+For the normal path, omit `model`. Veryfront uses runtime conventions:
+local inference by default, and Veryfront Cloud defaults when
+`VERYFRONT_API_TOKEN` plus project context are available.
+
 ## Define an agent
 
 Create a file in `agents/`:
@@ -18,7 +22,6 @@ import { agent } from "veryfront/agent";
 
 export default agent({
   id: "assistant",
-  model: "openai/gpt-4o",
   system: "You are a helpful assistant. Answer concisely.",
 });
 ```
@@ -35,7 +38,6 @@ import { agent } from "veryfront/agent";
 
 export default agent({
   id: "assistant",
-  model: "openai/gpt-4o",
   system: "You are a weather assistant.",
   tools: { getWeather: true },
   maxSteps: 5,
@@ -54,7 +56,6 @@ import { agent } from "veryfront/agent";
 
 export default agent({
   id: "assistant",
-  model: "openai/gpt-4o",
   system: "You are a support engineer. Use skills when they match the task.",
   skills: ["incident-response", "repo-maintainer"], // or `true` for all discovered skills
   tools: {
@@ -65,6 +66,7 @@ export default agent({
 ```
 
 When `skills` is enabled, the runtime automatically registers these skill tools:
+
 - `load-skill`
 - `load-skill-reference`
 - `execute-skill-script`
@@ -86,8 +88,8 @@ The runtime enforces that non-skill tools cannot run before a successful `load-s
 
 Skill scripts run in one of two modes, selected automatically:
 
-- **Local (development)**: When `SANDBOX_AUTH_TOKEN` is not set, scripts run as direct subprocesses on your machine via `runCommand()`. No remote sandbox is needed.
-- **Cloud (production)**: When `SANDBOX_AUTH_TOKEN` is set, scripts are uploaded to and executed inside a remote sandbox session.
+- **Local (development)**: When no Veryfront Cloud sandbox credentials are available, scripts run as direct subprocesses on your machine via `runCommand()`. No remote sandbox is needed.
+- **Cloud (production)**: When `SANDBOX_AUTH_TOKEN`, `VERYFRONT_API_TOKEN`, or request-scoped Veryfront credentials are available, scripts are uploaded to and executed inside a remote sandbox session.
 
 You don't need any sandbox infrastructure for local development — scripts just run directly.
 
@@ -126,9 +128,9 @@ const result = await agent.generate({
   input: "Summarize the latest news about AI.",
 });
 
-console.log(result.text);       // The agent's response
-console.log(result.toolCalls);  // Tools the agent called
-console.log(result.usage);      // Token usage
+console.log(result.text); // The agent's response
+console.log(result.toolCalls); // Tools the agent called
+console.log(result.usage); // Token usage
 ```
 
 ## Dynamic system prompts
@@ -138,7 +140,6 @@ The `system` property accepts a string, a function, or an async function:
 ```ts
 export default agent({
   id: "assistant",
-  model: "openai/gpt-4o",
   system: async () => {
     const date = new Date().toLocaleDateString();
     return `You are a helpful assistant. Today is ${date}.`;
@@ -148,18 +149,18 @@ export default agent({
 
 ## Agent configuration
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `id` | `string` | Unique identifier used with `getAgent()` |
-| `model` | `string` | Provider and model (e.g. `"openai/gpt-4o"`, `"anthropic/claude-sonnet-4-5-20250929"`) |
-| `system` | `string \| () => string \| Promise<string>` | System prompt |
-| `tools` | `Record<string, boolean \| Tool>` | Tools the agent can use |
-| `maxSteps` | `number` | Max tool-call iterations per request |
-| `memory` | `MemoryConfig` | Conversation memory settings |
-| `streaming` | `boolean` | Enable streaming (default: `true`) |
-| `middleware` | `AgentMiddleware[]` | Execution middleware |
-| `allowedModels` | `string[]` | Restrict runtime model overrides to these `provider/model` strings |
-| `skills` | `true \| string[]` | Enable all skills (`true`) or only specific skill IDs |
+| Property        | Type                                        | Description                                                                           |
+| --------------- | ------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `id`            | `string`                                    | Unique identifier used with `getAgent()`                                              |
+| `model`         | `string`                                    | Optional provider/model override. Omit or use `"auto"` for runtime defaults. |
+| `system`        | `string \| () => string \| Promise<string>` | System prompt                                                                         |
+| `tools`         | `Record<string, boolean \| Tool>`           | Tools the agent can use                                                               |
+| `maxSteps`      | `number`                                    | Max tool-call iterations per request                                                  |
+| `memory`        | `MemoryConfig`                              | Conversation memory settings                                                          |
+| `streaming`     | `boolean`                                   | Enable streaming (default: `true`)                                                    |
+| `middleware`    | `AgentMiddleware[]`                         | Execution middleware                                                                  |
+| `allowedModels` | `string[]`                                  | Restrict runtime model overrides to these `provider/model` strings                    |
+| `skills`        | `true \| string[]`                          | Enable all skills (`true`) or only specific skill IDs                                 |
 
 ## Next
 

@@ -8,6 +8,9 @@ order: 8
 
 Conversation memory strategies and streaming responses.
 
+Memory configuration is independent of model selection, so these examples omit
+`model` and follow the runtime default.
+
 ## Memory types
 
 Configure memory on your agent to persist messages across requests:
@@ -22,7 +25,6 @@ import { agent } from "veryfront/agent";
 
 export default agent({
   id: "assistant",
-  model: "openai/gpt-4o",
   system: "You are a helpful assistant.",
   memory: {
     type: "buffer",
@@ -37,7 +39,6 @@ Sliding window based on token count. Drops the oldest messages when the limit is
 
 ```ts
 export default agent({
-  model: "openai/gpt-4o",
   system: "You are a helpful assistant.",
   memory: {
     type: "conversation",
@@ -52,7 +53,6 @@ Automatically summarizes older messages to fit more context into fewer tokens:
 
 ```ts
 export default agent({
-  model: "openai/gpt-4o",
   system: "You are a research assistant.",
   memory: {
     type: "summary",
@@ -74,7 +74,6 @@ import Redis from "ioredis";
 const redis = new Redis(getEnv("REDIS_URL"));
 
 export default agent({
-  model: "openai/gpt-4o",
   system: "You are a support agent.",
   memory: createRedisMemory("support", {
     type: "redis",

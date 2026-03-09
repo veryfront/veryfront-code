@@ -110,8 +110,8 @@ export async function getTransformers(): Promise<TransformersModule> {
         type: "no_ai_available",
         message:
           "Local AI model unavailable — native ONNX Runtime is not supported in this environment " +
-          "(e.g. compiled binaries). Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY " +
-          "in your .env file to use a cloud provider instead.",
+          "(e.g. compiled binaries). Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or " +
+          "configure OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider instead.",
       }),
     );
   }
@@ -185,8 +185,8 @@ async function loadPipeline(modelInfo: ModelInfo): Promise<Pipeline> {
           type: "no_ai_available",
           message:
             "Local AI model unavailable — native ONNX Runtime is not supported in this environment " +
-            "(e.g. compiled binaries). Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY " +
-            "in your .env file to use a cloud provider instead.",
+            "(e.g. compiled binaries). Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or " +
+            "configure OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider instead.",
         }),
       );
     }

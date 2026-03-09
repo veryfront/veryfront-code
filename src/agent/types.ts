@@ -45,7 +45,14 @@ import type { EdgeConfig, MemoryConfig } from "./schemas/index.ts";
 
 export interface AgentConfig {
   id?: string;
-  model: ModelString;
+  /**
+   * Optional model string in "provider/model" format.
+   *
+   * When omitted or set to `"auto"`, Veryfront chooses the runtime default:
+   * local inference by default, automatically upgrading to an available cloud
+   * provider when bootstrap credentials are present.
+   */
+  model?: ModelString;
   system: string | (() => string) | (() => Promise<string>);
   tools?: true | Record<string, Tool | boolean>;
   maxSteps?: number;
@@ -70,6 +77,8 @@ export interface AgentConfig {
    */
   skills?: true | string[];
 }
+
+export type ResolvedAgentConfig = AgentConfig & { model: ModelString };
 
 // Import for use in AgentMiddleware
 import type { AgentContext, AgentResponse } from "./schemas/index.ts";
@@ -116,7 +125,7 @@ export interface AgentStreamResult {
 
 export interface Agent {
   id: string;
-  config: AgentConfig;
+  config: ResolvedAgentConfig;
 
   generate(input: {
     input: string | Message[];

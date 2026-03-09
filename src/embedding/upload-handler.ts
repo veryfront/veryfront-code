@@ -1,9 +1,12 @@
+import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
+import { VeryfrontCloudBlobStorage } from "#veryfront/workflow/blob/veryfront-cloud-storage.ts";
 import { serverLogger } from "#veryfront/utils";
-import type { UploadStore } from "./types.ts";
+import type { RagStore } from "./types.ts";
 import { loadUpload } from "./upload-loader.ts";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_FILE_NAME_LENGTH = 200;
+const CLOUD_UPLOAD_PREFIX = ".veryfront/rag/uploads/";
 
 const MIME_TO_TYPE: Record<string, string> = {
   "text/plain": "txt",
@@ -64,6 +67,35 @@ interface UploadHandlerConfig {
   maxFileSize?: number;
 }
 
+async function enrichUploadsWithSourceUrls(
+  uploads: Awaited<ReturnType<RagStore["listDocuments"]>>,
+): Promise<Awaited<ReturnType<RagStore["listDocuments"]>>> {
+  const sourceBlobStorage = getSourceBlobStorage();
+  if (!sourceBlobStorage) return uploads;
+
+  return await Promise.all(
+    uploads.map(async (upload) => {
+      if (!upload.source.startsWith("upload:")) {
+        return upload;
+      }
+
+      try {
+        const blob = await sourceBlobStorage.stat(upload.id);
+        return blob?.url ? { ...upload, url: blob.url } : upload;
+      } catch (error) {
+        serverLogger.warn("Upload source URL lookup failed:", error);
+        return upload;
+      }
+    }),
+  );
+}
+
+function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
+  return isVeryfrontCloudEnabled()
+    ? new VeryfrontCloudBlobStorage({ prefix: CLOUD_UPLOAD_PREFIX })
+    : null;
+}
+
 /**
  * Creates HTTP route handlers for upload, listing, and deletion.
  *
@@ -72,8 +104,10 @@ interface UploadHandlerConfig {
  *
  * Returns `{ POST, GET, DELETE }` handlers compatible with file-based routing.
  * POST accepts multipart form data with a `file` field, extracts text via
- * `loadUpload`, and ingests into the provided upload store. GET returns
- * the upload list. DELETE removes an upload by ID from route params.
+ * `loadUpload`, and ingests into the provided RAG store. When Veryfront Cloud
+ * bootstrap is present, the original binary is also stored in the project's
+ * uploads store via the cloud adapter. GET returns the upload list. DELETE
+ * removes an upload by ID from route params.
  *
  * @example
  * ```ts
@@ -94,7 +128,7 @@ interface UploadHandlerConfig {
  * ```
  */
 export function createUploadHandler(
-  store: UploadStore,
+  store: RagStore,
   config?: UploadHandlerConfig,
 ) {
   const maxSize = config?.maxFileSize ?? MAX_FILE_SIZE;
@@ -140,6 +174,32 @@ export function createUploadHandler(
         type: fileType,
       });
 
+      const sourceBlobStorage = getSourceBlobStorage();
+      if (sourceBlobStorage) {
+        try {
+          await sourceBlobStorage.put(file, {
+            id,
+            mimeType: file.type || typeToMime(fileType),
+            metadata: {
+              originalName: safeName,
+              source: `upload:${safeName}`,
+              title: safeName,
+              type: fileType,
+            },
+          });
+        } catch (error) {
+          try {
+            await store.removeDocument(id);
+          } catch (cleanupError) {
+            serverLogger.warn(
+              "Upload rollback failed after source persistence error:",
+              cleanupError,
+            );
+          }
+          throw error;
+        }
+      }
+
       return Response.json({
         success: true,
         upload: { id, title: file.name, type: fileType },
@@ -152,7 +212,7 @@ export function createUploadHandler(
 
   async function GET(): Promise<Response> {
     try {
-      const uploads = await store.listUploads();
+      const uploads = await enrichUploadsWithSourceUrls(await store.listDocuments());
       return Response.json({ uploads });
     } catch (error) {
       serverLogger.error("Upload list failed:", error);
@@ -169,7 +229,17 @@ export function createUploadHandler(
       if (!id) {
         return Response.json({ error: "Missing upload ID" }, { status: 400 });
       }
-      await store.removeUpload(id);
+      await store.removeDocument(id);
+
+      const sourceBlobStorage = getSourceBlobStorage();
+      if (sourceBlobStorage) {
+        try {
+          await sourceBlobStorage.delete(id);
+        } catch (error) {
+          serverLogger.warn("Upload source cleanup failed:", error);
+        }
+      }
+
       return Response.json({ success: true });
     } catch (error) {
       serverLogger.error("Upload delete failed:", error);

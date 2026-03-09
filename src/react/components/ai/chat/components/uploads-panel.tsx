@@ -7,6 +7,7 @@ export interface UploadedFile {
   name: string;
   size?: number;
   type?: string;
+  url?: string;
 }
 
 export interface UploadsPanelProps {
@@ -66,9 +67,22 @@ export function UploadsPanel({
                     <FileTextIcon className="size-4" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-[var(--card-foreground)] truncate">
-                      {doc.name}
-                    </p>
+                    {doc.url
+                      ? (
+                        <a
+                          href={doc.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block truncate text-sm text-[var(--card-foreground)] hover:underline"
+                        >
+                          {doc.name}
+                        </a>
+                      )
+                      : (
+                        <p className="text-sm text-[var(--card-foreground)] truncate">
+                          {doc.name}
+                        </p>
+                      )}
                     {doc.size != null && (
                       <p className="text-xs text-[var(--muted-foreground)]">
                         {formatFileSize(doc.size)}

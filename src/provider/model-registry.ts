@@ -29,6 +29,11 @@ import { DEFAULT_LOCAL_MODEL } from "./local/model-catalog.ts";
 import { createLocalModel } from "./local/ai-sdk-adapter.ts";
 import { isLocalAIDisabled } from "./local/env.ts";
 import { verifyLocalRuntime } from "./local/local-engine.ts";
+import {
+  getDefaultVeryfrontCloudModel,
+  isVeryfrontCloudEnabled,
+} from "#veryfront/platform/cloud/resolver.ts";
+import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
 
 const localLogger = serverLogger.component("local-llm");
 
@@ -135,19 +140,30 @@ function autoInitializeFromEnv(): void {
       return createLocalModel(id);
     });
   }
+
+  if (!manager.has("veryfront-cloud")) {
+    manager.registerShared("veryfront-cloud", (id) => {
+      return createVeryfrontCloudModel(id);
+    });
+  }
 }
 
 /**
  * Default cloud models to try when auto-upgrading from a local model.
- * Ordered by preference: Anthropic → OpenAI → Google.
+ * Ordered by preference: Veryfront Cloud → Anthropic → OpenAI → Google.
  *
  * NOTE: model IDs are hardcoded — update when default models change.
  */
 const CLOUD_UPGRADE_CANDIDATES: Array<{
   provider: string;
-  model: string;
+  model: string | (() => string);
   hasKey: () => boolean;
 }> = [
+  {
+    provider: "veryfront-cloud",
+    model: () => getDefaultVeryfrontCloudModel().replace(/^veryfront-cloud\//, ""),
+    hasKey: () => isVeryfrontCloudEnabled(),
+  },
   {
     provider: "anthropic",
     model: "claude-sonnet-4-20250514",
@@ -179,7 +195,8 @@ export function findAvailableCloudModel(): string | null {
   for (const { provider, model, hasKey } of CLOUD_UPGRADE_CANDIDATES) {
     if (!hasKey()) continue;
     if (!manager.has(provider)) continue;
-    return `${provider}/${model}`;
+    const resolvedModel = typeof model === "function" ? model() : model;
+    return `${provider}/${resolvedModel}`;
   }
   return null;
 }
@@ -250,7 +267,8 @@ export function resolveModel(modelString: string): LanguageModel {
       }
 
       localLogger.info(
-        `⚡ "${providerName}" unavailable (missing API key). Falling back to local model.`,
+        `⚡ "${providerName}" unavailable (missing credentials or configuration). ` +
+          "Falling back to local model.",
       );
       const localFactory = manager.get("local")!;
       return localFactory(DEFAULT_LOCAL_MODEL);

@@ -12,25 +12,24 @@ Use the sandbox when your app needs short-lived, isolated execution for tasks li
 
 ## Create a sandbox session
 
-Use `Sandbox.create()` with a server-side token:
+Use `Sandbox.create()` with standard Veryfront Cloud auth. In local development,
+`VERYFRONT_API_TOKEN` is enough. In remote requests, request-scoped credentials
+are used automatically.
 
 ```ts
 import { Sandbox } from "veryfront/sandbox";
 
-const authToken = "<server-side-jwt>";
-
-const sandbox = await Sandbox.create({
-  authToken,
-});
+const sandbox = await Sandbox.create();
 ```
 
 You can also reconnect to an existing session:
 
 ```ts
-const sandbox = await Sandbox.get(sessionId, {
-  authToken,
-});
+const sandbox = await Sandbox.get(sessionId);
 ```
+
+If you need to override the resolved credentials, pass `authToken`
+explicitly. This can be a JWT or a Studio-generated API key.
 
 ## Execute commands
 
@@ -67,15 +66,14 @@ console.log(content);
 - Always call `await sandbox.close()` in `finally` blocks.
 - Use `sandbox.heartbeat()` during long-running sessions to avoid idle timeouts.
 - Persist `sandbox.id` only when you need reconnect semantics.
-- Keep `authToken` server-side only. Do not expose it to browsers.
+- Keep auth tokens and API keys server-side only. Do not expose them to browsers.
 
 ## Example with cleanup
 
 ```ts
 import { Sandbox } from "veryfront/sandbox";
 
-const authToken = "<server-side-jwt>";
-const sandbox = await Sandbox.create({ authToken });
+const sandbox = await Sandbox.create();
 
 try {
   const result = await sandbox.executeCommand("echo 'ready'");

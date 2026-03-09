@@ -1,5 +1,12 @@
 export interface EmbeddingConfig {
-  model: string; // "provider/model" format, e.g. "openai/text-embedding-3-small"
+  /**
+   * Optional model string in "provider/model" format.
+   *
+   * When omitted or set to `"auto"`, Veryfront chooses the runtime default:
+   * a local embedding model by default, automatically switching to the
+   * Veryfront Cloud embedding default when cloud bootstrap is present.
+   */
+  model?: string;
   documentPrefix?: string; // prepended when embedding documents, e.g. "search_document: "
   queryPrefix?: string; // prepended when embedding queries, e.g. "search_query: "
   batchSize?: number; // max texts per embedMany API call (default 100)
@@ -45,32 +52,37 @@ export interface VectorStore {
 }
 
 // ---------------------------------------------------------------------------
-// Upload Store
+// RAG Store
 // ---------------------------------------------------------------------------
 
-export interface UploadMeta {
+export interface RagDocumentMeta {
   id: string;
   title: string;
   source: string;
   type: string;
   createdAt: number;
+  url?: string;
 }
 
-export interface StoredChunk {
+export interface RagChunk {
   id: string;
-  uploadId: string;
+  documentId: string;
   text: string;
   embedding: number[]; // [] = not yet embedded
   index: number;
 }
 
-export interface UploadStoreData {
-  uploads: UploadMeta[];
-  chunks: StoredChunk[];
+export interface RagStoreData {
+  documents: RagDocumentMeta[];
+  chunks: RagChunk[];
 }
 
-export interface UploadStoreConfig {
-  model: string;
+export type RagStoreBackend = "auto" | "local-json" | "veryfront-cloud";
+
+export interface RagStoreConfig {
+  model?: string;
+  backend?: RagStoreBackend;
+  branch?: string; // optional branch override for cloud-backed stores
   storagePath?: string; // default "data/index.json"
   contentDir?: string; // optional auto-index dir
   contentExtensions?: string[]; // default [".md", ".mdx", ".txt"]
@@ -80,24 +92,24 @@ export interface UploadStoreConfig {
   batchSize?: number;
 }
 
-export interface UploadSearchResult {
+export interface RagSearchResult {
   text: string;
   score: number;
-  uploadId: string;
+  documentId: string;
   title: string;
   source: string;
   type: string;
 }
 
-export interface UploadSearchOptions {
+export interface RagSearchOptions {
   topK?: number; // default 5
   threshold?: number; // minimum similarity score
 }
 
-export interface UploadStore {
+export interface RagStore {
   ingest(title: string, text: string, meta?: { source?: string; type?: string }): Promise<string>;
-  search(query: string, options?: UploadSearchOptions): Promise<UploadSearchResult[]>;
-  listUploads(): Promise<UploadMeta[]>;
-  removeUpload(id: string): Promise<void>;
+  search(query: string, options?: RagSearchOptions): Promise<RagSearchResult[]>;
+  listDocuments(): Promise<RagDocumentMeta[]>;
+  removeDocument(id: string): Promise<void>;
   indexContentDir(): Promise<void>;
 }

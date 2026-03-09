@@ -1,16 +1,36 @@
 ---
 title: "Providers"
-description: "AI SDK model provider registry with auto-initialization from environment variables."
+description: "AI SDK model provider registry with runtime conventions and explicit overrides."
 order: 12
 ---
 
 # Providers
 
-AI SDK model provider registry. Maps "provider/model" strings to AI SDK LanguageModel instances.
+AI SDK model provider registry. Maps "provider/model" strings to AI SDK `LanguageModel` instances.
 
-## Environment variables (recommended)
+## Runtime conventions (recommended)
 
-Providers are auto-initialized from standard environment variables on first use:
+For most projects, omit `model` entirely and let runtime defaults choose the
+right backend:
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  system: "You are a helpful assistant.",
+});
+```
+
+By convention:
+
+- local development without cloud bootstrap uses local inference or explicit
+  provider env vars
+- Veryfront Cloud is selected automatically when `VERYFRONT_API_TOKEN` and
+  project context such as `VERYFRONT_PROJECT_SLUG` are available
+- `VERYFRONT_DEFAULT_MODEL`, `VERYFRONT_DEFAULT_EMBEDDING_MODEL`, and
+  `VERYFRONT_RAG_BACKEND` are escape hatches, not required config
+
+## Explicit provider environment variables
 
 | Variable | Provider |
 |----------|----------|
@@ -19,15 +39,15 @@ Providers are auto-initialized from standard environment variables on first use:
 | `GOOGLE_API_KEY` | Google |
 | `OPENAI_BASE_URL` | Custom OpenAI-compatible endpoint |
 
-No setup code is needed — just set env vars and use `agent()`:
+Explicit provider env vars still work when you want to pin a provider directly:
 
 ```ts
 import { agent } from "veryfront/agent";
 
 export default agent({
-  model: "openai/gpt-4o",       // OpenAI
-  // model: "anthropic/claude-sonnet-4-20250514", // Anthropic
-  // model: "google/gemini-2.0-flash",  // Google
+  model: "openai/gpt-5.2",       // OpenAI
+  // model: "anthropic/claude-sonnet-4-6", // Anthropic
+  // model: "google/gemini-2.5-flash",     // Google
   system: "You are a helpful assistant.",
 });
 ```
@@ -67,8 +87,11 @@ VERYFRONT_DISABLE_LOCAL_AI=1
 Agents reference models as `"provider/model"`. The framework splits on the first `/`, so nested model IDs work:
 
 ```ts
-// Standard
-agent({ model: "openai/gpt-4o" })
+// Veryfront Cloud explicit override
+agent({ model: "veryfront-cloud/openai/gpt-5.2" })
+
+// Direct provider override
+agent({ model: "openai/gpt-5.2" })
 
 // Nested model ID (e.g. OpenRouter)
 agent({ model: "openai/meta-llama/llama-3.1-405b" })
@@ -113,7 +136,8 @@ For cases outside the agent system:
 ```ts
 import { resolveModel } from "veryfront/provider";
 
-const model = resolveModel("openai/gpt-4o");
+const model = resolveModel("openai/gpt-5.2");
+const cloudModel = resolveModel("veryfront-cloud/openai/gpt-5.2");
 ```
 
 ## Next

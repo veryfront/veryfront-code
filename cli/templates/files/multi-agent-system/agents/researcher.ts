@@ -2,7 +2,6 @@ import { agent } from "veryfront/agent";
 
 export default agent({
   id: "researcher",
-  model: "openai/gpt-4o",
   system:
     "You are a research specialist. " +
     "Gather comprehensive information on the given topic. " +

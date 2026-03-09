@@ -4,6 +4,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { getGoogleGenAIEnvConfig, getOpenAIEnvConfig } from "#veryfront/config/env.ts";
 import { createLocalEmbeddingModel } from "#veryfront/provider/local/local-embedding-adapter.ts";
+import { createVeryfrontCloudEmbeddingModel } from "./veryfront-cloud/provider.ts";
 
 type EmbeddingProviderFactory = (modelId: string) => EmbeddingModel;
 
@@ -65,6 +66,10 @@ function autoInitializeFromEnv(): void {
 
   if (!providers.has("local")) {
     providers.set("local", createLocalEmbeddingModel);
+  }
+
+  if (!providers.has("veryfront-cloud")) {
+    providers.set("veryfront-cloud", createVeryfrontCloudEmbeddingModel);
   }
 }
 

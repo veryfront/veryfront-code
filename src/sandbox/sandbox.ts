@@ -7,15 +7,22 @@
  * @module
  */
 
-import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import {
+  createError,
+  INITIALIZATION_ERROR,
+  REQUEST_ERROR,
+  TIMEOUT_ERROR,
+  toError,
+} from "#veryfront/errors";
+import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 /** Options for creating a sandbox session. */
 export interface SandboxOptions {
   /** Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL env. */
   apiUrl?: string;
-  /** User's JWT for authentication. */
-  authToken: string;
+  /** Explicit Veryfront auth token or API key override. */
+  authToken?: string;
 }
 
 /** Result of a command execution: stdout, stderr, and exit code. */
@@ -41,20 +48,34 @@ export class Sandbox {
     private apiUrl: string,
   ) {}
 
-  private static resolveApiUrl(options: SandboxOptions): string {
+  private static resolveApiUrl(options: SandboxOptions = {}): string {
     return options.apiUrl ||
       getHostEnv("VERYFRONT_API_URL") ||
       "https://api.veryfront.com";
   }
 
+  private static resolveAuthToken(options: SandboxOptions = {}): string {
+    const authToken = options.authToken?.trim() || getVeryfrontCloudAuthToken();
+    if (authToken) return authToken;
+
+    throw toError(
+      createError({
+        type: "config",
+        message:
+          "Sandbox auth not configured. Set VERYFRONT_API_TOKEN, provide request-scoped Veryfront credentials, or pass authToken explicitly.",
+      }),
+    );
+  }
+
   /** Create a new sandbox session. Claims a warm pod or creates a new one. */
-  static async create(options: SandboxOptions): Promise<Sandbox> {
+  static async create(options: SandboxOptions = {}): Promise<Sandbox> {
     const apiUrl = Sandbox.resolveApiUrl(options);
+    const authToken = Sandbox.resolveAuthToken(options);
 
     const res = await fetch(`${apiUrl}/sandbox-sessions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${options.authToken}`,
+        Authorization: `Bearer ${authToken}`,
         "Content-Type": "application/json",
       },
     });
@@ -69,18 +90,19 @@ export class Sandbox {
 
     // If not yet running, poll until ready
     if (status !== "running") {
-      await Sandbox.waitForReady(apiUrl, id, options.authToken);
+      await Sandbox.waitForReady(apiUrl, id, authToken);
     }
 
-    return new Sandbox(endpoint, id, options.authToken, apiUrl);
+    return new Sandbox(endpoint, id, authToken, apiUrl);
   }
 
   /** Reconnect to an existing sandbox session. */
-  static async get(id: string, options: SandboxOptions): Promise<Sandbox> {
+  static async get(id: string, options: SandboxOptions = {}): Promise<Sandbox> {
     const apiUrl = Sandbox.resolveApiUrl(options);
+    const authToken = Sandbox.resolveAuthToken(options);
 
     const res = await fetch(`${apiUrl}/sandbox-sessions/${id}`, {
-      headers: { Authorization: `Bearer ${options.authToken}` },
+      headers: { Authorization: `Bearer ${authToken}` },
     });
 
     if (!res.ok) {
@@ -90,7 +112,7 @@ export class Sandbox {
     }
 
     const { endpoint } = await res.json();
-    return new Sandbox(endpoint, id, options.authToken, apiUrl);
+    return new Sandbox(endpoint, id, authToken, apiUrl);
   }
 
   private static async waitForReady(

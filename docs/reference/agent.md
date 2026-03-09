@@ -29,7 +29,6 @@ import {
 import { agent } from "veryfront/agent";
 
 const assistant = agent({
-  model: "openai/gpt-4o",
   system: "You are a helpful assistant.",
 });
 ```
@@ -49,7 +48,6 @@ const searchTool = tool({
 });
 
 const assistant = agent({
-  model: "openai/gpt-4o",
   system: "You are a helpful assistant.",
   tools: { search: searchTool },
   memory: { type: "conversation", maxMessages: 50 },
@@ -62,7 +60,6 @@ const assistant = agent({
 import { agent } from "veryfront/agent";
 
 const assistant = agent({
-  model: "openai/gpt-4o",
   system: "You are a support engineer. Use skills when relevant.",
   skills: ["incident-response", "repo-maintainer"], // or `true` for all discovered skills
   tools: {
@@ -79,7 +76,6 @@ const assistant = agent({
 import { agent } from "veryfront/agent";
 
 const assistant = agent({
-  model: "openai/gpt-4o",
   system: "You are a helpful assistant.",
 });
 
@@ -95,14 +91,13 @@ export async function POST(req: Request) {
 ```ts
 import { agent, getAgentsAsTools, registerAgent } from "veryfront/agent";
 
-const researcher = agent({ model: "openai/gpt-4o", system: "Research topics thoroughly." });
-const writer = agent({ model: "openai/gpt-4o", system: "Write clear prose." });
+const researcher = agent({ system: "Research topics thoroughly." });
+const writer = agent({ system: "Write clear prose." });
 
 registerAgent(researcher);
 registerAgent(writer);
 
 const orchestrator = agent({
-  model: "openai/gpt-4o",
   system: "Coordinate research and writing.",
   tools: getAgentsAsTools(["researcher", "writer"]),
 });
@@ -114,10 +109,14 @@ const orchestrator = agent({
 
 Create an agent
 
+When `model` is omitted, Veryfront defaults to the runtime convention: local
+inference by default, automatically upgrading to an available cloud provider
+when bootstrap credentials are present.
+
 | Property         | Type                                                                                 | Description                                                         |
 | ---------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
 | `id?`            | `string`                                                                             | Unique identifier (auto-generated if omitted)                       |
-| `model`          | `ModelString`                                                                        | Provider and model (e.g. `"openai/gpt-4o"`)                         |
+| `model?`         | `ModelString`                                                                        | Provider/model override. Omit or use `"auto"` for runtime defaults. |
 | `system`         | <code>string &#124; (() =&gt; string) &#124; (() =&gt; Promise&lt;string&gt;)</code> | System prompt — string, function, or async function                 |
 | `tools?`         | <code>true &#124; Record&lt;string, Tool &#124; boolean&gt;</code>                   | Tools available to the agent                                        |
 | `maxSteps?`      | `number`                                                                             | Max tool-call iterations per request                                |

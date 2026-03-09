@@ -56,7 +56,6 @@ const weather = tool({
 });
 
 const assistant = agent({
-  model: "openai/gpt-4o",
   system: "You help with weather questions.",
   tools: [weather],
 });

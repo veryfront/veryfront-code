@@ -14,7 +14,7 @@ Create a file in `workflows/`:
 
 ```ts
 // workflows/content-pipeline.ts
-import { workflow, step } from "veryfront/workflow";
+import { step, workflow } from "veryfront/workflow";
 
 export default workflow({
   id: "content-pipeline",
@@ -34,36 +34,36 @@ A step runs an agent or a tool:
 
 ```ts
 // Run an agent
-step("research", { agent: "researcher" })
+step("research", { agent: "researcher" });
 
 // Run a tool
-step("fetch-data", { tool: "webScraper" })
+step("fetch-data", { tool: "webScraper" });
 
 // With custom input
 step("summarize", {
   agent: "writer",
   input: (ctx) => `Summarize this: ${ctx.results.research}`,
-})
+});
 ```
 
 ### Step options
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `agent` | `string \| Agent` | Agent to run (by ID or instance) |
-| `tool` | `string \| Tool` | Tool to execute (by ID or instance) |
-| `input` | `string \| object \| (ctx) => unknown` | Step input |
-| `checkpoint` | `boolean` | Persist state after this step |
-| `retry` | `RetryConfig` | Retry on failure |
-| `timeout` | `string \| number` | Step timeout |
-| `skip` | `(ctx) => boolean` | Skip this step conditionally |
+| Property     | Type                                   | Description                         |
+| ------------ | -------------------------------------- | ----------------------------------- |
+| `agent`      | `string \| Agent`                      | Agent to run (by ID or instance)    |
+| `tool`       | `string \| Tool`                       | Tool to execute (by ID or instance) |
+| `input`      | `string \| object \| (ctx) => unknown` | Step input                          |
+| `checkpoint` | `boolean`                              | Persist state after this step       |
+| `retry`      | `RetryConfig`                          | Retry on failure                    |
+| `timeout`    | `string \| number`                     | Step timeout                        |
+| `skip`       | `(ctx) => boolean`                     | Skip this step conditionally        |
 
 ## Parallel execution
 
 Run steps concurrently:
 
 ```ts
-import { workflow, step, parallel } from "veryfront/workflow";
+import { parallel, step, workflow } from "veryfront/workflow";
 
 export default workflow({
   id: "report",
@@ -84,9 +84,9 @@ All three analysis steps run at the same time. The `"compile"` step waits for al
 ### Parallel strategies
 
 ```ts
-parallel("race-check", steps, { strategy: "race" })       // First to finish wins
-parallel("best-effort", steps, { strategy: "allSettled" }) // Continue even if some fail
-parallel("all-required", steps, { strategy: "all" })       // Default — all must succeed
+parallel("race-check", steps, { strategy: "race" }); // First to finish wins
+parallel("best-effort", steps, { strategy: "allSettled" }); // Continue even if some fail
+parallel("all-required", steps, { strategy: "all" }); // Default — all must succeed
 ```
 
 ## Branching
@@ -94,7 +94,7 @@ parallel("all-required", steps, { strategy: "all" })       // Default — all mu
 Use `branch` for conditional paths:
 
 ```ts
-import { workflow, step, branch } from "veryfront/workflow";
+import { branch, step, workflow } from "veryfront/workflow";
 
 export default workflow({
   id: "support",
@@ -113,15 +113,15 @@ export default workflow({
 Shorthand helpers:
 
 ```ts
-import { when, unless } from "veryfront/workflow";
+import { unless, when } from "veryfront/workflow";
 
 when("needs-approval", (ctx) => ctx.results.classify.sensitive, [
   step("review", { agent: "reviewer" }),
-])
+]);
 
 unless("is-cached", (ctx) => ctx.cache.has(key), [
   step("fetch", { tool: "fetcher" }),
-])
+]);
 ```
 
 ## Human-in-the-loop
@@ -129,7 +129,7 @@ unless("is-cached", (ctx) => ctx.cache.has(key), [
 Pause a workflow until a human approves or rejects:
 
 ```ts
-import { workflow, step, waitForApproval } from "veryfront/workflow";
+import { step, waitForApproval, workflow } from "veryfront/workflow";
 
 export default workflow({
   id: "publish",
@@ -156,7 +156,7 @@ import { waitForEvent } from "veryfront/workflow";
 waitForEvent("payment-confirmed", {
   event: "payment.completed",
   timeout: "1h",
-})
+});
 ```
 
 ## Loops
@@ -164,35 +164,35 @@ waitForEvent("payment-confirmed", {
 Repeat steps based on conditions:
 
 ```ts
-import { loop, doWhile, times, map } from "veryfront/workflow";
+import { doWhile, loop, map, times } from "veryfront/workflow";
 
 // Repeat while condition is true
 loop("refine", (ctx) => ctx.results.review.score < 0.9, [
   step("rewrite", { agent: "writer" }),
   step("review", { agent: "reviewer" }),
-])
+]);
 
 // Execute once, then repeat while true
 doWhile("poll", (ctx) => !ctx.results.check.done, [
   step("check", { tool: "statusChecker" }),
   delay("wait", "5s"),
-])
+]);
 
 // Fixed iterations
 times("generate", 3, [
   step("variant", { agent: "writer" }),
-])
+]);
 
 // Map over array items
 map("process", (ctx) => ctx.input.urls, [
   step("scrape", { tool: "webScraper" }),
-])
+]);
 ```
 
 ## Workflow configuration
 
 ```ts
-import { workflow, step } from "veryfront/workflow";
+import { step, workflow } from "veryfront/workflow";
 import { z } from "zod";
 
 export default workflow({
@@ -215,12 +215,36 @@ export default workflow({
 });
 ```
 
+## Blob storage
+
+For large workflow artifacts, configure `blobStorage` on the executor.
+
+Use `VeryfrontCloudBlobStorage` when you want workflow blobs stored in the
+project uploads service on Veryfront Cloud:
+
+```ts
+import { MemoryBackend, WorkflowExecutor } from "veryfront/workflow";
+import { VeryfrontCloudBlobStorage } from "veryfront/workflow/blob";
+
+const executor = new WorkflowExecutor({
+  backend: new MemoryBackend(),
+  blobStorage: new VeryfrontCloudBlobStorage(),
+});
+```
+
+`VeryfrontCloudBlobStorage()` follows the standard cloud bootstrap:
+
+- local development: `VERYFRONT_API_TOKEN` + `VERYFRONT_PROJECT_SLUG`
+- remote/proxy execution: request-scoped Veryfront credentials and project context
+
+Only pass `apiToken`, `projectSlug`, `apiBaseUrl`, or `prefix` when you need to override the defaults.
+
 ## React hooks
 
 Track workflow progress from the client:
 
 ```tsx
-'use client'
+"use client";
 import { useWorkflow, useWorkflowStart } from "veryfront/workflow";
 
 export default function PipelineDashboard() {
@@ -231,9 +255,7 @@ export default function PipelineDashboard() {
     <div>
       <button onClick={() => start({ topic: "AI agents" })}>Run Pipeline</button>
       <p>Status: {status}</p>
-      {steps.map((s) => (
-        <div key={s.name}>{s.name}: {s.status}</div>
-      ))}
+      {steps.map((s) => <div key={s.name}>{s.name}: {s.status}</div>)}
     </div>
   );
 }
