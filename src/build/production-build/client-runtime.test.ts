@@ -4,6 +4,7 @@ import * as esbuild from "esbuild";
 import {
   generateAppModule,
   generateClientModule,
+  generateImportMap,
   generatePrefetchScript,
   generateRouterScript,
 } from "./client-runtime.ts";
@@ -160,5 +161,42 @@ describe(
         });
       },
     );
+
+    describe("generateImportMap", () => {
+      it("should return an HTML script tag with importmap", async () => {
+        const importMap = await generateImportMap();
+        assertEquals(importMap.includes('<script type="importmap">'), true);
+        assertEquals(importMap.includes("</script>"), true);
+      });
+
+      it("should contain react in the import map", async () => {
+        const importMap = await generateImportMap();
+        assertEquals(importMap.includes("react"), true);
+      });
+
+      it("should contain valid JSON inside the script tag", async () => {
+        const importMap = await generateImportMap();
+        const jsonMatch = importMap.match(/<script type="importmap">\s*([\s\S]*?)\s*<\/script>/);
+        assertEquals(jsonMatch !== null, true);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[1]);
+          assertEquals(typeof parsed.imports, "object");
+        }
+      });
+    });
+
+    describe("generateAppModule edge cases", () => {
+      it("should include IIFE wrapper", () => {
+        const result = generateAppModule();
+        assertEquals(result.includes("(() => {"), true);
+        assertEquals(result.includes("})()"), true);
+      });
+
+      it("should include hydration support", () => {
+        const result = generateAppModule();
+        assertEquals(result.includes("window.hydrate"), true);
+        assertEquals(result.includes("async function"), true);
+      });
+    });
   },
 );

@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { extractImports, resolveImportPath } from "./import-utils.ts";
+import { extractImports, processImports, resolveImportPath } from "./import-utils.ts";
 
 describe("build/renderer/utils/import-utils", () => {
   describe("extractImports", () => {
@@ -82,6 +82,73 @@ describe("build/renderer/utils/import-utils", () => {
         resolveImportPath("https://cdn.example.com/lib.js", "/a/b.ts", "/a"),
         "https://cdn.example.com/lib.js",
       );
+    });
+  });
+
+  describe("processImports", () => {
+    it("should replace import paths using the processor", async () => {
+      const code = 'import { helper } from "./utils";\nconsole.log(helper);';
+      const result = await processImports(
+        code,
+        "/project/src/app.ts",
+        "/project",
+        async (importPath: string) => {
+          if (importPath.includes("utils")) return "./utils/index.js";
+          return null;
+        },
+      );
+      assertEquals(result.includes("./utils/index.js"), true);
+    });
+
+    it("should leave imports unchanged when processor returns null", async () => {
+      const code = 'import React from "react";';
+      const result = await processImports(
+        code,
+        "/project/src/app.ts",
+        "/project",
+        async () => null,
+      );
+      assertEquals(result, code);
+    });
+
+    it("should leave imports unchanged when processor returns same path", async () => {
+      const code = 'import { x } from "./same";';
+      const result = await processImports(
+        code,
+        "/project/src/app.ts",
+        "/project",
+        async () => "./same",
+      );
+      assertEquals(result, code);
+    });
+
+    it("should handle code with no imports", async () => {
+      const code = "const x = 1;";
+      const result = await processImports(
+        code,
+        "/project/src/app.ts",
+        "/project",
+        async () => "./replaced",
+      );
+      assertEquals(result, code);
+    });
+
+    it("should handle multiple imports", async () => {
+      const code = [
+        'import { a } from "./mod-a";',
+        'import { b } from "./mod-b";',
+      ].join("\n");
+      const result = await processImports(
+        code,
+        "/project/src/app.ts",
+        "/project",
+        async (importPath: string) => {
+          if (importPath.includes("mod-a")) return "./new-mod-a";
+          return null;
+        },
+      );
+      assertEquals(result.includes("./new-mod-a"), true);
+      assertEquals(result.includes("./mod-b"), true);
     });
   });
 });
