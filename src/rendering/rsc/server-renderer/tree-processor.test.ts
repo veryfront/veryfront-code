@@ -4,7 +4,10 @@ import { renderChildren, renderTree } from "./tree-processor.ts";
 import * as React from "react";
 import type { ClientComponentMeta } from "../types.ts";
 
-describe("rendering/rsc/server-renderer/tree-processor", { sanitizeResources: false, sanitizeOps: false }, () => {
+describe("rendering/rsc/server-renderer/tree-processor", {
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, () => {
   describe("renderTree", () => {
     it("should return empty html node for null component", async () => {
       const result = await renderTree(null, {}, new Map(), new Map());
@@ -103,7 +106,6 @@ describe("rendering/rsc/server-renderer/tree-processor", { sanitizeResources: fa
       function ClientComp() {
         return React.createElement("div", null, "client");
       }
-      // Mark as client component using __rsc_client flag
       (ClientComp as any).__rsc_client = true;
 
       const clientManifest = new Map<string, ClientComponentMeta>();
@@ -140,7 +142,6 @@ describe("rendering/rsc/server-renderer/tree-processor", { sanitizeResources: fa
         new Map(),
       );
 
-      // Fragment should be processed into child nodes
       assertEquals(result.type === "fragment" || result.type === "html", true);
     });
   });

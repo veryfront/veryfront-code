@@ -20,10 +20,12 @@ function createMockAdapter(files: Record<string, string> = {}): RuntimeAdapter {
   } as unknown as RuntimeAdapter;
 }
 
-function createMockCompileMDX(
-  _returnBundle?: MdxBundle,
-): (content: string, frontmatter?: Record<string, unknown>, filePath?: string) => Promise<MdxBundle> {
-  return async (content: string, _frontmatter?: Record<string, unknown>, _filePath?: string) => ({
+function createMockCompileMDX(): (
+  content: string,
+  frontmatter?: Record<string, unknown>,
+  filePath?: string,
+) => Promise<MdxBundle> {
+  return async (content: string) => ({
     compiledCode: `compiled:${content}`,
     frontmatter: {},
     globals: {},
@@ -38,7 +40,6 @@ describe("rendering/layouts/utils/compiler", () => {
       const adapter = createMockAdapter();
       const compile = createMockCompileMDX();
       await compileMDXLayouts([], compile, adapter);
-      // No error thrown = success
     });
 
     it("should skip non-mdx layouts", async () => {
@@ -48,7 +49,6 @@ describe("rendering/layouts/utils/compiler", () => {
         { kind: "tsx", path: "/layout.tsx" } as unknown as LayoutItem,
       ];
       await compileMDXLayouts(layouts, compile, adapter);
-      // tsx layouts should be skipped, no bundle assigned
       assertEquals(layouts[0].bundle, undefined);
     });
 

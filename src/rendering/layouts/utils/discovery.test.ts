@@ -42,7 +42,6 @@ describe("rendering/layouts/utils/discovery", () => {
 
     it("should clear cache for specific project", () => {
       clearLayoutDiscoveryCache("/project");
-      // Should not throw
     });
   });
 
@@ -145,7 +144,6 @@ describe("rendering/layouts/utils/discovery", () => {
         adapter,
       );
       assertEquals(layouts1.length, layouts2.length);
-      // Cache stats should show increased size
       const stats = getLayoutDiscoveryCacheStats();
       assertEquals(stats.size >= 1, true);
     });

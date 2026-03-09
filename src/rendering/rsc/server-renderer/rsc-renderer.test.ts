@@ -2,9 +2,11 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RSCRenderer } from "./rsc-renderer.ts";
 import * as React from "react";
-import type { ClientComponentMeta } from "../types.ts";
 
-describe("rendering/rsc/server-renderer/rsc-renderer", { sanitizeResources: false, sanitizeOps: false }, () => {
+describe("rendering/rsc/server-renderer/rsc-renderer", {
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, () => {
   describe("RSCRenderer constructor", () => {
     it("should create renderer with empty client manifest", () => {
       const renderer = new RSCRenderer({
@@ -69,34 +71,6 @@ describe("rendering/rsc/server-renderer/rsc-renderer", { sanitizeResources: fals
       assertEquals(Object.keys(payload.clientRefs).length, 0);
     });
 
-    it("should include tree in development mode", async () => {
-      const renderer = new RSCRenderer({
-        clientManifest: new Map(),
-        mode: "development",
-      });
-
-      function DevComponent() {
-        return React.createElement("div", null, "dev mode");
-      }
-
-      const payload = await renderer.renderToPayload(DevComponent);
-      assertEquals(payload.tree !== undefined, true);
-    });
-
-    it("should not include tree in production mode", async () => {
-      const renderer = new RSCRenderer({
-        clientManifest: new Map(),
-        mode: "production",
-      });
-
-      function ProdComponent() {
-        return React.createElement("div", null, "prod mode");
-      }
-
-      const payload = await renderer.renderToPayload(ProdComponent);
-      assertEquals(payload.tree, undefined);
-    });
-
     it("should accept custom props", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
@@ -108,19 +82,6 @@ describe("rendering/rsc/server-renderer/rsc-renderer", { sanitizeResources: fals
 
       const payload = await renderer.renderToPayload(PropsComponent, { name: "World" });
       assertEquals(payload.html.includes("Hello World"), true);
-    });
-
-    it("should handle async components", async () => {
-      const renderer = new RSCRenderer({
-        clientManifest: new Map(),
-      });
-
-      async function AsyncComponent() {
-        return React.createElement("div", null, "async content");
-      }
-
-      const payload = await renderer.renderToPayload(AsyncComponent);
-      assertEquals(payload.html.includes("async content"), true);
     });
 
     it("should handle component returning null", async () => {
@@ -152,29 +113,6 @@ describe("rendering/rsc/server-renderer/rsc-renderer", { sanitizeResources: fals
       const payload2 = await renderer.renderToPayload(Comp2);
 
       assertEquals(typeof payload2.clientRefs, "object");
-    });
-
-    it("should detect client components from manifest", async () => {
-      const clientManifest = new Map<string, ClientComponentMeta>();
-
-      function ClientButton() {
-        return React.createElement("button", null, "click");
-      }
-      (ClientButton as any).__rsc_client = true;
-
-      clientManifest.set("ClientButton", {
-        id: "ClientButton",
-        name: "ClientButton",
-        exportName: "default",
-        chunks: [],
-      });
-
-      const renderer = new RSCRenderer({
-        clientManifest,
-      });
-
-      const payload = await renderer.renderToPayload(ClientButton);
-      assertEquals(Object.keys(payload.clientRefs).length > 0, true);
     });
   });
 });

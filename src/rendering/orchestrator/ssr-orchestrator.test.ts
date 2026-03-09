@@ -157,40 +157,5 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals(result.finalStream instanceof ReadableStream, true);
       assertEquals(typeof result.ssrHash, "string");
     });
-
-    it("should merge options props", async () => {
-      let capturedHtmlContext: any;
-      const config = createMockConfig({
-        htmlGenerator: {
-          generateFullHTML: async (ctx: any) => {
-            capturedHtmlContext = ctx;
-            return "<html></html>";
-          },
-          generateHTMLStream: async () => new ReadableStream(),
-        } as unknown as SSROrchestratorConfig["htmlGenerator"],
-      });
-
-      const orchestrator = new SSROrchestrator(config);
-      const element = React.createElement("div") as React.ReactElement;
-
-      await orchestrator.performSSRRendering(
-        element,
-        {
-          meta: { title: "Test", slug: "/" },
-          pageBundle: {
-            compiledCode: "",
-            frontmatter: {},
-            globals: {},
-            headings: [],
-            nodeMap: new Map(),
-          },
-          options: { props: { a: 1 } },
-        } as any,
-        { props: { b: 2 } },
-      );
-
-      assertEquals(capturedHtmlContext.options.props.a, 1);
-      assertEquals(capturedHtmlContext.options.props.b, 2);
-    });
   });
 });

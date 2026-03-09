@@ -81,7 +81,7 @@ describe("rendering/orchestrator/lifecycle", () => {
         configManager,
         port: 3000,
       });
-      lifecycle.clearAllCaches(); // Should not throw
+      lifecycle.clearAllCaches();
     });
   });
 
@@ -97,7 +97,7 @@ describe("rendering/orchestrator/lifecycle", () => {
         configManager,
         port: 3000,
       });
-      lifecycle.clearSlugCache("test-slug"); // Should not throw
+      lifecycle.clearSlugCache("test-slug");
     });
   });
 
@@ -113,7 +113,7 @@ describe("rendering/orchestrator/lifecycle", () => {
         configManager,
         port: 3000,
       });
-      await lifecycle.destroy(); // Should not throw
+      await lifecycle.destroy();
     });
   });
 
@@ -130,13 +130,14 @@ describe("rendering/orchestrator/lifecycle", () => {
         port: 3000,
       });
       assertThrows(
-        () => lifecycle.updateCompileMDX(async () => ({
-          compiledCode: "",
-          frontmatter: {},
-          globals: {},
-          headings: [],
-          nodeMap: new Map(),
-        })),
+        () =>
+          lifecycle.updateCompileMDX(async () => ({
+            compiledCode: "",
+            frontmatter: {},
+            globals: {},
+            headings: [],
+            nodeMap: new Map(),
+          })),
         Error,
       );
     });

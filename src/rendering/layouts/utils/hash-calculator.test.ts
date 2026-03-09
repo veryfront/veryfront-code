@@ -93,11 +93,10 @@ describe("rendering/layouts/utils/hash-calculator", () => {
     });
 
     it("should handle file read errors gracefully for component paths", async () => {
-      const adapter = createMockAdapter({}); // no files
+      const adapter = createMockAdapter({});
       const nestedLayouts: LayoutItem[] = [
         { componentPath: "/nonexistent.tsx" } as unknown as LayoutItem,
       ];
-      // Should not throw, should return empty or partial hash
       const result = await computeDepsHash(undefined, nestedLayouts, adapter);
       assertEquals(typeof result, "string");
     });

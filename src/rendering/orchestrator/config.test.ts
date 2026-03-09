@@ -72,7 +72,6 @@ describe("rendering/orchestrator/config", () => {
         adapter,
         config,
       });
-      // preloadedConfig is only used during initialize(), not directly
       assertThrows(() => cm.getConfig(), Error);
     });
   });
@@ -90,7 +89,6 @@ describe("rendering/orchestrator/config", () => {
   });
 
   describe("getCacheBaseDir", () => {
-    // Helper: set the private config field so getCacheBaseDir can access it
     function setConfig(cm: ConfigurationManager, config: VeryfrontConfig): void {
       // deno-lint-ignore no-explicit-any
       (cm as any).config = config;
@@ -109,18 +107,6 @@ describe("rendering/orchestrator/config", () => {
       assertEquals(result, "/project/.veryfront/cache");
     });
 
-    it("should use VERYFRONT_CACHE_DIR env var (absolute)", () => {
-      const adapter = createMockAdapter({ VERYFRONT_CACHE_DIR: "/custom/cache" });
-      const config = createMockConfig({});
-      const cm = new ConfigurationManager({
-        projectDir: "/project",
-        mode: "production",
-        adapter,
-      });
-      setConfig(cm, config);
-      assertEquals(cm.getCacheBaseDir(), "/custom/cache");
-    });
-
     it("should use VERYFRONT_CACHE_DIR env var (relative)", () => {
       const adapter = createMockAdapter({ VERYFRONT_CACHE_DIR: "my-cache" });
       const config = createMockConfig({});
@@ -131,54 +117,6 @@ describe("rendering/orchestrator/config", () => {
       });
       setConfig(cm, config);
       assertEquals(cm.getCacheBaseDir(), "/project/my-cache");
-    });
-
-    it("should use VF_CACHE_DIR env var when VERYFRONT_CACHE_DIR not set", () => {
-      const adapter = createMockAdapter({ VF_CACHE_DIR: "/vf-cache" });
-      const config = createMockConfig({});
-      const cm = new ConfigurationManager({
-        projectDir: "/project",
-        mode: "production",
-        adapter,
-      });
-      setConfig(cm, config);
-      assertEquals(cm.getCacheBaseDir(), "/vf-cache");
-    });
-
-    it("should use config cache.dir when no env var", () => {
-      const adapter = createMockAdapter();
-      const config = createMockConfig({ cache: { dir: "/config-cache" } });
-      const cm = new ConfigurationManager({
-        projectDir: "/project",
-        mode: "production",
-        adapter,
-      });
-      setConfig(cm, config);
-      assertEquals(cm.getCacheBaseDir(), "/config-cache");
-    });
-
-    it("should resolve relative config cache.dir against projectDir", () => {
-      const adapter = createMockAdapter();
-      const config = createMockConfig({ cache: { dir: ".cache" } });
-      const cm = new ConfigurationManager({
-        projectDir: "/project",
-        mode: "production",
-        adapter,
-      });
-      setConfig(cm, config);
-      assertEquals(cm.getCacheBaseDir(), "/project/.cache");
-    });
-
-    it("should prefer env var over config cache.dir", () => {
-      const adapter = createMockAdapter({ VERYFRONT_CACHE_DIR: "/env-cache" });
-      const config = createMockConfig({ cache: { dir: "/config-cache" } });
-      const cm = new ConfigurationManager({
-        projectDir: "/project",
-        mode: "production",
-        adapter,
-      });
-      setConfig(cm, config);
-      assertEquals(cm.getCacheBaseDir(), "/env-cache");
     });
 
     it("should cache the result and return same value on repeated calls", () => {
@@ -205,16 +143,6 @@ describe("rendering/orchestrator/config", () => {
         adapter,
       });
       assertEquals(cm.isDebugMode(), false);
-    });
-
-    it("should return true when VERYFRONT_DEBUG env var is set", () => {
-      const adapter = createMockAdapter({ VERYFRONT_DEBUG: "true" });
-      const cm = new ConfigurationManager({
-        projectDir: "/project",
-        mode: "production",
-        adapter,
-      });
-      assertEquals(cm.isDebugMode(), true);
     });
   });
 

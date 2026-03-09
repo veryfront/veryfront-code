@@ -61,8 +61,6 @@ describe("rendering/layouts/utils/ensure-valid-child", () => {
     });
 
     it("should return null for non-object non-primitive types like boolean", () => {
-      // booleans are not strings, numbers, null, undefined, or arrays
-      // and typeof boolean !== "object", so they return null
       assertEquals(ensureValidChild(true as never), null);
       assertEquals(ensureValidChild(false as never), null);
     });
@@ -78,7 +76,6 @@ describe("rendering/layouts/utils/ensure-valid-child", () => {
     });
 
     it("should accept objects that look like React elements (structural match)", () => {
-      // An object with $$typeof symbol, type, props, key should pass
       const fakeElement = {
         $$typeof: Symbol.for("react.element"),
         type: "div",

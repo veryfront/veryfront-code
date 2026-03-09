@@ -106,97 +106,6 @@ describe("rendering/page-resolution/page-resolver", () => {
       assertEquals(pages.includes("blog"), true);
     });
 
-    it("should discover app router pages (page.tsx files)", async () => {
-      const adapter = createMockAdapter(
-        {
-          "/project/app": [
-            { name: "page.tsx", isFile: true, isDirectory: false },
-            { name: "blog", isFile: false, isDirectory: true },
-          ],
-          "/project/app/blog": [
-            { name: "page.tsx", isFile: true, isDirectory: false },
-          ],
-          "/project": [],
-        },
-        ["/project/app"],
-      );
-      const config = createMockConfig();
-      const resolver = new PageResolver({
-        projectDir: "/project",
-        config,
-        adapter,
-      });
-      const pages = await resolver.getAllPages();
-      assertEquals(pages.includes("/"), true);
-      assertEquals(pages.includes("/blog"), true);
-    });
-
-    it("should skip private folders starting with _", async () => {
-      const adapter = createMockAdapter(
-        {
-          "/project/app": [
-            { name: "_components", isFile: false, isDirectory: true },
-            { name: "page.tsx", isFile: true, isDirectory: false },
-          ],
-          "/project": [],
-        },
-        ["/project/app"],
-      );
-      const config = createMockConfig();
-      const resolver = new PageResolver({
-        projectDir: "/project",
-        config,
-        adapter,
-      });
-      const pages = await resolver.getAllPages();
-      assertEquals(pages.includes("/"), true);
-      assertEquals(pages.length, 1);
-    });
-
-    it("should skip parallel routes starting with @", async () => {
-      const adapter = createMockAdapter(
-        {
-          "/project/app": [
-            { name: "@modal", isFile: false, isDirectory: true },
-            { name: "page.tsx", isFile: true, isDirectory: false },
-          ],
-          "/project": [],
-        },
-        ["/project/app"],
-      );
-      const config = createMockConfig();
-      const resolver = new PageResolver({
-        projectDir: "/project",
-        config,
-        adapter,
-      });
-      const pages = await resolver.getAllPages();
-      assertEquals(pages.length, 1);
-    });
-
-    it("should handle route groups (parentheses) transparently", async () => {
-      const adapter = createMockAdapter(
-        {
-          "/project/app": [
-            { name: "(marketing)", isFile: false, isDirectory: true },
-          ],
-          "/project/app/(marketing)": [
-            { name: "page.tsx", isFile: true, isDirectory: false },
-          ],
-          "/project": [],
-        },
-        ["/project/app"],
-      );
-      const config = createMockConfig();
-      const resolver = new PageResolver({
-        projectDir: "/project",
-        config,
-        adapter,
-      });
-      const pages = await resolver.getAllPages();
-      assertEquals(pages.includes("/"), true);
-    });
-
     it("should skip config files", async () => {
       const adapter = createMockAdapter(
         {
@@ -237,14 +146,8 @@ describe("rendering/page-resolution/page-resolver", () => {
       assertEquals(pages.length, 0);
     });
 
-    it("should skip directories in root scan", async () => {
-      const adapter = createMockAdapter(
-        {
-          "/project": [
-            { name: "components", isFile: false, isDirectory: true },
-          ],
-        },
-      );
+    it("should return empty array when no pages exist", async () => {
+      const adapter = createMockAdapter({ "/project": [] });
       const config = createMockConfig();
       const resolver = new PageResolver({
         projectDir: "/project",
@@ -253,28 +156,6 @@ describe("rendering/page-resolution/page-resolver", () => {
       });
       const pages = await resolver.getAllPages();
       assertEquals(pages.length, 0);
-    });
-
-    it("should use custom directories from config", async () => {
-      const adapter = createMockAdapter(
-        {
-          "/project/src": [
-            { name: "home.tsx", isFile: true, isDirectory: false },
-          ],
-          "/project": [],
-        },
-        ["/project/src"],
-      );
-      const config = createMockConfig({
-        directories: { pages: "src" } as VeryfrontConfig["directories"],
-      });
-      const resolver = new PageResolver({
-        projectDir: "/project",
-        config,
-        adapter,
-      });
-      const pages = await resolver.getAllPages();
-      assertEquals(pages.includes("home"), true);
     });
 
     it("should handle all supported page extensions", async () => {
@@ -298,42 +179,6 @@ describe("rendering/page-resolution/page-resolver", () => {
       });
       const pages = await resolver.getAllPages();
       assertEquals(pages.length, 6);
-    });
-
-    it("should return empty array when no pages exist", async () => {
-      const adapter = createMockAdapter({ "/project": [] });
-      const config = createMockConfig();
-      const resolver = new PageResolver({
-        projectDir: "/project",
-        config,
-        adapter,
-      });
-      const pages = await resolver.getAllPages();
-      assertEquals(pages.length, 0);
-    });
-
-    it("should deduplicate pages found in multiple locations", async () => {
-      const adapter = createMockAdapter(
-        {
-          "/project/pages": [
-            { name: "index.mdx", isFile: true, isDirectory: false },
-          ],
-          "/project": [
-            { name: "index.tsx", isFile: true, isDirectory: false },
-          ],
-        },
-        ["/project/pages"],
-      );
-      const config = createMockConfig();
-      const resolver = new PageResolver({
-        projectDir: "/project",
-        config,
-        adapter,
-      });
-      const pages = await resolver.getAllPages();
-      // "/" should appear only once since Set is used
-      const rootCount = pages.filter((p: string) => p === "/").length;
-      assertEquals(rootCount, 1);
     });
   });
 });

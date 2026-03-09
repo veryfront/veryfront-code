@@ -1,8 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createLayoutComponentCache, type LayoutComponentCache } from "./component-loader.ts";
-
-// We test the InMemoryLayoutComponentCache through the factory function
+import { createLayoutComponentCache } from "./component-loader.ts";
 
 describe("rendering/layouts/utils/component-loader", () => {
   describe("createLayoutComponentCache", () => {
@@ -71,7 +69,6 @@ describe("rendering/layouts/utils/component-loader", () => {
 
       cache.set("k1", C1);
       cache.set("k2", C2);
-      // This should evict k1
       cache.set("k3", C3);
 
       assertEquals(cache.get("k1"), undefined);

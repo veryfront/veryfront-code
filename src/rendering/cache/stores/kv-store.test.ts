@@ -32,8 +32,6 @@ describe("rendering/cache/stores/kv-store", () => {
     it("should get return undefined when no KV entries exist", async () => {
       const store = new KVCacheStore();
       const result = await store.get("nonexistent");
-      // If Deno.openKv is available, it returns undefined for missing keys
-      // If not available, returns undefined
       assertEquals(result === undefined || result === null || typeof result === "object", true);
     });
 
@@ -71,7 +69,7 @@ describe("rendering/cache/stores/kv-store", () => {
       await store.set("prefix:b", createPayload("<p>b</p>"));
       await store.set("other:c", createPayload("<p>c</p>"));
       const deleted = await store.deleteByPrefix("prefix:");
-      assertEquals(deleted >= 0, true); // deleted count depends on KV availability
+      assertEquals(deleted >= 0, true);
     });
 
     it("should destroy and clean up", async () => {
