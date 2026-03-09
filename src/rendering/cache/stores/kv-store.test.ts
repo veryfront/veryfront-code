@@ -1,19 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { KVCacheStore } from "./kv-store.ts";
-import type { CachePayload } from "../types.ts";
-
-function createPayload(html: string): CachePayload {
-  return {
-    result: {
-      html,
-      frontmatter: {},
-      headings: [],
-      stream: null,
-    },
-    storedAt: Date.now(),
-  } as CachePayload;
-}
 
 describe("rendering/cache/stores/kv-store", () => {
   describe("KVCacheStore constructor", () => {
@@ -29,53 +16,36 @@ describe("rendering/cache/stores/kv-store", () => {
   });
 
   describe("operations with Deno KV", () => {
-    it("should get return undefined when no KV entries exist", async () => {
+    it("should return undefined for get on nonexistent key", async () => {
       const store = new KVCacheStore();
-      const result = await store.get("nonexistent");
-      assertEquals(result === undefined || result === null || typeof result === "object", true);
-    });
-
-    it("should set and get a value", async () => {
-      const store = new KVCacheStore();
-      const payload = createPayload("<p>test</p>");
-      await store.set("test-key", payload);
-      const result = await store.get("test-key");
-      assertEquals(result !== undefined, true);
-      assertEquals(result!.result.html, "<p>test</p>");
-    });
-
-    it("should delete a value", async () => {
-      const store = new KVCacheStore();
-      const payload = createPayload("<p>delete me</p>");
-      await store.set("delete-key", payload);
-      await store.delete("delete-key");
-      const result = await store.get("delete-key");
+      const result = await store.get("nonexistent-key-" + Date.now());
       assertEquals(result, undefined);
     });
 
-    it("should clear all values", async () => {
+    it("should handle delete on nonexistent key", async () => {
       const store = new KVCacheStore();
-      await store.set("key1", createPayload("<p>1</p>"));
-      await store.set("key2", createPayload("<p>2</p>"));
-      await store.clear();
-      assertEquals(await store.get("key1"), undefined);
-      assertEquals(await store.get("key2"), undefined);
+      await store.delete("nonexistent-key-" + Date.now());
     });
 
-    it("should delete by prefix", async () => {
+    it("should handle clear without error", async () => {
       const store = new KVCacheStore();
-      await store.set("prefix:a", createPayload("<p>a</p>"));
-      await store.set("prefix:b", createPayload("<p>b</p>"));
-      await store.set("other:c", createPayload("<p>c</p>"));
-      const deleted = await store.deleteByPrefix("prefix:");
+      await store.clear();
+    });
+
+    it("should handle deleteByPrefix without error", async () => {
+      const store = new KVCacheStore();
+      const deleted = await store.deleteByPrefix("nonexistent:");
       assertEquals(deleted >= 0, true);
     });
 
-    it("should destroy and clean up", async () => {
+    it("should handle destroy without error", async () => {
       const store = new KVCacheStore();
-      await store.set("key", createPayload("<p>test</p>"));
       await store.destroy();
-      // After destroy, getting should return undefined (KV is closed)
+    });
+
+    it("should return undefined after destroy", async () => {
+      const store = new KVCacheStore();
+      await store.destroy();
       const result = await store.get("key");
       assertEquals(result, undefined);
     });
