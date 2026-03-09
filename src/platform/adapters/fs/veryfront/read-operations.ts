@@ -55,6 +55,11 @@ function previewText(content: string, max = 80): string {
   return content.length > max ? `${content.slice(0, max)}...` : content;
 }
 
+function hasExplicitExtension(path: string): boolean {
+  const lastSegment = path.split("/").pop() ?? path;
+  return lastSegment.includes(".") && lastSegment !== "." && lastSegment !== "..";
+}
+
 export class ReadOperations {
   private readonly inFlightRequests = new InFlightRequestDeduper<string>({
     timeoutMs: IN_FLIGHT_REQUEST_TIMEOUT_MS,
@@ -369,6 +374,49 @@ export class ReadOperations {
     }
   }
 
+  private async tryResolveExtensionlessPathFromFileList(
+    normalizedPath: string,
+    cacheKeyPrefix: string,
+    cacheKey: string,
+    isProduction: boolean,
+    ctx: ResolvedContentContext | null,
+    isPreviewMode: boolean,
+  ): Promise<string | null> {
+    const candidatePaths = EXTENSION_PRIORITY.map((ext) => `${normalizedPath}${ext}`);
+    const resolved = await this.fileListIndex.findFirstWithContent(candidatePaths);
+    if (!resolved) return null;
+
+    const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolved.path);
+
+    this.extensionResolutionCache.set(normalizedPath, resolved.path);
+
+    logContentMetric("FILE_LIST_HIT", {
+      path: normalizedPath,
+      resolvedPath: resolved.path,
+      mode: ctx?.sourceType ?? "unknown",
+      cacheKey,
+      isPreviewMode,
+    });
+    logger.debug("Resolved extension from file list index", {
+      basePath: normalizedPath,
+      resolvedPath: resolved.path,
+      cacheKey,
+      resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
+    });
+
+    if (isProduction) {
+      this.cache.set(cacheKey, resolved.content);
+      if (resolvedCacheKey !== cacheKey) this.cache.set(resolvedCacheKey, resolved.content);
+    }
+
+    setRequestScopedFile(cacheKey, resolved.content);
+    if (resolvedCacheKey !== cacheKey) {
+      setRequestScopedFile(resolvedCacheKey, resolved.content);
+    }
+
+    return resolved.content;
+  }
+
   private async fetchContent(normalizedPath: string): Promise<string> {
     // Framework paths should NEVER be fetched from API - they must be read from local filesystem.
     // If we reach here for a framework path, the module server's local resolution failed.
@@ -432,6 +480,30 @@ export class ReadOperations {
     if (fileListCached) return fileListCached;
 
     if (!hasKnownExt) {
+      const resolvedFromFileList = await this.tryResolveExtensionlessPathFromFileList(
+        normalizedPath,
+        cacheKeyPrefix,
+        cacheKey,
+        isProduction,
+        ctx,
+        isPreviewMode,
+      );
+      if (resolvedFromFileList) return resolvedFromFileList;
+
+      if (!skipPersistentCaches && hasExplicitExtension(apiPath)) {
+        const exactPathKnown = await this.fileListIndex.hasPath(normalizedPath);
+        const hasExtensionCandidate = await this.fileListIndex.hasAnyPath(
+          EXTENSION_PRIORITY.map((ext) => `${normalizedPath}${ext}`),
+        );
+
+        if (exactPathKnown === false && hasExtensionCandidate === false) {
+          logger.debug("Known-missing explicit path in file list, skipping API fetch", {
+            path: normalizedPath,
+          });
+          throw new Error(`404 Not Found: ${normalizedPath}`);
+        }
+      }
+
       const resolved = await this.tryResolveExtensionlessPath(
         apiPath,
         cacheKeyPrefix,
