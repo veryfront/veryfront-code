@@ -42,7 +42,7 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
 
       const handler = getRSCHandler("/project/dir");
       assertEquals(cache.size, 1);
-      assertEquals(handler !== undefined, true);
+      assertEquals(!!handler, true);
     });
 
     it("should return cached handler for same projectDir", () => {
