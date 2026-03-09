@@ -1,21 +1,21 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  fromFileUrl,
-  toFileUrl,
   basename,
+  delimiter,
   dirname,
   extname,
+  format,
+  fromFileUrl,
+  isAbsolute,
   join,
   normalize,
   parse,
-  format,
-  isAbsolute,
   relative,
   resolve,
   sep,
   SEPARATOR,
-  delimiter,
+  toFileUrl,
 } from "./std-path.ts";
 
 describe("platform/compat/shims/std-path", () => {

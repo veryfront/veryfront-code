@@ -10,6 +10,8 @@ import {
   chmod,
   createFileSystem,
   exists,
+  isAlreadyExistsError,
+  isNotFoundError,
   makeTempDir,
   mkdir,
   readDir,
@@ -17,6 +19,7 @@ import {
   readTextFile,
   remove,
   stat,
+  symlink,
   writeFile,
   writeTextFile,
 } from "./fs.ts";
@@ -211,6 +214,74 @@ describe("Filesystem Compat", () => {
 
       // Should not throw (may be no-op on Windows)
       await chmod(filePath, 0o600);
+    });
+  });
+
+  describe("symlink", () => {
+    it("should create a symlink", async () => {
+      const filePath = join(testDir, "symlink-target.txt");
+      const linkPath = join(testDir, "symlink-link.txt");
+      await writeTextFile(filePath, "symlink test");
+
+      await symlink(filePath, linkPath);
+
+      const content = await readTextFile(linkPath);
+      assertEquals(content, "symlink test");
+    });
+  });
+
+  describe("isNotFoundError", () => {
+    it("should return true for Deno.errors.NotFound", () => {
+      try {
+        Deno.readTextFileSync("/nonexistent/path/12345.txt");
+      } catch (e) {
+        assertEquals(isNotFoundError(e), true);
+      }
+    });
+
+    it("should return true for Node ENOENT errors", () => {
+      const error = new Error("ENOENT") as Error & { code: string };
+      error.code = "ENOENT";
+      assertEquals(isNotFoundError(error), true);
+    });
+
+    it("should return true for VeryfrontError with file-not-found slug", () => {
+      const error = new Error("File not found") as Error & { slug: string; name: string };
+      error.name = "VeryfrontError";
+      error.slug = "file-not-found";
+      assertEquals(isNotFoundError(error), true);
+    });
+
+    it("should return false for generic errors", () => {
+      assertEquals(isNotFoundError(new Error("generic")), false);
+    });
+
+    it("should return false for non-errors", () => {
+      assertEquals(isNotFoundError("string"), false);
+      assertEquals(isNotFoundError(null), false);
+      assertEquals(isNotFoundError(undefined), false);
+    });
+  });
+
+  describe("isAlreadyExistsError", () => {
+    it("should return true for Deno.errors.AlreadyExists", async () => {
+      const dirPath = join(testDir, "already-exists-test");
+      await mkdir(dirPath);
+      try {
+        await mkdir(dirPath);
+      } catch (e) {
+        assertEquals(isAlreadyExistsError(e), true);
+      }
+    });
+
+    it("should return true for Node EEXIST errors", () => {
+      const error = new Error("EEXIST") as Error & { code: string };
+      error.code = "EEXIST";
+      assertEquals(isAlreadyExistsError(error), true);
+    });
+
+    it("should return false for generic errors", () => {
+      assertEquals(isAlreadyExistsError(new Error("generic")), false);
     });
   });
 });

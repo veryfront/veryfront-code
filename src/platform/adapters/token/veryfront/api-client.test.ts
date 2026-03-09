@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { TokenStorageApiClient } from "./api-client.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";

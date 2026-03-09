@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { exists, existsSync, ensureDir, walk } from "./std-fs.ts";
+import { ensureDir, exists, existsSync, walk } from "./std-fs.ts";
 
 describe("platform/compat/shims/std-fs", () => {
   describe("exists", () => {

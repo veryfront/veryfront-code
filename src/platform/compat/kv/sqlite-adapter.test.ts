@@ -3,7 +3,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SqliteKv } from "./sqlite-adapter.ts";
 import type { SqliteDatabase } from "./types.ts";
 
-function createMockDb(): SqliteDatabase & { store: Map<string, { value: string; versionstamp?: string }> } {
+function createMockDb(): SqliteDatabase & {
+  store: Map<string, { value: string; versionstamp?: string }>;
+} {
   const store = new Map<string, { value: string; versionstamp?: string }>();
 
   return {

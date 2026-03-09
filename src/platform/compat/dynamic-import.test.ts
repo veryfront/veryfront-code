@@ -8,7 +8,7 @@ describe("platform/compat/dynamic-import", () => {
   });
 
   it("should import a built-in module", async () => {
-    const mod = await dynamicImport<{ join: Function }>("node:path");
+    const mod = await dynamicImport<{ join: (...args: unknown[]) => unknown }>("node:path");
     assertExists(mod);
     assertEquals(typeof mod.join, "function");
   });

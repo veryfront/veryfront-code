@@ -1,11 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  endRequestMetrics,
   getContentMetricsSnapshot,
   logContentMetric,
   resetContentMetrics,
   startRequestMetrics,
-  endRequestMetrics,
 } from "./content-metrics.ts";
 
 describe("platform/adapters/fs/veryfront/content-metrics", () => {

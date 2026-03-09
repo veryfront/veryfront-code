@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  detectPlatform,
   getPlatformCapabilities,
   getPlatformWarnings,
   supportsCapability,
@@ -119,6 +120,85 @@ describe("platform/core-platform", () => {
       );
       assertEquals(result.compatible, true);
       assertEquals(result.errors.length, 0);
+    });
+
+    it("should be compatible when maxSteps is within limit", () => {
+      const result = validatePlatformCompatibility(
+        { maxSteps: 2 },
+        "cloudflare-workers",
+      );
+      assertEquals(result.compatible, true);
+    });
+
+    it("should not error for streaming:true on non-streaming platform", () => {
+      const result = validatePlatformCompatibility(
+        { streaming: true },
+        "deno",
+      );
+      assertEquals(result.warnings.length, 0);
+    });
+
+    it("should use detected platform when none specified", () => {
+      const result = validatePlatformCompatibility({});
+      assertEquals(result.compatible, true);
+    });
+  });
+
+  describe("detectPlatform", () => {
+    it("should detect deno platform", () => {
+      assertEquals(detectPlatform(), "deno");
+    });
+  });
+
+  describe("getPlatformCapabilities edge cases", () => {
+    it("should detect current platform when no argument given", () => {
+      const caps = getPlatformCapabilities();
+      assertEquals(caps.displayName, "Deno");
+    });
+
+    it("should return null cpuTimeLimit for deno", () => {
+      const caps = getPlatformCapabilities("deno");
+      assertEquals(caps.cpuTimeLimit, null);
+      assertEquals(caps.memoryLimit, null);
+    });
+
+    it("should return specific limits for cloudflare-workers", () => {
+      const caps = getPlatformCapabilities("cloudflare-workers");
+      assertEquals(caps.cpuTimeLimit, 30_000);
+      assertEquals(caps.memoryLimit, 128);
+    });
+
+    it("should return limits for unknown platform", () => {
+      const caps = getPlatformCapabilities("unknown");
+      assertEquals(caps.cpuTimeLimit, 60_000);
+      assertEquals(caps.memoryLimit, 512);
+      assertEquals(caps.maxAgentSteps, 5);
+    });
+  });
+
+  describe("supportsCapability edge cases", () => {
+    it("should return false for null cpuTimeLimit (via boolean check)", () => {
+      // cpuTimeLimit is null for deno, which is not a boolean or positive number
+      assertEquals(supportsCapability("cpuTimeLimit"), false);
+    });
+
+    it("should return false for null memoryLimit", () => {
+      assertEquals(supportsCapability("memoryLimit"), false);
+    });
+
+    it("should return true for hasFileSystem on deno", () => {
+      assertEquals(supportsCapability("hasFileSystem"), true);
+    });
+
+    it("should return false for streamingRecommended on deno", () => {
+      assertEquals(supportsCapability("streamingRecommended"), false);
+    });
+  });
+
+  describe("getPlatformWarnings edge cases", () => {
+    it("should return empty array for deno (all capable)", () => {
+      const warnings = getPlatformWarnings();
+      assertEquals(warnings.length, 0);
     });
   });
 });
