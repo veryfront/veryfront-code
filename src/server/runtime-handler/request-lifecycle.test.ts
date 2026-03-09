@@ -1,12 +1,12 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  startRequestLifecycle,
-  endRequestLifecycle,
-  startRequestTracking,
   completeRequestTracking,
-  startContentMetrics,
   endContentMetrics,
+  endRequestLifecycle,
+  startContentMetrics,
+  startRequestLifecycle,
+  startRequestTracking,
 } from "./request-lifecycle.ts";
 import { requestTracker } from "./request-tracker.ts";
 

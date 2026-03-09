@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { resolveComponentPath, extractParams } from "./component-resolver.ts";
+import { extractParams, resolveComponentPath } from "./component-resolver.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 function createMockFs(existingFiles: Set<string>): FileSystemAdapter {
@@ -37,10 +37,12 @@ describe("server/services/rsc/orchestrators/component-resolver", () => {
     });
 
     it("should resolve .mdx files first (higher priority)", async () => {
-      const fs = createMockFs(new Set([
-        "/project/app/docs/page.mdx",
-        "/project/app/docs/page.tsx",
-      ]));
+      const fs = createMockFs(
+        new Set([
+          "/project/app/docs/page.mdx",
+          "/project/app/docs/page.tsx",
+        ]),
+      );
       const result = await resolveComponentPath("/docs", "/project", fs);
       assertEquals(result, "/project/app/docs/page.mdx");
     });

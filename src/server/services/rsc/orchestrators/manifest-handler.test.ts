@@ -1,5 +1,5 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it, afterEach } from "#veryfront/testing/bdd.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ManifestHandler } from "./manifest-handler.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 

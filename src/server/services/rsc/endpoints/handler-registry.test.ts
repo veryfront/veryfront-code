@@ -1,15 +1,17 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it, afterEach } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  getRSCHandler,
+  __destroyRSCHandlerForTests,
   __injectCacheForTests,
   __resetRSCHandlerForTests,
-  __destroyRSCHandlerForTests,
+  getRSCHandler,
   type HandlerCache,
 } from "./handler-registry.ts";
 import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 
-function createStubCache(): HandlerCache<RSCDevServerHandler> & { entries: Map<string, RSCDevServerHandler> } {
+function createStubCache(): HandlerCache<RSCDevServerHandler> & {
+  entries: Map<string, RSCDevServerHandler>;
+} {
   const entries = new Map<string, RSCDevServerHandler>();
   return {
     entries,

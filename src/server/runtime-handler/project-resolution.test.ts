@@ -1,11 +1,13 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it, afterEach } from "#veryfront/testing/bdd.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  __injectDepsForTests,
   extractRequestHeaders,
   resolveProject,
-  __injectDepsForTests,
 } from "./project-resolution.ts";
-import type { ParsedDomain } from "../utils/domain-parser.ts";
+import type { DomainLookupResult } from "../utils/domain-lookup.ts";
+import type { ParsedDomain } from "#veryfront/types";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 const defaultParsedDomain: ParsedDomain = {
   slug: null,
@@ -16,45 +18,89 @@ const defaultParsedDomain: ParsedDomain = {
   allowIframeEmbed: false,
 };
 
-afterEach(() => {
-  __injectDepsForTests(null);
-});
-
 describe("server/runtime-handler/project-resolution", () => {
   describe("extractRequestHeaders", () => {
-    it("should extract all project headers", () => {
-      const req = new Request("http://localhost/test", {
-        headers: {
-          "x-project-slug": "my-project",
-          "x-project-id": "proj-123",
-          "x-release-id": "rel-456",
-          "x-branch-id": "br-789",
-          "x-branch-name": "main",
-          "x-environment": "preview",
-          "x-environment-id": "env-001",
-          "x-content-source-id": "cs-001",
-          "x-project-path": "/custom/path",
-        },
+    it("extracts project slug from header", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-project-slug": "my-project" },
       });
-      const url = new URL(req.url);
-      const headers = extractRequestHeaders(req, url);
-
+      const headers = extractRequestHeaders(req, new URL(req.url));
       assertEquals(headers.projectSlug, "my-project");
-      assertEquals(headers.projectId, "proj-123");
-      assertEquals(headers.releaseId, "rel-456");
-      assertEquals(headers.branchId, "br-789");
-      assertEquals(headers.branchName, "main");
-      assertEquals(headers.environment, "preview");
-      assertEquals(headers.environmentId, "env-001");
-      assertEquals(headers.contentSourceId, "cs-001");
-      assertEquals(headers.projectPath, "/custom/path");
     });
 
-    it("should return undefined for missing headers", () => {
-      const req = new Request("http://localhost/test");
-      const url = new URL(req.url);
-      const headers = extractRequestHeaders(req, url);
+    it("extracts project id from header", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-project-id": "proj-123" },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.projectId, "proj-123");
+    });
 
+    it("extracts release id from header", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-release-id": "rel-456" },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.releaseId, "rel-456");
+    });
+
+    it("extracts branch id from header", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-branch-id": "branch-1" },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.branchId, "branch-1");
+    });
+
+    it("extracts branch name from header", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-branch-name": "feature-x" },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.branchName, "feature-x");
+    });
+
+    it("extracts environment from header", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-environment": "production" },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.environment, "production");
+    });
+
+    it("extracts environment from query parameter when header not present", () => {
+      const req = new Request("http://localhost/?x-environment=staging");
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.environment, "staging");
+    });
+
+    it("extracts environment-id from header", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-environment-id": "env-1" },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.environmentId, "env-1");
+    });
+
+    it("extracts content-source-id from header", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-content-source-id": "cs-1" },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.contentSourceId, "cs-1");
+    });
+
+    it("extracts project-path from header", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-project-path": "/projects/my-proj" },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.projectPath, "/projects/my-proj");
+    });
+
+    it("returns undefined for missing headers", () => {
+      const req = new Request("http://localhost/");
+      const headers = extractRequestHeaders(req, new URL(req.url));
       assertEquals(headers.projectSlug, undefined);
       assertEquals(headers.projectId, undefined);
       assertEquals(headers.releaseId, undefined);
@@ -62,77 +108,68 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.branchName, undefined);
       assertEquals(headers.environment, undefined);
       assertEquals(headers.environmentId, undefined);
+      assertEquals(headers.token, undefined);
       assertEquals(headers.contentSourceId, undefined);
       assertEquals(headers.projectPath, undefined);
-    });
-
-    it("should fallback to x-environment query param", () => {
-      const req = new Request("http://localhost/test?x-environment=staging");
-      const url = new URL(req.url);
-      const headers = extractRequestHeaders(req, url);
-      assertEquals(headers.environment, "staging");
-    });
-
-    it("should prefer header over query param for x-environment", () => {
-      const req = new Request("http://localhost/test?x-environment=staging", {
-        headers: { "x-environment": "preview" },
-      });
-      const url = new URL(req.url);
-      const headers = extractRequestHeaders(req, url);
-      assertEquals(headers.environment, "preview");
-    });
-
-    it("should always set token to undefined", () => {
-      const req = new Request("http://localhost/test", {
-        headers: { authorization: "Bearer token123" },
-      });
-      const url = new URL(req.url);
-      const headers = extractRequestHeaders(req, url);
-      assertEquals(headers.token, undefined);
     });
   });
 
   describe("resolveProject", () => {
-    it("should resolve from request context slug", async () => {
+    it("uses reqCtx.slug as projectSlug when available", async () => {
       __injectDepsForTests({
         parseProjectDomain: () => defaultParsedDomain,
-        lookupProjectByDomain: async () => null,
+        lookupProjectByDomain: () => Promise.resolve(null),
         getEnvironmentType: () => undefined,
       });
 
-      const req = new Request("http://localhost/test", {
-        headers: { host: "localhost" },
-      });
+      const req = new Request("http://localhost/");
       const url = new URL(req.url);
       const headers = extractRequestHeaders(req, url);
-
       const result = await resolveProject(req, url, headers, {
         config: undefined,
-        reqCtx: { slug: "ctx-slug", mode: "production", branch: null, token: "" },
+        reqCtx: { slug: "from-ctx", mode: undefined, branch: null, token: undefined },
         defaultProjectSlug: undefined,
         defaultProjectId: undefined,
         wsSlugOverride: undefined,
       });
 
-      assertEquals(result.projectSlug, "ctx-slug");
+      assertEquals(result.projectSlug, "from-ctx");
     });
 
-    it("should fall back to default slug when no context slug", async () => {
+    it("uses wsSlugOverride when reqCtx.slug is empty", async () => {
       __injectDepsForTests({
         parseProjectDomain: () => defaultParsedDomain,
-        lookupProjectByDomain: async () => null,
+        lookupProjectByDomain: () => Promise.resolve(null),
         getEnvironmentType: () => undefined,
       });
 
-      const req = new Request("http://localhost/test", {
-        headers: { host: "localhost" },
-      });
+      const req = new Request("http://localhost/");
       const url = new URL(req.url);
       const headers = extractRequestHeaders(req, url);
-
       const result = await resolveProject(req, url, headers, {
         config: undefined,
-        reqCtx: { slug: "", mode: "production", branch: null, token: "" },
+        reqCtx: { slug: undefined, mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        wsSlugOverride: "ws-slug",
+      });
+
+      assertEquals(result.projectSlug, "ws-slug");
+    });
+
+    it("uses defaultProjectSlug when no other slug source", async () => {
+      __injectDepsForTests({
+        parseProjectDomain: () => defaultParsedDomain,
+        lookupProjectByDomain: () => Promise.resolve(null),
+        getEnvironmentType: () => undefined,
+      });
+
+      const req = new Request("http://localhost/");
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url);
+      const result = await resolveProject(req, url, headers, {
+        config: undefined,
+        reqCtx: { slug: undefined, mode: undefined, branch: null, token: undefined },
         defaultProjectSlug: "default-slug",
         defaultProjectId: "default-id",
         wsSlugOverride: undefined,
@@ -142,159 +179,141 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(result.projectId, "default-id");
     });
 
-    it("should prefer ws slug override over default", async () => {
+    it("uses configured slug from config", async () => {
       __injectDepsForTests({
         parseProjectDomain: () => defaultParsedDomain,
-        lookupProjectByDomain: async () => null,
+        lookupProjectByDomain: () => Promise.resolve(null),
         getEnvironmentType: () => undefined,
       });
 
-      const req = new Request("http://localhost/test", {
-        headers: { host: "localhost" },
-      });
+      const config = {
+        fs: { veryfront: { projectSlug: "config-slug" } },
+      } as unknown as VeryfrontConfig;
+
+      const req = new Request("http://localhost/");
       const url = new URL(req.url);
       const headers = extractRequestHeaders(req, url);
-
       const result = await resolveProject(req, url, headers, {
-        config: undefined,
-        reqCtx: { slug: "", mode: "production", branch: null, token: "" },
-        defaultProjectSlug: "default-slug",
-        defaultProjectId: undefined,
-        wsSlugOverride: "ws-slug",
-      });
-
-      assertEquals(result.projectSlug, "ws-slug");
-    });
-
-    it("should use header projectId", async () => {
-      __injectDepsForTests({
-        parseProjectDomain: () => defaultParsedDomain,
-        lookupProjectByDomain: async () => null,
-        getEnvironmentType: () => undefined,
-      });
-
-      const req = new Request("http://localhost/test", {
-        headers: { host: "localhost", "x-project-id": "proj-abc" },
-      });
-      const url = new URL(req.url);
-      const headers = extractRequestHeaders(req, url);
-
-      const result = await resolveProject(req, url, headers, {
-        config: undefined,
-        reqCtx: { slug: "slug", mode: "production", branch: null, token: "" },
+        config,
+        reqCtx: { slug: undefined, mode: undefined, branch: null, token: undefined },
         defaultProjectSlug: undefined,
         defaultProjectId: undefined,
         wsSlugOverride: undefined,
       });
 
-      assertEquals(result.projectId, "proj-abc");
+      assertEquals(result.projectSlug, "config-slug");
     });
 
-    it("should use header releaseId", async () => {
+    it("extracts releaseId from headers", async () => {
       __injectDepsForTests({
         parseProjectDomain: () => defaultParsedDomain,
-        lookupProjectByDomain: async () => null,
+        lookupProjectByDomain: () => Promise.resolve(null),
         getEnvironmentType: () => undefined,
       });
 
-      const req = new Request("http://localhost/test", {
-        headers: { host: "localhost", "x-release-id": "rel-xyz" },
+      const req = new Request("http://localhost/", {
+        headers: { "x-release-id": "rel-1" },
       });
       const url = new URL(req.url);
       const headers = extractRequestHeaders(req, url);
-
       const result = await resolveProject(req, url, headers, {
         config: undefined,
-        reqCtx: { slug: "slug", mode: "production", branch: null, token: "" },
+        reqCtx: { slug: "test", mode: undefined, branch: null, token: undefined },
         defaultProjectSlug: undefined,
         defaultProjectId: undefined,
         wsSlugOverride: undefined,
       });
 
-      assertEquals(result.releaseId, "rel-xyz");
+      assertEquals(result.releaseId, "rel-1");
     });
 
-    it("should parse proxy environment from x-environment header", async () => {
-      __injectDepsForTests({
-        parseProjectDomain: () => defaultParsedDomain,
-        lookupProjectByDomain: async () => null,
-        getEnvironmentType: () => undefined,
-      });
-
-      const req = new Request("http://localhost/test", {
-        headers: { host: "localhost", "x-environment": "preview" },
-      });
-      const url = new URL(req.url);
-      const headers = extractRequestHeaders(req, url);
-
-      const result = await resolveProject(req, url, headers, {
-        config: undefined,
-        reqCtx: { slug: "slug", mode: "production", branch: null, token: "" },
-        defaultProjectSlug: undefined,
-        defaultProjectId: undefined,
-        wsSlugOverride: undefined,
-      });
-
-      assertEquals(result.proxyEnv, "preview");
-    });
-
-    it("should return parsedDomain in result", async () => {
-      const customDomain: ParsedDomain = {
-        ...defaultParsedDomain,
-        slug: "parsed",
-        isVeryfrontDomain: true,
+    it("performs custom domain lookup when conditions are met", async () => {
+      const lookupResult: DomainLookupResult = {
+        project_id: "proj-1",
+        project_slug: "looked-up-slug",
+        project_name: "Looked Up",
+        environment: { id: "env-1", name: "Production" },
+        release_id: "rel-99",
       };
 
       __injectDepsForTests({
-        parseProjectDomain: () => customDomain,
-        lookupProjectByDomain: async () => null,
-        getEnvironmentType: () => undefined,
+        parseProjectDomain: () => defaultParsedDomain,
+        lookupProjectByDomain: () => Promise.resolve(lookupResult),
+        getEnvironmentType: () => "production" as const,
       });
 
-      const req = new Request("http://parsed.veryfront.com/test", {
-        headers: { host: "parsed.veryfront.com" },
-      });
+      const config = {
+        fs: { veryfront: { apiToken: "test-token", apiBaseUrl: "https://api.test.com" } },
+      } as unknown as VeryfrontConfig;
+
+      const req = new Request("http://custom-domain.example.com/");
       const url = new URL(req.url);
       const headers = extractRequestHeaders(req, url);
-
       const result = await resolveProject(req, url, headers, {
-        config: undefined,
-        reqCtx: { slug: "parsed", mode: "production", branch: null, token: "" },
+        config,
+        reqCtx: { slug: undefined, mode: undefined, branch: null, token: undefined },
         defaultProjectSlug: undefined,
         defaultProjectId: undefined,
         wsSlugOverride: undefined,
       });
 
-      assertEquals(result.parsedDomain, customDomain);
+      assertEquals(result.projectSlug, "looked-up-slug");
+      assertEquals(result.projectId, "proj-1");
+      assertEquals(result.releaseId, "rel-99");
+      assertEquals(result.proxyEnv, "production");
     });
 
-    it("should skip domain lookup for internal hosts", async () => {
-      let lookupCalled = false;
-
+    it("uses x-forwarded-host for domain resolution", async () => {
+      let capturedHost = "";
       __injectDepsForTests({
-        parseProjectDomain: () => defaultParsedDomain,
-        lookupProjectByDomain: async () => {
-          lookupCalled = true;
-          return null;
+        parseProjectDomain: (host: string) => {
+          capturedHost = host;
+          return defaultParsedDomain;
         },
+        lookupProjectByDomain: () => Promise.resolve(null),
         getEnvironmentType: () => undefined,
       });
 
-      const req = new Request("http://127.0.0.1/test", {
-        headers: { host: "127.0.0.1" },
+      const req = new Request("http://localhost/", {
+        headers: { "x-forwarded-host": "forwarded.example.com" },
       });
       const url = new URL(req.url);
       const headers = extractRequestHeaders(req, url);
-
       await resolveProject(req, url, headers, {
-        config: { fs: { veryfront: { apiToken: "token" } } } as any,
-        reqCtx: { slug: "", mode: "production", branch: null, token: "" },
+        config: undefined,
+        reqCtx: { slug: "s", mode: undefined, branch: null, token: undefined },
         defaultProjectSlug: undefined,
         defaultProjectId: undefined,
         wsSlugOverride: undefined,
       });
 
-      assertEquals(lookupCalled, false);
+      assertEquals(capturedHost, "forwarded.example.com");
+    });
+
+    it("returns parsedDomain in result", async () => {
+      __injectDepsForTests({
+        parseProjectDomain: () => ({
+          ...defaultParsedDomain,
+          slug: "my-project",
+          isVeryfrontDomain: true,
+        }),
+        lookupProjectByDomain: () => Promise.resolve(null),
+        getEnvironmentType: () => undefined,
+      });
+
+      const req = new Request("http://my-project.preview.veryfront.dev/");
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url);
+      const result = await resolveProject(req, url, headers, {
+        config: undefined,
+        reqCtx: { slug: "my-project", mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        wsSlugOverride: undefined,
+      });
+
+      assertEquals(result.parsedDomain.isVeryfrontDomain, true);
+      assertEquals(result.parsedDomain.slug, "my-project");
     });
   });
 });

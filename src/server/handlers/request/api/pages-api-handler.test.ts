@@ -1,15 +1,17 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it, afterEach } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  resetApiHandler,
-  resetApiHandlerForProject,
   __injectCacheForTests,
   type HandlerCache,
+  resetApiHandler,
+  resetApiHandlerForProject,
 } from "./pages-api-handler.ts";
 
 type MockHandler = { destroyed: boolean; destroy(): void };
 
-function createMockCache(): HandlerCache<Promise<MockHandler>> & { store: Map<string, Promise<MockHandler>> } {
+function createMockCache(): HandlerCache<Promise<MockHandler>> & {
+  store: Map<string, Promise<MockHandler>>;
+} {
   const store = new Map<string, Promise<MockHandler>>();
   return {
     store,

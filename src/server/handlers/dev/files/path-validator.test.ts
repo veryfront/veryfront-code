@@ -63,7 +63,21 @@ describe("server/handlers/dev/files/path-validator", () => {
     assertEquals(result, "/project/src/foo.ts");
   });
 
-  for (const dir of ["app", "pages", "components", "islands", "public", "shared", "modules", "server", "client", "lib", "routes"]) {
+  for (
+    const dir of [
+      "app",
+      "pages",
+      "components",
+      "islands",
+      "public",
+      "shared",
+      "modules",
+      "server",
+      "client",
+      "lib",
+      "routes",
+    ]
+  ) {
     it(`should allow files in '${dir}' directory`, async () => {
       const encoded = toBase64Url(`${dir}/test.ts`);
       const ctx = makeCtx("/project", { isFile: true });

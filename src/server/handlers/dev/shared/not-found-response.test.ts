@@ -17,7 +17,11 @@ describe("server/handlers/dev/shared/not-found-response", () => {
     it("should have JSON content type", async () => {
       const response = createDevNotFoundResponse();
       const contentType = response.headers.get("content-type");
-      assertEquals(contentType?.includes("application/problem+json") || contentType?.includes("application/json"), true);
+      assertEquals(
+        contentType?.includes("application/problem+json") ||
+          contentType?.includes("application/json"),
+        true,
+      );
     });
 
     it("should contain error details in body", async () => {

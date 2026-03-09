@@ -400,4 +400,158 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       assertEquals(result, null);
     });
   });
+
+  describe("action endpoint - POST handling", () => {
+    it("handles POST action with missing body id", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/action", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ args: [] }),
+          }),
+        }),
+      );
+      assertEquals(result instanceof Response, true);
+      assertEquals(result!.status, 400);
+    });
+
+    it("handles POST action with invalid JSON body", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/action", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: "not json",
+          }),
+        }),
+      );
+      assertEquals(result instanceof Response, true);
+      // Should still get a response (400 for bad body)
+      assertEquals(result!.status, 400);
+    });
+
+    it("handles POST action with path traversal id", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/action", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ id: "../evil", args: [] }),
+          }),
+        }),
+      );
+      assertEquals(result instanceof Response, true);
+      assertEquals(result!.status, 400);
+    });
+
+    it("handles POST action with valid id but non-existent file returns error", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/action", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ id: "valid-action", args: ["hello"] }),
+          }),
+        }),
+      );
+      assertEquals(result instanceof Response, true);
+      // The import of the non-existent file will fail, resulting in a 500
+      assertEquals(result!.status, 500);
+    });
+
+    it("rejects DELETE with 405", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/action", { method: "DELETE" }),
+        }),
+      );
+      assertEquals(result!.status, 405);
+    });
+  });
+
+  describe("module endpoint - edge cases", () => {
+    it("returns 400 for backslash path traversal", async () => {
+      const adapter = createMockAdapter({
+        exists: () => Promise.resolve(true),
+      });
+
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          config: rscEnabledConfig,
+          req: new Request(
+            "http://localhost/_veryfront/rsc/module?rel=..\\..\\etc\\passwd",
+          ),
+          adapter,
+          projectDir: "/tmp/test-project",
+        }),
+      );
+      assertEquals(result instanceof Response, true);
+      assertEquals(result!.status, 400);
+    });
+
+    it("serves file from app directory root", async () => {
+      const adapter = createMockAdapter({
+        exists: (path: string) => Promise.resolve(path.includes("/app/component.js")),
+        readFile: () => Promise.resolve("export default {}"),
+      });
+
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/module?rel=component.js"),
+          adapter,
+          projectDir: "/tmp/test-project",
+        }),
+      );
+      assertEquals(result instanceof Response, true);
+      assertEquals(result!.status, 200);
+      const body = await result!.text();
+      assertEquals(body, "export default {}");
+    });
+  });
+
+  describe("stream endpoint - sub-paths", () => {
+    it("returns null for stream sub-path when RSC disabled", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/stream/sub",
+          config: rscDisabledConfig,
+        }),
+      );
+      assertEquals(result, null);
+    });
+
+    it("returns null for page sub-path when RSC disabled", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/page/sub",
+          config: rscDisabledConfig,
+        }),
+      );
+      assertEquals(result, null);
+    });
+
+    it("returns null for render sub-path when RSC disabled", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/render/sub",
+          config: rscDisabledConfig,
+        }),
+      );
+      assertEquals(result, null);
+    });
+  });
 });

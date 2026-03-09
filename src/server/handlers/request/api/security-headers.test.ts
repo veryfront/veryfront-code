@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildCSP, getSecurityHeader, applySecurityHeaders } from "./security-headers.ts";
+import { applySecurityHeaders, buildCSP, getSecurityHeader } from "./security-headers.ts";
 import type { HandlerContext } from "../../types.ts";
 
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
