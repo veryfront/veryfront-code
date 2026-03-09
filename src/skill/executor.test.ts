@@ -1,8 +1,29 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { detectRuntime, LocalScriptExecutor } from "./executor.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { detectRuntime, getSkillScriptExecutor, LocalScriptExecutor } from "./executor.ts";
+
+const SKILL_ENV_KEYS = [
+  "SANDBOX_AUTH_TOKEN",
+  "VERYFRONT_API_TOKEN",
+] as const;
+
+function clearSkillEnv(): void {
+  for (const key of SKILL_ENV_KEYS) {
+    try {
+      deleteEnv(key);
+    } catch {
+      // expected: env may already be unset
+    }
+  }
+}
 
 describe("src/skill/executor", () => {
+  afterEach(() => {
+    clearSkillEnv();
+  });
+
   describe("detectRuntime", () => {
     it("should detect Python scripts", () => {
       const { command, args } = detectRuntime("scripts/setup.py");
@@ -57,6 +78,39 @@ describe("src/skill/executor", () => {
 
       assertEquals(result.exitCode, 124);
       assertEquals(result.stderr.includes("timed out"), true);
+    });
+  });
+
+  describe("getSkillScriptExecutor", () => {
+    it("uses cloud execution when VERYFRONT_API_TOKEN is set", () => {
+      setEnv("VERYFRONT_API_TOKEN", "vf_test_skill");
+
+      const executor = getSkillScriptExecutor();
+      assertEquals(executor.constructor.name, "CloudScriptExecutor");
+    });
+
+    it("uses cloud execution when request-scoped credentials are available", async () => {
+      const executorType = await runWithRequestContext(
+        {
+          projectSlug: "skill-test",
+          token: "vf_request_token",
+        },
+        async () => getSkillScriptExecutor().constructor.name,
+      );
+
+      assertEquals(executorType, "CloudScriptExecutor");
+    });
+
+    it("keeps SANDBOX_AUTH_TOKEN as an explicit cloud override", () => {
+      setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+
+      const executor = getSkillScriptExecutor();
+      assertEquals(executor.constructor.name, "CloudScriptExecutor");
+    });
+
+    it("falls back to local execution without cloud credentials", () => {
+      const executor = getSkillScriptExecutor();
+      assertEquals(executor instanceof LocalScriptExecutor, true);
     });
   });
 });

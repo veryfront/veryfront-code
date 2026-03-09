@@ -6,7 +6,11 @@ order: 17
 
 # veryfront/provider
 
-AI SDK model provider registry. Maps "provider/model" strings to AI SDK LanguageModel instances. Auto-initializes providers from environment variables on first use.
+AI SDK model provider registry. Maps "provider/model" strings to AI SDK `LanguageModel` instances.
+
+Most apps do not need this directly. Omit `model` on `agent()` to follow
+runtime defaults, or use `resolveModel()` and `registerModelProvider()` when
+you need an explicit provider path.
 
 ## Import
 
@@ -30,7 +34,7 @@ import { registerModelProvider, resolveModel } from "veryfront/provider";
 import { createOpenAI } from "@ai-sdk/openai";
 
 registerModelProvider("openai", (id) => createOpenAI({ apiKey })(id));
-const model = resolveModel("openai/gpt-4o");
+const model = resolveModel("veryfront-cloud/openai/gpt-5.2");
 ```
 
 ## API

@@ -5,17 +5,19 @@ A chatbot that answers questions from your own documents using Retrieval-Augment
 ## What's included
 
 - Q&A agent with source citation
-- Embedding-based semantic search (OpenAI text-embedding-3-small)
+- Embedding-based semantic search with convention-based model selection
 - Document upload supporting PDF, DOCX, XLSX, PPTX, CSV, HTML, RTF, EPUB, TXT, and Markdown
-- JSON-based vector store — no external database required
+- `ragStore()` with local JSON storage by default, and Veryfront Cloud RAG when bootstrap is present
+- Original uploaded files stored in Veryfront Cloud project uploads when cloud bootstrap is present
 - Sample content in `/content` directory auto-indexed on first search
 
 ## Getting started
 
-1. Set your OpenAI API key:
+1. Set your Veryfront Cloud bootstrap vars:
 
    ```bash
-   export OPENAI_API_KEY=sk-...
+   export VERYFRONT_API_TOKEN=vf_...
+   export VERYFRONT_PROJECT_SLUG=my-project
    ```
 
 2. Start the dev server:
@@ -25,6 +27,8 @@ A chatbot that answers questions from your own documents using Retrieval-Augment
    ```
 
 3. Open the app and upload a document or ask a question — the sample docs in `content/` are indexed automatically.
+
+If you are using a self-hosted Veryfront API, also set `VERYFRONT_API_URL`.
 
 ## Architecture
 
@@ -69,7 +73,7 @@ flowchart LR
 
 ### Pipelines
 
-**Ingestion** — Documents are parsed into plain text via the built-in kreuzberg extraction engine (supporting PDF, DOCX, XLSX, PPTX, HTML, RTF, EPUB, and 76+ formats), split into overlapping chunks (~1000 chars, 200 char overlap), and stored with their embeddings in `data/index.json`. Embeddings are generated lazily on first search to keep uploads fast.
+**Ingestion** — Documents are parsed into plain text via the built-in kreuzberg extraction engine (supporting PDF, DOCX, XLSX, PPTX, HTML, RTF, EPUB, and 76+ formats), split into overlapping chunks (~1000 chars, 200 char overlap), and stored in the default `ragStore()`. In local mode that means `data/index.json`; with Veryfront Cloud bootstrap it upgrades to the cloud RAG backend automatically. The original uploaded binary is also stored in the project's Veryfront Cloud uploads store so remote projects retain the source file, not just the extracted text. Embeddings are generated lazily on first search to keep uploads fast.
 
 **Query** — The user's query is embedded into the same vector space as the documents, then compared against all stored chunks using cosine similarity to find the top-*k* most relevant results.
 
@@ -78,7 +82,7 @@ flowchart LR
 ## Structure
 
 ```
-store.ts                        Upload store config (embedding model, storage path)
+store.ts                        RAG store config
 agents/rag.ts                   Q&A agent with citation instructions
 content/
   getting-started.md            Sample document
@@ -102,7 +106,7 @@ app/
 | Chat API route | `createChatHandler` | 1 line in `route.ts` |
 | Agent definition | `agent()` | Config object in `agents/rag.ts` |
 | RAG retrieval | `beforeStream` hook | Context injection in `api/chat/route.ts` |
-| Vector store | `uploadStore()` | Config in `store.ts` |
+| Vector store | `ragStore()` | Config in `store.ts` |
 
 ## Adding documents
 
@@ -113,6 +117,6 @@ app/
 
 This is a starter template — not a production-ready setup. For production, consider:
 
-- **Vector store** — Replace the JSON store with pgvector, Pinecone, or Qdrant for datasets beyond ~10k chunks
+- **Vector store** — Replace the default store with pgvector, Pinecone, or Qdrant for datasets beyond ~10k chunks
 - **Reranking** — Add a cross-encoder reranker (e.g. Cohere Rerank) after retrieval to improve precision
 - **Hybrid search** — Combine dense vectors with BM25 keyword matching for better recall

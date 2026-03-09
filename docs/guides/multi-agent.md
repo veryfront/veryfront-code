@@ -8,6 +8,9 @@ order: 11
 
 Agent composition, delegation, and agent-as-tool patterns.
 
+Each agent can omit `model` and inherit the runtime default, or set an
+explicit provider/model override when you need one.
+
 ## Agent-as-tool
 
 Convert an agent into a tool that another agent can call:
@@ -18,7 +21,6 @@ import { agent } from "veryfront/agent";
 
 export default agent({
   id: "researcher",
-  model: "openai/gpt-4o",
   system: "Research topics thoroughly using web search.",
   tools: { webSearch: true },
   maxSteps: 5,
@@ -31,7 +33,6 @@ import { agent } from "veryfront/agent";
 
 export default agent({
   id: "writer",
-  model: "openai/gpt-4o",
   system: "Write clear, well-structured articles.",
 });
 ```
@@ -42,7 +43,6 @@ import { agent, getAgentsAsTools } from "veryfront/agent";
 
 export default agent({
   id: "orchestrator",
-  model: "openai/gpt-4o",
   system: "You coordinate research and writing. Use the researcher to gather facts, then the writer to produce the article.",
   tools: getAgentsAsTools({
     researcher: "Research a topic using web search",

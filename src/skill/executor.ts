@@ -8,6 +8,7 @@
 
 import { getEnv, runCommand } from "#veryfront/platform/compat/process.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { extname } from "#veryfront/compat/path";
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
@@ -79,6 +80,14 @@ function createSandboxScriptPath(scriptPath: string): string {
   return `/tmp/veryfront-skill-script-${Date.now()}-${suffix}${ext}`;
 }
 
+function getSandboxAuthOverride(): string | undefined {
+  return getEnv("SANDBOX_AUTH_TOKEN")?.trim() || undefined;
+}
+
+function hasCloudScriptExecutionAuth(): boolean {
+  return Boolean(getSandboxAuthOverride() || getVeryfrontCloudAuthToken());
+}
+
 /**
  * Detect the runtime command for a script based on file extension.
  */
@@ -135,28 +144,17 @@ export class LocalScriptExecutor implements SkillScriptExecutor {
 
 /**
  * Cloud script executor using sandbox.
- * Requires SANDBOX_AUTH_TOKEN environment variable.
+ * Uses SANDBOX_AUTH_TOKEN as an explicit override, otherwise falls back to the
+ * standard Veryfront Cloud bootstrap.
  */
 class CloudScriptExecutor implements SkillScriptExecutor {
   async execute(input: SkillScriptExecutorInput): Promise<SkillScriptResult> {
     const timeoutMs = resolveTimeoutMs(input.timeoutMs);
-    // NOTE: In SSR contexts, getEnv() reads through the project-env overlay
-    // (AsyncLocalStorage-backed). If the token is set at host level only,
-    // the overlay may not surface it. Ensure SANDBOX_AUTH_TOKEN is available
-    // in the request-scoped environment when running under SSR.
-    const authToken = getEnv("SANDBOX_AUTH_TOKEN");
-    if (!authToken) {
-      throw toError(
-        createError({
-          type: "agent",
-          message: "Cloud script execution requires SANDBOX_AUTH_TOKEN environment variable",
-        }),
-      );
-    }
 
     // Lazy import to avoid bundling sandbox in non-cloud environments
     const { Sandbox } = await import("#veryfront/sandbox");
-    const sandbox = await Sandbox.create({ authToken });
+    const authToken = getSandboxAuthOverride();
+    const sandbox = await Sandbox.create(authToken ? { authToken } : undefined);
     try {
       const sandboxScriptPath = createSandboxScriptPath(input.scriptPath);
       const scriptContent = input.scriptContent ?? await readTextFile(input.scriptPath);
@@ -205,9 +203,9 @@ class CloudScriptExecutor implements SkillScriptExecutor {
 
 /**
  * Get the appropriate script executor.
- * Checks SANDBOX_AUTH_TOKEN on every call so request-scoped env overlays
- * (e.g. project-env AsyncLocalStorage) are respected.
+ * Checks cloud auth availability on every call so request-scoped credentials
+ * and environment overrides are respected.
  */
 export function getSkillScriptExecutor(): SkillScriptExecutor {
-  return getEnv("SANDBOX_AUTH_TOKEN") ? new CloudScriptExecutor() : new LocalScriptExecutor();
+  return hasCloudScriptExecutionAuth() ? new CloudScriptExecutor() : new LocalScriptExecutor();
 }

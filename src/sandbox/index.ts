@@ -8,7 +8,7 @@
  * ```ts
  * import { Sandbox } from "veryfront/sandbox";
  *
- * const sandbox = await Sandbox.create({ authToken: "<your-jwt>" });
+ * const sandbox = await Sandbox.create();
  * const result = await sandbox.executeCommand("echo hello");
  * console.log(result.stdout); // "hello\n"
  * await sandbox.close();

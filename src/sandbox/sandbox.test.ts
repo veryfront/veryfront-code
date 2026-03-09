@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithProjectEnv } from "../server/project-env/storage.ts";
 import type { ExecStreamEvent } from "./sandbox.ts";
 import { Sandbox } from "./sandbox.ts";
@@ -76,6 +77,21 @@ function jsonBody(index: number): unknown {
   return JSON.parse(body);
 }
 
+const SANDBOX_ENV_KEYS = [
+  "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_URL",
+] as const;
+
+function clearSandboxEnv(): void {
+  for (const key of SANDBOX_ENV_KEYS) {
+    try {
+      deleteEnv(key);
+    } catch {
+      // expected: env may already be unset
+    }
+  }
+}
+
 describe("Sandbox", () => {
   beforeEach(() => {
     fetchCalls = [];
@@ -85,6 +101,7 @@ describe("Sandbox", () => {
   afterEach(() => {
     restoreTimers();
     globalThis.fetch = originalFetch;
+    clearSandboxEnv();
   });
 
   describe("create()", () => {
@@ -105,6 +122,70 @@ describe("Sandbox", () => {
       assertEquals(call(0).init?.method, "POST");
       assertEquals(headerValue(0, "Authorization"), "Bearer test-token");
       assertEquals(headerValue(0, "Content-Type"), "application/json");
+    });
+
+    it("should use VERYFRONT_API_TOKEN when authToken is omitted", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "vf_env_token");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+
+      mockFetch([
+        jsonResponse({
+          id: "session-env-token",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+
+      const sandbox = await Sandbox.create();
+      assertEquals(sandbox.id, "session-env-token");
+
+      assertStringIncludes(call(0).url, "https://api.test.com/sandbox-sessions");
+      assertEquals(headerValue(0, "Authorization"), "Bearer vf_env_token");
+    });
+
+    it("should prefer request-scoped credentials over VERYFRONT_API_TOKEN", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "vf_env_token");
+
+      mockFetch([
+        jsonResponse({
+          id: "session-request-token",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+
+      await runWithRequestContext(
+        {
+          projectSlug: "sandbox-test",
+          token: "vf_request_token",
+        },
+        async () => {
+          const sandbox = await Sandbox.create({ apiUrl: "https://api.test.com" });
+          assertEquals(sandbox.id, "session-request-token");
+        },
+      );
+
+      assertEquals(headerValue(0, "Authorization"), "Bearer vf_request_token");
+    });
+
+    it("should let explicit authToken override bootstrap auth", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "vf_env_token");
+
+      mockFetch([
+        jsonResponse({
+          id: "session-explicit-token",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+
+      const sandbox = await Sandbox.create({
+        authToken: "vf_explicit_token",
+        apiUrl: "https://api.test.com",
+      });
+      assertEquals(sandbox.id, "session-explicit-token");
+
+      assertEquals(headerValue(0, "Authorization"), "Bearer vf_explicit_token");
     });
 
     it("should poll until ready when not running", async () => {
@@ -142,6 +223,16 @@ describe("Sandbox", () => {
         Error,
         "Failed to create sandbox",
       );
+    });
+
+    it("should throw before fetching when no auth is configured", async () => {
+      await assertRejects(
+        () => Sandbox.create({ apiUrl: "https://api.test.com" }),
+        Error,
+        "Sandbox auth not configured",
+      );
+
+      assertEquals(fetchCalls.length, 0);
     });
 
     it("should throw when sandbox fails to start", async () => {
@@ -199,6 +290,20 @@ describe("Sandbox", () => {
       assertEquals(sandbox.url, "https://sandbox.example.com");
       assertStringIncludes(call(0).url, "/sandbox-sessions/session-existing");
       assertEquals(headerValue(0, "Authorization"), "Bearer test-token");
+    });
+
+    it("should reconnect using VERYFRONT_API_TOKEN when authToken is omitted", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "vf_env_token");
+
+      mockFetch([
+        jsonResponse({ endpoint: "https://sandbox.example.com" }),
+      ]);
+
+      const sandbox = await Sandbox.get("session-existing", {
+        apiUrl: "https://api.test.com",
+      });
+      assertEquals(sandbox.id, "session-existing");
+      assertEquals(headerValue(0, "Authorization"), "Bearer vf_env_token");
     });
 
     it("should throw when sandbox not found", async () => {

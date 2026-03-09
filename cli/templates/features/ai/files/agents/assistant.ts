@@ -8,7 +8,6 @@ function getSystemPrompt(): string {
 
 export default agent({
   id: "assistant",
-  model: "openai/gpt-4o",
   system: getSystemPrompt,
   tools: { getWeather: true },
   maxSteps: 10,

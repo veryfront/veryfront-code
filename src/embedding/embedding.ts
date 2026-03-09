@@ -1,6 +1,7 @@
 import { embed, embedMany } from "ai";
 import type { Embedding, EmbeddingConfig } from "./types.ts";
 import { resolveEmbeddingModel } from "./resolve.ts";
+import { resolveConfiguredEmbeddingModel } from "./model-resolution.ts";
 
 const DEFAULT_BATCH_SIZE = 100;
 
@@ -16,7 +17,6 @@ const DEFAULT_BATCH_SIZE = 100;
  * @example
  * ```ts
  * const embedder = embedding({
- *   model: "openai/text-embedding-3-small",
  *   documentPrefix: "search_document: ",  // for Nomic, E5, BGE models
  *   queryPrefix: "search_query: ",
  * });
@@ -25,13 +25,14 @@ const DEFAULT_BATCH_SIZE = 100;
  * ```
  */
 export function embedding(config: EmbeddingConfig): Embedding {
-  const model = resolveEmbeddingModel(config.model);
+  const modelId = resolveConfiguredEmbeddingModel(config.model);
+  const model = resolveEmbeddingModel(modelId);
   const batchSize = config.batchSize ?? DEFAULT_BATCH_SIZE;
   const docPrefix = config.documentPrefix ?? "";
   const queryPrefix = config.queryPrefix ?? "";
 
   return {
-    model: config.model,
+    model: modelId,
 
     async embed(text: string): Promise<number[]> {
       const result = await embed({ model, value: queryPrefix + text });

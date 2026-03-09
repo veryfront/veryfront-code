@@ -29,6 +29,11 @@ import { DEFAULT_LOCAL_MODEL } from "./local/model-catalog.ts";
 import { createLocalModel } from "./local/ai-sdk-adapter.ts";
 import { isLocalAIDisabled } from "./local/env.ts";
 import { verifyLocalRuntime } from "./local/local-engine.ts";
+import {
+  getDefaultVeryfrontCloudModel,
+  isVeryfrontCloudEnabled,
+} from "#veryfront/platform/cloud/resolver.ts";
+import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
 
 const localLogger = serverLogger.component("local-llm");
 
@@ -135,19 +140,30 @@ function autoInitializeFromEnv(): void {
       return createLocalModel(id);
     });
   }
+
+  if (!manager.has("veryfront-cloud")) {
+    manager.registerShared("veryfront-cloud", (id) => {
+      return createVeryfrontCloudModel(id);
+    });
+  }
 }
 
 /**
  * Default cloud models to try when auto-upgrading from a local model.
- * Ordered by preference: Anthropic → OpenAI → Google.
+ * Ordered by preference: Veryfront Cloud → Anthropic → OpenAI → Google.
  *
  * NOTE: model IDs are hardcoded — update when default models change.
  */
 const CLOUD_UPGRADE_CANDIDATES: Array<{
   provider: string;
-  model: string;
+  model: string | (() => string);
   hasKey: () => boolean;
 }> = [
+  {
+    provider: "veryfront-cloud",
+    model: () => getDefaultVeryfrontCloudModel().replace(/^veryfront-cloud\//, ""),
+    hasKey: () => isVeryfrontCloudEnabled(),
+  },
   {
     provider: "anthropic",
     model: "claude-sonnet-4-20250514",
@@ -165,6 +181,15 @@ const CLOUD_UPGRADE_CANDIDATES: Array<{
   },
 ];
 
+function isMissingProviderConfiguration(errorData: ReturnType<typeof fromError>): boolean {
+  if (errorData?.type !== "config") return false;
+
+  const message = errorData.message.toLowerCase();
+  return message.includes("not set") ||
+    message.includes("missing credentials") ||
+    message.includes("missing configuration");
+}
+
 /**
  * Find the first cloud provider with a valid API key.
  *
@@ -179,7 +204,8 @@ export function findAvailableCloudModel(): string | null {
   for (const { provider, model, hasKey } of CLOUD_UPGRADE_CANDIDATES) {
     if (!hasKey()) continue;
     if (!manager.has(provider)) continue;
-    return `${provider}/${model}`;
+    const resolvedModel = typeof model === "function" ? model() : model;
+    return `${provider}/${resolvedModel}`;
   }
   return null;
 }
@@ -238,7 +264,11 @@ export function resolveModel(modelString: string): LanguageModel {
     // Auto-fallback: when a cloud provider fails due to missing API key,
     // transparently switch to the local model so chat works out of the box.
     const errorData = fromError(error);
-    if (errorData?.type === "config" && providerName !== "local" && manager.has("local")) {
+    if (
+      isMissingProviderConfiguration(errorData) &&
+      providerName !== "local" &&
+      manager.has("local")
+    ) {
       // Check if local AI is explicitly disabled (e.g., for testing)
       if (isLocalAIDisabled()) {
         throw toError(
@@ -250,7 +280,8 @@ export function resolveModel(modelString: string): LanguageModel {
       }
 
       localLogger.info(
-        `⚡ "${providerName}" unavailable (missing API key). Falling back to local model.`,
+        `⚡ "${providerName}" unavailable (missing credentials or configuration). ` +
+          "Falling back to local model.",
       );
       const localFactory = manager.get("local")!;
       return localFactory(DEFAULT_LOCAL_MODEL);

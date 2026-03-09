@@ -8,3 +8,7 @@ export { type BlobRef, type BlobStorage, type StoreBlobOptions } from "./types.t
 export { LocalBlobStorage } from "./local-storage.ts";
 export { S3BlobStorage, type S3BlobStorageConfig } from "./s3-storage.ts";
 export { GCSBlobStorage, type GCSBlobStorageConfig } from "./gcs-storage.ts";
+export {
+  VeryfrontCloudBlobStorage,
+  type VeryfrontCloudBlobStorageConfig,
+} from "./veryfront-cloud-storage.ts";

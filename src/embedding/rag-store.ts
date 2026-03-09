@@ -8,38 +8,59 @@ import {
 } from "#veryfront/platform/compat/fs.ts";
 import { dirname, extname, join } from "#veryfront/platform/compat/path/basic-operations.ts";
 import { serverLogger } from "#veryfront/utils";
+import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { embedding } from "./embedding.ts";
 import { chunk } from "./chunk.ts";
+import { createVeryfrontCloudRagStore } from "./veryfront-cloud/rag-store.ts";
+import { resolveConfiguredEmbeddingModel } from "./model-resolution.ts";
 import type {
-  StoredChunk,
-  UploadMeta,
-  UploadSearchOptions,
-  UploadSearchResult,
-  UploadStore,
-  UploadStoreConfig,
-  UploadStoreData,
+  RagChunk,
+  RagDocumentMeta,
+  RagSearchOptions,
+  RagSearchResult,
+  RagStore,
+  RagStoreBackend,
+  RagStoreConfig,
+  RagStoreData,
 } from "./types.ts";
+
+// Legacy data shapes used only for migrating old upload-store JSON files.
+interface LegacyStoredChunk {
+  id: string;
+  uploadId: string;
+  text: string;
+  embedding: number[];
+  index: number;
+}
+
+interface LegacyUploadStoreData {
+  uploads: RagDocumentMeta[];
+  chunks: LegacyStoredChunk[];
+}
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+
+type ResolvedRagStoreConfig = RagStoreConfig & { model: string };
 
 /** Default number of top results returned by similarity search. */
 const DEFAULT_TOP_K = 5;
 
 /**
- * Creates a persistent upload store with lazy embedding and similarity search.
+ * Creates a persistent RAG store with lazy embedding and similarity search.
  *
- * Combines upload management, chunking, embedding, and vector search into
- * a single factory. Uploads are chunked on ingest; embeddings are generated
+ * Combines document ingestion, chunking, embedding, and vector search into
+ * a single factory. Documents are chunked on ingest; embeddings are generated
  * lazily on the first search call to avoid blocking uploads on AI API calls.
  *
- * Persistence is JSON-file-based (via the platform fs adapter), making it
- * suitable for prototypes, templates, and small-to-medium knowledge bases.
+ * By default, this uses the local JSON store. When Veryfront Cloud bootstrap
+ * is present, it automatically upgrades to the cloud-backed store unless
+ * explicitly overridden.
  *
  * @example
  * ```ts
- * import { uploadStore } from "veryfront/embedding";
+ * import { ragStore } from "veryfront/embedding";
  *
- * const store = uploadStore({
- *   model: "openai/text-embedding-3-small",
+ * const store = ragStore({
  *   storagePath: "data/index.json",
  *   contentDir: "content",
  * });
@@ -48,7 +69,85 @@ const DEFAULT_TOP_K = 5;
  * const results = await store.search("query", { topK: 5, threshold: 0.7 });
  * ```
  */
-export function uploadStore(config: UploadStoreConfig): UploadStore {
+export function ragStore(config: RagStoreConfig): RagStore {
+  const storeCache = new Map<string, RagStore>();
+
+  function getStore(): RagStore {
+    const resolvedConfig = resolveRagStoreConfig(config);
+    const backend = resolveRagStoreBackend(config);
+    const cacheKey = JSON.stringify({ backend, config: resolvedConfig });
+    const cached = storeCache.get(cacheKey);
+    if (cached) return cached;
+
+    const store = backend === "veryfront-cloud"
+      ? createVeryfrontCloudRagStore(resolvedConfig)
+      : createLocalJsonRagStore(resolvedConfig);
+    storeCache.set(cacheKey, store);
+    return store;
+  }
+
+  return {
+    ingest(title, text, meta) {
+      return getStore().ingest(title, text, meta);
+    },
+    search(query, options) {
+      return getStore().search(query, options);
+    },
+    listDocuments() {
+      return getStore().listDocuments();
+    },
+    removeDocument(id) {
+      return getStore().removeDocument(id);
+    },
+    indexContentDir() {
+      return getStore().indexContentDir();
+    },
+  };
+}
+
+function resolveRagStoreConfig(config: RagStoreConfig): ResolvedRagStoreConfig {
+  return {
+    ...config,
+    model: resolveConfiguredEmbeddingModel(config.model),
+  };
+}
+
+function normalizeRagStoreBackend(
+  value: string | undefined,
+): RagStoreBackend | undefined {
+  const normalized = value?.trim().toLowerCase();
+
+  switch (normalized) {
+    case undefined:
+    case "":
+      return undefined;
+    case "auto":
+      return "auto";
+    case "local":
+    case "local-json":
+      return "local-json";
+    case "cloud":
+    case "veryfront-cloud":
+      return "veryfront-cloud";
+    default:
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Invalid RAG backend "${value}". Expected "auto", "local-json", or "veryfront-cloud".`,
+      });
+  }
+}
+
+function resolveRagStoreBackend(config: RagStoreConfig): Exclude<RagStoreBackend, "auto"> {
+  const configured = normalizeRagStoreBackend(config.backend);
+  if (configured && configured !== "auto") return configured;
+
+  const envOverride = normalizeRagStoreBackend(getEnv("VERYFRONT_RAG_BACKEND"));
+  if (envOverride && envOverride !== "auto") return envOverride;
+
+  return isVeryfrontCloudEnabled() ? "veryfront-cloud" : "local-json";
+}
+
+function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
   const storagePath = config.storagePath ?? "data/index.json";
   const contentDir = config.contentDir;
   const contentExtensions = new Set(config.contentExtensions ?? [".md", ".mdx", ".txt"]);
@@ -57,45 +156,71 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
   const MAX_TEXT_LENGTH = 5 * 1024 * 1024; // 5 MB text limit per document
 
   // Serialize all load→modify→save operations to prevent concurrent overwrites.
+  // NOTE: This is a single-process, single-instance mutex. In multi-instance
+  // deployments, concurrent stores targeting the same file will race.
   let mutex: Promise<void> = Promise.resolve();
   function withLock<T>(fn: () => Promise<T>): Promise<T> {
     const result = mutex.then(fn);
     mutex = result.then(
       () => {},
       (err) => {
-        serverLogger.error("[upload-store] Lock operation failed:", err);
+        serverLogger.error("[rag-store] Lock operation failed:", err);
       },
     );
     return result;
   }
 
-  const embedder = embedding({
-    model: config.model,
-    documentPrefix: config.documentPrefix,
-    queryPrefix: config.queryPrefix,
-    batchSize: config.batchSize,
-  });
+  function createEmbedder() {
+    return embedding({
+      model: config.model,
+      documentPrefix: config.documentPrefix,
+      queryPrefix: config.queryPrefix,
+      batchSize: config.batchSize,
+    });
+  }
 
-  async function load(): Promise<UploadStoreData> {
+  function isLegacyUploadStoreData(value: unknown): value is LegacyUploadStoreData {
+    if (!value || typeof value !== "object") return false;
+    const data = value as { uploads?: unknown; chunks?: unknown };
+    return Array.isArray(data.uploads) && Array.isArray(data.chunks);
+  }
+
+  function migrateLegacyUploadStoreData(data: LegacyUploadStoreData): RagStoreData {
+    return {
+      documents: data.uploads.map((upload) => ({ ...upload })),
+      chunks: data.chunks.map((chunk: LegacyStoredChunk) => ({
+        id: chunk.id,
+        documentId: chunk.uploadId,
+        text: chunk.text,
+        embedding: chunk.embedding,
+        index: chunk.index,
+      })),
+    };
+  }
+
+  async function load(): Promise<RagStoreData> {
     try {
       const data = await readTextFile(storagePath);
       const parsed = JSON.parse(data);
-      if (!parsed || !Array.isArray(parsed.uploads) || !Array.isArray(parsed.chunks)) {
-        serverLogger.warn("[upload-store] Corrupted store file, resetting", { storagePath });
-        return { uploads: [], chunks: [] };
+      if (isLegacyUploadStoreData(parsed)) {
+        return migrateLegacyUploadStoreData(parsed);
       }
-      return parsed as UploadStoreData;
+      if (!parsed || !Array.isArray(parsed.documents) || !Array.isArray(parsed.chunks)) {
+        serverLogger.warn("[rag-store] Corrupted store file, resetting", { storagePath });
+        return { documents: [], chunks: [] };
+      }
+      return parsed as RagStoreData;
     } catch (err) {
       // File not found is expected on first run; anything else is worth logging
       if (isNotFoundError(err)) {
-        return { uploads: [], chunks: [] };
+        return { documents: [], chunks: [] };
       }
-      serverLogger.warn("[upload-store] Failed to load store, resetting", err);
-      return { uploads: [], chunks: [] };
+      serverLogger.warn("[rag-store] Failed to load store, resetting", err);
+      return { documents: [], chunks: [] };
     }
   }
 
-  async function save(data: UploadStoreData): Promise<void> {
+  async function save(data: RagStoreData): Promise<void> {
     const dir = dirname(storagePath);
     if (dir && dir !== ".") {
       await mkdir(dir, { recursive: true });
@@ -117,10 +242,11 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
     }
   }
 
-  async function ensureEmbeddings(data: UploadStoreData): Promise<boolean> {
+  async function ensureEmbeddings(data: RagStoreData): Promise<boolean> {
     const unembedded = data.chunks.filter((c) => c.embedding.length === 0);
     if (unembedded.length === 0) return false;
 
+    const embedder = createEmbedder();
     const embeddings = await embedder.embedMany(unembedded.map((c) => c.text));
     for (let i = 0; i < unembedded.length; i++) {
       unembedded[i]!.embedding = embeddings[i]!;
@@ -153,7 +279,7 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
     ): Promise<string> {
       return withLock(async () => {
         const data = await load();
-        const uploadId = crypto.randomUUID();
+        const documentId = crypto.randomUUID();
 
         if (text.length > MAX_TEXT_LENGTH) {
           throw INVALID_ARGUMENT.create({
@@ -166,34 +292,34 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
           throw INVALID_ARGUMENT.create({ detail: "Upload contains no extractable text" });
         }
 
-        const doc: UploadMeta = {
-          id: uploadId,
+        const doc: RagDocumentMeta = {
+          id: documentId,
           title,
           source: meta?.source ?? "",
           type: meta?.type ?? "",
           createdAt: Date.now(),
         };
 
-        const chunkRecords: StoredChunk[] = chunks.map((chunkText, i) => ({
+        const chunkRecords: RagChunk[] = chunks.map((chunkText, i) => ({
           id: crypto.randomUUID(),
-          uploadId,
+          documentId,
           text: chunkText,
           embedding: [], // filled lazily on first search
           index: i,
         }));
 
-        data.uploads.push(doc);
+        data.documents.push(doc);
         data.chunks.push(...chunkRecords);
         await save(data);
 
-        return uploadId;
+        return documentId;
       });
     },
 
     async search(
       query: string,
-      options?: UploadSearchOptions,
-    ): Promise<UploadSearchResult[]> {
+      options?: RagSearchOptions,
+    ): Promise<RagSearchResult[]> {
       return withLock(async () => {
         const data = await load();
         if (data.chunks.length === 0) return [];
@@ -201,18 +327,19 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
         const updated = await ensureEmbeddings(data);
         if (updated) await save(data);
 
+        const embedder = createEmbedder();
         const queryEmbedding = await embedder.embed(query);
         const topK = options?.topK ?? DEFAULT_TOP_K;
         const threshold = options?.threshold;
 
-        const docMap = new Map(data.uploads.map((d) => [d.id, d]));
+        const docMap = new Map(data.documents.map((d) => [d.id, d]));
 
         const scored = data.chunks.map((c) => {
-          const doc = docMap.get(c.uploadId);
+          const doc = docMap.get(c.documentId);
           return {
             text: c.text,
             score: cosineSimilarity(queryEmbedding, c.embedding),
-            uploadId: c.uploadId,
+            documentId: c.documentId,
             title: doc?.title ?? "Unknown",
             source: doc?.source ?? "",
             type: doc?.type ?? "",
@@ -229,18 +356,18 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
       });
     },
 
-    async listUploads(): Promise<UploadMeta[]> {
+    async listDocuments(): Promise<RagDocumentMeta[]> {
       return withLock(async () => {
         const data = await load();
-        return data.uploads;
+        return data.documents;
       });
     },
 
-    async removeUpload(id: string): Promise<void> {
+    async removeDocument(id: string): Promise<void> {
       return withLock(async () => {
         const data = await load();
-        data.uploads = data.uploads.filter((d) => d.id !== id);
-        data.chunks = data.chunks.filter((c) => c.uploadId !== id);
+        data.documents = data.documents.filter((d) => d.id !== id);
+        data.chunks = data.chunks.filter((c) => c.documentId !== id);
         await save(data);
       });
     },
@@ -250,7 +377,7 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
 
       return withLock(async () => {
         const data = await load();
-        const indexedSources = new Set(data.uploads.map((d) => d.source));
+        const indexedSources = new Set(data.documents.map((d) => d.source));
 
         const files = await listContentFiles(contentDir);
         const newFiles = files.filter((f) => !indexedSources.has(f));
@@ -261,7 +388,7 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
           if (!content?.trim()) continue;
           if (content.length > MAX_TEXT_LENGTH) {
             serverLogger.warn(
-              `[upload-store] Skipping ${file}: exceeds ${
+              `[rag-store] Skipping ${file}: exceeds ${
                 MAX_TEXT_LENGTH / 1024 / 1024
               } MB text limit`,
             );
@@ -271,14 +398,14 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
           const title = file.startsWith(contentDir + "/")
             ? file.slice(contentDir.length + 1).replace(/\.[^.]+$/, "")
             : file.replace(/\.[^.]+$/, "");
-          const uploadId = crypto.randomUUID();
+          const documentId = crypto.randomUUID();
           const type = extname(file).slice(1);
 
           const chunks = await chunk(content, chunkOptions);
           if (chunks.length === 0) continue;
 
-          data.uploads.push({
-            id: uploadId,
+          data.documents.push({
+            id: documentId,
             title,
             source: file,
             type,
@@ -288,7 +415,7 @@ export function uploadStore(config: UploadStoreConfig): UploadStore {
           data.chunks.push(
             ...chunks.map((chunkText, i) => ({
               id: crypto.randomUUID(),
-              uploadId,
+              documentId,
               text: chunkText,
               embedding: [] as number[],
               index: i,

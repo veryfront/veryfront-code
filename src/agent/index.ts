@@ -8,7 +8,6 @@
  * import { agent } from "veryfront/agent";
  *
  * const assistant = agent({
- *   model: "openai/gpt-4o",
  *   system: "You are a helpful assistant.",
  * });
  * ```
@@ -27,7 +26,6 @@
  * });
  *
  * const assistant = agent({
- *   model: "openai/gpt-4o",
  *   system: "You are a helpful assistant.",
  *   tools: { search: searchTool },
  *   memory: { type: "conversation", maxMessages: 50 },
@@ -39,7 +37,6 @@
  * import { agent } from "veryfront/agent";
  *
  * const assistant = agent({
- *   model: "openai/gpt-4o",
  *   system: "You are a support engineer. Use skills when relevant.",
  *   skills: ["incident-response", "repo-maintainer"], // or `true` for all discovered skills
  *   tools: {
@@ -55,7 +52,6 @@
  * import { agent } from "veryfront/agent";
  *
  * const assistant = agent({
- *   model: "openai/gpt-4o",
  *   system: "You are a helpful assistant.",
  * });
  *
@@ -70,14 +66,13 @@
  * ```ts
  * import { agent, registerAgent, getAgentsAsTools } from "veryfront/agent";
  *
- * const researcher = agent({ model: "openai/gpt-4o", system: "Research topics thoroughly." });
- * const writer = agent({ model: "openai/gpt-4o", system: "Write clear prose." });
+ * const researcher = agent({ system: "Research topics thoroughly." });
+ * const writer = agent({ system: "Write clear prose." });
  *
  * registerAgent(researcher);
  * registerAgent(writer);
  *
  * const orchestrator = agent({
- *   model: "openai/gpt-4o",
  *   system: "Coordinate research and writing.",
  *   tools: getAgentsAsTools(["researcher", "writer"]),
  * });
@@ -98,6 +93,7 @@ export type {
   MessagePart,
   ModelProvider,
   ModelString,
+  ResolvedAgentConfig,
   StreamToolCall,
   ToolCall,
   ToolCallPart,

@@ -12,7 +12,7 @@ const QUICK_ACTIONS: QuickAction[] = [
   { id: 'find-sources', label: 'Find Sources', prompt: 'Find relevant sources and references in the documents for: ' },
 ]
 
-interface Doc { id: string; title: string; source: string }
+interface Doc { id: string; title: string; source: string; url?: string }
 
 function useUploads(api: string) {
   const [docs, setDocs] = useState<Doc[]>([])
@@ -77,7 +77,7 @@ export default function DocsChat() {
   }, [docs.uploads, docs.uploading])
 
   const uploadFiles = useMemo(
-    () => docs.uploads.map((d) => ({ id: d.id, name: d.title })),
+    () => docs.uploads.map((d) => ({ id: d.id, name: d.title, url: d.url })),
     [docs.uploads],
   )
 
@@ -98,9 +98,22 @@ export default function DocsChat() {
       features={{ steps: true, tabs: true, sources: true, export: true }}
       models={{
         options: [
-          { value: 'anthropic/claude-sonnet-4-20250514', label: 'Claude Sonnet 4', provider: 'Anthropic' },
-          { value: 'openai/gpt-4o', label: 'GPT-4o', provider: 'OpenAI' },
-          { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini', provider: 'OpenAI', badge: 'Fast' },
+          {
+            value: 'veryfront-cloud/anthropic/claude-sonnet-4-6',
+            label: 'Claude Sonnet',
+            provider: 'Veryfront Cloud',
+          },
+          {
+            value: 'veryfront-cloud/openai/gpt-5.2',
+            label: 'GPT-5.2',
+            provider: 'Veryfront Cloud',
+          },
+          {
+            value: 'veryfront-cloud/google/gemini-2.5-flash',
+            label: 'Gemini 2.5 Flash',
+            provider: 'Veryfront Cloud',
+            badge: 'Fast',
+          },
         ],
       }}
       attachments={{

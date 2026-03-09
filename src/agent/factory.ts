@@ -1,4 +1,11 @@
-import type { Agent, AgentConfig, AgentResponse, AgentStreamResult, Message } from "./types.ts";
+import type {
+  Agent,
+  AgentConfig,
+  AgentResponse,
+  AgentStreamResult,
+  Message,
+  ResolvedAgentConfig,
+} from "./types.ts";
 import { AgentRuntime } from "./runtime/index.ts";
 import {
   detectPlatform,
@@ -17,6 +24,7 @@ import { agentRegistry } from "./composition/index.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -54,6 +62,11 @@ export function agent(config: AgentConfig): Agent {
   }
 
   const id = config.id ?? generateAgentId();
+
+  const publicConfig: ResolvedAgentConfig = {
+    ...config,
+    model: resolveConfiguredAgentModel(config.model),
+  };
 
   if (config.tools && config.tools !== true) {
     for (const [name, entry] of Object.entries(config.tools)) {
@@ -131,14 +144,17 @@ export function agent(config: AgentConfig): Agent {
   }
 
   const runtime = new AgentRuntime(id, {
-    ...config,
+    ...publicConfig,
     tools: mergedToolsConfig,
     system: augmentedSystem,
   });
 
   const agentInstance: Agent = {
     id,
-    config,
+    config: {
+      ...publicConfig,
+      tools: mergedToolsConfig,
+    },
 
     generate(input): Promise<AgentResponse> {
       return withSpan(
@@ -185,12 +201,12 @@ export function agent(config: AgentConfig): Agent {
 
           // Validate model override against allowlist when configured
           const modelOverride = body.model;
-          if (modelOverride && config.allowedModels?.length) {
-            if (!config.allowedModels.includes(modelOverride)) {
+          if (modelOverride && publicConfig.allowedModels?.length) {
+            if (!publicConfig.allowedModels.includes(modelOverride)) {
               return new Response(
                 JSON.stringify({
                   error: `Model "${modelOverride}" is not allowed. Allowed models: ${
-                    config.allowedModels.join(", ")
+                    publicConfig.allowedModels.join(", ")
                   }`,
                 }),
                 { status: 403, headers: { "Content-Type": "application/json" } },

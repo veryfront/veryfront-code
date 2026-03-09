@@ -62,6 +62,7 @@ import {
   isToolAllowedBySkill,
   validateAllowedToolPatterns,
 } from "#veryfront/skill/allowed-tools.ts";
+import { resolveConfiguredAgentModel } from "./model-resolution.ts";
 
 const logger = serverLogger.component("agent");
 const LOAD_SKILL_TOOL_ID = "load-skill";
@@ -194,7 +195,8 @@ export class AgentRuntime {
     context?: Record<string, unknown>,
     modelOverride?: string,
   ): Promise<AgentResponse> {
-    const resolvedModelString = maybeUpgradeLocalModel(modelOverride || this.config.model);
+    const requestedModel = resolveConfiguredAgentModel(modelOverride || this.config.model);
+    const resolvedModelString = maybeUpgradeLocalModel(requestedModel);
 
     return withSpan("agent.generate", async (span) => {
       setSpanAttributes(span, {
@@ -237,7 +239,7 @@ export class AgentRuntime {
     },
     modelOverride?: string,
   ): Promise<ReadableStream<Uint8Array>> {
-    const requestedModel = modelOverride || this.config.model;
+    const requestedModel = resolveConfiguredAgentModel(modelOverride || this.config.model);
     // Auto-upgrade local/* to a cloud provider when API keys are available.
     const resolvedModelString = maybeUpgradeLocalModel(requestedModel);
 
@@ -326,7 +328,7 @@ export class AgentRuntime {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
       const maxSteps = this.computeMaxSteps(maxAgentSteps);
-      const effectiveModel = modelString || this.config.model;
+      const effectiveModel = resolveConfiguredAgentModel(modelString || this.config.model);
       const languageModel = resolveModel(effectiveModel);
 
       const toolCalls: ToolCall[] = [];
@@ -339,7 +341,8 @@ export class AgentRuntime {
         logger.warn(
           `Agent "${this.id}" has tools configured but is using local model "${effectiveModel}". ` +
             "Local models don't support tool calling — tools will be skipped. " +
-            "Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
+            "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
+            "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
         );
       }
 
@@ -361,7 +364,7 @@ export class AgentRuntime {
 
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
-            "model.id": modelString || this.config.model,
+            "model.id": effectiveModel,
             "messages.count": currentMessages.length,
           });
           return generateText({
@@ -555,7 +558,7 @@ export class AgentRuntime {
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
     const maxSteps = this.computeMaxSteps(maxAgentSteps);
-    const effectiveModel = modelString || this.config.model;
+    const effectiveModel = resolveConfiguredAgentModel(modelString || this.config.model);
     const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
     const toolCalls: ToolCall[] = [];
@@ -568,7 +571,8 @@ export class AgentRuntime {
       logger.warn(
         `Agent "${this.id}" has tools configured but is using local model "${effectiveModel}". ` +
           "Local models don't support tool calling — tools will be skipped. " +
-          "Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
+          "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
+          "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
       );
     }
 

@@ -42,12 +42,14 @@ When you add a tool to an agent, the framework sends the Zod schema to the model
 import { agent } from "veryfront/agent";
 
 export default agent({
-  model: "openai/gpt-4o",
   system: "You are a weather assistant. Use the getWeather tool to answer weather questions.",
   tools: { getWeather: true },
   maxSteps: 3,
 });
 ```
+
+In most projects, you can omit `model` and let runtime defaults choose local
+or Veryfront Cloud inference automatically.
 
 When a user asks "What's the weather in Tokyo?", the agent:
 1. Sends the question to the model
@@ -140,7 +142,6 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 
 export default agent({
-  model: "openai/gpt-4o",
   system: "You are a math tutor.",
   tools: {
     calculate: tool({
