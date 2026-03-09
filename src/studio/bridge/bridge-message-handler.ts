@@ -21,6 +21,21 @@ import { captureMultipleSections, captureScreenshot } from "./bridge-screenshot.
 import { applyMarkdownContent } from "./bridge-markdown-editor.ts";
 import { replaceYTextContent, writeToYText } from "./bridge-markdown-yjs.ts";
 
+const SAFE_PROTOCOLS = new Set(["http:", "https:"]);
+
+/** Returns true if the URL is safe for navigation (relative or http/https only). */
+export function isSafeNavigationUrl(url: string): boolean {
+  // Relative URLs starting with / are always safe
+  if (url.startsWith("/")) return true;
+
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return SAFE_PROTOCOLS.has(parsed.protocol);
+  } catch {
+    return false;
+  }
+}
+
 export function handleStudioMessage(event: MessageEvent): void {
   if (!isFromStudio(event)) return;
 
@@ -32,6 +47,10 @@ export function handleStudioMessage(event: MessageEvent): void {
   switch (message.action) {
     case "routeChange":
       if (message.url) {
+        if (!isSafeNavigationUrl(message.url)) {
+          logger.warn("[StudioBridge] Blocked unsafe URL in routeChange", { url: message.url });
+          return;
+        }
         if (state.selectedNodeId) {
           state.selectedNodeId = null;
           hideOverlay(state.selectionOverlay);
