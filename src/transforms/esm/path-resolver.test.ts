@@ -1,6 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isCrossProjectImport, parseCrossProjectImport } from "./path-resolver.ts";
+import {
+  isCrossProjectImport,
+  parseCrossProjectImport,
+  resolvePathAliases,
+  resolveRelativeImports,
+} from "./path-resolver.ts";
 
 describe("transforms/esm/path-resolver", () => {
   describe("isCrossProjectImport", () => {
@@ -60,6 +65,104 @@ describe("transforms/esm/path-resolver", () => {
       assertEquals(result?.projectSlug, "pkg");
       assertEquals(result?.version, "^1.0.0");
       assertEquals(result?.path, "utils");
+    });
+  });
+
+  describe("resolvePathAliases", () => {
+    it("replaces @/ alias with relative path for root-level file", async () => {
+      const code = `import { Button } from "@/components/Button";`;
+      const result = await resolvePathAliases(code, "/project/index.tsx", "/project");
+      assertEquals(result.includes("./components/Button"), true);
+    });
+
+    it("replaces @/ alias with relative path for nested file", async () => {
+      const code = `import { utils } from "@/lib/utils";`;
+      const result = await resolvePathAliases(code, "/project/pages/home.tsx", "/project");
+      assertEquals(result.includes("../lib/utils"), true);
+    });
+
+    it("appends .js extension when specifier has no extension", async () => {
+      const code = `import { foo } from "@/lib/foo";`;
+      const result = await resolvePathAliases(code, "/project/index.tsx", "/project");
+      assertEquals(result.includes(".js"), true);
+    });
+
+    it("does not modify non-alias imports", async () => {
+      const code = `import React from "react";`;
+      const result = await resolvePathAliases(code, "/project/index.tsx", "/project");
+      assertEquals(result, code);
+    });
+
+    it("does not modify relative imports", async () => {
+      const code = `import { foo } from "./foo";`;
+      const result = await resolvePathAliases(code, "/project/index.tsx", "/project");
+      assertEquals(result, code);
+    });
+
+    it("handles SSR mode replacing extensions with .js", async () => {
+      const code = `import { Button } from "@/components/Button.tsx";`;
+      const result = await resolvePathAliases(code, "/project/index.tsx", "/project", true);
+      assertEquals(result.includes(".js"), true);
+      assertEquals(result.includes(".tsx"), false);
+    });
+
+    it("handles deeply nested files", async () => {
+      const code = `import { utils } from "@/utils";`;
+      const result = await resolvePathAliases(
+        code,
+        "/project/src/pages/about/index.tsx",
+        "/project",
+      );
+      assertEquals(result.includes("../../../utils"), true);
+    });
+  });
+
+  describe("resolveRelativeImports", () => {
+    it("rewrites .tsx extensions to .js", async () => {
+      const code = `import { foo } from "./foo.tsx";`;
+      const result = await resolveRelativeImports(code, "/project/index.tsx", "/project");
+      assertEquals(result.includes("./foo.js"), true);
+    });
+
+    it("rewrites .ts extensions to .js", async () => {
+      const code = `import { foo } from "./foo.ts";`;
+      const result = await resolveRelativeImports(code, "/project/index.tsx", "/project");
+      assertEquals(result.includes("./foo.js"), true);
+    });
+
+    it("rewrites .jsx extensions to .js", async () => {
+      const code = `import { foo } from "./foo.jsx";`;
+      const result = await resolveRelativeImports(code, "/project/index.tsx", "/project");
+      assertEquals(result.includes("./foo.js"), true);
+    });
+
+    it("does not modify non-relative imports", async () => {
+      const code = `import React from "react";`;
+      const result = await resolveRelativeImports(code, "/project/index.tsx", "/project");
+      assertEquals(result, code);
+    });
+
+    it("does not modify .js extensions", async () => {
+      const code = `import { foo } from "./foo.js";`;
+      const result = await resolveRelativeImports(code, "/project/index.tsx", "/project");
+      assertEquals(result.includes("./foo.js"), true);
+    });
+
+    it("prepends module server URL when provided", async () => {
+      const code = `import { foo } from "./foo.js";`;
+      const result = await resolveRelativeImports(
+        code,
+        "/project/src/index.tsx",
+        "/project",
+        "https://modules.example.com",
+      );
+      assertEquals(result.includes("https://modules.example.com/"), true);
+    });
+
+    it("handles parent directory references", async () => {
+      const code = `import { bar } from "../lib/bar.tsx";`;
+      const result = await resolveRelativeImports(code, "/project/src/index.tsx", "/project");
+      assertEquals(result.includes("../lib/bar.js"), true);
     });
   });
 });
