@@ -113,4 +113,3 @@ export interface RagStore {
   removeDocument(id: string): Promise<void>;
   indexContentDir(): Promise<void>;
 }
-
