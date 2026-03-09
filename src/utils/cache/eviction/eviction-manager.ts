@@ -92,7 +92,11 @@ export class EvictionManager<TEntry extends EvictableEntry> {
       this.cleanupTags(tags, node.key, tagIndex);
     }
 
-    this.onEvict?.(node.key, node.entry.value);
+    try {
+      this.onEvict?.(node.key, node.entry.value);
+    } catch {
+      // Prevent onEvict errors from corrupting cache size tracking
+    }
 
     return currentSize - node.entry.size;
   }

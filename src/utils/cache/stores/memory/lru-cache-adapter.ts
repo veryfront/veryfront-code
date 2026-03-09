@@ -139,7 +139,11 @@ export class LRUCacheAdapter implements CacheAdapter {
 
     if (node.entry.tags) this.entryManager.cleanupTags(node.entry.tags, key, this.tagIndex);
 
-    this.onEvict?.(key, node.entry.value);
+    try {
+      this.onEvict?.(key, node.entry.value);
+    } catch {
+      // Prevent onEvict errors from corrupting cache size tracking
+    }
   }
 
   invalidateTag(tag: string): number {

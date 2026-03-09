@@ -286,4 +286,45 @@ describe("LRUCacheAdapter", () => {
       expect(cache.get("buffer")).toEqual(buffer);
     });
   });
+
+  describe("onEvict error resilience", () => {
+    it("should not corrupt size tracking when onEvict throws", () => {
+      const throwingCache = new LRUCacheAdapter({
+        maxEntries: 2,
+        onEvict: () => {
+          throw new Error("onEvict error");
+        },
+      });
+
+      throwingCache.set("a", "value-a");
+      throwingCache.set("b", "value-b");
+      // This triggers eviction of "a" (oldest), onEvict throws but should be caught
+      throwingCache.set("c", "value-c");
+
+      // Cache should still function correctly
+      expect(throwingCache.get("c")).toBe("value-c");
+      const stats = throwingCache.getStats();
+      expect(stats.entries).toBe(2);
+      expect(stats.sizeBytes).toBeGreaterThan(0);
+    });
+
+    it("should maintain consistent size after onEvict throws during delete", () => {
+      const throwingCache = new LRUCacheAdapter({
+        maxEntries: 10,
+        onEvict: () => {
+          throw new Error("onEvict error");
+        },
+      });
+
+      throwingCache.set("a", "value-a");
+      const sizeBefore = throwingCache.getStats().sizeBytes;
+
+      // delete calls onEvict which throws, but size should still be decremented
+      throwingCache.delete("a");
+
+      expect(throwingCache.getStats().entries).toBe(0);
+      expect(throwingCache.getStats().sizeBytes).toBe(0);
+      expect(sizeBefore).toBeGreaterThan(0);
+    });
+  });
 });
