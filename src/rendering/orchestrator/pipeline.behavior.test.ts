@@ -1,7 +1,8 @@
-import { assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
+import { cacheCSSAsync } from "#veryfront/html/styles-builder/index.ts";
 
 function createPipeline(pagePath: string): RenderPipeline {
   const config: RenderPipelineConfig = {
@@ -133,5 +134,34 @@ describe("RenderPipeline behavior", () => {
       Error,
       "Critical page module(s) failed to load",
     );
+  });
+
+  it("resolvePageData reuses the SSR hashed stylesheet for SPA CSS", async () => {
+    const slug = "/behavior-ssr-css";
+    const projectId = "proj-ssr-css";
+    const pipeline = createPipeline("/project/pages/behavior-ssr-css.tsx");
+    const cssHash = "abc12345";
+    const expectedCss = ".from-ssr{color:red}";
+
+    await cacheCSSAsync(expectedCss, cssHash, {
+      candidates: ["from-ssr"],
+      stylesheet: '@import "tailwindcss";',
+    });
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).renderPage = async () => ({
+      html:
+        `<!DOCTYPE html><html><head><link rel="stylesheet" href="/_vf/css/${cssHash}.css"></head><body></body></html>`,
+    });
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      environment: "production",
+    });
+
+    assertEquals(pageData.css, expectedCss);
+    assertEquals(pageData.cssError, undefined);
   });
 });
