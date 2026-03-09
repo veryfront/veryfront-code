@@ -3,7 +3,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { processFormat } from "./format-processor.ts";
 import type { SharpInstance } from "./types.ts";
 
-function createMockSharp(): SharpInstance & { lastCall: { method: string; args: unknown[] } | null } {
+function createMockSharp(): SharpInstance & {
+  lastCall: { method: string; args: unknown[] } | null;
+} {
   const mock: SharpInstance & { lastCall: { method: string; args: unknown[] } | null } = {
     lastCall: null,
     metadata: () => Promise.resolve({}),

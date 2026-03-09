@@ -77,8 +77,11 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
     it("should handle HTML with tag selectors", async () => {
       const tmpDir = await Deno.makeTempDir();
       const cssPath = `${tmpDir}/style.css`;
-      await Deno.writeTextFile(cssPath, `p { font-size: 16px; }
-h1 { font-size: 32px; }`);
+      await Deno.writeTextFile(
+        cssPath,
+        `p { font-size: 16px; }
+h1 { font-size: 32px; }`,
+      );
 
       try {
         const html = `<div><p>Hello</p></div>`;

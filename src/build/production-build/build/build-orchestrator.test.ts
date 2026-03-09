@@ -1,6 +1,11 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildProduction, cleanupCaches, cleanupRenderer, logBuildCompletion } from "./build-orchestrator.ts";
+import {
+  buildProduction,
+  cleanupCaches,
+  cleanupRenderer,
+  logBuildCompletion,
+} from "./build-orchestrator.ts";
 
 describe("build/production-build/build/build-orchestrator", () => {
   describe("re-exports", () => {

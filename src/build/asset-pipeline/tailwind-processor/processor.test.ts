@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { TailwindProcessor } from "./processor.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
-function createMockAdapter(baseDir: string): RuntimeAdapter {
+function createMockAdapter(_baseDir: string): RuntimeAdapter {
   return {
     name: "test",
     fs: {

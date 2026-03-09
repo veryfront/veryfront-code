@@ -4,50 +4,30 @@ import { runCodeSplitting } from "./code-splitter-orchestrator.ts";
 
 describe("build/production-build/build/code-splitter-orchestrator", () => {
   describe("runCodeSplitting", () => {
-    it("should return null manifest when splitting is disabled", async () => {
-      const result = await runCodeSplitting(
-        "/tmp/project",
-        "/tmp/output",
-        [{ path: "/", file: "index.tsx", slug: "index" }],
-        false, // enableSplitting = false
-        false,
-      );
+    it("should return null manifest and 0 chunks when splitting is disabled", async () => {
+      const result = await runCodeSplitting("/project", "/output", [], false, false);
       assertEquals(result.manifest, null);
       assertEquals(result.chunks, 0);
     });
 
-    it("should return null manifest during dry run", async () => {
-      const result = await runCodeSplitting(
-        "/tmp/project",
-        "/tmp/output",
-        [{ path: "/", file: "index.tsx", slug: "index" }],
-        true,
-        true, // dryRun = true
-      );
+    it("should return null manifest and 0 chunks on dryRun", async () => {
+      const routes = [
+        { path: "/", file: "/project/src/index.tsx", slug: "index", component: "Index" },
+      ];
+      // deno-lint-ignore no-explicit-any
+      const result = await runCodeSplitting("/project", "/output", routes as any, true, true);
       assertEquals(result.manifest, null);
       assertEquals(result.chunks, 0);
     });
 
-    it("should return null manifest when routes array is empty", async () => {
-      const result = await runCodeSplitting(
-        "/tmp/project",
-        "/tmp/output",
-        [], // empty routes
-        true,
-        false,
-      );
+    it("should return null manifest and 0 chunks when routes are empty", async () => {
+      const result = await runCodeSplitting("/project", "/output", [], true, false);
       assertEquals(result.manifest, null);
       assertEquals(result.chunks, 0);
     });
 
-    it("should return null manifest when all three conditions are met", async () => {
-      const result = await runCodeSplitting(
-        "/tmp/project",
-        "/tmp/output",
-        [],
-        false,
-        true,
-      );
+    it("should skip when both splitting disabled and dryRun", async () => {
+      const result = await runCodeSplitting("/project", "/output", [], false, true);
       assertEquals(result.manifest, null);
       assertEquals(result.chunks, 0);
     });

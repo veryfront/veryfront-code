@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildAppRoutes, buildPagesRoutes } from "./static-generation.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
