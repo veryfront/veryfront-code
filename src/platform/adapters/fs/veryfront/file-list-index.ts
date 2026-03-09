@@ -22,6 +22,7 @@ const INDEX_STALENESS_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 
 export class FileListIndex {
   private index: Map<string, string> | null = null;
+  private knownPaths: Set<string> | null = null;
   private indexKey: string | null = null;
   private indexBuiltAt = 0;
   private readyPromise: Promise<void> | null = null;
@@ -35,13 +36,15 @@ export class FileListIndex {
   }
 
   clear(): void {
-    if (!this.index) return;
+    if (!this.index && !this.knownPaths) return;
 
-    const indexedWithContent = this.index.size;
+    const indexedWithContent = this.index?.size ?? 0;
+    const knownPathCount = this.knownPaths?.size ?? 0;
     this.index = null;
+    this.knownPaths = null;
     this.indexKey = null;
     this.indexBuiltAt = 0;
-    logger.debug("Cleared file list index", { indexedWithContent });
+    logger.debug("Cleared file list index", { indexedWithContent, knownPathCount });
   }
 
   private async ensureReady(): Promise<void> {
@@ -83,6 +86,26 @@ export class FileListIndex {
     return content;
   }
 
+  async hasPath(normalizedPath: string): Promise<boolean | undefined> {
+    await this.ensureReady();
+
+    const index = await this.getOrBuild();
+    if (!index) return undefined;
+
+    return this.knownPaths?.has(normalizedPath) ?? undefined;
+  }
+
+  async hasAnyPath(normalizedPaths: string[]): Promise<boolean | undefined> {
+    await this.ensureReady();
+
+    const index = await this.getOrBuild();
+    if (!index) return undefined;
+
+    const knownPaths = this.knownPaths;
+    if (!knownPaths) return undefined;
+
+    return normalizedPaths.some((path) => knownPaths.has(path));
+  }
   async findFirstWithContent(
     normalizedPaths: string[],
   ): Promise<{ path: string; content: string } | undefined> {
@@ -126,6 +149,7 @@ export class FileListIndex {
           staleLimitMs: INDEX_STALENESS_LIMIT_MS,
         });
         this.index = null;
+        this.knownPaths = null;
         this.indexKey = null;
       }
       logger.debug(
@@ -152,11 +176,14 @@ export class FileListIndex {
     }
 
     const index = new Map<string, string>();
+    const knownPaths = new Set<string>();
     for (const file of fileList) {
+      knownPaths.add(file.path);
       if (file.content) index.set(file.path, file.content);
     }
 
     this.index = index;
+    this.knownPaths = knownPaths;
     this.indexKey = indexKey;
     this.indexBuiltAt = Date.now();
 
@@ -165,6 +192,7 @@ export class FileListIndex {
     logger.debug("Built file list index", {
       fileListSize: fileList.length,
       indexedWithContent: index.size,
+      knownPathCount: knownPaths.size,
       sampleFilePath: sampleFile?.path,
       sampleContentLength: sampleContent?.length,
       sampleContentHash: sampleContent ? hashPreview(sampleContent) : undefined,

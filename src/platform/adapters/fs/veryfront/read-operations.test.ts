@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -370,7 +370,7 @@ describe("ReadOperations", () => {
       assertEquals(apiFetchCount, 0);
     });
 
-    it("should fall back to API for explicit dotted files missing from file list cache", async () => {
+    it("should short-circuit known-missing explicit files like deno.json from file list cache", async () => {
       let resolveCallCount = 0;
       let apiFetchCount = 0;
 
@@ -395,11 +395,13 @@ describe("ReadOperations", () => {
 
       readOps.setFileListReadyPromise(Promise.resolve());
 
-      const content = await readOps.readTextFile("deno.json");
-
-      assertEquals(content, "published API content");
-      assertEquals(resolveCallCount, 1);
-      assertEquals(apiFetchCount, 1);
+      await assertRejects(
+        () => readOps.readTextFile("deno.json"),
+        Error,
+        "404 Not Found",
+      );
+      assertEquals(resolveCallCount, 0);
+      assertEquals(apiFetchCount, 0);
     });
 
     it("should cache extension resolution to avoid repeated API calls", async () => {

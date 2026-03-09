@@ -55,6 +55,11 @@ function previewText(content: string, max = 80): string {
   return content.length > max ? `${content.slice(0, max)}...` : content;
 }
 
+function hasExplicitExtension(path: string): boolean {
+  const lastSegment = path.split("/").pop() ?? path;
+  return lastSegment.includes(".") && lastSegment !== "." && lastSegment !== "..";
+}
+
 export class ReadOperations {
   private readonly inFlightRequests = new InFlightRequestDeduper<string>({
     timeoutMs: IN_FLIGHT_REQUEST_TIMEOUT_MS,
@@ -493,6 +498,20 @@ export class ReadOperations {
           isPreviewMode,
         );
         if (resolvedFromFileList) return resolvedFromFileList;
+
+        if (hasExplicitExtension(apiPath)) {
+          const exactPathKnown = await this.fileListIndex.hasPath(normalizedPath);
+          const hasExtensionCandidate = await this.fileListIndex.hasAnyPath(
+            EXTENSION_PRIORITY.map((ext) => `${normalizedPath}${ext}`),
+          );
+
+          if (exactPathKnown === false && hasExtensionCandidate === false) {
+            logger.debug("Known-missing explicit path in file list, skipping API fetch", {
+              path: normalizedPath,
+            });
+            throw new Error(`404 Not Found: ${normalizedPath}`);
+          }
+        }
       }
 
       const resolved = await this.tryResolveExtensionlessPath(
