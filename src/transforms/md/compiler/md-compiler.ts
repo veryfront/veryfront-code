@@ -5,6 +5,7 @@ import remarkFrontmatter from "remark-frontmatter";
 import remarkRehype from "remark-rehype";
 import rehypeStarryNight from "rehype-starry-night";
 import rehypeSlug from "rehype-slug";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeStringify from "rehype-stringify";
 import { visit } from "unist-util-visit";
 import { toString } from "mdast-util-to-string";
@@ -103,7 +104,8 @@ export function compileMarkdownRuntime(
         }
 
         const result = await pipeline
-          .use(rehypeStringify, { allowDangerousHtml: true })
+          .use(rehypeSanitize, defaultSchema)
+          .use(rehypeStringify)
           .process(body);
         const html = String(result);
 
