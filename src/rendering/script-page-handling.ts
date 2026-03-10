@@ -45,8 +45,8 @@ interface ScriptPageOptions {
 }
 
 const NPM_REWRITES: ReadonlyArray<{ pattern: RegExp; replacement: string }> = [
-  { pattern: /from\s+["']ai["']/g, replacement: 'from "npm:ai@latest"' },
-  { pattern: /from\s+["']zod["']/g, replacement: 'from "npm:zod@latest"' },
+  { pattern: /from\s+["']ai["']/g, replacement: 'from "npm:ai@6.0.33"' },
+  { pattern: /from\s+["']zod["']/g, replacement: 'from "npm:zod@3.25.76"' },
 ];
 
 const ESBUILD_EXTERNALS = [

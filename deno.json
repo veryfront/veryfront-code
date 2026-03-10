@@ -248,7 +248,7 @@
     "tailwindcss/defaultTheme": "https://esm.sh/tailwindcss@4.1.8/defaultTheme",
     "tailwindcss/colors": "https://esm.sh/tailwindcss@4.1.8/colors",
     "redis": "npm:redis@4.6.13",
-    "pg": "npm:pg",
+    "pg": "npm:pg@8.13.1",
     "@opentelemetry/api": "npm:@opentelemetry/api@1",
     "@opentelemetry/core": "npm:@opentelemetry/core@1",
     "@opentelemetry/context-async-hooks": "npm:@opentelemetry/context-async-hooks@1",
