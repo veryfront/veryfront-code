@@ -20,8 +20,8 @@ export function getSSRModuleRedisTTL(isProduction: boolean): number {
 
 export { DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC, DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC };
 
-export const CIRCUIT_BREAKER_THRESHOLD = 3;
-export const CIRCUIT_BREAKER_RESET_MS = 60 * 1000;
+export const CIRCUIT_BREAKER_THRESHOLD = 25;
+export const CIRCUIT_BREAKER_RESET_MS = 5 * 1000;
 
 // Max concurrent ESM transforms (safety net, not throttle). Set to 0 to disable.
 let _maxConcurrentTransforms: number | undefined;
