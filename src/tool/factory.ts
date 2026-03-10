@@ -186,7 +186,10 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
     inputSchema: config.inputSchema as z.ZodSchema<unknown>,
     inputSchemaJson,
     execute: async (input: unknown, context?: ToolExecutionContext) => {
-      if (config.inputSchema && typeof (config.inputSchema as { parse?: unknown }).parse === "function") {
+      if (
+        config.inputSchema &&
+        typeof (config.inputSchema as { parse?: unknown }).parse === "function"
+      ) {
         (config.inputSchema as { parse: (v: unknown) => unknown }).parse(input);
       } else if (input == null || typeof input !== "object") {
         throw new Error("dynamicTool: input must be a non-null object");
