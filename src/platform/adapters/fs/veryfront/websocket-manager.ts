@@ -108,15 +108,18 @@ export class WebSocketManager {
       }
     }
 
-    const url = `${wsUrl}/ws/${projectId}/events?token=${this.deps.apiToken}`;
+    const url = `${wsUrl}/ws/${projectId}/events`;
 
     logger.debug("Connecting to WebSocket", {
-      url: url.replace(this.deps.apiToken, "***"),
+      url,
       consecutiveFailures: this.wsConsecutiveFailures,
     });
 
     try {
-      this.ws = new WebSocket(url);
+      // Send the API token via a WebSocket subprotocol header instead of
+      // a query-string parameter. Query strings can leak into server
+      // access logs, proxy logs, and the browser's Referer header.
+      this.ws = new WebSocket(url, [`bearer-${this.deps.apiToken}`]);
       this.wsConnectionId = crypto.randomUUID().slice(0, 8);
       this.wsErrorLogged = false;
 
@@ -160,7 +163,7 @@ export class WebSocketManager {
           this.wsErrorLogged = true;
           logger.warn("WebSocket error", {
             type: event.type,
-            url: (event.target as WebSocket)?.url?.replace(/token=[^&]+/, "token=***"),
+            url: (event.target as WebSocket)?.url,
             readyState: (event.target as WebSocket)?.readyState,
             consecutiveFailures: this.wsConsecutiveFailures,
           });
