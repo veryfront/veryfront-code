@@ -50,8 +50,8 @@ export function buildReadFetchState(options: BuildReadFetchStateOptions): ReadFe
   const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
   const isProduction = contextProvider?.isProductionMode() ?? false;
   const releaseId = contentContext?.releaseId;
-  const isPrefixInvalidated =
-    (isProduction && contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix)) ?? false;
+  const isPrefixInvalidated = contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ??
+    false;
   const isReleaseInvalidated = isProduction && releaseId
     ? contextProvider?.isReleaseBeingInvalidated?.(releaseId)
     : undefined;

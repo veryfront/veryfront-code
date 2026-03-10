@@ -44,6 +44,10 @@ import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 import type { LayoutItem } from "#veryfront/types";
 import { withTimeout, withTimeoutThrow } from "../utils/stream-utils.ts";
 import { extractCandidates, generateTailwindCSS } from "#veryfront/html/styles-builder/index.ts";
+import {
+  getCSSByHashAsync,
+  regenerateCSSByHash,
+} from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
 import type { ModuleLoaderConfig } from "./module-loader/index.ts";
 import {
@@ -73,6 +77,7 @@ import {
 const renderPageLog = logger.component("render-page");
 const renderPipelineLog = logger.component("render-pipeline");
 const resolvePageDataLog = logger.component("resolve-page-data");
+const RENDERED_CSS_HASH_RE = /href="\/_vf\/css\/([a-z0-9-]{1,16})\.css"/i;
 
 // Re-export test helper for backward compatibility
 export { __injectCssCacheForTests } from "./css-cache.ts";
@@ -135,6 +140,23 @@ export class RenderPipeline {
 
   private loadModule(filePath: string): Promise<Record<string, unknown>> {
     return loadModule(filePath, this.moduleLoaderConfig);
+  }
+
+  private extractRenderedCssHash(html: string): string | undefined {
+    return html.match(RENDERED_CSS_HASH_RE)?.[1];
+  }
+
+  private async resolveCssFromRenderedHtml(
+    html: string,
+    projectSlug: string | undefined,
+  ): Promise<string | undefined> {
+    const cssHash = this.extractRenderedCssHash(html);
+    if (!cssHash) return undefined;
+
+    const cachedCss = await getCSSByHashAsync(cssHash);
+    if (cachedCss) return cachedCss;
+
+    return await regenerateCSSByHash(cssHash, projectSlug);
   }
 
   /**
@@ -687,15 +709,31 @@ export class RenderPipeline {
         );
 
         if (renderResult?.html) {
-          const candidates = extractCandidates(renderResult.html);
-          css = (await generateTailwindCSS(undefined, candidates)).css;
-          if (css) cachePageCss(cssCacheKey, css);
+          css = await this.resolveCssFromRenderedHtml(
+            renderResult.html,
+            options?.projectSlug ?? options?.projectId,
+          );
 
-          resolvePageDataLog.debug("Generated and cached CSS", {
-            slug,
-            htmlLength: renderResult.html.length,
-            cssLength: css?.length || 0,
-          });
+          if (css) {
+            resolvePageDataLog.debug("Reused SSR CSS for page data", {
+              slug,
+              cssLength: css.length,
+              source: "rendered-html-hash",
+            });
+          } else {
+            const candidates = extractCandidates(renderResult.html);
+            css = (await generateTailwindCSS(undefined, candidates, {
+              projectSlug: options?.projectSlug,
+            })).css;
+
+            resolvePageDataLog.debug("Fell back to HTML candidate CSS generation", {
+              slug,
+              htmlLength: renderResult.html.length,
+              cssLength: css?.length || 0,
+            });
+          }
+
+          if (css) cachePageCss(cssCacheKey, css);
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

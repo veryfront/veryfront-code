@@ -149,7 +149,8 @@ function handleWebSocketUpgrade(req: Request): Response {
   const projectSlug = parsed.slug || undefined;
 
   const serverWsUrl = PRODUCTION_SERVER_URL.replace(/^http/, "ws");
-  const targetUrl = new URL(`${serverWsUrl}${url.pathname}${url.search}`);
+  const safePath = url.pathname.replace(/^\/\/+/, "/");
+  const targetUrl = new URL(`${serverWsUrl}${safePath}${url.search}`);
   targetUrl.searchParams.set("x-project-slug", projectSlug || "");
   targetUrl.searchParams.set("x-environment", scope);
 
@@ -365,7 +366,9 @@ function forwardToServer(req: Request): Promise<Response> {
             const baseUrl = dedicatedServerUrl ??
               rendererRouter?.resolve(ctx.projectSlug) ??
               PRODUCTION_SERVER_URL;
-            const serverUrl = new URL(url.pathname + url.search, baseUrl);
+            // Collapse leading slashes to prevent protocol-relative URL interpretation (e.g. "//cms/..." → hostname "cms")
+            const safePath = url.pathname.replace(/^\/\/+/, "/");
+            const serverUrl = new URL(safePath + url.search, baseUrl);
             // Delay before retry (not on first attempt)
             if (attempt > 0) {
               proxyLogger.info(

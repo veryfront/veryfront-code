@@ -8,7 +8,7 @@ const CLEANUP_INTERVAL_MS = 30 * 1000;
 let lastCleanupTime = 0;
 let totalBlockedReads = 0;
 
-const pendingInvalidations = new Map<string, number>();
+const pendingInvalidations = new Map<string, { startedAt: number; count: number }>();
 
 function cleanupStaleInvalidations(): void {
   const now = Date.now();
@@ -18,7 +18,8 @@ function cleanupStaleInvalidations(): void {
 
   const staleEntries: Array<{ prefix: string; ageMs: number }> = [];
 
-  for (const [prefix, startedAt] of pendingInvalidations) {
+  for (const [prefix, entry] of pendingInvalidations) {
+    const { startedAt } = entry;
     const ageMs = now - startedAt;
     if (ageMs <= STALE_INVALIDATION_THRESHOLD_MS) continue;
 
@@ -37,24 +38,41 @@ function cleanupStaleInvalidations(): void {
 
 export function addPendingInvalidation(prefix: string): void {
   const startedAt = Date.now();
-  pendingInvalidations.set(prefix, startedAt);
+  const existing = pendingInvalidations.get(prefix);
+  pendingInvalidations.set(prefix, {
+    startedAt: existing?.startedAt ?? startedAt,
+    count: (existing?.count ?? 0) + 1,
+  });
+
+  const count = pendingInvalidations.get(prefix)?.count ?? 1;
 
   logger.info("INVALIDATION_STARTED - cache prefix marked for invalidation", {
     prefix,
     startedAt,
+    count,
     totalPending: pendingInvalidations.size,
   });
 }
 
 export function removePendingInvalidation(prefix: string): void {
-  const startedAt = pendingInvalidations.get(prefix);
-  const durationMs = startedAt != null ? Date.now() - startedAt : null;
+  const entry = pendingInvalidations.get(prefix);
+  const durationMs = entry != null ? Date.now() - entry.startedAt : null;
 
-  pendingInvalidations.delete(prefix);
+  if (entry && entry.count > 1) {
+    pendingInvalidations.set(prefix, {
+      startedAt: entry.startedAt,
+      count: entry.count - 1,
+    });
+  } else {
+    pendingInvalidations.delete(prefix);
+  }
+
+  const remainingCount = pendingInvalidations.get(prefix)?.count ?? 0;
 
   logger.info("INVALIDATION_COMPLETED - cache prefix invalidation finished", {
     prefix,
     durationMs,
+    remainingCount,
     totalPending: pendingInvalidations.size,
   });
 }
@@ -62,16 +80,17 @@ export function removePendingInvalidation(prefix: string): void {
 export function isPrefixBeingInvalidated(prefix: string): boolean {
   cleanupStaleInvalidations();
 
-  for (const [pendingPrefix, startedAt] of pendingInvalidations) {
+  for (const [pendingPrefix, entry] of pendingInvalidations) {
     if (!prefix.startsWith(pendingPrefix) && !pendingPrefix.startsWith(prefix)) continue;
 
-    const ageMs = Date.now() - startedAt;
+    const ageMs = Date.now() - entry.startedAt;
     totalBlockedReads++;
 
     logger.info("CACHE_READ_BLOCKED - preventing stale cache read", {
       requestedPrefix: prefix,
       blockingPrefix: pendingPrefix,
       invalidationAgeMs: ageMs,
+      blockingCount: entry.count,
       totalBlockedReads,
       totalPending: pendingInvalidations.size,
     });
@@ -89,17 +108,18 @@ export function getPendingInvalidationsCount(): number {
 export function getInvalidationDebugState(): {
   pendingCount: number;
   totalBlockedReads: number;
-  entries: Array<{ prefix: string; ageMs: number; startedAt: number }>;
+  entries: Array<{ prefix: string; ageMs: number; startedAt: number; count: number }>;
 } {
   const now = Date.now();
 
   return {
     pendingCount: pendingInvalidations.size,
     totalBlockedReads,
-    entries: Array.from(pendingInvalidations, ([prefix, startedAt]) => ({
+    entries: Array.from(pendingInvalidations, ([prefix, entry]) => ({
       prefix,
-      startedAt,
-      ageMs: now - startedAt,
+      startedAt: entry.startedAt,
+      ageMs: now - entry.startedAt,
+      count: entry.count,
     })),
   };
 }

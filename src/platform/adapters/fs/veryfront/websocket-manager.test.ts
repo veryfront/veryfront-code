@@ -4,6 +4,7 @@ import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { InvalidationCallbacks } from "./types.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
+import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
 
 interface TimerEntry {
   delay: number;
@@ -36,6 +37,45 @@ class MockWebSocket {
   emitClose(): void {
     this.readyState = MockWebSocket.CLOSED;
     this.onclose?.call(this as unknown as WebSocket, new CloseEvent("close"));
+  }
+}
+
+function captureConsoleMethod(
+  method: "debug" | "warn",
+): { getOutput: () => string; reset: () => void; restore: () => void } {
+  const original = console[method];
+  let capturedOutput = "";
+
+  console[method] = ((msg: string) => {
+    capturedOutput = msg;
+  }) as typeof console[typeof method];
+
+  return {
+    getOutput: () => capturedOutput,
+    reset: () => {
+      capturedOutput = "";
+    },
+    restore: () => {
+      console[method] = original;
+    },
+  };
+}
+
+function withJsonLogFormat<T>(fn: () => T): T {
+  const previousLogFormat = Deno.env.get("LOG_FORMAT");
+  const previousLogLevel = Deno.env.get("LOG_LEVEL");
+  Deno.env.set("LOG_FORMAT", "json");
+  Deno.env.set("LOG_LEVEL", "DEBUG");
+  __resetLoggerConfigForTests();
+
+  try {
+    return fn();
+  } finally {
+    if (previousLogFormat == null) Deno.env.delete("LOG_FORMAT");
+    else Deno.env.set("LOG_FORMAT", previousLogFormat);
+    if (previousLogLevel == null) Deno.env.delete("LOG_LEVEL");
+    else Deno.env.set("LOG_LEVEL", previousLogLevel);
+    __resetLoggerConfigForTests();
   }
 }
 
@@ -186,7 +226,9 @@ describe("WebSocketManager", () => {
     manager.connect("project-1");
     assertEquals(MockWebSocket.instances.length, 1);
     manager.dispose();
-    assertEquals(MockWebSocket.instances[0].readyState, MockWebSocket.CLOSED);
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    assertEquals(socket.readyState, MockWebSocket.CLOSED);
   });
 
   it("should set connection ID after connect", () => {
@@ -288,6 +330,80 @@ describe("WebSocketManager", () => {
       manager.dispose();
     } finally {
       (globalThis as any).WebSocket = OriginalMockWebSocket;
+    }
+  });
+
+  it("should include projectSlug in connection lifecycle logs", () => {
+    const debugCapture = captureConsoleMethod("debug");
+    const warnCapture = captureConsoleMethod("warn");
+
+    try {
+      withJsonLogFormat(() => {
+        const manager = createWebSocketManager();
+        manager.connect("project-1");
+
+        const connectEntry = JSON.parse(debugCapture.getOutput()) as {
+          message: string;
+          projectSlug?: string;
+        };
+        assertEquals(connectEntry.message, "Connecting to WebSocket");
+        assertEquals(connectEntry.projectSlug, "test-project");
+
+        const socket = MockWebSocket.instances[0];
+        assertExists(socket);
+
+        debugCapture.reset();
+        socket.emitClose();
+
+        const closeEntry = JSON.parse(debugCapture.getOutput()) as {
+          message: string;
+          projectSlug?: string;
+        };
+        assertEquals(closeEntry.message, "WebSocket closed, reconnecting");
+        assertEquals(closeEntry.projectSlug, "test-project");
+
+        warnCapture.reset();
+        socket.onerror?.call(socket as unknown as WebSocket, new Event("error"));
+
+        const errorEntry = JSON.parse(warnCapture.getOutput()) as {
+          message: string;
+          projectSlug?: string;
+        };
+        assertEquals(errorEntry.message, "WebSocket error");
+        assertEquals(errorEntry.projectSlug, "test-project");
+
+        manager.dispose();
+      });
+    } finally {
+      debugCapture.restore();
+      warnCapture.restore();
+    }
+  });
+
+  it("should include projectSlug when WebSocket connection setup fails", () => {
+    const warnCapture = captureConsoleMethod("warn");
+    const OriginalMockWebSocket = (globalThis as any).WebSocket;
+    (globalThis as any).WebSocket = function () {
+      throw new Error("Connection failed");
+    };
+
+    try {
+      withJsonLogFormat(() => {
+        const manager = createWebSocketManager();
+        manager.connect("project-1");
+
+        const entry = JSON.parse(warnCapture.getOutput()) as {
+          message: string;
+          projectSlug?: string;
+        };
+        assertEquals(entry.message, "Failed to connect WebSocket");
+        assertEquals(entry.projectSlug, "test-project");
+
+        manager.dispose();
+      });
+    } finally {
+      (globalThis as any).WebSocket = OriginalMockWebSocket;
+      warnCapture.restore();
     }
   });
 
