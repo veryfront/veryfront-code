@@ -43,10 +43,7 @@ import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 import type { LayoutItem } from "#veryfront/types";
 import { withTimeout, withTimeoutThrow } from "../utils/stream-utils.ts";
-import {
-  extractCandidates,
-  generateTailwindCSS,
-} from "#veryfront/html/styles-builder/index.ts";
+import { extractCandidates, generateTailwindCSS } from "#veryfront/html/styles-builder/index.ts";
 import {
   getCSSByHashAsync,
   regenerateCSSByHash,
