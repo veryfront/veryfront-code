@@ -249,6 +249,7 @@
     "tailwindcss/colors": "https://esm.sh/tailwindcss@4.1.8/colors",
     "redis": "npm:redis@4.6.13",
     "pg": "npm:pg",
+    "jose": "npm:jose@5.9.6",
     "@opentelemetry/api": "npm:@opentelemetry/api@1",
     "@opentelemetry/core": "npm:@opentelemetry/core@1",
     "@opentelemetry/context-async-hooks": "npm:@opentelemetry/context-async-hooks@1",
