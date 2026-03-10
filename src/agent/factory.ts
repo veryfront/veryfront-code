@@ -23,10 +23,7 @@ import {
 import { agentRegistry } from "./composition/index.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import {
-  COMMON_BLOCKED_PATTERNS,
-  securityMiddleware,
-} from "./middleware/security/validator.ts";
+import { COMMON_BLOCKED_PATTERNS, securityMiddleware } from "./middleware/security/validator.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";
 
@@ -122,20 +119,18 @@ export function agent(config: AgentConfig): Agent {
     : originalSystem;
 
   // Prepend default security middleware unless explicitly opted out
-  const resolvedMiddleware = config.security === false
-    ? (config.middleware ?? [])
-    : [
-      securityMiddleware({
-        input: {
-          maxLength: 50_000,
-          blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection,
-        },
-        output: {
-          filterPII: true,
-        },
-      }),
-      ...(config.middleware ?? []),
-    ];
+  const resolvedMiddleware = config.security === false ? (config.middleware ?? []) : [
+    securityMiddleware({
+      input: {
+        maxLength: 50_000,
+        blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection,
+      },
+      output: {
+        filterPII: true,
+      },
+    }),
+    ...(config.middleware ?? []),
+  ];
 
   const platform = detectPlatform();
   const compatibility = validatePlatformCompatibility(
