@@ -141,29 +141,8 @@ export const MessageFromRendererSchema = z.discriminatedUnion("action", [
     symbolName: z.string().optional(),
   }),
   z.object({
-    action: z.literal("markdownEditorReady"),
-    fileId: z.string(),
-    filePath: z.string(),
-  }),
-  z.object({
-    action: z.literal("markdownContentChange"),
-    fileId: z.string(),
-    filePath: z.string(),
-    content: z.string(),
-  }),
-  z.object({
-    action: z.literal("markdownSelectionChange"),
-    fileId: z.string(),
-    filePath: z.string(),
-    start: z.number(),
-    end: z.number(),
-  }),
-  z.object({
     action: z.literal("logEvent"),
     value: LogMessageSchema,
-  }),
-  z.object({
-    action: z.literal("focusEditor"),
   }),
   z.object({
     action: z.literal("duplicateNode"),
@@ -241,11 +220,6 @@ export const MessageFromStudioSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("setHoveredNode"),
     id: z.string(),
-  }),
-  z.object({
-    action: z.literal("setMarkdownPersistState"),
-    fileId: z.string(),
-    status: z.enum(["saving", "saved", "error"]),
   }),
 ]);
 

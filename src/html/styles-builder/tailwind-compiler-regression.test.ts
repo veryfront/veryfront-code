@@ -59,7 +59,7 @@ describe("styles-builder/tailwind-compiler regressions", () => {
         const hash = hashCSS(generated.css);
         await cacheCSSAsync(generated.css, hash, { candidates, stylesheet });
 
-        const regenerated = await regenerateCSSByHash(hash);
+        const regenerated = await regenerateCSSByHash(hash, "vf-unified-regression");
         assertEquals(regenerated, generated.css);
       } finally {
         restoreFetch();
@@ -81,7 +81,7 @@ describe("styles-builder/tailwind-compiler regressions", () => {
         await cacheCSSAsync(generated.css, hash);
         await cacheCSSInputsAsync(hash, { candidates, stylesheet });
 
-        const regenerated = await regenerateCSSByHash(hash);
+        const regenerated = await regenerateCSSByHash(hash, "vf-legacy-fallback-regression");
         assertEquals(regenerated, generated.css);
       } finally {
         restoreFetch();
@@ -89,8 +89,46 @@ describe("styles-builder/tailwind-compiler regressions", () => {
     });
 
     it("returns undefined when cached inputs are missing", async () => {
-      const regenerated = await regenerateCSSByHash("vf-missing-regeneration-hash");
+      const regenerated = await regenerateCSSByHash("vf-missing-regeneration-hash", undefined);
       assertEquals(regenerated, undefined);
+    });
+
+    it("isolates JIT regeneration by project to avoid cross-project compiler contamination", async () => {
+      const restoreFetch = mockTailwindFetch();
+
+      try {
+        const stylesheet = '@import "tailwindcss";/*vf-project-isolation-regression*/';
+        const projectA = "vf-project-a";
+        const projectB = "vf-project-b";
+        const candidatesA = ["text-red-500"];
+        const candidatesB = ["font-bold"];
+
+        const generatedA = await generateTailwindCSS(stylesheet, candidatesA, {
+          minify: true,
+          projectSlug: projectA,
+        });
+        assertEquals(generatedA.error, undefined);
+
+        const generatedB = await generateTailwindCSS(stylesheet, candidatesB, {
+          minify: true,
+          projectSlug: projectB,
+        });
+        assertEquals(generatedB.error, undefined);
+
+        const hashA = hashCSS(generatedA.css);
+        const hashB = hashCSS(generatedB.css);
+
+        await cacheCSSAsync(generatedA.css, hashA, { candidates: candidatesA, stylesheet });
+        await cacheCSSAsync(generatedB.css, hashB, { candidates: candidatesB, stylesheet });
+
+        const regeneratedA = await regenerateCSSByHash(hashA, projectA);
+        const regeneratedB = await regenerateCSSByHash(hashB, projectB);
+
+        assertEquals(regeneratedA, generatedA.css);
+        assertEquals(regeneratedB, generatedB.css);
+      } finally {
+        restoreFetch();
+      }
     });
   });
 
