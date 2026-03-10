@@ -76,7 +76,7 @@ function formatEnvAssignments(env?: Record<string, string>): string[] {
 
 function createSandboxScriptPath(scriptPath: string): string {
   const ext = extname(scriptPath) || ".sh";
-  const suffix = Math.random().toString(36).slice(2, 10);
+  const suffix = crypto.randomUUID().slice(0, 8);
   return `/tmp/veryfront-skill-script-${Date.now()}-${suffix}${ext}`;
 }
 

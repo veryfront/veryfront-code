@@ -74,7 +74,7 @@ async function transformAllComponents(
 
 async function createTempDir(projectId: string, adapter: RuntimeAdapter): Promise<string> {
   const baseTmp = await getProjectTmpDir(projectId);
-  const uniqueTmp = `unified-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const uniqueTmp = `unified-${Date.now()}-${crypto.randomUUID().slice(0, 12)}`;
   const tmpDir = join(baseTmp, uniqueTmp);
 
   await adapter.fs.mkdir(tmpDir, { recursive: true });
