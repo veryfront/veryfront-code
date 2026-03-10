@@ -352,15 +352,7 @@ export class ReadOperations {
         resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
       });
 
-      if (isProduction && !skipPersistentCaches) {
-        this.cache.set(cacheKey, resolved.content);
-        if (resolvedCacheKey !== cacheKey) this.cache.set(resolvedCacheKey, resolved.content);
-      }
-
-      setRequestScopedFile(cacheKey, resolved.content);
-      if (resolvedCacheKey !== cacheKey) {
-        setRequestScopedFile(resolvedCacheKey, resolved.content);
-      }
+      this.cacheResolvedContent(cacheKey, resolvedCacheKey, resolved.content, isProduction && !skipPersistentCaches);
 
       return resolved.content;
     } catch (error) {
@@ -402,17 +394,25 @@ export class ReadOperations {
       resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
     });
 
-    if (isProduction) {
-      this.cache.set(cacheKey, resolved.content);
-      if (resolvedCacheKey !== cacheKey) this.cache.set(resolvedCacheKey, resolved.content);
-    }
-
-    setRequestScopedFile(cacheKey, resolved.content);
-    if (resolvedCacheKey !== cacheKey) {
-      setRequestScopedFile(resolvedCacheKey, resolved.content);
-    }
+    this.cacheResolvedContent(cacheKey, resolvedCacheKey, resolved.content, isProduction);
 
     return resolved.content;
+  }
+
+  private cacheResolvedContent(
+    cacheKey: string,
+    resolvedCacheKey: string,
+    content: string,
+    persistToCache: boolean,
+  ): void {
+    if (persistToCache) {
+      this.cache.set(cacheKey, content);
+      if (resolvedCacheKey !== cacheKey) this.cache.set(resolvedCacheKey, content);
+    }
+    setRequestScopedFile(cacheKey, content);
+    if (resolvedCacheKey !== cacheKey) {
+      setRequestScopedFile(resolvedCacheKey, content);
+    }
   }
 
   private async fetchContent(normalizedPath: string): Promise<string> {

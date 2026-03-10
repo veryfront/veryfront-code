@@ -405,6 +405,15 @@ const baseAgentLogger = createLogger("AGENT");
 const baseProxyLogger = createLogger("PROXY");
 const baseLogger = createLogger("VERYFRONT");
 
+const BASE_LOGGER_MAP: Readonly<Record<string, ConsoleLogger>> = {
+  CLI: baseCliLogger,
+  SERVER: baseServerLogger,
+  RENDERER: baseRendererLogger,
+  BUNDLER: baseBundlerLogger,
+  AGENT: baseAgentLogger,
+  PROXY: baseProxyLogger,
+};
+
 /**
  * Request context getter - set by request-context.ts to avoid circular imports.
  * This pattern allows the logger module to be imported first without
@@ -535,36 +544,13 @@ export function getBaseLogger(
   options?: ConsoleLoggerOptions,
 ): ConsoleLogger {
   const resolvedPrefix = prefix.toUpperCase();
+  const validPrefix = resolvedPrefix in BASE_LOGGER_MAP ? resolvedPrefix : "VERYFRONT";
+
   if (options?.injectTraceContext === false) {
-    return createLogger(
-      resolvedPrefix === "CLI" ||
-        resolvedPrefix === "SERVER" ||
-        resolvedPrefix === "RENDERER" ||
-        resolvedPrefix === "BUNDLER" ||
-        resolvedPrefix === "AGENT" ||
-        resolvedPrefix === "PROXY"
-        ? resolvedPrefix
-        : "VERYFRONT",
-      options,
-    );
+    return createLogger(validPrefix, options);
   }
 
-  switch (resolvedPrefix) {
-    case "CLI":
-      return baseCliLogger;
-    case "SERVER":
-      return baseServerLogger;
-    case "RENDERER":
-      return baseRendererLogger;
-    case "BUNDLER":
-      return baseBundlerLogger;
-    case "AGENT":
-      return baseAgentLogger;
-    case "PROXY":
-      return baseProxyLogger;
-    default:
-      return baseLogger;
-  }
+  return BASE_LOGGER_MAP[resolvedPrefix] ?? baseLogger;
 }
 
 /**
