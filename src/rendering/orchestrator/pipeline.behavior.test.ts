@@ -176,7 +176,8 @@ describe("RenderPipeline behavior", () => {
 
     (pipeline as any).loadModule = async () => ({});
     (pipeline as any).renderPage = async () => ({
-      html: `<!DOCTYPE html><html><head></head><body><div class="fallback">hello</div></body></html>`,
+      html:
+        `<!DOCTYPE html><html><head></head><body><div class="fallback">hello</div></body></html>`,
     });
 
     // Intercept resolveCssFromRenderedHtml to confirm it returns undefined (no hash in HTML)
@@ -190,11 +191,20 @@ describe("RenderPipeline behavior", () => {
     // Pre-cache the CSS that generateTailwindCSS would produce for our candidates
     // so we don't depend on the Tailwind compiler actually working in CI
     const { extractCandidates } = await import("#veryfront/html/styles-builder/index.ts");
-    const html = `<!DOCTYPE html><html><head></head><body><div class="fallback">hello</div></body></html>`;
+    const html =
+      `<!DOCTYPE html><html><head></head><body><div class="fallback">hello</div></body></html>`;
     candidatesReceived = extractCandidates(html);
 
     // Verify candidates were actually extracted from the HTML
-    assertEquals(Array.isArray(candidatesReceived), true, "extractCandidates should return an array");
-    assertEquals(candidatesReceived!.length > 0, true, "Should extract at least one candidate from HTML");
+    assertEquals(
+      Array.isArray(candidatesReceived),
+      true,
+      "extractCandidates should return an array",
+    );
+    assertEquals(
+      candidatesReceived!.length > 0,
+      true,
+      "Should extract at least one candidate from HTML",
+    );
   });
 });
