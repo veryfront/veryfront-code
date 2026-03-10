@@ -21,10 +21,11 @@ export interface CodeBlockProps {
   inline?: boolean;
 }
 
-const ESM_REACT_MARKDOWN = "https://esm.sh/react-markdown@9?external=react&target=es2022";
-const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4?target=es2022";
-const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7?target=es2022";
-const ESM_MERMAID = "https://esm.sh/mermaid@11";
+const ESM_REACT_MARKDOWN =
+  "https://esm.sh/react-markdown@9.0.3?external=react&target=es2022&pin=v135";
+const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4.0.1?target=es2022&pin=v135";
+const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7.0.2?target=es2022&pin=v135";
+const ESM_MERMAID = "https://esm.sh/mermaid@11.4.1?pin=v135";
 
 const dynamicImport = new Function("url", "return import(url)") as (url: string) => Promise<any>;
 
