@@ -102,7 +102,7 @@ const PII_REPLACEMENTS: Array<{ pattern: RegExp; label: string }> = [
  * Input Validator
  */
 export class InputValidator {
-  private config: SecurityConfig["input"];
+  private config: NonNullable<SecurityConfig["input"]>;
 
   constructor(config?: SecurityConfig["input"]) {
     this.config = config ?? {};
@@ -181,7 +181,7 @@ export class InputValidator {
  * Output Filter
  */
 export class OutputFilter {
-  private config: SecurityConfig["output"];
+  private config: NonNullable<SecurityConfig["output"]>;
 
   constructor(config?: SecurityConfig["output"]) {
     this.config = config ?? {};
