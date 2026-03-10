@@ -6,17 +6,26 @@ const STATE_EXPIRATION_MS = 10 * 60 * 1_000;
 export class MemoryTokenStore implements TokenStore {
   private tokens = new Map<string, OAuthTokens>();
   private states = new Map<string, OAuthState>();
+  private projectId: string;
+
+  constructor(projectId = "default") {
+    this.projectId = projectId;
+  }
+
+  private scopedKey(serviceId: string): string {
+    return `${this.projectId}:${serviceId}`;
+  }
 
   async getTokens(serviceId: string): Promise<OAuthTokens | null> {
-    return this.tokens.get(serviceId) ?? null;
+    return this.tokens.get(this.scopedKey(serviceId)) ?? null;
   }
 
   async setTokens(serviceId: string, tokens: OAuthTokens): Promise<void> {
-    this.tokens.set(serviceId, tokens);
+    this.tokens.set(this.scopedKey(serviceId), tokens);
   }
 
   async clearTokens(serviceId: string): Promise<void> {
-    this.tokens.delete(serviceId);
+    this.tokens.delete(this.scopedKey(serviceId));
   }
 
   async getState(state: string): Promise<OAuthState | null> {
@@ -54,7 +63,7 @@ export class MemoryTokenStore implements TokenStore {
   }
 
   isConnected(serviceId: string): boolean {
-    const tokens = this.tokens.get(serviceId);
+    const tokens = this.tokens.get(this.scopedKey(serviceId));
     if (!tokens) return false;
 
     const isExpired = tokens.expiresAt != null && Date.now() > tokens.expiresAt;

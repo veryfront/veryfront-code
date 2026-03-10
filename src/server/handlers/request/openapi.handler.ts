@@ -55,7 +55,7 @@ export class OpenAPIHandler extends BaseHandler {
 
       const response = this.createResponseBuilder(ctx)
         .withCache(isDev ? "no-cache" : { maxAge: SPEC_CACHE_MAX_AGE_SECONDS, public: true })
-        .withCORS(req, { origin: "*" })
+        .withCORS(req, ctx.securityConfig?.cors)
         .withContentType(
           isYaml ? "text/yaml; charset=utf-8" : "application/json; charset=utf-8",
           content,
