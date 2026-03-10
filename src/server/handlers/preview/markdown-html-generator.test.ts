@@ -84,28 +84,27 @@ describe("generateMarkdownHtml", () => {
     assert(
       html.includes('"pageId":"9c7ba88d-fef9-43c0-9f5d-7f1125536d0f"'),
     );
+    assert(html.includes("studio-bridge.js"));
   });
 
-  it("injects bridge script for standalone markdown pages without studio_embed", () => {
+  it("omits bridge script for standalone markdown pages without studio_embed", () => {
     const html = generateMarkdownHtml(
       makeOptions({
         url: new URL("http://localhost/test.md"),
         filePath: "docs/README.md",
       }),
     );
-    assert(html.includes("pagePath"));
-    assert(html.includes("studio-bridge.js"));
+    assert(!html.includes("studio-bridge.js"));
   });
 
-  it("injects bridge script for standalone mdx pages without studio_embed", () => {
+  it("omits bridge script for standalone mdx pages without studio_embed", () => {
     const html = generateMarkdownHtml(
       makeOptions({
         url: new URL("http://localhost/test.mdx"),
         filePath: "docs/page.mdx",
       }),
     );
-    assert(html.includes("pagePath"));
-    assert(html.includes("studio-bridge.js"));
+    assert(!html.includes("studio-bridge.js"));
   });
 
   it("omits bridge script for non-markdown pages without studio_embed", () => {
@@ -132,5 +131,6 @@ describe("generateMarkdownHtml", () => {
         '"projectId":"95c93d5a-51a1-4ade-b055-72162cf0a891"',
       ),
     );
+    assert(html.includes("studio-bridge.js"));
   });
 });

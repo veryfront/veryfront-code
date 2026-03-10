@@ -52,7 +52,9 @@ export class StylesCSSHandler extends BaseHandler {
           });
           candidates = new Set<string>();
         }
-        const result = await generateTailwindCSS(rawCss, candidates);
+        const result = await generateTailwindCSS(rawCss, candidates, {
+          projectSlug: ctx.projectSlug,
+        });
 
         if (result.error) {
           const formatted = formatCSSError(result.error);
