@@ -71,6 +71,8 @@ export function handleDashboardAPI(
   req: Request,
   ctx: HandlerContext,
 ): Promise<Response | null> | Response | null {
+  if (!ctx.isLocalProject) return errorResponse("Unauthorized", 401);
+
   const { pathname } = new URL(req.url);
 
   if (req.method === "GET") {
