@@ -312,20 +312,23 @@ export class ReadOperations {
     cacheKeyPrefix: string,
     cacheKey: string,
     isProduction: boolean,
+    skipPersistentCaches: boolean,
   ): Promise<string | null> {
     // Check extension resolution cache first to skip the API call entirely.
     // Once we know pages/home → pages/home.tsx, we never need to ask the API again.
-    const cachedResolvedPath = this.extensionResolutionCache.get(apiPath);
-    if (cachedResolvedPath) {
-      const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, cachedResolvedPath);
-      const cached = this.cache.get<string>(resolvedCacheKey) ?? this.cache.get<string>(cacheKey);
-      if (cached) {
-        logger.debug("Extension resolution cache hit", {
-          basePath: apiPath,
-          resolvedPath: cachedResolvedPath,
-        });
-        setRequestScopedFile(cacheKey, cached);
-        return cached;
+    if (!skipPersistentCaches) {
+      const cachedResolvedPath = this.extensionResolutionCache.get(apiPath);
+      if (cachedResolvedPath) {
+        const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, cachedResolvedPath);
+        const cached = this.cache.get<string>(resolvedCacheKey) ?? this.cache.get<string>(cacheKey);
+        if (cached) {
+          logger.debug("Extension resolution cache hit", {
+            basePath: apiPath,
+            resolvedPath: cachedResolvedPath,
+          });
+          setRequestScopedFile(cacheKey, cached);
+          return cached;
+        }
       }
     }
 
@@ -349,15 +352,12 @@ export class ReadOperations {
         resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
       });
 
-      if (isProduction) {
-        this.cache.set(cacheKey, resolved.content);
-        if (resolvedCacheKey !== cacheKey) this.cache.set(resolvedCacheKey, resolved.content);
-      }
-
-      setRequestScopedFile(cacheKey, resolved.content);
-      if (resolvedCacheKey !== cacheKey) {
-        setRequestScopedFile(resolvedCacheKey, resolved.content);
-      }
+      this.cacheResolvedContent(
+        cacheKey,
+        resolvedCacheKey,
+        resolved.content,
+        isProduction && !skipPersistentCaches,
+      );
 
       return resolved.content;
     } catch (error) {
@@ -366,6 +366,57 @@ export class ReadOperations {
         error: error instanceof Error ? error.message : String(error),
       });
       return null;
+    }
+  }
+
+  private async tryResolveExtensionlessPathFromFileList(
+    normalizedPath: string,
+    cacheKeyPrefix: string,
+    cacheKey: string,
+    isProduction: boolean,
+    ctx: ResolvedContentContext | null,
+    isPreviewMode: boolean,
+  ): Promise<string | null> {
+    const candidatePaths = EXTENSION_PRIORITY.map((ext) => `${normalizedPath}${ext}`);
+    const resolved = await this.fileListIndex.findFirstWithContent(candidatePaths);
+    if (!resolved) return null;
+
+    const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolved.path);
+
+    this.extensionResolutionCache.set(normalizedPath, resolved.path);
+
+    logContentMetric("FILE_LIST_HIT", {
+      path: normalizedPath,
+      resolvedPath: resolved.path,
+      mode: ctx?.sourceType ?? "unknown",
+      cacheKey,
+      isPreviewMode,
+    });
+    logger.debug("Resolved extension from file list index", {
+      basePath: normalizedPath,
+      resolvedPath: resolved.path,
+      cacheKey,
+      resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
+    });
+
+    this.cacheResolvedContent(cacheKey, resolvedCacheKey, resolved.content, isProduction);
+
+    return resolved.content;
+  }
+
+  private cacheResolvedContent(
+    cacheKey: string,
+    resolvedCacheKey: string,
+    content: string,
+    persistToCache: boolean,
+  ): void {
+    if (persistToCache) {
+      this.cache.set(cacheKey, content);
+      if (resolvedCacheKey !== cacheKey) this.cache.set(resolvedCacheKey, content);
+    }
+    setRequestScopedFile(cacheKey, content);
+    if (resolvedCacheKey !== cacheKey) {
+      setRequestScopedFile(resolvedCacheKey, content);
     }
   }
 
@@ -432,11 +483,24 @@ export class ReadOperations {
     if (fileListCached) return fileListCached;
 
     if (!hasKnownExt) {
+      if (!skipPersistentCaches) {
+        const resolvedFromFileList = await this.tryResolveExtensionlessPathFromFileList(
+          normalizedPath,
+          cacheKeyPrefix,
+          cacheKey,
+          isProduction,
+          ctx,
+          isPreviewMode,
+        );
+        if (resolvedFromFileList) return resolvedFromFileList;
+      }
+
       const resolved = await this.tryResolveExtensionlessPath(
         apiPath,
         cacheKeyPrefix,
         cacheKey,
         isProduction,
+        skipPersistentCaches,
       );
       if (resolved) return resolved;
     }
