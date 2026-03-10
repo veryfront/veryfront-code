@@ -15,11 +15,14 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 /** Pattern to match hashed CSS URLs: /_vf/css/[8-char-hash].css */
 const CSS_URL_PATTERN = /^\/_vf\/css\/([a-z0-9-]{1,16})\.css$/;
 
-async function getCSSWithJITFallback(cssHash: string): Promise<string | undefined> {
+async function getCSSWithJITFallback(
+  cssHash: string,
+  projectSlug: string | undefined,
+): Promise<string | undefined> {
   const cached = await getCSSByHashAsync(cssHash);
   if (cached) return cached;
 
-  return regenerateCSSByHash(cssHash);
+  return regenerateCSSByHash(cssHash, projectSlug);
 }
 
 export class CSSHandler extends BaseHandler {
@@ -47,7 +50,12 @@ export class CSSHandler extends BaseHandler {
     // null — causing cross-pod cache misses. Wrap the lookup in request context
     // so the API backend can resolve the token and project.
     const effectiveToken = ctx.proxyToken || getEnv("VERYFRONT_API_TOKEN") || "";
-    const lookup = () => runWithCacheKeyContext(cacheCtx, () => getCSSWithJITFallback(cssHash));
+    const lookup = () =>
+      runWithCacheKeyContext(cacheCtx, () =>
+        getCSSWithJITFallback(
+          cssHash,
+          ctx.projectSlug ?? ctx.projectId,
+        ));
 
     const css = ctx.projectSlug
       ? await runWithRequestContext(
