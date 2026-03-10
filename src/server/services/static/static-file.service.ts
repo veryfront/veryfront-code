@@ -312,7 +312,18 @@ export class StaticFileService {
   isAssetRequest(pathname: string): boolean {
     if (pathname.includes("/.veryfront/") || pathname.startsWith("/.veryfront")) return false;
     if (pathname.endsWith(".md")) return false;
+    if (this.isDeniedDotfile(pathname)) return false;
     return pathname.includes(".") || pathname.startsWith("/_veryfront/");
+  }
+
+  private isDeniedDotfile(pathname: string): boolean {
+    const segments = pathname.split("/");
+    for (const segment of segments) {
+      if (segment.startsWith(".") && segment !== ".well-known") {
+        return true;
+      }
+    }
+    return false;
   }
 
   static clearCache(): void {
