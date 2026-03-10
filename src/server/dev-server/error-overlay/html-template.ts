@@ -187,7 +187,7 @@ export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): st
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Build Error - Veryfront</title>
+  <title>${errorType} Error - Veryfront</title>
   <style>
     body {
       margin: 0;

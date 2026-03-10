@@ -37,14 +37,14 @@ export class FileListIndex {
   clear(): void {
     if (!this.index) return;
 
-    const size = this.index.size;
+    const indexedWithContent = this.index.size;
     this.index = null;
     this.indexKey = null;
     this.indexBuiltAt = 0;
-    logger.debug("Cleared file list index", { entriesCleared: size });
+    logger.debug("Cleared file list index", { indexedWithContent });
   }
 
-  async lookup(normalizedPath: string): Promise<string | undefined> {
+  private async ensureReady(): Promise<void> {
     if (this.readyPromise) {
       try {
         await this.readyPromise;
@@ -53,6 +53,10 @@ export class FileListIndex {
         logger.debug("File list initialization failed, will fetch individually");
       }
     }
+  }
+
+  async lookup(normalizedPath: string): Promise<string | undefined> {
+    await this.ensureReady();
 
     const index = await this.getOrBuild();
     if (!index) {
@@ -77,6 +81,22 @@ export class FileListIndex {
     });
 
     return content;
+  }
+
+  async findFirstWithContent(
+    normalizedPaths: string[],
+  ): Promise<{ path: string; content: string } | undefined> {
+    await this.ensureReady();
+
+    const index = await this.getOrBuild();
+    if (!index) return undefined;
+
+    for (const path of normalizedPaths) {
+      const content = index.get(path);
+      if (content) return { path, content };
+    }
+
+    return undefined;
   }
 
   private async getOrBuild(): Promise<Map<string, string> | null> {
