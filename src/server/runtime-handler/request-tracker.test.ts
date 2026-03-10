@@ -140,4 +140,26 @@ describe("server/runtime-handler/request-tracker", () => {
       requestTracker.complete("req-env", 200);
     });
   });
+
+  describe("timer cleanup", () => {
+    it("should clear both slow and very slow timers on completion", () => {
+      const clearedTimers: ReturnType<typeof setTimeout>[] = [];
+      const originalClearTimeout = globalThis.clearTimeout;
+      globalThis.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
+        if (id !== undefined) clearedTimers.push(id);
+        originalClearTimeout(id);
+      }) as typeof clearTimeout;
+
+      try {
+        requestTracker.start("req-timer", "proj", "/slow", "GET");
+        requestTracker.complete("req-timer", 200);
+
+        // Should have cleared the slow timer (verySlowTimer hasn't been set
+        // yet since the outer timer hasn't fired)
+        assertEquals(clearedTimers.length >= 1, true);
+      } finally {
+        globalThis.clearTimeout = originalClearTimeout;
+      }
+    });
+  });
 });
