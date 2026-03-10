@@ -119,20 +119,14 @@ export function getDefaultLevel(
 
 /**
  * Determine log format from environment.
- * Defaults to JSON in production/staging/K8s for Grafana compatibility.
- * Text format produces multi-line output that Loki splits into separate
- * entries, so JSON is strongly preferred for any deployed environment.
+ * Defaults to JSON in production for Grafana compatibility.
  */
 function getDefaultFormat(
   envFormat: string | undefined = getEnv("LOG_FORMAT"),
   envMode: string | undefined = getEnv("NODE_ENV"),
 ): LogFormat {
   if (envFormat === "json" || envFormat === "text") return envFormat;
-  // Use JSON for any non-development environment (production, staging, test, etc.)
-  // and when running inside Kubernetes (KUBERNETES_SERVICE_HOST is always set in K8s pods)
-  if (envMode && envMode !== "development") return "json";
-  if (getEnv("KUBERNETES_SERVICE_HOST")) return "json";
-  return "text";
+  return envMode === "production" ? "json" : "text";
 }
 
 // ---- Eager config resolution ----
