@@ -85,16 +85,21 @@ function evictOldestCompiler(): void {
 
 export async function getCompiler(
   stylesheet: string,
+  projectSlug?: string,
 ): Promise<Awaited<ReturnType<typeof compile>>> {
-  const hash = hashString(stylesheet);
+  // Tailwind v4's compile().build() is stateful — it accumulates candidates
+  // across calls. Without per-project isolation, projects sharing the same
+  // stylesheet on the shared pool contaminate each other's CSS output.
+  const stylesheetHash = hashString(stylesheet);
+  const hash = projectSlug ? `${projectSlug}:${stylesheetHash}` : stylesheetHash;
 
   const cached = compilerCache.get(hash);
   if (cached) {
-    logger.debug("Compiler cache hit", { hash });
+    logger.debug("Compiler cache hit", { hash, projectSlug });
     return cached.compiler;
   }
 
-  logger.debug("Creating new compiler", { hash });
+  logger.debug("Creating new compiler", { hash, projectSlug });
 
   const tailwindBase = await getTailwindBaseCSS();
   const pluginCache = new Map<string, unknown>();
