@@ -589,7 +589,13 @@ export class ReadOperations {
 
     // Mark all promises as handled to prevent unhandled rejection errors
     // when we return early after a high-priority success (skipping lower-priority promises).
-    for (const p of promises) p.catch(() => {});
+    for (const p of promises) {
+      p.catch((err) => {
+        logger.debug("Fallback attempt failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
 
     // Await in priority order: return as soon as highest-priority succeeds
     for (const promise of promises) {
