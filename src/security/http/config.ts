@@ -43,7 +43,15 @@ export class SecurityConfigLoader {
 
     if (security.headers) security.headers = { ...security.headers };
 
-    security.cors ??= true;
+    security.cors ??= false;
+
+    if (!cfg?.security?.cors && !cfg?.security?.csrf) {
+      logger.warn(
+        "Neither CORS nor CSRF protection is configured. " +
+          "CORS is disabled by default (same-origin only). " +
+          "Consider explicitly configuring security.cors and security.csrf.",
+      );
+    }
 
     this.securityConfig = security;
     this.cspUserHeader = this.parseCspUserHeader(security.csp);
