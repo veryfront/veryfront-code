@@ -17,7 +17,6 @@ export const SERVER_PERMISSIONS = [
   "--allow-net",
   "--allow-env",
   "--allow-run",
-  "--allow-ffi",
   "--allow-sys",
 ] as const;
 
