@@ -23,6 +23,10 @@ import {
 import { agentRegistry } from "./composition/index.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import {
+  COMMON_BLOCKED_PATTERNS,
+  securityMiddleware,
+} from "./middleware/security/validator.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";
 
@@ -117,6 +121,22 @@ export function agent(config: AgentConfig): Agent {
     }
     : originalSystem;
 
+  // Prepend default security middleware unless explicitly opted out
+  const resolvedMiddleware = config.security === false
+    ? (config.middleware ?? [])
+    : [
+      securityMiddleware({
+        input: {
+          maxLength: 50_000,
+          blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection,
+        },
+        output: {
+          filterPII: true,
+        },
+      }),
+      ...(config.middleware ?? []),
+    ];
+
   const platform = detectPlatform();
   const compatibility = validatePlatformCompatibility(
     {
@@ -147,6 +167,7 @@ export function agent(config: AgentConfig): Agent {
     ...publicConfig,
     tools: mergedToolsConfig,
     system: augmentedSystem,
+    middleware: resolvedMiddleware,
   });
 
   const agentInstance: Agent = {
@@ -244,7 +265,12 @@ export function agent(config: AgentConfig): Agent {
 // Register on globalThis so compiled-binary runtime shim can delegate to the
 // real factory. External temp-file modules can't import from the embedded
 // binary FS, so they use globalThis bridges instead.
-(globalThis as Record<string, unknown>).__vfAgentFactory = agent;
+Object.defineProperty(globalThis, "__vfAgentFactory", {
+  value: agent,
+  writable: false,
+  enumerable: false,
+  configurable: false,
+});
 
 let agentIdCounter = 0;
 

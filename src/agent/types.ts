@@ -76,6 +76,8 @@ export interface AgentConfig {
    * and registers the skill tools.
    */
   skills?: true | string[];
+  /** Set to false to disable the default security middleware */
+  security?: false;
 }
 
 export type ResolvedAgentConfig = AgentConfig & { model: ModelString };
