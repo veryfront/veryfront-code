@@ -43,6 +43,27 @@ describe("veryfront/invalidation-state", () => {
     clearAllPendingInvalidations();
   });
 
+  it("keeps blocking until overlapping invalidations are fully removed", () => {
+    clearAllPendingInvalidations();
+
+    const prefix = "file:branch:project-a:main";
+    addPendingInvalidation(prefix);
+    addPendingInvalidation(prefix);
+
+    assertEquals(getPendingInvalidationsCount(), 1);
+    assertEquals(isPrefixBeingInvalidated(`${prefix}:pages/index.tsx`), true);
+
+    removePendingInvalidation(prefix);
+    assertEquals(getPendingInvalidationsCount(), 1);
+    assertEquals(isPrefixBeingInvalidated(`${prefix}:pages/index.tsx`), true);
+
+    removePendingInvalidation(prefix);
+    assertEquals(getPendingInvalidationsCount(), 0);
+    assertEquals(isPrefixBeingInvalidated(`${prefix}:pages/index.tsx`), false);
+
+    clearAllPendingInvalidations();
+  });
+
   it("cleans up stale invalidations and avoids blocking after stale timeout", () => {
     clearAllPendingInvalidations();
 

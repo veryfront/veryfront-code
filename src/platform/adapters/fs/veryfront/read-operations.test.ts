@@ -881,6 +881,95 @@ describe("ReadOperations", () => {
       assertEquals(resolveCallCount, 1);
     });
 
+    it("should skip preview file-list cache reads while branch invalidation is pending", async () => {
+      let fileListCalls = 0;
+      let fileFetchCount = 0;
+      const client = createMockClient({
+        getFileContent: () => {
+          fileFetchCount++;
+          return Promise.resolve("fresh draft content");
+        },
+      });
+
+      const contextProvider: ContentContextProvider = {
+        isProductionMode: () => false,
+        getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch" as const,
+          projectSlug: "test",
+          branch: "main",
+        }),
+        isPersistentCacheInvalidated: () => true,
+      };
+
+      const readOps = new ReadOperations(
+        client,
+        new FileCache({ enabled: true, ttl: 60000, maxSize: 100 }),
+        new PathNormalizer(),
+        contextProvider,
+        (path: string) => path,
+        () => {
+          fileListCalls++;
+          return Promise.resolve([
+            { path: "pages/home.tsx", content: "stale file-list content" },
+          ]);
+        },
+      );
+
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const content = await readOps.readTextFile("pages/home.tsx");
+      assertEquals(content, "fresh draft content");
+      assertEquals(fileListCalls, 0);
+      assertEquals(fileFetchCount, 1);
+    });
+
+    it("should skip preview extensionless file-list lookups while branch invalidation is pending", async () => {
+      let fileListCalls = 0;
+      let resolveCallCount = 0;
+      const client = createMockClient({
+        resolveFileWithExtension: () => {
+          resolveCallCount++;
+          return Promise.resolve({
+            path: "pages/home.tsx",
+            content: "fresh resolved content",
+          });
+        },
+      });
+
+      const contextProvider: ContentContextProvider = {
+        isProductionMode: () => false,
+        getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch" as const,
+          projectSlug: "test",
+          branch: "main",
+        }),
+        isPersistentCacheInvalidated: () => true,
+      };
+
+      const readOps = new ReadOperations(
+        client,
+        new FileCache({ enabled: true, ttl: 60000, maxSize: 100 }),
+        new PathNormalizer(),
+        contextProvider,
+        (path: string) => path,
+        () => {
+          fileListCalls++;
+          return Promise.resolve([
+            { path: "pages/home.tsx", content: "stale file-list content" },
+          ]);
+        },
+      );
+
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const content = await readOps.readTextFile("pages/home");
+      assertEquals(content, "fresh resolved content");
+      assertEquals(fileListCalls, 0);
+      assertEquals(resolveCallCount, 1);
+    });
+
     it("should skip extension resolution cache reads and writes during invalidation", async () => {
       let invalidated = false;
       let resolveCallCount = 0;
