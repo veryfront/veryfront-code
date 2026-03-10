@@ -716,7 +716,9 @@ export class RenderPipeline {
             });
           } else {
             const candidates = extractCandidates(renderResult.html);
-            css = (await generateTailwindCSS(undefined, candidates)).css;
+            css = (await generateTailwindCSS(undefined, candidates, {
+              projectSlug: options?.projectSlug,
+            })).css;
 
             resolvePageDataLog.debug("Fell back to HTML candidate CSS generation", {
               slug,
