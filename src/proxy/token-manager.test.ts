@@ -109,7 +109,7 @@ describe("TokenManager", () => {
     );
 
     // Fire concurrent requests for different projects
-    const [token1, token2] = await Promise.all([
+    const [_token1, _token2] = await Promise.all([
       manager.getToken("production", "project-a"),
       manager.getToken("production", "project-b"),
     ]);
