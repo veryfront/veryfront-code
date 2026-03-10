@@ -174,7 +174,11 @@ export class MultiTierCache<T = string> {
         );
 
         if (this.config.asyncBackfill) {
-          void Promise.all(setOps).catch(() => {});
+          void Promise.all(setOps).catch((err) => {
+            logger.warn(`[${this.config.name}] Cache backfill failed`, {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
           return;
         }
 
