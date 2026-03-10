@@ -164,4 +164,27 @@ describe("RenderPipeline behavior", () => {
     assertEquals(pageData.css, expectedCss);
     assertEquals(pageData.cssError, undefined);
   });
+
+  it("resolvePageData falls back to candidate extraction when CSS hash is not cached", async () => {
+    const slug = "/behavior-css-fallback";
+    const projectId = "proj-css-fallback";
+    const pipeline = createPipeline("/project/pages/behavior-css-fallback.tsx");
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).renderPage = async () => ({
+      html:
+        `<!DOCTYPE html><html><head></head><body><div class="text-red-500">hello</div></body></html>`,
+    });
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      environment: "production",
+    });
+
+    // Falls back to extractCandidates + generateTailwindCSS, so CSS should be generated
+    assertEquals(typeof pageData.css, "string");
+    assertEquals(pageData.cssError, undefined);
+  });
 });

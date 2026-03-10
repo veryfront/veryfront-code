@@ -729,12 +729,6 @@ export class RenderPipeline {
           }
 
           if (css) cachePageCss(cssCacheKey, css);
-
-          resolvePageDataLog.debug("Generated and cached CSS", {
-            slug,
-            htmlLength: renderResult.html.length,
-            cssLength: css?.length || 0,
-          });
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
