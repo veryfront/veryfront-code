@@ -75,8 +75,15 @@ export function rateLimit(
   const maxRequests = options.maxRequests ?? DEFAULT_RATE_LIMIT_REQUESTS;
   const windowMs = options.windowMs ?? DEFAULT_RATE_LIMIT_WINDOW_MS;
   const store = options.store ?? new MemoryRateLimitStore(windowMs);
-  const keyGenerator = options.keyGenerator ??
-    ((req: Request) => req.headers.get("x-forwarded-for") || "anonymous");
+  const keyGenerator = options.keyGenerator ?? ((req: Request) => {
+    const forwarded = req.headers.get("x-forwarded-for");
+    if (forwarded) {
+      const parts = forwarded.split(",").map((s) => s.trim()).filter(Boolean);
+      // Use rightmost IP — added by nearest trusted proxy, not spoofable by clients
+      if (parts.length > 0) return parts[parts.length - 1]!;
+    }
+    return "anonymous";
+  });
 
   return async (ctx, next) => {
     const req = getRequest(ctx);
@@ -94,4 +101,13 @@ export function rateLimit(
       headers: { "Retry-After": String(retryAfterSeconds) },
     });
   };
+}
+
+/** Pre-configured rate limiter for authentication endpoints (5 req/15min). */
+export function authRateLimit(store?: RateLimitStore): Middleware {
+  return rateLimit({
+    maxRequests: 5,
+    windowMs: 15 * MS_PER_MINUTE,
+    store,
+  });
 }

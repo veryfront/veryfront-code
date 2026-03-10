@@ -572,6 +572,9 @@ function router(req: Request): Promise<Response> {
 
   switch (url.pathname) {
     case "/_proxy/stats":
+      if (Object.keys(proxyHandler.localProjects).length === 0) {
+        return Promise.resolve(new Response("Forbidden", { status: 403 }));
+      }
       return handleStats();
     case "/_proxy/health":
       return Promise.resolve(
