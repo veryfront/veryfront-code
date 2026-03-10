@@ -1,5 +1,6 @@
 import type { AgentMiddleware, AgentResponse } from "../../types.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -16,6 +17,8 @@ export interface CostConfig {
   limits?: {
     daily?: number;
     monthly?: number;
+    /** Per-user daily cost limit */
+    userDaily?: number;
   };
   onLimitExceeded?: (usage: UsageSummary) => void;
 }
@@ -64,12 +67,35 @@ class CostTracker {
   private records: UsageRecord[] = [];
   private dailyTotal = 0;
   private monthlyTotal = 0;
+  private userDailyTotals = new Map<string, number>();
   private lastDayReset = Date.now();
   private lastMonthReset = Date.now();
   private resetInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(private config: CostConfig) {
     this.startPeriodicReset();
+  }
+
+  isOverBudget(userId?: string): string | null {
+    const dailyLimit = this.config.limits?.daily;
+    if (dailyLimit && this.dailyTotal >= dailyLimit) {
+      return "Daily cost limit exceeded";
+    }
+
+    const monthlyLimit = this.config.limits?.monthly;
+    if (monthlyLimit && this.monthlyTotal >= monthlyLimit) {
+      return "Monthly cost limit exceeded";
+    }
+
+    const userDailyLimit = this.config.limits?.userDaily;
+    if (userDailyLimit && userId) {
+      const userTotal = this.userDailyTotals.get(userId) ?? 0;
+      if (userTotal >= userDailyLimit) {
+        return "Per-user daily cost limit exceeded";
+      }
+    }
+
+    return null;
   }
 
   track(
@@ -107,6 +133,9 @@ class CostTracker {
     this.records.push(record);
     this.dailyTotal += cost;
     this.monthlyTotal += cost;
+    if (userId) {
+      this.userDailyTotals.set(userId, (this.userDailyTotals.get(userId) ?? 0) + cost);
+    }
     this.checkLimits();
 
     return record;
@@ -185,6 +214,7 @@ class CostTracker {
 
       if (now - this.lastDayReset >= ONE_DAY_MS) {
         this.dailyTotal = 0;
+        this.userDailyTotals.clear();
         this.lastDayReset = now;
       }
 
@@ -223,11 +253,13 @@ class CostTracker {
     this.records = [];
     this.dailyTotal = 0;
     this.monthlyTotal = 0;
+    this.userDailyTotals.clear();
   }
 }
 
 export function createCostTracker(config: CostConfig): {
   track: (agentId: string, model: string, response: AgentResponse, userId?: string) => UsageRecord;
+  isOverBudget: (userId?: string) => string | null;
   getSummary: (startTime?: number, endTime?: number) => UsageSummary;
   getDailySummary: () => UsageSummary;
   getMonthlySummary: () => UsageSummary;
@@ -239,6 +271,7 @@ export function createCostTracker(config: CostConfig): {
 
   return {
     track: tracker.track.bind(tracker),
+    isOverBudget: tracker.isOverBudget.bind(tracker),
     getSummary: tracker.getSummary.bind(tracker),
     getDailySummary: tracker.getDailySummary.bind(tracker),
     getMonthlySummary: tracker.getMonthlySummary.bind(tracker),
@@ -254,12 +287,23 @@ export function costTrackingMiddleware(
   const tracker = createCostTracker(config);
 
   const middleware = (async (context, next): Promise<AgentResponse> => {
+    const userId = (context.data as { userId?: string } | undefined)?.userId;
+    const budgetError = tracker.isOverBudget(userId);
+    if (budgetError) {
+      throw toError(
+        createError({
+          type: "agent",
+          message: `Cost limit exceeded: ${budgetError}`,
+        }),
+      );
+    }
+
     const result = await next();
     tracker.track(
       context.agentId,
       context.model || "unknown",
       result,
-      (context.data as { userId?: string } | undefined)?.userId,
+      userId,
     );
     return result;
   }) as AgentMiddleware & { destroy(): void };
