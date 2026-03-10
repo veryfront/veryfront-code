@@ -1,8 +1,11 @@
+import { serverLogger } from "../../../logger/logger.ts";
 import type { CacheAdapter, LRUCacheOptions, LRUCacheStats, LRUEntry } from "./types.ts";
 import { LRUNode } from "./lru-node.ts";
 import { LRUListManager } from "./lru-list-manager.ts";
 import { EvictionManager } from "../../eviction/eviction-manager.ts";
 import { EntryManager } from "./entry-manager.ts";
+
+const logger = serverLogger.component("cache");
 
 const MAX_ESTIMATION_DEPTH = 10;
 
@@ -141,8 +144,11 @@ export class LRUCacheAdapter implements CacheAdapter {
 
     try {
       this.onEvict?.(key, node.entry.value);
-    } catch {
-      // Prevent onEvict errors from corrupting cache size tracking
+    } catch (error) {
+      logger.warn("onEvict callback threw during delete", {
+        key,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

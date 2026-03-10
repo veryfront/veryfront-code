@@ -1,3 +1,7 @@
+import { serverLogger } from "../../logger/logger.ts";
+
+const logger = serverLogger.component("cache");
+
 export interface EvictableEntry {
   size: number;
   timestamp?: number;
@@ -94,8 +98,11 @@ export class EvictionManager<TEntry extends EvictableEntry> {
 
     try {
       this.onEvict?.(node.key, node.entry.value);
-    } catch {
-      // Prevent onEvict errors from corrupting cache size tracking
+    } catch (error) {
+      logger.warn("onEvict callback threw during eviction", {
+        key: node.key,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     return currentSize - node.entry.size;
