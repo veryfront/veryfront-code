@@ -1,4 +1,4 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { ContentSource, InvalidationCallbacks, ResolvedContentContext } from "./types.ts";
@@ -14,7 +14,7 @@ import {
   removePendingInvalidation,
 } from "./invalidation-state.ts";
 
-const logger = baseLogger.component("web-socket-manager");
+const logger = getBaseLogger("SERVER").component("web-socket-manager");
 
 const INVALIDATION_DEBOUNCE_MS = 100;
 const WS_RECONNECT_DELAY_MS = 5000;
