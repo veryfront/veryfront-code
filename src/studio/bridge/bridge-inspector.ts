@@ -389,7 +389,3 @@ export function setColorMode(mode: string): void {
   document.documentElement.classList.remove("light", "dark");
   document.documentElement.classList.add(mode);
 }
-
-// --- Page type helpers ---
-
-export { isMarkdownPage, isMdxPage } from "./bridge-config.ts";

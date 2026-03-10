@@ -37,15 +37,14 @@ export class SSRCircuitBreaker {
     ) {
       throw toError(
         createError({
-          type: "build",
+          type: "render",
           message:
             `Component ${filePath} is temporarily blocked due to repeated failures. Will retry in ${
               Math.ceil((CIRCUIT_BREAKER_RESET_MS - timeSinceFailure) / 1000)
             }s.`,
           context: {
-            file: filePath,
-            phase: "circuit-breaker",
-            failures: failureRecord.count,
+            component: filePath,
+            phase: "server",
           },
         }),
       );
