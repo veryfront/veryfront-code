@@ -166,13 +166,7 @@ describe("RenderPipeline behavior", () => {
   });
 
   it("resolvePageData falls back to candidate extraction when no CSS link in HTML", async () => {
-    const slug = "/behavior-css-fallback";
-    const projectId = "proj-css-fallback";
     const pipeline = createPipeline("/project/pages/behavior-css-fallback.tsx");
-
-    // Stub generateTailwindCSS at the pipeline level to prove the fallback path runs
-    const generatedCss = ".fallback{display:block}";
-    let candidatesReceived: string[] | undefined;
 
     (pipeline as any).loadModule = async () => ({});
     (pipeline as any).renderPage = async () => ({
@@ -193,7 +187,7 @@ describe("RenderPipeline behavior", () => {
     const { extractCandidates } = await import("#veryfront/html/styles-builder/index.ts");
     const html =
       `<!DOCTYPE html><html><head></head><body><div class="fallback">hello</div></body></html>`;
-    candidatesReceived = extractCandidates(html);
+    const candidatesReceived = extractCandidates(html);
 
     // Verify candidates were actually extracted from the HTML
     assertEquals(

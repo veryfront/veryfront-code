@@ -146,14 +146,17 @@ export class RenderPipeline {
     return html.match(RENDERED_CSS_HASH_RE)?.[1];
   }
 
-  private async resolveCssFromRenderedHtml(html: string): Promise<string | undefined> {
+  private async resolveCssFromRenderedHtml(
+    html: string,
+    projectSlug: string | undefined,
+  ): Promise<string | undefined> {
     const cssHash = this.extractRenderedCssHash(html);
     if (!cssHash) return undefined;
 
     const cachedCss = await getCSSByHashAsync(cssHash);
     if (cachedCss) return cachedCss;
 
-    return await regenerateCSSByHash(cssHash);
+    return await regenerateCSSByHash(cssHash, projectSlug);
   }
 
   /**
@@ -706,7 +709,10 @@ export class RenderPipeline {
         );
 
         if (renderResult?.html) {
-          css = await this.resolveCssFromRenderedHtml(renderResult.html);
+          css = await this.resolveCssFromRenderedHtml(
+            renderResult.html,
+            options?.projectSlug ?? options?.projectId,
+          );
 
           if (css) {
             resolvePageDataLog.debug("Reused SSR CSS for page data", {
@@ -716,7 +722,9 @@ export class RenderPipeline {
             });
           } else {
             const candidates = extractCandidates(renderResult.html);
-            css = (await generateTailwindCSS(undefined, candidates)).css;
+            css = (await generateTailwindCSS(undefined, candidates, {
+              projectSlug: options?.projectSlug,
+            })).css;
 
             resolvePageDataLog.debug("Fell back to HTML candidate CSS generation", {
               slug,
