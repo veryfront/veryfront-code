@@ -33,6 +33,8 @@ export interface RedisMemoryConfig extends MemoryConfigBase {
   client: RedisClient;
   /** Key prefix for namespacing */
   keyPrefix?: string;
+  /** User ID for per-user memory isolation */
+  userId?: string;
   /** TTL in seconds (default: 24 hours) */
   ttl?: number;
 }
@@ -43,6 +45,7 @@ const DEFAULT_KEY_PREFIX = "veryfront:agent:memory:";
 export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   private client: RedisClient;
   private agentId: string;
+  private userId: string;
   private keyPrefix: string;
   private ttl: number;
   private config: RedisMemoryConfig;
@@ -50,13 +53,14 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
   constructor(agentId: string, config: RedisMemoryConfig) {
     this.client = config.client;
     this.agentId = agentId;
+    this.userId = config.userId ?? "anonymous";
     this.keyPrefix = config.keyPrefix ?? DEFAULT_KEY_PREFIX;
     this.ttl = config.ttl ?? DEFAULT_TTL;
     this.config = config;
   }
 
   private getKey(): string {
-    return `${this.keyPrefix}${this.agentId}`;
+    return `${this.keyPrefix}${this.agentId}:${this.userId}`;
   }
 
   private parseMessages(data: string | null): M[] {

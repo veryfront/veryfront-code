@@ -264,6 +264,16 @@ function isRequest(obj: unknown): obj is Request {
   );
 }
 
+function extractUserId(request: Request): string {
+  const userId = request.headers.get("x-user-id");
+  if (userId) return userId;
+  agentLogger.warn(
+    "No user identity found in request. Using anonymous fallback. " +
+      "Set x-user-id header or provide a context function for proper user isolation.",
+  );
+  return "anonymous";
+}
+
 function extractRequest(requestOrCtx: unknown): Request {
   if (isRequest(requestOrCtx)) return requestOrCtx;
   // Pages Router APIContext — has a .request property
@@ -316,7 +326,7 @@ export function createChatHandler(
 
       const context = typeof options?.context === "function"
         ? await options.context(request)
-        : options?.context ?? { userId: "current-user" };
+        : options?.context ?? { userId: extractUserId(request) };
 
       const baseMessages = transformUIMessages(rawMessages);
       const beforeStreamResult = await options?.beforeStream?.({
