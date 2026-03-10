@@ -479,9 +479,14 @@ export class SSRModuleLoader {
       resolveTransform = resolve;
       rejectTransform = reject;
     });
-    // Attach no-op catch to prevent unhandled rejection when waiters timeout
+    // Attach catch to prevent unhandled rejection when waiters timeout
     // and stop listening. The actual error is thrown to the caller directly.
-    transformPromise.catch(() => {});
+    transformPromise.catch((err) => {
+      logger.debug("Transform rejected (waiters may have timed out)", {
+        key: inProgressKey,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
     globalInProgress.set(inProgressKey, transformPromise);
 
     try {
