@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -370,7 +370,7 @@ describe("ReadOperations", () => {
       assertEquals(apiFetchCount, 0);
     });
 
-    it("should short-circuit known-missing explicit files like deno.json from file list cache", async () => {
+    it("should fall back to API for explicit dotted files missing from file list cache", async () => {
       let resolveCallCount = 0;
       let apiFetchCount = 0;
 
@@ -395,13 +395,11 @@ describe("ReadOperations", () => {
 
       readOps.setFileListReadyPromise(Promise.resolve());
 
-      await assertRejects(
-        () => readOps.readTextFile("deno.json"),
-        Error,
-        "404 Not Found",
-      );
-      assertEquals(resolveCallCount, 0);
-      assertEquals(apiFetchCount, 0);
+      const content = await readOps.readTextFile("deno.json");
+
+      assertEquals(content, "published API content");
+      assertEquals(resolveCallCount, 1);
+      assertEquals(apiFetchCount, 1);
     });
 
     it("should cache extension resolution to avoid repeated API calls", async () => {
@@ -834,6 +832,110 @@ describe("ReadOperations", () => {
       assertEquals(content, "fresh api content");
       assertEquals(fileListCalls, 0);
       assertEquals(fetchedApiPath, "api-source/pages/index.tsx");
+    });
+
+    it("should skip extensionless file-list lookups during invalidation", async () => {
+      let fileListCalls = 0;
+      let resolveCallCount = 0;
+      const client = createMockClient({
+        resolveFileWithExtension: () => {
+          resolveCallCount++;
+          return Promise.resolve({
+            path: "pages/home.tsx",
+            content: "fresh resolved content",
+          });
+        },
+      });
+
+      const contextProvider: ContentContextProvider = {
+        isProductionMode: () => true,
+        getReleaseId: () => "rel-extensionless-invalidation",
+        getContentContext: () => ({
+          sourceType: "release" as const,
+          projectSlug: "test",
+          releaseId: "rel-extensionless-invalidation",
+        }),
+        isPersistentCacheInvalidated: () => true,
+        isReleaseBeingInvalidated: () => false,
+      };
+
+      const readOps = new ReadOperations(
+        client,
+        new FileCache({ enabled: true, ttl: 60000, maxSize: 100 }),
+        new PathNormalizer(),
+        contextProvider,
+        (path: string) => path,
+        () => {
+          fileListCalls++;
+          return Promise.resolve([
+            { path: "pages/home.tsx", content: "stale file-list content" },
+          ]);
+        },
+      );
+
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const content = await readOps.readTextFile("pages/home");
+      assertEquals(content, "fresh resolved content");
+      assertEquals(fileListCalls, 0);
+      assertEquals(resolveCallCount, 1);
+    });
+
+    it("should skip extension resolution cache reads and writes during invalidation", async () => {
+      let invalidated = false;
+      let resolveCallCount = 0;
+      const cache = new FileCache({ enabled: true, ttl: 60000, maxSize: 100 });
+      const client = createMockClient({
+        resolveFileWithExtension: () => {
+          resolveCallCount++;
+          return Promise.resolve({
+            path: "pages/home.tsx",
+            content: resolveCallCount === 1 ? "cached resolved content" : "fresh resolved content",
+          });
+        },
+      });
+
+      const contextProvider: ContentContextProvider = {
+        isProductionMode: () => true,
+        getReleaseId: () => "rel-resolve-invalidation",
+        getContentContext: () => ({
+          sourceType: "release" as const,
+          projectSlug: "test",
+          releaseId: "rel-resolve-invalidation",
+        }),
+        isPersistentCacheInvalidated: () => invalidated,
+        isReleaseBeingInvalidated: () => false,
+      };
+
+      const readOps = new ReadOperations(
+        client,
+        cache,
+        new PathNormalizer(),
+        contextProvider,
+      );
+
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const warmed = await readOps.readTextFile("pages/home");
+      assertEquals(warmed, "cached resolved content");
+      assertEquals(
+        cache.get("file:release:test:rel-resolve-invalidation:pages/home"),
+        "cached resolved content",
+      );
+
+      invalidated = true;
+
+      const refreshed = await readOps.readTextFile("pages/home");
+      assertEquals(refreshed, "fresh resolved content");
+      assertEquals(resolveCallCount, 2);
+      assertEquals(
+        cache.get("file:release:test:rel-resolve-invalidation:pages/home"),
+        "cached resolved content",
+      );
+      assertEquals(
+        cache.get("file:release:test:rel-resolve-invalidation:pages/home.tsx"),
+        "cached resolved content",
+      );
     });
 
     it("should track invalidation state changes", () => {

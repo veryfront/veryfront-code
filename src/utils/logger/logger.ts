@@ -88,6 +88,10 @@ type LoggerConfig = {
   format: LogFormat;
 };
 
+type ConsoleLoggerOptions = {
+  injectTraceContext?: boolean;
+};
+
 // ---- Config helpers (must be declared before the eager init below) ----
 
 const LOG_LEVEL_MAP: Readonly<Record<string, LogLevel>> = {
@@ -249,17 +253,23 @@ class ConsoleLogger implements Logger {
     private prefix: string,
     boundContext?: Record<string, unknown>,
     componentName?: string,
+    private readonly options: ConsoleLoggerOptions = {},
   ) {
     this.boundContext = boundContext ?? {};
     this.componentName = componentName;
   }
 
   child(context: Record<string, unknown>): Logger {
-    return new ConsoleLogger(this.prefix, { ...this.boundContext, ...context }, this.componentName);
+    return new ConsoleLogger(
+      this.prefix,
+      { ...this.boundContext, ...context },
+      this.componentName,
+      this.options,
+    );
   }
 
   component(name: string): Logger {
-    return new ConsoleLogger(this.prefix, { ...this.boundContext }, name);
+    return new ConsoleLogger(this.prefix, { ...this.boundContext }, name, this.options);
   }
 
   private formatJson(level: LogEntry["level"], message: string, args: unknown[]): string {
@@ -284,7 +294,7 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "durationMs", (v) => Number(v));
 
     // Auto-inject trace context from OTel when not already set
-    if (traceContextGetter && !entry.traceId) {
+    if ((this.options.injectTraceContext ?? true) && traceContextGetter && !entry.traceId) {
       const traceCtx = traceContextGetter();
       if (traceCtx.traceId) {
         entry.traceId = traceCtx.traceId;
@@ -382,8 +392,8 @@ class ConsoleLogger implements Logger {
   }
 }
 
-function createLogger(prefix: string): ConsoleLogger {
-  return new ConsoleLogger(prefix);
+function createLogger(prefix: string, options?: ConsoleLoggerOptions): ConsoleLogger {
+  return new ConsoleLogger(prefix, undefined, undefined, options);
 }
 
 // Base loggers without request context
@@ -520,8 +530,26 @@ export const logger = createContextAwareLogger(baseLogger);
  * Get the base logger without request context awareness.
  * Use this when you need to create a request-scoped logger in middleware.
  */
-export function getBaseLogger(prefix: string): ConsoleLogger {
-  switch (prefix.toUpperCase()) {
+export function getBaseLogger(
+  prefix: string,
+  options?: ConsoleLoggerOptions,
+): ConsoleLogger {
+  const resolvedPrefix = prefix.toUpperCase();
+  if (options?.injectTraceContext === false) {
+    return createLogger(
+      resolvedPrefix === "CLI" ||
+        resolvedPrefix === "SERVER" ||
+        resolvedPrefix === "RENDERER" ||
+        resolvedPrefix === "BUNDLER" ||
+        resolvedPrefix === "AGENT" ||
+        resolvedPrefix === "PROXY"
+        ? resolvedPrefix
+        : "VERYFRONT",
+      options,
+    );
+  }
+
+  switch (resolvedPrefix) {
     case "CLI":
       return baseCliLogger;
     case "SERVER":

@@ -186,7 +186,9 @@ describe("WebSocketManager", () => {
     manager.connect("project-1");
     assertEquals(MockWebSocket.instances.length, 1);
     manager.dispose();
-    assertEquals(MockWebSocket.instances[0].readyState, MockWebSocket.CLOSED);
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    assertEquals(socket.readyState, MockWebSocket.CLOSED);
   });
 
   it("should set connection ID after connect", () => {

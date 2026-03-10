@@ -14,7 +14,9 @@ import {
   removePendingInvalidation,
 } from "./invalidation-state.ts";
 
-const logger = getBaseLogger("SERVER").component("web-socket-manager");
+const logger = getBaseLogger("SERVER", { injectTraceContext: false }).component(
+  "web-socket-manager",
+);
 
 const INVALIDATION_DEBOUNCE_MS = 100;
 const WS_RECONNECT_DELAY_MS = 5000;
