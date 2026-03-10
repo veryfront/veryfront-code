@@ -1,4 +1,4 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { ContentSource, InvalidationCallbacks, ResolvedContentContext } from "./types.ts";
@@ -14,7 +14,9 @@ import {
   removePendingInvalidation,
 } from "./invalidation-state.ts";
 
-const logger = baseLogger.component("web-socket-manager");
+const logger = getBaseLogger("SERVER", { injectTraceContext: false }).component(
+  "web-socket-manager",
+);
 
 const INVALIDATION_DEBOUNCE_MS = 100;
 const WS_RECONNECT_DELAY_MS = 5000;
@@ -55,6 +57,8 @@ export class WebSocketManager {
   private wsConsecutiveFailures = 0;
   private wsErrorLogged = false;
   private disposed = false;
+  private previewInvalidationVersion = 0;
+  private activePreviewInvalidationPrefixes = new Set<string>();
   private pokeMetrics = {
     received: 0,
     invalidationsTriggered: 0,
@@ -62,6 +66,41 @@ export class WebSocketManager {
   };
 
   constructor(private readonly deps: WebSocketDeps) {}
+
+  private getConnectionLogContext(context: Record<string, unknown> = {}): Record<string, unknown> {
+    if (!this.deps.projectSlug) return context;
+    return { projectSlug: this.deps.projectSlug, ...context };
+  }
+
+  private getPreviewInvalidationPrefixes(
+    contentContext: ResolvedContentContext | null,
+  ): string[] {
+    if (contentContext?.sourceType !== "branch") return [];
+    return [buildFileCacheKeyPrefix(contentContext)];
+  }
+
+  private beginPreviewInvalidation(contentContext: ResolvedContentContext | null): void {
+    const prefixes = this.getPreviewInvalidationPrefixes(contentContext);
+    if (prefixes.length === 0) return;
+
+    this.previewInvalidationVersion++;
+
+    for (const prefix of prefixes) {
+      if (this.activePreviewInvalidationPrefixes.has(prefix)) continue;
+      addPendingInvalidation(prefix);
+      this.activePreviewInvalidationPrefixes.add(prefix);
+    }
+  }
+
+  private completePreviewInvalidation(prefixes: string[], version: number): void {
+    if (prefixes.length === 0) return;
+    if (version !== this.previewInvalidationVersion) return;
+
+    for (const prefix of prefixes) {
+      if (!this.activePreviewInvalidationPrefixes.delete(prefix)) continue;
+      removePendingInvalidation(prefix);
+    }
+  }
 
   getPokeMetrics(): {
     received: number;
@@ -100,7 +139,10 @@ export class WebSocketManager {
           host === "::1" || host === "[::1]";
         if (!isLocal) {
           wsUrl = wsUrl.replace(/^ws:/, "wss:");
-          logger.warn("Upgraded WebSocket connection to wss:// for non-localhost host", { host });
+          logger.warn(
+            "Upgraded WebSocket connection to wss:// for non-localhost host",
+            this.getConnectionLogContext({ host }),
+          );
         }
       } catch {
         // If URL parsing fails, upgrade to be safe
@@ -110,10 +152,13 @@ export class WebSocketManager {
 
     const url = `${wsUrl}/ws/${projectId}/events`;
 
-    logger.debug("Connecting to WebSocket", {
-      url,
-      consecutiveFailures: this.wsConsecutiveFailures,
-    });
+    logger.debug(
+      "Connecting to WebSocket",
+      this.getConnectionLogContext({
+        url,
+        consecutiveFailures: this.wsConsecutiveFailures,
+      }),
+    );
 
     try {
       // Send the API token via a WebSocket subprotocol header instead of
@@ -125,12 +170,15 @@ export class WebSocketManager {
 
       this.ws.onopen = () => {
         this.wsConsecutiveFailures = 0;
-        logger.debug("WebSocket connected to events channel", {
-          projectId,
-          connectionId: this.wsConnectionId,
-          contentSource: this.deps.getContentSource(),
-          branch: this.deps.getContentContext()?.branch,
-        });
+        logger.debug(
+          "WebSocket connected to events channel",
+          this.getConnectionLogContext({
+            projectId,
+            connectionId: this.wsConnectionId,
+            contentSource: this.deps.getContentSource(),
+            branch: this.deps.getContentContext()?.branch,
+          }),
+        );
         this.wsLastPong = Date.now();
         this.startHeartbeat(projectId);
       };
@@ -149,11 +197,14 @@ export class WebSocketManager {
 
         this.wsConsecutiveFailures++;
         const delay = this.getReconnectDelay();
-        logger.debug("WebSocket closed, reconnecting", {
-          delayMs: delay,
-          totalPokesReceived: this.pokeMetrics.received,
-          consecutiveFailures: this.wsConsecutiveFailures,
-        });
+        logger.debug(
+          "WebSocket closed, reconnecting",
+          this.getConnectionLogContext({
+            delayMs: delay,
+            totalPokesReceived: this.pokeMetrics.received,
+            consecutiveFailures: this.wsConsecutiveFailures,
+          }),
+        );
         this.wsReconnectTimer = setTimeout(() => this.connect(projectId), delay);
       };
 
@@ -161,21 +212,27 @@ export class WebSocketManager {
         // Log once per connection attempt to avoid flooding logs.
         if (!this.wsErrorLogged) {
           this.wsErrorLogged = true;
-          logger.warn("WebSocket error", {
-            type: event.type,
-            url: (event.target as WebSocket)?.url,
-            readyState: (event.target as WebSocket)?.readyState,
-            consecutiveFailures: this.wsConsecutiveFailures,
-          });
+          logger.warn(
+            "WebSocket error",
+            this.getConnectionLogContext({
+              type: event.type,
+              url: (event.target as WebSocket)?.url,
+              readyState: (event.target as WebSocket)?.readyState,
+              consecutiveFailures: this.wsConsecutiveFailures,
+            }),
+          );
         }
       };
     } catch (error) {
       this.wsConsecutiveFailures++;
       const delay = this.getReconnectDelay();
-      logger.warn("Failed to connect WebSocket", {
-        error,
-        consecutiveFailures: this.wsConsecutiveFailures,
-      });
+      logger.warn(
+        "Failed to connect WebSocket",
+        this.getConnectionLogContext({
+          error,
+          consecutiveFailures: this.wsConsecutiveFailures,
+        }),
+      );
       this.wsReconnectTimer = setTimeout(() => this.connect(projectId), delay);
     }
   }
@@ -348,6 +405,7 @@ export class WebSocketManager {
         pokeEnvironmentName: normalizedPokeEnvironment,
       });
 
+      this.beginPreviewInvalidation(contentContext);
       this.deps.invalidationCallbacks.clearDomainCache?.();
       this.deps.clearMemoryCaches();
       logger.debug("All in-memory caches cleared immediately on POKE");
@@ -510,247 +568,273 @@ export class WebSocketManager {
     this.pendingChangedPaths.clear();
 
     const contentContext = this.deps.getContentContext();
+    const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
+    const previewInvalidationVersion = this.previewInvalidationVersion;
+    let succeeded = false;
 
-    logger.debug("Performing selective invalidation", {
-      changedPaths,
-      count: changedPaths.length,
-    });
+    try {
+      logger.debug("Performing selective invalidation", {
+        changedPaths,
+        count: changedPaths.length,
+      });
 
-    const sourceTypes = ["branch:", "release:", "env:"] as const;
-    const fileTypes = ["file:", "stat:"] as const;
+      const sourceTypes = ["branch:", "release:", "env:"] as const;
+      const fileTypes = ["file:", "stat:"] as const;
 
-    const parentDirs = new Set<string>();
-    const deletionPromises: Promise<number>[] = [];
+      const parentDirs = new Set<string>();
+      const deletionPromises: Promise<number>[] = [];
 
-    for (const path of changedPaths) {
-      const slashIndex = path.lastIndexOf("/");
-      parentDirs.add(slashIndex > 0 ? path.substring(0, slashIndex) : "");
+      for (const path of changedPaths) {
+        const slashIndex = path.lastIndexOf("/");
+        parentDirs.add(slashIndex > 0 ? path.substring(0, slashIndex) : "");
 
-      for (const fileType of fileTypes) {
+        for (const fileType of fileTypes) {
+          for (const sourceType of sourceTypes) {
+            deletionPromises.push(
+              this.deps.cache.deleteByPrefixAndSuffixAsync(fileType + sourceType, path),
+            );
+          }
+        }
+      }
+
+      for (const parentDir of parentDirs) {
         for (const sourceType of sourceTypes) {
           deletionPromises.push(
-            this.deps.cache.deleteByPrefixAndSuffixAsync(fileType + sourceType, path),
+            this.deps.cache.deleteByPrefixAndSuffixAsync("dir:" + sourceType, parentDir),
           );
         }
       }
-    }
 
-    for (const parentDir of parentDirs) {
-      for (const sourceType of sourceTypes) {
-        deletionPromises.push(
-          this.deps.cache.deleteByPrefixAndSuffixAsync("dir:" + sourceType, parentDir),
+      await Promise.all(deletionPromises);
+
+      logger.debug("Cache entries deleted for changed paths", {
+        changedPaths,
+        parentDirs: Array.from(parentDirs),
+        prefixes: ["file:", "stat:", "dir:"],
+      });
+
+      this.deps.invalidationCallbacks.invalidateModulePaths?.(changedPaths);
+
+      const projectId = this.deps.client.getProjectId();
+      logger.debug("Clearing SSR module cache for HMR", {
+        changedPaths,
+        projectId,
+        usePerProject: !!this.deps.invalidationCallbacks.clearSSRModuleCacheForProject,
+      });
+
+      if (this.deps.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
+        this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId);
+      } else {
+        this.deps.invalidationCallbacks.clearSSRModuleCache?.();
+      }
+
+      if (this.deps.invalidationCallbacks.clearRendererCacheForProject && projectId) {
+        await this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId);
+      }
+
+      if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
+        this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
+      }
+
+      if (contentContext?.sourceType === "branch") {
+        await this.deps.cache.deleteByPrefixAsync("files:branch:");
+        try {
+          const files = await this.deps.client.listAllFiles();
+          const cacheKey = buildFileListCacheKey(contentContext);
+          await this.deps.setFileListCache(cacheKey, files);
+          this.deps.clearFileListIndex();
+
+          logger.debug("Fresh files cached (memory + Redis)", {
+            cacheKey,
+            fileCount: files.length,
+          });
+        } catch (error) {
+          logger.warn("Failed to fetch files during selective invalidation", {
+            error,
+          });
+        }
+      }
+
+      this.pokeMetrics.invalidationsTriggered++;
+
+      logger.info(
+        "[WebSocketManager] TRIGGERING HMR RELOAD via invalidationCallbacks.triggerReload",
+        {
+          changedPaths,
+          projectSlug: this.deps.projectSlug,
+          projectId: this.deps.client.getProjectId(),
+          hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
+        },
+      );
+
+      const environment: "preview" | "production" = contentContext?.sourceType === "branch"
+        ? "preview"
+        : "production";
+      const projectContext = {
+        projectSlug: this.deps.projectSlug,
+        projectId: this.deps.client.getProjectId(),
+        environment,
+        branch: contentContext?.branch ?? null,
+        releaseId: contentContext?.releaseId ?? null,
+      };
+
+      this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
+
+      logger.info("Selective invalidation complete - HMR triggered", {
+        changedPaths,
+        durationMs: Date.now() - startTime,
+        totalInvalidations: this.pokeMetrics.invalidationsTriggered,
+      });
+
+      this.sendPokeAck("selective", changedPaths);
+      succeeded = true;
+    } finally {
+      if (succeeded) {
+        this.completePreviewInvalidation(
+          previewInvalidationPrefixes,
+          previewInvalidationVersion,
         );
       }
     }
-
-    await Promise.all(deletionPromises);
-
-    logger.debug("Cache entries deleted for changed paths", {
-      changedPaths,
-      parentDirs: Array.from(parentDirs),
-      prefixes: ["file:", "stat:", "dir:"],
-    });
-
-    this.deps.invalidationCallbacks.invalidateModulePaths?.(changedPaths);
-
-    const projectId = this.deps.client.getProjectId();
-    logger.debug("Clearing SSR module cache for HMR", {
-      changedPaths,
-      projectId,
-      usePerProject: !!this.deps.invalidationCallbacks.clearSSRModuleCacheForProject,
-    });
-
-    if (this.deps.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
-      this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId);
-    } else {
-      this.deps.invalidationCallbacks.clearSSRModuleCache?.();
-    }
-
-    if (this.deps.invalidationCallbacks.clearRendererCacheForProject && projectId) {
-      await this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId);
-    }
-
-    if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-      this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
-    }
-
-    if (contentContext?.sourceType === "branch") {
-      await this.deps.cache.deleteByPrefixAsync("files:branch:");
-      try {
-        const files = await this.deps.client.listAllFiles();
-        const cacheKey = buildFileListCacheKey(contentContext);
-        await this.deps.setFileListCache(cacheKey, files);
-        this.deps.clearFileListIndex();
-
-        logger.debug("Fresh files cached (memory + Redis)", {
-          cacheKey,
-          fileCount: files.length,
-        });
-      } catch (error) {
-        logger.warn("Failed to fetch files during selective invalidation", {
-          error,
-        });
-      }
-    }
-
-    this.pokeMetrics.invalidationsTriggered++;
-
-    logger.info(
-      "[WebSocketManager] TRIGGERING HMR RELOAD via invalidationCallbacks.triggerReload",
-      {
-        changedPaths,
-        projectSlug: this.deps.projectSlug,
-        projectId: this.deps.client.getProjectId(),
-        hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
-      },
-    );
-
-    const environment: "preview" | "production" = contentContext?.sourceType === "branch"
-      ? "preview"
-      : "production";
-    const projectContext = {
-      projectSlug: this.deps.projectSlug,
-      projectId: this.deps.client.getProjectId(),
-      environment,
-      branch: contentContext?.branch ?? null,
-      releaseId: contentContext?.releaseId ?? null,
-    };
-
-    this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
-
-    logger.info("Selective invalidation complete - HMR triggered", {
-      changedPaths,
-      durationMs: Date.now() - startTime,
-      totalInvalidations: this.pokeMetrics.invalidationsTriggered,
-    });
-
-    this.sendPokeAck("selective", changedPaths);
   }
 
   private async performInvalidation(): Promise<void> {
     const startTime = Date.now();
     const contentContext = this.deps.getContentContext();
+    const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
+    const previewInvalidationVersion = this.previewInvalidationVersion;
+    let succeeded = false;
 
-    logger.debug("CACHE INVALIDATION STARTED - clearing all caches");
+    try {
+      logger.debug("CACHE INVALIDATION STARTED - clearing all caches");
 
-    const [
-      fileBranchCount,
-      fileReleaseCount,
-      fileEnvCount,
-      statBranchCount,
-      statReleaseCount,
-      statEnvCount,
-      dirBranchCount,
-      dirReleaseCount,
-      dirEnvCount,
-      filesBranchCount,
-      filesReleaseCount,
-      filesEnvCount,
-    ] = await Promise.all([
-      this.deps.cache.deleteByPrefixAsync("file:branch:"),
-      this.deps.cache.deleteByPrefixAsync("file:release:"),
-      this.deps.cache.deleteByPrefixAsync("file:env:"),
-      this.deps.cache.deleteByPrefixAsync("stat:branch:"),
-      this.deps.cache.deleteByPrefixAsync("stat:release:"),
-      this.deps.cache.deleteByPrefixAsync("stat:env:"),
-      this.deps.cache.deleteByPrefixAsync("dir:branch:"),
-      this.deps.cache.deleteByPrefixAsync("dir:release:"),
-      this.deps.cache.deleteByPrefixAsync("dir:env:"),
-      this.deps.cache.deleteByPrefixAsync("files:branch:"),
-      this.deps.cache.deleteByPrefixAsync("files:release:"),
-      this.deps.cache.deleteByPrefixAsync("files:env:"),
-    ]);
+      const [
+        fileBranchCount,
+        fileReleaseCount,
+        fileEnvCount,
+        statBranchCount,
+        statReleaseCount,
+        statEnvCount,
+        dirBranchCount,
+        dirReleaseCount,
+        dirEnvCount,
+        filesBranchCount,
+        filesReleaseCount,
+        filesEnvCount,
+      ] = await Promise.all([
+        this.deps.cache.deleteByPrefixAsync("file:branch:"),
+        this.deps.cache.deleteByPrefixAsync("file:release:"),
+        this.deps.cache.deleteByPrefixAsync("file:env:"),
+        this.deps.cache.deleteByPrefixAsync("stat:branch:"),
+        this.deps.cache.deleteByPrefixAsync("stat:release:"),
+        this.deps.cache.deleteByPrefixAsync("stat:env:"),
+        this.deps.cache.deleteByPrefixAsync("dir:branch:"),
+        this.deps.cache.deleteByPrefixAsync("dir:release:"),
+        this.deps.cache.deleteByPrefixAsync("dir:env:"),
+        this.deps.cache.deleteByPrefixAsync("files:branch:"),
+        this.deps.cache.deleteByPrefixAsync("files:release:"),
+        this.deps.cache.deleteByPrefixAsync("files:env:"),
+      ]);
 
-    // These caches are also cleared immediately on POKE receipt (before debounce).
-    // These calls are redundant safety nets for the full invalidation flow.
-    this.deps.clearMemoryCaches();
-    this.deps.invalidationCallbacks.clearDomainCache?.();
+      // These caches are also cleared immediately on POKE receipt (before debounce).
+      // These calls are redundant safety nets for the full invalidation flow.
+      this.deps.clearMemoryCaches();
+      this.deps.invalidationCallbacks.clearDomainCache?.();
 
-    const projectId = this.deps.client.getProjectId();
+      const projectId = this.deps.client.getProjectId();
 
-    if (this.deps.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
-      this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId);
-    } else {
-      this.deps.invalidationCallbacks.clearSSRModuleCache?.();
-    }
+      if (this.deps.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
+        this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId);
+      } else {
+        this.deps.invalidationCallbacks.clearSSRModuleCache?.();
+      }
 
-    if (this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject && projectId) {
-      this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject(projectId);
-    }
+      if (this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject && projectId) {
+        this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject(projectId);
+      }
 
-    this.deps.invalidationCallbacks.clearModulePathCache?.();
+      this.deps.invalidationCallbacks.clearModulePathCache?.();
 
-    if (this.deps.invalidationCallbacks.clearSnippetCacheForProject && this.deps.projectSlug) {
-      this.deps.invalidationCallbacks.clearSnippetCacheForProject(this.deps.projectSlug);
-    }
+      if (this.deps.invalidationCallbacks.clearSnippetCacheForProject && this.deps.projectSlug) {
+        this.deps.invalidationCallbacks.clearSnippetCacheForProject(this.deps.projectSlug);
+      }
 
-    if (this.deps.invalidationCallbacks.clearRendererCacheForProject && projectId) {
-      await this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId);
-    }
+      if (this.deps.invalidationCallbacks.clearRendererCacheForProject && projectId) {
+        await this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId);
+      }
 
-    if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-      this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
-    }
+      if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
+        this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
+      }
 
-    const totalFileCount = fileBranchCount + fileReleaseCount + fileEnvCount;
-    const totalStatCount = statBranchCount + statReleaseCount + statEnvCount;
-    const totalDirCount = dirBranchCount + dirReleaseCount + dirEnvCount;
-    const totalFilesListCount = filesBranchCount + filesReleaseCount + filesEnvCount;
+      const totalFileCount = fileBranchCount + fileReleaseCount + fileEnvCount;
+      const totalStatCount = statBranchCount + statReleaseCount + statEnvCount;
+      const totalDirCount = dirBranchCount + dirReleaseCount + dirEnvCount;
+      const totalFilesListCount = filesBranchCount + filesReleaseCount + filesEnvCount;
 
-    logger.debug("CACHES CLEARED (memory + Redis)", {
-      fileCacheCleared: totalFileCount,
-      statCacheCleared: totalStatCount,
-      dirCacheCleared: totalDirCount,
-      filesListCacheCleared: totalFilesListCount,
-    });
+      logger.debug("CACHES CLEARED (memory + Redis)", {
+        fileCacheCleared: totalFileCount,
+        statCacheCleared: totalStatCount,
+        dirCacheCleared: totalDirCount,
+        filesListCacheCleared: totalFilesListCount,
+      });
 
-    if (contentContext?.sourceType === "branch") {
-      try {
-        const files = await this.deps.client.listAllFiles();
-        const cacheKey = buildFileListCacheKey(contentContext);
-        await this.deps.setFileListCache(cacheKey, files);
-        this.deps.clearFileListIndex();
+      if (contentContext?.sourceType === "branch") {
+        try {
+          const files = await this.deps.client.listAllFiles();
+          const cacheKey = buildFileListCacheKey(contentContext);
+          await this.deps.setFileListCache(cacheKey, files);
+          this.deps.clearFileListIndex();
 
-        logger.debug("FRESH FILES FETCHED", {
-          cacheKey,
-          fileCount: files.length,
-        });
-      } catch (error) {
-        logger.warn("Failed to fetch files during invalidation", { error });
+          logger.debug("FRESH FILES FETCHED", {
+            cacheKey,
+            fileCount: files.length,
+          });
+        } catch (error) {
+          logger.warn("Failed to fetch files during invalidation", { error });
+        }
+      }
+
+      this.pokeMetrics.invalidationsTriggered++;
+
+      logger.info("TRIGGERING FULL BROWSER RELOAD via ReloadNotifier", {
+        projectSlug: this.deps.projectSlug,
+        projectId: this.deps.client.getProjectId(),
+        hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
+      });
+
+      const environment: "preview" | "production" = contentContext?.sourceType === "branch"
+        ? "preview"
+        : "production";
+      const projectContext = {
+        projectSlug: this.deps.projectSlug,
+        projectId: this.deps.client.getProjectId(),
+        environment,
+        branch: contentContext?.branch ?? null,
+        releaseId: contentContext?.releaseId ?? null,
+      };
+
+      this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);
+
+      logger.debug("CACHE INVALIDATION COMPLETE", {
+        fileCacheCleared: totalFileCount,
+        statCacheCleared: totalStatCount,
+        dirCacheCleared: totalDirCount,
+        filesListCacheCleared: totalFilesListCount,
+        durationMs: Date.now() - startTime,
+        totalInvalidations: this.pokeMetrics.invalidationsTriggered,
+      });
+
+      this.sendPokeAck("full");
+      succeeded = true;
+    } finally {
+      if (succeeded) {
+        this.completePreviewInvalidation(
+          previewInvalidationPrefixes,
+          previewInvalidationVersion,
+        );
       }
     }
-
-    this.pokeMetrics.invalidationsTriggered++;
-
-    logger.info("TRIGGERING FULL BROWSER RELOAD via ReloadNotifier", {
-      projectSlug: this.deps.projectSlug,
-      projectId: this.deps.client.getProjectId(),
-      hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
-    });
-
-    const environment: "preview" | "production" = contentContext?.sourceType === "branch"
-      ? "preview"
-      : "production";
-    const projectContext = {
-      projectSlug: this.deps.projectSlug,
-      projectId: this.deps.client.getProjectId(),
-      environment,
-      branch: contentContext?.branch ?? null,
-      releaseId: contentContext?.releaseId ?? null,
-    };
-
-    this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);
-
-    logger.debug("CACHE INVALIDATION COMPLETE", {
-      fileCacheCleared: totalFileCount,
-      statCacheCleared: totalStatCount,
-      dirCacheCleared: totalDirCount,
-      filesListCacheCleared: totalFilesListCount,
-      durationMs: Date.now() - startTime,
-      totalInvalidations: this.pokeMetrics.invalidationsTriggered,
-    });
-
-    this.sendPokeAck("full");
   }
 
   private startHeartbeat(projectId: string): void {
@@ -758,9 +842,12 @@ export class WebSocketManager {
       const timeSinceLastPong = Date.now() - this.wsLastPong;
       if (timeSinceLastPong <= WS_HEARTBEAT_TIMEOUT_MS) return;
 
-      logger.warn("WebSocket heartbeat timeout, reconnecting", {
-        timeSinceLastPong,
-      });
+      logger.warn(
+        "WebSocket heartbeat timeout, reconnecting",
+        this.getConnectionLogContext({
+          timeSinceLastPong,
+        }),
+      );
 
       // Detach onclose before closing to prevent double-reconnect:
       // ws.close() triggers onclose asynchronously, which would increment

@@ -26,10 +26,6 @@ interface MarkdownHtmlOptions {
   projectId: string;
   /** File path of the markdown file. */
   filePath: string;
-  /** Branch ID for Yjs room GUID computation. */
-  branchId?: string | null;
-  /** API base URL for computing the WebSocket URL (e.g. "https://api.veryfront.com"). */
-  apiBaseUrl?: string;
 }
 
 /**
@@ -56,47 +52,28 @@ function detectTheme(req: Request, url: URL): "light" | "dark" | null {
 
 /**
  * Generate the studio bridge `<script>` tag.
- * Injected when embedded in Studio (`studio_embed=true`) or for standalone
- * markdown/MDX pages so the edit button and editor features are available.
+ * Injected only when embedded in Studio (`studio_embed=true`).
  */
 function buildStudioScript(
   url: URL,
   projectId: string,
   filePath: string,
-  branchId?: string | null,
-  apiBaseUrl?: string,
 ): string {
   const studioEmbed = url.searchParams.get("studio_embed") === "true";
-  const isMarkdown = /\.mdx?$/i.test(filePath);
-  if (!studioEmbed && !isMarkdown) return "";
+  if (!studioEmbed) return "";
 
   const rawQueryProjectId = url.searchParams.get("vf_project_id")?.trim() || "";
-  // Validate query param to prevent path traversal in WebSocket URL
+  // Validate query param before using it in bridge config.
   const queryProjectId = /^[a-zA-Z0-9_-]+$/.test(rawQueryProjectId) ? rawQueryProjectId : "";
   const queryFileId = url.searchParams.get("vf_file_id")?.trim() || "";
   const canonicalProjectId = queryProjectId || projectId;
   const canonicalPageId = queryFileId || filePath;
-
-  // Compute Yjs WebSocket URL from the API base URL (Yjs endpoint lives on the API server)
-  let wsUrl = "";
-  if (apiBaseUrl) {
-    try {
-      const apiUrl = new URL(apiBaseUrl);
-      const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
-      wsUrl = `${wsProtocol}//${apiUrl.host}/ws/${canonicalProjectId}/yjs`;
-    } catch (_) {
-      /* expected: invalid API URL — wsUrl stays empty, bridge won't self-connect */
-    }
-  }
-  const yjsGuid = branchId ? `${canonicalProjectId}:${branchId}` : canonicalProjectId;
 
   const bridgeConfig: Record<string, unknown> = {
     projectId: canonicalProjectId,
     pageId: canonicalPageId,
     pagePath: filePath,
   };
-  if (wsUrl) bridgeConfig.wsUrl = wsUrl;
-  if (yjsGuid) bridgeConfig.yjsGuid = yjsGuid;
 
   // Escape </script> sequences to prevent XSS breakout from inline JSON
   const safeJson = JSON.stringify(bridgeConfig).replace(/</g, "\\u003c");
@@ -112,11 +89,10 @@ function buildStudioScript(
  * studio bridge integration.
  */
 export function generateMarkdownHtml(options: MarkdownHtmlOptions): string {
-  const { rawHtml, title, description, request, url, projectId, filePath, branchId, apiBaseUrl } =
-    options;
+  const { rawHtml, title, description, request, url, projectId, filePath } = options;
 
   const theme = detectTheme(request, url);
-  const studioScript = buildStudioScript(url, projectId, filePath, branchId, apiBaseUrl);
+  const studioScript = buildStudioScript(url, projectId, filePath);
   const themeAttrs = theme ? ` data-theme="${theme}" style="color-scheme: ${theme};"` : "";
 
   return `<!DOCTYPE html>
