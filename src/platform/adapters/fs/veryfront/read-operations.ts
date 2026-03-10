@@ -352,7 +352,12 @@ export class ReadOperations {
         resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
       });
 
-      this.cacheResolvedContent(cacheKey, resolvedCacheKey, resolved.content, isProduction && !skipPersistentCaches);
+      this.cacheResolvedContent(
+        cacheKey,
+        resolvedCacheKey,
+        resolved.content,
+        isProduction && !skipPersistentCaches,
+      );
 
       return resolved.content;
     } catch (error) {
