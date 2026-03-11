@@ -5,21 +5,17 @@
  */
 
 import { logger } from "./bridge-logger.ts";
-import { editorState } from "./bridge-editor-state.ts";
 import { state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
 import { isFromStudio, postToStudio } from "./bridge-messaging.ts";
 import {
   hideOverlay,
-  isMarkdownPage,
   scrollToElement,
   setColorMode,
   showHoverOverlay,
   showSelectionOverlay,
 } from "./bridge-inspector.ts";
 import { captureMultipleSections, captureScreenshot } from "./bridge-screenshot.ts";
-import { applyMarkdownContent } from "./bridge-markdown-editor.ts";
-import { replaceYTextContent, writeToYText } from "./bridge-markdown-yjs.ts";
 
 const SAFE_PROTOCOLS = new Set(["http:", "https:"]);
 
@@ -103,48 +99,6 @@ export function handleStudioMessage(event: MessageEvent): void {
     case "setHoveredNode":
       if (!state.inspectMode) showHoverOverlay(message.id);
       return;
-
-    case "setMarkdownPersistState":
-      return;
-
-    case "agentWriteMarkdown": {
-      const content = typeof message.content === "string" ? message.content : "";
-      const mode: string = typeof message.mode === "string" ? message.mode : "replace";
-      if (mode === "replace") {
-        replaceYTextContent(content);
-      } else if (mode === "append") {
-        writeToYText(content);
-      } else if (mode === "insert_at") {
-        writeToYText(content, {
-          position: typeof message.position === "number" ? message.position : 0,
-          origin: "agent-write",
-        });
-      }
-      return;
-    }
-
-    case "contentChanged": {
-      if (!isMarkdownPage()) return;
-      if (
-        message.fileId && editorState.markdownFileId &&
-        message.fileId !== editorState.markdownFileId
-      ) {
-        return;
-      }
-
-      const content = typeof message.content === "string" ? message.content : null;
-      const isEditMode = !!editorState.markdownEditorRoot &&
-        editorState.markdownEditorRoot.style.display === "block";
-
-      if (isEditMode) {
-        if (content !== null && !editorState.markdownYjsConnected) {
-          applyMarkdownContent(content);
-        }
-      } else {
-        window.location.reload();
-      }
-      return;
-    }
 
     case "screenshot":
       (async function () {

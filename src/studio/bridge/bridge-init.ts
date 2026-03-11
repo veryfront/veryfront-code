@@ -2,14 +2,13 @@
  * Bridge Init
  *
  * Initialization flow: sets up overlays, console capture, error handling,
- * inspect mode, markdown editor, mutation observer, and message listener.
+ * inspect mode, mutation observer, and message listener.
  */
 
 import { logger } from "./bridge-logger.ts";
 import { state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
 import { postToStudio } from "./bridge-messaging.ts";
-import { registerEditorCallbacks } from "./bridge-editor-callbacks.ts";
 import { injectOverlayStyles } from "./bridge-styles.ts";
 import {
   createOverlay,
@@ -18,7 +17,6 @@ import {
   setupMutationObserver,
 } from "./bridge-inspector.ts";
 import { setupConsoleCapture, setupErrorHandling } from "./bridge-console.ts";
-import { setupMarkdownEditor } from "./bridge-markdown-editor.ts";
 import { handleStudioMessage } from "./bridge-message-handler.ts";
 
 function notifyAppLoaded(): void {
@@ -55,13 +53,10 @@ export function init(): void {
   const isStandalone = window.parent === window && !studioEmbed;
 
   if (isStandalone) {
-    // Allow standalone markdown editing when WS_URL is available (server-injected Yjs config)
-    if (!config.wsUrl) {
-      logger.debug(
-        "[StudioBridge] Not in iframe and not studio_embed mode, skipping initialization",
-      );
-      return;
-    }
+    logger.debug(
+      "[StudioBridge] Not in iframe and not studio_embed mode, skipping initialization",
+    );
+    return;
   }
 
   logger.debug("Initializing...");
@@ -76,35 +71,6 @@ export function init(): void {
     setupErrorHandling();
     setupInspectMode();
   }
-
-  registerEditorCallbacks({
-    onContentChange(fileId, filePath, content, save) {
-      postToStudio({
-        action: "markdownContentChange",
-        fileId,
-        filePath,
-        content,
-        ...(save ? { save: true } : {}),
-      });
-    },
-    onEditorReady(fileId, filePath) {
-      postToStudio({ action: "markdownEditorReady", fileId, filePath });
-    },
-    onOpenFile(filePath, lineNumber, columnNumber, symbolName) {
-      const payload: Record<string, unknown> = {
-        action: "openFile",
-        filePath,
-        lineNumber,
-        columnNumber,
-      };
-      if (symbolName) {
-        payload.symbolName = symbolName;
-      }
-      postToStudio(payload);
-    },
-  });
-
-  setupMarkdownEditor(params);
 
   // Intentionally permanent: message listener persists for the bridge's lifetime
   window.addEventListener("message", handleStudioMessage);
