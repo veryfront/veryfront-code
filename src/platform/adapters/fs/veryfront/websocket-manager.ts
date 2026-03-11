@@ -126,7 +126,7 @@ export class WebSocketManager {
       this.wsConsecutiveFailures = 0;
     }
 
-    let wsUrl = this.deps.apiBaseUrl
+    const wsUrl = this.deps.apiBaseUrl
       .replace(/^http:/, "ws:")
       .replace(/^https:/, "wss:")
       .replace(/\/api$/, "");
