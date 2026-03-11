@@ -612,5 +612,4 @@ describe("WebSocketManager", () => {
 
     manager.dispose();
   });
-
 });
