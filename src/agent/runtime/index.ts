@@ -307,9 +307,10 @@ export class AgentRuntime {
           controller.close();
         } catch (error) {
           this.status = "error";
+          logger.error("Agent stream error", { error });
           sendSSE(controller, encoder, {
             type: "error",
-            error: error instanceof Error ? error.message : String(error),
+            error: "An internal error occurred",
           });
           controller.close();
         }
