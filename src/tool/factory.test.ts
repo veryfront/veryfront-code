@@ -218,18 +218,15 @@ describe("tool factory", () => {
       );
     });
 
-    it("should reject undefined input without schema", async () => {
+    it("should coerce undefined input to empty object for zero-input tools", async () => {
       const t = dynamicTool({
         id: "no-schema-undef",
         description: "desc",
         inputSchema: {},
         execute: async (input) => input,
       });
-      await assertRejects(
-        () => t.execute(undefined),
-        Error,
-        "input must be a non-null object",
-      );
+      const result = await t.execute(undefined);
+      assertEquals(result, {});
     });
 
     it("should reject primitive input without schema", async () => {

@@ -191,7 +191,9 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
         typeof (config.inputSchema as { parse?: unknown }).parse === "function"
       ) {
         (config.inputSchema as { parse: (v: unknown) => unknown }).parse(input);
-      } else if (input == null || typeof input !== "object") {
+      } else if (input === undefined) {
+        input = {};
+      } else if (input === null || typeof input !== "object") {
         throw new Error("dynamicTool: input must be a non-null object");
       }
       const result = await config.execute(input, context);
