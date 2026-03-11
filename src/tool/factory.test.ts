@@ -167,4 +167,83 @@ describe("tool factory", () => {
       assertStringIncludes(t.id, "tool_");
     });
   });
+
+  describe("dynamicTool input validation", () => {
+    it("should validate input with Zod schema", async () => {
+      const t = dynamicTool({
+        id: "zod-validate",
+        description: "desc",
+        inputSchema: z.object({ query: z.string() }),
+        execute: async (input) => input,
+      });
+      const result = await t.execute({ query: "test" });
+      assertEquals(result, { query: "test" });
+    });
+
+    it("should reject invalid input when Zod schema is provided", async () => {
+      const t = dynamicTool({
+        id: "zod-reject",
+        description: "desc",
+        inputSchema: z.object({ query: z.string() }),
+        execute: async () => "ok",
+      });
+      await assertRejects(
+        () => t.execute({ query: 123 }),
+        Error,
+      );
+    });
+
+    it("should accept valid object input without Zod schema", async () => {
+      const t = dynamicTool({
+        id: "no-schema-obj",
+        description: "desc",
+        inputSchema: {},
+        execute: async (input) => input,
+      });
+      const result = await t.execute({ foo: "bar" });
+      assertEquals(result, { foo: "bar" });
+    });
+
+    it("should reject null input without schema", async () => {
+      const t = dynamicTool({
+        id: "no-schema-null",
+        description: "desc",
+        inputSchema: {},
+        execute: async (input) => input,
+      });
+      await assertRejects(
+        () => t.execute(null),
+        Error,
+        "input must be a non-null object",
+      );
+    });
+
+    it("should reject undefined input without schema", async () => {
+      const t = dynamicTool({
+        id: "no-schema-undef",
+        description: "desc",
+        inputSchema: {},
+        execute: async (input) => input,
+      });
+      await assertRejects(
+        () => t.execute(undefined),
+        Error,
+        "input must be a non-null object",
+      );
+    });
+
+    it("should reject primitive input without schema", async () => {
+      const t = dynamicTool({
+        id: "no-schema-prim",
+        description: "desc",
+        inputSchema: {},
+        execute: async (input) => input,
+      });
+      await assertRejects(
+        () => t.execute("string-input"),
+        Error,
+        "input must be a non-null object",
+      );
+    });
+  });
 });
