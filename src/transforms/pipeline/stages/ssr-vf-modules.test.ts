@@ -12,8 +12,13 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { buildReactUrl, getReactImportMap } from "../../import-rewriter/url-builder.ts";
+import { resolveVeryfrontModuleUrl } from "../../veryfront-module-urls.ts";
 import { ssrVfModulesPlugin } from "./ssr-vf-modules.ts";
-import { _testExports } from "./ssr-vf-modules/index.ts";
+import {
+  _testExports,
+  cacheTransformedCode,
+  transformFrameworkSource,
+} from "./ssr-vf-modules/index.ts";
 import type { TransformContext } from "../types.ts";
 
 const { findVfModuleImports, findRelativeImports, FRAMEWORK_ROOT, EMBEDDED_SRC_DIR, EXTENSIONS } =
@@ -404,6 +409,28 @@ describe("ssr-vf-modules relative import resolution", {
       fileImportCount > 0,
       true,
       "Cached module should have file:// imports for dependencies",
+    );
+  });
+
+  it("preserves deno.json imports and exports when rewriting #deno-config", async () => {
+    const fs = createFileSystem();
+    const sourcePath = `${FRAMEWORK_ROOT}/src/transforms/veryfront-module-urls.ts`;
+    const content = await fs.readTextFile(sourcePath);
+
+    const transformed = await transformFrameworkSource(
+      content,
+      sourcePath,
+      REACT_DEFAULT_VERSION,
+      "/tmp/test-project",
+      fs,
+    );
+    const cachePath = await cacheTransformedCode(transformed, sourcePath, fs);
+    const transformedModule = await import(`file://${cachePath}`);
+
+    assertEquals(
+      transformedModule.resolveVeryfrontModuleUrl("veryfront/chat"),
+      resolveVeryfrontModuleUrl("veryfront/chat"),
+      "Transformed module should preserve import/export mappings from deno.json",
     );
   });
 });

@@ -7,6 +7,7 @@
 
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
+import denoConfig from "#deno-config" with { type: "json" };
 import { rendererLogger as logger } from "#veryfront/utils";
 import { IMPORT_RESOLUTION_ERROR } from "#veryfront/errors";
 import { replaceSpecifiers } from "../../../esm/lexer.ts";
@@ -29,6 +30,8 @@ import {
   transformingFiles,
   veryfrontTransformCache,
 } from "./constants.ts";
+
+const DENO_CONFIG_STUB_CODE = `export default ${JSON.stringify(denoConfig)};`;
 
 /**
  * Check if a transformed code string is a cycle placeholder.
@@ -291,7 +294,26 @@ export async function transformFrameworkCode(
     // Rewrite imports to resolved paths
     const reactImportMap = getReactImportMap(ctx.reactVersion);
 
+    // Handle Deno import-map aliases (e.g. #deno-config) that only exist in
+    // the Deno runtime and cannot be resolved by esm.sh or the HTTP cache.
+    // We create a cached JS stub module so the transformed code can import it
+    // without losing access to imports/exports metadata from deno.json.
+    let denoConfigStubUrl: string | null = null;
+    if (transformed.includes('"#deno-config"') || transformed.includes("'#deno-config'")) {
+      const stubPath = await cacheTransformedCode(
+        DENO_CONFIG_STUB_CODE,
+        "#deno-config-stub",
+        ctx.fs,
+      );
+      denoConfigStubUrl = `file://${stubPath}`;
+    }
+
     transformed = await replaceSpecifiers(transformed, (specifier) => {
+      // Handle Deno import-map aliases
+      if (specifier === "#deno-config") {
+        return denoConfigStubUrl;
+      }
+
       // Handle #veryfront/ imports
       if (specifier.startsWith("#veryfront/")) {
         return veryfrontReplacements.get(specifier) ?? null;
