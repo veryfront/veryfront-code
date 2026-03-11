@@ -89,7 +89,10 @@ describe("mcp/server", () => {
 
     const handler = server.createHTTPHandler();
     const response = await handler(
-      new Request("http://localhost/mcp", { method: "OPTIONS" }),
+      new Request("http://localhost/mcp", {
+        method: "OPTIONS",
+        headers: { "Origin": "https://example.com" },
+      }),
     );
 
     assertEquals(response.status, 204);
