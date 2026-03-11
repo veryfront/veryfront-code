@@ -22,7 +22,10 @@ class MockWebSocket {
   onclose: ((this: WebSocket, ev: CloseEvent) => unknown) | null = null;
   onerror: ((this: WebSocket, ev: Event) => unknown) | null = null;
 
-  constructor(readonly url: string) {
+  protocols: string | string[] | undefined;
+
+  constructor(readonly url: string, protocols?: string | string[]) {
+    this.protocols = protocols;
     MockWebSocket.instances.push(this);
   }
 
@@ -443,7 +446,9 @@ describe("WebSocketManager", () => {
 
     // http:// should be upgraded to wss:// for non-localhost
     assertEquals(socket.url.startsWith("wss://"), true);
-    assertEquals(socket.url.includes("token=test-token"), true);
+    // Token is sent via subprotocol, not query string
+    assertEquals(socket.url.includes("token="), false);
+    assertEquals(socket.protocols, ["bearer-test-token"]);
 
     manager.dispose();
   });
