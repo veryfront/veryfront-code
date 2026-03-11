@@ -189,7 +189,9 @@ async function extractUserIdFromToken(
     const { payload } = await jwtVerify(token, secret);
     return (payload as { userId?: string }).userId;
   } catch (error) {
-    log?.debug("JWT verification failed", { error: error instanceof Error ? error.message : String(error) });
+    log?.debug("JWT verification failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return undefined;
   }
 }
