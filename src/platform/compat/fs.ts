@@ -161,7 +161,7 @@ class NodeFileSystem implements FileSystem {
     await this.ensureInitialized();
     const tempDir = this.getPath().join(
       this.getOs().tmpdir(),
-      `${options?.prefix ?? "tmp-"}${Math.random().toString(36).substring(2, 8)}`,
+      `${options?.prefix ?? "tmp-"}${crypto.randomUUID().slice(0, 8)}`,
     );
     await this.getFs().mkdir(tempDir, { recursive: true });
     return tempDir;

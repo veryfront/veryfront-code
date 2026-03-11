@@ -78,7 +78,7 @@ export class DiskCacheBackend implements CacheBackend {
       expiresAt: ttlSeconds != null ? Date.now() + ttlSeconds * 1000 : undefined,
     };
     const filePath = this.filePath(key);
-    const tmpPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+    const tmpPath = `${filePath}.tmp.${Date.now()}.${crypto.randomUUID().slice(0, 8)}`;
     const content = JSON.stringify(envelope);
     const { writeFile, rename, unlink } = await fsPromises;
     try {
