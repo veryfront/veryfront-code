@@ -14,7 +14,7 @@ currently being supported with security updates.
 
 We take the security of Veryfront seriously. If you have found a security vulnerability, please do not report it in the public issue tracker.
 
-Instead, please email **security@veryfront.com** (replace with actual email) with details. We will review the issue and respond within 48 hours.
+Instead, please email **security@veryfront.com** with details. We will review the issue and respond within 48 hours.
 
 ### What to include:
 

@@ -12,6 +12,12 @@ export async function loadSecurityConfig(
     const remote = cfg.security?.remoteHosts;
 
     if (Array.isArray(remote)) {
+      if (remote.length === 0) {
+        logger.warn(
+          "security.remoteHosts is set to an empty array — all remote requests will be blocked. " +
+            "If this is intentional, you can ignore this warning.",
+        );
+      }
       return remote;
     }
   } catch (e) {
