@@ -291,7 +291,22 @@ export async function transformFrameworkCode(
     // Rewrite imports to resolved paths
     const reactImportMap = getReactImportMap(ctx.reactVersion);
 
+    // Handle Deno import-map aliases (e.g. #deno-config) that only exist in
+    // the Deno runtime and cannot be resolved by esm.sh or the HTTP cache.
+    // We create a cached JS stub module so the transformed code can import it.
+    let denoConfigStubUrl: string | null = null;
+    if (transformed.includes('"#deno-config"') || transformed.includes("'#deno-config'")) {
+      const stubCode = `export default ${JSON.stringify({ version: VERSION })};`;
+      const stubPath = await cacheTransformedCode(stubCode, "#deno-config-stub", ctx.fs);
+      denoConfigStubUrl = `file://${stubPath}`;
+    }
+
     transformed = await replaceSpecifiers(transformed, (specifier) => {
+      // Handle Deno import-map aliases
+      if (specifier === "#deno-config") {
+        return denoConfigStubUrl;
+      }
+
       // Handle #veryfront/ imports
       if (specifier.startsWith("#veryfront/")) {
         return veryfrontReplacements.get(specifier) ?? null;
