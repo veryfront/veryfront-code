@@ -263,7 +263,7 @@ describe(
           });
         });
 
-        it("handles CORS preflight requests", async () => {
+        it("handles CORS preflight requests without CORS headers when cors disabled", async () => {
           await withTestContext("prod-cors-preflight", async (context) => {
             await mkdir(join(context.projectDir, "pages", "api"), { recursive: true });
             await writeTextFile(
@@ -277,9 +277,10 @@ describe(
             });
 
             assertEquals(response.status, 204, "Should return 204 for preflight");
-            assertExists(
+            assertEquals(
               response.headers.get("access-control-allow-origin"),
-              "Should include CORS headers",
+              null,
+              "Should not include CORS headers when cors is disabled by default",
             );
 
             await response.body?.cancel();
