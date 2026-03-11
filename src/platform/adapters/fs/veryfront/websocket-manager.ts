@@ -131,24 +131,9 @@ export class WebSocketManager {
       .replace(/^https:/, "wss:")
       .replace(/\/api$/, "");
 
-    // Enforce TLS for non-localhost connections to protect the auth token
-    if (wsUrl.startsWith("ws://")) {
-      try {
-        const host = new URL(wsUrl.replace(/^ws:/, "http:")).hostname;
-        const isLocal = host === "localhost" || host === "127.0.0.1" ||
-          host === "::1" || host === "[::1]";
-        if (!isLocal) {
-          wsUrl = wsUrl.replace(/^ws:/, "wss:");
-          logger.warn(
-            "Upgraded WebSocket connection to wss:// for non-localhost host",
-            this.getConnectionLogContext({ host }),
-          );
-        }
-      } catch {
-        // If URL parsing fails, upgrade to be safe
-        wsUrl = wsUrl.replace(/^ws:/, "wss:");
-      }
-    }
+    // The WebSocket protocol (ws vs wss) is derived from the configured
+    // apiBaseUrl (http→ws, https→wss). No forced upgrade is needed because
+    // the auth token is sent via a subprotocol header, not in the URL.
 
     const url = `${wsUrl}/ws/${projectId}/events`;
 
