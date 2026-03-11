@@ -519,6 +519,33 @@ describe("logger", () => {
         restore();
       }
     });
+
+    it("should allow base loggers to opt out of auto trace injection", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        __registerTraceContextGetter(() => ({
+          traceId: "from-otel",
+          spanId: "from-otel-span",
+        }));
+
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER", { injectTraceContext: false });
+          const component = base.component("web-socket-manager");
+          component.info("No trace bridge");
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.component, "web-socket-manager");
+          assertEquals(entry.traceId, undefined);
+          assertEquals(entry.spanId, undefined);
+          assertEquals(entry.trace_id, undefined);
+          assertEquals(entry.span_id, undefined);
+        });
+      } finally {
+        __resetTraceContextGetterForTests();
+        restore();
+      }
+    });
   });
 
   describe("snake_case field aliases", () => {
