@@ -68,8 +68,9 @@ describe(
           const cacheControl = res.headers.get("cache-control") ?? "";
           assertMatch(cacheControl, /no-cache/i);
 
+          // CORS is disabled by default, so no access-control-allow-origin header
           const allowOrigin = res.headers.get("access-control-allow-origin");
-          assert(allowOrigin === "https://foo.example" || allowOrigin === "*");
+          assertEquals(allowOrigin, null);
 
           const code = await res.text();
           assert(code.includes("export"), "should output ESM code");
