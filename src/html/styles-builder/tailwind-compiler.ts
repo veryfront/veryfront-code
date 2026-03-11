@@ -59,6 +59,7 @@ export interface GenerateOptions {
   minify?: boolean;
   environment?: string;
   buildMode?: "development" | "production";
+  projectSlug?: string;
 }
 
 export interface CSSErrorInfo {
@@ -104,7 +105,10 @@ export async function getProjectCSS(
 
   const generationPromise = (async () => {
     // Generate fresh CSS
-    const result = await generateTailwindCSS(context.stylesheet, candidates, options);
+    const result = await generateTailwindCSS(context.stylesheet, candidates, {
+      ...options,
+      projectSlug,
+    });
 
     if (result.error) {
       const formatted = formatCSSError(result.error);
@@ -159,7 +163,10 @@ export async function getProjectCSS(
  * @param expectedHash - The CSS hash to regenerate
  * @returns The regenerated CSS if inputs are cached and hash matches, undefined otherwise
  */
-export async function regenerateCSSByHash(expectedHash: string): Promise<string | undefined> {
+export async function regenerateCSSByHash(
+  expectedHash: string,
+  projectSlug: string | undefined,
+): Promise<string | undefined> {
   const inFlight = inFlightRegeneration.get(expectedHash);
   if (inFlight) return await inFlight;
 
@@ -174,6 +181,7 @@ export async function regenerateCSSByHash(expectedHash: string): Promise<string 
 
       const result = await generateTailwindCSS(inputs.stylesheet, inputs.candidates, {
         minify: true,
+        projectSlug,
       });
 
       if (result.error) {
@@ -237,7 +245,7 @@ export async function generateTailwindCSS(
       const css = stylesheet ?? DEFAULT_STYLESHEET;
 
       try {
-        const comp = await getCompiler(css);
+        const comp = await getCompiler(css, options?.projectSlug);
         let output = comp.build(candidateArray);
 
         if (options?.minify) output = minifyCSS(output);

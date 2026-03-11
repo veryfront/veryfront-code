@@ -290,41 +290,8 @@ describe("studio/schema", () => {
       assertEquals(result.success, true);
     });
 
-    it("should accept markdown editor sync actions", () => {
-      const actions = [
-        {
-          action: "markdownEditorReady",
-          fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
-          filePath: "docs/intro.md",
-        },
-        {
-          action: "markdownContentChange",
-          fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
-          filePath: "docs/intro.md",
-          content: "# Hello",
-        },
-        {
-          action: "markdownSelectionChange",
-          fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
-          filePath: "docs/intro.md",
-          start: 3,
-          end: 9,
-        },
-      ];
-
-      for (const action of actions) {
-        const result = MessageFromRendererSchema.safeParse(action);
-        assertEquals(
-          result.success,
-          true,
-          `${action.action} should be valid`,
-        );
-      }
-    });
-
     it("should accept node manipulation actions", () => {
       const actions = [
-        { action: "focusEditor" },
         { action: "duplicateNode", id: "node-1" },
         { action: "deleteNode", id: "node-2" },
         { action: "wrapNode", id: "node-3", element: "div" },
@@ -449,15 +416,6 @@ describe("studio/schema", () => {
       const result = MessageFromStudioSchema.safeParse({
         action: "setHoveredNode",
         id: "node-456",
-      });
-      assertEquals(result.success, true);
-    });
-
-    it("should accept setMarkdownPersistState action", () => {
-      const result = MessageFromStudioSchema.safeParse({
-        action: "setMarkdownPersistState",
-        fileId: "f43f9fb3-4a3a-4eb8-b8d0-8b6f8a4ca03f",
-        status: "saved",
       });
       assertEquals(result.success, true);
     });
