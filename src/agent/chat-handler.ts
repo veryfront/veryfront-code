@@ -250,6 +250,14 @@ export interface ChatHandlerConfigWithAgent extends ChatHandlerOptions {
   agent: import("./types.ts").Agent;
 }
 
+function mergeChatHandlerConfig(
+  config: ChatHandlerConfigWithAgent,
+  options?: ChatHandlerOptions,
+): ChatHandlerConfigWithAgent {
+  if (!options) return config;
+  return { ...options, ...config };
+}
+
 /**
  * Extract the raw Request from either a raw Request or a Pages Router APIContext.
  * Pages Router handlers receive `(ctx)` where `ctx.request` is the Request.
@@ -318,6 +326,14 @@ function extractRequest(requestOrCtx: unknown): Request {
  * ```
  */
 export function createChatHandler(
+  agentId: string,
+  options?: ChatHandlerOptions,
+): (requestOrCtx: unknown) => Promise<Response>;
+export function createChatHandler(
+  config: ChatHandlerConfigWithAgent,
+  options?: ChatHandlerOptions,
+): (requestOrCtx: unknown) => Promise<Response>;
+export function createChatHandler(
   agentIdOrConfig: string | ChatHandlerConfigWithAgent,
   options?: ChatHandlerOptions,
 ) {
@@ -330,8 +346,9 @@ export function createChatHandler(
       typeof agentIdOrConfig === "object" && agentIdOrConfig !== null && "agent" in agentIdOrConfig
     ) {
       // Object-based API: createChatHandler({ agent, beforeStream, ... })
-      agent = agentIdOrConfig.agent;
-      options = agentIdOrConfig;
+      const config = mergeChatHandlerConfig(agentIdOrConfig, options);
+      agent = config.agent;
+      options = config;
     } else {
       // String-based API: createChatHandler("agentId", options?)
       const agentId = agentIdOrConfig as string;
