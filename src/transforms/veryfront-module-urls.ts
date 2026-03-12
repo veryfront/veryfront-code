@@ -30,11 +30,20 @@ function addMapping(
 
 const config = denoConfig as DenoConfig;
 const veryfrontModuleUrlMap = new Map<string, string>();
+const internalModuleUrlMap = new Map<string, string>();
 
 for (const [specifier, target] of Object.entries(config.imports ?? {})) {
-  if (!specifier.startsWith("veryfront/")) continue;
   if (typeof target !== "string") continue;
-  addMapping(veryfrontModuleUrlMap, specifier, target);
+
+  if (specifier.startsWith("veryfront/")) {
+    addMapping(veryfrontModuleUrlMap, specifier, target);
+  }
+
+  // Also index #veryfront/* internal imports so the import rewriter can
+  // generate correct /_vf_modules/ URLs that match the actual filesystem layout.
+  if (specifier.startsWith("#veryfront/")) {
+    addMapping(internalModuleUrlMap, specifier, target);
+  }
 }
 
 for (const [key, target] of Object.entries(config.exports ?? {})) {
@@ -51,4 +60,14 @@ for (const [key, target] of Object.entries(config.exports ?? {})) {
 
 export function resolveVeryfrontModuleUrl(specifier: string): string | null {
   return veryfrontModuleUrlMap.get(specifier) ?? null;
+}
+
+/**
+ * Resolve an internal #veryfront/* specifier to a /_vf_modules/ URL.
+ * Uses the deno.json import map to get the correct filesystem path,
+ * which may differ from the specifier path (e.g. #veryfront/compat/console
+ * maps to src/platform/compat/console/index.ts, not src/compat/console.ts).
+ */
+export function resolveInternalModuleUrl(specifier: string): string | null {
+  return internalModuleUrlMap.get(specifier) ?? null;
 }

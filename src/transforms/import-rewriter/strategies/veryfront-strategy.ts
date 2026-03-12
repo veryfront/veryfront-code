@@ -12,7 +12,7 @@ import type {
   RewriteResult,
 } from "../types.ts";
 import { buildVeryfrontModuleUrl } from "../url-builder.ts";
-import { resolveVeryfrontModuleUrl } from "../../veryfront-module-urls.ts";
+import { resolveInternalModuleUrl, resolveVeryfrontModuleUrl } from "../../veryfront-module-urls.ts";
 
 /**
  * SSR-specific module overrides.
@@ -46,9 +46,16 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
       // Try resolving via deno.json mappings first (veryfront/head → react/components/Head.js)
       const mapped = resolveVeryfrontModuleUrl(`veryfront/${path}`);
       if (mapped) {
-        // For SSR, append ?ssr=true to signal server-side rendering
         if (ctx.target === "ssr") return { specifier: `${mapped}?ssr=true` };
         return { specifier: mapped };
+      }
+      // Try resolving via #veryfront/* import map (handles paths where the
+      // filesystem layout differs from the specifier, e.g. #veryfront/compat/console
+      // maps to src/platform/compat/console/index.ts, not src/compat/console.ts)
+      const internalMapped = resolveInternalModuleUrl(specifier);
+      if (internalMapped) {
+        if (ctx.target === "ssr") return { specifier: `${internalMapped}?ssr=true` };
+        return { specifier: internalMapped };
       }
       const builtUrl = buildVeryfrontModuleUrl(path);
       if (ctx.target === "ssr") return { specifier: `${builtUrl}?ssr=true` };
