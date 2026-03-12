@@ -68,8 +68,9 @@ export async function importKreuzberg(): Promise<{
       // computed import() paths for the WASM glue code that deno compile
       // cannot trace. Manually import the glue code (traced via deno.json
       // import map entry) and load the WASM binary via fetch().
-      const glue = await import("@kreuzberg/wasm/dist/pkg/kreuzberg_wasm.js") as unknown as
-        { default: (input?: BufferSource) => Promise<void> };
+      const glue = await import("@kreuzberg/wasm/dist/pkg/kreuzberg_wasm.js") as unknown as {
+        default: (input?: BufferSource) => Promise<void>;
+      };
       const glueUrl = import.meta.resolve("@kreuzberg/wasm/dist/pkg/kreuzberg_wasm.js");
       const wasmUrl = new URL("kreuzberg_wasm_bg.wasm", glueUrl).href;
       const wasmBinary = await fetch(wasmUrl).then((r) => r.arrayBuffer());
