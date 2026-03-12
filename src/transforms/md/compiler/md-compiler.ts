@@ -103,8 +103,27 @@ export function compileMarkdownRuntime(
           pipeline.use(rehypeNodePositions, { filePath });
         }
 
+        // Extend the sanitize schema in studio embed mode to preserve
+        // data-node-* attributes used for element-to-source mapping.
+        const sanitizeSchema = studioEmbed
+          ? {
+            ...defaultSchema,
+            attributes: {
+              ...defaultSchema.attributes,
+              "*": [
+                ...(defaultSchema.attributes?.["*"] ?? []),
+                "data-node-file",
+                "data-node-name",
+                "data-node-line",
+                "data-node-column",
+                "data-node-source",
+              ],
+            },
+          }
+          : defaultSchema;
+
         const result = await pipeline
-          .use(rehypeSanitize, defaultSchema)
+          .use(rehypeSanitize, sanitizeSchema)
           .use(rehypeStringify)
           .process(body);
         const html = String(result);

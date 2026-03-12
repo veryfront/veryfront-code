@@ -189,7 +189,37 @@ describe(
           '![alt text](https://example.com/img.png "title")',
         );
         assertEquals(result.rawHtml!.includes("<img"), true);
-        assertEquals(result.rawHtml!.includes("https://example.com/img.png"), true);
+        assertEquals(
+          result.rawHtml!.includes("https://example.com/img.png"),
+          true,
+        );
+      });
+
+      it("strips style tags", async () => {
+        const result = await compileMarkdownRuntime(
+          "runtime",
+          "/tmp/project",
+          "# Title\n\n<style>body{display:none}</style>\n\nVisible text.",
+        );
+        assertEquals(result.rawHtml!.includes("<style>"), false);
+        assertEquals(result.rawHtml!.includes("display:none"), false);
+        assertEquals(result.rawHtml!.includes("Visible text"), true);
+      });
+
+      it("preserves data-node attributes in studio embed mode", async () => {
+        const result = await compileMarkdownRuntime(
+          "runtime",
+          "/tmp/project",
+          "# Hello\n\nSome paragraph.",
+          undefined,
+          "content/page.md",
+          "server",
+          undefined,
+          true,
+        );
+        assertEquals(result.rawHtml!.includes("data-node-file"), true);
+        assertEquals(result.rawHtml!.includes("data-node-line"), true);
+        assertEquals(result.rawHtml!.includes("data-node-source"), true);
       });
     });
   },
