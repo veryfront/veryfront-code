@@ -106,6 +106,24 @@ describe("ragStore", () => {
     });
   });
 
+  it("returns empty results for whitespace-only local queries", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      await store.ingest("Doc", "Hello world", {
+        source: "upload:test.txt",
+        type: "txt",
+      });
+
+      const results = await store.search("   ");
+      assertEquals(results, []);
+    });
+  });
+
   it("migrates legacy upload-store data from data/index.json", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
@@ -328,6 +346,29 @@ describe("ragStore", () => {
 
         await store.removeDocument(id);
         assertEquals(await store.listDocuments(), []);
+      },
+    );
+  });
+
+  it("returns empty results for whitespace-only cloud queries without making requests", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+
+    let fetchCalls = 0;
+
+    await withMockFetch(
+      async () => {
+        fetchCalls++;
+        throw new Error("fetch should not run for whitespace-only queries");
+      },
+      async () => {
+        const store = ragStore({
+          model: "test/demo",
+        });
+
+        const results = await store.search("   ");
+        assertEquals(results, []);
+        assertEquals(fetchCalls, 0);
       },
     );
   });

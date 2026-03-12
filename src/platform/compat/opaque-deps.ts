@@ -15,7 +15,7 @@
  * @module platform/compat
  */
 
-import { isDeno } from "./runtime.ts";
+import { isDeno, isDenoCompiled } from "./runtime.ts";
 import { dynamicImport } from "./dynamic-import.ts";
 
 function resolve(pkg: string, version: string): string {
@@ -24,6 +24,14 @@ function resolve(pkg: string, version: string): string {
 
 // deno-lint-ignore no-explicit-any -- callers assign to their own typed variable; any allows implicit narrowing at each call site
 type OpaqueModule = any;
+
+type KreuzbergModule = {
+  initWasm?: () => Promise<void>;
+  extractBytes: (
+    data: Uint8Array,
+    mimeType: string,
+  ) => Promise<{ content: string }>;
+};
 
 /** Lazily import `@huggingface/transformers` (+ onnxruntime, ~500MB). */
 export function importTransformers(): Promise<OpaqueModule> {
@@ -55,9 +63,16 @@ export async function importKreuzberg(): Promise<{
 }> {
   if (isDeno) {
     // Regular import — visible to deno compile, resolved via deno.json import map
-    const mod = await import("@kreuzberg/wasm") as unknown as
-      & { initWasm?: () => Promise<void> }
-      & { extractBytes: (data: Uint8Array, mimeType: string) => Promise<{ content: string }> };
+    const mod = await import("@kreuzberg/wasm") as unknown as KreuzbergModule;
+    if (isDenoCompiled) {
+      // Kreuzberg's initWasm() internally uses a computed dynamic import() to
+      // load the WASM glue module (kreuzberg_wasm.js). deno compile cannot
+      // trace computed import() paths, so the glue module is absent from the
+      // binary's embedded module graph. Pre-importing it here populates Deno's
+      // in-process module cache so the subsequent import() inside initWasm()
+      // resolves from cache instead of hitting the missing file.
+      await import("#kreuzberg-wasm-glue");
+    }
     await mod.initWasm?.();
     return mod;
   }

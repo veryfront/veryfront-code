@@ -5,7 +5,7 @@
  * Requires Deno to be installed
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,7 +25,7 @@ console.log(`   Version: ${version}\n`);
 
 // Run the same pre-build pipeline used by deno task build/build:npm
 console.log("📝 Running build preparation...");
-execSync("deno task build:prepare", { stdio: "inherit" });
+execFileSync("deno", ["task", "build:prepare"], { stdio: "inherit" });
 console.log("");
 
 const targets = [
@@ -64,8 +64,17 @@ for (const { name, target, output } of targets) {
 
   try {
     console.log(`📦 Building ${name}...`);
-    execSync(
-      `deno compile --allow-all --unstable-net --target ${target} --include src/platform/polyfills --include src/proxy/main.ts --include dist/framework-src --output ${outputPath} cli/main.ts`,
+    execFileSync(
+      "deno",
+      [
+        "run",
+        "-A",
+        "scripts/build/compile-binary.ts",
+        "--target",
+        target,
+        "--output",
+        outputPath,
+      ],
       { stdio: "inherit" },
     );
 

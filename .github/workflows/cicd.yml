@@ -205,16 +205,14 @@ jobs:
         run: |
           # React is fetched at runtime through the module server (SSR transform pipeline)
           # Include Tailwind CSS v4 plugins (versions must match PINNED_PLUGIN_VERSIONS in tailwind-compiler.ts)
-          deno compile --allow-all --unstable-net \
-            --include src/platform/polyfills \
-            --include src/proxy/main.ts \
-            --include dist/framework-src \
+          deno run -A scripts/build/compile-binary.ts \
+            --target ${{ matrix.target }} \
+            --output ${{ matrix.name }} \
             --include "https://esm.sh/tailwindcss-animate@1.0.7" \
             --include "https://esm.sh/@tailwindcss/typography@0.5.19" \
             --include "https://esm.sh/@tailwindcss/forms@0.5.11" \
             --include "https://esm.sh/tailwind-scrollbar-hide@2.0.0" \
-            --include "https://esm.sh/daisyui@5.5.14" \
-            --target ${{ matrix.target }} --output ${{ matrix.name }} cli/main.ts
+            --include "https://esm.sh/daisyui@5.5.14"
 
       - uses: actions/upload-artifact@v4
         with:
