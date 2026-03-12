@@ -5,8 +5,8 @@
  * Requires Deno to be installed
  */
 
-import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,28 +23,9 @@ if (!existsSync(distDir)) {
 console.log("🔨 Building Veryfront CLI binaries...");
 console.log(`   Version: ${version}\n`);
 
-// Resolve kreuzberg WASM binary for --include
-let kreuzbergInclude = "";
-const denoModsDir = join(__dirname, "../..", "node_modules/.deno");
-if (existsSync(denoModsDir)) {
-  for (const entry of readdirSync(denoModsDir)) {
-    if (entry.startsWith("@kreuzberg+wasm@")) {
-      const wasmPath = join(denoModsDir, entry, "node_modules/@kreuzberg/wasm/dist/pkg/kreuzberg_wasm_bg.wasm");
-      if (existsSync(wasmPath)) {
-        kreuzbergInclude = `--include ${wasmPath}`;
-        console.log(`   Kreuzberg WASM: ${wasmPath}\n`);
-        break;
-      }
-    }
-  }
-}
-if (!kreuzbergInclude) {
-  console.warn("⚠️  Kreuzberg WASM binary not found — PDF upload extraction will be unavailable\n");
-}
-
 // Run the same pre-build pipeline used by deno task build/build:npm
 console.log("📝 Running build preparation...");
-execSync("deno task build:prepare", { stdio: "inherit" });
+execFileSync("deno", ["task", "build:prepare"], { stdio: "inherit" });
 console.log("");
 
 const targets = [
@@ -83,8 +64,17 @@ for (const { name, target, output } of targets) {
 
   try {
     console.log(`📦 Building ${name}...`);
-    execSync(
-      `deno compile --allow-all --unstable-net --target ${target} --include src/platform/polyfills --include src/proxy/main.ts --include dist/framework-src ${kreuzbergInclude} --output ${outputPath} cli/main.ts`,
+    execFileSync(
+      "deno",
+      [
+        "run",
+        "-A",
+        "scripts/build/compile-binary.ts",
+        "--target",
+        target,
+        "--output",
+        outputPath,
+      ],
       { stdio: "inherit" },
     );
 

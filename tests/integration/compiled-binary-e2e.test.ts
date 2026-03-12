@@ -49,18 +49,6 @@ async function computeSourceHash(): Promise<string> {
 
   try {
     const result = await new Deno.Command("git", {
-      args: ["rev-parse", "HEAD:src"],
-      stdout: "piped",
-      stderr: "null",
-    }).output();
-
-    if (result.success) return decoder.decode(result.stdout).trim();
-  } catch {
-    // fall through
-  }
-
-  try {
-    const result = await new Deno.Command("git", {
       args: ["rev-parse", "HEAD"],
       stdout: "piped",
       stderr: "null",
@@ -105,7 +93,7 @@ async function ensureBinaryCompiled(): Promise<void> {
   // Run the same pre-build pipeline used by distribution builds
   console.log("📦 Preparing build artifacts...");
   const prepareResult = await new Deno.Command("deno", {
-    args: ["run", "--allow-all", "scripts/build/prepare-framework-sources.ts"],
+    args: ["task", "build:prepare"],
     stdout: "inherit",
     stderr: "inherit",
   }).output();
@@ -115,17 +103,11 @@ async function ensureBinaryCompiled(): Promise<void> {
   console.log("📦 Compiling binary...");
   const result = await new Deno.Command("deno", {
     args: [
-      "compile",
-      "--allow-all",
-      "--include",
-      "src/platform/polyfills",
-      "--include",
-      "src/proxy/main.ts",
-      "--include",
-      "dist/framework-src",
+      "run",
+      "-A",
+      "scripts/build/compile-binary.ts",
       "--output",
       BINARY_PATH,
-      "cli/main.ts",
     ],
     stdout: "inherit",
     stderr: "inherit",

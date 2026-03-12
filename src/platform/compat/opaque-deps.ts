@@ -25,6 +25,14 @@ function resolve(pkg: string, version: string): string {
 // deno-lint-ignore no-explicit-any -- callers assign to their own typed variable; any allows implicit narrowing at each call site
 type OpaqueModule = any;
 
+type KreuzbergModule = {
+  initWasm?: () => Promise<void>;
+  extractBytes: (
+    data: Uint8Array,
+    mimeType: string,
+  ) => Promise<{ content: string }>;
+};
+
 /** Lazily import `@huggingface/transformers` (+ onnxruntime, ~500MB). */
 export function importTransformers(): Promise<OpaqueModule> {
   return dynamicImport(resolve("@huggingface/transformers", "3.4.2"));
@@ -55,28 +63,15 @@ export async function importKreuzberg(): Promise<{
 }> {
   if (isDeno) {
     // Regular import — visible to deno compile, resolved via deno.json import map
-    const mod = await import("@kreuzberg/wasm") as unknown as
-      & { initWasm?: (options?: { wasmModule?: BufferSource }) => Promise<void> }
-      & { extractBytes: (data: Uint8Array, mimeType: string) => Promise<{ content: string }> };
-
-    try {
-      await mod.initWasm?.();
-    } catch (initError) {
-      if (!isDenoCompiled) throw initError;
-
-      // In compiled binaries, kreuzberg's initWasm() fails because it uses
-      // computed import() paths for the WASM glue code that deno compile
-      // cannot trace. Manually import the glue code (traced via deno.json
-      // import map entry) and load the WASM binary via fetch().
-      const glue = await import("@kreuzberg/wasm/dist/pkg/kreuzberg_wasm.js") as unknown as {
-        default: (input?: BufferSource) => Promise<void>;
-      };
-      const glueUrl = import.meta.resolve("@kreuzberg/wasm/dist/pkg/kreuzberg_wasm.js");
-      const wasmUrl = new URL("kreuzberg_wasm_bg.wasm", glueUrl).href;
-      const wasmBinary = await fetch(wasmUrl).then((r) => r.arrayBuffer());
-      await glue.default(wasmBinary);
+    const mod = await import("@kreuzberg/wasm") as unknown as KreuzbergModule;
+    if (isDenoCompiled) {
+      // Kreuzberg's wrapper resolves the glue module via computed import()
+      // paths that deno compile cannot trace. Import the glue module here so
+      // the compiled binary includes it, then let Kreuzberg's own init path
+      // run normally and manage its internal wrapper state.
+      await import("#kreuzberg-wasm-glue");
     }
-
+    await mod.initWasm?.();
     return mod;
   }
   // Opaque import — resolved from node_modules at runtime

@@ -264,7 +264,7 @@
     "clsx": "npm:clsx@2.1.1",
     "tailwind-merge": "npm:tailwind-merge@2.6.0",
     "@kreuzberg/wasm": "npm:@kreuzberg/wasm@4.4.2",
-    "@kreuzberg/wasm/dist/pkg/kreuzberg_wasm.js": "npm:@kreuzberg/wasm@4.4.2/dist/pkg/kreuzberg_wasm.js"
+    "#kreuzberg-wasm-glue": "npm:@kreuzberg/wasm@4.4.2/dist/pkg/kreuzberg_wasm.js"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
@@ -292,7 +292,7 @@
     "dev": "deno task generate && deno run --allow-all cli/main.ts dev",
     "production": "deno task generate && deno run --allow-all cli/main.ts serve --mode=production",
     "build:prepare": "deno run -A scripts/build/generate-integrations-module.ts && deno task generate && deno run -A scripts/build/prepare-framework-sources.ts",
-    "build": "deno task build:prepare && deno compile --allow-all --include src/platform/polyfills --include src/proxy/main.ts --include dist/framework-src --output ./bin/veryfront cli/main.ts",
+    "build": "deno task build:prepare && deno run -A scripts/build/compile-binary.ts --output ./bin/veryfront",
     "build:npm": "deno run -A scripts/build/generate-integrations-module.ts && deno task generate && deno run -A scripts/build/build-npm-dnt.ts",
     "release": "deno run -A scripts/release.ts",
     "test": "deno task generate && VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --allow-all '--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts' --unstable-worker-options --unstable-net",
