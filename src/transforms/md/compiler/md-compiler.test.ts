@@ -166,7 +166,7 @@ describe(
         const result = await compileMarkdownRuntime(
           "runtime",
           "/tmp/project",
-          '[click me](javascript:alert(1))',
+          "[click me](javascript:alert(1))",
         );
         assertEquals(result.rawHtml!.includes("javascript:"), false);
       });
