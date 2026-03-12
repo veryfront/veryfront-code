@@ -22,8 +22,21 @@ interface CompileBinaryOptions {
   target?: string;
 }
 
+/**
+ * Resolve the kreuzberg WASM assets that must be embedded in the compiled binary.
+ *
+ * NOTE: This runs under `deno run` (not compiled), so `import.meta.resolve`
+ * returns a `file:` URL pointing into `node_modules`. It will NOT work inside
+ * a compiled binary — only call this at build time.
+ */
 export function resolveKreuzbergCompileIncludes(): string[] {
-  const glueUrl = new URL(import.meta.resolve("#kreuzberg-wasm-glue"));
+  const resolved = import.meta.resolve("#kreuzberg-wasm-glue");
+  if (!resolved.startsWith("file:")) {
+    throw new Error(
+      `Expected #kreuzberg-wasm-glue to resolve to a file: URL, got: ${resolved}`,
+    );
+  }
+  const glueUrl = new URL(resolved);
   return [
     fromFileUrl(new URL("kreuzberg_wasm_bg.wasm", glueUrl)),
     fromFileUrl(new URL("../pdfium.esm.wasm", glueUrl)),
@@ -81,11 +94,7 @@ if (import.meta.main) {
     throw new Error("Missing required --output <path>");
   }
 
-  const extraIncludes = Array.isArray(args.include)
-    ? args.include.map(String)
-    : typeof args.include === "string"
-    ? [args.include]
-    : [];
+  const extraIncludes = (args.include as string[]).map(String);
 
   try {
     await compileBinary({

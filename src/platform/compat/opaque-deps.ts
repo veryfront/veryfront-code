@@ -65,10 +65,12 @@ export async function importKreuzberg(): Promise<{
     // Regular import — visible to deno compile, resolved via deno.json import map
     const mod = await import("@kreuzberg/wasm") as unknown as KreuzbergModule;
     if (isDenoCompiled) {
-      // Kreuzberg's wrapper resolves the glue module via computed import()
-      // paths that deno compile cannot trace. Import the glue module here so
-      // the compiled binary includes it, then let Kreuzberg's own init path
-      // run normally and manage its internal wrapper state.
+      // Kreuzberg's initWasm() internally uses a computed dynamic import() to
+      // load the WASM glue module (kreuzberg_wasm.js). deno compile cannot
+      // trace computed import() paths, so the glue module is absent from the
+      // binary's embedded module graph. Pre-importing it here populates Deno's
+      // in-process module cache so the subsequent import() inside initWasm()
+      // resolves from cache instead of hitting the missing file.
       await import("#kreuzberg-wasm-glue");
     }
     await mod.initWasm?.();

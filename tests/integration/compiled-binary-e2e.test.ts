@@ -47,6 +47,28 @@ async function getAvailablePort(): Promise<number> {
 async function computeSourceHash(): Promise<string> {
   const decoder = new TextDecoder();
 
+  // Hash both src/ and scripts/build/ since compile-binary.ts is a build input
+  try {
+    const srcResult = await new Deno.Command("git", {
+      args: ["rev-parse", "HEAD:src"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    const scriptsResult = await new Deno.Command("git", {
+      args: ["rev-parse", "HEAD:scripts/build"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+
+    if (srcResult.success && scriptsResult.success) {
+      const srcHash = decoder.decode(srcResult.stdout).trim();
+      const scriptsHash = decoder.decode(scriptsResult.stdout).trim();
+      return `${srcHash}-${scriptsHash}`;
+    }
+  } catch {
+    // fall through
+  }
+
   try {
     const result = await new Deno.Command("git", {
       args: ["rev-parse", "HEAD"],
