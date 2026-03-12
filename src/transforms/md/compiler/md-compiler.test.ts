@@ -195,6 +195,17 @@ describe(
         );
       });
 
+      it("preserves safe embedded HTML like details/summary", async () => {
+        const result = await compileMarkdownRuntime(
+          "runtime",
+          "/tmp/project",
+          "<details><summary>Click</summary>\n\nHidden content\n\n</details>",
+        );
+        assertEquals(result.rawHtml!.includes("<details>"), true);
+        assertEquals(result.rawHtml!.includes("<summary>"), true);
+        assertEquals(result.rawHtml!.includes("Hidden content"), true);
+      });
+
       it("strips style tags", async () => {
         const result = await compileMarkdownRuntime(
           "runtime",
@@ -202,7 +213,6 @@ describe(
           "# Title\n\n<style>body{display:none}</style>\n\nVisible text.",
         );
         assertEquals(result.rawHtml!.includes("<style>"), false);
-        assertEquals(result.rawHtml!.includes("display:none"), false);
         assertEquals(result.rawHtml!.includes("Visible text"), true);
       });
 

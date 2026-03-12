@@ -5,6 +5,7 @@ import remarkFrontmatter from "remark-frontmatter";
 import remarkRehype from "remark-rehype";
 import rehypeStarryNight from "rehype-starry-night";
 import rehypeSlug from "rehype-slug";
+import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeStringify from "rehype-stringify";
 import { visit } from "unist-util-visit";
@@ -99,6 +100,10 @@ export function compileMarkdownRuntime(
           .use(rehypeStarryNight)
           .use(rehypeSlug);
 
+        // Parse raw HTML nodes into proper elements before sanitizing.
+        pipeline.use(rehypeRaw);
+
+        // Add node positions after rehype-raw so attributes survive re-parsing.
         if (studioEmbed && filePath) {
           pipeline.use(rehypeNodePositions, { filePath });
         }
