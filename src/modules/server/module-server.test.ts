@@ -158,6 +158,23 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(text.includes("0.1.59"), true);
   });
 
+  it("should serve #deno-config as embedded JSON for browser imports", async () => {
+    const response = await serve(
+      new Request("http://localhost:3000/_vf_modules/_deno-config.json"),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(response.headers.get("content-type"), "application/json; charset=utf-8");
+
+    const text = await response.text();
+    const config = JSON.parse(text) as {
+      version?: string;
+      imports?: Record<string, string>;
+    };
+    assertEquals(config.version, "0.1.59");
+    assertEquals(config.imports?.["#deno-config"], "./deno.json");
+  });
+
   it("should serve dnt shims as JavaScript content type", async () => {
     const response = await serve(
       new Request("http://localhost:3000/_vf_modules/_veryfront/_dnt.shims.js"),

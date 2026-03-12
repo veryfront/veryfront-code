@@ -45,9 +45,10 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
     const specifier = info.specifier;
 
     // Handle #deno-config — Deno import-map alias that doesn't exist in browsers.
-    // Rewrite to an embedded polyfill served by the module server.
+    // Rewrite to embedded JSON served by the module server so
+    // `with { type: "json" }` imports remain valid in browsers.
     if (specifier === "#deno-config") {
-      return { specifier: "/_vf_modules/_deno-config.js" };
+      return { specifier: "/_vf_modules/_deno-config.json" };
     }
 
     // Handle #veryfront/* (internal framework imports)
