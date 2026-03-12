@@ -60,6 +60,7 @@ export function vectorStore(config: VectorStoreConfig): VectorStore {
     },
 
     async search(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+      if (!query.trim()) return [];
       if (entries.length === 0) return [];
 
       const topK = options?.topK ?? 5;
