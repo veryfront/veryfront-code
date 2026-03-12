@@ -72,5 +72,63 @@ describe(
       assertExists(result);
       assertExists(result.errors);
     });
+
+    it("should discover all valid named exports from a single tool file", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-multi-export-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/tools/many.ts`,
+          [
+            'export const alpha = { execute: async () => "alpha" };',
+            'export const beta = { execute: async () => "beta" };',
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        assertEquals(Array.from(result.tools.keys()).sort(), ["alpha", "beta"]);
+        assertEquals(toolRegistry.getAllIds().sort(), ["alpha", "beta"]);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("should keep concrete tool files over index barrel re-exports", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-barrel-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/tools/foo.ts`,
+          'export const foo = { execute: async () => "foo" };\n',
+        );
+        await Deno.writeTextFile(
+          `${tempDir}/tools/bar.ts`,
+          'export const bar = { execute: async () => "bar" };\n',
+        );
+        await Deno.writeTextFile(
+          `${tempDir}/tools/index.ts`,
+          [
+            'export { foo } from "./foo.ts";',
+            'export { bar } from "./bar.ts";',
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        assertEquals(Array.from(result.tools.keys()).sort(), ["bar", "foo"]);
+        assertEquals(toolRegistry.getAllIds().sort(), ["bar", "foo"]);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
   },
 );
