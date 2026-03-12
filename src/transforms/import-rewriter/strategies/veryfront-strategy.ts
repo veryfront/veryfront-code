@@ -36,12 +36,19 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
     return (
       specifier.startsWith("#veryfront/") ||
       specifier.startsWith("veryfront/") ||
-      specifier === "veryfront"
+      specifier === "veryfront" ||
+      specifier === "#deno-config"
     );
   }
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
     const specifier = info.specifier;
+
+    // Handle #deno-config — Deno import-map alias that doesn't exist in browsers.
+    // Rewrite to an embedded polyfill served by the module server.
+    if (specifier === "#deno-config") {
+      return { specifier: "/_vf_modules/_deno-config.js" };
+    }
 
     // Handle #veryfront/* (internal framework imports)
     if (specifier.startsWith("#veryfront/")) {

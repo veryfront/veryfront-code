@@ -4,7 +4,7 @@ import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { type TransformOptions, transformToESM } from "#veryfront/transforms/esm-transform.ts";
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger, VERSION } from "#veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
 import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "#veryfront/security";
@@ -79,6 +79,9 @@ export default {};
     `export default {};`,
   ].join("\n") + "\n",
   "_dnt.polyfills": `export default {};\n`,
+  // Deno import-map alias stub for browser — version.ts imports #deno-config
+  // which only exists in the Deno runtime. Serve a JS module with version info.
+  "_deno-config": `export default ${JSON.stringify({ version: VERSION })};\n`,
 };
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;

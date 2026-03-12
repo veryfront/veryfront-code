@@ -147,6 +147,17 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status, 200);
   });
 
+  it("should serve browser-safe framework version modules without #deno-config", async () => {
+    const response = await serve(
+      new Request("http://localhost:3000/_vf_modules/_veryfront/utils/version.js"),
+    );
+
+    assertEquals(response.status, 200);
+    const text = await response.text();
+    assertEquals(text.includes("#deno-config"), false);
+    assertEquals(text.includes("0.1.59"), true);
+  });
+
   it("should serve dnt shims as JavaScript content type", async () => {
     const response = await serve(
       new Request("http://localhost:3000/_vf_modules/_veryfront/_dnt.shims.js"),
