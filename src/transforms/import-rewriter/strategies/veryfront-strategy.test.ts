@@ -102,12 +102,12 @@ describe("VeryfrontStrategy", () => {
   });
 
   describe("internal import-map resolution", () => {
-    it("should rewrite #deno-config to the browser JSON stub", () => {
+    it("should rewrite #deno-config to the framework-scoped browser stub", () => {
       const result = strategy.rewrite(
         makeInfo("#deno-config"),
         makeCtx({ target: "browser" }),
       );
-      assertEquals(result.specifier, "/_vf_modules/_deno-config.json");
+      assertEquals(result.specifier, "/_vf_modules/_veryfront/_deno-config.js");
     });
 
     it("should resolve exact internal aliases using deno.json mappings", () => {
