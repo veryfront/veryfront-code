@@ -12,7 +12,10 @@ import type {
   RewriteResult,
 } from "../types.ts";
 import { buildVeryfrontModuleUrl } from "../url-builder.ts";
-import { resolveInternalModuleUrl, resolveVeryfrontModuleUrl } from "../../veryfront-module-urls.ts";
+import {
+  resolveInternalModuleUrl,
+  resolveVeryfrontModuleUrl,
+} from "../../veryfront-module-urls.ts";
 
 /**
  * SSR-specific module overrides.
