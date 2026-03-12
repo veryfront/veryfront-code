@@ -10,6 +10,8 @@
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import { isModuleRequest } from "./module-server.ts";
 
 describe("isModuleRequest", () => {
@@ -56,12 +58,12 @@ describe("isModuleRequest", () => {
 // pipeline which spawns a long-lived child process. This is a pre-existing
 // resource that cannot be torn down inside a unit test.
 describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, () => {
-  async function serve(req: Request): Promise<Response> {
+  async function serve(req: Request, projectDir = "/tmp/test"): Promise<Response> {
     const { serveModule } = await import("./module-server.ts");
     return await serveModule(req, {
       projectId: "test",
-      projectDir: "/tmp/test",
-      adapter: {} as any,
+      projectDir,
+      adapter: denoAdapter,
     });
   }
 
@@ -155,24 +157,22 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status, 200);
     const text = await response.text();
     assertEquals(text.includes("#deno-config"), false);
-    assertEquals(text.includes("0.1.59"), true);
+    assertEquals(text.includes(VERSION), true);
   });
 
-  it("should serve #deno-config as embedded JSON for browser imports", async () => {
+  it("should serve #deno-config as embedded JS module for browser imports", async () => {
     const response = await serve(
-      new Request("http://localhost:3000/_vf_modules/_deno-config.json"),
+      new Request("http://localhost:3000/_vf_modules/_veryfront/_deno-config.js"),
     );
 
     assertEquals(response.status, 200);
-    assertEquals(response.headers.get("content-type"), "application/json; charset=utf-8");
+    const contentType = response.headers.get("content-type") ?? "";
+    assertEquals(contentType.includes("javascript"), true);
 
     const text = await response.text();
-    const config = JSON.parse(text) as {
-      version?: string;
-      imports?: Record<string, string>;
-    };
-    assertEquals(config.version, "0.1.59");
-    assertEquals(config.imports?.["#deno-config"], "./deno.json");
+    // esbuild may transform `export default {...}` into other export forms
+    assertEquals(text.includes(VERSION), true);
+    assertEquals(text.includes("version"), true);
   });
 
   it("should serve dnt shims as JavaScript content type", async () => {

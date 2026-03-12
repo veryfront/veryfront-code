@@ -4,8 +4,7 @@ import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { type TransformOptions, transformToESM } from "#veryfront/transforms/esm-transform.ts";
-import denoConfig from "#deno-config" with { type: "json" };
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger, VERSION } from "#veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
 import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "#veryfront/security";
@@ -80,9 +79,10 @@ export default {};
     `export default {};`,
   ].join("\n") + "\n",
   "_dnt.polyfills": `export default {};\n`,
-  // Deno import-map alias stub for browser/HTTP-served modules.
-  // Keep the real deno.json shape so import-map readers continue to work.
-  "_deno-config": JSON.stringify(denoConfig),
+  // Deno import-map alias stub for browser/HTTP-served framework modules.
+  // Must be a JS module (not JSON) because esbuild strips `with { type: "json" }`
+  // at es2020 target, and browsers reject JSON MIME type without the assertion.
+  "_veryfront/_deno-config": `export default ${JSON.stringify({ version: VERSION })};\n`,
 };
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
