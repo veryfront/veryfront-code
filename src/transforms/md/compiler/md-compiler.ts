@@ -5,6 +5,8 @@ import remarkFrontmatter from "remark-frontmatter";
 import remarkRehype from "remark-rehype";
 import rehypeStarryNight from "rehype-starry-night";
 import rehypeSlug from "rehype-slug";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeStringify from "rehype-stringify";
 import { visit } from "unist-util-visit";
 import { toString } from "mdast-util-to-string";
@@ -98,12 +100,36 @@ export function compileMarkdownRuntime(
           .use(rehypeStarryNight)
           .use(rehypeSlug);
 
+        // Parse raw HTML nodes into proper elements before sanitizing.
+        pipeline.use(rehypeRaw);
+
+        // Add node positions after rehype-raw so attributes survive re-parsing.
         if (studioEmbed && filePath) {
           pipeline.use(rehypeNodePositions, { filePath });
         }
 
+        // Extend the sanitize schema in studio embed mode to preserve
+        // data-node-* attributes used for element-to-source mapping.
+        const sanitizeSchema = studioEmbed
+          ? {
+            ...defaultSchema,
+            attributes: {
+              ...defaultSchema.attributes,
+              "*": [
+                ...(defaultSchema.attributes?.["*"] ?? []),
+                "data-node-file",
+                "data-node-name",
+                "data-node-line",
+                "data-node-column",
+                "data-node-source",
+              ],
+            },
+          }
+          : defaultSchema;
+
         const result = await pipeline
-          .use(rehypeStringify, { allowDangerousHtml: true })
+          .use(rehypeSanitize, sanitizeSchema)
+          .use(rehypeStringify)
           .process(body);
         const html = String(result);
 
