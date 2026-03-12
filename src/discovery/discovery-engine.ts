@@ -49,7 +49,21 @@ async function discoverItems<T>(
   for (const file of files) {
     try {
       const module = await importModule(file, context);
-      const item = (module as { default?: T }).default;
+
+      // Check default export first, then fall back to named exports
+      let item = (module as { default?: T }).default;
+
+      if (!handler.validate(item)) {
+        // Search named exports for a valid item (e.g. `export const myAgent = agent(...)`)
+        for (const key of Object.keys(module as Record<string, unknown>)) {
+          if (key === "default") continue;
+          const candidate = (module as Record<string, unknown>)[key] as T;
+          if (handler.validate(candidate)) {
+            item = candidate;
+            break;
+          }
+        }
+      }
 
       if (!handler.validate(item)) {
         if (verbose) {

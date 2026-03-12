@@ -336,6 +336,46 @@ describe("createChatHandler", () => {
     );
   });
 
+  it("should accept agent instance via object-based config", async () => {
+    const agentId = `obj-api-agent-${crypto.randomUUID()}`;
+    let streamCalled = false;
+
+    const fakeAgent = {
+      id: agentId,
+      config: { model: "openai/gpt-4o", system: "Object API test" },
+      generate: () => {},
+      clearMemory: async () => {},
+      stream: async () => {
+        streamCalled = true;
+        return {
+          toDataStreamResponse: () => new Response("ok", { status: 200 }),
+        };
+      },
+    };
+
+    // Use the object-based API: createChatHandler({ agent, beforeStream })
+    // deno-lint-ignore no-explicit-any
+    const handler = createChatHandler({ agent: fakeAgent as any });
+
+    const request = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          {
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          },
+        ],
+      }),
+    });
+
+    const response = await handler(request);
+    assertEquals(response.status, 200);
+    assertEquals(streamCalled, true);
+  });
+
   it("should not leak async system prompt in 503 no_ai_available response", async () => {
     const agentId = `no-ai-async-${crypto.randomUUID()}`;
 

@@ -244,6 +244,12 @@ export interface ChatHandlerOptions {
   beforeStream?: ChatHandlerBeforeStream;
 }
 
+/** Options when passing an agent instance directly. */
+export interface ChatHandlerConfigWithAgent extends ChatHandlerOptions {
+  /** The agent instance to use (bypasses registry lookup). */
+  agent: import("./types.ts").Agent;
+}
+
 /**
  * Extract the raw Request from either a raw Request or a Pages Router APIContext.
  * Pages Router handlers receive `(ctx)` where `ctx.request` is the Request.
@@ -297,25 +303,46 @@ function extractRequest(requestOrCtx: unknown): Request {
  * - App Router: `app/api/chat/route.ts` — handler receives `(request, context)`
  * - Pages Router: `pages/api/chat.ts` — handler receives `(ctx)`
  *
+ * Accepts either:
+ * - `createChatHandler("agentId", options?)` — looks up agent by ID from the registry
+ * - `createChatHandler({ agent, ...options })` — uses the provided agent instance directly
+ *
  * @example
  * ```ts
- * import { createChatHandler } from "veryfront/agent";
+ * // By agent ID (requires auto-discovery registration)
  * export const POST = createChatHandler("assistant");
+ *
+ * // By agent instance (no registry needed)
+ * import { myAgent } from "../../agents/my-agent";
+ * export const POST = createChatHandler({ agent: myAgent, beforeStream: ... });
  * ```
  */
 export function createChatHandler(
-  agentId: string,
+  agentIdOrConfig: string | ChatHandlerConfigWithAgent,
   options?: ChatHandlerOptions,
 ) {
   return async function POST(requestOrCtx: unknown): Promise<Response> {
     const request = extractRequest(requestOrCtx);
+
     let agent: ReturnType<typeof getAgent> | undefined;
-    try {
-      agent = getAgent(agentId);
-    } catch (error) {
-      agentLogger.debug("getAgent lookup failed", { error });
-      return Response.json({ error: "Agent not found" }, { status: 404 });
+
+    if (
+      typeof agentIdOrConfig === "object" && agentIdOrConfig !== null && "agent" in agentIdOrConfig
+    ) {
+      // Object-based API: createChatHandler({ agent, beforeStream, ... })
+      agent = agentIdOrConfig.agent;
+      options = agentIdOrConfig;
+    } else {
+      // String-based API: createChatHandler("agentId", options?)
+      const agentId = agentIdOrConfig as string;
+      try {
+        agent = getAgent(agentId);
+      } catch (error) {
+        agentLogger.debug("getAgent lookup failed", { error });
+        return Response.json({ error: "Agent not found" }, { status: 404 });
+      }
     }
+
     if (!agent) {
       return Response.json({ error: "Agent not found" }, { status: 404 });
     }
