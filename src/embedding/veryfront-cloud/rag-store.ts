@@ -491,6 +491,7 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       query: string,
       options?: RagSearchOptions,
     ): Promise<RagSearchResult[]> {
+      if (!query.trim()) return [];
       const context = getCloudStoreContext(config);
       const queryEmbedder = createEmbedder(config);
       const vector = await queryEmbedder.embed(query);

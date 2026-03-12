@@ -35,7 +35,11 @@ export function embedding(config: EmbeddingConfig): Embedding {
     model: modelId,
 
     async embed(text: string): Promise<number[]> {
-      const result = await embed({ model, value: queryPrefix + text });
+      const value = queryPrefix + text;
+      if (!value.trim()) {
+        throw new Error("Cannot embed an empty string");
+      }
+      const result = await embed({ model, value });
       return result.embedding;
     },
 

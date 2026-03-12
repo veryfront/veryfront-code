@@ -320,6 +320,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       query: string,
       options?: RagSearchOptions,
     ): Promise<RagSearchResult[]> {
+      if (!query.trim()) return [];
       return withLock(async () => {
         const data = await load();
         if (data.chunks.length === 0) return [];
