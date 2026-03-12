@@ -424,6 +424,11 @@ export function createChatHandler(
         );
       }
 
+      agentLogger.error("Chat handler error", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+
       return Response.json(
         { error: "Internal server error" },
         { status: 500 },
