@@ -12,7 +12,11 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { buildReactUrl, getReactImportMap } from "../../import-rewriter/url-builder.ts";
-import { resolveVeryfrontModuleUrl } from "../../veryfront-module-urls.ts";
+import {
+  resolveInternalModuleTarget,
+  resolveInternalModuleUrl,
+  resolveVeryfrontModuleUrl,
+} from "../../veryfront-module-urls.ts";
 import { ssrVfModulesPlugin } from "./ssr-vf-modules.ts";
 import {
   _testExports,
@@ -281,6 +285,15 @@ describe("ssr-vf-modules integration", { sanitizeOps: false, sanitizeResources: 
     assertStringIncludes(result!, "/src/utils");
   });
 
+  it("resolves prefix-mapped #veryfront/ specifiers to source paths", async () => {
+    const { resolveVeryfrontSourcePath } = _testExports;
+
+    const result = await resolveVeryfrontSourcePath("#veryfront/compat/path/index.ts");
+
+    assertEquals(result !== null, true, "Should resolve #veryfront/compat/path/index.ts");
+    assertStringIncludes(result!, "/src/platform/compat/path/index.ts");
+  });
+
   it("returns null for non-existent #veryfront/ imports", async () => {
     const { resolveVeryfrontSourcePath } = _testExports;
 
@@ -431,6 +444,16 @@ describe("ssr-vf-modules relative import resolution", {
       transformedModule.resolveVeryfrontModuleUrl("veryfront/chat"),
       resolveVeryfrontModuleUrl("veryfront/chat"),
       "Transformed module should preserve import/export mappings from deno.json",
+    );
+    assertEquals(
+      transformedModule.resolveInternalModuleUrl("#veryfront/compat/path/index.ts"),
+      resolveInternalModuleUrl("#veryfront/compat/path/index.ts"),
+      "Transformed module should preserve internal prefix mappings from deno.json",
+    );
+    assertEquals(
+      transformedModule.resolveInternalModuleTarget("#veryfront/compat/path/index.ts"),
+      resolveInternalModuleTarget("#veryfront/compat/path/index.ts"),
+      "Transformed module should preserve internal target resolution from deno.json",
     );
   });
 });
