@@ -15,7 +15,7 @@
  * @module platform/compat
  */
 
-import { isDeno } from "./runtime.ts";
+import { isDeno, isDenoCompiled } from "./runtime.ts";
 import { dynamicImport } from "./dynamic-import.ts";
 
 function resolve(pkg: string, version: string): string {
@@ -56,9 +56,26 @@ export async function importKreuzberg(): Promise<{
   if (isDeno) {
     // Regular import — visible to deno compile, resolved via deno.json import map
     const mod = await import("@kreuzberg/wasm") as unknown as
-      & { initWasm?: () => Promise<void> }
+      & { initWasm?: (options?: { wasmModule?: BufferSource }) => Promise<void> }
       & { extractBytes: (data: Uint8Array, mimeType: string) => Promise<{ content: string }> };
-    await mod.initWasm?.();
+
+    try {
+      await mod.initWasm?.();
+    } catch (initError) {
+      if (!isDenoCompiled) throw initError;
+
+      // In compiled binaries, kreuzberg's initWasm() fails because it uses
+      // computed import() paths for the WASM glue code that deno compile
+      // cannot trace. Manually import the glue code (traced via deno.json
+      // import map entry) and load the WASM binary via fetch().
+      const glue = await import("@kreuzberg/wasm/dist/pkg/kreuzberg_wasm.js") as unknown as
+        { default: (input?: BufferSource) => Promise<void> };
+      const glueUrl = import.meta.resolve("@kreuzberg/wasm/dist/pkg/kreuzberg_wasm.js");
+      const wasmUrl = new URL("kreuzberg_wasm_bg.wasm", glueUrl).href;
+      const wasmBinary = await fetch(wasmUrl).then((r) => r.arrayBuffer());
+      await glue.default(wasmBinary);
+    }
+
     return mod;
   }
   // Opaque import — resolved from node_modules at runtime

@@ -205,6 +205,12 @@ jobs:
         run: |
           # React is fetched at runtime through the module server (SSR transform pipeline)
           # Include Tailwind CSS v4 plugins (versions must match PINNED_PLUGIN_VERSIONS in tailwind-compiler.ts)
+          # Resolve kreuzberg WASM binary path for --include
+          KREUZBERG_PKG=$(find node_modules/.deno -path '*/@kreuzberg/wasm/dist/pkg' -type d 2>/dev/null | head -1)
+          KREUZBERG_INCLUDE=""
+          if [ -n "$KREUZBERG_PKG" ]; then
+            KREUZBERG_INCLUDE="--include $KREUZBERG_PKG/kreuzberg_wasm_bg.wasm"
+          fi
           deno compile --allow-all --unstable-net \
             --include src/platform/polyfills \
             --include src/proxy/main.ts \
@@ -214,6 +220,7 @@ jobs:
             --include "https://esm.sh/@tailwindcss/forms@0.5.11" \
             --include "https://esm.sh/tailwind-scrollbar-hide@2.0.0" \
             --include "https://esm.sh/daisyui@5.5.14" \
+            $KREUZBERG_INCLUDE \
             --target ${{ matrix.target }} --output ${{ matrix.name }} cli/main.ts
 
       - uses: actions/upload-artifact@v4
