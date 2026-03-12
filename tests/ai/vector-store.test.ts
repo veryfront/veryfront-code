@@ -5,7 +5,7 @@
  * so cosine similarity produces predictable, testable results.
  */
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assert } from "#veryfront/testing/assert";
+import { assert, assertEquals } from "#veryfront/testing/assert";
 
 import { vectorStore } from "../../src/embedding/vector-store.ts";
 import type { Embedding, VectorStore } from "../../src/embedding/types.ts";
@@ -59,6 +59,29 @@ function createTestStore(): VectorStore {
 // ---------------------------------------------------------------------------
 
 describe("vectorStore — dense search", () => {
+  it("returns empty for whitespace-only queries without calling the embedder", async () => {
+    let embedCalls = 0;
+    const store = vectorStore({
+      embedder: {
+        model: "mock/test-embed",
+        async embed(): Promise<number[]> {
+          embedCalls++;
+          throw new Error("embed should not run for whitespace-only queries");
+        },
+        async embedMany(texts: string[]): Promise<number[][]> {
+          return texts.map(() => [1, 0, 0, 0]);
+        },
+      },
+    });
+
+    await store.add(["cats are fluffy"]);
+
+    const results = await store.search("   ");
+
+    assertEquals(results, []);
+    assertEquals(embedCalls, 0);
+  });
+
   it("returns results ranked by cosine similarity", async () => {
     const store = createTestStore();
     await store.add([
