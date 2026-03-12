@@ -131,6 +131,22 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status, 200);
   });
 
+  it("should resolve framework directory imports to index files", async () => {
+    const response = await serve(
+      new Request("http://localhost:3000/_vf_modules/_veryfront/utils"),
+    );
+
+    assertEquals(response.status, 200);
+  });
+
+  it("should serve remapped framework directories through their resolved platform paths", async () => {
+    const response = await serve(
+      new Request("http://localhost:3000/_vf_modules/_veryfront/platform/compat/console"),
+    );
+
+    assertEquals(response.status, 200);
+  });
+
   it("should serve dnt shims as JavaScript content type", async () => {
     const response = await serve(
       new Request("http://localhost:3000/_vf_modules/_veryfront/_dnt.shims.js"),

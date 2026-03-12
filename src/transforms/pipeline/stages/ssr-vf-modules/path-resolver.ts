@@ -8,6 +8,7 @@
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { resolveInternalModuleTarget } from "../../../veryfront-module-urls.ts";
 import {
   EMBEDDED_SRC_DIR,
   EXTENSIONS,
@@ -120,7 +121,10 @@ export async function resolveFrameworkFile(
 export async function resolveVeryfrontSourcePath(specifier: string): Promise<string | null> {
   if (!specifier.startsWith("#veryfront/")) return null;
 
-  const relativePath = specifier.slice("#veryfront/".length);
+  const mappedTarget = resolveInternalModuleTarget(specifier);
+  if (!mappedTarget?.startsWith("./src/")) return null;
+
+  const relativePath = mappedTarget.slice("./src/".length);
   const hasExtension = /\.(tsx?|jsx?|mjs)$/.test(relativePath);
 
   // Check embedded sources first (for compiled binaries), then regular src/

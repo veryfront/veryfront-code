@@ -512,19 +512,23 @@ async function findSourceFile(
         ? basePathWithoutExt.slice(prefix.length)
         : basePathWithoutExt;
 
-      for (const ext of extensions) {
-        const frameworkPath = join(frameworkDir, pathWithinFramework + ext);
-        try {
-          const stat = await platformFs.stat(frameworkPath);
-          if (stat.isFile) {
-            logger.debug(`Found framework ${label} file`, {
-              basePath: basePathWithoutExt,
-              resolvedPath: frameworkPath,
-            });
-            return { path: frameworkPath, isFrameworkFile: true };
+      // Try direct file match first, then index file fallback
+      const candidates = [pathWithinFramework, `${pathWithinFramework}/index`];
+      for (const candidate of candidates) {
+        for (const ext of extensions) {
+          const frameworkPath = join(frameworkDir, candidate + ext);
+          try {
+            const stat = await platformFs.stat(frameworkPath);
+            if (stat.isFile) {
+              logger.debug(`Found framework ${label} file`, {
+                basePath: basePathWithoutExt,
+                resolvedPath: frameworkPath,
+              });
+              return { path: frameworkPath, isFrameworkFile: true };
+            }
+          } catch (_) {
+            /* expected: file may not exist at this extension */
           }
-        } catch (_) {
-          /* expected: file may not exist at this extension */
         }
       }
     }
