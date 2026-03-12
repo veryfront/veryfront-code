@@ -1,11 +1,6 @@
-import denoConfig from "#deno-config" with { type: "json" };
-
-function getVersionFromDeno(): string {
-  return typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0";
-}
-
-// Use deno.json version directly to avoid env access at module load
-export const VERSION: string = getVersionFromDeno();
+// Keep in sync with deno.json version.
+// scripts/release.ts updates this constant during releases.
+export const VERSION = "0.1.59";
 
 export const SERVER_START_TIME: number = Date.now();
 
