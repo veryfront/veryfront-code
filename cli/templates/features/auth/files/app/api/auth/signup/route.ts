@@ -30,7 +30,9 @@ export async function POST(req: Request): Promise<Response> {
     });
 
     const headers = new Headers({
-      "Set-Cookie": `session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 60 * 60}`,
+      "Set-Cookie": `session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${
+        7 * 24 * 60 * 60
+      }`,
     });
 
     return Response.json(
