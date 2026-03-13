@@ -48,7 +48,7 @@ export const ChannelInvokeRequestSchema = z.object({
   }),
   conversationHistory: z.array(channelInvokeHistoryMessageSchema),
   generation: z.object({
-    maxResponseTokens: z.number().int().positive().optional(),
+    maxResponseTokens: z.number().int().positive().max(16384).optional(),
   }).optional(),
 });
 

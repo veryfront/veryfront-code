@@ -75,10 +75,9 @@ export class ChannelInvokeHandler extends BaseHandler {
         return this.respond(builder.json({ error: "Invalid dispatch signature" }, 401));
       }
 
+      let payload;
       try {
-        const payload = ChannelInvokeRequestSchema.parse(JSON.parse(rawBody));
-        const response = await executeChannelInvoke(payload, ctx, this.deps);
-        return this.respond(builder.json(response, 200));
+        payload = ChannelInvokeRequestSchema.parse(JSON.parse(rawBody));
       } catch (error) {
         this.logWarn("Channel invoke request validation failed", {
           error: error instanceof Error ? error.message : String(error),
@@ -87,6 +86,9 @@ export class ChannelInvokeHandler extends BaseHandler {
         });
         return this.respond(builder.json({ error: "Invalid channel invoke request" }, 400));
       }
+
+      const response = await executeChannelInvoke(payload, ctx, this.deps);
+      return this.respond(builder.json(response, 200));
     });
   }
 }

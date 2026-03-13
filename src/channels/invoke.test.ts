@@ -183,6 +183,44 @@ describe("channels/invoke", () => {
       );
     });
 
+    it("rejects an expired dispatch signature", async () => {
+      const payload = createPayload();
+      const body = JSON.stringify(payload);
+      const now = Math.floor(Date.now() / 1000);
+      const { jws, publicKeyPem } = await createDispatchSignature(body, {
+        iat: now - 120,
+        exp: now - 60,
+      });
+
+      await assertRejects(() =>
+        verifyDispatchJws(jws, body, {
+          audience: "demo-project",
+          publicKeyPem,
+          maxAgeSeconds: 60,
+          expectedProjectId: "proj-1",
+        })
+      );
+    });
+
+    it("rejects a dispatch signature issued in the future", async () => {
+      const payload = createPayload();
+      const body = JSON.stringify(payload);
+      const now = Math.floor(Date.now() / 1000);
+      const { jws, publicKeyPem } = await createDispatchSignature(body, {
+        iat: now + 30,
+        exp: now + 90,
+      });
+
+      await assertRejects(() =>
+        verifyDispatchJws(jws, body, {
+          audience: "demo-project",
+          publicKeyPem,
+          maxAgeSeconds: 60,
+          expectedProjectId: "proj-1",
+        })
+      );
+    });
+
     it("rejects a dispatch when the body hash does not match", async () => {
       const payload = createPayload();
       const body = JSON.stringify(payload);
