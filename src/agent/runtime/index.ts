@@ -194,6 +194,7 @@ export class AgentRuntime {
     input: string | Message[],
     context?: Record<string, unknown>,
     modelOverride?: string,
+    maxOutputTokensOverride?: number,
   ): Promise<AgentResponse> {
     const requestedModel = resolveConfiguredAgentModel(modelOverride || this.config.model);
     const resolvedModelString = maybeUpgradeLocalModel(requestedModel);
@@ -221,7 +222,13 @@ export class AgentRuntime {
       const chain = new MiddlewareChain(this.config.middleware);
       return chain.execute(
         agentContext,
-        () => this.executeAgentLoop(systemPrompt, messages, resolvedModelString),
+        () =>
+          this.executeAgentLoop(
+            systemPrompt,
+            messages,
+            resolvedModelString,
+            maxOutputTokensOverride,
+          ),
       );
     });
   }
@@ -238,6 +245,7 @@ export class AgentRuntime {
       onChunk?: (chunk: string) => void;
     },
     modelOverride?: string,
+    maxOutputTokensOverride?: number,
   ): Promise<ReadableStream<Uint8Array>> {
     const requestedModel = resolveConfiguredAgentModel(modelOverride || this.config.model);
     // Auto-upgrade local/* to a cloud provider when API keys are available.
@@ -300,6 +308,7 @@ export class AgentRuntime {
             toolContext,
             resolvedModelString,
             languageModel,
+            maxOutputTokensOverride,
           );
 
           sendSSE(controller, encoder, { type: "text-end", id: textPartId });
@@ -325,6 +334,7 @@ export class AgentRuntime {
     systemPrompt: string,
     messages: Message[],
     modelString?: string,
+    maxOutputTokensOverride?: number,
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
@@ -373,7 +383,7 @@ export class AgentRuntime {
             system: systemPrompt,
             messages: convertToModelMessages(currentMessages),
             tools: convertToolsToAISDK(tools),
-            maxOutputTokens: this.config.memory?.maxTokens ?? DEFAULT_MAX_TOKENS,
+            maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
             temperature: DEFAULT_TEMPERATURE,
           });
         });
@@ -556,6 +566,7 @@ export class AgentRuntime {
     toolContext?: Record<string, unknown>,
     modelString?: string,
     resolvedModel?: LanguageModel,
+    maxOutputTokensOverride?: number,
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
     const maxSteps = this.computeMaxSteps(maxAgentSteps);
@@ -597,7 +608,7 @@ export class AgentRuntime {
         system: systemPrompt,
         messages: convertToModelMessages(currentMessages),
         tools: convertToolsToAISDK(tools),
-        maxOutputTokens: this.config.memory?.maxTokens ?? DEFAULT_MAX_TOKENS,
+        maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
         temperature: DEFAULT_TEMPERATURE,
       });
 
@@ -816,6 +827,18 @@ export class AgentRuntime {
   private computeMaxSteps(platformLimit: number): number {
     const edgeMaxSteps = this.config.edge?.enabled ? this.config.edge.maxSteps : undefined;
     return getMaxSteps(this.config.maxSteps, edgeMaxSteps, platformLimit);
+  }
+
+  private resolveMaxOutputTokens(maxOutputTokensOverride?: number): number {
+    if (
+      typeof maxOutputTokensOverride === "number" &&
+      Number.isFinite(maxOutputTokensOverride) &&
+      maxOutputTokensOverride > 0
+    ) {
+      return Math.floor(maxOutputTokensOverride);
+    }
+
+    return this.config.memory?.maxTokens ?? DEFAULT_MAX_TOKENS;
   }
 
   /**

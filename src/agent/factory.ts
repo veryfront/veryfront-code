@@ -159,7 +159,7 @@ export function agent(config: AgentConfig): Agent {
     generate(input): Promise<AgentResponse> {
       return withSpan(
         "agent.factory.generate",
-        () => runtime.generate(input.input, input.context, input.model),
+        () => runtime.generate(input.input, input.context, input.model, input.maxOutputTokens),
         { "agent.id": id },
       );
     },
@@ -178,10 +178,16 @@ export function agent(config: AgentConfig): Agent {
             ]
             : (input.messages ?? []);
 
-          const stream = await runtime.stream(inputMessages, input.context, {
-            onToolCall: input.onToolCall,
-            onChunk: input.onChunk,
-          }, input.model);
+          const stream = await runtime.stream(
+            inputMessages,
+            input.context,
+            {
+              onToolCall: input.onToolCall,
+              onChunk: input.onChunk,
+            },
+            input.model,
+            input.maxOutputTokens,
+          );
 
           return createAgentStreamResult(stream);
         },
@@ -197,6 +203,7 @@ export function agent(config: AgentConfig): Agent {
             messages?: Message[];
             context?: Record<string, unknown>;
             model?: string;
+            maxOutputTokens?: number;
           } = await request.json();
 
           // Validate model override against allowlist when configured
@@ -215,7 +222,13 @@ export function agent(config: AgentConfig): Agent {
           }
 
           const messages = body.messages ?? [];
-          const stream = await runtime.stream(messages, body.context, undefined, modelOverride);
+          const stream = await runtime.stream(
+            messages,
+            body.context,
+            undefined,
+            modelOverride,
+            body.maxOutputTokens,
+          );
 
           return new Response(stream, { headers: STREAMING_HEADERS });
         },
