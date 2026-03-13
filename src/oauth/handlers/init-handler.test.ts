@@ -1,8 +1,5 @@
 import { assertEquals } from "#std/assert";
-import {
-  createOAuthDisconnectHandler,
-  createOAuthStatusHandler,
-} from "./init-handler.ts";
+import { createOAuthDisconnectHandler, createOAuthStatusHandler } from "./init-handler.ts";
 import { MemoryTokenStore } from "../token-store/memory.ts";
 import type { OAuthServiceConfig } from "../types.ts";
 
