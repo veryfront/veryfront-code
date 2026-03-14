@@ -6,12 +6,12 @@
  */
 
 import { createWriteStream, existsSync, mkdirSync, unlinkSync, chmodSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import https from "node:https";
 import os from "node:os";
-import { createReadStream, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { verifyChecksum } from "./postinstall-lib.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const platform = os.platform();
@@ -86,7 +86,7 @@ function downloadBinary(url, dest, maxRedirects = 5) {
 
         const file = createWriteStream(dest);
         response.pipe(file);
-        file.on('finish', () => { file.close(); resolve(); });
+        file.on('finish', () => { file.close(() => resolve()); });
         file.on("error", (err) => {
           try { if (existsSync(dest)) unlinkSync(dest); }
           catch (e) { console.warn("   Warning: Failed to clean up partial download:", e.message); }
@@ -97,67 +97,6 @@ function downloadBinary(url, dest, maxRedirects = 5) {
 
     follow(url, 0);
   });
-}
-
-function computeFileHash(filePath) {
-  return new Promise((resolve, reject) => {
-    const hash = createHash("sha256");
-    const stream = createReadStream(filePath);
-    stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("end", () => resolve(hash.digest("hex")));
-    stream.on("error", reject);
-  });
-}
-
-function downloadText(url, maxRedirects = 5) {
-  return new Promise((resolve, reject) => {
-    function follow(currentUrl, redirectCount) {
-      if (redirectCount > maxRedirects) {
-        return reject(new Error("Too many redirects"));
-      }
-      https.get(currentUrl, (response) => {
-        const { statusCode = 0, headers } = response;
-        if (statusCode >= 301 && statusCode <= 308 && statusCode !== 304) {
-          response.resume();
-          const location = headers.location;
-          if (!location) return reject(new Error("Redirect missing Location"));
-          try { return follow(new URL(location, currentUrl).toString(), redirectCount + 1); }
-          catch { return reject(new Error(`Invalid redirect URL: ${location}`)); }
-        }
-        if (statusCode !== 200) {
-          response.resume();
-          return reject(new Error(`HTTP ${statusCode}`));
-        }
-        let data = "";
-        response.on("data", (chunk) => { data += chunk; });
-        response.on("end", () => resolve(data));
-      }).on("error", reject);
-    }
-    follow(url, 0);
-  });
-}
-
-async function verifyChecksum(filePath, checksumUrl) {
-  let checksumText;
-  try {
-    checksumText = await downloadText(checksumUrl);
-  } catch {
-    console.warn("⚠️  No checksum file available — skipping verification");
-    return;
-  }
-
-  // Checksum file format: "<hash>  <filename>" or just "<hash>"
-  const expectedHash = checksumText.trim().split(/\s+/)[0].toLowerCase();
-  const actualHash = await computeFileHash(filePath);
-
-  if (actualHash !== expectedHash) {
-    try { if (existsSync(filePath)) unlinkSync(filePath); } catch {}
-    throw new Error(
-      `Checksum mismatch!\n   Expected: ${expectedHash}\n   Actual:   ${actualHash}`
-    );
-  }
-
-  console.log("✅ Checksum verified");
 }
 
 async function install() {
