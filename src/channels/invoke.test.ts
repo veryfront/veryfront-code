@@ -322,22 +322,25 @@ describe("channels/invoke", () => {
       });
 
       assertEquals(discoveryCalls, 1);
-      assertEquals(response, ChannelAssistantsResponseSchema.parse({
-        assistants: [
-          {
-            id: "assistant-a",
-            name: "Alpha",
-            description: "Primary assistant",
-            model: "openai/gpt-5",
-          },
-          {
-            id: "assistant-b",
-            name: "Beta",
-            description: null,
-            model: "anthropic/claude-sonnet-4-6",
-          },
-        ],
-      }));
+      assertEquals(
+        response,
+        ChannelAssistantsResponseSchema.parse({
+          assistants: [
+            {
+              id: "assistant-a",
+              name: "Alpha",
+              description: "Primary assistant",
+              model: "openai/gpt-5",
+            },
+            {
+              id: "assistant-b",
+              name: "Beta",
+              description: null,
+              model: "anthropic/claude-sonnet-4-6",
+            },
+          ],
+        }),
+      );
     });
 
     it("validates assistants request payload shape", () => {

@@ -2,9 +2,9 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import {
   ChannelAssistantsRequestSchema,
+  type ChannelInvokeDeps,
   defaultChannelInvokeDeps,
   listChannelAssistants,
-  type ChannelInvokeDeps,
   verifyDispatchJws,
 } from "../../../channels/invoke.ts";
 import {

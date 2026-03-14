@@ -93,7 +93,11 @@ describe("server/handlers/request/channel-assistants.handler", () => {
             stream: async () => ({ toDataStreamResponse: () => new Response() } as never),
             respond: async () => new Response(),
             getMemory: () => ({} as never),
-            getMemoryStats: async () => ({ totalMessages: 0, estimatedTokens: 0, type: "conversation" }),
+            getMemoryStats: async () => ({
+              totalMessages: 0,
+              estimatedTokens: 0,
+              type: "conversation",
+            }),
             clearMemory: async () => {},
           };
         }
