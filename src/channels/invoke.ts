@@ -33,11 +33,11 @@ const channelInvokeHistoryMessageSchema = z.object({
   createdAt: z.string().optional(),
 });
 
-export const ChannelInvokeRequestSchema = z.object({
+const channelInvokeRequestWireSchema = z.object({
   dispatchId: z.string().min(1),
   conversationId: z.string().min(1),
   projectId: z.string().min(1),
-  agentConfigId: z.string().min(1),
+  assistantId: z.string().min(1),
   platform: z.literal("slack"),
   inboundMessage: z.object({
     text: z.string(),
@@ -50,6 +50,25 @@ export const ChannelInvokeRequestSchema = z.object({
   generation: z.object({
     maxResponseTokens: z.number().int().positive().max(16384).optional(),
   }).optional(),
+});
+
+export const ChannelInvokeRequestSchema = channelInvokeRequestWireSchema;
+
+export const ChannelAssistantsRequestSchema = z.object({
+  requestId: z.string().min(1),
+  projectId: z.string().min(1),
+  platform: z.literal("slack"),
+});
+
+export const ChannelAssistantSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().nullable().optional(),
+  model: z.string().nullable().optional(),
+});
+
+export const ChannelAssistantsResponseSchema = z.object({
+  assistants: z.array(ChannelAssistantSchema),
 });
 
 const channelTextPartSchema = z.object({
@@ -124,9 +143,12 @@ const dispatchClaimsSchema = z.object({
 
 export type ChannelInvokeRequest = z.infer<typeof ChannelInvokeRequestSchema>;
 export type ChannelInvokeResponse = z.infer<typeof ChannelInvokeResponseSchema>;
+export type ChannelAssistantsRequest = z.infer<typeof ChannelAssistantsRequestSchema>;
+export type ChannelAssistantsResponse = z.infer<typeof ChannelAssistantsResponseSchema>;
 
 type ChannelResponsePart = z.infer<typeof ChannelResponsePartSchema>;
 type DispatchClaims = z.infer<typeof dispatchClaimsSchema>;
+type ChannelAssistant = z.infer<typeof ChannelAssistantSchema>;
 
 export interface ChannelInvokeDeps {
   ensureProjectDiscovery: (ctx: HandlerContext) => Promise<void>;
@@ -139,6 +161,34 @@ export const defaultChannelInvokeDeps: ChannelInvokeDeps = {
   getAgent: getRegisteredAgent,
   getAllAgentIds: getRegisteredAgentIds,
 };
+
+function getAssistantMetadata(agent: Agent): ChannelAssistant {
+  const rawConfig = agent.config as unknown as Record<string, unknown>;
+
+  return ChannelAssistantSchema.parse({
+    id: agent.id,
+    name: typeof rawConfig.name === "string" && rawConfig.name.trim().length > 0
+      ? rawConfig.name
+      : agent.id,
+    description: typeof rawConfig.description === "string" ? rawConfig.description : null,
+    model: agent.config.model ?? null,
+  });
+}
+
+export async function listChannelAssistants(
+  ctx: HandlerContext,
+  deps: ChannelInvokeDeps,
+): Promise<ChannelAssistantsResponse> {
+  await deps.ensureProjectDiscovery(ctx);
+
+  const assistants = deps.getAllAgentIds()
+    .map((id) => deps.getAgent(id))
+    .filter((agent): agent is Agent => Boolean(agent))
+    .map(getAssistantMetadata)
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  return ChannelAssistantsResponseSchema.parse({ assistants });
+}
 
 function base64urlDecodeToBytes(input: string): ArrayBuffer {
   const normalized = input
@@ -299,35 +349,10 @@ export function normalizeConversationHistoryForRuntime(
 }
 
 export function resolveChannelInvokeAgent(
-  agentConfigId: string,
+  assistantId: string,
   deps: Pick<ChannelInvokeDeps, "getAgent" | "getAllAgentIds">,
 ): Agent | undefined {
-  const exactAgent = deps.getAgent(agentConfigId);
-  if (exactAgent) {
-    return exactAgent;
-  }
-
-  const agentIds = deps.getAllAgentIds();
-  if (agentIds.length !== 1) {
-    return undefined;
-  }
-
-  const onlyAgentId = agentIds[0];
-  if (!onlyAgentId) {
-    return undefined;
-  }
-  const onlyAgent = deps.getAgent(onlyAgentId);
-  if (onlyAgent) {
-    logger.warn(
-      "Channel invoke fell back to the only discovered runtime agent because agentConfigId did not match a registry id",
-      {
-        requestedAgentConfigId: agentConfigId,
-        resolvedAgentId: onlyAgentId,
-      },
-    );
-  }
-
-  return onlyAgent;
+  return deps.getAgent(assistantId);
 }
 
 function normalizeToolCallState(status: string): "pending" | "completed" | "error" {
@@ -454,10 +479,10 @@ export async function executeChannelInvoke(
 ): Promise<ChannelInvokeResponse> {
   await deps.ensureProjectDiscovery(ctx);
 
-  const agent = resolveChannelInvokeAgent(payload.agentConfigId, deps);
+  const agent = resolveChannelInvokeAgent(payload.assistantId, deps);
   if (!agent) {
     logger.error("Channel invoke could not resolve a runtime agent for the request", {
-      requestedAgentConfigId: payload.agentConfigId,
+      requestedAssistantId: payload.assistantId,
       discoveredAgentIds: deps.getAllAgentIds(),
       projectSlug: ctx.projectSlug,
       projectId: ctx.projectId,
@@ -482,7 +507,7 @@ export async function executeChannelInvoke(
         dispatchId: payload.dispatchId,
         conversationId: payload.conversationId,
         projectId: payload.projectId,
-        agentConfigId: payload.agentConfigId,
+        assistantId: payload.assistantId,
         channel: payload.inboundMessage,
       },
       ...(payload.generation?.maxResponseTokens

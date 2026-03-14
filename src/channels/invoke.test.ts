@@ -6,9 +6,12 @@ import type { HandlerContext } from "#veryfront/types";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import {
   buildChannelResponseParts,
+  ChannelAssistantsRequestSchema,
+  ChannelAssistantsResponseSchema,
   type ChannelInvokeDeps,
   type ChannelInvokeRequest,
   executeChannelInvoke,
+  listChannelAssistants,
   normalizeConversationHistoryForRuntime,
   resolveChannelInvokeAgent,
   verifyDispatchJws,
@@ -76,7 +79,7 @@ function createPayload(
     dispatchId: "dispatch-1",
     conversationId: "conversation-1",
     projectId: "proj-1",
-    agentConfigId: "agent-1",
+    assistantId: "agent-1",
     platform: "slack",
     inboundMessage: {
       text: "Hello from Slack",
@@ -284,6 +287,74 @@ describe("channels/invoke", () => {
     });
   });
 
+  describe("listChannelAssistants", () => {
+    it("returns discovered runtime assistants sorted by name", async () => {
+      let discoveryCalls = 0;
+      const response = await listChannelAssistants(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {
+          discoveryCalls += 1;
+        },
+        getAgent: (id) => {
+          if (id === "assistant-b") {
+            return {
+              ...createAgent({ id }),
+              config: {
+                system: "You are Beta.",
+                model: "anthropic/claude-sonnet-4-6",
+                name: "Beta",
+              } as unknown as Agent["config"],
+            };
+          }
+          if (id === "assistant-a") {
+            return {
+              ...createAgent({ id }),
+              config: {
+                system: "You are Alpha.",
+                model: "openai/gpt-5",
+                name: "Alpha",
+                description: "Primary assistant",
+              } as unknown as Agent["config"],
+            };
+          }
+          return undefined;
+        },
+        getAllAgentIds: () => ["assistant-b", "assistant-a"],
+      });
+
+      assertEquals(discoveryCalls, 1);
+      assertEquals(
+        response,
+        ChannelAssistantsResponseSchema.parse({
+          assistants: [
+            {
+              id: "assistant-a",
+              name: "Alpha",
+              description: "Primary assistant",
+              model: "openai/gpt-5",
+            },
+            {
+              id: "assistant-b",
+              name: "Beta",
+              description: null,
+              model: "anthropic/claude-sonnet-4-6",
+            },
+          ],
+        }),
+      );
+    });
+
+    it("validates assistants request payload shape", () => {
+      const parsed = ChannelAssistantsRequestSchema.parse({
+        requestId: "request-1",
+        projectId: "proj-1",
+        platform: "slack",
+      });
+
+      assertEquals(parsed.platform, "slack");
+      assertEquals(parsed.requestId, "request-1");
+    });
+  });
+
   describe("resolveChannelInvokeAgent", () => {
     it("returns an exact registry match when available", () => {
       const agent = createAgent({ id: "agent-1" });
@@ -295,20 +366,10 @@ describe("channels/invoke", () => {
       assertEquals(resolved, agent);
     });
 
-    it("falls back only when exactly one runtime agent exists", () => {
-      const agent = createAgent({ id: "agent-runtime" });
-      const resolved = resolveChannelInvokeAgent("api-agent-config", {
-        getAgent: (id) => id === "agent-runtime" ? agent : undefined,
-        getAllAgentIds: () => ["agent-runtime"],
-      });
-
-      assertEquals(resolved, agent);
-    });
-
-    it("fails closed when multiple runtime agents make the mapping ambiguous", () => {
+    it("fails closed when the requested assistant is not registered", () => {
       const resolved = resolveChannelInvokeAgent("api-agent-config", {
         getAgent: () => undefined,
-        getAllAgentIds: () => ["agent-a", "agent-b"],
+        getAllAgentIds: () => ["agent-runtime"],
       });
 
       assertEquals(resolved, undefined);
@@ -411,6 +472,23 @@ describe("channels/invoke", () => {
       assertEquals(response, {
         ignored: false,
         error: { code: "provider_error", retryable: false },
+      });
+    });
+
+    it("fails closed when the requested assistant is not registered on the runtime", async () => {
+      const response = await executeChannelInvoke(
+        createPayload({ assistantId: "assistant-missing" }),
+        createHandlerContext(),
+        {
+          ensureProjectDiscovery: async () => {},
+          getAgent: () => undefined,
+          getAllAgentIds: () => ["agent-1"],
+        },
+      );
+
+      assertEquals(response, {
+        ignored: false,
+        error: { code: "internal_error", retryable: false },
       });
     });
   });
