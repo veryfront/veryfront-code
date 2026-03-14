@@ -61,7 +61,7 @@ function createPayload(): ChannelInvokeRequest {
     dispatchId: "dispatch-1",
     conversationId: "conversation-1",
     projectId: "proj-1",
-    agentConfigId: "agent-1",
+    assistantId: "agent-1",
     platform: "slack",
     inboundMessage: {
       text: "Hello from Slack",
@@ -200,7 +200,7 @@ describe("server/handlers/request/channel-invoke.handler", () => {
     const invalidBody = JSON.stringify({
       dispatchId: "dispatch-1",
       projectId: "proj-1",
-      agentConfigId: "agent-1",
+      assistantId: "agent-1",
       platform: "slack",
       inboundMessage: {
         text: "Hello from Slack",

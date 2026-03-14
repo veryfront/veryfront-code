@@ -51,6 +51,7 @@ import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
 import { MarkdownPreviewHandler } from "../handlers/preview/markdown-preview.handler.ts";
 import { OpenAPIHandler } from "../handlers/request/openapi.handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs.handler.ts";
+import { ChannelAssistantsHandler } from "../handlers/request/channel-assistants.handler.ts";
 import { ChannelInvokeHandler } from "../handlers/request/channel-invoke.handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
@@ -203,6 +204,7 @@ export function createVeryfrontHandler(
     new DebugContextHandler(),
     new OpenAPIHandler(),
     new OpenAPIDocsHandler(),
+    new ChannelAssistantsHandler(),
     new ChannelInvokeHandler(),
     new DevDashboardHandler(),
     new ProjectsHandler(),
