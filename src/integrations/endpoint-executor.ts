@@ -18,12 +18,11 @@ const PRIVATE_IP_RANGES = [
   /^169\.254\./, // 169.254.0.0/16
   /^0\./, // 0.0.0.0/8
   /^::1$/, // IPv6 loopback
-  /^fc00:/i, // IPv6 unique local (fc00::/7)
-  /^fd/i, // IPv6 unique local (fd00::/8)
+  /^f[cd][0-9a-f]{2}:/i, // IPv6 unique local (fc00::/7)
   /^fe80:/i, // IPv6 link-local (fe80::/10)
 ];
 
-function validateEndpointUrl(url: string): void {
+export function validateEndpointUrl(url: string): void {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -38,14 +37,19 @@ function validateEndpointUrl(url: string): void {
   }
 
   const hostname = parsed.hostname.toLowerCase();
-  if (hostname === "localhost" || hostname === "[::1]") {
+  if (hostname === "localhost") {
     throw INVALID_ARGUMENT.create({
       detail: "Endpoint URL must not target localhost",
     });
   }
 
+  // Strip IPv6 brackets for regex matching
+  const bare = hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+
   for (const range of PRIVATE_IP_RANGES) {
-    if (range.test(hostname)) {
+    if (range.test(bare)) {
       throw INVALID_ARGUMENT.create({
         detail: "Endpoint URL must not target private/internal networks",
       });
