@@ -18,6 +18,7 @@ export function downloadText(url, maxRedirects = 5) {
       if (redirectCount > maxRedirects) {
         return reject(new Error("Too many redirects"));
       }
+      let settled = false;
       https.get(currentUrl, (response) => {
         const { statusCode = 0, headers } = response;
         if (statusCode >= 301 && statusCode <= 308 && statusCode !== 304) {
@@ -35,13 +36,14 @@ export function downloadText(url, maxRedirects = 5) {
         let data = "";
         response.on("data", (chunk) => {
           data += chunk;
-          if (data.length > MAX_CHECKSUM_SIZE) {
+          if (!settled && data.length > MAX_CHECKSUM_SIZE) {
+            settled = true;
             response.destroy();
             reject(new Error("Checksum file too large"));
           }
         });
-        response.on("end", () => resolve(data));
-      }).on("error", reject);
+        response.on("end", () => { if (!settled) resolve(data); });
+      }).on("error", (err) => { if (!settled) reject(err); });
     }
     follow(url, 0);
   });
