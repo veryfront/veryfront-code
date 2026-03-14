@@ -119,6 +119,8 @@ async function install() {
     console.log('   npx veryfront create my-app');
 
   } catch (error) {
+    // Clean up unverified binary so the JS fallback is used instead
+    try { if (existsSync(binPath)) unlinkSync(binPath); } catch {}
     // Graceful fallback - bundled JS CLI will be used instead
     console.warn("⚠️  Binary download failed:", error.message);
     console.warn("   Falling back to bundled JavaScript CLI (slower startup)");

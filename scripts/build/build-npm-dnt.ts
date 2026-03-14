@@ -190,6 +190,7 @@ await build({
 		// Copy postinstall script
 		await Deno.mkdir("./npm/scripts", { recursive: true });
 		await Deno.copyFile("./scripts/postinstall.js", "./npm/scripts/postinstall.js");
+		await Deno.copyFile("./scripts/postinstall-lib.js", "./npm/scripts/postinstall-lib.js");
 
 		// Note: Templates are now embedded in manifest.json which is bundled by dnt
 		// No need to copy template files separately
