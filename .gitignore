@@ -19,8 +19,7 @@ dist/
 *.backup/
 
 # IDE
-.claude/*
-!.claude/skills/
+.claude/
 .vscode/
 .idea/
 
