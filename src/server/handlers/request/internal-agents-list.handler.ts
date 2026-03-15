@@ -17,6 +17,7 @@ import {
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
+import { ZodError } from "zod";
 
 export class InternalAgentsListHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -82,7 +83,7 @@ export class InternalAgentsListHandler extends BaseHandler {
           return this.respond(builder.json({ error: error.message }, error.status));
         }
 
-        if (error instanceof SyntaxError || (error instanceof Error && error.name === "ZodError")) {
+        if (error instanceof SyntaxError || error instanceof ZodError) {
           this.logWarn("Internal agents list request validation failed", {
             error: error instanceof Error ? error.message : String(error),
             projectSlug: ctx.projectSlug,
