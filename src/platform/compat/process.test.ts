@@ -93,6 +93,22 @@ describe("Process Compat", () => {
       setEnv(testKey, specialValue);
       assertEquals(getEnv(testKey), specialValue);
     });
+
+    it("keeps direct env readers aligned inside the test overlay", () => {
+      setEnv(testKey, testValue);
+
+      try {
+        assertEquals(getEnv(testKey), testValue);
+        assertEquals(process.env[testKey], testValue);
+        assertEquals(Deno.env.get(testKey), testValue);
+        assertEquals(env()[testKey], testValue);
+      } finally {
+        deleteEnv(testKey);
+      }
+
+      assertEquals(process.env[testKey], undefined);
+      assertEquals(Deno.env.get(testKey), undefined);
+    });
   });
 
   describe("getHostEnv", () => {

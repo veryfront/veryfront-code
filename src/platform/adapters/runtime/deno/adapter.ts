@@ -16,7 +16,12 @@ import type {
   WebSocketUpgrade,
 } from "../../base.ts";
 import { serverLogger } from "#veryfront/utils";
-import { getEnvOverlayStorage } from "../../../compat/process.ts";
+import {
+  env as getEnvObject,
+  getEnv,
+  getEnvOverlayStorage,
+  setEnv,
+} from "../../../compat/process.ts";
 import {
   createFileWatcher,
   createWatcherIterator,
@@ -271,22 +276,15 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
 
 class DenoEnvironmentAdapter implements EnvironmentAdapter {
   get(key: string): string | undefined {
-    if (typeof Deno === "undefined" || typeof Deno.env === "undefined") return undefined;
-    return Deno.env.get(key);
+    return getEnv(key);
   }
 
   set(key: string, value: string): void {
-    if (typeof Deno === "undefined" || typeof Deno.env === "undefined") {
-      throw NOT_SUPPORTED.create({
-        detail: "DenoEnvironmentAdapter.set() can only be used in Deno runtime",
-      });
-    }
-    Deno.env.set(key, value);
+    setEnv(key, value);
   }
 
   toObject(): Record<string, string> {
-    if (typeof Deno === "undefined" || typeof Deno.env === "undefined") return {};
-    return Deno.env.toObject();
+    return getEnvObject();
   }
 }
 
