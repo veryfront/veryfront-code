@@ -1,4 +1,5 @@
 import type { AgentResponse } from "#veryfront/agent";
+import { z } from "zod";
 
 const encoder = new TextEncoder();
 
@@ -31,8 +32,67 @@ export function createStreamTransformState(): StreamTransformState {
   };
 }
 
+const agUiEventPayloadSchemas = {
+  RunStarted: z.object({
+    runId: z.string().min(1),
+    threadId: z.string().min(1),
+    agentId: z.string().min(1),
+  }),
+  TextMessageStart: z.object({
+    messageId: z.string().min(1),
+    role: z.literal("assistant"),
+  }),
+  TextMessageContent: z.object({
+    messageId: z.string().min(1),
+    delta: z.string(),
+  }),
+  TextMessageEnd: z.object({
+    messageId: z.string().min(1),
+  }),
+  ToolCallStart: z.object({
+    toolCallId: z.string().min(1),
+    toolCallName: z.string().min(1),
+  }),
+  ToolCallArgs: z.object({
+    toolCallId: z.string().min(1),
+    delta: z.string(),
+  }),
+  ToolCallEnd: z.object({
+    toolCallId: z.string().min(1),
+  }),
+  ToolCallResult: z.object({
+    toolCallId: z.string().min(1),
+    result: z.unknown(),
+    isError: z.boolean().optional(),
+  }),
+  StepStarted: z.object({
+    stepIndex: z.number().int().positive(),
+  }),
+  StepFinished: z.object({
+    stepIndex: z.number().int().positive(),
+  }),
+  RunError: z.object({
+    code: z.string().min(1).optional(),
+    message: z.string().min(1),
+  }),
+  RunFinished: z.object({
+    metadata: z.object({
+      provider: z.string().optional(),
+      model: z.string().optional(),
+      inputTokens: z.number().int().nonnegative().optional(),
+      outputTokens: z.number().int().nonnegative().optional(),
+      totalTokens: z.number().int().nonnegative().optional(),
+      finishReason: z.string().optional(),
+    }),
+  }),
+} as const satisfies Record<string, z.ZodType<Record<string, unknown>>>;
+
+type AgUiEventName = keyof typeof agUiEventPayloadSchemas;
+
 export function formatAgUiEvent(event: string, payload: Record<string, unknown>): Uint8Array {
-  return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+  const schema = agUiEventPayloadSchemas[event as AgUiEventName];
+  const validatedPayload = schema ? schema.parse(payload) : payload;
+  return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(validatedPayload)}\n\n`);
 }
 
 export function parseSseJsonEvents(chunk: string): {

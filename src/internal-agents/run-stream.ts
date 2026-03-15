@@ -218,6 +218,7 @@ export async function createRuntimeAgentStreamResponse(
   let completedResponse: AgentResponse | null = null;
   const runtimeMessages = normalizeRuntimeMessages(input.messages);
   let runtimeStream: ReadableStream<Uint8Array>;
+  let clientAttached = true;
   try {
     runtimeStream = await runtime.stream(
       runtimeMessages,
@@ -246,6 +247,19 @@ export async function createRuntimeAgentStreamResponse(
       let remainder = "";
       let aborted = false;
 
+      const enqueueIfAttached = (event: string, payload: Record<string, unknown>) => {
+        const encodedEvent = formatAgUiEvent(event, payload);
+        if (!clientAttached) {
+          return;
+        }
+
+        try {
+          controller.enqueue(encodedEvent);
+        } catch {
+          clientAttached = false;
+        }
+      };
+
       const throwIfAborted = () => {
         if (aborted || abortSignal.aborted) {
           throw new AgentRunCancelledError();
@@ -258,13 +272,11 @@ export async function createRuntimeAgentStreamResponse(
       };
 
       abortSignal.addEventListener("abort", abortHandler, { once: true });
-      controller.enqueue(
-        formatAgUiEvent("RunStarted", {
-          runId: input.runId,
-          threadId: input.threadId,
-          agentId: input.agentId,
-        }),
-      );
+      enqueueIfAttached("RunStarted", {
+        runId: input.runId,
+        threadId: input.threadId,
+        agentId: input.agentId,
+      });
 
       try {
         while (true) {
@@ -283,7 +295,7 @@ export async function createRuntimeAgentStreamResponse(
 
           for (const event of parsed.events) {
             for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
-              controller.enqueue(formatAgUiEvent(mappedEvent.event, mappedEvent.payload));
+              enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
             }
           }
         }
@@ -293,37 +305,40 @@ export async function createRuntimeAgentStreamResponse(
         const trailingEvents = parseSseJsonEvents(`${remainder}\n\n`);
         for (const event of trailingEvents.events) {
           for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
-            controller.enqueue(formatAgUiEvent(mappedEvent.event, mappedEvent.payload));
+            enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
           }
         }
 
         throwIfAborted();
 
         for (const mappedEvent of finalizeRunEvents(state, completedResponse)) {
-          controller.enqueue(formatAgUiEvent(mappedEvent.event, mappedEvent.payload));
+          enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
         }
         deps.sessionManager.completeRun(input.runId);
       } catch (error) {
         if (error instanceof AgentRunCancelledError) {
           deps.sessionManager.cancelRun(input.runId);
-          controller.enqueue(formatAgUiEvent("RunError", {
+          enqueueIfAttached("RunError", {
             code: "CANCELLED",
             message: error.message,
-          }));
+          });
         } else {
           deps.sessionManager.failRun(input.runId);
-          controller.enqueue(formatAgUiEvent("RunError", {
+          enqueueIfAttached("RunError", {
             code: "RUNTIME_ERROR",
             message: error instanceof Error ? error.message : String(error),
-          }));
+          });
         }
       } finally {
         abortSignal.removeEventListener("abort", abortHandler);
-        controller.close();
+        if (clientAttached) {
+          controller.close();
+        }
       }
     },
     cancel() {
-      deps.sessionManager.cancelRun(input.runId);
+      clientAttached = false;
+      return Promise.resolve();
     },
   });
 

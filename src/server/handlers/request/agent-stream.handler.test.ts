@@ -2,9 +2,11 @@ import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/tes
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import { AgentStreamHandler } from "./agent-stream.handler.ts";
 import {
   createAgent,
+  createInjectedToolRuntime,
   createControlPlaneSignature,
   createCtx,
   encodeDataStreamEvent,
@@ -333,6 +335,78 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(text, '"code":"CANCELLED"');
     assertEquals(text.includes("event: RunFinished"), false);
     assertEquals(sessionManager.stats.completeCalls, 0);
+    assertEquals(sessionManager.stats.failCalls, 0);
+  });
+
+  it("keeps a waiting run resumable after the client disconnects", async () => {
+    const sessionManager = new TrackingSessionManager();
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager,
+      createRuntime: createInjectedToolRuntime(
+        "studio_focus_component",
+        "tool-1",
+        { focused: true },
+      ),
+    });
+    const resumeHandler = new AgentRunResumeHandler(sessionManager);
+
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertExists(result.response.body);
+
+    const reader = result.response.body.getReader();
+    await readUntil(reader, (chunk) => chunk.includes("event: ToolCallEnd"));
+    await reader.cancel();
+
+    assertEquals(sessionManager.getRunStatus("run_1"), "waiting");
+    assertEquals(sessionManager.stats.cancelCalls, 0);
+
+    const resumeBody = JSON.stringify({
+      type: "tool_result",
+      toolCallId: "tool-1",
+      result: { focused: true },
+    });
+    const resumeSignature = await createControlPlaneSignature(resumeBody, { requestId: "run_1" });
+
+    const resumeResult = await resumeHandler.handle(
+      new Request("https://example.com/internal/agents/runs/run_1/resume", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": resumeSignature.jws,
+        },
+        body: resumeBody,
+      }),
+      createCtx(resumeSignature.publicKeyPem),
+    );
+
+    assertExists(resumeResult.response);
+    assertEquals(resumeResult.response.status, 200);
+
+    for (let attempt = 0; attempt < 20 && sessionManager.getRunStatus("run_1") !== null; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
+    assertEquals(sessionManager.stats.completeCalls, 1);
+    assertEquals(sessionManager.stats.cancelCalls, 0);
     assertEquals(sessionManager.stats.failCalls, 0);
   });
 });

@@ -68,4 +68,30 @@ describe("internal-agents/session-manager", () => {
     );
     assertEquals(sessionManager.getRunStatus("run_1"), null);
   });
+
+  it("expires waiting runs after the configured TTL", async () => {
+    const timerCallbacks: Array<() => void> = [];
+    const sessionManager = new AgentRunSessionManager({
+      waitingForToolTtlMs: 1,
+      setTimeoutFn: ((callback: () => void) => {
+        timerCallbacks.push(callback);
+        return timerCallbacks.length as unknown as number;
+      }) as typeof setTimeout,
+      clearTimeoutFn: (() => {}) as typeof clearTimeout,
+    });
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    const pending = sessionManager.waitForToolResult("run_1", "tool_1");
+    assertEquals(sessionManager.getRunStatus("run_1"), "waiting");
+
+    timerCallbacks[0]?.();
+
+    await assertRejects(
+      async () => {
+        await pending;
+      },
+      AgentRunCancelledError,
+    );
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
+  });
 });
