@@ -131,7 +131,7 @@ function normalizeMessagePart(part: Record<string, unknown>): Message["parts"][n
     typeof part.name === "string"
   ) {
     return {
-      type: `tool-${part.name}`,
+      type: "tool-call",
       toolCallId: part.id,
       toolName: part.name,
       args: normalizeToolArgs(part),

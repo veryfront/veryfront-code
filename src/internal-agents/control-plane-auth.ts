@@ -54,12 +54,28 @@ export async function verifyControlPlaneRequest(
       maxAgeSeconds: MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS,
     });
   } catch (error) {
-    logger.warn("Invalid control-plane signature", {
+    const isAuthError = error instanceof Error && (
+      error.message.includes("Control-plane") ||
+      error.message.includes("Unsupported")
+    );
+
+    if (isAuthError) {
+      logger.warn("Invalid control-plane signature", {
+        error,
+        projectSlug,
+        expectedSubject: options.expectedSubject,
+        expectedSurface: options.expectedSurface,
+      });
+      throw new ControlPlaneRequestError(401, "Invalid control-plane signature");
+    }
+
+    logger.error("Unexpected error during control-plane verification", {
       error,
       projectSlug,
-      expectedSubject: options.expectedSubject,
-      expectedSurface: options.expectedSurface,
     });
-    throw new ControlPlaneRequestError(401, "Invalid control-plane signature");
+    throw new ControlPlaneRequestError(
+      HTTP_INTERNAL_SERVER_ERROR,
+      "Internal error during request verification",
+    );
   }
 }

@@ -1,15 +1,19 @@
-function stableJsonStringify(value: unknown): string {
+function stableJsonStringify(value: unknown, depth = 0): string {
+  if (depth > 64) {
+    return JSON.stringify(value);
+  }
+
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
   }
 
   if (Array.isArray(value)) {
-    return `[${value.map((item) => stableJsonStringify(item)).join(",")}]`;
+    return `[${value.map((item) => stableJsonStringify(item, depth + 1)).join(",")}]`;
   }
 
   const entries = Object.entries(value as Record<string, unknown>)
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, item]) => `${JSON.stringify(key)}:${stableJsonStringify(item)}`);
+    .map(([key, item]) => `${JSON.stringify(key)}:${stableJsonStringify(item, depth + 1)}`);
 
   return `{${entries.join(",")}}`;
 }
@@ -55,6 +59,7 @@ export class ToolResultConflictError extends Error {
 
 const DEFAULT_WAITING_FOR_TOOL_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MS = 15 * 60 * 1000;
+const DEFAULT_MAX_CONCURRENT_SESSIONS = 100;
 
 type SessionStatus = "running" | "waiting" | "completed" | "cancelled" | "failed";
 
@@ -94,6 +99,7 @@ export class AgentRunSessionManager {
     private readonly options: {
       waitingForToolTtlMs?: number;
       sessionTtlMs?: number | null;
+      maxConcurrentSessions?: number;
       setTimeoutFn?: typeof setTimeout;
       clearTimeoutFn?: typeof clearTimeout;
     } = {},
@@ -159,10 +165,20 @@ export class AgentRunSessionManager {
     }
   }
 
+  private get maxConcurrentSessions(): number {
+    return this.options.maxConcurrentSessions ?? DEFAULT_MAX_CONCURRENT_SESSIONS;
+  }
+
   startRun(input: { runId: string; threadId: string }): AbortSignal {
     const existing = this.sessions.get(input.runId);
     if (existing && (existing.status === "running" || existing.status === "waiting")) {
       throw new AgentRunAlreadyExistsError(input.runId);
+    }
+
+    if (this.sessions.size >= this.maxConcurrentSessions) {
+      throw new Error(
+        `Maximum concurrent sessions (${this.maxConcurrentSessions}) reached`,
+      );
     }
 
     const session: AgentRunSession = {

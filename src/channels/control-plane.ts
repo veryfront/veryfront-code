@@ -174,6 +174,10 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
     throw new Error("Control-plane signature verification failed");
   }
 
+  if (claims.iss !== "veryfront-api") {
+    throw new Error("Control-plane issuer mismatch");
+  }
+
   if (claims.aud !== options.audience) {
     throw new Error("Control-plane audience mismatch");
   }
