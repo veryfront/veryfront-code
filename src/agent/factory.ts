@@ -1,6 +1,7 @@
 import type {
   Agent,
   AgentConfig,
+  AgentMiddleware,
   AgentResponse,
   AgentStreamResult,
   Message,
@@ -118,19 +119,7 @@ export function agent(config: AgentConfig): Agent {
     }
     : originalSystem;
 
-  // Prepend default security middleware unless explicitly opted out
-  const resolvedMiddleware = config.security === false ? (config.middleware ?? []) : [
-    securityMiddleware({
-      input: {
-        maxLength: 50_000,
-        blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection,
-      },
-      output: {
-        filterPII: true,
-      },
-    }),
-    ...(config.middleware ?? []),
-  ];
+  const resolvedMiddleware = resolveSecurityMiddleware(config);
 
   const platform = detectPlatform();
   const compatibility = validatePlatformCompatibility(
@@ -260,12 +249,36 @@ export function agent(config: AgentConfig): Agent {
 // Register on globalThis so compiled-binary runtime shim can delegate to the
 // real factory. External temp-file modules can't import from the embedded
 // binary FS, so they use globalThis bridges instead.
-Object.defineProperty(globalThis, "__vfAgentFactory", {
-  value: agent,
-  writable: false,
-  enumerable: false,
-  configurable: false,
-});
+if (!("__vfAgentFactory" in globalThis)) {
+  Object.defineProperty(globalThis, "__vfAgentFactory", {
+    value: agent,
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+}
+
+/**
+ * Resolve the middleware array for an agent, prepending security middleware
+ * unless explicitly opted out with `security: false`.
+ */
+export function resolveSecurityMiddleware(
+  config: Pick<AgentConfig, "security" | "middleware">,
+): AgentMiddleware[] {
+  if (config.security === false) return config.middleware ?? [];
+  return [
+    securityMiddleware({
+      input: {
+        maxLength: 50_000,
+        blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection,
+      },
+      output: {
+        filterPII: true,
+      },
+    }),
+    ...(config.middleware ?? []),
+  ];
+}
 
 let agentIdCounter = 0;
 
