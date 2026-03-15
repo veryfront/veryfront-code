@@ -10,7 +10,7 @@ import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { logger } from "#veryfront/utils";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
@@ -256,6 +256,7 @@ export async function bootstrapProd(
 function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
   const nodeEnv = getEnv("NODE_ENV") ?? getEnv("DENO_ENV");
   const proxyMode = getEnv("PROXY_MODE");
+  const controlPlanePublicKey = getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
 
   // In proxy mode (deployed pods), NODE_ENV must be explicitly set to production
   if (proxyMode === "1") {
@@ -275,6 +276,17 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
           "Expected 'production'. This may enable dev features.",
         nodeEnv,
       );
+    }
+
+    if (!controlPlanePublicKey) {
+      logger.error(
+        "[Bootstrap:Prod] CRITICAL: CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY is not set in proxy mode. " +
+          "Hosted runtimes cannot verify control-plane requests without it.",
+      );
+      throw INVALID_ARGUMENT.create({
+        detail:
+          "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set when running in proxy mode (PROXY_MODE=1)",
+      });
     }
   }
 
