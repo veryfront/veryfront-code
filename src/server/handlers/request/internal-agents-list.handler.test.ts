@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES } from "#veryfront/internal-agents/request-body.ts";
 import { InternalAgentsListHandler } from "./internal-agents-list.handler.ts";
@@ -122,6 +122,43 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     assertEquals(await result.response.json(), { error: "Invalid control-plane signature" });
   });
 
+  it("returns 401 when the project id in the signed claims does not match the body", async () => {
+    const handler = new InternalAgentsListHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+    });
+
+    const body = JSON.stringify({
+      requestId: "agents-1",
+      projectId: "proj-1",
+      surface: "studio",
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      projectId: "proj-2",
+      requestId: "agents-1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/list", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      {
+        ...createCtx(publicKeyPem),
+        projectId: undefined,
+      },
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 401);
+    assertEquals(await result.response.json(), { error: "Invalid control-plane signature" });
+  });
+
   it("rejects oversized list payloads before parsing", async () => {
     const handler = new InternalAgentsListHandler({
       ensureProjectDiscovery: async () => {},
@@ -183,5 +220,91 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 400);
     assertEquals(await result.response.json(), { error: "Invalid internal agents request" });
+  });
+
+  it("returns 400 when the request body shape is invalid", async () => {
+    const handler = new InternalAgentsListHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+    });
+
+    const body = JSON.stringify({
+      requestId: "agents-1",
+      projectId: "proj-1",
+      surface: 123,
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "agents-1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/list", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(await result.response.json(), { error: "Invalid internal agents request" });
+  });
+
+  it("rethrows unexpected discovery failures", async () => {
+    const handler = new InternalAgentsListHandler({
+      ensureProjectDiscovery: async () => {
+        throw new Error("discovery boom");
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+    });
+
+    const body = JSON.stringify({
+      requestId: "agents-1",
+      projectId: "proj-1",
+      surface: "studio",
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "agents-1",
+    });
+
+    await assertRejects(
+      () =>
+        handler.handle(
+          new Request("https://example.com/internal/agents/list", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          }),
+          createCtx(publicKeyPem),
+        ),
+      Error,
+      "discovery boom",
+    );
+  });
+
+  it("ignores non-matching agents list routes", async () => {
+    const handler = new InternalAgentsListHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/other", {
+        method: "POST",
+      }),
+      createCtx(),
+    );
+
+    assertEquals(result.response, undefined);
   });
 });

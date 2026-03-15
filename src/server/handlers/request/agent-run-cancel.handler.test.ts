@@ -78,4 +78,35 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
     assertEquals(result.response.status, 500);
     assertEquals(await result.response.json(), { error: "Internal cancel failed" });
   });
+
+  it("returns 401 when the control-plane signature is missing", async () => {
+    const handler = new AgentRunCancelHandler(new AgentRunSessionManager());
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/runs/run_1", {
+        method: "DELETE",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ runId: "run_1" }),
+      }),
+      createCtx("-----BEGIN PUBLIC KEY-----\nZmFrZQ==\n-----END PUBLIC KEY-----"),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 401);
+    assertEquals(await result.response.json(), { error: "Missing control-plane signature" });
+  });
+
+  it("ignores non-matching cancel routes", async () => {
+    const handler = new AgentRunCancelHandler(new AgentRunSessionManager());
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/runs/run_1/extra", {
+        method: "DELETE",
+      }),
+      createCtx(),
+    );
+
+    assertEquals(result.response, undefined);
+  });
 });
