@@ -30,6 +30,10 @@ describe("014.1 NODE_ENV Validation", () => {
         content.includes("NODE_ENV must be set"),
         "Should have error message for missing NODE_ENV",
       );
+      assert(
+        content.includes("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY"),
+        "Should validate control-plane signing key in proxy mode",
+      );
     });
 
     it("should check NODE_ENV before proceeding in bootstrapProd", async () => {
@@ -57,6 +61,19 @@ describe("014.1 NODE_ENV Validation", () => {
       assert(
         content.includes("proxy mode"),
         "Error message should mention proxy mode",
+      );
+    });
+
+    it("should throw error when control-plane signing key is missing in proxy mode", async () => {
+      const content = await readBootstrap();
+
+      assert(
+        content.includes("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set"),
+        "Should throw error when control-plane signing key is missing in proxy mode",
+      );
+      assert(
+        content.includes("Hosted runtimes cannot verify control-plane requests"),
+        "Should explain why the signing key is required",
       );
     });
   });

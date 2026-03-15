@@ -19,6 +19,7 @@ import { clearConfigCache } from "#veryfront/config";
 import { join } from "#veryfront/compat/path";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat";
 import { isBun, isDeno, isNode } from "../../../src/platform/compat/runtime.ts";
 import { delay } from "#std/async";
@@ -92,6 +93,28 @@ async function expectBootstrapThrows(projectDir: string, adapter: unknown): Prom
   } catch (error) {
     assertExists(error);
   }
+}
+
+function withEnvOverrides(vars: Record<string, string | undefined>): () => void {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(vars)) {
+    previous.set(key, Deno.env.get(key));
+    if (value === undefined) {
+      deleteEnv(key);
+    } else {
+      setEnv(key, value);
+    }
+  }
+
+  return () => {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        deleteEnv(key);
+      } else {
+        setEnv(key, value);
+      }
+    }
+  };
 }
 
 // ============================================================================
@@ -896,6 +919,29 @@ describe("bootstrap - Dev and Prod Modes", () => {
 
       await assertRejects(() => bootstrapProd(projectDir, adapter), Error);
     });
+  });
+
+  it("should reject proxy mode startup when control-plane signing key is missing", async () => {
+    const adapter = await getAdapter();
+    const restore = withEnvOverrides({
+      NODE_ENV: "production",
+      PROXY_MODE: "1",
+      CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY: undefined,
+    });
+
+    try {
+      await withTempProjectDir("prod_missing_control_plane_key", async (projectDir) => {
+        await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
+
+        await assertRejects(
+          () => bootstrapProd(projectDir, adapter),
+          Error,
+          "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set",
+        );
+      });
+    } finally {
+      restore();
+    }
   });
 
   it("should log FSAdapter info in dev mode", async () => {
