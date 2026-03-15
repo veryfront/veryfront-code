@@ -30,4 +30,52 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
     assertEquals(await result.response.json(), { accepted: true });
     assertEquals(sessionManager.getRunStatus("run_1"), null);
   });
+
+  it("returns 204 when the run is already inactive", async () => {
+    const handler = new AgentRunCancelHandler(new AgentRunSessionManager());
+    const body = JSON.stringify({ runId: "run_1" });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/runs/run_1", {
+        method: "DELETE",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 204);
+    assertEquals(await result.response.text(), "");
+  });
+
+  it("returns 500 when cancel handling fails unexpectedly", async () => {
+    const handler = new AgentRunCancelHandler({
+      cancelRun() {
+        throw new Error("cancel boom");
+      },
+    } as unknown as AgentRunSessionManager);
+    const body = JSON.stringify({ runId: "run_1" });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/runs/run_1", {
+        method: "DELETE",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 500);
+    assertEquals(await result.response.json(), { error: "Internal cancel failed" });
+  });
 });

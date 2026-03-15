@@ -160,6 +160,133 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(await result.response.json(), { error: "Payload too large" });
   });
 
+  it("returns 404 when the requested agent is not available", async () => {
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 404);
+    assertEquals(await result.response.json(), { error: "Agent not found" });
+  });
+
+  it("returns 400 for malformed internal agent stream payloads", async () => {
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: () => createAgent("assistant-1"),
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+    });
+
+    const body = '{"agentId":"assistant-1"';
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(await result.response.json(), { error: "Invalid internal agent stream request" });
+  });
+
+  it("returns 409 when the same run is started twice", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+              );
+            },
+          }),
+      }),
+    });
+
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const request = new Request("https://example.com/internal/agents/stream", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-veryfront-control-plane-jws": jws,
+      },
+      body,
+    });
+
+    const firstResult = await handler.handle(request.clone(), createCtx(publicKeyPem));
+    assertExists(firstResult.response);
+    assertEquals(firstResult.response.status, 200);
+
+    const secondResult = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(secondResult.response);
+    assertEquals(secondResult.response.status, 409);
+    assertEquals(await secondResult.response.json(), { error: 'Run "run_1" is already active' });
+  });
+
+  it("returns 500 when runtime execution setup fails unexpectedly", async () => {
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => {
+        throw new Error("runtime boom");
+      },
+    });
+
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 500);
+    assertEquals(await result.response.json(), { error: "Internal agent stream failed" });
+  });
+
   it("emits a cancellation error instead of finishing after an abort during a pending read", async () => {
     const sessionManager = new TrackingSessionManager();
     const handler = new AgentStreamHandler({

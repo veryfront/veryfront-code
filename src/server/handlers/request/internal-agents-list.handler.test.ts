@@ -155,4 +155,33 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     assertEquals(result.response.status, 413);
     assertEquals(await result.response.json(), { error: "Payload too large" });
   });
+
+  it("returns 400 for malformed internal agents requests", async () => {
+    const handler = new InternalAgentsListHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+    });
+
+    const body = '{"requestId":"agents-1"';
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "agents-1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/list", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(await result.response.json(), { error: "Invalid internal agents request" });
+  });
 });
