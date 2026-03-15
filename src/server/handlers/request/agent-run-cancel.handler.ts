@@ -6,6 +6,11 @@ import {
   type AgentRunSessionManager,
   agentRunSessionManager,
 } from "#veryfront/internal-agents/session-manager.ts";
+import {
+  INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+  InternalAgentRequestBodyTooLargeError,
+  readInternalAgentRequestBody,
+} from "#veryfront/internal-agents/request-body.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
@@ -42,8 +47,11 @@ export class AgentRunCancelHandler extends BaseHandler {
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined, req);
 
-      const rawBody = await req.text();
       try {
+        const rawBody = await readInternalAgentRequestBody(
+          req,
+          INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+        );
         await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: runId,
           expectedSurface: "studio",
@@ -56,6 +64,10 @@ export class AgentRunCancelHandler extends BaseHandler {
 
         return this.respond(builder.build(null, 204));
       } catch (error) {
+        if (error instanceof InternalAgentRequestBodyTooLargeError) {
+          return this.respond(builder.json({ error: error.message }, error.status));
+        }
+
         if (error instanceof ControlPlaneRequestError) {
           return this.respond(builder.json({ error: error.message }, error.status));
         }

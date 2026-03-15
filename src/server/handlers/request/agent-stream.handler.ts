@@ -10,6 +10,11 @@ import {
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
+  INTERNAL_AGENT_STREAM_MAX_BODY_BYTES,
+  InternalAgentRequestBodyTooLargeError,
+  readInternalAgentRequestBody,
+} from "#veryfront/internal-agents/request-body.ts";
+import {
   AgentRunAlreadyExistsError,
   agentRunSessionManager,
 } from "#veryfront/internal-agents/session-manager.ts";
@@ -62,8 +67,11 @@ export class AgentStreamHandler extends BaseHandler {
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined, req);
 
-      const rawBody = await req.text();
       try {
+        const rawBody = await readInternalAgentRequestBody(
+          req,
+          INTERNAL_AGENT_STREAM_MAX_BODY_BYTES,
+        );
         const payload = RuntimeRunAgentInputSchema.parse(JSON.parse(rawBody));
         await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: payload.runId,
@@ -80,6 +88,10 @@ export class AgentStreamHandler extends BaseHandler {
         const response = await createRuntimeAgentStreamResponse(payload, agent as Agent, this.deps);
         return this.respond(applyBuilderHeaders(response, builder.headers));
       } catch (error) {
+        if (error instanceof InternalAgentRequestBodyTooLargeError) {
+          return this.respond(builder.json({ error: error.message }, error.status));
+        }
+
         if (error instanceof ControlPlaneRequestError) {
           return this.respond(builder.json({ error: error.message }, error.status));
         }

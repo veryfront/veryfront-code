@@ -1,105 +1,56 @@
-import type { Agent } from "#veryfront/agent";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { HandlerContext } from "#veryfront/types";
-import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { AgentStreamHandler } from "./agent-stream.handler.ts";
+import {
+  createAgent,
+  createControlPlaneSignature,
+  createCtx,
+  encodeDataStreamEvent,
+  readRemainingText,
+  readUntil,
+} from "./internal-agent-run.test-helpers.ts";
 
-const encoder = new TextEncoder();
-
-function encodePem(label: string, der: ArrayBuffer): string {
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
-  const lines = base64.match(/.{1,64}/g) ?? [base64];
-  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
-}
-
-async function sha256Base64url(body: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(body));
-  return base64urlEncodeBytes(new Uint8Array(digest));
-}
-
-async function createControlPlaneSignature(
-  body: string,
-  overrides: Partial<{
-    audience: string;
-    projectId: string;
-    requestId: string;
-    surface: "studio" | "channels" | "a2a" | "mcp";
-  }> = {},
-): Promise<{ jws: string; publicKeyPem: string }> {
-  const keyPair = await crypto.subtle.generateKey(
-    "Ed25519",
-    true,
-    ["sign", "verify"],
-  ) as CryptoKeyPair;
-  const publicKeyDer = await crypto.subtle.exportKey("spki", keyPair.publicKey);
-  const publicKeyPem = encodePem("PUBLIC KEY", publicKeyDer);
-  const now = Math.floor(Date.now() / 1000);
-
-  const header = base64urlEncode(JSON.stringify({ alg: "EdDSA", typ: "JWT" }));
-  const payload = base64urlEncode(JSON.stringify({
-    iss: "veryfront-api",
-    aud: overrides.audience ?? "demo-project",
-    sub: overrides.requestId ?? "run_1",
-    surface: overrides.surface ?? "studio",
-    project_id: overrides.projectId ?? "proj-1",
-    request_hash: await sha256Base64url(body),
-    iat: now,
-    exp: now + 60,
-  }));
-
-  const signingInput = encoder.encode(`${header}.${payload}`);
-  const signature = await crypto.subtle.sign("Ed25519", keyPair.privateKey, signingInput);
-
-  return {
-    publicKeyPem,
-    jws: `${header}.${payload}.${base64urlEncodeBytes(new Uint8Array(signature))}`,
-  };
-}
-
-function createCtx(publicKeyPem?: string): HandlerContext {
-  return {
-    projectDir: "/project",
-    adapter: {
-      env: {
-        get: (key: string) =>
-          key === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY" ? publicKeyPem : undefined,
+function createAgentStreamRequestBody(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    agentId: "assistant-1",
+    threadId: "10000000-1000-4000-8000-100000000001",
+    runId: "run_1",
+    messages: [
+      {
+        id: "msg_1",
+        role: "user",
+        parts: [{ type: "text", text: "hello" }],
       },
-      fs: {},
-    },
-    securityConfig: null,
-    cspUserHeader: null,
-    projectSlug: "demo-project",
-    projectId: "proj-1",
-    isLocalProject: false,
-  } as unknown as HandlerContext;
+    ],
+    tools: [{ name: "studio_focus_component" }],
+    context: [{ type: "text", text: "Current file: app.tsx" }],
+    ...overrides,
+  });
 }
 
-function createAgent(): Agent {
-  return {
-    id: "assistant-1",
-    config: {
-      system: "You are Support.",
-      model: "anthropic/claude-sonnet-4-6",
-      name: "Support",
-      description: "Helps with support issues",
-      version: "1.0.0",
-    } as unknown as Agent["config"],
-    generate: async () => ({}) as never,
-    stream: async () => ({ toDataStreamResponse: () => new Response() } as never),
-    respond: async () => new Response(),
-    getMemory: () => ({} as never),
-    getMemoryStats: async () => ({
-      totalMessages: 0,
-      estimatedTokens: 0,
-      type: "conversation",
-    }),
-    clearMemory: async () => {},
+class TrackingSessionManager extends AgentRunSessionManager {
+  readonly stats = {
+    cancelCalls: 0,
+    completeCalls: 0,
+    failCalls: 0,
   };
-}
 
-function encodeRuntimeEvent(payload: Record<string, unknown>): Uint8Array {
-  return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+  override cancelRun(runId: string): boolean {
+    this.stats.cancelCalls += 1;
+    return super.cancelRun(runId);
+  }
+
+  override completeRun(runId: string): void {
+    this.stats.completeCalls += 1;
+    super.completeRun(runId);
+  }
+
+  override failRun(runId: string): void {
+    this.stats.failCalls += 1;
+    super.failRun(runId);
+  }
 }
 
 describe("server/handlers/request/agent-stream.handler", () => {
@@ -109,18 +60,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
       },
-      getAgent: (id) => id === "assistant-1" ? createAgent() : undefined,
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
-      sessionManager: {
-        startRun: () => new AbortController().signal,
-        waitForToolResult: async () => ({ result: { ok: true }, isError: false }),
-        submitToolResult: () => ({ accepted: true }),
-        cancelRun: () => true,
-        completeRun: () => {},
-        failRun: () => {},
-        getRunStatus: () => "running",
-        reset: () => {},
-      },
+      sessionManager: new AgentRunSessionManager(),
       createRuntime: () => ({
         stream: async (_messages, _context, callbacks) => {
           callbacks?.onFinish?.({
@@ -141,19 +83,19 @@ describe("server/handlers/request/agent-stream.handler", () => {
           return new ReadableStream<Uint8Array>({
             start(controller) {
               controller.enqueue(
-                encodeRuntimeEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+                encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
               );
-              controller.enqueue(encodeRuntimeEvent({ type: "step-start" }));
-              controller.enqueue(encodeRuntimeEvent({ type: "text-start", id: "text-1" }));
+              controller.enqueue(encodeDataStreamEvent({ type: "step-start" }));
+              controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
               controller.enqueue(
-                encodeRuntimeEvent({
+                encodeDataStreamEvent({
                   type: "text-delta",
                   id: "text-1",
                   delta: "hello from runtime",
                 }),
               );
-              controller.enqueue(encodeRuntimeEvent({ type: "text-end", id: "text-1" }));
-              controller.enqueue(encodeRuntimeEvent({ type: "step-end" }));
+              controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+              controller.enqueue(encodeDataStreamEvent({ type: "step-end" }));
               controller.close();
             },
           });
@@ -161,20 +103,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       }),
     });
 
-    const body = JSON.stringify({
-      agentId: "assistant-1",
-      threadId: "10000000-1000-4000-8000-100000000001",
-      runId: "run_1",
-      messages: [
-        {
-          id: "msg_1",
-          role: "user",
-          parts: [{ type: "text", text: "hello" }],
-        },
-      ],
-      tools: [{ name: "studio_focus_component" }],
-      context: [{ type: "text", text: "Current file: app.tsx" }],
-    });
+    const body = createAgentStreamRequestBody();
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
@@ -199,5 +128,84 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(text, "event: TextMessageContent");
     assertStringIncludes(text, "event: RunFinished");
     assertStringIncludes(text, '"inputTokens":21');
+  });
+
+  it("rejects oversized internal agent stream payloads before parsing", async () => {
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: () => createAgent("assistant-1"),
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+    });
+
+    const body = createAgentStreamRequestBody({
+      context: [{ type: "text", text: "x".repeat(DEFAULT_MAX_BODY_SIZE_BYTES + 1024) }],
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 413);
+    assertEquals(await result.response.json(), { error: "Payload too large" });
+  });
+
+  it("emits a cancellation error instead of finishing after an abort during a pending read", async () => {
+    const sessionManager = new TrackingSessionManager();
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              return Promise.resolve();
+            },
+          }),
+      }),
+    });
+
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertExists(result.response.body);
+
+    const reader = result.response.body.getReader();
+    let text = await readUntil(reader, (chunk) => chunk.includes("event: RunStarted"));
+
+    assertEquals(sessionManager.cancelRun("run_1"), true);
+
+    text += await readRemainingText(reader);
+
+    assertStringIncludes(text, "event: RunError");
+    assertStringIncludes(text, '"code":"CANCELLED"');
+    assertEquals(text.includes("event: RunFinished"), false);
+    assertEquals(sessionManager.stats.completeCalls, 0);
+    assertEquals(sessionManager.stats.failCalls, 0);
   });
 });

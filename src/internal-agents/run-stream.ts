@@ -246,6 +246,12 @@ export async function createRuntimeAgentStreamResponse(
       let remainder = "";
       let aborted = false;
 
+      const throwIfAborted = () => {
+        if (aborted || abortSignal.aborted) {
+          throw new AgentRunCancelledError();
+        }
+      };
+
       const abortHandler = () => {
         aborted = true;
         reader.cancel(new AgentRunCancelledError()).catch(() => {});
@@ -262,11 +268,11 @@ export async function createRuntimeAgentStreamResponse(
 
       try {
         while (true) {
-          if (aborted) {
-            throw new AgentRunCancelledError();
-          }
+          throwIfAborted();
 
           const { done, value } = await reader.read();
+          throwIfAborted();
+
           if (done) {
             break;
           }
@@ -282,12 +288,16 @@ export async function createRuntimeAgentStreamResponse(
           }
         }
 
+        throwIfAborted();
+
         const trailingEvents = parseSseJsonEvents(`${remainder}\n\n`);
         for (const event of trailingEvents.events) {
           for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
             controller.enqueue(formatAgUiEvent(mappedEvent.event, mappedEvent.payload));
           }
         }
+
+        throwIfAborted();
 
         for (const mappedEvent of finalizeRunEvents(state, completedResponse)) {
           controller.enqueue(formatAgUiEvent(mappedEvent.event, mappedEvent.payload));

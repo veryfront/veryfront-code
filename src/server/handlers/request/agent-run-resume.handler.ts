@@ -9,6 +9,11 @@ import {
   ToolResultConflictError,
   ToolResultNotWaitingError,
 } from "#veryfront/internal-agents/session-manager.ts";
+import {
+  INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+  InternalAgentRequestBodyTooLargeError,
+  readInternalAgentRequestBody,
+} from "#veryfront/internal-agents/request-body.ts";
 import { ResumeSignalSchema } from "#veryfront/internal-agents/schema.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
@@ -46,8 +51,11 @@ export class AgentRunResumeHandler extends BaseHandler {
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined, req);
 
-      const rawBody = await req.text();
       try {
+        const rawBody = await readInternalAgentRequestBody(
+          req,
+          INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+        );
         await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: runId,
           expectedSurface: "studio",
@@ -62,6 +70,10 @@ export class AgentRunResumeHandler extends BaseHandler {
 
         return this.respond(builder.json(outcome, 200));
       } catch (error) {
+        if (error instanceof InternalAgentRequestBodyTooLargeError) {
+          return this.respond(builder.json({ error: error.message }, error.status));
+        }
+
         if (error instanceof ControlPlaneRequestError) {
           return this.respond(builder.json({ error: error.message }, error.status));
         }

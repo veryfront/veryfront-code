@@ -5,16 +5,18 @@ import {
   ControlPlaneAgentsListRequestSchema,
   listRuntimeAgents,
   type RuntimeAgentDiscoveryDeps,
-  verifyControlPlaneJws,
 } from "../../../channels/control-plane.ts";
 import { defaultChannelInvokeDeps } from "../../../channels/invoke.ts";
 import {
-  HTTP_INTERNAL_SERVER_ERROR,
-  PRIORITY_MEDIUM_API,
-} from "#veryfront/utils/constants/index.ts";
-
-const CONTROL_PLANE_JWS_HEADER = "x-veryfront-control-plane-jws";
-const MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS = 60;
+  ControlPlaneRequestError,
+  verifyControlPlaneRequest,
+} from "#veryfront/internal-agents/control-plane-auth.ts";
+import {
+  INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+  InternalAgentRequestBodyTooLargeError,
+  readInternalAgentRequestBody,
+} from "#veryfront/internal-agents/request-body.ts";
+import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 
 export class InternalAgentsListHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -37,78 +39,60 @@ export class InternalAgentsListHandler extends BaseHandler {
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined, req);
 
-      const publicKeyPem = ctx.adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-      if (!publicKeyPem) {
-        this.logWarn("Missing CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY for internal agents list");
-        return this.respond(
-          builder.json(
-            { error: "Control-plane verification is not configured" },
-            HTTP_INTERNAL_SERVER_ERROR,
-          ),
+      try {
+        const rawBody = await readInternalAgentRequestBody(
+          req,
+          INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
         );
-      }
-
-      const projectSlug = ctx.projectSlug;
-      if (!projectSlug) {
-        this.logWarn("Internal agents list request arrived without resolved project slug");
-        return this.respond(builder.json({ error: "Project context is unavailable" }, 400));
-      }
-
-      const controlPlaneJws = req.headers.get(CONTROL_PLANE_JWS_HEADER);
-      if (!controlPlaneJws) {
-        return this.respond(builder.json({ error: "Missing control-plane signature" }, 401));
-      }
-
-      const rawBody = await req.text();
-      let claims: Awaited<ReturnType<typeof verifyControlPlaneJws>> | undefined;
-      try {
-        claims = await verifyControlPlaneJws(controlPlaneJws, rawBody, {
-          audience: projectSlug,
-          expectedProjectId: ctx.projectId,
-          publicKeyPem,
-          maxAgeSeconds: MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS,
+        const payload: ControlPlaneAgentsListRequest = ControlPlaneAgentsListRequestSchema.parse(
+          JSON.parse(rawBody),
+        );
+        const claims = await verifyControlPlaneRequest(req, ctx, rawBody, {
+          expectedSubject: payload.requestId,
+          expectedSurface: payload.surface,
         });
+
+        if (
+          payload.projectId !== claims.project_id ||
+          (ctx.projectId !== undefined && payload.projectId !== ctx.projectId)
+        ) {
+          this.logWarn("Internal agents list request body did not match signed claims", {
+            projectSlug: ctx.projectSlug,
+            projectId: ctx.projectId,
+            requestId: payload.requestId,
+            signedRequestId: claims.sub,
+            surface: payload.surface,
+            signedSurface: claims.surface,
+          });
+          return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
+        }
+        const response = await listRuntimeAgents(ctx, this.deps);
+        return this.respond(builder.json(response, 200));
       } catch (error) {
-        this.logWarn("Internal agents list signature verification failed", {
-          error: error instanceof Error ? error.message : String(error),
-          projectSlug,
-          projectId: ctx.projectId,
-        });
-        return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
-      }
+        if (error instanceof InternalAgentRequestBodyTooLargeError) {
+          return this.respond(builder.json({ error: error.message }, error.status));
+        }
 
-      let payload: ControlPlaneAgentsListRequest;
-      try {
-        payload = ControlPlaneAgentsListRequestSchema.parse(JSON.parse(rawBody));
-      } catch (error) {
-        this.logWarn("Internal agents list request validation failed", {
-          error: error instanceof Error ? error.message : String(error),
-          projectSlug,
-          projectId: ctx.projectId,
-        });
-        return this.respond(builder.json({ error: "Invalid internal agents request" }, 400));
-      }
+        if (error instanceof ControlPlaneRequestError) {
+          this.logWarn("Internal agents list signature verification failed", {
+            error: error.message,
+            projectSlug: ctx.projectSlug,
+            projectId: ctx.projectId,
+          });
+          return this.respond(builder.json({ error: error.message }, error.status));
+        }
 
-      if (
-        !claims ||
-        payload.projectId !== claims.project_id ||
-        (ctx.projectId !== undefined && payload.projectId !== ctx.projectId) ||
-        payload.requestId !== claims.sub ||
-        payload.surface !== claims.surface
-      ) {
-        this.logWarn("Internal agents list request body did not match signed claims", {
-          projectSlug,
-          projectId: ctx.projectId,
-          requestId: payload.requestId,
-          signedRequestId: claims?.sub,
-          surface: payload.surface,
-          signedSurface: claims?.surface,
-        });
-        return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
-      }
+        if (error instanceof SyntaxError || (error instanceof Error && error.name === "ZodError")) {
+          this.logWarn("Internal agents list request validation failed", {
+            error: error instanceof Error ? error.message : String(error),
+            projectSlug: ctx.projectSlug,
+            projectId: ctx.projectId,
+          });
+          return this.respond(builder.json({ error: "Invalid internal agents request" }, 400));
+        }
 
-      const response = await listRuntimeAgents(ctx, this.deps);
-      return this.respond(builder.json(response, 200));
+        throw error;
+      }
     });
   }
 }

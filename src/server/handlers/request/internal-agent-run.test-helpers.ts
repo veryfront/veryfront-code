@@ -94,6 +94,21 @@ export function createAgent(id = "agent-1"): Agent {
   };
 }
 
+export function createAgentWithConfig(
+  id = "agent-1",
+  configOverrides: Record<string, unknown> = {},
+): Agent {
+  return {
+    ...createAgent(id),
+    config: {
+      id,
+      system: "You are helpful.",
+      model: "anthropic/claude-sonnet-4-6",
+      ...configOverrides,
+    } as Agent["config"],
+  };
+}
+
 export function encodeDataStreamEvent(payload: Record<string, unknown>): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
 }
@@ -212,5 +227,21 @@ export async function readUntil(
     if (matcher(output)) {
       return output;
     }
+  }
+}
+
+export async function readRemainingText(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<string> {
+  const decoder = new TextDecoder();
+  let output = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      return output;
+    }
+
+    output += decoder.decode(value, { stream: true });
   }
 }
