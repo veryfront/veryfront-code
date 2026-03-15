@@ -1,5 +1,6 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { createUploadHandler } from "./upload-handler.ts";
 import type { RagSearchOptions, RagSearchResult, RagStore } from "./types.ts";
@@ -19,18 +20,6 @@ function clearCloudEnv(): void {
       // expected: env may already be unset
     }
   }
-}
-
-function withMockFetch<T>(
-  mockFetch: typeof globalThis.fetch,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = mockFetch;
-
-  return fn().finally(() => {
-    globalThis.fetch = originalFetch;
-  });
 }
 
 function createStubStore(overrides: Partial<RagStore> = {}): RagStore {

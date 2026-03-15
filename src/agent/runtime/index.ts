@@ -243,6 +243,7 @@ export class AgentRuntime {
     callbacks?: {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
+      onFinish?: (response: AgentResponse) => void;
     },
     modelOverride?: string,
     maxOutputTokensOverride?: number,
@@ -298,7 +299,7 @@ export class AgentRuntime {
           });
           sendSSE(controller, encoder, { type: "text-start", id: textPartId });
 
-          await this.executeAgentLoopStreaming(
+          const response = await this.executeAgentLoopStreaming(
             systemPrompt,
             memoryMessages,
             controller,
@@ -310,6 +311,7 @@ export class AgentRuntime {
             languageModel,
             maxOutputTokensOverride,
           );
+          callbacks?.onFinish?.(response);
 
           sendSSE(controller, encoder, { type: "text-end", id: textPartId });
           sendSSE(controller, encoder, { type: "message-finish" });
@@ -479,7 +481,10 @@ export class AgentRuntime {
               toolCall.status = "executing";
               const startTime = Date.now();
 
-              const result = await executeTool(tc.toolName, toolCall.args, { agentId: this.id });
+              const result = await executeTool(tc.toolName, toolCall.args, {
+                agentId: this.id,
+                toolCallId: tc.toolCallId,
+              });
 
               toolCall.status = "completed";
               toolCall.result = result;
@@ -561,6 +566,7 @@ export class AgentRuntime {
     callbacks?: {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
+      onFinish?: (response: AgentResponse) => void;
     },
     textPartId?: string,
     toolContext?: Record<string, unknown>,
@@ -590,6 +596,7 @@ export class AgentRuntime {
 
     // Request-scoped skill policy (not class-level mutable state)
     let activeSkillPolicy: string[] | undefined;
+    let finalFinishReason: string | undefined;
 
     for (let step = 0; step < maxSteps; step++) {
       sendSSE(controller, encoder, { type: "step-start" });
@@ -617,6 +624,7 @@ export class AgentRuntime {
         onChunk: callbacks?.onChunk,
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
       });
+      finalFinishReason = state.finishReason ?? finalFinishReason;
 
       const streamParts: MessagePart[] = [];
       if (state.accumulatedText) streamParts.push({ type: "text", text: state.accumulatedText });
@@ -707,6 +715,7 @@ export class AgentRuntime {
 
           const result = await executeTool(tc.name, toolCall.args, {
             agentId: this.id,
+            toolCallId: tc.id,
             ...toolContext,
           });
 
@@ -768,6 +777,7 @@ export class AgentRuntime {
       toolCalls,
       status: "completed",
       usage: totalUsage,
+      metadata: finalFinishReason ? { finishReason: finalFinishReason } : undefined,
     };
   }
 

@@ -1,6 +1,7 @@
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, readTextFile, withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { join } from "#veryfront/compat/path";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
@@ -22,18 +23,6 @@ function clearCloudEnv(): void {
       // expected: env may already be unset
     }
   }
-}
-
-function withMockFetch<T>(
-  mockFetch: typeof globalThis.fetch,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = mockFetch;
-
-  return fn().finally(() => {
-    globalThis.fetch = originalFetch;
-  });
 }
 
 function registerTestEmbeddingProvider(): void {

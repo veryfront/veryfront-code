@@ -1,6 +1,7 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import {
+  type ChannelAssistantsRequest,
   ChannelAssistantsRequestSchema,
   type ChannelInvokeDeps,
   defaultChannelInvokeDeps,
@@ -59,8 +60,9 @@ export class ChannelAssistantsHandler extends BaseHandler {
       }
 
       const rawBody = await req.text();
+      let claims: Awaited<ReturnType<typeof verifyDispatchJws>> | undefined;
       try {
-        await verifyDispatchJws(dispatchJws, rawBody, {
+        claims = await verifyDispatchJws(dispatchJws, rawBody, {
           audience: projectSlug,
           expectedProjectId: ctx.projectId,
           publicKeyPem,
@@ -75,8 +77,9 @@ export class ChannelAssistantsHandler extends BaseHandler {
         return this.respond(builder.json({ error: "Invalid dispatch signature" }, 401));
       }
 
+      let payload: ChannelAssistantsRequest;
       try {
-        ChannelAssistantsRequestSchema.parse(JSON.parse(rawBody));
+        payload = ChannelAssistantsRequestSchema.parse(JSON.parse(rawBody));
       } catch (error) {
         this.logWarn("Channel assistants request validation failed", {
           error: error instanceof Error ? error.message : String(error),
@@ -84,6 +87,22 @@ export class ChannelAssistantsHandler extends BaseHandler {
           projectId: ctx.projectId,
         });
         return this.respond(builder.json({ error: "Invalid channel assistants request" }, 400));
+      }
+
+      if (
+        !claims ||
+        payload.projectId !== claims.project_id ||
+        (ctx.projectId !== undefined && payload.projectId !== ctx.projectId) ||
+        payload.requestId !== claims.sub ||
+        payload.platform !== claims.platform
+      ) {
+        this.logWarn("Channel assistants request body did not match signed claims", {
+          projectSlug,
+          projectId: ctx.projectId,
+          requestId: payload.requestId,
+          signedRequestId: claims?.sub,
+        });
+        return this.respond(builder.json({ error: "Invalid dispatch signature" }, 401));
       }
 
       const response = await listChannelAssistants(ctx, this.deps);
