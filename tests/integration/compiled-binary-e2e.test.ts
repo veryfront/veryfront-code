@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
+import { withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
 
 // Load .env file for test configuration (VERYFRONT_BINARY_FRESH, etc.)
 try {
@@ -189,13 +190,13 @@ async function startBinaryServer(
     const process = new Deno.Command(BINARY_PATH, {
       args: ["serve", "--mode=production", "-p", String(port)],
       cwd: projectDir,
-      env: {
+      env: withProxyModeControlPlaneKey({
         ...Deno.env.toObject(),
         NODE_ENV: nodeEnv,
         LOG_FORMAT: "text",
         VERYFRONT_CACHE_DIR: cacheDir,
         ...extraEnv,
-      },
+      }),
       stdout: "piped",
       stderr: "piped",
     }).spawn();
