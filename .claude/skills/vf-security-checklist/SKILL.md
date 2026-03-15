@@ -30,7 +30,7 @@ Run through these when modifying security-sensitive code:
 ### Network & Routing
 - [ ] Redirects validate URL scheme (block `javascript:`, `data:`, `vbscript:`)
 - [ ] CORS origins explicitly listed (no wildcard `*` in production)
-- [ ] Rate limiting keys use actual connection IP, not `X-Forwarded-For` alone
+- [ ] Rate limiting uses `trustProxy: false` (default) unless behind a trusted reverse proxy
 - [ ] WebSocket enforces `wss://` in production (not plain `ws://`)
 
 ### File System
@@ -93,11 +93,23 @@ res.redirect(userProvidedUrl);  // javascript: XSS risk
 
 ### Rate Limiting
 ```typescript
-// Correct: use connection info
-const clientIp = request.connection.remoteAddr;
+import { createRateLimiter } from "#veryfront/security";
 
-// Wrong: trust client header
-const clientIp = request.headers.get("X-Forwarded-For");  // SPOOFABLE
+// Correct: trustProxy=false (default) uses rightmost X-Forwarded-For IP
+// (added by nearest proxy, not client-controlled)
+const limiter = createRateLimiter({
+  maxRequests: 100,
+  windowMs: 60_000,
+  trustProxy: false,
+});
+
+// Wrong: trustProxy=true uses leftmost IP (client-spoofable)
+// Only safe behind a trusted reverse proxy that overwrites X-Forwarded-For
+const limiter = createRateLimiter({
+  maxRequests: 100,
+  windowMs: 60_000,
+  trustProxy: true,  // SPOOFABLE without trusted proxy
+});
 ```
 
 ## Verified Secure Areas
@@ -115,7 +127,7 @@ These have been audited and are safe — don't over-engineer:
 | Mistake | Fix |
 |---------|-----|
 | Extracting JWT payload without verification | Verify signature first |
-| `X-Forwarded-For` for rate limit key | Use `request.connection.remoteAddr` |
+| `trustProxy: true` without trusted proxy | Use `trustProxy: false` (default) for rightmost IP |
 | `ws://` WebSocket in production | Enforce `wss://` |
 | `SecureFS.unsafeReadFile` in prod code | Use safe variant with path validation |
 | Missing auth on upload endpoint | Add auth middleware |
