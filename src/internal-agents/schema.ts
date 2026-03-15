@@ -6,6 +6,7 @@ const MAX_CONTEXT_ITEM_BYTES = 16_384;
 const MAX_CONTEXT_TOTAL_BYTES = 65_536;
 const MAX_FORWARDED_PROPS_BYTES = 65_536;
 const MAX_TOOL_RESULT_BYTES = 65_536;
+const MAX_RUNTIME_MESSAGES = 100;
 
 const encoder = new TextEncoder();
 
@@ -71,7 +72,7 @@ export const RuntimeRunAgentInputSchema = z.object({
       metadata: z.record(z.unknown()).optional(),
       createdAt: z.string().optional(),
     }),
-  ),
+  ).max(MAX_RUNTIME_MESSAGES),
   tools: z.array(RuntimeInjectedToolSchema).max(50).default([]),
   context: z.array(RuntimeContextItemSchema).max(10).default([]).refine(
     (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_TOTAL_BYTES),

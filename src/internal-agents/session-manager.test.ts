@@ -94,4 +94,23 @@ describe("internal-agents/session-manager", () => {
     );
     assertEquals(sessionManager.getRunStatus("run_1"), null);
   });
+
+  it("evicts stale running sessions after the configured session TTL", () => {
+    const timerCallbacks: Array<() => void> = [];
+    const sessionManager = new AgentRunSessionManager({
+      sessionTtlMs: 1,
+      setTimeoutFn: ((callback: () => void) => {
+        timerCallbacks.push(callback);
+        return timerCallbacks.length as unknown as number;
+      }) as typeof setTimeout,
+      clearTimeoutFn: (() => {}) as typeof clearTimeout,
+    });
+
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    assertEquals(sessionManager.getRunStatus("run_1"), "running");
+
+    timerCallbacks[0]?.();
+
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
+  });
 });

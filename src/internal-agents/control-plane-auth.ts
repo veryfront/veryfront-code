@@ -1,9 +1,11 @@
 import { verifyControlPlaneJws } from "#veryfront/channels/control-plane.ts";
 import type { HandlerContext } from "#veryfront/types";
+import { serverLogger } from "#veryfront/utils";
 import { HTTP_INTERNAL_SERVER_ERROR } from "#veryfront/utils/constants/index.ts";
 
 const CONTROL_PLANE_JWS_HEADER = "x-veryfront-control-plane-jws";
 const MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS = 60;
+const logger = serverLogger.component("internal-agents-auth");
 
 export class ControlPlaneRequestError extends Error {
   readonly status: number;
@@ -51,7 +53,13 @@ export async function verifyControlPlaneRequest(
       publicKeyPem,
       maxAgeSeconds: MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS,
     });
-  } catch {
+  } catch (error) {
+    logger.warn("Invalid control-plane signature", {
+      error,
+      projectSlug,
+      expectedSubject: options.expectedSubject,
+      expectedSurface: options.expectedSurface,
+    });
     throw new ControlPlaneRequestError(401, "Invalid control-plane signature");
   }
 }

@@ -218,6 +218,40 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(await result.response.json(), { error: "Invalid internal agent stream request" });
   });
 
+  it("returns 400 when the runtime input exceeds the message limit", async () => {
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: () => createAgent("assistant-1"),
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+    });
+
+    const body = createAgentStreamRequestBody({
+      messages: Array.from({ length: 101 }, (_, index) => ({
+        id: `msg_${index}`,
+        role: "user",
+        parts: [{ type: "text", text: "hello" }],
+      })),
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(await result.response.json(), { error: "Invalid internal agent stream request" });
+  });
+
   it("returns 409 when the same run is started twice", async () => {
     const sessionManager = new AgentRunSessionManager();
     const handler = new AgentStreamHandler({

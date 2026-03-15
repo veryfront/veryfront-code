@@ -54,6 +54,7 @@ export class ToolResultConflictError extends Error {
 }
 
 const DEFAULT_WAITING_FOR_TOOL_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_SESSION_TTL_MS = 15 * 60 * 1000;
 
 type SessionStatus = "running" | "waiting" | "completed" | "cancelled" | "failed";
 
@@ -78,6 +79,7 @@ interface AgentRunSession {
   waitingTool: WaitingToolState | null;
   submittedResults: Map<string, SubmittedToolResult>;
   waitingTimeoutId: number | null;
+  sessionTimeoutId: number | null;
 }
 
 export interface SubmitToolResultOutcome {
@@ -91,6 +93,7 @@ export class AgentRunSessionManager {
   constructor(
     private readonly options: {
       waitingForToolTtlMs?: number;
+      sessionTtlMs?: number | null;
       setTimeoutFn?: typeof setTimeout;
       clearTimeoutFn?: typeof clearTimeout;
     } = {},
@@ -98,6 +101,10 @@ export class AgentRunSessionManager {
 
   private get waitingForToolTtlMs(): number {
     return this.options.waitingForToolTtlMs ?? DEFAULT_WAITING_FOR_TOOL_TTL_MS;
+  }
+
+  private get sessionTtlMs(): number | null {
+    return this.options.sessionTtlMs ?? null;
   }
 
   private get setTimeoutFn(): typeof setTimeout {
@@ -117,11 +124,39 @@ export class AgentRunSessionManager {
     session.waitingTimeoutId = null;
   }
 
+  private clearSessionTimeout(session: AgentRunSession): void {
+    if (session.sessionTimeoutId === null) {
+      return;
+    }
+
+    this.clearTimeoutFn(session.sessionTimeoutId);
+    session.sessionTimeoutId = null;
+  }
+
+  private scheduleSessionTimeout(session: AgentRunSession): void {
+    if (this.sessionTtlMs === null) {
+      return;
+    }
+
+    this.clearSessionTimeout(session);
+    session.sessionTimeoutId = this.setTimeoutFn(() => {
+      this.cancelRun(session.runId);
+    }, this.sessionTtlMs) as unknown as number;
+  }
+
   private scheduleWaitingTimeout(session: AgentRunSession): void {
     this.clearWaitingTimeout(session);
     session.waitingTimeoutId = this.setTimeoutFn(() => {
       this.cancelRun(session.runId);
     }, this.waitingForToolTtlMs) as unknown as number;
+  }
+
+  private touchSession(session: AgentRunSession): void {
+    if (
+      session.status === "running" || session.status === "waiting"
+    ) {
+      this.scheduleSessionTimeout(session);
+    }
   }
 
   startRun(input: { runId: string; threadId: string }): AbortSignal {
@@ -138,9 +173,11 @@ export class AgentRunSessionManager {
       waitingTool: null,
       submittedResults: new Map(),
       waitingTimeoutId: null,
+      sessionTimeoutId: null,
     };
 
     this.sessions.set(input.runId, session);
+    this.touchSession(session);
     return session.abortController.signal;
   }
 
@@ -160,6 +197,7 @@ export class AgentRunSessionManager {
     const existingResult = session.submittedResults.get(toolCallId);
     if (existingResult) {
       session.status = "running";
+      this.touchSession(session);
       return { result: existingResult.result, isError: existingResult.isError };
     }
 
@@ -169,6 +207,7 @@ export class AgentRunSessionManager {
 
     session.status = "waiting";
     this.scheduleWaitingTimeout(session);
+    this.touchSession(session);
 
     return await new Promise<{ result: unknown; isError: boolean }>((resolve, reject) => {
       const abortHandler = () => {
@@ -186,6 +225,7 @@ export class AgentRunSessionManager {
           this.clearWaitingTimeout(session);
           session.waitingTool = null;
           session.status = "running";
+          this.touchSession(session);
           resolve({ result: value.result, isError: value.isError });
         },
         reject: (reason) => {
@@ -235,6 +275,7 @@ export class AgentRunSessionManager {
     }
 
     session.submittedResults.set(input.toolCallId, normalized);
+    this.touchSession(session);
     session.waitingTool.resolve(normalized);
     return { accepted: true };
   }
@@ -254,6 +295,7 @@ export class AgentRunSessionManager {
 
     session.status = "cancelled";
     this.clearWaitingTimeout(session);
+    this.clearSessionTimeout(session);
     session.abortController.abort(new AgentRunCancelledError());
     session.waitingTool?.reject(new AgentRunCancelledError());
     session.waitingTool = null;
@@ -266,6 +308,7 @@ export class AgentRunSessionManager {
     if (!session) return;
     session.status = "completed";
     this.clearWaitingTimeout(session);
+    this.clearSessionTimeout(session);
     session.waitingTool = null;
     this.sessions.delete(runId);
   }
@@ -275,6 +318,7 @@ export class AgentRunSessionManager {
     if (!session) return;
     session.status = "failed";
     this.clearWaitingTimeout(session);
+    this.clearSessionTimeout(session);
     session.waitingTool = null;
     this.sessions.delete(runId);
   }
@@ -284,8 +328,14 @@ export class AgentRunSessionManager {
   }
 
   reset(): void {
+    for (const session of this.sessions.values()) {
+      this.clearWaitingTimeout(session);
+      this.clearSessionTimeout(session);
+    }
     this.sessions.clear();
   }
 }
 
-export const agentRunSessionManager = new AgentRunSessionManager();
+export const agentRunSessionManager = new AgentRunSessionManager({
+  sessionTtlMs: DEFAULT_SESSION_TTL_MS,
+});

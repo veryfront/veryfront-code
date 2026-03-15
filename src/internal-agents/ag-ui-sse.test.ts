@@ -23,6 +23,20 @@ describe("internal-agents/ag-ui-sse", () => {
     assertEquals(parsed.remainder, 'data: {"type":"message-start"');
   });
 
+  it("skips malformed SSE payloads and continues parsing", () => {
+    const parsed = parseSseJsonEvents(
+      'data: {"type":"text-delta","id":"text-1","delta":"hello"}\n\n' +
+        'data: {"type":"broken"\n\n' +
+        'data: {"type":"step-end"}\n\n',
+    );
+
+    assertEquals(parsed.events, [
+      { type: "text-delta", id: "text-1", delta: "hello" },
+      { type: "step-end" },
+    ]);
+    assertEquals(parsed.remainder, "");
+  });
+
   it("maps runtime tool and text events to AG-UI wire events", () => {
     const state = createStreamTransformState();
 

@@ -1,7 +1,9 @@
 import type { AgentResponse } from "#veryfront/agent";
+import { serverLogger } from "#veryfront/utils";
 import { z } from "zod";
 
 const encoder = new TextEncoder();
+const logger = serverLogger.component("internal-agents-ag-ui-sse");
 
 type RuntimeDataEvent = Record<string, unknown> & { type: string };
 
@@ -110,8 +112,16 @@ export function parseSseJsonEvents(chunk: string): {
       return [];
     }
 
-    const payload = JSON.parse(dataLines.join("\n")) as RuntimeDataEvent;
-    return [payload];
+    try {
+      const payload = JSON.parse(dataLines.join("\n")) as RuntimeDataEvent;
+      return [payload];
+    } catch (error) {
+      logger.warn("Skipping malformed runtime SSE event payload", {
+        error,
+        dataLength: dataLines.join("\n").length,
+      });
+      return [];
+    }
   });
 
   return { events, remainder };
