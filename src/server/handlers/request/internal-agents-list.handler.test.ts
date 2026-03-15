@@ -255,6 +255,89 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     assertEquals(await result.response.json(), { error: "Invalid internal agents request" });
   });
 
+  it("uses VERYFRONT_API_TOKEN for multi-project proxy context when request token is absent", async () => {
+    let discoveryCalls = 0;
+    let receivedToken: string | undefined;
+
+    const handler = new InternalAgentsListHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: (id) =>
+        id === "assistant-1"
+          ? createAgentWithConfig("assistant-1", { name: "Project Smoke Agent" })
+          : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+    });
+
+    const body = JSON.stringify({
+      requestId: "agents-1",
+      projectId: "proj-1",
+      surface: "studio",
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "agents-1",
+    });
+
+    const ctx = {
+      ...createCtx(publicKeyPem),
+      adapter: {
+        env: {
+          get: (key: string) => {
+            if (key === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") return publicKeyPem;
+            if (key === "VERYFRONT_API_TOKEN") return "server-api-token";
+            return undefined;
+          },
+          set: () => {},
+          toObject: () => ({}),
+        },
+        fs: {
+          isMultiProjectMode: () => true,
+          runWithContext: async (
+            _projectSlug: string,
+            token: string,
+            fn: () => Promise<unknown>,
+          ) => {
+            receivedToken = token;
+            return await fn();
+          },
+        },
+      },
+      proxyToken: undefined,
+      resolvedEnvironment: "production",
+      requestContext: { token: "", slug: "demo-project", branch: null, mode: "production" },
+    } as unknown as ReturnType<typeof createCtx>;
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/list", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(receivedToken, "server-api-token");
+    assertEquals(discoveryCalls, 1);
+    assertEquals(await result.response.json(), {
+      agents: [
+        {
+          id: "assistant-1",
+          name: "Project Smoke Agent",
+          description: null,
+          model: "anthropic/claude-sonnet-4-6",
+          version: null,
+          skills: [],
+        },
+      ],
+    });
+  });
+
   it("rethrows unexpected discovery failures", async () => {
     const handler = new InternalAgentsListHandler({
       ensureProjectDiscovery: async () => {

@@ -107,6 +107,7 @@ export abstract class BaseHandler implements Handler {
     fn: () => Promise<T>,
     options: { requireToken?: boolean } = {},
   ): Promise<T> {
+    const effectiveToken = ctx.proxyToken || ctx.adapter.env.get("VERYFRONT_API_TOKEN") || "";
     const fsWrapper = ctx.adapter.fs as {
       setRequestToken?: (t: string) => void;
       setRequestBranch?: (b: string | null) => void;
@@ -129,7 +130,7 @@ export abstract class BaseHandler implements Handler {
     }
 
     const requireToken = options.requireToken ?? false;
-    if (!ctx.projectSlug || (requireToken && !ctx.proxyToken)) return fn();
+    if (!ctx.projectSlug || (requireToken && !effectiveToken)) return fn();
 
     if (fsWrapper.isMultiProjectMode?.()) {
       const isProduction = (ctx.resolvedEnvironment ?? ctx.requestContext?.mode) === "production";
@@ -148,15 +149,15 @@ export abstract class BaseHandler implements Handler {
 
       return fsWrapper.runWithContext!(
         ctx.projectSlug,
-        ctx.proxyToken ?? "",
+        effectiveToken,
         fn,
         ctx.projectId,
         { productionMode: isProduction, releaseId: ctx.releaseId, branch },
       );
     }
 
-    if (typeof fsWrapper.setRequestToken === "function" && ctx.proxyToken) {
-      fsWrapper.setRequestToken(ctx.proxyToken);
+    if (typeof fsWrapper.setRequestToken === "function" && effectiveToken) {
+      fsWrapper.setRequestToken(effectiveToken);
     }
 
     return runWithCacheBatching(fn);
