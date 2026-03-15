@@ -17,15 +17,15 @@ Veryfront uses a centralized error registry with slug-based identification. All 
 
 ```typescript
 // In src/errors/error-registry.ts
-import { defineError } from "./define-error.ts";
+import { defineError } from "./types.ts";
 
-export const MY_NEW_ERROR = defineError(
-  "my-new-error",        // slug (kebab-case, unique)
-  "RUNTIME",             // category: CONFIG | BUILD | RUNTIME | ROUTE | MODULE | SERVER | BOUNDARY | DEV | DEPLOY | AGENT | GENERAL
-  500,                   // default HTTP status
-  "Something went wrong", // title (human-readable)
-  "Try doing X instead"  // suggestion (actionable fix)
-);
+export const MY_NEW_ERROR = defineError({
+  slug: "my-new-error",           // kebab-case, unique
+  category: "RUNTIME",            // CONFIG | BUILD | RUNTIME | ROUTE | MODULE | SERVER | BOUNDARY | DEV | DEPLOY | AGENT | GENERAL
+  status: 500,                    // default HTTP status
+  title: "Something went wrong",  // human-readable
+  suggestion: "Try doing X instead", // actionable fix
+});
 ```
 
 ### Throwing Errors
@@ -64,13 +64,13 @@ When replacing `class FooError extends Error`:
 
 ```typescript
 // src/errors/error-registry.ts
-export const FOO_ERROR = defineError(
-  "foo-error",
-  "RUNTIME",
-  500,
-  "Foo operation failed",
-  "Check the foo configuration"
-);
+export const FOO_ERROR = defineError({
+  slug: "foo-error",
+  category: "RUNTIME",
+  status: 500,
+  title: "Foo operation failed",
+  suggestion: "Check the foo configuration",
+});
 ```
 
 ### Step 2: Update Usage Sites
