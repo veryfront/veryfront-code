@@ -6,9 +6,9 @@ import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import { AgentStreamHandler } from "./agent-stream.handler.ts";
 import {
   createAgent,
-  createInjectedToolRuntime,
   createControlPlaneSignature,
   createCtx,
+  createInjectedToolRuntime,
   encodeDataStreamEvent,
   readRemainingText,
   readUntil,
@@ -375,6 +375,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
     await readUntil(reader, (chunk) => chunk.includes("event: ToolCallEnd"));
     await reader.cancel();
 
+    for (
+      let attempt = 0;
+      attempt < 20 && sessionManager.getRunStatus("run_1") !== "waiting";
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
     assertEquals(sessionManager.getRunStatus("run_1"), "waiting");
     assertEquals(sessionManager.stats.cancelCalls, 0);
 
@@ -400,7 +408,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(resumeResult.response);
     assertEquals(resumeResult.response.status, 200);
 
-    for (let attempt = 0; attempt < 20 && sessionManager.getRunStatus("run_1") !== null; attempt += 1) {
+    for (
+      let attempt = 0;
+      attempt < 20 && sessionManager.getRunStatus("run_1") !== null;
+      attempt += 1
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 

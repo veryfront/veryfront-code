@@ -181,11 +181,12 @@ describe("internal-agents/ag-ui-sse", () => {
     const payload = formatAgUiEvent("RunStarted", {
       runId: "run_1",
       threadId: "thread-1",
+      agentId: "assistant-1",
     });
 
     assertEquals(
       new TextDecoder().decode(payload),
-      'event: RunStarted\ndata: {"runId":"run_1","threadId":"thread-1"}\n\n',
+      'event: RunStarted\ndata: {"runId":"run_1","threadId":"thread-1","agentId":"assistant-1"}\n\n',
     );
   });
 });

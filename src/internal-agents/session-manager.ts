@@ -101,11 +101,11 @@ export class AgentRunSessionManager {
   }
 
   private get setTimeoutFn(): typeof setTimeout {
-    return this.options.setTimeoutFn ?? setTimeout;
+    return this.options.setTimeoutFn ?? globalThis.setTimeout.bind(globalThis);
   }
 
   private get clearTimeoutFn(): typeof clearTimeout {
-    return this.options.clearTimeoutFn ?? clearTimeout;
+    return this.options.clearTimeoutFn ?? globalThis.clearTimeout.bind(globalThis);
   }
 
   private clearWaitingTimeout(session: AgentRunSession): void {

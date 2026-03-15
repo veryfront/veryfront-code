@@ -36,11 +36,53 @@ export interface BddTestContext {
 /** Hook function */
 type HookFn = (ctx?: BddTestContext) => void | Promise<void>;
 
+type EnvOverlayStorageShim = {
+  storage: {
+    getStore: () => unknown;
+    run?: <T>(store: unknown, fn: () => T) => T;
+    enterWith?: (store: unknown) => void;
+  };
+};
+
+async function installDenoEnvOverlayStorage(): Promise<void> {
+  if (!isDeno) return;
+
+  const globalAny = globalThis as Record<string, unknown>;
+  if (globalAny["__vfTestDenoEnvOverlay"]) return;
+
+  const { AsyncLocalStorage } = await import("node:async_hooks");
+
+  globalAny["__vfTestDenoEnvOverlay"] = {
+    storage: new AsyncLocalStorage<Map<string, string | null>>(),
+  } satisfies EnvOverlayStorageShim;
+}
+
+function withEnvOverlay<T extends TestFn | (() => void)>(fn: T): T {
+  const overlay = getEnvOverlayStorage();
+  if (!overlay) return fn;
+
+  return ((...args: unknown[]) => {
+    if (overlay.run) {
+      return overlay.run(
+        new Map<string, string | null>(),
+        () => Promise.resolve().then(() => fn(...(args as []))),
+      );
+    }
+
+    if (overlay.enterWith) {
+      overlay.enterWith(new Map<string, string | null>());
+    }
+
+    return fn(...(args as []));
+  }) as T;
+}
+
 // For Deno, we directly use @std/testing/bdd - no wrapper needed
 // This avoids creating a "global" test suite from top-level await
 let denoBdd: typeof import("#std/testing/bdd") | null = null;
 
 if (isDeno) {
+  await installDenoEnvOverlayStorage();
   denoBdd = await import("#std/testing/bdd");
 }
 
@@ -166,19 +208,6 @@ function createBunImpl(bunTest: BunTestModule): BddImpl {
     const parsed = Number(raw);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 30000;
   })();
-
-  function withEnvOverlay(fn: TestFn): TestFn {
-    return async () => {
-      const overlay = getEnvOverlayStorage();
-      if (overlay?.run) {
-        return await overlay.run(new Map(), () => Promise.resolve().then(fn));
-      }
-      if (overlay?.enterWith) {
-        overlay.enterWith(new Map());
-      }
-      return await fn();
-    };
-  }
 
   return {
     describe(nameOrOptions, optionsOrFn, fn): void {
@@ -364,14 +393,15 @@ export function it(
 
   const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
   if (!testFn) throw new Error("it requires a test function");
+  const testWithEnv = withEnvOverlay(testFn);
 
   const denoOptions = normalizeDenoOptions(options);
   if (hasOptions(denoOptions)) {
-    denoBdd.it({ name, ...denoOptions }, testFn);
+    denoBdd.it({ name, ...denoOptions }, testWithEnv);
     return;
   }
 
-  denoBdd.it(name, testFn);
+  denoBdd.it(name, testWithEnv);
 }
 
 it.skip = function skip(
@@ -380,13 +410,14 @@ it.skip = function skip(
   fn?: TestFn,
 ): void {
   const { name, testFn } = getNameAndFn(nameOrOptions, optionsOrFn, fn);
+  const testWithEnv = withEnvOverlay(testFn);
 
   if (denoBdd) {
-    denoBdd.it({ name, ignore: true }, testFn);
+    denoBdd.it({ name, ignore: true }, testWithEnv);
     return;
   }
 
-  requireImpl().it({ name, ignore: true }, testFn);
+  requireImpl().it({ name, ignore: true }, testWithEnv);
 };
 
 it.ignore = it.skip;
@@ -397,13 +428,14 @@ it.only = function only(
   fn?: TestFn,
 ): void {
   const { name, testFn } = getNameAndFn(nameOrOptions, optionsOrFn, fn);
+  const testWithEnv = withEnvOverlay(testFn);
 
   if (denoBdd) {
-    denoBdd.it({ name, only: true }, testFn);
+    denoBdd.it({ name, only: true }, testWithEnv);
     return;
   }
 
-  requireImpl().it({ name, only: true }, testFn);
+  requireImpl().it({ name, only: true }, testWithEnv);
 };
 
 export function beforeEach(fn: HookFn): void {

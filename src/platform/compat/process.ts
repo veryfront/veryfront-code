@@ -56,10 +56,46 @@ export function chdir(directory: string): void {
   throw new Error("chdir() is not supported in this runtime");
 }
 
+type EnvOverlayValue = string | null;
+type EnvOverlayStore = Map<string, EnvOverlayValue>;
+
+function getEnvOverlayStore(): EnvOverlayStore | null {
+  const storage = getEnvOverlayStorage();
+  const store = storage?.getStore();
+  return store instanceof Map ? store as EnvOverlayStore : null;
+}
+
+function getOverlayEnvValue(
+  store: EnvOverlayStore | null,
+  key: string,
+): { hasValue: boolean; value: string | undefined } {
+  if (!store?.has(key)) {
+    return { hasValue: false, value: undefined };
+  }
+
+  const value = store.get(key);
+  return { hasValue: true, value: value ?? undefined };
+}
+
 export function env(): Record<string, string> {
-  if (IS_DENO) return Deno.env.toObject();
-  if (runtimeProcess) return runtimeProcess.env as Record<string, string>;
-  return {};
+  const base = IS_DENO
+    ? Deno.env.toObject()
+    : runtimeProcess
+    ? { ...runtimeProcess.env } as Record<string, string>
+    : {};
+
+  const overlay = getEnvOverlayStore();
+  if (!overlay) return base;
+
+  for (const [key, value] of overlay.entries()) {
+    if (value === null) {
+      delete base[key];
+      continue;
+    }
+    base[key] = value;
+  }
+
+  return base;
 }
 
 /**
@@ -67,6 +103,11 @@ export function env(): Record<string, string> {
  * Use this for framework-owned runtime configuration that should not be shadowed by tenant env.
  */
 export function getHostEnv(key: string): string | undefined {
+  const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
+  if (overlayResult.hasValue) {
+    return overlayResult.value;
+  }
+
   if (IS_DENO) return Deno.env.get(key);
   if (runtimeProcess) return runtimeProcess.env[key];
   return undefined;
@@ -183,6 +224,12 @@ export function getEnvBoolean(
 }
 
 export function setEnv(key: string, value: string): void {
+  const overlay = getEnvOverlayStore();
+  if (overlay) {
+    overlay.set(key, value);
+    return;
+  }
+
   if (IS_DENO) {
     Deno.env.set(key, value);
     return;
@@ -195,6 +242,12 @@ export function setEnv(key: string, value: string): void {
 }
 
 export function deleteEnv(key: string): void {
+  const overlay = getEnvOverlayStore();
+  if (overlay) {
+    overlay.set(key, null);
+    return;
+  }
+
   if (IS_DENO) {
     Deno.env.delete(key);
     return;
