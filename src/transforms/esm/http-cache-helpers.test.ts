@@ -167,6 +167,14 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertEquals(result.includes("external=react,react-dom"), true);
       assertEquals(result.includes("%2C"), false);
     });
+
+    it("preserves encoding for non-external comma-separated params", () => {
+      const result = normalizeHttpUrl(
+        "https://esm.sh/pkg@1.0?deps=a,b&external=react,react-dom&target=es2022",
+      );
+      assertEquals(result.includes("external=react,react-dom"), true);
+      assertEquals(result.includes("deps=a%2Cb"), true);
+    });
   });
 
   describe("ensureAbsoluteDir", () => {

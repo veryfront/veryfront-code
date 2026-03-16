@@ -107,9 +107,17 @@ export function normalizeHttpUrl(raw: string): string {
 
     // esm.sh misbehaves when list-valued params such as
     // `external=react,react-dom` are percent-encoded as `%2C`.
-    // Preserve literal commas after sorting so direct CDN imports remain valid.
+    // Preserve literal commas only for the affected param so unrelated
+    // query values remain canonically encoded.
     if (url.hostname === "esm.sh") {
-      return normalized.replace(/%2C/gi, ",");
+      const external = url.searchParams.get("external");
+      if (!external) return normalized;
+
+      const encodedExternal = encodeURIComponent(external);
+      return normalized.replace(
+        `external=${encodedExternal}`,
+        `external=${encodedExternal.replace(/%2C/gi, ",")}`,
+      );
     }
 
     return normalized;
