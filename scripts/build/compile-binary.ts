@@ -8,6 +8,7 @@
 
 import { parseArgs } from "jsr:@std/cli/parse-args";
 import { fromFileUrl, isAbsolute, join } from "#std/path.ts";
+import { getBinaryPluginBundleIncludes } from "../../src/build/binary-plugin-includes.ts";
 
 const PROJECT_ROOT = fromFileUrl(new URL("../..", import.meta.url));
 const DEFAULT_INCLUDES = [
@@ -52,6 +53,7 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
 
   for (const include of [
     ...DEFAULT_INCLUDES,
+    ...getBinaryPluginBundleIncludes(),
     ...resolveKreuzbergCompileIncludes(),
     ...options.extraIncludes,
   ]) {

@@ -18,6 +18,7 @@ import {
   NETWORK_ERROR,
   VeryfrontError,
 } from "#veryfront/errors";
+import { getTailwindPluginBundleUrl } from "#veryfront/build/binary-plugin-includes.ts";
 
 const logger = serverLogger.component("tailwind");
 
@@ -106,7 +107,7 @@ async function importBundledModule(code: string): Promise<unknown> {
  * dynamic imports from URLs. Fetches bundled code, rewrites imports, loads via temp file.
  */
 export async function loadModuleFromEsmSh(packageName: string): Promise<unknown> {
-  const stubUrl = `https://esm.sh/${packageName}?bundle&external=tailwindcss&target=denonext`;
+  const stubUrl = getTailwindPluginBundleUrl(packageName);
   logger.debug("Fetching esm.sh stub", { url: stubUrl });
 
   const stubResponse = await fetch(stubUrl);
