@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import https from "node:https";
 import os from "node:os";
 import { readFileSync } from "node:fs";
+import { verifyChecksum } from "./postinstall-lib.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const platform = os.platform();
@@ -85,7 +86,7 @@ function downloadBinary(url, dest, maxRedirects = 5) {
 
         const file = createWriteStream(dest);
         response.pipe(file);
-        file.on('finish', () => { file.close(); resolve(); });
+        file.on('finish', () => { file.close(() => resolve()); });
         file.on("error", (err) => {
           try { if (existsSync(dest)) unlinkSync(dest); }
           catch (e) { console.warn("   Warning: Failed to clean up partial download:", e.message); }
@@ -103,6 +104,10 @@ async function install() {
     console.log(`⬇️  Downloading binary from ${url}...`);
     await downloadBinary(url, binPath);
 
+    // Verify binary integrity
+    const checksumUrl = `${baseUrl}/${binaryName}.sha256`;
+    await verifyChecksum(binPath, checksumUrl);
+
     // Make binary executable (Unix systems)
     if (platform !== "win32") {
       chmodSync(binPath, 0o755);
@@ -114,6 +119,8 @@ async function install() {
     console.log('   npx veryfront create my-app');
 
   } catch (error) {
+    // Clean up unverified binary so the JS fallback is used instead
+    try { if (existsSync(binPath)) unlinkSync(binPath); } catch {}
     // Graceful fallback - bundled JS CLI will be used instead
     console.warn("⚠️  Binary download failed:", error.message);
     console.warn("   Falling back to bundled JavaScript CLI (slower startup)");
