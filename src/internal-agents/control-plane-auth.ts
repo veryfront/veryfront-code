@@ -1,4 +1,5 @@
 import { verifyControlPlaneJws } from "#veryfront/channels/control-plane.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { serverLogger } from "#veryfront/utils";
 import { HTTP_INTERNAL_SERVER_ERROR } from "#veryfront/utils/constants/index.ts";
@@ -17,6 +18,14 @@ export class ControlPlaneRequestError extends Error {
   }
 }
 
+export function getControlPlaneVerificationPublicKey(ctx: HandlerContext): string | undefined {
+  // Project env overlays intentionally hide host secrets from request-scoped reads.
+  // Control-plane verification is framework-owned config, so it must fall back to
+  // the host environment when the runtime adapter env is overlay-aware.
+  return ctx.adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
+    getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+}
+
 export async function verifyControlPlaneRequest(
   req: Request,
   ctx: HandlerContext,
@@ -26,7 +35,7 @@ export async function verifyControlPlaneRequest(
     expectedSurface?: "studio" | "channels" | "a2a" | "mcp";
   } = {},
 ) {
-  const publicKeyPem = ctx.adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+  const publicKeyPem = getControlPlaneVerificationPublicKey(ctx);
   if (!publicKeyPem) {
     throw new ControlPlaneRequestError(
       HTTP_INTERNAL_SERVER_ERROR,

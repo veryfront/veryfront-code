@@ -1,7 +1,9 @@
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES } from "#veryfront/internal-agents/request-body.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { InternalAgentsListHandler } from "./internal-agents-list.handler.ts";
+import { runWithProjectEnv } from "../../project-env/storage.ts";
 import {
   createAgentWithConfig,
   createControlPlaneSignature,
@@ -336,6 +338,78 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
         },
       ],
     });
+  });
+
+  it("uses the host verification key when project overlays hide adapter env reads", async () => {
+    const handler = new InternalAgentsListHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) =>
+        id === "assistant-1"
+          ? createAgentWithConfig("assistant-1", { name: "Project Smoke Agent" })
+          : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+    });
+
+    const body = JSON.stringify({
+      requestId: "agents-1",
+      projectId: "proj-1",
+      surface: "studio",
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "agents-1",
+    });
+
+    const envKey = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+    const originalValue = Deno.env.get(envKey);
+    Deno.env.set(envKey, publicKeyPem);
+
+    try {
+      const ctx = {
+        ...createCtx(undefined),
+        adapter: {
+          env: {
+            get: (key: string) => getEnv(key),
+            set: () => {},
+            toObject: () => ({}),
+          },
+          fs: {},
+        },
+      } as unknown as ReturnType<typeof createCtx>;
+
+      const result = await runWithProjectEnv({}, () =>
+        handler.handle(
+          new Request("https://example.com/internal/agents/list", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          }),
+          ctx,
+        ));
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals(await result.response.json(), {
+        agents: [
+          {
+            id: "assistant-1",
+            name: "Project Smoke Agent",
+            description: null,
+            model: "anthropic/claude-sonnet-4-6",
+            version: null,
+            skills: [],
+          },
+        ],
+      });
+    } finally {
+      if (originalValue === undefined) {
+        Deno.env.delete(envKey);
+      } else {
+        Deno.env.set(envKey, originalValue);
+      }
+    }
   });
 
   it("rethrows unexpected discovery failures", async () => {

@@ -7,6 +7,7 @@ import {
   executeChannelInvoke,
   verifyDispatchJws,
 } from "../../../channels/invoke.ts";
+import { getControlPlaneVerificationPublicKey } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
   PRIORITY_MEDIUM_API,
@@ -36,7 +37,7 @@ export class ChannelInvokeHandler extends BaseHandler {
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined, req);
 
-      const publicKeyPem = ctx.adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      const publicKeyPem = getControlPlaneVerificationPublicKey(ctx);
       if (!publicKeyPem) {
         this.logWarn("Missing CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY for channel invoke endpoint");
         return this.respond(
