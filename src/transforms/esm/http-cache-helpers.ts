@@ -103,7 +103,16 @@ export function normalizeHttpUrl(raw: string): string {
     const url = new URL(raw);
     normalizeEsmShUrl(url);
     url.searchParams.sort();
-    return url.toString();
+    const normalized = url.toString();
+
+    // esm.sh misbehaves when list-valued params such as
+    // `external=react,react-dom` are percent-encoded as `%2C`.
+    // Preserve literal commas after sorting so direct CDN imports remain valid.
+    if (url.hostname === "esm.sh") {
+      return normalized.replace(/%2C/gi, ",");
+    }
+
+    return normalized;
   } catch (_) {
     /* expected: URL may be malformed */
     return raw;
