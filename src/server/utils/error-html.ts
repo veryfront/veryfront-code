@@ -19,9 +19,7 @@ export function generateErrorHtml(options: ErrorHtmlOptions): string {
 }
 
 function generateStyledErrorHtml(statusCode: number, title: string, message: string): string {
-  const errorMessage = title === "Not Found"
-    ? `Page not found: ${message}`
-    : message;
+  const errorMessage = title === "Not Found" ? `Page not found: ${message}` : message;
 
   // 4xx = warning (routing/config issue), 5xx = error (something broke)
   const errorType = statusCode >= 500 ? "error" : "warning";
