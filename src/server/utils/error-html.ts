@@ -1,3 +1,5 @@
+import { escapeHTML } from "#veryfront/html/html-escape.ts";
+
 interface ErrorHtmlOptions {
   statusCode: number;
   title: string;
@@ -30,7 +32,7 @@ function generateStyledErrorHtml(statusCode: number, title: string, message: str
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width">
   <link rel="icon" type="image/png" href="https://cdn.veryfront.com/images/veryfront-favicon.png">
-  <title>${statusCode} ${title} — Veryfront</title>
+  <title>${statusCode} ${escapeHTML(title)} — Veryfront</title>
   <style>
     :root {
       --bg: #ffffff;
@@ -79,8 +81,8 @@ function generateStyledErrorHtml(statusCode: number, title: string, message: str
 </head>
 <body>
   <div class="container">
-    <h1 class="title">${title}</h1>
-    <p class="message">${message}</p>
+    <h1 class="title">${escapeHTML(title)}</h1>
+    <p class="message">${escapeHTML(message)}</p>
   </div>
   <script>
     if (window.parent !== window) {
@@ -115,11 +117,11 @@ function generateMinimalErrorHtml(
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>${statusCode} ${title}</title>
+  <title>${statusCode} ${escapeHTML(title)}</title>
 </head>
 <body>
-  <h1>${statusCode} ${title}</h1>
-  <p>${fullMessage}</p>
+  <h1>${statusCode} ${escapeHTML(title)}</h1>
+  <p>${escapeHTML(fullMessage)}</p>
 </body>
 </html>`;
 }

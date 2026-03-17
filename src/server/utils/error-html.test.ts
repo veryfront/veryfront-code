@@ -47,7 +47,7 @@ describe("server/utils/error-html", () => {
         minimal: true,
       });
 
-      assertIncludes(html, '"/foo/bar"');
+      assertIncludes(html, "&quot;/foo/bar&quot;");
     });
 
     it("should include Veryfront favicon in styled mode", () => {
