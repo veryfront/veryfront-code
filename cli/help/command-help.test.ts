@@ -34,5 +34,18 @@ describe("command-help", () => {
       assertStringIncludes(output, "Single project");
       assertStringIncludes(output, "Workspace");
     });
+
+    it("renders grouped uploads help", () => {
+      const output = captureConsoleLog(() => showCommandHelp("uploads"));
+      assertStringIncludes(output, "veryfront uploads <command>");
+      assertStringIncludes(output, "list");
+      assertStringIncludes(output, "pull");
+    });
+
+    it("renders knowledge help", () => {
+      const output = captureConsoleLog(() => showCommandHelp("knowledge"));
+      assertStringIncludes(output, "veryfront knowledge ingest <source> [options]");
+      assertStringIncludes(output, "Primary subcommand: ingest");
+    });
   });
 });

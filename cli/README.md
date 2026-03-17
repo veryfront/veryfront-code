@@ -53,6 +53,11 @@ Run `veryfront <command> --help` for options:
 | `doctor`        | Project diagnostics                 |
 | `login`         | Authenticate                        |
 | `pull` / `push` | Sync with remote                    |
+| `uploads`       | List, pull, put, and delete uploads |
+| `files`         | List, get, put, and delete files    |
+| `knowledge`     | Knowledge-base ingestion workflow   |
+
+Use `uploads/...` for remote project-upload references in `veryfront knowledge ingest`; use `./uploads/...` or `/workspace/uploads/...` to force a local sandbox path.
 
 ## Adding a New Command
 
