@@ -129,9 +129,9 @@ export function generateRuntimeScript(): string {
             </button>
             \${window.__VF_PROJECT_SLUG__ ? \`
             <button type="button" id="vf-fix-btn-runtime" style="
-              background: #fff;
-              border: none;
-              color: #000;
+              background: transparent;
+              border: 1px solid rgba(255, 255, 255, 0.2);
+              color: rgba(255, 255, 255, 0.7);
               padding: 10px 20px;
               border-radius: 9999px;
               cursor: pointer;
@@ -146,6 +146,24 @@ export function generateRuntimeScript(): string {
       \`;
 
       document.body.appendChild(overlay);
+
+      // Notify Studio of runtime error
+      if (window.parent !== window) {
+        try {
+          window.parent.postMessage({
+            action: 'runtimeError',
+            hasError: true,
+            errors: [{
+              type: 'error',
+              message: (errorInfo.error && errorInfo.error.message) || 'Unknown error',
+              stack: (errorInfo.error && errorInfo.error.stack) || undefined,
+              file: errorInfo.file ? String(errorInfo.file) : undefined,
+              line: errorInfo.line ? Number(errorInfo.line) : undefined,
+              column: errorInfo.column ? Number(errorInfo.column) : undefined
+            }]
+          }, '*');
+        } catch (e) { /* postMessage may fail */ }
+      }
 
       if (window.__VF_PROJECT_SLUG__) {
         var fixBtn = document.getElementById('vf-fix-btn-runtime');
@@ -320,12 +338,15 @@ export function generateErrorHTML(
       background: #e5e5e5;
     }
     .btn-fix {
-      background: #fff;
-      color: #000;
+      background: transparent;
+      color: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.2);
       margin-left: 8px;
     }
     .btn-fix:hover {
-      background: #e5e5e5;
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      border-color: rgba(255, 255, 255, 0.4);
     }
   </style>
 </head>
