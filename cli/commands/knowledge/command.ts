@@ -1,14 +1,6 @@
 import { z } from "zod";
 import { createFileSystem } from "veryfront/platform";
-import {
-  basename,
-  dirname,
-  extname,
-  join,
-  normalize,
-  relative,
-  resolve,
-} from "veryfront/platform/path";
+import { basename, extname, join, normalize, relative } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
@@ -132,11 +124,23 @@ export function parseKnowledgeIngestArgs(
 }
 
 export function normalizeKnowledgeInputPath(inputPath: string): string {
-  const normalizedPath = normalize(inputPath).replace(/^\/+/, "");
+  const normalizedPath = normalize(inputPath).replace(/^\/+/, "").replace(/\\/g, "/");
   if (!normalizedPath || normalizedPath.startsWith("..") || normalizedPath.startsWith("/")) {
     throw new Error(`Invalid knowledge input path: ${inputPath}`);
   }
   return normalizedPath;
+}
+
+export function normalizeProjectUploadPath(inputPath: string): string {
+  const normalizedPath = normalizeKnowledgeInputPath(inputPath);
+  return normalizedPath === "uploads" ? "" : normalizedPath.replace(/^uploads\/+/, "");
+}
+
+export function formatKnowledgeUploadSource(uploadPath: string): string {
+  const normalizedPath = normalizeKnowledgeInputPath(uploadPath);
+  return normalizedPath === "uploads" || normalizedPath.startsWith("uploads/")
+    ? normalizedPath
+    : `uploads/${normalizedPath}`;
 }
 
 export function isLikelyLocalPath(value: string): boolean {
@@ -160,6 +164,10 @@ function slugify(value: string): string {
 
 function defaultOutputRoot(): Promise<string> {
   return Deno.makeTempDir({ prefix: "veryfront-knowledge-" });
+}
+
+export function resolveKnowledgeDownloadOutputDir(outputDir: string): string {
+  return join(outputDir, ".uploads");
 }
 
 async function collectLocalFiles(root: string, recursive: boolean): Promise<string[]> {
@@ -187,7 +195,7 @@ async function collectLocalFiles(root: string, recursive: boolean): Promise<stri
 }
 
 function buildSourceReference(source: KnowledgeSource): string {
-  return source.kind === "upload" ? source.uploadPath : source.input;
+  return source.kind === "upload" ? formatKnowledgeUploadSource(source.uploadPath) : source.input;
 }
 
 function buildSuggestedSlug(source: KnowledgeSource, index: number): string {
@@ -283,11 +291,21 @@ export async function runKnowledgeParser(input: {
     );
     await Deno.writeTextFile(scriptPath, knowledgeIngestPythonSource);
 
-    const result = await new Deno.Command("python3", {
-      args: [scriptPath, "--input-json", inputJsonPath, "--output-json", outputJsonPath],
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    let result: Deno.CommandOutput;
+    try {
+      result = await new Deno.Command("python3", {
+        args: [scriptPath, "--input-json", inputJsonPath, "--output-json", outputJsonPath],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) {
+        throw new Error(
+          "knowledge ingest requires python3. Install python3 and the supported parser packages, or run the command inside the Veryfront sandbox.",
+        );
+      }
+      throw error;
+    }
 
     if (result.code !== 0) {
       const stderr = new TextDecoder().decode(result.stderr).trim();
@@ -322,7 +340,7 @@ export async function collectKnowledgeSources(
       throw new Error(`Local file not found: ${options.source}`);
     }
 
-    const uploadPath = normalizeKnowledgeInputPath(options.source);
+    const uploadPath = normalizeProjectUploadPath(options.source);
     const downloads = await deps.downloadUploads([uploadPath]);
     return downloads.map((download) => ({
       kind: "upload",
@@ -342,9 +360,10 @@ export async function collectKnowledgeSources(
     return localFiles.map((localPath) => ({ kind: "local", input: options.path!, localPath }));
   }
 
-  const uploadPrefix = normalizeKnowledgeInputPath(options.path);
+  const displayUploadPrefix = normalizeKnowledgeInputPath(options.path);
+  const uploadPrefix = normalizeProjectUploadPath(options.path);
   const uploads = await listAllUploads(deps.client, deps.projectSlug, {
-    path: uploadPrefix,
+    path: uploadPrefix || undefined,
     recursive: options.recursive ?? true,
     limit: 100,
   });
@@ -353,7 +372,7 @@ export async function collectKnowledgeSources(
     .map((item: UploadItem) => item.path);
 
   if (!uploadTargets.length) {
-    throw new Error(`No supported uploads found under ${uploadPrefix}`);
+    throw new Error(`No supported uploads found under ${displayUploadPrefix}`);
   }
 
   const downloads = await deps.downloadUploads(uploadTargets);
@@ -430,7 +449,7 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
         const client = createApiClient(config);
         const outputDir = options.outputDir ?? await defaultOutputRoot();
         const shouldCleanupOutputDir = options.outputDir === undefined;
-        const downloadOutputDir = resolve(dirname(outputDir), "uploads");
+        const downloadOutputDir = resolveKnowledgeDownloadOutputDir(outputDir);
 
         try {
           const sources = await collectKnowledgeSources(options, {

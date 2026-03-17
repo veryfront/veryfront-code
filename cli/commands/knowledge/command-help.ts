@@ -35,5 +35,6 @@ export const knowledgeHelp: CommandHelp = {
     "Primary subcommand: ingest",
     "`uploads/...` means a remote project upload; use `./uploads/...` or `/workspace/uploads/...` to force a local file",
     "`ingest` orchestrates upload resolution, parsing, and project file writes",
+    "Requires python3; non-text formats also require the supported parser packages unless you run inside the Veryfront sandbox",
   ],
 };

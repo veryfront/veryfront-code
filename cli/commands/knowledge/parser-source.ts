@@ -12,6 +12,9 @@ def yaml_quote(value: Any) -> str:
     return json.dumps("" if value is None else str(value), ensure_ascii=False)
 
 
+CODE_FENCE = chr(96) * 3
+
+
 def slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return slug or "document"
@@ -296,7 +299,7 @@ def parse_json(path: str):
 
     rendered = json.dumps(data, indent=2, ensure_ascii=False)
     stats = {"top_level_type": type(data).__name__}
-    return f"\`\`\`json\n{rendered}\n\`\`\`", stats, warnings
+    return f"{CODE_FENCE}json\n{rendered}\n{CODE_FENCE}", stats, warnings
 
 
 def select_parser(path: Path):

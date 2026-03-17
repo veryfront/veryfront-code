@@ -1,12 +1,23 @@
-import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "veryfront/platform/path";
 import {
   collectKnowledgeSources,
   createKnowledgeIngestResult,
   deriveKnowledgeRemotePath,
+  formatKnowledgeUploadSource,
   ingestResolvedSources,
   isLikelyLocalPath,
   normalizeKnowledgeInputPath,
+  normalizeProjectUploadPath,
+  resolveKnowledgeDownloadOutputDir,
+  runKnowledgeParser,
 } from "./command.ts";
 import { knowledgeIngestPythonSource } from "./parser-source.ts";
 import type { ApiClient } from "#cli/shared/config";
@@ -39,6 +50,23 @@ describe("normalizeKnowledgeInputPath", () => {
   });
 });
 
+describe("normalizeProjectUploadPath", () => {
+  it("strips the uploads/ prefix before upload-store API calls", () => {
+    assertEquals(normalizeProjectUploadPath("uploads/contracts/q1.pdf"), "contracts/q1.pdf");
+    assertEquals(normalizeProjectUploadPath("uploads/"), "");
+  });
+});
+
+describe("formatKnowledgeUploadSource", () => {
+  it("re-adds the uploads/ prefix for user-facing output", () => {
+    assertEquals(formatKnowledgeUploadSource("contracts/q1.pdf"), "uploads/contracts/q1.pdf");
+    assertEquals(
+      formatKnowledgeUploadSource("uploads/contracts/q1.pdf"),
+      "uploads/contracts/q1.pdf",
+    );
+  });
+});
+
 describe("isLikelyLocalPath", () => {
   it("detects workspace and relative local paths", () => {
     assertEquals(isLikelyLocalPath("/workspace/uploads/q1.pdf"), true);
@@ -57,6 +85,14 @@ describe("deriveKnowledgeRemotePath", () => {
       ),
       "knowledge/q1-report.md",
     );
+  });
+});
+
+describe("resolveKnowledgeDownloadOutputDir", () => {
+  it("keeps staged uploads inside the ingest output root", () => {
+    const outputDir = join("/tmp", "veryfront-knowledge-run");
+
+    assertEquals(resolveKnowledgeDownloadOutputDir(outputDir), join(outputDir, ".uploads"));
   });
 });
 
@@ -126,19 +162,19 @@ describe("collectKnowledgeSources", () => {
         downloadUploads: async (uploadPaths) => {
           calls.push(...uploadPaths);
           return [{
-            uploadPath: "uploads/contracts/q1.pdf",
+            uploadPath: "contracts/q1.pdf",
             localPath: "/workspace/uploads/contracts/q1.pdf",
           }];
         },
       },
     );
 
-    assertEquals(calls, ["uploads/contracts/q1.pdf"]);
+    assertEquals(calls, ["contracts/q1.pdf"]);
     assertEquals(sources, [
       {
         kind: "upload",
         input: "uploads/contracts/q1.pdf",
-        uploadPath: "uploads/contracts/q1.pdf",
+        uploadPath: "contracts/q1.pdf",
         localPath: "/workspace/uploads/contracts/q1.pdf",
       },
     ]);
@@ -166,14 +202,14 @@ describe("collectKnowledgeSources", () => {
           downloadUploads: async (uploadPaths) => {
             calls.push(...uploadPaths);
             return [{
-              uploadPath: "uploads/contracts/q1.pdf",
+              uploadPath: "contracts/q1.pdf",
               localPath: "/workspace/uploads/contracts/q1.pdf",
             }];
           },
         },
       );
 
-      assertEquals(calls, ["uploads/contracts/q1.pdf"]);
+      assertEquals(calls, ["contracts/q1.pdf"]);
       assertEquals(sources[0]?.kind, "upload");
     } finally {
       Deno.chdir(originalCwd);
@@ -188,7 +224,7 @@ describe("collectKnowledgeSources", () => {
       get: (path, params) => {
         listCalls.push({ path, params });
         return Promise.resolve({
-          data: [{ path: "uploads/a.pdf" }, { path: "uploads/b.pdf" }],
+          data: [{ path: "a.pdf" }, { path: "b.pdf" }],
           page_info: { next: null },
         });
       },
@@ -215,7 +251,8 @@ describe("collectKnowledgeSources", () => {
     );
 
     assertEquals(listCalls.length, 1);
-    assertEquals(downloadCalls, [["uploads/a.pdf", "uploads/b.pdf"]]);
+    assertEquals(listCalls[0]?.params?.path, undefined);
+    assertEquals(downloadCalls, [["a.pdf", "b.pdf"]]);
     assertEquals(sources.length, 2);
     assert(sources.every((source) => source.kind === "upload"));
   });
@@ -252,6 +289,7 @@ describe("collectKnowledgeSources", () => {
     );
 
     assertEquals(listCalls.length, 1);
+    assertEquals(listCalls[0]?.params?.path, "contracts");
     assertEquals(listCalls[0]?.params?.recursive, "false");
   });
 });
@@ -262,7 +300,7 @@ describe("ingestResolvedSources", () => {
       [{
         kind: "upload",
         input: "uploads/contracts/q1.pdf",
-        uploadPath: "uploads/contracts/q1.pdf",
+        uploadPath: "contracts/q1.pdf",
         localPath: "/workspace/uploads/contracts/q1.pdf",
       }],
       {
@@ -369,5 +407,46 @@ describe("ingestResolvedSources", () => {
 describe("knowledgeIngestPythonSource", () => {
   it("avoids Python 3.10-only union type syntax", () => {
     assertEquals(knowledgeIngestPythonSource.includes(" | None"), false);
+  });
+
+  it("emits plain markdown code fences for JSON output", () => {
+    assertEquals(knowledgeIngestPythonSource.includes("\`\`\`json"), false);
+    assertEquals(knowledgeIngestPythonSource.includes("CODE_FENCE = chr(96) * 3"), true);
+    assertStringIncludes(
+      knowledgeIngestPythonSource,
+      String.raw`return f"{CODE_FENCE}json\n{rendered}\n{CODE_FENCE}", stats, warnings`,
+    );
+  });
+});
+
+describe("runKnowledgeParser", () => {
+  it("executes the embedded parser with python3 for plain-text documents", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-test-" });
+    const filePath = join(tempDir, "q1-report.txt");
+    const outputDir = join(tempDir, "knowledge-output");
+
+    try {
+      await Deno.writeTextFile(filePath, "Quarterly revenue increased 12% year over year.");
+
+      const result = await runKnowledgeParser({
+        filePath,
+        outputDir,
+        description: "Quarterly performance summary",
+        slug: "q1-report",
+        sourceReference: "uploads/contracts/q1-report.txt",
+      });
+
+      assertEquals(result.slug, "q1-report");
+      assertEquals(result.source_type, "txt");
+      assertEquals(result.sandbox_output_path, join(outputDir, "q1-report.md"));
+
+      const markdown = await Deno.readTextFile(result.sandbox_output_path);
+      assertStringIncludes(markdown, 'source: "uploads/contracts/q1-report.txt"');
+      assertStringIncludes(markdown, 'description: "Quarterly performance summary"');
+      assertStringIncludes(markdown, "# Q1 Report");
+      assertStringIncludes(markdown, "Quarterly revenue increased 12% year over year.");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
   });
 });

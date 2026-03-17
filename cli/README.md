@@ -58,6 +58,7 @@ Run `veryfront <command> --help` for options:
 | `knowledge`     | Knowledge-base ingestion workflow   |
 
 Use `uploads/...` for remote project-upload references in `veryfront knowledge ingest`; use `./uploads/...` or `/workspace/uploads/...` to force a local sandbox path.
+`veryfront knowledge ingest` requires `python3`; non-text formats also need the supported parser packages unless you run inside the Veryfront sandbox image.
 
 ## Adding a New Command
 
