@@ -90,10 +90,24 @@ let rendererInitPromise: Promise<Renderer> | null = null;
 /**
  * Replace the renderer initializer used by the adapter layer.
  * Pass `undefined` to restore the default (real) initializer.
+ *
+ * Returns a disposer that restores the previous initializer — use in
+ * `afterEach` or with `using` to prevent test pollution:
+ *
+ * ```ts
+ * afterEach(() => setRendererInitializer(undefined));
+ * ```
  */
-export function setRendererInitializer(initializer?: RendererInitializer): void {
+export function setRendererInitializer(
+  initializer?: RendererInitializer,
+): () => void {
+  const previous = activeInitializer;
   activeInitializer = initializer ?? defaultInitializer;
   rendererInitPromise = null;
+  return () => {
+    activeInitializer = previous;
+    rendererInitPromise = null;
+  };
 }
 
 async function getOrInitRenderer(): Promise<Renderer> {

@@ -113,23 +113,101 @@ const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("runtime-handler");
 
+/** Handler names in registration order. */
+export const HANDLER_NAMES = [
+  "AuthHandler",
+  "CsrfHandler",
+  "HMRHandler",
+  "CorsHandler",
+  "HealthHandler",
+  "MetricsHandler",
+  "MemoryDebugHandler",
+  "ClientLogHandler",
+  "DevEndpointsHandler",
+  "StylesCSSHandler",
+  "DebugContextHandler",
+  "OpenAPIHandler",
+  "OpenAPIDocsHandler",
+  "InternalAgentsListHandler",
+  "AgentStreamHandler",
+  "AgentRunResumeHandler",
+  "AgentRunCancelHandler",
+  "ChannelInvokeHandler",
+  "DevDashboardHandler",
+  "ProjectsHandler",
+  "StudioBridgeModulesHandler",
+  "CSSHandler",
+  "DevFileHandler",
+  "SnippetHandler",
+  "StaticHandler",
+  "LibModulesHandler",
+  "RSCHandler",
+  "ModuleHandler",
+  "ApiHandlerWrapper",
+  "MarkdownPreviewHandler",
+  "SSRHandler",
+  "NotFoundHandler",
+] as const;
+
+/** Union of all registered handler names. */
+export type HandlerName = (typeof HANDLER_NAMES)[number];
+
 /**
  * Dependencies for handler registry creation.
  * All fields are optional — when omitted, the real handler implementation is used.
  * This allows tests to inject mock handlers for specific slots.
  */
 export interface HandlerDependencies {
-  /** Override any handler by its class name (e.g., "AuthHandler", "SSRHandler"). */
-  overrides?: Record<string, Handler>;
+  /** Override any handler by its typed name. */
+  overrides?: Partial<Record<HandlerName, Handler>>;
   /** When true, log handler registration details. */
   debug?: boolean;
 }
 
+/** Factory for each handler. Only called when no override is provided (lazy instantiation). */
+const handlerFactories: Record<
+  HandlerName,
+  (projectDir: string, adapter: RuntimeAdapter) => Handler
+> = {
+  AuthHandler: () => new AuthHandler(),
+  CsrfHandler: () => new CsrfHandler(),
+  HMRHandler: () => new HMRHandler(),
+  CorsHandler: () => new CorsHandler(),
+  HealthHandler: () => new HealthHandler(),
+  MetricsHandler: () => new MetricsHandler(),
+  MemoryDebugHandler: () => new MemoryDebugHandler(),
+  ClientLogHandler: () => new ClientLogHandler(),
+  DevEndpointsHandler: () => new DevEndpointsHandler(),
+  StylesCSSHandler: () => new StylesCSSHandler(),
+  DebugContextHandler: () => new DebugContextHandler(),
+  OpenAPIHandler: () => new OpenAPIHandler(),
+  OpenAPIDocsHandler: () => new OpenAPIDocsHandler(),
+  InternalAgentsListHandler: () => new InternalAgentsListHandler(),
+  AgentStreamHandler: () => new AgentStreamHandler(),
+  AgentRunResumeHandler: () => new AgentRunResumeHandler(),
+  AgentRunCancelHandler: () => new AgentRunCancelHandler(),
+  ChannelInvokeHandler: () => new ChannelInvokeHandler(),
+  DevDashboardHandler: () => new DevDashboardHandler(),
+  ProjectsHandler: () => new ProjectsHandler(),
+  StudioBridgeModulesHandler: () => new StudioBridgeModulesHandler(),
+  CSSHandler: () => new CSSHandler(),
+  DevFileHandler: () => new DevFileHandler(),
+  SnippetHandler: () => new SnippetHandler(),
+  StaticHandler: () => new StaticHandler(),
+  LibModulesHandler: () => new LibModulesHandler(),
+  RSCHandler: () => new RSCHandler(),
+  ModuleHandler: () => new ModuleHandler(),
+  ApiHandlerWrapper: (projectDir, adapter) => new ApiHandlerWrapper(projectDir, adapter),
+  MarkdownPreviewHandler: () => new MarkdownPreviewHandler(),
+  SSRHandler: () => new SSRHandler(),
+  NotFoundHandler: () => new NotFoundHandler(),
+};
+
 /**
  * Creates a RouteRegistry populated with the standard handler chain.
  *
- * The handler registration order and resulting priority-sorted order are
- * preserved exactly as in the production `createVeryfrontHandler`.
+ * Handlers are instantiated lazily — overridden slots skip construction
+ * of the default handler entirely.
  *
  * @param projectDir - Root project directory
  * @param adapter - Runtime adapter for environment access
@@ -146,51 +224,22 @@ export function createHandlerRegistry(
     enableMetrics: true,
   });
 
-  const apiHandler = new ApiHandlerWrapper(projectDir, adapter);
-
-  // Default handler instances in registration order.
-  // The RouteRegistry sorts by priority internally, but registration order
-  // matters as a tiebreaker for handlers sharing the same priority.
-  const defaultHandlers: Array<[string, Handler]> = [
-    ["AuthHandler", new AuthHandler()],
-    ["CsrfHandler", new CsrfHandler()],
-    ["HMRHandler", new HMRHandler()],
-    ["CorsHandler", new CorsHandler()],
-    ["HealthHandler", new HealthHandler()],
-    ["MetricsHandler", new MetricsHandler()],
-    ["MemoryDebugHandler", new MemoryDebugHandler()],
-    ["ClientLogHandler", new ClientLogHandler()],
-    ["DevEndpointsHandler", new DevEndpointsHandler()],
-    ["StylesCSSHandler", new StylesCSSHandler()],
-    ["DebugContextHandler", new DebugContextHandler()],
-    ["OpenAPIHandler", new OpenAPIHandler()],
-    ["OpenAPIDocsHandler", new OpenAPIDocsHandler()],
-    ["InternalAgentsListHandler", new InternalAgentsListHandler()],
-    ["AgentStreamHandler", new AgentStreamHandler()],
-    ["AgentRunResumeHandler", new AgentRunResumeHandler()],
-    ["AgentRunCancelHandler", new AgentRunCancelHandler()],
-    ["ChannelInvokeHandler", new ChannelInvokeHandler()],
-    ["DevDashboardHandler", new DevDashboardHandler()],
-    ["ProjectsHandler", new ProjectsHandler()],
-    ["StudioBridgeModulesHandler", new StudioBridgeModulesHandler()],
-    ["CSSHandler", new CSSHandler()],
-    ["DevFileHandler", new DevFileHandler()],
-    ["SnippetHandler", new SnippetHandler()],
-    ["StaticHandler", new StaticHandler()],
-    ["LibModulesHandler", new LibModulesHandler()],
-    ["RSCHandler", new RSCHandler()],
-    ["ModuleHandler", new ModuleHandler()],
-    ["ApiHandlerWrapper", apiHandler],
-    ["MarkdownPreviewHandler", new MarkdownPreviewHandler()],
-    ["SSRHandler", new SSRHandler()],
-    ["NotFoundHandler", new NotFoundHandler()],
-  ];
-
   const overrides = deps.overrides ?? {};
+  let apiHandler: ApiHandlerWrapper | undefined;
 
-  registry.registerAll(
-    defaultHandlers.map(([name, handler]) => overrides[name] ?? handler),
-  );
+  const handlers = HANDLER_NAMES.map((name) => {
+    if (overrides[name]) return overrides[name]!;
+    const handler = handlerFactories[name](projectDir, adapter);
+    if (name === "ApiHandlerWrapper") apiHandler = handler as ApiHandlerWrapper;
+    return handler;
+  });
+
+  // ApiHandlerWrapper is always present — either from overrides or from the factory above
+  if (!apiHandler) {
+    apiHandler = new ApiHandlerWrapper(projectDir, adapter);
+  }
+
+  registry.registerAll(handlers);
 
   return { registry, apiHandler };
 }
