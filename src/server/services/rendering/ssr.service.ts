@@ -14,7 +14,7 @@ import {
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
-import { ErrorOverlay } from "../../dev-server/error-overlay/index.ts";
+import { ErrorOverlay, parseErrorLocation } from "../../dev-server/error-overlay/index.ts";
 import { ErrorPages } from "../../utils/error-html.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
@@ -240,12 +240,14 @@ export class SSRService {
       });
 
       const sourceFile = (errorObj as Error & { sourceFile?: string }).sourceFile;
+      const location = sourceFile ? parseErrorLocation(errorObj, sourceFile) : {};
       return {
         status: HTTP_INTERNAL_SERVER_ERROR,
         html: ErrorOverlay.createHTML({
           error: errorObj,
           type: "runtime",
           ...(sourceFile ? { file: sourceFile } : {}),
+          ...location,
         }, ctx.projectSlug),
         isStreaming: false,
         cacheStrategy: "no-cache",

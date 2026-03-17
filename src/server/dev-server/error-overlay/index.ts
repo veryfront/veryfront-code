@@ -10,6 +10,7 @@ export {
   type ErrorType,
   formatErrorType,
   getSuggestion,
+  parseErrorLocation,
 } from "./error-formatter.ts";
 export { generateErrorHTML, generateRuntimeScript } from "./html-template.ts";
 export {

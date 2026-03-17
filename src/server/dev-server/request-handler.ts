@@ -9,7 +9,7 @@ import {
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { clearConfigCache } from "#veryfront/config";
-import { ErrorOverlay } from "./error-overlay/index.ts";
+import { ErrorOverlay, parseErrorLocation } from "./error-overlay/index.ts";
 import { createResponseBuilder } from "#veryfront/security/index.ts";
 import { resetApiHandler } from "../handlers/request/api/pages-api-handler.ts";
 import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts";
@@ -169,11 +169,13 @@ export class RequestHandler {
     getErrorCollector().addRuntimeError(err.message, err.stack, { source: "request-handler" });
 
     const sourceFile = (err as Error & { sourceFile?: string }).sourceFile;
+    const location = sourceFile ? parseErrorLocation(err, sourceFile) : {};
     return new Response(
       ErrorOverlay.createHTML({
         type: "runtime",
         error: err,
         ...(sourceFile ? { file: sourceFile } : {}),
+        ...location,
       }, this.defaultProjectSlug),
       {
         status: HTTP_SERVER_ERROR,

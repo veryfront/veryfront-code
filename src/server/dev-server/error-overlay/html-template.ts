@@ -175,9 +175,10 @@ export function generateRuntimeScript(): string {
             var rawLine = errorInfo.line ? String(errorInfo.line) : null;
             var rawColumn = errorInfo.column ? String(errorInfo.column) : null;
             var loc = rawFile ? rawFile + (rawLine ? ':' + rawLine : '') + (rawColumn ? ':' + rawColumn : '') : null;
+            var bt = String.fromCharCode(96);
             var prompt = 'Find and fix the following error' +
-              (loc ? ' in ' + loc : '') +
-              ':\\n\\n' + rawName + ': ' + rawMessage;
+              (loc ? ' in ' + bt + loc + bt : '') +
+              '\\n\\n' + bt + rawMessage + bt;
             if (window.parent !== window) {
               window.parent.postMessage({ action: 'chatMessage', prompt: prompt }, '*');
             } else {
@@ -378,9 +379,10 @@ export function generateErrorHTML(
       if (btn) {
         btn.addEventListener('click', function() {
           var loc = errorFile ? errorFile + (errorLine ? ':' + errorLine : '') + (errorColumn ? ':' + errorColumn : '') : null;
+          var bt = String.fromCharCode(96);
           var prompt = 'Find and fix the following error' +
-            (loc ? ' in ' + loc : '') +
-            ':\\n\\n' + errorName + ': ' + errorMessage;
+            (loc ? ' in ' + bt + loc + bt : '') +
+            '\\n\\n' + bt + errorMessage + bt;
           if (window.parent !== window) {
             window.parent.postMessage({ action: 'chatMessage', prompt: prompt }, '*');
           } else {

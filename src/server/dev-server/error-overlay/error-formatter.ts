@@ -53,6 +53,35 @@ export function getSuggestion(error: Error): string | undefined {
   return undefined;
 }
 
+export function parseErrorLocation(
+  error: Error,
+  file: string,
+): { line?: number; column?: number } {
+  if (!error.stack || !file) return {};
+
+  const lines = error.stack.split("\n");
+
+  // First try to match the known source file
+  for (const stackLine of lines) {
+    if (!stackLine.includes(file)) continue;
+
+    const match = stackLine.match(/:(\d+):(\d+)\)?$/);
+    if (match) {
+      return { line: Number(match[1]), column: Number(match[2]) };
+    }
+  }
+
+  // Fallback: use the first stack frame (for bundled SSR where paths don't match)
+  for (const stackLine of lines) {
+    const match = stackLine.match(/^\s+at\s+.*:(\d+):(\d+)\)?$/);
+    if (match) {
+      return { line: Number(match[1]), column: Number(match[2]) };
+    }
+  }
+
+  return {};
+}
+
 export function formatErrorType(type: ErrorType): string {
   const firstChar = type[0];
   if (!firstChar) return "";
