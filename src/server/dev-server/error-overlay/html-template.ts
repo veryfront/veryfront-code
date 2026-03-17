@@ -110,21 +110,57 @@ export function generateRuntimeScript(): string {
             </div>
 
             <button type="button" onclick="document.getElementById('veryfront-error-overlay').remove()" style="
-              background: #333;
-              border: 1px solid #555;
-              color: #ccc;
-              padding: 8px 16px;
-              border-radius: 4px;
+              background: #fff;
+              border: none;
+              color: #000;
+              padding: 10px 20px;
+              border-radius: 9999px;
               cursor: pointer;
               font-family: inherit;
             ">
               Dismiss
             </button>
+            \${window.__VF_PROJECT_SLUG__ ? \`
+            <button type="button" id="vf-fix-btn-runtime" style="
+              background: #fff;
+              border: none;
+              color: #000;
+              padding: 10px 20px;
+              border-radius: 9999px;
+              cursor: pointer;
+              font-family: inherit;
+              margin-left: 8px;
+            ">
+              Fix in Veryfront
+            </button>
+            \` : ''}
           </div>
         </div>
       \`;
 
       document.body.appendChild(overlay);
+
+      if (window.__VF_PROJECT_SLUG__) {
+        var fixBtn = document.getElementById('vf-fix-btn-runtime');
+        if (fixBtn) {
+          fixBtn.addEventListener('click', function() {
+            var rawName = (errorInfo.error && errorInfo.error.name) || 'Error';
+            var rawMessage = (errorInfo.error && errorInfo.error.message) || 'Unknown error';
+            var rawFile = errorInfo.file ? String(errorInfo.file) : null;
+            var rawLine = errorInfo.line ? String(errorInfo.line) : null;
+            var rawColumn = errorInfo.column ? String(errorInfo.column) : null;
+            var loc = rawFile ? rawFile + (rawLine ? ':' + rawLine : '') + (rawColumn ? ':' + rawColumn : '') : null;
+            var prompt = 'Find and fix the following error' +
+              (loc ? ' in ' + loc : '') +
+              ':\\n\\n' + rawName + ': ' + rawMessage;
+            if (window.parent !== window) {
+              window.parent.postMessage({ action: 'chatMessage', prompt: prompt }, '*');
+            } else {
+              window.open('https://veryfront.com/projects/' + window.__VF_PROJECT_SLUG__ + '?prompt=' + encodeURIComponent(prompt));
+            }
+          });
+        }
+      }
     };
 
     window.addEventListener('error', (event) => {
@@ -146,7 +182,11 @@ export function generateRuntimeScript(): string {
   `;
 }
 
-export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): string {
+export function generateErrorHTML(
+  errorInfo: ErrorInfo,
+  suggestion?: string,
+  projectSlug?: string,
+): string {
   const errorType = escapeHtml(formatErrorType(errorInfo.type));
   const errorName = escapeHtml(errorInfo.error.name);
   const errorMessage = escapeHtml(errorInfo.error.message);
@@ -180,6 +220,10 @@ export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): st
         <pre>${errorStack}</pre>
       </details>
     `
+    : "";
+
+  const fixButtonHtml = projectSlug
+    ? `<button type="button" id="vf-fix-btn" class="btn btn-fix">Fix in Veryfront</button>`
     : "";
 
   return `
@@ -253,6 +297,29 @@ export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): st
       overflow-x: auto;
       font-size: 12px;
     }
+    .btn {
+      padding: 10px 20px;
+      border-radius: 9999px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 14px;
+      border: none;
+    }
+    .btn-dismiss {
+      background: #fff;
+      color: #000;
+    }
+    .btn-dismiss:hover {
+      background: #e5e5e5;
+    }
+    .btn-fix {
+      background: #fff;
+      color: #000;
+      margin-left: 8px;
+    }
+    .btn-fix:hover {
+      background: #e5e5e5;
+    }
   </style>
 </head>
 <body>
@@ -267,8 +334,35 @@ export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): st
       ${suggestionSection}
       ${stackSection}
     </div>
+    ${fixButtonHtml}
   </div>
-  <script>
+  <script>${
+    projectSlug
+      ? `
+    (function() {
+      var slug = ${JSON.stringify(projectSlug)};
+      var errorName = ${JSON.stringify(errorInfo.error.name)};
+      var errorMessage = ${JSON.stringify(errorInfo.error.message)};
+      var errorFile = ${JSON.stringify(errorInfo.file ?? null)};
+      var errorLine = ${JSON.stringify(errorInfo.line ?? null)};
+      var errorColumn = ${JSON.stringify(errorInfo.column ?? null)};
+      var btn = document.getElementById('vf-fix-btn');
+      if (btn) {
+        btn.addEventListener('click', function() {
+          var loc = errorFile ? errorFile + (errorLine ? ':' + errorLine : '') + (errorColumn ? ':' + errorColumn : '') : null;
+          var prompt = 'Find and fix the following error' +
+            (loc ? ' in ' + loc : '') +
+            ':\\n\\n' + errorName + ': ' + errorMessage;
+          if (window.parent !== window) {
+            window.parent.postMessage({ action: 'chatMessage', prompt: prompt }, '*');
+          } else {
+            window.open('https://veryfront.com/projects/' + slug + '?prompt=' + encodeURIComponent(prompt));
+          }
+        });
+      }
+    })();`
+      : ""
+  }
     // Notify Studio (parent) that page has loaded with an error
     // This hides the loading spinner in Studio's preview iframe
     if (window.parent !== window) {
@@ -277,7 +371,14 @@ export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): st
           action: 'appUpdated',
           isInitialLoad: true,
           hasError: true,
-          url: window.location.href
+          url: window.location.href,
+          errors: [{
+            type: 'error',
+            message: ${JSON.stringify(errorInfo.error.message)},
+            file: ${JSON.stringify(errorInfo.file || undefined)},
+            line: ${errorInfo.line ? String(errorInfo.line) : "undefined"},
+            column: ${errorInfo.column ? String(errorInfo.column) : "undefined"}
+          }]
         }, '*');
       } catch (e) { /* postMessage may fail in cross-origin iframes */ }
     }

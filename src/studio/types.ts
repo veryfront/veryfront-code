@@ -7,7 +7,7 @@
 
 // Re-export schema-based types
 export type {
-  BundlerMessage,
+  ErrorMessage,
   LogMessage,
   LogMethod,
   MessageFromRenderer,

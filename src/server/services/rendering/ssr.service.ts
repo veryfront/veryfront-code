@@ -239,9 +239,14 @@ export class SSRService {
         slug,
       });
 
+      const sourceFile = (errorObj as Error & { sourceFile?: string }).sourceFile;
       return {
         status: HTTP_INTERNAL_SERVER_ERROR,
-        html: ErrorOverlay.createHTML({ error: errorObj, type: "runtime" }),
+        html: ErrorOverlay.createHTML({
+          error: errorObj,
+          type: "runtime",
+          ...(sourceFile ? { file: sourceFile } : {}),
+        }, ctx.projectSlug),
         isStreaming: false,
         cacheStrategy: "no-cache",
         error: errorObj,

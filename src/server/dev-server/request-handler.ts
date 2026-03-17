@@ -168,11 +168,13 @@ export class RequestHandler {
     const err = error as Error;
     getErrorCollector().addRuntimeError(err.message, err.stack, { source: "request-handler" });
 
+    const sourceFile = (err as Error & { sourceFile?: string }).sourceFile;
     return new Response(
       ErrorOverlay.createHTML({
         type: "runtime",
         error: err,
-      }),
+        ...(sourceFile ? { file: sourceFile } : {}),
+      }, this.defaultProjectSlug),
       {
         status: HTTP_SERVER_ERROR,
         headers: { "content-type": "text/html; charset=utf-8" },
