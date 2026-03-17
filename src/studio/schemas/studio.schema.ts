@@ -115,10 +115,6 @@ export const MessageFromRendererSchema = z.discriminatedUnion("action", [
     }).optional(),
   }),
   z.object({
-    action: z.literal("errorPageLoaded"),
-    url: z.string(),
-  }),
-  z.object({
     action: z.literal("onPageTransitionStart"),
     url: z.string(),
     projectId: z.string(),
