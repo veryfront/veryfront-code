@@ -139,9 +139,20 @@ describe("server/dev-server/error-overlay/html-template", () => {
         error: new Error('He said "hello" & <goodbye>'),
         file: "path/with spaces/file.tsx",
       });
-      // JSON.stringify handles special chars safely for JS embedding
-      assertEquals(html.includes(JSON.stringify('He said "hello" & <goodbye>')), true);
+      // < is escaped to \u003c to prevent </script> injection
+      assertEquals(html.includes("\\u003cgoodbye>"), true);
       assertEquals(html.includes(JSON.stringify("path/with spaces/file.tsx")), true);
+    });
+
+    it("should escape </script> in error messages to prevent XSS", () => {
+      const html = generateErrorHTML({
+        type: "runtime",
+        error: new Error("</script><img src=x onerror=alert(1)>"),
+      });
+      // Must not contain literal </script> from error message
+      // The only </script> should be the actual closing tag
+      const scriptCloseCount = (html.match(/<\/script>/gi) || []).length;
+      assertEquals(scriptCloseCount, 1);
     });
   });
 });

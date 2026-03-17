@@ -92,7 +92,7 @@ function generateStyledErrorHtml(statusCode: number, title: string, message: str
           url: window.location.href,
           errors: [{
             type: '${errorType}',
-            message: ${JSON.stringify(errorMessage)}
+            message: ${JSON.stringify(errorMessage).replace(/</g, "\\u003c")}
           }]
         }, '*');
       } catch (e) { /* postMessage may fail in cross-origin iframes */ }

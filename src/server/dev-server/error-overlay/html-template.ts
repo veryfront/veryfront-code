@@ -10,6 +10,13 @@ const WS_RECONNECT_MAX_DELAY_MS = 5_000;
 /** Maximum number of WebSocket reconnection attempts before giving up */
 const WS_MAX_RECONNECT_ATTEMPTS = 10;
 
+/** JSON.stringify that escapes `<` to prevent `</script>` breaking inline scripts */
+function jsonForScript(value: unknown): string {
+  const json = JSON.stringify(value);
+  // JSON.stringify(undefined) returns undefined (not a string)
+  return json === undefined ? "undefined" : json.replace(/</g, "\\u003c");
+}
+
 export function generateRuntimeScript(): string {
   return `
     // Veryfront Error Overlay Runtime
@@ -340,12 +347,12 @@ export function generateErrorHTML(
     projectSlug
       ? `
     (function() {
-      var slug = ${JSON.stringify(projectSlug)};
-      var errorName = ${JSON.stringify(errorInfo.error.name)};
-      var errorMessage = ${JSON.stringify(errorInfo.error.message)};
-      var errorFile = ${JSON.stringify(errorInfo.file ?? null)};
-      var errorLine = ${JSON.stringify(errorInfo.line ?? null)};
-      var errorColumn = ${JSON.stringify(errorInfo.column ?? null)};
+      var slug = ${jsonForScript(projectSlug)};
+      var errorName = ${jsonForScript(errorInfo.error.name)};
+      var errorMessage = ${jsonForScript(errorInfo.error.message)};
+      var errorFile = ${jsonForScript(errorInfo.file ?? null)};
+      var errorLine = ${jsonForScript(errorInfo.line ?? null)};
+      var errorColumn = ${jsonForScript(errorInfo.column ?? null)};
       var btn = document.getElementById('vf-fix-btn');
       if (btn) {
         btn.addEventListener('click', function() {
@@ -374,8 +381,8 @@ export function generateErrorHTML(
           url: window.location.href,
           errors: [{
             type: 'error',
-            message: ${JSON.stringify(errorInfo.error.message)},
-            file: ${JSON.stringify(errorInfo.file || undefined)},
+            message: ${jsonForScript(errorInfo.error.message)},
+            file: ${jsonForScript(errorInfo.file || undefined)},
             line: ${errorInfo.line ? String(errorInfo.line) : "undefined"},
             column: ${errorInfo.column ? String(errorInfo.column) : "undefined"}
           }]
