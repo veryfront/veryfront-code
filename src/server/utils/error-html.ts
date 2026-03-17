@@ -19,6 +19,13 @@ export function generateErrorHtml(options: ErrorHtmlOptions): string {
 }
 
 function generateStyledErrorHtml(statusCode: number, title: string, message: string): string {
+  const errorMessage = title === "Not Found"
+    ? `Page not found: ${message}`
+    : message;
+
+  // 4xx = warning (routing/config issue), 5xx = error (something broke)
+  const errorType = statusCode >= 500 ? "error" : "warning";
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -77,6 +84,22 @@ function generateStyledErrorHtml(statusCode: number, title: string, message: str
     <h1 class="title">${title}</h1>
     <p class="message">${message}</p>
   </div>
+  <script>
+    if (window.parent !== window) {
+      try {
+        window.parent.postMessage({
+          action: 'appUpdated',
+          isInitialLoad: true,
+          hasError: true,
+          url: window.location.href,
+          errors: [{
+            type: '${errorType}',
+            message: ${JSON.stringify(errorMessage)}
+          }]
+        }, '*');
+      } catch (e) { /* postMessage may fail in cross-origin iframes */ }
+    }
+  </script>
 </body>
 </html>`;
 }
