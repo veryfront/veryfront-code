@@ -257,40 +257,52 @@ describe("collectKnowledgeSources", () => {
     assert(sources.every((source) => source.kind === "upload"));
   });
 
-  it("respects non-recursive upload prefix listing", async () => {
+  it("retries folder-like upload prefixes with a trailing slash", async () => {
     const listCalls: Array<{ path: string; params?: Record<string, string> }> = [];
+    const downloadCalls: string[][] = [];
     const client = createMockClient({
-      get: (path, params) => {
-        listCalls.push({ path, params });
+      get: (_path, params) => {
+        listCalls.push({ path: _path, params });
+        if (params?.path === "contracts") {
+          return Promise.resolve({
+            data: [{ type: "folder", path: "contracts/" }],
+            page_info: { next: null },
+          });
+        }
         return Promise.resolve({
-          data: [],
+          data: [{ type: "file", path: "contracts/q1.pdf" }],
           page_info: { next: null },
         });
       },
     });
 
-    await assertRejects(
-      () =>
-        collectKnowledgeSources(
-          {
-            source: undefined,
-            path: "uploads/contracts/",
-            all: true,
-            recursive: false,
-          },
-          {
-            client,
-            projectSlug: "my-project",
-            downloadUploads: async () => [],
-          },
-        ),
-      Error,
-      "No supported uploads found under uploads/contracts",
+    const sources = await collectKnowledgeSources(
+      {
+        source: undefined,
+        path: "uploads/contracts",
+        all: true,
+        recursive: false,
+      },
+      {
+        client,
+        projectSlug: "my-project",
+        downloadUploads: async (uploadPaths) => {
+          downloadCalls.push(uploadPaths);
+          return uploadPaths.map((uploadPath) => ({
+            uploadPath,
+            localPath: `/workspace/${uploadPath}`,
+          }));
+        },
+      },
     );
 
-    assertEquals(listCalls.length, 1);
+    assertEquals(listCalls.length, 2);
     assertEquals(listCalls[0]?.params?.path, "contracts");
-    assertEquals(listCalls[0]?.params?.recursive, "false");
+    assertEquals(listCalls[1]?.params?.path, "contracts/");
+    assertEquals(listCalls[1]?.params?.recursive, "false");
+    assertEquals(downloadCalls, [["contracts/q1.pdf"]]);
+    assertEquals(sources.length, 1);
+    assertEquals(sources[0]?.kind, "upload");
   });
 });
 

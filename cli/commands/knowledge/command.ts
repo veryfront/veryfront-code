@@ -362,14 +362,25 @@ export async function collectKnowledgeSources(
 
   const displayUploadPrefix = normalizeKnowledgeInputPath(options.path);
   const uploadPrefix = normalizeProjectUploadPath(options.path);
-  const uploads = await listAllUploads(deps.client, deps.projectSlug, {
-    path: uploadPrefix || undefined,
-    recursive: options.recursive ?? true,
-    limit: 100,
-  });
-  const uploadTargets = uploads
+
+  const listUploadsForPrefix = async (pathPrefix?: string): Promise<UploadItem[]> =>
+    listAllUploads(deps.client, deps.projectSlug, {
+      path: pathPrefix || undefined,
+      recursive: options.recursive ?? true,
+      limit: 100,
+    });
+
+  let uploads = await listUploadsForPrefix(uploadPrefix || undefined);
+  let uploadTargets = uploads
     .filter((item: UploadItem) => item.type !== "folder" && isSupportedKnowledgeFile(item.path))
     .map((item: UploadItem) => item.path);
+
+  if (!uploadTargets.length && uploadPrefix && !uploadPrefix.endsWith("/")) {
+    uploads = await listUploadsForPrefix(`${uploadPrefix}/`);
+    uploadTargets = uploads
+      .filter((item: UploadItem) => item.type !== "folder" && isSupportedKnowledgeFile(item.path))
+      .map((item: UploadItem) => item.path);
+  }
 
   if (!uploadTargets.length) {
     throw new Error(`No supported uploads found under ${displayUploadPrefix}`);
