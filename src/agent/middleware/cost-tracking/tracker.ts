@@ -20,6 +20,8 @@ export interface CostConfig {
     /** Per-user daily cost limit */
     userDaily?: number;
   };
+  /** Maximum number of per-user cost entries to retain (default: 10_000) */
+  maxTrackedUsers?: number;
   onLimitExceeded?: (usage: UsageSummary) => void;
 }
 
@@ -68,11 +70,13 @@ class CostTracker {
   private dailyTotal = 0;
   private monthlyTotal = 0;
   private userDailyTotals = new Map<string, number>();
+  private maxTrackedUsers: number;
   private lastDayReset = Date.now();
   private lastMonthReset = Date.now();
   private resetInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(private config: CostConfig) {
+    this.maxTrackedUsers = config.maxTrackedUsers ?? 10_000;
     this.startPeriodicReset();
   }
 
@@ -135,6 +139,11 @@ class CostTracker {
     this.monthlyTotal += cost;
     if (userId) {
       this.userDailyTotals.set(userId, (this.userDailyTotals.get(userId) ?? 0) + cost);
+      if (this.userDailyTotals.size > this.maxTrackedUsers) {
+        // Evict oldest entry (first key in insertion order)
+        const firstKey = this.userDailyTotals.keys().next().value;
+        if (firstKey !== undefined) this.userDailyTotals.delete(firstKey);
+      }
     }
     this.checkLimits(userId);
 
@@ -200,11 +209,13 @@ class CostTracker {
     const dailyLimit = this.config.limits?.daily;
     if (dailyLimit && this.dailyTotal >= dailyLimit) {
       this.config.onLimitExceeded?.(this.getDailySummary());
+      return;
     }
 
     const monthlyLimit = this.config.limits?.monthly;
     if (monthlyLimit && this.monthlyTotal >= monthlyLimit) {
       this.config.onLimitExceeded?.(this.getMonthlySummary());
+      return;
     }
 
     const userDailyLimit = this.config.limits?.userDaily;
@@ -257,6 +268,10 @@ class CostTracker {
     return [...this.records];
   }
 
+  getTrackedUserCount(): number {
+    return this.userDailyTotals.size;
+  }
+
   clear(): void {
     this.records = [];
     this.dailyTotal = 0;
@@ -272,6 +287,7 @@ export function createCostTracker(config: CostConfig): {
   getDailySummary: () => UsageSummary;
   getMonthlySummary: () => UsageSummary;
   getAllRecords: () => UsageRecord[];
+  getTrackedUserCount: () => number;
   clear: () => void;
   destroy: () => void;
 } {
@@ -284,6 +300,7 @@ export function createCostTracker(config: CostConfig): {
     getDailySummary: tracker.getDailySummary.bind(tracker),
     getMonthlySummary: tracker.getMonthlySummary.bind(tracker),
     getAllRecords: tracker.getAllRecords.bind(tracker),
+    getTrackedUserCount: tracker.getTrackedUserCount.bind(tracker),
     clear: tracker.clear.bind(tracker),
     destroy: tracker.destroy.bind(tracker),
   };
