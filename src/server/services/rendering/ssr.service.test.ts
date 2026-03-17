@@ -26,8 +26,7 @@ function createMockAdapter(): RuntimeAdapter {
       readDir: () => Promise.resolve([]),
       mkdir: () => Promise.resolve(),
       remove: () => Promise.resolve(),
-      stat: () =>
-        Promise.resolve({ isFile: false, isDirectory: false, size: 0, mtime: null }),
+      stat: () => Promise.resolve({ isFile: false, isDirectory: false, size: 0, mtime: null }),
     },
     env: {
       get: () => undefined,
@@ -237,8 +236,7 @@ describe("server/services/rendering/ssr.service", () => {
           },
         });
         const adapter = createMockRendererAdapter({
-          renderPage: () =>
-            Promise.resolve({ html: undefined, stream, ssrHash: undefined }),
+          renderPage: () => Promise.resolve({ html: undefined, stream, ssrHash: undefined }),
         });
         const service = new SSRService({
           rendererProvider: createMockRendererProvider(adapter),

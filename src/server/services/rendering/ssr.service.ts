@@ -48,7 +48,8 @@ export interface SSRServiceLike {
  * Default RendererProvider that delegates to the real getRendererForProject.
  */
 const defaultRendererProvider: RendererProvider = {
-  getRenderer: (ctx: HandlerContext) => timeAsync("renderer-init", () => getRendererForProject(ctx)),
+  getRenderer: (ctx: HandlerContext) =>
+    timeAsync("renderer-init", () => getRendererForProject(ctx)),
 };
 
 export interface SSRRenderResult {

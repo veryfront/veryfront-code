@@ -7,8 +7,8 @@
 export {
   destroyRendererAdapter,
   getRendererForProject,
-  setRendererInitializer,
   type RendererAdapter,
   type RendererInitializer,
+  setRendererInitializer,
 } from "./adapter.ts";
 export { shouldRejectDueToMemory } from "./memory/pressure.ts";

@@ -192,6 +192,112 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     assertEquals(mockHealth.callCount, 1);
   });
 
+  it("supports multiple simultaneous overrides", () => {
+    const mockAuth = createMockHandler("AuthHandler", HandlerPriority.CRITICAL, "/__/auth");
+    const mockSSR = createMockHandler("SSRHandler", HandlerPriority.LOW, "/");
+    const mockHealth = createMockHandler("HealthHandler", HandlerPriority.HIGH, "/__/health");
+
+    const { registry } = createHandlerRegistry(projectDir, adapter, {
+      overrides: {
+        AuthHandler: mockAuth,
+        SSRHandler: mockSSR,
+        HealthHandler: mockHealth,
+      },
+    });
+
+    const handlers = registry.getHandlers();
+    const authHandler = handlers.find((h) => h.metadata.name === "AuthHandler");
+    const ssrHandler = handlers.find((h) => h.metadata.name === "SSRHandler");
+    const healthHandler = handlers.find((h) => h.metadata.name === "HealthHandler");
+
+    assertEquals(authHandler, mockAuth as Handler);
+    assertEquals(ssrHandler, mockSSR as Handler);
+    assertEquals(healthHandler, mockHealth as Handler);
+    assertEquals(registry.getStats().totalHandlers, 32);
+  });
+
+  it("ignores overrides with non-existent handler names", () => {
+    const mockFake = createMockHandler("FakeHandler", HandlerPriority.LOW);
+
+    const { registry } = createHandlerRegistry(projectDir, adapter, {
+      overrides: {
+        FakeHandler: mockFake,
+      },
+    });
+
+    // FakeHandler is not in the default list, so it should be ignored
+    const stats = registry.getStats();
+    assertEquals(stats.totalHandlers, 32);
+    assertEquals(stats.handlerNames.includes("FakeHandler"), false);
+  });
+
+  it("works with empty overrides object", () => {
+    const { registry } = createHandlerRegistry(projectDir, adapter, {
+      overrides: {},
+    });
+
+    assertEquals(registry.getStats().totalHandlers, 32);
+  });
+
+  it("works with debug mode enabled", () => {
+    const { registry } = createHandlerRegistry(projectDir, adapter, {
+      debug: true,
+    });
+
+    assertEquals(registry.getStats().totalHandlers, 32);
+  });
+
+  it("contains all security handler group", () => {
+    const { registry } = createHandlerRegistry(projectDir, adapter);
+    const names = registry.getStats().handlerNames;
+    for (const handler of ["AuthHandler", "CsrfHandler", "CorsHandler"]) {
+      assertEquals(names.includes(handler), true, `Missing security handler: ${handler}`);
+    }
+  });
+
+  it("contains all API handler group", () => {
+    const { registry } = createHandlerRegistry(projectDir, adapter);
+    const names = registry.getStats().handlerNames;
+    for (const handler of ["OpenAPIHandler", "OpenAPIDocsHandler", "AgentStreamHandler"]) {
+      assertEquals(names.includes(handler), true, `Missing API handler: ${handler}`);
+    }
+  });
+
+  it("contains all content handler group", () => {
+    const { registry } = createHandlerRegistry(projectDir, adapter);
+    const names = registry.getStats().handlerNames;
+    for (const handler of ["SSRHandler", "StaticHandler", "ModuleHandler", "RSCHandler"]) {
+      assertEquals(names.includes(handler), true, `Missing content handler: ${handler}`);
+    }
+  });
+
+  it("contains all dev handler group", () => {
+    const { registry } = createHandlerRegistry(projectDir, adapter);
+    const names = registry.getStats().handlerNames;
+    for (const handler of ["HMRHandler", "DevEndpointsHandler", "DevDashboardHandler"]) {
+      assertEquals(names.includes(handler), true, `Missing dev handler: ${handler}`);
+    }
+  });
+
+  it("apiHandler has handle method", () => {
+    const { apiHandler } = createHandlerRegistry(projectDir, adapter);
+    assertEquals(typeof apiHandler.handle, "function");
+  });
+
+  it("override does not affect a separately created registry", () => {
+    const mockHealth = createMockHandler("HealthHandler", HandlerPriority.HIGH, "/__/health");
+    const { registry: r1 } = createHandlerRegistry(projectDir, adapter, {
+      overrides: { HealthHandler: mockHealth },
+    });
+    const { registry: r2 } = createHandlerRegistry(projectDir, adapter);
+
+    const r1Health = r1.getHandlers().find((h) => h.metadata.name === "HealthHandler");
+    const r2Health = r2.getHandlers().find((h) => h.metadata.name === "HealthHandler");
+
+    assertEquals(r1Health, mockHealth as Handler);
+    assertEquals(r2Health !== mockHealth, true);
+  });
+
   it("preserves handler count across multiple factory calls (no shared state)", () => {
     const { registry: r1 } = createHandlerRegistry(projectDir, adapter);
     const { registry: r2 } = createHandlerRegistry(projectDir, adapter);

@@ -7,7 +7,6 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Renderer, RendererOptions } from "#veryfront/rendering/renderer.ts";
-import type { RenderContext } from "#veryfront/rendering/renderer.ts";
 import {
   destroyRendererAdapter,
   getRendererForProject,
@@ -285,6 +284,206 @@ describe("RendererAdapter with RendererInitializer", () => {
       // Both adapters should work
       assertEquals(await a1.getAllPages(), ["/"]);
       assertEquals(await a2.getAllPages(), ["/"]);
+    });
+  });
+
+  // -- RendererAdapterImpl methods ------------------------------------------
+
+  describe("RendererAdapterImpl methods", () => {
+    it("clearCache delegates to renderer.clearCache", async () => {
+      const adapter = await getRendererForProject(stubHandlerContext());
+      adapter.clearCache("some-slug");
+      // clearCache fires async — give it a tick to resolve
+      await new Promise((r) => setTimeout(r, 10));
+      assertEquals(mockRenderer.calls.clearCache, 1);
+    });
+
+    it("clearCache without slug also calls renderer", async () => {
+      const adapter = await getRendererForProject(stubHandlerContext());
+      adapter.clearCache();
+      await new Promise((r) => setTimeout(r, 10));
+      assertEquals(mockRenderer.calls.clearCache, 1);
+    });
+
+    it("clearAllState delegates to clearCache", async () => {
+      const adapter = await getRendererForProject(stubHandlerContext());
+      adapter.clearAllState();
+      await new Promise((r) => setTimeout(r, 10));
+      assertEquals(mockRenderer.calls.clearCache, 1);
+    });
+
+    it("getVirtualModuleSystem returns stub methods", async () => {
+      const adapter = await getRendererForProject(stubHandlerContext());
+      const vms = adapter.getVirtualModuleSystem();
+
+      assertEquals(vms.handleRequest(new Request("http://localhost/test")), null);
+      assertEquals(await vms.register("id", "source", "/dir"), "");
+      assertEquals(await vms.registerModule("id", "source", "/dir"), "");
+      assertEquals(vms.getModule("id"), undefined);
+      // clear should not throw
+      vms.clear();
+    });
+
+    it("initializeComponents resolves without error", async () => {
+      const adapter = await getRendererForProject(stubHandlerContext());
+      await adapter.initializeComponents();
+      // No error thrown = success
+    });
+
+    it("destroy resolves without error", async () => {
+      const adapter = await getRendererForProject(stubHandlerContext());
+      await adapter.destroy();
+    });
+
+    it("resolvePageData delegates to renderer", async () => {
+      const adapter = await getRendererForProject(stubHandlerContext());
+      await adapter.resolvePageData("/about");
+      assertEquals(mockRenderer.calls.resolvePageData, 1);
+    });
+  });
+
+  // -- createContextFromHandler paths ---------------------------------------
+
+  describe("createContextFromHandler", () => {
+    it("takes pre-built enriched context fast path", async () => {
+      const ctx = stubHandlerContext();
+      // enriched is already set — should skip config loading
+      const adapter = await getRendererForProject(ctx);
+      assertEquals(mockInit.initCount, 1);
+      // Adapter should work
+      const pages = await adapter.getAllPages();
+      assertEquals(pages, ["/"]);
+    });
+
+    it("builds enriched context when not pre-populated", async () => {
+      const ctx = stubHandlerContext();
+      ctx.enriched = undefined;
+      ctx.config = { pages: { include: ["**/*.mdx"] } };
+      ctx.projectDir = "/tmp/test-project";
+      ctx.adapter = {
+        fs: {
+          exists: () => Promise.resolve(false),
+          readFile: () => Promise.resolve(""),
+          readDir: async function* () {},
+          stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+        },
+        env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+      } as unknown as any;
+
+      const adapter = await getRendererForProject(ctx);
+      // Should have built enriched context and stored it
+      assertEquals(ctx.enriched !== undefined, true);
+      const pages = await adapter.getAllPages();
+      assertEquals(pages, ["/"]);
+    });
+
+    it("resolves production environment from resolvedEnvironment", async () => {
+      const ctx = stubHandlerContext();
+      ctx.enriched = undefined;
+      ctx.resolvedEnvironment = "production";
+      ctx.config = { pages: { include: ["**/*.mdx"] } };
+      ctx.adapter = {
+        fs: {
+          exists: () => Promise.resolve(false),
+          readFile: () => Promise.resolve(""),
+          readDir: async function* () {},
+          stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+        },
+        env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+      } as unknown as any;
+
+      await getRendererForProject(ctx);
+      assertEquals(ctx.enriched !== undefined, true);
+      assertEquals(ctx.enriched.environment, "production");
+    });
+
+    it("resolves preview environment from domain staging", async () => {
+      const ctx = stubHandlerContext();
+      ctx.enriched = undefined;
+      ctx.resolvedEnvironment = undefined;
+      ctx.parsedDomain = {
+        slug: null,
+        branch: null,
+        environment: "staging",
+        isVeryfrontDomain: false,
+        isDraft: false,
+        allowIframeEmbed: false,
+      } as any;
+      ctx.config = { pages: { include: ["**/*.mdx"] } };
+      ctx.adapter = {
+        fs: {
+          exists: () => Promise.resolve(false),
+          readFile: () => Promise.resolve(""),
+          readDir: async function* () {},
+          stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+        },
+        env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+      } as unknown as any;
+
+      await getRendererForProject(ctx);
+      assertEquals(ctx.enriched !== undefined, true);
+      assertEquals(ctx.enriched.environment, "preview");
+    });
+
+    it("loads config when not provided and enriched is absent", async () => {
+      const ctx = stubHandlerContext();
+      ctx.enriched = undefined;
+      ctx.config = undefined;
+      ctx.projectDir = "/tmp/test-project";
+      ctx.adapter = {
+        fs: {
+          exists: () => Promise.resolve(false),
+          readFile: () => Promise.resolve(""),
+          readDir: async function* () {},
+          stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+        },
+        env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+      } as unknown as any;
+
+      const adapter = await getRendererForProject(ctx);
+      // Config was loaded (or defaulted) and enriched context was built
+      assertEquals(ctx.enriched !== undefined, true);
+      const pages = await adapter.getAllPages();
+      assertEquals(pages, ["/"]);
+    });
+
+    it("derives projectId from projectDir when no explicit id", async () => {
+      const ctx = stubHandlerContext();
+      ctx.enriched = undefined;
+      ctx.projectId = undefined;
+      ctx.projectSlug = undefined;
+      ctx.projectDir = "/tmp/my-special-project";
+      ctx.config = { pages: { include: ["**/*.mdx"] } };
+      ctx.adapter = {
+        fs: {
+          exists: () => Promise.resolve(false),
+          readFile: () => Promise.resolve(""),
+          readDir: async function* () {},
+          stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+        },
+        env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+      } as unknown as any;
+
+      await getRendererForProject(ctx);
+      assertEquals(ctx.enriched !== undefined, true);
+      // Should derive from last path segment
+      assertEquals(ctx.enriched.projectId, "my-special-project");
+    });
+
+    it("clearCache handles renderer.clearCache rejection silently", async () => {
+      // Create a renderer whose clearCache rejects
+      const failingRenderer = createMockRenderer();
+      (failingRenderer as any).clearCache = async () => {
+        throw new Error("cache clear fail");
+      };
+      const failingInit = createMockInitializer(failingRenderer);
+      setRendererInitializer(failingInit);
+
+      const adapter = await getRendererForProject(stubHandlerContext());
+      // Should not throw
+      adapter.clearCache("test-slug");
+      await new Promise((r) => setTimeout(r, 20));
+      // Just verify it didn't crash
     });
   });
 
