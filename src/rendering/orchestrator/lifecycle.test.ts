@@ -117,6 +117,203 @@ describe("rendering/orchestrator/lifecycle", () => {
     });
   });
 
+  describe("initialize with injected servicesFactory", () => {
+    function createMockServices(): any {
+      const cleared: string[] = [];
+      return {
+        componentRegistry: {
+          initializeComponents: async () => {},
+          loadFromDirectory: async () => {},
+          clear: () => cleared.push("componentRegistry"),
+        },
+        virtualModules: { clear: () => cleared.push("virtualModules") },
+        cacheCoordinator: {
+          clearAll: async () => {
+            cleared.push("cacheCoordinator");
+          },
+          clearSlug: async (slug: string) => {
+            cleared.push(`slug:${slug}`);
+          },
+          destroy: async () => {},
+        },
+        mdxCacheAdapter: {},
+        layoutCollector: {},
+        layoutCompiler: {},
+        elementValidator: {},
+        ssrRenderer: {},
+        pageRenderer: {},
+        pageResolver: {},
+        compilerService: {
+          setCompileMDX: () => {},
+          getCompileFunction: () => async () => ({
+            compiledCode: "",
+            frontmatter: {},
+            globals: {},
+            headings: [],
+            nodeMap: new Map(),
+          }),
+        },
+        _cleared: cleared,
+      };
+    }
+
+    it("initializes with injected factory", async () => {
+      const mockServices = createMockServices();
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+        servicesFactory: () => mockServices,
+      });
+
+      const services = await lifecycle.initialize();
+      assertEquals(services, mockServices);
+    });
+
+    it("getServices returns services after initialize", async () => {
+      const mockServices = createMockServices();
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+        servicesFactory: () => mockServices,
+      });
+
+      await lifecycle.initialize();
+      assertEquals(lifecycle.getServices(), mockServices);
+    });
+
+    it("clearAllCaches delegates to services after init", async () => {
+      const mockServices = createMockServices();
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+        servicesFactory: () => mockServices,
+      });
+
+      await lifecycle.initialize();
+      lifecycle.clearAllCaches();
+      // Wait for async clearAll
+      await new Promise((r) => setTimeout(r, 10));
+      assertEquals(mockServices._cleared.includes("cacheCoordinator"), true);
+      assertEquals(mockServices._cleared.includes("virtualModules"), true);
+      assertEquals(mockServices._cleared.includes("componentRegistry"), true);
+    });
+
+    it("clearSlugCache delegates to services after init", async () => {
+      const mockServices = createMockServices();
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+        servicesFactory: () => mockServices,
+      });
+
+      await lifecycle.initialize();
+      lifecycle.clearSlugCache("test-slug");
+      await new Promise((r) => setTimeout(r, 10));
+      assertEquals(mockServices._cleared.includes("slug:test-slug"), true);
+    });
+
+    it("initializeComponents delegates after init", async () => {
+      let called = false;
+      const mockServices = createMockServices();
+      mockServices.componentRegistry.initializeComponents = async () => {
+        called = true;
+      };
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+        servicesFactory: () => mockServices,
+      });
+
+      await lifecycle.initialize();
+      await lifecycle.initializeComponents();
+      assertEquals(called, true);
+    });
+
+    it("destroy delegates to cache coordinator", async () => {
+      let destroyed = false;
+      const mockServices = createMockServices();
+      mockServices.cacheCoordinator.destroy = async () => {
+        destroyed = true;
+      };
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+        servicesFactory: () => mockServices,
+      });
+
+      await lifecycle.initialize();
+      await lifecycle.destroy();
+      assertEquals(destroyed, true);
+    });
+
+    it("updateCompileMDX delegates after init", async () => {
+      let updatedFn: unknown = null;
+      const mockServices = createMockServices();
+      mockServices.compilerService.setCompileMDX = (fn: unknown) => {
+        updatedFn = fn;
+      };
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+        servicesFactory: () => mockServices,
+      });
+
+      const newCompile = async () => ({
+        compiledCode: "new",
+        frontmatter: {},
+        globals: {},
+        headings: [],
+        nodeMap: new Map(),
+      });
+
+      await lifecycle.initialize();
+      lifecycle.updateCompileMDX(newCompile);
+      assertEquals(updatedFn, newCompile);
+    });
+  });
+
   describe("updateCompileMDX before initialization", () => {
     it("should throw when services not initialized", () => {
       const adapter = createMockAdapter();
