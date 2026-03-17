@@ -278,7 +278,7 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
       );
     }
 
-    if (!controlPlanePublicKey) {
+    if (!controlPlanePublicKey && nodeEnv === "production") {
       logger.error(
         "[Bootstrap:Prod] CRITICAL: CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY is not set in proxy mode. " +
           "Hosted runtimes cannot verify control-plane requests without it.",
@@ -287,6 +287,11 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
         detail:
           "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set when running in proxy mode (PROXY_MODE=1)",
       });
+    } else if (!controlPlanePublicKey) {
+      logger.warn(
+        "[Bootstrap:Prod] CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY is not set. " +
+          "Channel dispatch verification will be unavailable.",
+      );
     }
   }
 
