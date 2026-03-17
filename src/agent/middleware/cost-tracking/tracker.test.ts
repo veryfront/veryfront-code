@@ -322,7 +322,6 @@ describe("createCostTracker", () => {
 
     // Existing user still accumulates (not evicted)
     tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-a");
-    // user-a now has 2 calls — if they were evicted and re-added they'd only have 1
     assertEquals(tracker.getTrackedUserCount(), 2);
 
     tracker.destroy();

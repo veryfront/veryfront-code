@@ -55,6 +55,9 @@ export {
   type StdinReader,
 } from "./compat/stdin.ts";
 
+// Compat: media types
+export { lookup as lookupMimeType } from "./compat/media-types.ts";
+
 // Compat: KV store
 export { createKVStore, MemoryKv } from "./compat/kv/index.ts";
 

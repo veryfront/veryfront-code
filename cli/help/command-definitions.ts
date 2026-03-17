@@ -21,6 +21,9 @@ import { analyzeChunksHelp } from "../commands/analyze-chunks/command-help.ts";
 import { generateHelp } from "../commands/generate/command-help.ts";
 import { pullHelp } from "../commands/pull/command-help.ts";
 import { pushHelp } from "../commands/push/command-help.ts";
+import { uploadsHelp } from "../commands/uploads/command-help.ts";
+import { filesHelp } from "../commands/files/command-help.ts";
+import { knowledgeHelp } from "../commands/knowledge/command-help.ts";
 import { mergeHelp } from "../commands/merge/command-help.ts";
 import { deployHelp } from "../commands/deploy/command-help.ts";
 import { upHelp } from "../commands/up/command-help.ts";
@@ -52,6 +55,9 @@ export const COMMANDS: CommandRegistry = {
   generate: generateHelp,
   pull: pullHelp,
   push: pushHelp,
+  uploads: uploadsHelp,
+  files: filesHelp,
+  knowledge: knowledgeHelp,
   merge: mergeHelp,
   deploy: deployHelp,
   up: upHelp,

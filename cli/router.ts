@@ -22,6 +22,9 @@ import { handleMCPCommand } from "./commands/mcp/handler.ts";
 import { handleMergeCommand } from "./commands/merge/handler.ts";
 import { handlePullCommand } from "./commands/pull/index.ts";
 import { handlePushCommand } from "./commands/push/index.ts";
+import { handleUploadsCommand } from "./commands/uploads/index.ts";
+import { handleFilesCommand } from "./commands/files/index.ts";
+import { handleKnowledgeCommand } from "./commands/knowledge/index.ts";
 import { handleRoutesCommand } from "./commands/routes/handler.ts";
 import { handleServeCommand } from "./commands/serve/handler.ts";
 import { handleStartCommand } from "./commands/start/handler.ts";
@@ -56,6 +59,9 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "g": handleGenerateCommand,
   "pull": handlePullCommand,
   "push": handlePushCommand,
+  "uploads": handleUploadsCommand,
+  "files": handleFilesCommand,
+  "knowledge": handleKnowledgeCommand,
   "merge": handleMergeCommand,
   "deploy": handleDeployCommand,
   "up": handleUpCommand,
