@@ -480,6 +480,140 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
     });
   });
 
+  describe("payload endpoint", () => {
+    it("returns JSON with html, modules, slots keys", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/payload",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/payload"),
+        }),
+      );
+      assertEquals(result instanceof Response, true);
+      assertEquals(result!.status, 200);
+      const body = await result!.json();
+      assertEquals("html" in body, true);
+      assertEquals("modules" in body, true);
+      assertEquals("slots" in body, true);
+    });
+
+    it("uses name param in payload response", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/payload",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/payload?name=Test"),
+        }),
+      );
+      const body = await result!.json();
+      assertStringIncludes(body.html, "Test");
+    });
+
+    it("escapes HTML in payload name", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/payload",
+          config: rscEnabledConfig,
+          req: new Request(
+            "http://localhost/_veryfront/rsc/payload?name=<script>xss</script>",
+          ),
+        }),
+      );
+      const body = await result!.json();
+      assertEquals(body.html.includes("<script>"), false);
+      assertStringIncludes(body.html, "&lt;script&gt;");
+    });
+  });
+
+  describe("manifest endpoint", () => {
+    it("returns response when RSC enabled", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/manifest",
+          config: rscEnabledConfig,
+        }),
+      );
+      assertEquals(result instanceof Response, true);
+    });
+  });
+
+  describe("hydrator script endpoints", () => {
+    it("returns response for hydrator.js", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/hydrator.js",
+          config: rscEnabledConfig,
+        }),
+      );
+      assertEquals(result instanceof Response, true);
+    });
+
+    it("returns response for hydrate.js", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/hydrate.js",
+          config: rscEnabledConfig,
+        }),
+      );
+      assertEquals(result instanceof Response, true);
+    });
+  });
+
+  describe("page endpoint (root)", () => {
+    it("returns response for /_veryfront/rsc/page", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/page",
+          config: rscEnabledConfig,
+        }),
+      );
+      assertEquals(result instanceof Response, true);
+    });
+  });
+
+  describe("module endpoint - fs error handling", () => {
+    it("returns 500 when fs.exists throws", async () => {
+      const adapter = createMockAdapter({
+        exists: () => {
+          throw new Error("fs error");
+        },
+      });
+
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/module?rel=foo.js"),
+          adapter,
+          projectDir: "/tmp/test-project",
+        }),
+      );
+      assertEquals(result instanceof Response, true);
+      assertEquals(result!.status, 500);
+    });
+
+    it("handles leading slash in rel param", async () => {
+      const adapter = createMockAdapter({
+        exists: (path: string) => Promise.resolve(path.includes("/app/test.js")),
+        readFile: () => Promise.resolve("export default {}"),
+      });
+
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          config: rscEnabledConfig,
+          req: new Request(
+            "http://localhost/_veryfront/rsc/module?rel=/test.js",
+          ),
+          adapter,
+          projectDir: "/tmp/test-project",
+        }),
+      );
+      assertEquals(result instanceof Response, true);
+      assertEquals(result!.status, 200);
+    });
+  });
+
   describe("module endpoint - edge cases", () => {
     it("returns 400 for backslash path traversal", async () => {
       const adapter = createMockAdapter({
