@@ -1,6 +1,6 @@
 import type { AgentMiddleware, AgentResponse } from "../../types.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { COST_LIMIT_EXCEEDED } from "#veryfront/errors";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -136,7 +136,7 @@ class CostTracker {
     if (userId) {
       this.userDailyTotals.set(userId, (this.userDailyTotals.get(userId) ?? 0) + cost);
     }
-    this.checkLimits();
+    this.checkLimits(userId);
 
     return record;
   }
@@ -196,15 +196,23 @@ class CostTracker {
     return this.getSummary(now - THIRTY_DAYS_MS, now);
   }
 
-  private checkLimits(): void {
+  private checkLimits(userId?: string): void {
     const dailyLimit = this.config.limits?.daily;
-    if (dailyLimit && this.dailyTotal > dailyLimit) {
+    if (dailyLimit && this.dailyTotal >= dailyLimit) {
       this.config.onLimitExceeded?.(this.getDailySummary());
     }
 
     const monthlyLimit = this.config.limits?.monthly;
-    if (monthlyLimit && this.monthlyTotal > monthlyLimit) {
+    if (monthlyLimit && this.monthlyTotal >= monthlyLimit) {
       this.config.onLimitExceeded?.(this.getMonthlySummary());
+    }
+
+    const userDailyLimit = this.config.limits?.userDaily;
+    if (userDailyLimit && userId) {
+      const userTotal = this.userDailyTotals.get(userId) ?? 0;
+      if (userTotal >= userDailyLimit) {
+        this.config.onLimitExceeded?.(this.getDailySummary());
+      }
     }
   }
 
@@ -290,12 +298,10 @@ export function costTrackingMiddleware(
     const userId = (context.data as { userId?: string } | undefined)?.userId;
     const budgetError = tracker.isOverBudget(userId);
     if (budgetError) {
-      throw toError(
-        createError({
-          type: "agent",
-          message: `Cost limit exceeded: ${budgetError}`,
-        }),
-      );
+      throw COST_LIMIT_EXCEEDED.create({
+        detail: budgetError,
+        context: { userId },
+      });
     }
 
     const result = await next();
