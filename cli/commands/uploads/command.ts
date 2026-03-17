@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { createFileSystem, cwd } from "veryfront/platform";
+import { createFileSystem, cwd, lookupMimeType } from "veryfront/platform";
 import { dirname, join, normalize, resolve } from "veryfront/platform/path";
-import { lookup as lookupMimeType } from "#veryfront/platform/compat/media-types.ts";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
