@@ -292,12 +292,38 @@ describe("createCostTracker", () => {
       maxTrackedUsers: 3,
     });
 
-    // Track 5 different users — only 3 should be retained
+    // Track 5 different users — only first 3 should be tracked.
+    // New unseen users are not added once the cap is reached,
+    // preserving existing users' totals for accurate enforcement.
     for (let i = 0; i < 5; i++) {
       tracker.track("agent", "openai/gpt-4.1", createResponse(), `user-${i}`);
     }
 
-    assertEquals(tracker.getTrackedUserCount() <= 3, true);
+    assertEquals(tracker.getTrackedUserCount(), 3);
+
+    tracker.destroy();
+  });
+
+  it("continues tracking existing users after cap is reached", () => {
+    const tracker = createCostTracker({
+      pricing: { openai: { input: 1, output: 0 } },
+      limits: { daily: 1_000_000 },
+      maxTrackedUsers: 2,
+    });
+
+    // Fill to cap
+    tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-a");
+    tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-b");
+    assertEquals(tracker.getTrackedUserCount(), 2);
+
+    // New user is not added (capped)
+    tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-c");
+    assertEquals(tracker.getTrackedUserCount(), 2);
+
+    // Existing user still accumulates (not evicted)
+    tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-a");
+    // user-a now has 2 calls — if they were evicted and re-added they'd only have 1
+    assertEquals(tracker.getTrackedUserCount(), 2);
 
     tracker.destroy();
   });

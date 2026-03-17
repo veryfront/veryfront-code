@@ -225,19 +225,18 @@ export function createHandlerRegistry(
   });
 
   const overrides = deps.overrides ?? {};
-  let apiHandler: ApiHandlerWrapper | undefined;
+
+  // Create the ApiHandlerWrapper first — it's special because callers need
+  // the returned instance for initialization regardless of overrides.
+  const apiHandler = overrides.ApiHandlerWrapper
+    ? (overrides.ApiHandlerWrapper as ApiHandlerWrapper)
+    : new ApiHandlerWrapper(projectDir, adapter);
 
   const handlers = HANDLER_NAMES.map((name) => {
+    if (name === "ApiHandlerWrapper") return apiHandler;
     if (overrides[name]) return overrides[name]!;
-    const handler = handlerFactories[name](projectDir, adapter);
-    if (name === "ApiHandlerWrapper") apiHandler = handler as ApiHandlerWrapper;
-    return handler;
+    return handlerFactories[name](projectDir, adapter);
   });
-
-  // ApiHandlerWrapper is always present — either from overrides or from the factory above
-  if (!apiHandler) {
-    apiHandler = new ApiHandlerWrapper(projectDir, adapter);
-  }
 
   registry.registerAll(handlers);
 
