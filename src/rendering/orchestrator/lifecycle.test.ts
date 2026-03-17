@@ -1,6 +1,6 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { RendererLifecycle } from "./lifecycle.ts";
+import { RendererLifecycle, type RendererServices } from "./lifecycle.ts";
 import { ConfigurationManager } from "./config.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
@@ -118,7 +118,7 @@ describe("rendering/orchestrator/lifecycle", () => {
   });
 
   describe("initialize with injected servicesFactory", () => {
-    function createMockServices(): any {
+    function createMockServices(): RendererServices & { _cleared: string[] } {
       const cleared: string[] = [];
       return {
         componentRegistry: {
@@ -154,7 +154,7 @@ describe("rendering/orchestrator/lifecycle", () => {
           }),
         },
         _cleared: cleared,
-      };
+      } as unknown as RendererServices & { _cleared: string[] };
     }
 
     it("initializes with injected factory", async () => {

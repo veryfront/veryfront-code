@@ -54,9 +54,7 @@ describe("rendering/cache/stores/api-store", () => {
   });
 
   describe("serialize/deserialize round-trip", () => {
-    function makePayload(
-      overrides: Record<string, unknown> = {},
-    ): {
+    interface TestPayload {
       result: {
         html: string;
         css?: string;
@@ -69,7 +67,9 @@ describe("rendering/cache/stores/api-store", () => {
       };
       storedAt: number;
       expiresAt?: number;
-    } {
+    }
+
+    function makePayload(overrides: Record<string, unknown> = {}): TestPayload {
       return {
         result: {
           html: "<h1>Test</h1>",
