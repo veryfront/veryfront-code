@@ -591,6 +591,14 @@ export const ORCHESTRATION_ERROR = defineError({
   suggestion: "Check agent coordination logic",
 });
 
+export const COST_LIMIT_EXCEEDED = defineError({
+  slug: "cost-limit-exceeded",
+  category: "AGENT",
+  status: 429,
+  title: "Cost limit exceeded",
+  suggestion: "Wait for the budget period to reset or increase the limit",
+});
+
 // =============================================================================
 // GENERAL - Cross-cutting errors
 // =============================================================================
@@ -772,6 +780,7 @@ export const ERROR_REGISTRY = {
   "agent-timeout": AGENT_TIMEOUT,
   "agent-intent-error": AGENT_INTENT_ERROR,
   "orchestration-error": ORCHESTRATION_ERROR,
+  "cost-limit-exceeded": COST_LIMIT_EXCEEDED,
 
   // GENERAL
   "unknown-error": UNKNOWN_ERROR,
