@@ -19,6 +19,7 @@ import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { UNKNOWN_ERROR } from "#veryfront/errors/error-registry.ts";
 import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
+import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 
 // Re-export is at the bottom of the file
@@ -112,6 +113,88 @@ const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("runtime-handler");
 
+/**
+ * Dependencies for handler registry creation.
+ * All fields are optional — when omitted, the real handler implementation is used.
+ * This allows tests to inject mock handlers for specific slots.
+ */
+export interface HandlerDependencies {
+  /** Override any handler by its class name (e.g., "AuthHandler", "SSRHandler"). */
+  overrides?: Record<string, Handler>;
+  /** When true, log handler registration details. */
+  debug?: boolean;
+}
+
+/**
+ * Creates a RouteRegistry populated with the standard handler chain.
+ *
+ * The handler registration order and resulting priority-sorted order are
+ * preserved exactly as in the production `createVeryfrontHandler`.
+ *
+ * @param projectDir - Root project directory
+ * @param adapter - Runtime adapter for environment access
+ * @param deps - Optional dependency overrides for testing
+ * @returns Object containing the registry and the api handler (for initialization)
+ */
+export function createHandlerRegistry(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  deps: HandlerDependencies = {},
+): { registry: RouteRegistry; apiHandler: ApiHandlerWrapper } {
+  const registry = new RouteRegistry({
+    debug: deps.debug,
+    enableMetrics: true,
+  });
+
+  const apiHandler = new ApiHandlerWrapper(projectDir, adapter);
+
+  // Default handler instances in registration order.
+  // The RouteRegistry sorts by priority internally, but registration order
+  // matters as a tiebreaker for handlers sharing the same priority.
+  const defaultHandlers: Array<[string, Handler]> = [
+    ["AuthHandler", new AuthHandler()],
+    ["CsrfHandler", new CsrfHandler()],
+    ["HMRHandler", new HMRHandler()],
+    ["CorsHandler", new CorsHandler()],
+    ["HealthHandler", new HealthHandler()],
+    ["MetricsHandler", new MetricsHandler()],
+    ["MemoryDebugHandler", new MemoryDebugHandler()],
+    ["ClientLogHandler", new ClientLogHandler()],
+    ["DevEndpointsHandler", new DevEndpointsHandler()],
+    ["StylesCSSHandler", new StylesCSSHandler()],
+    ["DebugContextHandler", new DebugContextHandler()],
+    ["OpenAPIHandler", new OpenAPIHandler()],
+    ["OpenAPIDocsHandler", new OpenAPIDocsHandler()],
+    ["InternalAgentsListHandler", new InternalAgentsListHandler()],
+    ["AgentStreamHandler", new AgentStreamHandler()],
+    ["AgentRunResumeHandler", new AgentRunResumeHandler()],
+    ["AgentRunCancelHandler", new AgentRunCancelHandler()],
+    ["ChannelInvokeHandler", new ChannelInvokeHandler()],
+    ["DevDashboardHandler", new DevDashboardHandler()],
+    ["ProjectsHandler", new ProjectsHandler()],
+    ["StudioBridgeModulesHandler", new StudioBridgeModulesHandler()],
+    ["CSSHandler", new CSSHandler()],
+    ["DevFileHandler", new DevFileHandler()],
+    ["SnippetHandler", new SnippetHandler()],
+    ["StaticHandler", new StaticHandler()],
+    ["LibModulesHandler", new LibModulesHandler()],
+    ["RSCHandler", new RSCHandler()],
+    ["ModuleHandler", new ModuleHandler()],
+    ["ApiHandlerWrapper", apiHandler],
+    ["MarkdownPreviewHandler", new MarkdownPreviewHandler()],
+    ["SSRHandler", new SSRHandler()],
+    ["NotFoundHandler", new NotFoundHandler()],
+  ];
+
+  const overrides = deps.overrides ?? {};
+
+  registry.registerAll(
+    defaultHandlers.map(([name, handler]) => overrides[name] ?? handler),
+  );
+
+  return { registry, apiHandler };
+}
+
 export interface RuntimeHandlerOptions {
   projectDir: string;
   /** When true, expose additional debug logging. */
@@ -186,47 +269,9 @@ export function createVeryfrontHandler(
     }
   })();
 
-  const registry = new RouteRegistry({
+  const { registry, apiHandler } = createHandlerRegistry(projectDir, adapter, {
     debug: opts.debug,
-    enableMetrics: true,
   });
-
-  const apiHandler = new ApiHandlerWrapper(projectDir, adapter);
-
-  registry.registerAll([
-    new AuthHandler(),
-    new CsrfHandler(),
-    new HMRHandler(),
-    new CorsHandler(),
-    new HealthHandler(),
-    new MetricsHandler(),
-    new MemoryDebugHandler(),
-    new ClientLogHandler(),
-    new DevEndpointsHandler(),
-    new StylesCSSHandler(),
-    new DebugContextHandler(),
-    new OpenAPIHandler(),
-    new OpenAPIDocsHandler(),
-    new InternalAgentsListHandler(),
-    new AgentStreamHandler(),
-    new AgentRunResumeHandler(),
-    new AgentRunCancelHandler(),
-    new ChannelInvokeHandler(),
-    new DevDashboardHandler(),
-    new ProjectsHandler(),
-    new StudioBridgeModulesHandler(),
-    new CSSHandler(),
-    new DevFileHandler(),
-    new SnippetHandler(),
-    new StaticHandler(),
-    new LibModulesHandler(),
-    new RSCHandler(),
-    new ModuleHandler(),
-    apiHandler,
-    new MarkdownPreviewHandler(),
-    new SSRHandler(),
-    new NotFoundHandler(),
-  ]);
 
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
 

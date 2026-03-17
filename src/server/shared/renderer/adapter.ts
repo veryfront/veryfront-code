@@ -62,10 +62,42 @@ export interface RendererAdapter {
   destroy(): Promise<void>;
 }
 
+/**
+ * Abstraction over renderer initialization, allowing tests to inject
+ * a mock renderer without pulling in the full rendering subsystem.
+ */
+export interface RendererInitializer {
+  initialize(options: RendererOptions): Promise<Renderer>;
+  isInitialized(): boolean;
+  get(): Renderer;
+  destroy(): Promise<void>;
+}
+
+/**
+ * Default initializer that delegates to the real shared renderer
+ * singleton from `#veryfront/rendering/renderer.ts`.
+ */
+const defaultInitializer: RendererInitializer = {
+  initialize: initializeRenderer,
+  isInitialized: isRendererInitialized,
+  get: getRenderer,
+  destroy: destroySharedRenderer,
+};
+
+let activeInitializer: RendererInitializer = defaultInitializer;
 let rendererInitPromise: Promise<Renderer> | null = null;
 
+/**
+ * Replace the renderer initializer used by the adapter layer.
+ * Pass `undefined` to restore the default (real) initializer.
+ */
+export function setRendererInitializer(initializer?: RendererInitializer): void {
+  activeInitializer = initializer ?? defaultInitializer;
+  rendererInitPromise = null;
+}
+
 async function getOrInitRenderer(): Promise<Renderer> {
-  if (isRendererInitialized()) return getRenderer();
+  if (activeInitializer.isInitialized()) return activeInitializer.get();
   if (rendererInitPromise) return rendererInitPromise;
 
   const isProxyMode = getEnvBoolean("PROXY_MODE", false, {
@@ -97,7 +129,7 @@ async function getOrInitRenderer(): Promise<Renderer> {
     cacheType: useApiCache ? "api-distributed" : "memory",
   });
 
-  rendererInitPromise = initializeRenderer(options);
+  rendererInitPromise = activeInitializer.initialize(options);
 
   try {
     return await rendererInitPromise;
@@ -306,6 +338,6 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
 }
 
 export async function destroyRendererAdapter(): Promise<void> {
-  await destroySharedRenderer();
+  await activeInitializer.destroy();
   rendererInitPromise = null;
 }

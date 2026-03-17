@@ -15,7 +15,11 @@ import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import { getConfig } from "#veryfront/config/loader.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { timeAsync } from "./request-lifecycle.ts";
-import { findLocalProjectPath, localAdapterCache } from "./local-project-discovery.ts";
+import {
+  defaultDiscoveryCache,
+  findLocalProjectPath,
+  type ProjectDiscoveryCache,
+} from "./local-project-discovery.ts";
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 
 const baseLogger = getBaseLogger("SERVER");
@@ -60,6 +64,8 @@ interface AdapterResolutionOptions {
   headerProjectPath: string | undefined;
   /** Whether running in proxy mode */
   isProxyMode: boolean;
+  /** Optional injectable cache (defaults to module-level singleton) */
+  cache?: ProjectDiscoveryCache;
 }
 
 /**
@@ -71,6 +77,8 @@ interface AdapterResolutionOptions {
 export async function resolveAdapter(
   opts: AdapterResolutionOptions,
 ): Promise<AdapterResolutionResult> {
+  const cache = opts.cache ?? defaultDiscoveryCache;
+
   let effectiveProjectDir = opts.projectDir;
   let effectiveAdapter = opts.adapter;
   let effectiveConfig = opts.config;
@@ -81,7 +89,7 @@ export async function resolveAdapter(
   const trustedHeaderProjectPath = opts.isProxyMode ? opts.headerProjectPath : undefined;
   const shouldCheckLocalPath = opts.projectSlug && (!opts.isProxyMode || trustedHeaderProjectPath);
   const localProjectPath = shouldCheckLocalPath
-    ? await findLocalProjectPath(opts.projectSlug!, opts.adapter, trustedHeaderProjectPath)
+    ? await findLocalProjectPath(opts.projectSlug!, opts.adapter, trustedHeaderProjectPath, cache)
     : undefined;
 
   const isLocalProject = !!localProjectPath;
@@ -95,16 +103,16 @@ export async function resolveAdapter(
     });
 
     // Get or create local adapter
-    if (!localAdapterCache.has(effectiveProjectDir)) {
+    if (!cache.adapters.has(effectiveProjectDir)) {
       const baseAdapter = await runtime.get();
-      localAdapterCache.set(effectiveProjectDir, baseAdapter);
+      cache.adapters.set(effectiveProjectDir, baseAdapter);
       logger.debug("Created local adapter for project", {
         projectSlug: opts.projectSlug,
         projectDir: effectiveProjectDir,
       });
     }
 
-    effectiveAdapter = localAdapterCache.get(effectiveProjectDir)!;
+    effectiveAdapter = cache.adapters.get(effectiveProjectDir)!;
 
     // Load project-specific config
     try {

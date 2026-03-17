@@ -17,24 +17,56 @@ const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("runtime-handler");
 
-/** Cache of local adapters by project directory */
-export const localAdapterCache = new LRUCache<string, RuntimeAdapter>({
-  maxEntries: 50,
-});
+/**
+ * Injectable cache container for project discovery state.
+ *
+ * Wraps both the project-path cache (slug → absolute path) and the
+ * adapter cache (project dir → RuntimeAdapter) so that callers — especially
+ * tests — can supply an isolated instance instead of sharing global state.
+ */
+export class ProjectDiscoveryCache {
+  /** Cache of discovered local project paths by slug */
+  readonly projects: LRUCache<string, string>;
+  /** Cache of local adapters by project directory */
+  readonly adapters: LRUCache<string, RuntimeAdapter>;
 
-// Register cache for monitoring
-registerLRUCache("local-adapter-cache", localAdapterCache);
+  constructor(opts?: { maxProjects?: number; maxAdapters?: number }) {
+    this.projects = new LRUCache<string, string>({
+      maxEntries: opts?.maxProjects ?? 100,
+    });
+    this.adapters = new LRUCache<string, RuntimeAdapter>({
+      maxEntries: opts?.maxAdapters ?? 50,
+    });
+  }
+
+  /** Clear both caches */
+  clear(): void {
+    this.projects.clear();
+    this.adapters.clear();
+  }
+}
+
+/** Default module-level cache instance (backward-compatible singleton) */
+export const defaultDiscoveryCache = new ProjectDiscoveryCache();
+
+// Register the default caches for monitoring
+registerLRUCache("local-project-cache", defaultDiscoveryCache.projects);
+registerLRUCache("local-adapter-cache", defaultDiscoveryCache.adapters);
+
+/**
+ * @deprecated Use `defaultDiscoveryCache.adapters` instead.
+ * Kept for backward compatibility with existing consumers.
+ */
+export const localAdapterCache = defaultDiscoveryCache.adapters;
+
+/**
+ * @deprecated Use `defaultDiscoveryCache.projects` instead.
+ * Kept for backward compatibility with existing consumers.
+ */
+export const localProjectCache = defaultDiscoveryCache.projects;
 
 /** Standard directories to search for local projects */
 export const standardProjectDirs = ["data/projects", "projects"];
-
-/** Cache of discovered local project paths by slug */
-export const localProjectCache = new LRUCache<string, string>({
-  maxEntries: 100,
-});
-
-// Register cache for monitoring
-registerLRUCache("local-project-cache", localProjectCache);
 
 function isNotFoundError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
@@ -78,12 +110,14 @@ async function isValidLocalProjectPath(path: string, adapter: RuntimeAdapter): P
  * @param slug - The project slug to find
  * @param adapter - The runtime adapter to use for filesystem operations
  * @param headerPath - Optional path from x-project-path header (takes precedence)
+ * @param cache - Optional cache instance (defaults to module-level singleton)
  * @returns The absolute path to the project, or undefined if not found
  */
 export async function findLocalProjectPath(
   slug: string,
   adapter: RuntimeAdapter,
   headerPath?: string,
+  cache: ProjectDiscoveryCache = defaultDiscoveryCache,
 ): Promise<string | undefined> {
   if (headerPath) {
     try {
@@ -92,7 +126,7 @@ export async function findLocalProjectPath(
         const absolutePath = normalizedPath.startsWith("/")
           ? normalizedPath
           : `${cwd()}/${normalizedPath}`;
-        localProjectCache.set(slug, absolutePath);
+        cache.projects.set(slug, absolutePath);
         return absolutePath;
       }
       logger.warn("Ignoring invalid x-project-path override", {
@@ -108,7 +142,7 @@ export async function findLocalProjectPath(
     }
   }
 
-  const cached = localProjectCache.get(slug);
+  const cached = cache.projects.get(slug);
   if (cached) return cached;
 
   for (const dir of standardProjectDirs) {
@@ -118,7 +152,7 @@ export async function findLocalProjectPath(
       if (!await isValidLocalProjectPath(projectPath, adapter)) continue;
 
       const absolutePath = projectPath.startsWith("/") ? projectPath : `${cwd()}/${projectPath}`;
-      localProjectCache.set(slug, absolutePath);
+      cache.projects.set(slug, absolutePath);
       logger.debug("Discovered local project", { slug, path: absolutePath });
       return absolutePath;
     } catch (error) {

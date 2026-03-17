@@ -26,6 +26,31 @@ import type { CacheRepository } from "#veryfront/repositories/types.ts";
 
 const logger = serverLogger.component("ssr-service");
 
+/**
+ * Provides a renderer for a given handler context.
+ * Extracted to allow dependency injection in tests.
+ */
+export interface RendererProvider {
+  getRenderer(ctx: HandlerContext): Promise<RendererAdapter>;
+}
+
+/**
+ * Minimal interface for SSRService consumers (e.g., SSRHandler).
+ * Allows dependency injection and mocking in tests.
+ */
+export interface SSRServiceLike {
+  checkMemoryPressure(): MemoryStatus;
+  renderPage(ctx: HandlerContext, options: SSRRenderOptions): Promise<SSRRenderResult>;
+  createMemoryPressureResult(slug: string): SSRRenderResult;
+}
+
+/**
+ * Default RendererProvider that delegates to the real getRendererForProject.
+ */
+const defaultRendererProvider: RendererProvider = {
+  getRenderer: (ctx: HandlerContext) => timeAsync("renderer-init", () => getRendererForProject(ctx)),
+};
+
 export interface SSRRenderResult {
   status: number;
   html?: string;
@@ -58,11 +83,16 @@ export interface MemoryStatus {
   heapUsedPercent: number;
 }
 
-export class SSRService {
+export class SSRService implements SSRServiceLike {
   private readonly cacheRepo?: CacheRepository<string>;
+  private readonly rendererProvider: RendererProvider;
 
-  constructor(options?: { cacheRepo?: CacheRepository<string> }) {
+  constructor(options?: {
+    cacheRepo?: CacheRepository<string>;
+    rendererProvider?: RendererProvider;
+  }) {
     this.cacheRepo = options?.cacheRepo;
+    this.rendererProvider = options?.rendererProvider ?? defaultRendererProvider;
   }
 
   checkMemoryPressure(): MemoryStatus {
@@ -77,7 +107,7 @@ export class SSRService {
   }
 
   async getRenderer(ctx: HandlerContext): Promise<RendererAdapter> {
-    return timeAsync("renderer-init", () => getRendererForProject(ctx));
+    return this.rendererProvider.getRenderer(ctx);
   }
 
   async renderPage(ctx: HandlerContext, options: SSRRenderOptions): Promise<SSRRenderResult> {
