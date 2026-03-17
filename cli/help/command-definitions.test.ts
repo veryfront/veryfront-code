@@ -22,6 +22,9 @@ describe("command-definitions", () => {
       assertExists(COMMANDS.doctor);
       assertExists(COMMANDS.clean);
       assertExists(COMMANDS.deploy);
+      assertExists(COMMANDS.uploads);
+      assertExists(COMMANDS.files);
+      assertExists(COMMANDS.knowledge);
     });
 
     it("each command has required properties", () => {
@@ -42,7 +45,7 @@ describe("command-definitions", () => {
   });
 
   describe("init command", () => {
-    const init = COMMANDS.init;
+    const init = COMMANDS.init!;
 
     it("has correct name and description", () => {
       assertEquals(init.name, "init");
@@ -50,14 +53,14 @@ describe("command-definitions", () => {
     });
 
     it("has template option", () => {
-      const templateOpt = init.options.find((o) => o.flag.includes("--template"));
+      const templateOpt = (init.options ?? []).find((o) => o.flag.includes("--template"));
       assertExists(templateOpt);
       // init command uses interactive wizard - no default, user must choose
       assertEquals(templateOpt.default, undefined);
     });
 
     it("has examples", () => {
-      assertEquals(init.examples.length > 0, true);
+      assertEquals((init.examples ?? []).length > 0, true);
     });
 
     it("has notes", () => {
@@ -67,40 +70,40 @@ describe("command-definitions", () => {
   });
 
   describe("dev command", () => {
-    const dev = COMMANDS.dev;
+    const dev = COMMANDS.dev!;
 
     it("has correct name", () => {
       assertEquals(dev.name, "dev");
     });
 
     it("has port option with default", () => {
-      const portOpt = dev.options.find((o) => o.flag.includes("--port"));
+      const portOpt = (dev.options ?? []).find((o) => o.flag.includes("--port"));
       assertExists(portOpt);
       assertEquals(portOpt.default, "3000");
     });
   });
 
   describe("build command", () => {
-    const build = COMMANDS.build;
+    const build = COMMANDS.build!;
 
     it("has correct name", () => {
       assertEquals(build.name, "build");
     });
 
     it("has output option with default", () => {
-      const outputOpt = build.options.find((o) => o.flag.includes("--output"));
+      const outputOpt = (build.options ?? []).find((o) => o.flag.includes("--output"));
       assertExists(outputOpt);
       assertEquals(outputOpt.default, ".veryfront/output");
     });
   });
 
   describe("login command", () => {
-    const login = COMMANDS.login;
+    const login = COMMANDS.login!;
 
     it("has OAuth provider options", () => {
-      const googleOpt = login.options.find((o) => o.flag.includes("--google"));
-      const githubOpt = login.options.find((o) => o.flag.includes("--github"));
-      const microsoftOpt = login.options.find((o) => o.flag.includes("--microsoft"));
+      const googleOpt = (login.options ?? []).find((o) => o.flag.includes("--google"));
+      const githubOpt = (login.options ?? []).find((o) => o.flag.includes("--github"));
+      const microsoftOpt = (login.options ?? []).find((o) => o.flag.includes("--microsoft"));
 
       assertExists(googleOpt);
       assertExists(githubOpt);
@@ -109,14 +112,14 @@ describe("command-definitions", () => {
   });
 
   describe("mcp command", () => {
-    const mcp = COMMANDS.mcp;
+    const mcp = COMMANDS.mcp!;
 
     it("has correct name", () => {
       assertEquals(mcp.name, "mcp");
     });
 
     it("has no options", () => {
-      assertEquals(mcp.options.length, 0);
+      assertEquals((mcp.options ?? []).length, 0);
     });
 
     it("has detailed notes about MCP tools", () => {

@@ -63,6 +63,9 @@ describe("cli/command-definitions integrity", () => {
       "mcp",
       "analyze-chunks",
       "issues",
+      "uploads",
+      "files",
+      "knowledge",
     ];
 
     for (const cmd of expectedCommands) {
@@ -301,7 +304,7 @@ describe("cli/router helpers", () => {
     });
 
     it("should handle undefined command", () => {
-      assertEquals(({ _: [] } as const)._[0], undefined);
+      assertEquals(({ _: [] } as { _: string[] })._[0], undefined);
     });
 
     it("should extract subcommand as second positional", () => {
