@@ -85,7 +85,33 @@ const defaultInitializer: RendererInitializer = {
 };
 
 let activeInitializer: RendererInitializer = defaultInitializer;
-let rendererInitPromise: Promise<Renderer> | null = null;
+let rendererInitState: { initializer: RendererInitializer; promise: Promise<Renderer> } | null =
+  null;
+
+function scheduleInitializerDestroy(
+  initializer: RendererInitializer,
+  pendingPromise?: Promise<unknown>,
+): void {
+  const destroy = async () => {
+    try {
+      await initializer.destroy();
+    } catch (error) {
+      logger.warn("Failed to destroy renderer initializer", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  if (pendingPromise) {
+    void pendingPromise
+      .catch(() => undefined)
+      .then(destroy);
+    return;
+  }
+
+  if (!initializer.isInitialized()) return;
+  void destroy();
+}
 
 /**
  * Replace the renderer initializer used by the adapter layer.
@@ -102,19 +128,29 @@ let rendererInitPromise: Promise<Renderer> | null = null;
  */
 export function setRendererInitializer(
   initializer?: RendererInitializer,
-): () => void {
+): void {
+  const nextInitializer = initializer ?? defaultInitializer;
   const previous = activeInitializer;
-  activeInitializer = initializer ?? defaultInitializer;
-  rendererInitPromise = null;
-  return () => {
-    activeInitializer = previous;
-    rendererInitPromise = null;
-  };
+  const previousPendingPromise = rendererInitState?.initializer === previous
+    ? rendererInitState.promise
+    : undefined;
+
+  activeInitializer = nextInitializer;
+
+  if (rendererInitState?.initializer !== activeInitializer) {
+    rendererInitState = null;
+  }
+
+  if (previous !== activeInitializer) {
+    scheduleInitializerDestroy(previous, previousPendingPromise);
+  }
 }
 
 async function getOrInitRenderer(): Promise<Renderer> {
   if (activeInitializer.isInitialized()) return activeInitializer.get();
-  if (rendererInitPromise) return rendererInitPromise;
+  if (rendererInitState?.initializer === activeInitializer) {
+    return rendererInitState.promise;
+  }
 
   const isProxyMode = getEnvBoolean("PROXY_MODE", false, {
     trueValues: ["1"],
@@ -145,12 +181,19 @@ async function getOrInitRenderer(): Promise<Renderer> {
     cacheType: useApiCache ? "api-distributed" : "memory",
   });
 
-  rendererInitPromise = activeInitializer.initialize(options);
+  const initializer = activeInitializer;
+  const initPromise = initializer.initialize(options);
+  rendererInitState = {
+    initializer,
+    promise: initPromise,
+  };
 
   try {
-    return await rendererInitPromise;
+    return await initPromise;
   } finally {
-    rendererInitPromise = null;
+    if (rendererInitState?.promise === initPromise) {
+      rendererInitState = null;
+    }
   }
 }
 
@@ -354,6 +397,14 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
 }
 
 export async function destroyRendererAdapter(): Promise<void> {
+  const pendingPromise = rendererInitState?.initializer === activeInitializer
+    ? rendererInitState.promise
+    : undefined;
+  rendererInitState = null;
+
+  if (pendingPromise) {
+    await pendingPromise.catch(() => undefined);
+  }
+
   await activeInitializer.destroy();
-  rendererInitPromise = null;
 }

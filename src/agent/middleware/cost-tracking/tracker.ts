@@ -137,21 +137,24 @@ class CostTracker {
     this.records.push(record);
     this.dailyTotal += cost;
     this.monthlyTotal += cost;
-    if (userId) {
-      // Only track per-user totals while under the capacity cap.
-      // Once the cap is reached, new (unseen) users are not added — their
-      // spend is still counted in dailyTotal/monthlyTotal for global limits,
-      // but per-user enforcement is skipped to avoid unbounded memory growth.
-      // Existing tracked users continue to be tracked accurately.
+    if (userId && this.maxTrackedUsers > 0) {
+      // Keep tracking the current user even after the cap is reached by
+      // evicting the oldest tracked user first. This preserves per-user
+      // enforcement for active users without unbounded memory growth.
       if (
-        this.userDailyTotals.has(userId) ||
-        this.userDailyTotals.size < this.maxTrackedUsers
+        !this.userDailyTotals.has(userId) &&
+        this.userDailyTotals.size >= this.maxTrackedUsers
       ) {
-        this.userDailyTotals.set(
-          userId,
-          (this.userDailyTotals.get(userId) ?? 0) + cost,
-        );
+        const oldestTrackedUser = this.userDailyTotals.keys().next().value;
+        if (oldestTrackedUser !== undefined) {
+          this.userDailyTotals.delete(oldestTrackedUser);
+        }
       }
+
+      this.userDailyTotals.set(
+        userId,
+        (this.userDailyTotals.get(userId) ?? 0) + cost,
+      );
     }
     this.checkLimits(userId);
 

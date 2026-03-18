@@ -292,9 +292,7 @@ describe("createCostTracker", () => {
       maxTrackedUsers: 3,
     });
 
-    // Track 5 different users — only first 3 should be tracked.
-    // New unseen users are not added once the cap is reached,
-    // preserving existing users' totals for accurate enforcement.
+    // Track 5 different users — the cache stays bounded at 3 entries.
     for (let i = 0; i < 5; i++) {
       tracker.track("agent", "openai/gpt-4.1", createResponse(), `user-${i}`);
     }
@@ -304,7 +302,27 @@ describe("createCostTracker", () => {
     tracker.destroy();
   });
 
-  it("continues tracking existing users after cap is reached", () => {
+  it("keeps tracking the current user by evicting the oldest entry after cap is reached", () => {
+    const tracker = createCostTracker({
+      pricing: { openai: { input: 1, output: 0 } },
+      limits: { userDaily: 1.5 },
+      maxTrackedUsers: 2,
+    });
+
+    tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-a");
+    tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-b");
+    assertEquals(tracker.getTrackedUserCount(), 2);
+
+    tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-c");
+    tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-c");
+
+    assertEquals(tracker.getTrackedUserCount(), 2);
+    assertEquals(tracker.isOverBudget("user-c"), "Per-user daily cost limit exceeded");
+
+    tracker.destroy();
+  });
+
+  it("continues tracking re-added users after eviction", () => {
     const tracker = createCostTracker({
       pricing: { openai: { input: 1, output: 0 } },
       limits: { daily: 1_000_000 },
@@ -316,11 +334,11 @@ describe("createCostTracker", () => {
     tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-b");
     assertEquals(tracker.getTrackedUserCount(), 2);
 
-    // New user is not added (capped)
+    // New user is added by evicting the oldest tracked user.
     tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-c");
     assertEquals(tracker.getTrackedUserCount(), 2);
 
-    // Existing user still accumulates (not evicted)
+    // A re-added user replaces the oldest remaining entry and is tracked again.
     tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-a");
     assertEquals(tracker.getTrackedUserCount(), 2);
 

@@ -89,6 +89,10 @@ function createMockInitializer(
   return init;
 }
 
+function waitForMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 /**
  * Minimal HandlerContext stub sufficient for `getRendererForProject`.
  * Uses an enriched context shortcut so we skip config loading.
@@ -507,17 +511,49 @@ describe("RendererAdapter with RendererInitializer", () => {
       await getRendererForProject(stubHandlerContext());
       assertEquals(mockInit.initCount, 1);
 
-      // Swap initializer - destroys state so next call re-initializes
-      await destroyRendererAdapter();
+      // Swap initializer - next call should re-initialize through the new seam
       setRendererInitializer(secondInit);
 
       await getRendererForProject(stubHandlerContext());
       assertEquals(secondInit.initCount, 1);
       // Original initializer should not have been called again
       assertEquals(mockInit.initCount, 1);
+    });
 
-      // Cleanup the second initializer
-      await destroyRendererAdapter();
+    it("destroys the replaced initializer when swapping to a new one", async () => {
+      await getRendererForProject(stubHandlerContext());
+      assertEquals(mockInit.destroyCount, 0);
+
+      const secondInit = createMockInitializer(createMockRenderer());
+      setRendererInitializer(secondInit);
+      await waitForMicrotasks();
+
+      assertEquals(mockInit.destroyCount, 1);
+    });
+
+    it("destroys a replaced initializer after its in-flight init settles", async () => {
+      let resolveInit!: (renderer: Renderer) => void;
+      const slowRenderer = createMockRenderer();
+      const slowInit = createMockInitializer(slowRenderer);
+      slowInit.initialize = (_options: RendererOptions) => {
+        slowInit.initCount++;
+        return new Promise<Renderer>((resolve) => {
+          resolveInit = resolve;
+        });
+      };
+      slowInit.isInitialized = () => false;
+
+      setRendererInitializer(slowInit);
+      const pendingAdapter = getRendererForProject(stubHandlerContext());
+
+      const replacement = createMockInitializer(createMockRenderer());
+      setRendererInitializer(replacement);
+
+      resolveInit(slowRenderer);
+      await pendingAdapter;
+      await waitForMicrotasks();
+
+      assertEquals(slowInit.destroyCount, 1);
     });
   });
 });
