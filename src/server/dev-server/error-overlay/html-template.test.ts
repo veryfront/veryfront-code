@@ -20,6 +20,12 @@ describe("server/dev-server/error-overlay/html-template", () => {
       const script = generateRuntimeScript();
       assertEquals(script.includes("escapeHtml"), true);
     });
+
+    it("should include url in runtimeError postMessage payload", () => {
+      const script = generateRuntimeScript();
+      assertEquals(script.includes("action: 'runtimeError'"), true);
+      assertEquals(script.includes("url: window.location.href"), true);
+    });
   });
 
   describe("generateErrorHTML", () => {

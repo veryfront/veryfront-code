@@ -71,14 +71,6 @@ export function parseErrorLocation(
     }
   }
 
-  // Fallback: use the first stack frame (for bundled SSR where paths don't match)
-  for (const stackLine of lines) {
-    const match = stackLine.match(/^\s+at\s+.*:(\d+):(\d+)\)?$/);
-    if (match) {
-      return { line: Number(match[1]), column: Number(match[2]) };
-    }
-  }
-
   return {};
 }
 

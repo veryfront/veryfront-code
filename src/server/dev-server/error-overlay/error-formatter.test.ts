@@ -47,7 +47,7 @@ describe("server/dev-server/error-overlay/error-formatter", () => {
       assertEquals(location.column, 9);
     });
 
-    it("should extract line and column from first frame when file is not in stack (bundled SSR)", () => {
+    it("should not fabricate source line and column from bundled SSR frames", () => {
       const error = new Error("SSR test error: something broke during render");
       error.stack = `Error: SSR test error: something broke during render
     at Module.RootLayout (file:///tmp/vf-ssr-bundle-abc123.js:42:11)
@@ -55,8 +55,8 @@ describe("server/dev-server/error-overlay/error-formatter", () => {
     at processChild (node_modules/react-dom/server.js:200:3)`;
 
       const location = parseErrorLocation(error, "app/layout.tsx");
-      assertEquals(location.line, 42);
-      assertEquals(location.column, 11);
+      assertEquals(location.line, undefined);
+      assertEquals(location.column, undefined);
     });
 
     it("should return undefined line/column when stack is missing", () => {

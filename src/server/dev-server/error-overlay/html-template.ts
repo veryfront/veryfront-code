@@ -152,11 +152,11 @@ export function generateRuntimeScript(): string {
         try {
           window.parent.postMessage({
             action: 'runtimeError',
+            url: window.location.href,
             hasError: true,
             errors: [{
               type: 'error',
               message: (errorInfo.error && errorInfo.error.message) || 'Unknown error',
-              stack: (errorInfo.error && errorInfo.error.stack) || undefined,
               file: errorInfo.file ? String(errorInfo.file) : undefined,
               line: errorInfo.line ? Number(errorInfo.line) : undefined,
               column: errorInfo.column ? Number(errorInfo.column) : undefined
