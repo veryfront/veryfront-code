@@ -12,7 +12,7 @@ import { ApiRouteMatcher, type RouteMatch } from "./api-route-matcher.ts";
 import type { APIRoute } from "./module-loader/types.ts";
 import { loadHandlerModule } from "./module-loader/loader.ts";
 import { discoverAppRoutes, discoverPagesRoutes } from "./route-discovery.ts";
-import { executeAppRoute, executePagesRoute } from "./route-executor.ts";
+import { executeAppRoute, executePagesRoute, type ExecuteRouteOptions } from "./route-executor.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /** Max entries in the loaded-handler LRU cache */
@@ -187,9 +187,14 @@ export class APIRouteHandler {
         // Note: Cannot use path-based detection (/app/) as projectDir may be '/app' in production
         const isAppRoute = /\/route\.(ts|js|tsx|jsx)$/.test(match.route.page);
 
+        const isolationOptions: ExecuteRouteOptions = {
+          modulePath: match.route.page,
+          projectDir: this.projectDir,
+        };
+
         const response = isAppRoute
-          ? await executeAppRoute(handler, request, match, pathname, adapter)
-          : await executePagesRoute(handler, request, match, pathname, adapter, this.projectDir);
+          ? await executeAppRoute(handler, request, match, pathname, adapter, isolationOptions)
+          : await executePagesRoute(handler, request, match, pathname, adapter, this.projectDir, isolationOptions);
 
         const corsResponse = await applyCORSHeaders({
           request,
