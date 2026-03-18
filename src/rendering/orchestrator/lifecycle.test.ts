@@ -195,6 +195,14 @@ describe("rendering/orchestrator/lifecycle", () => {
 
     it("clearAllCaches delegates to services after init", async () => {
       const mockServices = createMockServices();
+      // Track the clearAll promise so we can await it deterministically
+      let clearAllResolve: () => void;
+      const clearAllDone = new Promise<void>((r) => (clearAllResolve = r));
+      mockServices.cacheCoordinator.clearAll = async () => {
+        mockServices._cleared.push("cacheCoordinator");
+        clearAllResolve();
+      };
+
       const adapter = createMockAdapter();
       const configManager = new ConfigurationManager({
         projectDir: "/project",
@@ -209,15 +217,23 @@ describe("rendering/orchestrator/lifecycle", () => {
 
       await lifecycle.initialize();
       lifecycle.clearAllCaches();
-      // Wait for async clearAll
-      await new Promise((r) => setTimeout(r, 10));
+      // clearAllCaches is fire-and-forget (void return), so await the mock's promise
+      await clearAllDone;
       assertEquals(mockServices._cleared.includes("cacheCoordinator"), true);
+      // virtualModules.clear() and componentRegistry.clear() are synchronous
       assertEquals(mockServices._cleared.includes("virtualModules"), true);
       assertEquals(mockServices._cleared.includes("componentRegistry"), true);
     });
 
     it("clearSlugCache delegates to services after init", async () => {
       const mockServices = createMockServices();
+      let clearSlugResolve: () => void;
+      const clearSlugDone = new Promise<void>((r) => (clearSlugResolve = r));
+      mockServices.cacheCoordinator.clearSlug = async (slug: string) => {
+        mockServices._cleared.push(`slug:${slug}`);
+        clearSlugResolve();
+      };
+
       const adapter = createMockAdapter();
       const configManager = new ConfigurationManager({
         projectDir: "/project",
@@ -232,7 +248,8 @@ describe("rendering/orchestrator/lifecycle", () => {
 
       await lifecycle.initialize();
       lifecycle.clearSlugCache("test-slug");
-      await new Promise((r) => setTimeout(r, 10));
+      // clearSlugCache is fire-and-forget (void return), so await the mock's promise
+      await clearSlugDone;
       assertEquals(mockServices._cleared.includes("slug:test-slug"), true);
     });
 

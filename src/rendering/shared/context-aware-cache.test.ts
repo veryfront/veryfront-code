@@ -280,8 +280,9 @@ describe("rendering/shared/context-aware-cache", () => {
       const ctx = makeMockCtx();
 
       await cache.clearSlug("test-slug", ctx);
-      // Should have attempted to delete individual variant keys
+      // Should have attempted to delete keys containing the target slug
       assertEquals(deletedKeys.length >= 1, true);
+      assertEquals(deletedKeys.every((k) => k.includes("test-slug")), true);
     });
 
     it("should clear for context using prefix deletion", async () => {
