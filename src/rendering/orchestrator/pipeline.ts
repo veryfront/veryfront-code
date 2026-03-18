@@ -36,7 +36,7 @@ import type { PageResolver } from "../page-resolution/index.ts";
 import type { LayoutOrchestrator } from "./layout.ts";
 import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
-import { DataFetcher } from "#veryfront/data/index.ts";
+import { DataFetcher, type FetchDataOptions } from "#veryfront/data/index.ts";
 import type { DataContext, PageWithData } from "#veryfront/data/types.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
@@ -303,8 +303,12 @@ export class RenderPipeline {
           Promise.all(
             dataJobs.map(async (job) => {
               try {
+                const fetchOptions: FetchDataOptions = {
+                  modulePath: (job as unknown as ModuleToLoad).path,
+                  projectDir: this.config.projectDir,
+                };
                 const result = await this.dataFetcher
-                  .fetchData(job.mod as PageWithData, dataContext, this.config.mode);
+                  .fetchData(job.mod as PageWithData, dataContext, this.config.mode, fetchOptions);
                 return { ...job, result, error: null as Error | null };
               } catch (error) {
                 return { ...job, result: null, error: error as Error };

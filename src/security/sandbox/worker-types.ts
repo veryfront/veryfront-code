@@ -54,13 +54,37 @@ export interface SerializedError {
   detail?: string;
 }
 
+/**
+ * Serialized DataContext for data fetcher isolation.
+ * Request and URL are not structured-cloneable, so we serialize them.
+ */
+export interface SerializedDataContext {
+  params: Record<string, string | string[]>;
+  /** URLSearchParams.toString() */
+  query: string;
+  request: SerializedRequest;
+  /** URL.toString() */
+  url: string;
+}
+
+/**
+ * Serialized DataResult — plain JSON, fully structured-cloneable.
+ */
+export interface SerializedDataResult {
+  props?: unknown;
+  redirect?: { destination: string; permanent?: boolean };
+  notFound?: boolean;
+  revalidate?: number | false;
+}
+
 // ---------------------------------------------------------------------------
 // Worker Request / Response Protocol
 // ---------------------------------------------------------------------------
 
 export type WorkerRequest =
   | ExecuteAppRouteRequest
-  | ExecutePagesRouteRequest;
+  | ExecutePagesRouteRequest
+  | FetchDataRequest;
 
 export interface ExecuteAppRouteRequest {
   type: "execute-app-route";
@@ -79,14 +103,28 @@ export interface ExecutePagesRouteRequest {
   projectDir: string;
 }
 
+export interface FetchDataRequest {
+  type: "fetch-data";
+  id: string;
+  modulePath: string;
+  context: SerializedDataContext;
+}
+
 export type WorkerResponse =
   | WorkerResultResponse
+  | WorkerDataResultResponse
   | WorkerErrorResponse;
 
 export interface WorkerResultResponse {
   type: "result";
   id: string;
   response: SerializedResponse;
+}
+
+export interface WorkerDataResultResponse {
+  type: "data-result";
+  id: string;
+  result: SerializedDataResult;
 }
 
 export interface WorkerErrorResponse {

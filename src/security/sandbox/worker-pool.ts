@@ -274,6 +274,17 @@ export function isWorkerIsolationEnabled(): boolean {
   return getEnvBoolean("WORKER_ISOLATION_API", false);
 }
 
+/**
+ * Whether worker isolation is enabled for data fetchers (getServerData).
+ * Controlled by WORKER_ISOLATION_DATA=1 (requires WORKER_ISOLATION_ENABLED=1).
+ */
+export function isDataIsolationEnabled(): boolean {
+  const master = getEnvBoolean("WORKER_ISOLATION_ENABLED", false);
+  if (!master) return false;
+
+  return getEnvBoolean("WORKER_ISOLATION_DATA", false);
+}
+
 /** Lazy singleton — created on first use when isolation is enabled */
 let _pool: WorkerPool | null = null;
 

@@ -13,10 +13,14 @@
 import type {
   ExecuteAppRouteRequest,
   ExecutePagesRouteRequest,
+  FetchDataRequest,
+  SerializedDataContext,
+  SerializedDataResult,
   SerializedError,
   SerializedPagesContext,
   SerializedRequest,
   SerializedResponse,
+  WorkerDataResultResponse,
   WorkerErrorResponse,
   WorkerRequest,
   WorkerResultResponse,
@@ -123,6 +127,46 @@ async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedRe
   return serializeResponse(response);
 }
 
+function deserializeDataContext(
+  s: SerializedDataContext,
+): {
+  params: Record<string, string | string[]>;
+  query: URLSearchParams;
+  request: Request;
+  url: URL;
+} {
+  const request = new Request(s.request.url, {
+    method: s.request.method,
+    headers: s.request.headers,
+    body: s.request.body,
+  });
+  return {
+    params: s.params,
+    query: new URLSearchParams(s.query),
+    request,
+    url: new URL(s.url),
+  };
+}
+
+async function handleFetchData(req: FetchDataRequest): Promise<SerializedDataResult> {
+  const mod = await loadModule(req.modulePath);
+  const getServerData = mod.getServerData as
+    | ((ctx: unknown) => unknown | Promise<unknown>)
+    | undefined;
+
+  if (typeof getServerData !== "function") {
+    return { props: {} };
+  }
+
+  const context = deserializeDataContext(req.context);
+  const result = (await getServerData(context)) as SerializedDataResult;
+
+  // Normalize the result shape
+  if (result.redirect) return { redirect: result.redirect };
+  if (result.notFound) return { notFound: true };
+  return { props: result.props ?? {}, revalidate: result.revalidate };
+}
+
 async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<SerializedResponse> {
   const mod = await loadModule(req.modulePath);
   const method = req.method as string;
@@ -186,6 +230,18 @@ self.onmessage = async (event: MessageEvent<WorkerRequest | { type: "ping"; id: 
   const request = msg as WorkerRequest;
 
   try {
+    // Data fetcher returns a different response shape than HTTP handlers
+    if (request.type === "fetch-data") {
+      const dataResult = await handleFetchData(request);
+      const response: WorkerDataResultResponse = {
+        type: "data-result",
+        id: request.id,
+        result: dataResult,
+      };
+      self.postMessage(response);
+      return;
+    }
+
     let serializedResponse: SerializedResponse;
 
     switch (request.type) {

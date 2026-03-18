@@ -161,7 +161,12 @@ function workerResponseToResponse(
     return errorToRFC9457Response(err, ctx, req);
   }
 
-  return deserializeResponse(workerResponse.response);
+  if (workerResponse.type === "result") {
+    return deserializeResponse(workerResponse.response);
+  }
+
+  // data-result type is not expected in API route execution
+  throw new Error(`Unexpected worker response type: ${workerResponse.type}`);
 }
 
 // ---------------------------------------------------------------------------
