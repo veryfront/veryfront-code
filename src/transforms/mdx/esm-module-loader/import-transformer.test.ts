@@ -1,9 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  rewriteProjectAliasImports,
-  transformImports,
-} from "./import-transformer.ts";
+import { rewriteProjectAliasImports, transformImports } from "./import-transformer.ts";
 
 describe("rewriteProjectAliasImports", () => {
   it("rewrites @/ alias to /_vf_modules/ path", () => {

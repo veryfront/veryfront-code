@@ -30,8 +30,10 @@ function createCtx(overrides?: Partial<RewriteContext>): RewriteContext {
 
 describe("UnifiedImportRewriter", () => {
   it("applies matching strategy to imports", async () => {
-    const strategy = mockStrategy("test", 0, (spec) =>
-      spec === "my-lib" ? "/rewritten/my-lib.js" : null
+    const strategy = mockStrategy(
+      "test",
+      0,
+      (spec) => spec === "my-lib" ? "/rewritten/my-lib.js" : null,
     );
     const rewriter = new UnifiedImportRewriter({ strategies: [strategy] });
     const result = await rewriter.rewrite(
@@ -50,12 +52,8 @@ describe("UnifiedImportRewriter", () => {
   });
 
   it("first matching strategy wins", async () => {
-    const first = mockStrategy("first", 0, (spec) =>
-      spec === "target" ? "/first.js" : null
-    );
-    const second = mockStrategy("second", 1, (spec) =>
-      spec === "target" ? "/second.js" : null
-    );
+    const first = mockStrategy("first", 0, (spec) => spec === "target" ? "/first.js" : null);
+    const second = mockStrategy("second", 1, (spec) => spec === "target" ? "/second.js" : null);
     const rewriter = new UnifiedImportRewriter({ strategies: [first, second] });
     const result = await rewriter.rewrite(
       `import { a } from "target";\n`,
@@ -73,12 +71,8 @@ describe("UnifiedImportRewriter", () => {
   });
 
   it("rewrites multiple imports with different strategies", async () => {
-    const strategyA = mockStrategy("a", 0, (spec) =>
-      spec === "pkg-a" ? "/a.js" : null
-    );
-    const strategyB = mockStrategy("b", 1, (spec) =>
-      spec === "pkg-b" ? "/b.js" : null
-    );
+    const strategyA = mockStrategy("a", 0, (spec) => spec === "pkg-a" ? "/a.js" : null);
+    const strategyB = mockStrategy("b", 1, (spec) => spec === "pkg-b" ? "/b.js" : null);
     const rewriter = new UnifiedImportRewriter({ strategies: [strategyA, strategyB] });
     const result = await rewriter.rewrite(
       `import { a } from "pkg-a";\nimport { b } from "pkg-b";\n`,
@@ -90,12 +84,8 @@ describe("UnifiedImportRewriter", () => {
 
   it("respects priority order", async () => {
     // Lower priority number = runs first
-    const highPriority = mockStrategy("high", 0, (spec) =>
-      spec === "shared" ? "/high.js" : null
-    );
-    const lowPriority = mockStrategy("low", 10, (spec) =>
-      spec === "shared" ? "/low.js" : null
-    );
+    const highPriority = mockStrategy("high", 0, (spec) => spec === "shared" ? "/high.js" : null);
+    const lowPriority = mockStrategy("low", 10, (spec) => spec === "shared" ? "/low.js" : null);
     // Pass in wrong order — constructor should not re-sort (user provides order)
     const rewriter = new UnifiedImportRewriter({
       strategies: [highPriority, lowPriority],

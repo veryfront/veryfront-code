@@ -1,9 +1,9 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  tryReadWithExtensions,
   resolveFrameworkFile,
   resolveRelativeFrameworkImport,
+  tryReadWithExtensions,
 } from "./path-resolver.ts";
 
 function createMockFs(files: Record<string, string>) {

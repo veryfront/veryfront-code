@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { findVfModuleImports, findRelativeImports } from "./import-finder.ts";
+import { findRelativeImports, findVfModuleImports } from "./import-finder.ts";
 
 describe("findVfModuleImports", () => {
   it("finds veryfront module imports", () => {

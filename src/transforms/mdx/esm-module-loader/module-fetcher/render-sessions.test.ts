@@ -1,10 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  startRenderSession,
-  endRenderSession,
-  recordModuleToSession,
-} from "./render-sessions.ts";
+import { endRenderSession, recordModuleToSession, startRenderSession } from "./render-sessions.ts";
 
 describe("render-sessions", () => {
   it("starts and ends a session without error", () => {

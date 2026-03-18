@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { rewriteVeryfrontImports, rewriteDntImports } from "./import-rewriter.ts";
+import { rewriteDntImports, rewriteVeryfrontImports } from "./import-rewriter.ts";
 
 describe("rewriteVeryfrontImports", () => {
   it("rewrites veryfront/ bare specifiers to /_vf_modules/ paths", () => {
