@@ -597,17 +597,16 @@ describe("runKnowledgeParser", () => {
       prefix: "veryfront-knowledge-parser-kreuzberg-fallback-",
     });
     const binDir = join(tempDir, "bin");
-    const filePath = join(tempDir, "landing.html");
+    const pythonDir = join(tempDir, "python");
+    const filePath = join(tempDir, "fallback.pdf");
     const outputDir = join(tempDir, "knowledge-output");
     const kreuzbergPath = join(binDir, "kreuzberg");
     const originalPath = Deno.env.get("PATH") ?? "";
 
     try {
       await Deno.mkdir(binDir, { recursive: true });
-      await Deno.writeTextFile(
-        filePath,
-        "<html><body><h1>Hello</h1><p>World</p></body></html>",
-      );
+      await Deno.mkdir(pythonDir, { recursive: true });
+      await Deno.writeTextFile(filePath, "stub pdf bytes");
       await Deno.writeTextFile(
         kreuzbergPath,
         [
@@ -616,17 +615,47 @@ describe("runKnowledgeParser", () => {
           "exit 2",
         ].join("\n"),
       );
+      await Deno.writeTextFile(
+        join(pythonDir, "pdfplumber.py"),
+        [
+          "class _Page:",
+          "    def __init__(self, text):",
+          "        self._text = text",
+          "",
+          "    def extract_text(self):",
+          "        return self._text",
+          "",
+          "    def extract_tables(self):",
+          "        return []",
+          "",
+          "class _Pdf:",
+          "    def __init__(self, path):",
+          '        self.pages = [_Page("Fallback PDF text")]',
+          "",
+          "    def __enter__(self):",
+          "        return self",
+          "",
+          "    def __exit__(self, exc_type, exc, tb):",
+          "        return False",
+          "",
+          "def open(path):",
+          "    return _Pdf(path)",
+        ].join("\n"),
+      );
       await Deno.chmod(kreuzbergPath, 0o755);
 
       const result = await runKnowledgeParser({
         filePath,
         outputDir,
-        sourceReference: "uploads/sites/landing.html",
-        env: { PATH: `${binDir}:${originalPath}` },
+        sourceReference: "uploads/offers/fallback.pdf",
+        env: {
+          PATH: `${binDir}:${originalPath}`,
+          PYTHONPATH: pythonDir,
+        },
       });
 
-      assertEquals(result.source_type, "html");
-      assertStringIncludes(result.summary, "Converted HTML");
+      assertEquals(result.source_type, "pdf");
+      assertStringIncludes(result.summary, "Extracted 1 page");
       assertEquals(result.stats.engine, undefined);
       assertEquals(result.warnings.length, 1);
       assertStringIncludes(
@@ -635,9 +664,9 @@ describe("runKnowledgeParser", () => {
       );
 
       const markdown = await Deno.readTextFile(result.sandbox_output_path);
-      assertStringIncludes(markdown, "# Landing");
-      assertStringIncludes(markdown, "Hello");
-      assertStringIncludes(markdown, "World");
+      assertStringIncludes(markdown, "# Fallback");
+      assertStringIncludes(markdown, "## Page 1");
+      assertStringIncludes(markdown, "Fallback PDF text");
     } finally {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }
