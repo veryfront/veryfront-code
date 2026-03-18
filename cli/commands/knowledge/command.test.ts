@@ -306,7 +306,7 @@ describe("collectKnowledgeSources", () => {
   });
 
   it("resolves multiple explicit sources in input order", async () => {
-    const calls: string[] = [];
+    const downloadCalls: string[][] = [];
     const sources = await collectKnowledgeSources(
       {
         sources: [
@@ -322,7 +322,7 @@ describe("collectKnowledgeSources", () => {
         client: createMockClient(),
         projectSlug: "my-project",
         downloadUploads: async (uploadPaths) => {
-          calls.push(...uploadPaths);
+          downloadCalls.push(uploadPaths);
           return uploadPaths.map((uploadPath) => ({
             uploadPath,
             localPath: `/workspace/uploads/${uploadPath}`,
@@ -331,11 +331,69 @@ describe("collectKnowledgeSources", () => {
       },
     );
 
-    assertEquals(calls, ["contracts/a.pdf", "contracts/b.pdf", "contracts/c.pdf"]);
+    assertEquals(downloadCalls, [["contracts/a.pdf", "contracts/b.pdf", "contracts/c.pdf"]]);
     assertEquals(
       sources.map((source) => source.kind === "upload" ? source.uploadPath : source.localPath),
       ["contracts/a.pdf", "contracts/b.pdf", "contracts/c.pdf"],
     );
+  });
+
+  it("batches explicit upload downloads while preserving mixed-source order", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const localPath = `${tempDir}/notes.txt`;
+    await Deno.writeTextFile(localPath, "stub");
+
+    try {
+      const downloadCalls: string[][] = [];
+      const sources = await collectKnowledgeSources(
+        {
+          sources: ["uploads/contracts/a.pdf", localPath, "uploads/contracts/b.pdf"],
+          path: undefined,
+          all: false,
+          recursive: false,
+        },
+        {
+          client: createMockClient(),
+          projectSlug: "my-project",
+          downloadUploads: async (uploadPaths) => {
+            downloadCalls.push(uploadPaths);
+            return [
+              {
+                uploadPath: "contracts/b.pdf",
+                localPath: "/workspace/uploads/contracts/b.pdf",
+              },
+              {
+                uploadPath: "contracts/a.pdf",
+                localPath: "/workspace/uploads/contracts/a.pdf",
+              },
+            ];
+          },
+        },
+      );
+
+      assertEquals(downloadCalls, [["contracts/a.pdf", "contracts/b.pdf"]]);
+      assertEquals(sources, [
+        {
+          kind: "upload",
+          input: "uploads/contracts/a.pdf",
+          uploadPath: "contracts/a.pdf",
+          localPath: "/workspace/uploads/contracts/a.pdf",
+        },
+        {
+          kind: "local",
+          input: localPath,
+          localPath,
+        },
+        {
+          kind: "upload",
+          input: "uploads/contracts/b.pdf",
+          uploadPath: "contracts/b.pdf",
+          localPath: "/workspace/uploads/contracts/b.pdf",
+        },
+      ]);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
   });
 });
 

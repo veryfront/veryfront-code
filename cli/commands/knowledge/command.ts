@@ -369,32 +369,64 @@ export async function collectKnowledgeSources(
 ): Promise<KnowledgeSource[]> {
   const fs = createFileSystem();
 
-  const resolveExplicitSource = async (input: string): Promise<KnowledgeSource[]> => {
-    if (!isProjectUploadReference(input) && await fs.exists(input)) {
-      const localFiles = await collectLocalFiles(input, options.recursive);
-      if (!localFiles.length) throw new Error(`No supported files found at ${input}`);
-      return localFiles.map((localPath) => ({ kind: "local", input, localPath }));
-    }
-
-    if (isLikelyLocalPath(input)) {
-      throw new Error(`Local file not found: ${input}`);
-    }
-
-    const uploadPath = normalizeProjectUploadPath(input);
-    const downloads = await deps.downloadUploads([uploadPath]);
-    return downloads.map((download) => ({
-      kind: "upload",
-      input,
-      uploadPath: download.uploadPath,
-      localPath: download.localPath,
-    }));
-  };
-
   if (options.sources.length > 0) {
-    const resolvedSources = await Promise.all(
-      options.sources.map((source) => resolveExplicitSource(source)),
-    );
-    return resolvedSources.flat();
+    const explicitSources: Array<
+      | { kind: "local"; sources: KnowledgeSource[] }
+      | { kind: "upload"; input: string; uploadPath: string }
+    > = [];
+    const uploadTargets: string[] = [];
+
+    for (const input of options.sources) {
+      if (!isProjectUploadReference(input) && await fs.exists(input)) {
+        const localFiles = await collectLocalFiles(input, options.recursive);
+        if (!localFiles.length) throw new Error(`No supported files found at ${input}`);
+        explicitSources.push({
+          kind: "local",
+          sources: localFiles.map((localPath) => ({ kind: "local", input, localPath })),
+        });
+        continue;
+      }
+
+      if (isLikelyLocalPath(input)) {
+        throw new Error(`Local file not found: ${input}`);
+      }
+
+      const uploadPath = normalizeProjectUploadPath(input);
+      explicitSources.push({ kind: "upload", input, uploadPath });
+      uploadTargets.push(uploadPath);
+    }
+
+    const downloads = uploadTargets.length > 0 ? await deps.downloadUploads(uploadTargets) : [];
+    const downloadsByPath = new Map<string, DownloadResult[]>();
+
+    for (const download of downloads) {
+      const existing = downloadsByPath.get(download.uploadPath) ?? [];
+      existing.push(download);
+      downloadsByPath.set(download.uploadPath, existing);
+    }
+
+    const resolvedSources: KnowledgeSource[] = [];
+    for (const source of explicitSources) {
+      if (source.kind === "local") {
+        resolvedSources.push(...source.sources);
+        continue;
+      }
+
+      const matchingDownloads = downloadsByPath.get(source.uploadPath);
+      const download = matchingDownloads?.shift();
+      if (!download) {
+        throw new Error(`Upload not found: ${formatKnowledgeUploadSource(source.uploadPath)}`);
+      }
+
+      resolvedSources.push({
+        kind: "upload",
+        input: source.input,
+        uploadPath: download.uploadPath,
+        localPath: download.localPath,
+      });
+    }
+
+    return resolvedSources;
   }
 
   if (!options.path || !options.all) {
