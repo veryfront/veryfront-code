@@ -57,8 +57,8 @@ Run `veryfront <command> --help` for options:
 | `files`         | List, get, put, and delete files    |
 | `knowledge`     | Knowledge-base ingestion workflow   |
 
-Use `uploads/...` for remote project-upload references in `veryfront knowledge ingest`; use `./uploads/...` or `/workspace/uploads/...` to force a local sandbox path.
-`veryfront knowledge ingest` requires `python3`; non-text formats also need the supported parser packages unless you run inside the Veryfront sandbox image.
+Use one or more `uploads/...` paths for remote project-upload references in `veryfront knowledge ingest`; use `./uploads/...` or `/workspace/uploads/...` to force a local sandbox path.
+`veryfront knowledge ingest` requires `python3`; inside the Veryfront sandbox it prefers `kreuzberg` for PDF, Office, and HTML extraction, and outside the sandbox it falls back to the supported parser packages when `kreuzberg` is unavailable.
 
 ## Adding a New Command
 

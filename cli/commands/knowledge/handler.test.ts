@@ -30,8 +30,30 @@ describe("Knowledge Handler", () => {
       } as ParsedArgs);
 
       assertSuccess(result);
-      assertEquals(result.data.source, "/workspace/uploads/q1.pdf");
+      assertEquals(result.data.sources, ["/workspace/uploads/q1.pdf"]);
       assertEquals(result.data.json, true);
+      assertEquals(result.data.all, false);
+    });
+
+    it("parses multiple explicit source paths", () => {
+      const result = parseKnowledgeIngestArgs({
+        _: [
+          "knowledge",
+          "ingest",
+          "uploads/contracts/a.pdf",
+          "uploads/contracts/b.pdf",
+          "./notes/c.txt",
+        ],
+        json: true,
+      } as ParsedArgs);
+
+      assertSuccess(result);
+      assertEquals(result.data.sources, [
+        "uploads/contracts/a.pdf",
+        "uploads/contracts/b.pdf",
+        "./notes/c.txt",
+      ]);
+      assertEquals(result.data.path, undefined);
       assertEquals(result.data.all, false);
     });
 
@@ -49,6 +71,25 @@ describe("Knowledge Handler", () => {
       assertEquals(result.data.all, true);
       assertEquals(result.data.recursive, true);
       assertEquals(result.data.json, true);
+    });
+
+    it("rejects mixing explicit sources with --path --all batch mode", () => {
+      const result = parseKnowledgeIngestArgs({
+        _: ["knowledge", "ingest", "uploads/contracts/a.pdf"],
+        path: "uploads/contracts",
+        all: true,
+      } as ParsedArgs);
+
+      assertEquals(result.success, false);
+    });
+
+    it("rejects --slug when multiple explicit sources are provided", () => {
+      const result = parseKnowledgeIngestArgs({
+        _: ["knowledge", "ingest", "uploads/contracts/a.pdf", "uploads/contracts/b.pdf"],
+        slug: "contracts-batch",
+      } as ParsedArgs);
+
+      assertEquals(result.success, false);
     });
   });
 });

@@ -126,7 +126,7 @@ describe("collectKnowledgeSources", () => {
     try {
       const sources = await collectKnowledgeSources(
         {
-          source: localPath,
+          sources: [localPath],
           path: undefined,
           all: false,
           recursive: false,
@@ -150,7 +150,7 @@ describe("collectKnowledgeSources", () => {
     const calls: string[] = [];
     const sources = await collectKnowledgeSources(
       {
-        source: "uploads/contracts/q1.pdf",
+        sources: ["uploads/contracts/q1.pdf"],
         path: undefined,
         all: false,
         recursive: false,
@@ -190,7 +190,7 @@ describe("collectKnowledgeSources", () => {
       const calls: string[] = [];
       const sources = await collectKnowledgeSources(
         {
-          source: "uploads/contracts/q1.pdf",
+          sources: ["uploads/contracts/q1.pdf"],
           path: undefined,
           all: false,
           recursive: false,
@@ -231,7 +231,7 @@ describe("collectKnowledgeSources", () => {
 
     const sources = await collectKnowledgeSources(
       {
-        source: undefined,
+        sources: [],
         path: "uploads/",
         all: true,
         recursive: true,
@@ -277,7 +277,7 @@ describe("collectKnowledgeSources", () => {
 
     const sources = await collectKnowledgeSources(
       {
-        source: undefined,
+        sources: [],
         path: "uploads/contracts",
         all: true,
         recursive: false,
@@ -303,6 +303,39 @@ describe("collectKnowledgeSources", () => {
     assertEquals(sources.length, 1);
     assertEquals(sources[0]?.kind, "upload");
   });
+
+  it("resolves multiple explicit sources in input order", async () => {
+    const calls: string[] = [];
+    const sources = await collectKnowledgeSources(
+      {
+        sources: [
+          "uploads/contracts/a.pdf",
+          "uploads/contracts/b.pdf",
+          "uploads/contracts/c.pdf",
+        ],
+        path: undefined,
+        all: false,
+        recursive: false,
+      },
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        downloadUploads: async (uploadPaths) => {
+          calls.push(...uploadPaths);
+          return uploadPaths.map((uploadPath) => ({
+            uploadPath,
+            localPath: `/workspace/uploads/${uploadPath}`,
+          }));
+        },
+      },
+    );
+
+    assertEquals(calls, ["contracts/a.pdf", "contracts/b.pdf", "contracts/c.pdf"]);
+    assertEquals(
+      sources.map((source) => source.kind === "upload" ? source.uploadPath : source.localPath),
+      ["contracts/a.pdf", "contracts/b.pdf", "contracts/c.pdf"],
+    );
+  });
 });
 
 describe("ingestResolvedSources", () => {
@@ -315,7 +348,7 @@ describe("ingestResolvedSources", () => {
         localPath: "/workspace/uploads/contracts/q1.pdf",
       }],
       {
-        source: undefined,
+        sources: [],
         path: undefined,
         all: false,
         recursive: false,
@@ -373,7 +406,7 @@ describe("ingestResolvedSources", () => {
         localPath: "/var/folders/random/report.pdf",
       }],
       {
-        source: undefined,
+        sources: [],
         path: undefined,
         all: false,
         recursive: false,
@@ -457,6 +490,55 @@ describe("runKnowledgeParser", () => {
       assertStringIncludes(markdown, "# Q1 Report");
       assertStringIncludes(markdown, "Quarterly revenue increased 12% year over year.");
     } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("prefers kreuzberg for PDF extraction when the binary is available", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-kreuzberg-" });
+    const binDir = join(tempDir, "bin");
+    const filePath = join(tempDir, "offer.pdf");
+    const outputDir = join(tempDir, "knowledge-output");
+    const kreuzbergPath = join(binDir, "kreuzberg");
+    const originalPath = Deno.env.get("PATH") ?? "";
+
+    try {
+      await Deno.mkdir(binDir, { recursive: true });
+      await Deno.writeTextFile(filePath, "stub pdf bytes");
+      await Deno.writeTextFile(
+        kreuzbergPath,
+        [
+          "#!/bin/sh",
+          "if [ \"$1\" != \"extract\" ]; then",
+          "  echo \"unexpected command\" >&2",
+          "  exit 64",
+          "fi",
+          "printf '%s\\n' '{\"content\":\"## Fake PDF\\n\\nParsed by kreuzberg\",\"metadata\":{\"mime_type\":\"application/pdf\"}}'",
+        ].join("\n"),
+      );
+      await Deno.chmod(kreuzbergPath, 0o755);
+      Deno.env.set("PATH", `${binDir}:${originalPath}`);
+
+      const result = await runKnowledgeParser({
+        filePath,
+        outputDir,
+        description: "Offer PDF",
+        slug: "offer-pdf",
+        sourceReference: "uploads/offers/offer.pdf",
+      });
+
+      assertEquals(result.source_type, "pdf");
+      assertEquals(result.slug, "offer-pdf");
+      assertEquals(result.stats.engine, "kreuzberg");
+      assertStringIncludes(result.summary, "Converted PDF to markdown");
+
+      const markdown = await Deno.readTextFile(result.sandbox_output_path);
+      assertStringIncludes(markdown, 'source: "uploads/offers/offer.pdf"');
+      assertStringIncludes(markdown, 'description: "Offer PDF"');
+      assertStringIncludes(markdown, "# Offer");
+      assertStringIncludes(markdown, "Parsed by kreuzberg");
+    } finally {
+      Deno.env.set("PATH", originalPath);
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }
   });

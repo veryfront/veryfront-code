@@ -3,6 +3,7 @@ import argparse
 import csv
 import json
 import re
+import subprocess
 from datetime import date
 from pathlib import Path
 from typing import Any, Optional
@@ -69,6 +70,61 @@ def build_frontmatter(source: str, source_type: str, description: str) -> str:
         f"description: {yaml_quote(description)}",
         "---",
     ])
+
+
+def parse_with_kreuzberg(path: str):
+    warnings: list[str] = []
+    completed = subprocess.run(
+        [
+            "kreuzberg",
+            "extract",
+            path,
+            "--format",
+            "json",
+            "--output-format",
+            "markdown",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or f"exit code {completed.returncode}"
+        raise RuntimeError(f"kreuzberg extract failed: {detail}")
+
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"kreuzberg extract returned invalid JSON: {error}") from error
+
+    content = payload.get("content", "")
+    if not isinstance(content, str):
+        raise RuntimeError("kreuzberg extract did not return string content")
+
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    normalized_content = clean_text(content)
+    stats: dict[str, Any] = {
+        "characters": len(normalized_content),
+        "lines": len(normalized_content.splitlines()) if normalized_content else 0,
+        "engine": "kreuzberg",
+    }
+    if isinstance(metadata.get("mime_type"), str):
+        stats["mime_type"] = metadata["mime_type"]
+
+    return normalized_content or "_No extractable text found in document._", stats, warnings
+
+
+def prefer_kreuzberg(fallback_parser):
+    def parser(path: str):
+        try:
+            return parse_with_kreuzberg(path)
+        except FileNotFoundError as error:
+            if getattr(error, "filename", "") == "kreuzberg":
+                return fallback_parser(path)
+            raise
+
+    return parser
 
 
 def parse_csv_like(path: str, delimiter: str = ","):
@@ -305,18 +361,18 @@ def parse_json(path: str):
 def select_parser(path: Path):
     ext = path.suffix.lower()
     if ext == ".pdf":
-        return "pdf", parse_pdf
+        return "pdf", prefer_kreuzberg(parse_pdf)
     if ext in {".csv", ".tsv"}:
         delimiter = "\t" if ext == ".tsv" else ","
         return ext.lstrip("."), lambda file_path: parse_csv_like(file_path, delimiter)
     if ext in {".xlsx", ".xls"}:
-        return ext.lstrip("."), parse_excel
+        return ext.lstrip("."), prefer_kreuzberg(parse_excel)
     if ext == ".docx":
-        return "docx", parse_docx
+        return "docx", prefer_kreuzberg(parse_docx)
     if ext == ".pptx":
-        return "pptx", parse_pptx
+        return "pptx", prefer_kreuzberg(parse_pptx)
     if ext in {".html", ".htm"}:
-        return "html", parse_html
+        return "html", prefer_kreuzberg(parse_html)
     if ext in {".txt", ".md", ".mdx"}:
         return ext.lstrip("."), parse_text
     if ext == ".json":
@@ -325,6 +381,8 @@ def select_parser(path: Path):
 
 
 def build_summary(source_type: str, stats: dict[str, Any]) -> str:
+    if stats.get("engine") == "kreuzberg":
+        return f"Converted {source_type.upper()} to markdown ({stats.get('characters', 0)} chars)."
     if source_type in {"csv", "tsv"}:
         return f"Parsed {stats.get('rows', 0)} rows across {stats.get('columns', 0)} columns."
     if source_type in {"xlsx", "xls"}:
