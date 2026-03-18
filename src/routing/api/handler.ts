@@ -194,7 +194,15 @@ export class APIRouteHandler {
 
         const response = isAppRoute
           ? await executeAppRoute(handler, request, match, pathname, adapter, isolationOptions)
-          : await executePagesRoute(handler, request, match, pathname, adapter, this.projectDir, isolationOptions);
+          : await executePagesRoute(
+            handler,
+            request,
+            match,
+            pathname,
+            adapter,
+            this.projectDir,
+            isolationOptions,
+          );
 
         const corsResponse = await applyCORSHeaders({
           request,

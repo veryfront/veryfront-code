@@ -19,7 +19,10 @@ import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-
 import { serverLogger as logger } from "#veryfront/utils";
 import { isDevelopment as isDevelopmentEnv } from "#veryfront/build/config/environment.ts";
 import type { HandlerContext } from "#veryfront/types";
-import { getWorkerPool, isWorkerIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
+import {
+  getWorkerPool,
+  isWorkerIsolationEnabled,
+} from "#veryfront/security/sandbox/worker-pool.ts";
 import type {
   SerializedRequest,
   SerializedResponse,
@@ -142,7 +145,11 @@ function deserializeResponse(s: SerializedResponse): Response {
   });
 }
 
-function workerResponseToResponse(workerResponse: WorkerResponse, pathname: string, adapter: RuntimeAdapter): Response {
+function workerResponseToResponse(
+  workerResponse: WorkerResponse,
+  pathname: string,
+  adapter: RuntimeAdapter,
+): Response {
   if (workerResponse.type === "error") {
     const { error } = workerResponse;
     logger.error(`API route error in ${pathname} (worker):`, error.message);
@@ -196,7 +203,12 @@ function executeAppRouteIsolated(
         return handleAPIError(error, pathname, adapter);
       }
     },
-    { "http.method": method, "http.path": pathname, "api.route.pattern": match.route.pattern, "api.isolated": true },
+    {
+      "http.method": method,
+      "http.path": pathname,
+      "api.route.pattern": match.route.pattern,
+      "api.isolated": true,
+    },
   );
 }
 
@@ -242,7 +254,12 @@ function executePagesRouteIsolated(
         return handleAPIError(error, pathname, adapter);
       }
     },
-    { "http.method": method, "http.path": pathname, "api.route.pattern": match.route.pattern, "api.isolated": true },
+    {
+      "http.method": method,
+      "http.path": pathname,
+      "api.route.pattern": match.route.pattern,
+      "api.isolated": true,
+    },
   );
 }
 

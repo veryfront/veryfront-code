@@ -36,7 +36,11 @@ function deserializeRequest(s: SerializedRequest): Request {
 
 function deserializePagesRequest(
   s: SerializedPagesContext,
-): { request: Request; params: Record<string, string | string[]>; cookies: Record<string, string> } {
+): {
+  request: Request;
+  params: Record<string, string | string[]>;
+  cookies: Record<string, string>;
+} {
   const request = new Request(s.url, {
     method: s.method,
     headers: s.headers,
@@ -96,7 +100,10 @@ async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedRe
   const method = req.method.toUpperCase();
 
   const handlerFn = (mod[method] ?? mod.default) as
-    | ((request: Request, context: { params: Record<string, string> }) => Promise<Response> | Response)
+    | ((
+      request: Request,
+      context: { params: Record<string, string> },
+    ) => Promise<Response> | Response)
     | undefined;
 
   if (!handlerFn) {

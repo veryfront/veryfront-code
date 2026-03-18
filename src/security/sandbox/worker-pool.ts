@@ -13,11 +13,7 @@ import { getEnvBoolean, getEnvNumber, unrefTimer } from "#veryfront/platform/com
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ProjectWorker } from "./project-worker.ts";
 import { buildWorkerPermissions } from "./worker-permissions.ts";
-import type {
-  WorkerPoolConfig,
-  WorkerRequest,
-  WorkerResponse,
-} from "./worker-types.ts";
+import type { WorkerPoolConfig, WorkerRequest, WorkerResponse } from "./worker-types.ts";
 import { DEFAULT_WORKER_POOL_CONFIG } from "./worker-types.ts";
 
 const logger = serverLogger.component("worker-pool");
@@ -44,7 +40,9 @@ export class WorkerPool {
    */
   getOrCreateWorker(projectId: string, readPaths: string[]): ProjectWorker {
     const existing = this.pool.get(projectId);
-    if (existing && existing.worker.status !== "crashed" && existing.worker.status !== "terminated") {
+    if (
+      existing && existing.worker.status !== "crashed" && existing.worker.status !== "terminated"
+    ) {
       existing.lastAccessedAt = Date.now();
       return existing.worker;
     }
@@ -283,8 +281,10 @@ export function getWorkerPool(): WorkerPool {
   if (!_pool) {
     _pool = new WorkerPool({
       maxPoolSize: getEnvNumber("WORKER_MAX_POOL_SIZE") ?? DEFAULT_WORKER_POOL_CONFIG.maxPoolSize,
-      idleTimeoutMs: getEnvNumber("WORKER_IDLE_TIMEOUT_MS") ?? DEFAULT_WORKER_POOL_CONFIG.idleTimeoutMs,
-      requestTimeoutMs: getEnvNumber("WORKER_REQUEST_TIMEOUT_MS") ?? DEFAULT_WORKER_POOL_CONFIG.requestTimeoutMs,
+      idleTimeoutMs: getEnvNumber("WORKER_IDLE_TIMEOUT_MS") ??
+        DEFAULT_WORKER_POOL_CONFIG.idleTimeoutMs,
+      requestTimeoutMs: getEnvNumber("WORKER_REQUEST_TIMEOUT_MS") ??
+        DEFAULT_WORKER_POOL_CONFIG.requestTimeoutMs,
       maxRequestsPerWorker: getEnvNumber("WORKER_MAX_REQUESTS_PER_WORKER") ??
         DEFAULT_WORKER_POOL_CONFIG.maxRequestsPerWorker,
     });

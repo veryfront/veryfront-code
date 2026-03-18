@@ -13,10 +13,7 @@ import { isCompiledBinary } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors";
 import type { WorkerPermissions } from "./worker-permissions.ts";
-import type {
-  WorkerRequest,
-  WorkerResponse,
-} from "./worker-types.ts";
+import type { WorkerRequest, WorkerResponse } from "./worker-types.ts";
 
 const logger = serverLogger.component("project-worker");
 

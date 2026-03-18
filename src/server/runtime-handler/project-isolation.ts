@@ -1,6 +1,9 @@
 import { serverLogger } from "#veryfront/utils";
 import { getEnvNumber, unrefTimer } from "#veryfront/compat/process.ts";
-import { getWorkerPool, isWorkerIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
+import {
+  getWorkerPool,
+  isWorkerIsolationEnabled,
+} from "#veryfront/security/sandbox/worker-pool.ts";
 
 const logger = serverLogger.component("project-isolation");
 
