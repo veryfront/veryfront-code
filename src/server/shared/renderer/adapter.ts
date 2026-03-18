@@ -97,6 +97,8 @@ let rendererInitPromise: Promise<Renderer> | null = null;
  * ```ts
  * afterEach(() => setRendererInitializer(undefined));
  * ```
+ *
+ * @internal Test-only — not part of the public API.
  */
 export function setRendererInitializer(
   initializer?: RendererInitializer,

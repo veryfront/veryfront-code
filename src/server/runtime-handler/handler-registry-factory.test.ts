@@ -14,7 +14,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { Handler, HandlerResult } from "#veryfront/types";
 import { HandlerPriority } from "#veryfront/types";
-import { createHandlerRegistry } from "./index.ts";
+import { createHandlerRegistry, HANDLER_NAMES } from "./index.ts";
 
 /** Minimal mock adapter — only `env.get` is needed by the factory. */
 function createMockAdapter(): RuntimeAdapter {
@@ -69,8 +69,8 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     const { registry } = createHandlerRegistry(projectDir, adapter);
     const stats = registry.getStats();
 
-    // Should have all 31 handlers registered
-    assertEquals(stats.totalHandlers, 32);
+    // Should have all handlers from HANDLER_NAMES registered
+    assertEquals(stats.totalHandlers, HANDLER_NAMES.length);
 
     // Verify key handlers are present
     const names = stats.handlerNames;
