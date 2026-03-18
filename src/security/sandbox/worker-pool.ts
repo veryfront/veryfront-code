@@ -21,6 +21,7 @@ const logger = serverLogger.component("worker-pool");
 interface PoolEntry {
   worker: ProjectWorker;
   lastAccessedAt: number;
+  createdAt: number;
 }
 
 export class WorkerPool {
@@ -65,9 +66,11 @@ export class WorkerPool {
 
     worker.start();
 
+    const now = Date.now();
     this.pool.set(projectId, {
       worker,
-      lastAccessedAt: Date.now(),
+      lastAccessedAt: now,
+      createdAt: now,
     });
 
     logger.debug("Worker created", {
@@ -92,11 +95,19 @@ export class WorkerPool {
       async () => {
         const worker = this.getOrCreateWorker(projectId, readPaths);
 
-        // Check if worker should be recycled
-        if (worker.requestCount >= this.config.maxRequestsPerWorker) {
-          logger.debug("Recycling worker due to request count", {
+        // Check if worker should be recycled (request count or age)
+        const entry = this.pool.get(projectId);
+        const shouldRecycle = worker.requestCount >= this.config.maxRequestsPerWorker ||
+          (entry && Date.now() - entry.createdAt > this.config.maxWorkerAgeMs);
+
+        if (shouldRecycle) {
+          logger.debug("Recycling worker", {
             projectId,
             requestCount: worker.requestCount,
+            ageMs: entry ? Date.now() - entry.createdAt : 0,
+            reason: worker.requestCount >= this.config.maxRequestsPerWorker
+              ? "request_count"
+              : "age",
           });
           this.evictWorker(projectId);
           const fresh = this.getOrCreateWorker(projectId, readPaths);
@@ -128,11 +139,13 @@ export class WorkerPool {
   getStats(): {
     poolSize: number;
     maxPoolSize: number;
+    memoryBudgetMb: number;
     workers: Record<string, {
       status: string;
       requestCount: number;
       hasPending: boolean;
       idleMs: number;
+      ageMs: number;
     }>;
   } {
     const workers: Record<string, {
@@ -140,6 +153,7 @@ export class WorkerPool {
       requestCount: number;
       hasPending: boolean;
       idleMs: number;
+      ageMs: number;
     }> = {};
     const now = Date.now();
 
@@ -149,13 +163,49 @@ export class WorkerPool {
         requestCount: entry.worker.requestCount,
         hasPending: entry.worker.hasPendingRequests,
         idleMs: now - entry.lastAccessedAt,
+        ageMs: now - entry.createdAt,
       };
     }
 
     return {
       poolSize: this.pool.size,
       maxPoolSize: this.config.maxPoolSize,
+      memoryBudgetMb: this.config.memoryBudgetMb,
       workers,
+    };
+  }
+
+  /**
+   * Get aggregate metrics suitable for Prometheus exposition.
+   */
+  getMetrics(): {
+    /** Current number of active workers */
+    workerPoolSize: number;
+    /** Number of workers at capacity (max pool size) */
+    workerPoolCapacity: number;
+    /** Total requests processed across all workers */
+    totalRequestsProcessed: number;
+    /** Number of workers with pending requests (busy) */
+    busyWorkers: number;
+    /** Number of crashed workers (cleaned up at next health check) */
+    crashedWorkers: number;
+  } {
+    let totalRequests = 0;
+    let busy = 0;
+    let crashed = 0;
+
+    for (const [, entry] of this.pool) {
+      totalRequests += entry.worker.requestCount;
+      if (entry.worker.hasPendingRequests) busy++;
+      if (entry.worker.status === "crashed") crashed++;
+    }
+
+    return {
+      workerPoolSize: this.pool.size,
+      workerPoolCapacity: this.config.maxPoolSize,
+      totalRequestsProcessed: totalRequests,
+      busyWorkers: busy,
+      crashedWorkers: crashed,
     };
   }
 
@@ -256,6 +306,45 @@ export class WorkerPool {
         this.pool.delete(projectId);
       }
     }
+
+    // Evict oldest workers when under memory pressure
+    this.evictUnderMemoryPressure();
+  }
+
+  /**
+   * Evict workers when the process is under memory pressure.
+   * Uses the global heap stats — if heap usage is above a threshold,
+   * evict idle workers starting with the oldest to free memory.
+   */
+  private evictUnderMemoryPressure(): void {
+    // Lazy import to avoid circular deps — this is only called during health checks
+    try {
+      // deno-lint-ignore no-explicit-any
+      const { getHeapStats } = (globalThis as any).__veryfront_heap_stats ?? {};
+      if (!getHeapStats) return;
+
+      const { heapUsedPercent } = getHeapStats();
+      if (heapUsedPercent < 70) return; // Only act above 70%
+
+      // Sort workers by last access time (oldest first)
+      const entries = [...this.pool.entries()]
+        .filter(([, e]) => !e.worker.hasPendingRequests)
+        .sort(([, a], [, b]) => a.lastAccessedAt - b.lastAccessedAt);
+
+      // Evict up to 25% of idle workers
+      const toEvict = Math.max(1, Math.ceil(entries.length * 0.25));
+      for (let i = 0; i < toEvict && i < entries.length; i++) {
+        const projectId = entries[i]![0];
+        this.evictWorker(projectId);
+        logger.debug("Evicted worker due to memory pressure", {
+          projectId,
+          heapUsedPercent,
+          poolSize: this.pool.size,
+        });
+      }
+    } catch {
+      // getHeapStats may not be available in all environments
+    }
   }
 }
 
@@ -309,6 +398,10 @@ export function getWorkerPool(): WorkerPool {
         DEFAULT_WORKER_POOL_CONFIG.requestTimeoutMs,
       maxRequestsPerWorker: getEnvNumber("WORKER_MAX_REQUESTS_PER_WORKER") ??
         DEFAULT_WORKER_POOL_CONFIG.maxRequestsPerWorker,
+      maxWorkerAgeMs: getEnvNumber("WORKER_MAX_AGE_MS") ??
+        DEFAULT_WORKER_POOL_CONFIG.maxWorkerAgeMs,
+      memoryBudgetMb: getEnvNumber("WORKER_MEMORY_BUDGET_MB") ??
+        DEFAULT_WORKER_POOL_CONFIG.memoryBudgetMb,
     });
   }
   return _pool;

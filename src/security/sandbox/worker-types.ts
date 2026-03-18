@@ -186,6 +186,10 @@ export interface WorkerPoolConfig {
   healthCheckIntervalMs: number;
   /** Maximum requests before recycling a worker (default: 1000) */
   maxRequestsPerWorker: number;
+  /** Maximum age of a worker in ms before recycling (default: 600_000 = 10 minutes) */
+  maxWorkerAgeMs: number;
+  /** Per-worker memory budget in MB (default: 64). Workers exceeding this are evicted. */
+  memoryBudgetMb: number;
 }
 
 export const DEFAULT_WORKER_POOL_CONFIG: WorkerPoolConfig = {
@@ -194,4 +198,6 @@ export const DEFAULT_WORKER_POOL_CONFIG: WorkerPoolConfig = {
   requestTimeoutMs: 30_000,
   healthCheckIntervalMs: 30_000,
   maxRequestsPerWorker: 1_000,
+  maxWorkerAgeMs: 600_000,
+  memoryBudgetMb: 64,
 };
