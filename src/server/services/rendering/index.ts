@@ -5,4 +5,10 @@
  */
 
 export { SSRService } from "./ssr.service.ts";
-export type { MemoryStatus, SSRRenderOptions, SSRRenderResult } from "./ssr.service.ts";
+export type {
+  MemoryStatus,
+  RendererProvider,
+  SSRRenderOptions,
+  SSRRenderResult,
+  SSRServiceLike,
+} from "./ssr.service.ts";

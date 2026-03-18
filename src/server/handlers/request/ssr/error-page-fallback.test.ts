@@ -139,6 +139,176 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
     });
   });
 
+  describe("status codes", () => {
+    it("returns null for 500 when no error page files exist", async () => {
+      const adapter = createMockAdapter({
+        stat: (path: string) => {
+          if (path.endsWith("/pages")) {
+            return Promise.resolve({
+              isFile: false,
+              isDirectory: true,
+              size: 0,
+              mtime: null,
+            });
+          }
+          return Promise.reject(new Error("not found"));
+        },
+      });
+      const ctx = makeCtx({ adapter });
+      const req = new Request("http://localhost/");
+      const builder = new ResponseBuilder();
+
+      const result = await tryErrorPageFallback(req, ctx, builder, {
+        statusCode: 500,
+        error: new Error("test error"),
+      });
+      assertEquals(result, null);
+    });
+
+    it("returns null for 403 (only tries _error fallback)", async () => {
+      const adapter = createMockAdapter({
+        stat: (path: string) => {
+          if (path.endsWith("/pages")) {
+            return Promise.resolve({
+              isFile: false,
+              isDirectory: true,
+              size: 0,
+              mtime: null,
+            });
+          }
+          return Promise.reject(new Error("not found"));
+        },
+      });
+      const ctx = makeCtx({ adapter });
+      const req = new Request("http://localhost/");
+      const builder = new ResponseBuilder();
+
+      const result = await tryErrorPageFallback(req, ctx, builder, {
+        statusCode: 403,
+      });
+      assertEquals(result, null);
+    });
+  });
+
+  describe("cache behavior with injected repo", () => {
+    it("calls cache.get and cache.set via injected repo", async () => {
+      const cacheOps: string[] = [];
+      const mockRepo = {
+        get: (key: string) => {
+          cacheOps.push(`get:${key}`);
+          return Promise.resolve(null);
+        },
+        set: (key: string, value: string) => {
+          cacheOps.push(`set:${key}:${value}`);
+          return Promise.resolve();
+        },
+        delete: (key: string) => {
+          cacheOps.push(`delete:${key}`);
+          return Promise.resolve();
+        },
+      };
+      __injectCacheForTests(mockRepo as any);
+
+      const adapter = createMockAdapter({
+        stat: (path: string) => {
+          if (path.endsWith("/pages")) {
+            return Promise.resolve({
+              isFile: false,
+              isDirectory: true,
+              size: 0,
+              mtime: null,
+            });
+          }
+          return Promise.reject(new Error("not found"));
+        },
+      });
+      const ctx = makeCtx({ adapter });
+      const req = new Request("http://localhost/");
+      const builder = new ResponseBuilder();
+
+      await tryErrorPageFallback(req, ctx, builder, { statusCode: 404 });
+
+      // Should have called get and set on the cache
+      assertEquals(cacheOps.some((op) => op.startsWith("get:")), true);
+      assertEquals(cacheOps.some((op) => op.startsWith("set:")), true);
+    });
+
+    it("returns null when cache has NOT_FOUND sentinel", async () => {
+      const mockRepo = {
+        get: () => Promise.resolve("__NOT_FOUND__"),
+        set: () => Promise.resolve(),
+        delete: () => Promise.resolve(),
+      };
+      __injectCacheForTests(mockRepo as any);
+
+      const adapter = createMockAdapter({
+        stat: (path: string) => {
+          if (path.endsWith("/pages")) {
+            return Promise.resolve({
+              isFile: false,
+              isDirectory: true,
+              size: 0,
+              mtime: null,
+            });
+          }
+          return Promise.reject(new Error("not found"));
+        },
+      });
+      const ctx = makeCtx({ adapter });
+      const req = new Request("http://localhost/");
+      const builder = new ResponseBuilder();
+
+      const result = await tryErrorPageFallback(req, ctx, builder, {
+        statusCode: 404,
+      });
+      assertEquals(result, null);
+    });
+  });
+
+  describe("resolveFile path", () => {
+    it("returns null when resolveFile throws", async () => {
+      const adapter = createMockAdapter({
+        stat: (path: string) => {
+          if (path.endsWith("/pages")) {
+            return Promise.resolve({
+              isFile: false,
+              isDirectory: true,
+              size: 0,
+              mtime: null,
+            });
+          }
+          return Promise.reject(new Error("not found"));
+        },
+        resolveFile: () => Promise.reject(new Error("resolve failed")),
+      });
+      const ctx = makeCtx({ adapter });
+      const req = new Request("http://localhost/");
+      const builder = new ResponseBuilder();
+
+      const result = await tryErrorPageFallback(req, ctx, builder, {
+        statusCode: 404,
+      });
+      assertEquals(result, null);
+    });
+  });
+
+  describe("pathname in error options", () => {
+    it("passes pathname through options", async () => {
+      const adapter = createMockAdapter({
+        stat: () => Promise.reject(new Error("not found")),
+      });
+      const ctx = makeCtx({ adapter });
+      const req = new Request("http://localhost/missing-page");
+      const builder = new ResponseBuilder();
+
+      const result = await tryErrorPageFallback(req, ctx, builder, {
+        statusCode: 404,
+        pathname: "/missing-page",
+      });
+      assertEquals(result, null);
+    });
+  });
+
   describe("__injectCacheForTests", () => {
     it("can inject and reset cache repo", () => {
       const mockRepo = {

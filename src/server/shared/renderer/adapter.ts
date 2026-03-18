@@ -62,11 +62,95 @@ export interface RendererAdapter {
   destroy(): Promise<void>;
 }
 
-let rendererInitPromise: Promise<Renderer> | null = null;
+/**
+ * Abstraction over renderer initialization, allowing tests to inject
+ * a mock renderer without pulling in the full rendering subsystem.
+ */
+export interface RendererInitializer {
+  initialize(options: RendererOptions): Promise<Renderer>;
+  isInitialized(): boolean;
+  get(): Renderer;
+  destroy(): Promise<void>;
+}
+
+/**
+ * Default initializer that delegates to the real shared renderer
+ * singleton from `#veryfront/rendering/renderer.ts`.
+ */
+const defaultInitializer: RendererInitializer = {
+  initialize: initializeRenderer,
+  isInitialized: isRendererInitialized,
+  get: getRenderer,
+  destroy: destroySharedRenderer,
+};
+
+let activeInitializer: RendererInitializer = defaultInitializer;
+let rendererInitState: { initializer: RendererInitializer; promise: Promise<Renderer> } | null =
+  null;
+
+function scheduleInitializerDestroy(
+  initializer: RendererInitializer,
+  pendingPromise?: Promise<unknown>,
+): void {
+  const destroy = async () => {
+    try {
+      await initializer.destroy();
+    } catch (error) {
+      logger.warn("Failed to destroy renderer initializer", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  if (pendingPromise) {
+    void pendingPromise
+      .catch(() => undefined)
+      .then(destroy);
+    return;
+  }
+
+  if (!initializer.isInitialized()) return;
+  void destroy();
+}
+
+/**
+ * Replace the renderer initializer used by the adapter layer.
+ * Pass `undefined` to restore the default (real) initializer.
+ *
+ * Returns a disposer that restores the previous initializer — use in
+ * `afterEach` or with `using` to prevent test pollution:
+ *
+ * ```ts
+ * afterEach(() => setRendererInitializer(undefined));
+ * ```
+ *
+ * @internal Test-only — not part of the public API.
+ */
+export function setRendererInitializer(
+  initializer?: RendererInitializer,
+): void {
+  const nextInitializer = initializer ?? defaultInitializer;
+  const previous = activeInitializer;
+  const previousPendingPromise = rendererInitState?.initializer === previous
+    ? rendererInitState.promise
+    : undefined;
+
+  activeInitializer = nextInitializer;
+
+  if (rendererInitState?.initializer !== activeInitializer) {
+    rendererInitState = null;
+  }
+
+  if (previous !== activeInitializer) {
+    scheduleInitializerDestroy(previous, previousPendingPromise);
+  }
+}
 
 async function getOrInitRenderer(): Promise<Renderer> {
-  if (isRendererInitialized()) return getRenderer();
-  if (rendererInitPromise) return rendererInitPromise;
+  if (activeInitializer.isInitialized()) return activeInitializer.get();
+  if (rendererInitState?.initializer === activeInitializer) {
+    return rendererInitState.promise;
+  }
 
   const isProxyMode = getEnvBoolean("PROXY_MODE", false, {
     trueValues: ["1"],
@@ -97,12 +181,19 @@ async function getOrInitRenderer(): Promise<Renderer> {
     cacheType: useApiCache ? "api-distributed" : "memory",
   });
 
-  rendererInitPromise = initializeRenderer(options);
+  const initializer = activeInitializer;
+  const initPromise = initializer.initialize(options);
+  rendererInitState = {
+    initializer,
+    promise: initPromise,
+  };
 
   try {
-    return await rendererInitPromise;
+    return await initPromise;
   } finally {
-    rendererInitPromise = null;
+    if (rendererInitState?.promise === initPromise) {
+      rendererInitState = null;
+    }
   }
 }
 
@@ -306,6 +397,14 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
 }
 
 export async function destroyRendererAdapter(): Promise<void> {
-  await destroySharedRenderer();
-  rendererInitPromise = null;
+  const pendingPromise = rendererInitState?.initializer === activeInitializer
+    ? rendererInitState.promise
+    : undefined;
+  rendererInitState = null;
+
+  if (pendingPromise) {
+    await pendingPromise.catch(() => undefined);
+  }
+
+  await activeInitializer.destroy();
 }

@@ -4,5 +4,11 @@
  * @module server/shared/renderer
  */
 
-export { destroyRendererAdapter, getRendererForProject, type RendererAdapter } from "./adapter.ts";
+export {
+  destroyRendererAdapter,
+  getRendererForProject,
+  type RendererAdapter,
+  type RendererInitializer,
+  setRendererInitializer,
+} from "./adapter.ts";
 export { shouldRejectDueToMemory } from "./memory/pressure.ts";

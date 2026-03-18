@@ -137,13 +137,24 @@ class CostTracker {
     this.records.push(record);
     this.dailyTotal += cost;
     this.monthlyTotal += cost;
-    if (userId) {
-      this.userDailyTotals.set(userId, (this.userDailyTotals.get(userId) ?? 0) + cost);
-      if (this.userDailyTotals.size > this.maxTrackedUsers) {
-        // Evict oldest entry (first key in insertion order)
-        const firstKey = this.userDailyTotals.keys().next().value;
-        if (firstKey !== undefined) this.userDailyTotals.delete(firstKey);
+    if (userId && this.maxTrackedUsers > 0) {
+      // Keep tracking the current user even after the cap is reached by
+      // evicting the oldest tracked user first. This preserves per-user
+      // enforcement for active users without unbounded memory growth.
+      if (
+        !this.userDailyTotals.has(userId) &&
+        this.userDailyTotals.size >= this.maxTrackedUsers
+      ) {
+        const oldestTrackedUser = this.userDailyTotals.keys().next().value;
+        if (oldestTrackedUser !== undefined) {
+          this.userDailyTotals.delete(oldestTrackedUser);
+        }
       }
+
+      this.userDailyTotals.set(
+        userId,
+        (this.userDailyTotals.get(userId) ?? 0) + cost,
+      );
     }
     this.checkLimits(userId);
 
