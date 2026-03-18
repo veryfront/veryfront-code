@@ -91,5 +91,16 @@ describe("Knowledge Handler", () => {
 
       assertEquals(result.success, false);
     });
+
+    it("rejects --slug when using --path --all batch mode", () => {
+      const result = parseKnowledgeIngestArgs({
+        _: ["knowledge", "ingest"],
+        path: "uploads/contracts",
+        all: true,
+        slug: "contracts-batch",
+      } as ParsedArgs);
+
+      assertEquals(result.success, false);
+    });
   });
 });

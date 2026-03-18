@@ -72,7 +72,52 @@ def build_frontmatter(source: str, source_type: str, description: str) -> str:
     ])
 
 
-def parse_with_kreuzberg(path: str):
+def metadata_int(metadata: dict[str, Any], *keys: str) -> Optional[int]:
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def metadata_string_list(metadata: dict[str, Any], *keys: str) -> Optional[list[str]]:
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, list) and all(isinstance(item, str) for item in value):
+            return value
+    return None
+
+
+def build_kreuzberg_stats(source_type: str, content: str, metadata: dict[str, Any]):
+    stats: dict[str, Any] = {
+        "characters": len(content),
+        "lines": len(content.splitlines()) if content else 0,
+        "engine": "kreuzberg",
+    }
+
+    if isinstance(metadata.get("mime_type"), str):
+        stats["mime_type"] = metadata["mime_type"]
+
+    if source_type == "pdf":
+        stats["pages"] = metadata_int(metadata, "page_count") or 0
+        stats["tables"] = metadata_int(metadata, "table_count") or 0
+    elif source_type in {"xlsx", "xls"}:
+        stats["sheets"] = metadata_int(metadata, "sheet_count") or 0
+        stats["rows"] = metadata_int(metadata, "row_count") or 0
+        stats["sheet_names"] = metadata_string_list(metadata, "sheet_names") or []
+    elif source_type == "docx":
+        stats["paragraphs"] = metadata_int(metadata, "paragraph_count") or 0
+        stats["tables"] = metadata_int(metadata, "table_count") or 0
+    elif source_type == "pptx":
+        stats["slides"] = metadata_int(metadata, "slide_count", "page_count") or 0
+        stats["tables"] = metadata_int(metadata, "table_count") or 0
+    elif source_type == "html":
+        stats["tables"] = metadata_int(metadata, "table_count") or 0
+
+    return stats
+
+
+def parse_with_kreuzberg(path: str, source_type: str):
     warnings: list[str] = []
     completed = subprocess.run(
         [
@@ -104,25 +149,26 @@ def parse_with_kreuzberg(path: str):
 
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     normalized_content = clean_text(content)
-    stats: dict[str, Any] = {
-        "characters": len(normalized_content),
-        "lines": len(normalized_content.splitlines()) if normalized_content else 0,
-        "engine": "kreuzberg",
-    }
-    if isinstance(metadata.get("mime_type"), str):
-        stats["mime_type"] = metadata["mime_type"]
+    stats = build_kreuzberg_stats(source_type, normalized_content, metadata)
 
     return normalized_content or "_No extractable text found in document._", stats, warnings
 
 
-def prefer_kreuzberg(fallback_parser):
+def prefer_kreuzberg(source_type: str, fallback_parser):
     def parser(path: str):
         try:
-            return parse_with_kreuzberg(path)
+            return parse_with_kreuzberg(path, source_type)
         except FileNotFoundError as error:
             if getattr(error, "filename", "") == "kreuzberg":
                 return fallback_parser(path)
             raise
+        except RuntimeError as error:
+            content, stats, warnings = fallback_parser(path)
+            warnings.append(
+                "kreuzberg extraction failed; fell back to the built-in parser: "
+                + str(error)
+            )
+            return content, stats, warnings
 
     return parser
 
@@ -361,18 +407,19 @@ def parse_json(path: str):
 def select_parser(path: Path):
     ext = path.suffix.lower()
     if ext == ".pdf":
-        return "pdf", prefer_kreuzberg(parse_pdf)
+        return "pdf", prefer_kreuzberg("pdf", parse_pdf)
     if ext in {".csv", ".tsv"}:
         delimiter = "\t" if ext == ".tsv" else ","
         return ext.lstrip("."), lambda file_path: parse_csv_like(file_path, delimiter)
     if ext in {".xlsx", ".xls"}:
-        return ext.lstrip("."), prefer_kreuzberg(parse_excel)
+        source_type = ext.lstrip(".")
+        return source_type, prefer_kreuzberg(source_type, parse_excel)
     if ext == ".docx":
-        return "docx", prefer_kreuzberg(parse_docx)
+        return "docx", prefer_kreuzberg("docx", parse_docx)
     if ext == ".pptx":
-        return "pptx", prefer_kreuzberg(parse_pptx)
+        return "pptx", prefer_kreuzberg("pptx", parse_pptx)
     if ext in {".html", ".htm"}:
-        return "html", prefer_kreuzberg(parse_html)
+        return "html", prefer_kreuzberg("html", parse_html)
     if ext in {".txt", ".md", ".mdx"}:
         return ext.lstrip("."), parse_text
     if ext == ".json":

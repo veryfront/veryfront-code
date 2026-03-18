@@ -103,7 +103,7 @@ const KnowledgeIngestArgsSchema = z.object({
     });
   }
 
-  if (value.slug && value.sources.length > 1) {
+  if (value.slug && value.sources.length !== 1) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "--slug can only be used with a single explicit source.",
@@ -310,6 +310,7 @@ export async function runKnowledgeParser(input: {
   description?: string;
   slug?: string;
   sourceReference?: string;
+  env?: Record<string, string>;
 }): Promise<KnowledgeParserResult> {
   const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-" });
   const inputJsonPath = `${tempDir}/input.json`;
@@ -333,7 +334,7 @@ export async function runKnowledgeParser(input: {
     try {
       result = await new Deno.Command("python3", {
         args: [scriptPath, "--input-json", inputJsonPath, "--output-json", outputJsonPath],
-        env: Deno.env.toObject(),
+        ...(input.env ? { env: input.env } : {}),
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -452,7 +453,11 @@ export async function ingestResolvedSources(
     uploadKnowledgeFile: (remotePath: string, localPath: string) => Promise<{ path: string }>;
   },
 ): Promise<KnowledgeIngestFileResult[]> {
-  const slugs = options.slug && sources.length === 1 ? [options.slug] : ensureUniqueSlugs(sources);
+  if (options.slug && sources.length !== 1) {
+    throw new Error("--slug can only be used with a single explicit source.");
+  }
+
+  const slugs = options.slug ? [options.slug] : ensureUniqueSlugs(sources);
   const results: KnowledgeIngestFileResult[] = [];
 
   for (const [index, source] of sources.entries()) {

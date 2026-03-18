@@ -64,7 +64,7 @@ veryfront login
 
 Inside the Veryfront sandbox image, the embedded parser prefers `kreuzberg` for PDF, Office, and HTML extraction.
 
-If you are running outside the Veryfront sandbox image and do not have `kreuzberg` installed, non-text formats fall back to the parser dependencies:
+If you are running outside the Veryfront sandbox image and do not have `kreuzberg` installed, or if `kreuzberg` fails to extract a specific file, non-text formats fall back to the parser dependencies:
 
 ```bash
 pip install pandas openpyxl xlrd pdfplumber python-docx python-pptx beautifulsoup4 lxml
@@ -130,6 +130,8 @@ With `--json`, the command returns a machine-readable summary for each ingested 
 [
   {
     "source": "uploads/demo/notes.txt",
+    "localSourcePath": "/workspace/uploads/demo/notes.txt",
+    "outputPath": "/workspace/knowledge-output/demo-notes.md",
     "remotePath": "knowledge/demo-notes.md",
     "slug": "demo-notes",
     "sourceType": "txt",
@@ -143,7 +145,8 @@ With `--json`, the command returns a machine-readable summary for each ingested 
 ]
 ```
 
-This is useful for agent pipelines that want to confirm exactly what was created.
+This is useful for agent pipelines that want to confirm exactly what was created. The exact `stats`
+shape varies by source type, but the top-level result fields are the same.
 
 ## Path rules
 
@@ -216,7 +219,7 @@ Install the parser packages listed above, or run the command inside the Veryfron
 
 ### `kreuzberg` is not installed
 
-Inside the sandbox image, `kreuzberg` is preinstalled. Outside the sandbox, the command falls back to the Python parser stack for supported formats, so install the parser packages above if you do not want to install `kreuzberg` locally.
+Inside the sandbox image, `kreuzberg` is preinstalled. Outside the sandbox, the command falls back to the Python parser stack for supported formats when `kreuzberg` is not installed or extraction fails, so install the parser packages above if you do not want to install `kreuzberg` locally.
 
 ## Recommended agent flow
 

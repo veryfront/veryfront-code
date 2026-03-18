@@ -1,6 +1,7 @@
 import {
   assert,
   assertEquals,
+  assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
@@ -446,6 +447,53 @@ describe("ingestResolvedSources", () => {
 
     assertEquals(parserSlug, "report");
   });
+
+  it("rejects a custom slug when more than one resolved source would be written", async () => {
+    await assertRejects(
+      () =>
+        ingestResolvedSources(
+          [
+            {
+              kind: "local",
+              input: "./contracts/a.pdf",
+              localPath: "/workspace/contracts/a.pdf",
+            },
+            {
+              kind: "local",
+              input: "./contracts/b.pdf",
+              localPath: "/workspace/contracts/b.pdf",
+            },
+          ],
+          {
+            sources: ["./contracts"],
+            path: undefined,
+            all: false,
+            recursive: false,
+            outputDir: "/workspace/knowledge",
+            knowledgePath: "knowledge",
+            description: undefined,
+            slug: "contracts-batch",
+            json: true,
+            quiet: false,
+            projectDir: undefined,
+            projectSlug: undefined,
+          },
+          {
+            client: createMockClient(),
+            projectSlug: "my-project",
+            outputDir: "/workspace/knowledge",
+            runParser: async () => {
+              throw new Error("runParser should not be called");
+            },
+            uploadKnowledgeFile: async () => {
+              throw new Error("uploadKnowledgeFile should not be called");
+            },
+          },
+        ),
+      Error,
+      "--slug can only be used with a single explicit source.",
+    );
+  });
 });
 
 describe("knowledgeIngestPythonSource", () => {
@@ -509,15 +557,14 @@ describe("runKnowledgeParser", () => {
         kreuzbergPath,
         [
           "#!/bin/sh",
-          "if [ \"$1\" != \"extract\" ]; then",
-          "  echo \"unexpected command\" >&2",
+          'if [ "$1" != "extract" ]; then',
+          '  echo "unexpected command" >&2',
           "  exit 64",
           "fi",
-          "printf '%s\\n' '{\"content\":\"## Fake PDF\\n\\nParsed by kreuzberg\",\"metadata\":{\"mime_type\":\"application/pdf\"}}'",
+          'printf \'%s\\n\' \'{"content":"## Fake PDF\\n\\nParsed by kreuzberg","metadata":{"mime_type":"application/pdf","page_count":3,"table_count":1}}\'',
         ].join("\n"),
       );
       await Deno.chmod(kreuzbergPath, 0o755);
-      Deno.env.set("PATH", `${binDir}:${originalPath}`);
 
       const result = await runKnowledgeParser({
         filePath,
@@ -525,11 +572,14 @@ describe("runKnowledgeParser", () => {
         description: "Offer PDF",
         slug: "offer-pdf",
         sourceReference: "uploads/offers/offer.pdf",
+        env: { PATH: `${binDir}:${originalPath}` },
       });
 
       assertEquals(result.source_type, "pdf");
       assertEquals(result.slug, "offer-pdf");
       assertEquals(result.stats.engine, "kreuzberg");
+      assertEquals(result.stats.pages, 3);
+      assertEquals(result.stats.tables, 1);
       assertStringIncludes(result.summary, "Converted PDF to markdown");
 
       const markdown = await Deno.readTextFile(result.sandbox_output_path);
@@ -538,7 +588,57 @@ describe("runKnowledgeParser", () => {
       assertStringIncludes(markdown, "# Offer");
       assertStringIncludes(markdown, "Parsed by kreuzberg");
     } finally {
-      Deno.env.set("PATH", originalPath);
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("falls back to the built-in parser when kreuzberg extraction fails", async () => {
+    const tempDir = await Deno.makeTempDir({
+      prefix: "veryfront-knowledge-parser-kreuzberg-fallback-",
+    });
+    const binDir = join(tempDir, "bin");
+    const filePath = join(tempDir, "landing.html");
+    const outputDir = join(tempDir, "knowledge-output");
+    const kreuzbergPath = join(binDir, "kreuzberg");
+    const originalPath = Deno.env.get("PATH") ?? "";
+
+    try {
+      await Deno.mkdir(binDir, { recursive: true });
+      await Deno.writeTextFile(
+        filePath,
+        "<html><body><h1>Hello</h1><p>World</p></body></html>",
+      );
+      await Deno.writeTextFile(
+        kreuzbergPath,
+        [
+          "#!/bin/sh",
+          'echo "boom" >&2',
+          "exit 2",
+        ].join("\n"),
+      );
+      await Deno.chmod(kreuzbergPath, 0o755);
+
+      const result = await runKnowledgeParser({
+        filePath,
+        outputDir,
+        sourceReference: "uploads/sites/landing.html",
+        env: { PATH: `${binDir}:${originalPath}` },
+      });
+
+      assertEquals(result.source_type, "html");
+      assertStringIncludes(result.summary, "Converted HTML");
+      assertEquals(result.stats.engine, undefined);
+      assertEquals(result.warnings.length, 1);
+      assertStringIncludes(
+        result.warnings[0] ?? "",
+        "kreuzberg extraction failed; fell back to the built-in parser",
+      );
+
+      const markdown = await Deno.readTextFile(result.sandbox_output_path);
+      assertStringIncludes(markdown, "# Landing");
+      assertStringIncludes(markdown, "Hello");
+      assertStringIncludes(markdown, "World");
+    } finally {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }
   });
