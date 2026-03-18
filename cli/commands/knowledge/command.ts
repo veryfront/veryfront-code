@@ -61,7 +61,7 @@ type DownloadResult = { uploadPath: string; localPath: string; bytes?: number };
 const KnowledgeIngestArgsSchema = z.object({
   projectSlug: z.string().optional(),
   projectDir: z.string().optional(),
-  source: z.string().optional(),
+  sources: z.array(z.string()).default([]),
   path: z.string().optional(),
   all: z.boolean().default(false),
   recursive: z.boolean().default(false),
@@ -71,6 +71,44 @@ const KnowledgeIngestArgsSchema = z.object({
   slug: z.string().optional(),
   json: z.boolean().default(false),
   quiet: z.boolean().default(false),
+}).superRefine((value, ctx) => {
+  const hasExplicitSources = value.sources.length > 0;
+  const hasPath = typeof value.path === "string" && value.path.length > 0;
+
+  if (hasExplicitSources && (hasPath || value.all)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Use either explicit source paths or --path with --all, not both.",
+    });
+  }
+
+  if (!hasExplicitSources && !hasPath && !value.all) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide one or more source paths or use --path with --all.",
+    });
+  }
+
+  if (hasPath && !value.all) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "--path requires --all.",
+    });
+  }
+
+  if (!hasPath && value.all) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "--all requires --path.",
+    });
+  }
+
+  if (value.slug && value.sources.length !== 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "--slug can only be used with a single explicit source.",
+    });
+  }
 });
 
 export type KnowledgeIngestOptions = z.infer<typeof KnowledgeIngestArgsSchema>;
@@ -96,7 +134,7 @@ function showKnowledgeUsage(): void {
 Veryfront Knowledge
 
 Usage:
-  veryfront knowledge ingest <source> [options]
+  veryfront knowledge ingest <source...> [options]
   veryfront knowledge ingest --path <prefix-or-dir> --all [options]
 
 Subcommands:
@@ -110,7 +148,7 @@ export function parseKnowledgeIngestArgs(
   return KnowledgeIngestArgsSchema.safeParse({
     projectSlug: getStringArg(args, "project", "p", "project-slug"),
     projectDir: getStringArg(args, "project-dir", "dir", "d"),
-    source: typeof args._[2] === "string" ? args._[2] : undefined,
+    sources: args._.slice(2).filter((value): value is string => typeof value === "string"),
     path: getStringArg(args, "path"),
     all: getBooleanArg(args, "all"),
     recursive: getBooleanArg(args, "recursive"),
@@ -272,6 +310,7 @@ export async function runKnowledgeParser(input: {
   description?: string;
   slug?: string;
   sourceReference?: string;
+  env?: Record<string, string>;
 }): Promise<KnowledgeParserResult> {
   const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-" });
   const inputJsonPath = `${tempDir}/input.json`;
@@ -295,6 +334,7 @@ export async function runKnowledgeParser(input: {
     try {
       result = await new Deno.Command("python3", {
         args: [scriptPath, "--input-json", inputJsonPath, "--output-json", outputJsonPath],
+        ...(input.env ? { env: input.env } : {}),
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -320,7 +360,7 @@ export async function runKnowledgeParser(input: {
 }
 
 export async function collectKnowledgeSources(
-  options: Pick<KnowledgeIngestOptions, "source" | "path" | "all" | "recursive">,
+  options: Pick<KnowledgeIngestOptions, "sources" | "path" | "all" | "recursive">,
   deps: {
     client: ApiClient;
     projectSlug: string;
@@ -329,29 +369,36 @@ export async function collectKnowledgeSources(
 ): Promise<KnowledgeSource[]> {
   const fs = createFileSystem();
 
-  if (options.source) {
-    if (!isProjectUploadReference(options.source) && await fs.exists(options.source)) {
-      const localFiles = await collectLocalFiles(options.source, options.recursive);
-      if (!localFiles.length) throw new Error(`No supported files found at ${options.source}`);
-      return localFiles.map((localPath) => ({ kind: "local", input: options.source!, localPath }));
+  const resolveExplicitSource = async (input: string): Promise<KnowledgeSource[]> => {
+    if (!isProjectUploadReference(input) && await fs.exists(input)) {
+      const localFiles = await collectLocalFiles(input, options.recursive);
+      if (!localFiles.length) throw new Error(`No supported files found at ${input}`);
+      return localFiles.map((localPath) => ({ kind: "local", input, localPath }));
     }
 
-    if (isLikelyLocalPath(options.source)) {
-      throw new Error(`Local file not found: ${options.source}`);
+    if (isLikelyLocalPath(input)) {
+      throw new Error(`Local file not found: ${input}`);
     }
 
-    const uploadPath = normalizeProjectUploadPath(options.source);
+    const uploadPath = normalizeProjectUploadPath(input);
     const downloads = await deps.downloadUploads([uploadPath]);
     return downloads.map((download) => ({
       kind: "upload",
-      input: options.source!,
+      input,
       uploadPath: download.uploadPath,
       localPath: download.localPath,
     }));
+  };
+
+  if (options.sources.length > 0) {
+    const resolvedSources = await Promise.all(
+      options.sources.map((source) => resolveExplicitSource(source)),
+    );
+    return resolvedSources.flat();
   }
 
   if (!options.path || !options.all) {
-    throw new Error("Provide a source path or use --path with --all.");
+    throw new Error("Provide one or more source paths or use --path with --all.");
   }
 
   if (!isProjectUploadReference(options.path) && await fs.exists(options.path)) {
@@ -406,7 +453,11 @@ export async function ingestResolvedSources(
     uploadKnowledgeFile: (remotePath: string, localPath: string) => Promise<{ path: string }>;
   },
 ): Promise<KnowledgeIngestFileResult[]> {
-  const slugs = options.slug && sources.length === 1 ? [options.slug] : ensureUniqueSlugs(sources);
+  if (options.slug && sources.length !== 1) {
+    throw new Error("--slug can only be used with a single explicit source.");
+  }
+
+  const slugs = options.slug ? [options.slug] : ensureUniqueSlugs(sources);
   const results: KnowledgeIngestFileResult[] = [];
 
   for (const [index, source] of sources.entries()) {

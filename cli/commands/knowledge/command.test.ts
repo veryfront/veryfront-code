@@ -1,6 +1,7 @@
 import {
   assert,
   assertEquals,
+  assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
@@ -126,7 +127,7 @@ describe("collectKnowledgeSources", () => {
     try {
       const sources = await collectKnowledgeSources(
         {
-          source: localPath,
+          sources: [localPath],
           path: undefined,
           all: false,
           recursive: false,
@@ -150,7 +151,7 @@ describe("collectKnowledgeSources", () => {
     const calls: string[] = [];
     const sources = await collectKnowledgeSources(
       {
-        source: "uploads/contracts/q1.pdf",
+        sources: ["uploads/contracts/q1.pdf"],
         path: undefined,
         all: false,
         recursive: false,
@@ -190,7 +191,7 @@ describe("collectKnowledgeSources", () => {
       const calls: string[] = [];
       const sources = await collectKnowledgeSources(
         {
-          source: "uploads/contracts/q1.pdf",
+          sources: ["uploads/contracts/q1.pdf"],
           path: undefined,
           all: false,
           recursive: false,
@@ -231,7 +232,7 @@ describe("collectKnowledgeSources", () => {
 
     const sources = await collectKnowledgeSources(
       {
-        source: undefined,
+        sources: [],
         path: "uploads/",
         all: true,
         recursive: true,
@@ -277,7 +278,7 @@ describe("collectKnowledgeSources", () => {
 
     const sources = await collectKnowledgeSources(
       {
-        source: undefined,
+        sources: [],
         path: "uploads/contracts",
         all: true,
         recursive: false,
@@ -303,6 +304,39 @@ describe("collectKnowledgeSources", () => {
     assertEquals(sources.length, 1);
     assertEquals(sources[0]?.kind, "upload");
   });
+
+  it("resolves multiple explicit sources in input order", async () => {
+    const calls: string[] = [];
+    const sources = await collectKnowledgeSources(
+      {
+        sources: [
+          "uploads/contracts/a.pdf",
+          "uploads/contracts/b.pdf",
+          "uploads/contracts/c.pdf",
+        ],
+        path: undefined,
+        all: false,
+        recursive: false,
+      },
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        downloadUploads: async (uploadPaths) => {
+          calls.push(...uploadPaths);
+          return uploadPaths.map((uploadPath) => ({
+            uploadPath,
+            localPath: `/workspace/uploads/${uploadPath}`,
+          }));
+        },
+      },
+    );
+
+    assertEquals(calls, ["contracts/a.pdf", "contracts/b.pdf", "contracts/c.pdf"]);
+    assertEquals(
+      sources.map((source) => source.kind === "upload" ? source.uploadPath : source.localPath),
+      ["contracts/a.pdf", "contracts/b.pdf", "contracts/c.pdf"],
+    );
+  });
 });
 
 describe("ingestResolvedSources", () => {
@@ -315,7 +349,7 @@ describe("ingestResolvedSources", () => {
         localPath: "/workspace/uploads/contracts/q1.pdf",
       }],
       {
-        source: undefined,
+        sources: [],
         path: undefined,
         all: false,
         recursive: false,
@@ -373,7 +407,7 @@ describe("ingestResolvedSources", () => {
         localPath: "/var/folders/random/report.pdf",
       }],
       {
-        source: undefined,
+        sources: [],
         path: undefined,
         all: false,
         recursive: false,
@@ -412,6 +446,53 @@ describe("ingestResolvedSources", () => {
     );
 
     assertEquals(parserSlug, "report");
+  });
+
+  it("rejects a custom slug when more than one resolved source would be written", async () => {
+    await assertRejects(
+      () =>
+        ingestResolvedSources(
+          [
+            {
+              kind: "local",
+              input: "./contracts/a.pdf",
+              localPath: "/workspace/contracts/a.pdf",
+            },
+            {
+              kind: "local",
+              input: "./contracts/b.pdf",
+              localPath: "/workspace/contracts/b.pdf",
+            },
+          ],
+          {
+            sources: ["./contracts"],
+            path: undefined,
+            all: false,
+            recursive: false,
+            outputDir: "/workspace/knowledge",
+            knowledgePath: "knowledge",
+            description: undefined,
+            slug: "contracts-batch",
+            json: true,
+            quiet: false,
+            projectDir: undefined,
+            projectSlug: undefined,
+          },
+          {
+            client: createMockClient(),
+            projectSlug: "my-project",
+            outputDir: "/workspace/knowledge",
+            runParser: async () => {
+              throw new Error("runParser should not be called");
+            },
+            uploadKnowledgeFile: async () => {
+              throw new Error("uploadKnowledgeFile should not be called");
+            },
+          },
+        ),
+      Error,
+      "--slug can only be used with a single explicit source.",
+    );
   });
 });
 
@@ -456,6 +537,136 @@ describe("runKnowledgeParser", () => {
       assertStringIncludes(markdown, 'description: "Quarterly performance summary"');
       assertStringIncludes(markdown, "# Q1 Report");
       assertStringIncludes(markdown, "Quarterly revenue increased 12% year over year.");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("prefers kreuzberg for PDF extraction when the binary is available", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-kreuzberg-" });
+    const binDir = join(tempDir, "bin");
+    const filePath = join(tempDir, "offer.pdf");
+    const outputDir = join(tempDir, "knowledge-output");
+    const kreuzbergPath = join(binDir, "kreuzberg");
+    const originalPath = Deno.env.get("PATH") ?? "";
+
+    try {
+      await Deno.mkdir(binDir, { recursive: true });
+      await Deno.writeTextFile(filePath, "stub pdf bytes");
+      await Deno.writeTextFile(
+        kreuzbergPath,
+        [
+          "#!/bin/sh",
+          'if [ "$1" != "extract" ]; then',
+          '  echo "unexpected command" >&2',
+          "  exit 64",
+          "fi",
+          'printf \'%s\\n\' \'{"content":"## Fake PDF\\n\\nParsed by kreuzberg","metadata":{"mime_type":"application/pdf","page_count":3,"table_count":1}}\'',
+        ].join("\n"),
+      );
+      await Deno.chmod(kreuzbergPath, 0o755);
+
+      const result = await runKnowledgeParser({
+        filePath,
+        outputDir,
+        description: "Offer PDF",
+        slug: "offer-pdf",
+        sourceReference: "uploads/offers/offer.pdf",
+        env: { PATH: `${binDir}:${originalPath}` },
+      });
+
+      assertEquals(result.source_type, "pdf");
+      assertEquals(result.slug, "offer-pdf");
+      assertEquals(result.stats.engine, "kreuzberg");
+      assertEquals(result.stats.pages, 3);
+      assertEquals(result.stats.tables, 1);
+      assertStringIncludes(result.summary, "Converted PDF to markdown");
+
+      const markdown = await Deno.readTextFile(result.sandbox_output_path);
+      assertStringIncludes(markdown, 'source: "uploads/offers/offer.pdf"');
+      assertStringIncludes(markdown, 'description: "Offer PDF"');
+      assertStringIncludes(markdown, "# Offer");
+      assertStringIncludes(markdown, "Parsed by kreuzberg");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("falls back to the built-in parser when kreuzberg extraction fails", async () => {
+    const tempDir = await Deno.makeTempDir({
+      prefix: "veryfront-knowledge-parser-kreuzberg-fallback-",
+    });
+    const binDir = join(tempDir, "bin");
+    const pythonDir = join(tempDir, "python");
+    const filePath = join(tempDir, "fallback.pdf");
+    const outputDir = join(tempDir, "knowledge-output");
+    const kreuzbergPath = join(binDir, "kreuzberg");
+    const originalPath = Deno.env.get("PATH") ?? "";
+
+    try {
+      await Deno.mkdir(binDir, { recursive: true });
+      await Deno.mkdir(pythonDir, { recursive: true });
+      await Deno.writeTextFile(filePath, "stub pdf bytes");
+      await Deno.writeTextFile(
+        kreuzbergPath,
+        [
+          "#!/bin/sh",
+          'echo "boom" >&2',
+          "exit 2",
+        ].join("\n"),
+      );
+      await Deno.writeTextFile(
+        join(pythonDir, "pdfplumber.py"),
+        [
+          "class _Page:",
+          "    def __init__(self, text):",
+          "        self._text = text",
+          "",
+          "    def extract_text(self):",
+          "        return self._text",
+          "",
+          "    def extract_tables(self):",
+          "        return []",
+          "",
+          "class _Pdf:",
+          "    def __init__(self, path):",
+          '        self.pages = [_Page("Fallback PDF text")]',
+          "",
+          "    def __enter__(self):",
+          "        return self",
+          "",
+          "    def __exit__(self, exc_type, exc, tb):",
+          "        return False",
+          "",
+          "def open(path):",
+          "    return _Pdf(path)",
+        ].join("\n"),
+      );
+      await Deno.chmod(kreuzbergPath, 0o755);
+
+      const result = await runKnowledgeParser({
+        filePath,
+        outputDir,
+        sourceReference: "uploads/offers/fallback.pdf",
+        env: {
+          PATH: `${binDir}:${originalPath}`,
+          PYTHONPATH: pythonDir,
+        },
+      });
+
+      assertEquals(result.source_type, "pdf");
+      assertStringIncludes(result.summary, "Extracted 1 page");
+      assertEquals(result.stats.engine, undefined);
+      assertEquals(result.warnings.length, 1);
+      assertStringIncludes(
+        result.warnings[0] ?? "",
+        "kreuzberg extraction failed; fell back to the built-in parser",
+      );
+
+      const markdown = await Deno.readTextFile(result.sandbox_output_path);
+      assertStringIncludes(markdown, "# Fallback");
+      assertStringIncludes(markdown, "## Page 1");
+      assertStringIncludes(markdown, "Fallback PDF text");
     } finally {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }
