@@ -84,7 +84,8 @@ export interface SerializedDataResult {
 export type WorkerRequest =
   | ExecuteAppRouteRequest
   | ExecutePagesRouteRequest
-  | FetchDataRequest;
+  | FetchDataRequest
+  | RenderSSRRequest;
 
 export interface ExecuteAppRouteRequest {
   type: "execute-app-route";
@@ -110,10 +111,47 @@ export interface FetchDataRequest {
   context: SerializedDataContext;
 }
 
+export interface RenderSSRRequest {
+  type: "render-ssr";
+  id: string;
+  /** Temp file path for the page component module */
+  pageModulePath: string;
+  /** Ordered layout module temp paths (innermost → outermost) */
+  layoutModulePaths: string[];
+  /** Page component props (JSON-serializable) */
+  pageProps: Record<string, unknown>;
+  /** Layout props keyed by layout index (matching layoutModulePaths order) */
+  layoutProps: Record<string, unknown>[];
+  /** Rendering delivery mode */
+  delivery: "string" | "stream";
+}
+
+// ---------------------------------------------------------------------------
+// Streaming SSR Protocol
+// ---------------------------------------------------------------------------
+
+export interface WorkerStreamChunk {
+  type: "stream-chunk";
+  id: string;
+  chunk: Uint8Array;
+}
+
+export interface WorkerStreamEnd {
+  type: "stream-end";
+  id: string;
+}
+
 export type WorkerResponse =
   | WorkerResultResponse
   | WorkerDataResultResponse
+  | WorkerSSRResultResponse
   | WorkerErrorResponse;
+
+export interface WorkerSSRResultResponse {
+  type: "ssr-result";
+  id: string;
+  html: string;
+}
 
 export interface WorkerResultResponse {
   type: "result";

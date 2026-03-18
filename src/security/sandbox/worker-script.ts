@@ -14,6 +14,7 @@ import type {
   ExecuteAppRouteRequest,
   ExecutePagesRouteRequest,
   FetchDataRequest,
+  RenderSSRRequest,
   SerializedDataContext,
   SerializedDataResult,
   SerializedError,
@@ -24,6 +25,9 @@ import type {
   WorkerErrorResponse,
   WorkerRequest,
   WorkerResultResponse,
+  WorkerSSRResultResponse,
+  WorkerStreamChunk,
+  WorkerStreamEnd,
 } from "./worker-types.ts";
 
 // ---------------------------------------------------------------------------
@@ -215,6 +219,99 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
 }
 
 // ---------------------------------------------------------------------------
+// SSR Rendering Handler
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle SSR rendering in the isolated Worker.
+ *
+ * Imports the page + layout components from their temp file paths,
+ * constructs a React element tree (layouts wrapping page), and renders
+ * to HTML string. For streaming, sends chunks via postMessage.
+ *
+ * The Worker gets its own React instance — safe because SSR is
+ * self-contained (no hydration mismatch concern).
+ */
+async function handleRenderSSR(
+  req: RenderSSRRequest,
+): Promise<{ html: string } | "streaming"> {
+  // Dynamic import of React — resolved from the project's import map
+  // which maps to the correct esm.sh version
+  const React = await import("react");
+  const { renderToString } = await import("react-dom/server");
+
+  // Import the page component
+  const pageMod = await loadModule(req.pageModulePath);
+  const PageComponent = (pageMod.default ?? pageMod) as React.ComponentType<
+    Record<string, unknown>
+  >;
+
+  // Import layout components (innermost → outermost order)
+  const layoutComponents: React.ComponentType<Record<string, unknown>>[] = [];
+  for (const layoutPath of req.layoutModulePaths) {
+    const layoutMod = await loadModule(layoutPath);
+    layoutComponents.push(
+      (layoutMod.default ?? layoutMod) as React.ComponentType<
+        Record<string, unknown>
+      >,
+    );
+  }
+
+  // Build element tree: page is innermost, layouts wrap outward
+  let element: React.ReactElement = React.createElement(
+    PageComponent,
+    req.pageProps,
+  );
+
+  for (let i = 0; i < layoutComponents.length; i++) {
+    const Layout = layoutComponents[i];
+    const layoutProps = req.layoutProps[i] ?? {};
+    element = React.createElement(Layout, layoutProps, element);
+  }
+
+  // Streaming mode: send chunks via postMessage
+  if (req.delivery === "stream") {
+    // Use renderToReadableStream if available (React 18+)
+    const serverModule = await import("react-dom/server") as Record<
+      string,
+      unknown
+    >;
+    const renderToReadableStream = serverModule.renderToReadableStream as
+      | ((element: React.ReactElement) => Promise<ReadableStream<Uint8Array>>)
+      | undefined;
+
+    if (renderToReadableStream) {
+      const stream = await renderToReadableStream(element);
+      const reader = stream.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          const endMsg: WorkerStreamEnd = { type: "stream-end", id: req.id };
+          self.postMessage(endMsg);
+          break;
+        }
+        const chunkMsg: WorkerStreamChunk = {
+          type: "stream-chunk",
+          id: req.id,
+          chunk: value,
+        };
+        // Transfer the Uint8Array for zero-copy
+        self.postMessage(chunkMsg, [value.buffer]);
+      }
+
+      return "streaming";
+    }
+
+    // Fallback: render to string if streaming not available
+  }
+
+  // String mode (or streaming fallback): render to string
+  const html = renderToString(element);
+  return { html };
+}
+
+// ---------------------------------------------------------------------------
 // Message Handler
 // ---------------------------------------------------------------------------
 
@@ -239,6 +336,22 @@ self.onmessage = async (event: MessageEvent<WorkerRequest | { type: "ping"; id: 
         result: dataResult,
       };
       self.postMessage(response);
+      return;
+    }
+
+    // SSR rendering — may stream chunks or return HTML string
+    if (request.type === "render-ssr") {
+      const ssrResult = await handleRenderSSR(request);
+
+      // If streaming, chunks were already sent via postMessage
+      if (ssrResult === "streaming") return;
+
+      const ssrResponse: WorkerSSRResultResponse = {
+        type: "ssr-result",
+        id: request.id,
+        html: ssrResult.html,
+      };
+      self.postMessage(ssrResponse);
       return;
     }
 

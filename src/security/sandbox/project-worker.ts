@@ -13,7 +13,12 @@ import { isCompiledBinary } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors";
 import type { WorkerPermissions } from "./worker-permissions.ts";
-import type { WorkerRequest, WorkerResponse } from "./worker-types.ts";
+import type {
+  WorkerRequest,
+  WorkerResponse,
+  WorkerStreamChunk,
+  WorkerStreamEnd,
+} from "./worker-types.ts";
 
 const logger = serverLogger.component("project-worker");
 
@@ -35,6 +40,12 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
+interface StreamHandler {
+  onChunk: (chunk: Uint8Array) => void;
+  onEnd: () => void;
+  onError: (error: Error) => void;
+}
+
 /**
  * Status of a project worker.
  */
@@ -45,6 +56,7 @@ export class ProjectWorker {
 
   private worker: Worker | null = null;
   private pending = new Map<string, PendingRequest>();
+  private streamHandlers = new Map<string, StreamHandler>();
   private requestTimeoutMs: number;
   private permissions: WorkerPermissions;
   private _requestCount = 0;
@@ -148,6 +160,95 @@ export class ProjectWorker {
   }
 
   /**
+   * Execute a streaming request. Returns a ReadableStream that yields
+   * chunks as they arrive from the Worker via postMessage.
+   *
+   * Used for streaming SSR where the Worker sends chunks progressively.
+   * Falls back to a single-chunk stream if the Worker returns a non-streaming
+   * response (ssr-result with full HTML).
+   */
+  executeStream(request: WorkerRequest): ReadableStream<Uint8Array> {
+    if (!this.worker || this._status === "crashed" || this._status === "terminated") {
+      throw UNKNOWN_ERROR.create({ detail: `Worker not available (status: ${this._status})` });
+    }
+
+    this._requestCount++;
+    this._lastActivityAt = Date.now();
+    this._status = "busy";
+
+    const requestId = request.id;
+    const encoder = new TextEncoder();
+
+    return new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        const timer = setTimeout(() => {
+          this.streamHandlers.delete(requestId);
+          this.pending.delete(requestId);
+          this.updateIdleStatus();
+          controller.error(
+            TIMEOUT_ERROR.create({
+              detail: `Worker stream timed out after ${this.requestTimeoutMs}ms`,
+            }),
+          );
+        }, this.requestTimeoutMs);
+
+        // Register a stream handler for this request
+        this.streamHandlers.set(requestId, {
+          onChunk: (chunk: Uint8Array) => {
+            controller.enqueue(chunk);
+          },
+          onEnd: () => {
+            clearTimeout(timer);
+            this.streamHandlers.delete(requestId);
+            this.pending.delete(requestId);
+            this.updateIdleStatus();
+            controller.close();
+          },
+          onError: (error: Error) => {
+            clearTimeout(timer);
+            this.streamHandlers.delete(requestId);
+            this.pending.delete(requestId);
+            this.updateIdleStatus();
+            controller.error(error);
+          },
+        });
+
+        // Also register in pending for non-streaming responses (fallback)
+        this.pending.set(requestId, {
+          resolve: (response) => {
+            clearTimeout(timer);
+            this.streamHandlers.delete(requestId);
+            this.pending.delete(requestId);
+            this.updateIdleStatus();
+
+            // If we get an ssr-result, emit it as a single chunk
+            if (response.type === "ssr-result") {
+              controller.enqueue(encoder.encode(response.html));
+              controller.close();
+            } else if (response.type === "error") {
+              const err = new Error(response.error.message);
+              err.name = response.error.name;
+              controller.error(err);
+            } else {
+              controller.close();
+            }
+          },
+          reject: (error) => {
+            clearTimeout(timer);
+            this.streamHandlers.delete(requestId);
+            this.pending.delete(requestId);
+            this.updateIdleStatus();
+            controller.error(error);
+          },
+          timer,
+        });
+
+        this.worker!.postMessage(request);
+      },
+    });
+  }
+
+  /**
    * Health check — send a ping and wait for pong.
    */
   async isHealthy(timeoutMs = 5_000): Promise<boolean> {
@@ -221,7 +322,13 @@ export class ProjectWorker {
     return import.meta.resolve("./worker-script.ts");
   }
 
-  private handleMessage(data: WorkerResponse | { type: "pong"; id: string }): void {
+  private handleMessage(
+    data:
+      | WorkerResponse
+      | WorkerStreamChunk
+      | WorkerStreamEnd
+      | { type: "pong"; id: string },
+  ): void {
     if (data.type === "pong") {
       const pending = this.pending.get((data as { id: string }).id);
       if (pending) {
@@ -229,6 +336,19 @@ export class ProjectWorker {
         pending.resolve(data as unknown as WorkerResponse);
         this.pending.delete((data as { id: string }).id);
       }
+      return;
+    }
+
+    // Handle streaming SSR chunks
+    if (data.type === "stream-chunk") {
+      const handler = this.streamHandlers.get(data.id);
+      if (handler) handler.onChunk(data.chunk);
+      return;
+    }
+
+    if (data.type === "stream-end") {
+      const handler = this.streamHandlers.get(data.id);
+      if (handler) handler.onEnd();
       return;
     }
 
@@ -260,6 +380,12 @@ export class ProjectWorker {
       clearTimeout(pending.timer);
       pending.reject(UNKNOWN_ERROR.create({ detail: reason }));
       this.pending.delete(id);
+    }
+
+    // Clean up stream handlers
+    for (const [id, handler] of this.streamHandlers) {
+      handler.onError(UNKNOWN_ERROR.create({ detail: reason }));
+      this.streamHandlers.delete(id);
     }
   }
 }

@@ -285,6 +285,17 @@ export function isDataIsolationEnabled(): boolean {
   return getEnvBoolean("WORKER_ISOLATION_DATA", false);
 }
 
+/**
+ * Whether worker isolation is enabled for SSR rendering.
+ * Controlled by WORKER_ISOLATION_SSR=1 (requires WORKER_ISOLATION_ENABLED=1).
+ */
+export function isSSRIsolationEnabled(): boolean {
+  const master = getEnvBoolean("WORKER_ISOLATION_ENABLED", false);
+  if (!master) return false;
+
+  return getEnvBoolean("WORKER_ISOLATION_SSR", false);
+}
+
 /** Lazy singleton — created on first use when isolation is enabled */
 let _pool: WorkerPool | null = null;
 
