@@ -1,7 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  BundlerMessageSchema,
+  ErrorMessageSchema,
   LogMessageSchema,
   MessageFromRendererSchema,
   MessageFromStudioSchema,
@@ -158,9 +158,9 @@ describe("studio/schema", () => {
     });
   });
 
-  describe("BundlerMessageSchema", () => {
+  describe("ErrorMessageSchema", () => {
     it("should accept error message", () => {
-      const result = BundlerMessageSchema.safeParse({
+      const result = ErrorMessageSchema.safeParse({
         type: "error",
         message: "Syntax error",
         file: "app.tsx",
@@ -171,7 +171,7 @@ describe("studio/schema", () => {
     });
 
     it("should accept warning message", () => {
-      const result = BundlerMessageSchema.safeParse({
+      const result = ErrorMessageSchema.safeParse({
         type: "warning",
         message: "Unused variable",
       });
@@ -179,7 +179,7 @@ describe("studio/schema", () => {
     });
 
     it("should reject invalid type", () => {
-      const result = BundlerMessageSchema.safeParse({
+      const result = ErrorMessageSchema.safeParse({
         type: "info",
         message: "Info message",
       });
@@ -319,12 +319,90 @@ describe("studio/schema", () => {
       assertEquals(result.success, false);
     });
 
+    it("should accept chatMessage action", () => {
+      const result = MessageFromRendererSchema.safeParse({
+        action: "chatMessage",
+        prompt: "Fix the error in src/app.tsx",
+      });
+      assertEquals(result.success, true);
+    });
+
+    it("should reject chatMessage without prompt", () => {
+      const result = MessageFromRendererSchema.safeParse({
+        action: "chatMessage",
+      });
+      assertEquals(result.success, false);
+    });
+
     it("should reject invalid action", () => {
       const result = MessageFromRendererSchema.safeParse({
         action: "invalidAction",
         url: "https://example.com",
       });
       assertEquals(result.success, false);
+    });
+
+    it("should accept appUpdated with hasError and errors[] array", () => {
+      const result = MessageFromRendererSchema.safeParse({
+        action: "appUpdated",
+        url: "https://example.com",
+        id: "page-123",
+        isInitialLoad: true,
+        hasError: true,
+        errors: [
+          {
+            type: "error",
+            message: "Cannot read property of undefined",
+            file: "src/components/Button.tsx",
+            line: 42,
+            column: 7,
+          },
+        ],
+      });
+      assertEquals(result.success, true);
+    });
+
+    it("should accept appUpdated without id when hasError is true and errors[] is provided", () => {
+      const result = MessageFromRendererSchema.safeParse({
+        action: "appUpdated",
+        url: "https://example.com",
+        isInitialLoad: true,
+        hasError: true,
+        errors: [
+          {
+            type: "error",
+            message: "Unexpected token",
+            file: "src/app.tsx",
+            line: 10,
+            column: 3,
+          },
+        ],
+      });
+      assertEquals(result.success, true);
+    });
+
+    it("should accept appUpdated with only hasError and no errors[] array", () => {
+      const result = MessageFromRendererSchema.safeParse({
+        action: "appUpdated",
+        url: "https://example.com",
+        hasError: true,
+      });
+      assertEquals(result.success, true);
+    });
+
+    it("should accept appUpdated with errors[] containing minimal fields", () => {
+      const result = MessageFromRendererSchema.safeParse({
+        action: "appUpdated",
+        url: "https://example.com",
+        hasError: true,
+        errors: [
+          {
+            type: "error",
+            message: "Something failed",
+          },
+        ],
+      });
+      assertEquals(result.success, true);
     });
   });
 

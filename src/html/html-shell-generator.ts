@@ -208,6 +208,14 @@ async function generateHTMLShellPartsImpl(
 
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
 
+  // Expose project slug for runtime error overlay "Fix in Veryfront" button
+  const overlaySlug = options.projectId || meta.slug;
+  const slugForOverlay = useDevScripts && overlaySlug
+    ? `<script${nonceAttr}>window.__VF_PROJECT_SLUG__=${
+      JSON.stringify(overlaySlug).replace(/</g, "\\u003c")
+    };</script>`
+    : "";
+
   const hydrationErrorSuppression = useDevScripts ? "" : `<script${nonceAttr}>
 (function(){
   var origError = console.error;
@@ -303,6 +311,7 @@ async function generateHTMLShellPartsImpl(
   ${linkTags}
   ${styleTags}
   ${modeStyles}
+  ${slugForOverlay}
 </head>
 <body${bodyClass ? ` class="${bodyClass}"` : ""} suppressHydrationWarning>
   <div ${rootAttributes}>`;

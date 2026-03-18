@@ -5,8 +5,8 @@
  */
 
 export {
-  type BundlerMessage,
-  BundlerMessageSchema,
+  type ErrorMessage,
+  ErrorMessageSchema,
   type LogMessage,
   LogMessageSchema,
   type LogMethod,
