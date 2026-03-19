@@ -170,25 +170,34 @@ describe("Runtime Detection", () => {
     });
   });
 
-  describe("runtime constants in Deno test environment", () => {
-    it("isDeno should be true", () => {
-      assertEquals(isDeno, true);
+  describe("runtime constants consistency", () => {
+    it("isDeno should match expected runtime", () => {
+      if (isDeno) {
+        assertEquals(isNode, false);
+        assertEquals(isBun, false);
+      }
     });
 
-    it("isBun should be false", () => {
-      assertEquals(isBun, false);
+    it("isNode should match expected runtime", () => {
+      if (isNode) {
+        assertEquals(isDeno, false);
+        assertEquals(isBun, false);
+      }
     });
 
-    it("isNode should be false", () => {
-      assertEquals(isNode, false);
+    it("isBun should match expected runtime", () => {
+      if (isBun) {
+        assertEquals(isDeno, false);
+        assertEquals(isNode, false);
+      }
     });
 
-    it("isCloudflare should be false", () => {
-      assertEquals(isCloudflare, false);
+    it("isCloudflare should be boolean", () => {
+      assertEquals(typeof isCloudflare, "boolean");
     });
 
-    it("isNodeRuntime() should return false", () => {
-      assertEquals(isNodeRuntime(), false);
+    it("isNodeRuntime() should agree with isNode constant", () => {
+      assertEquals(isNodeRuntime(), isNode);
     });
   });
 

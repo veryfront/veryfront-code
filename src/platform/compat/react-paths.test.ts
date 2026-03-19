@@ -37,7 +37,8 @@ describe("react-paths", () => {
       }
     });
 
-    it("should return empty object on Deno", () => {
+    it("should return empty object on Deno/Node", () => {
+      if (isBun) return; // Bun resolves React paths
       const paths = getLocalReactPaths();
       assertEquals(paths, {});
     });

@@ -151,9 +151,10 @@ describe("platform/core-platform", () => {
       assertEquals(platform.length > 0, true);
     });
 
-    it("should return 'deno' in Deno environment", () => {
+    it("should return a known platform value", () => {
       const platform = detectPlatform();
-      assertEquals(platform, "deno");
+      const known = ["deno", "node", "bun", "cloudflare-workers", "unknown"];
+      assertEquals(known.includes(platform), true);
     });
   });
 

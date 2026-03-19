@@ -34,10 +34,12 @@ describe("platform/adapters/redis/modules", () => {
       assertExists(result);
     });
 
-    it("should return NodeRedis as null in Deno", async () => {
+    it("should load exactly one redis module per runtime", async () => {
       clearModuleCache();
       const result = await getRedisModule();
-      assertEquals(result.NodeRedis, null);
+      // Exactly one should be loaded: DenoRedis on Deno, NodeRedis on Node/Bun
+      const hasExactlyOne = (result.DenoRedis !== null) !== (result.NodeRedis !== null);
+      assertEquals(hasExactlyOne, true);
     });
   });
 
