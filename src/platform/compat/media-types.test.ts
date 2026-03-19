@@ -44,8 +44,7 @@ describe("media types compat", () => {
     });
 
     it("should return falsy for unknown types", () => {
-      const result = extension("application/x-unknown-custom");
-      assertEquals(!result, true);
+      assertEquals(!!extension("application/x-unknown-custom"), false);
     });
   });
 
@@ -57,8 +56,7 @@ describe("media types compat", () => {
     });
 
     it("should return falsy for unknown extensions", () => {
-      const result = lookup(".xyz123");
-      assertEquals(!result, true);
+      assertEquals(!!lookup(".xyz123"), false);
     });
 
     it("should work with full filenames", () => {
@@ -72,8 +70,7 @@ describe("media types compat", () => {
     });
 
     it("should return falsy for non-text types", () => {
-      const result = charset("image/png");
-      assertEquals(!result, true);
+      assertEquals(!!charset("image/png"), false);
     });
   });
 });

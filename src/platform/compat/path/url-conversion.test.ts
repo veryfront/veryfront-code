@@ -51,7 +51,7 @@ describe("url-conversion", () => {
   });
 
   describe("fromFileUrl edge cases", () => {
-    it("should handle file URL with query params", () => {
+    it("should handle standard file URL", () => {
       const result = fromFileUrl("file:///path/to/file.ts");
       assertEquals(result, "/path/to/file.ts");
     });
