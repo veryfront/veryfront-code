@@ -95,6 +95,8 @@ export interface ExecuteAppRouteRequest {
   request: SerializedRequest;
   params: Record<string, string | string[]>;
   projectDir: string;
+  /** Per-project env var overlay for multi-tenant proxy mode */
+  projectEnv?: Record<string, string>;
 }
 
 export interface ExecutePagesRouteRequest {
@@ -104,6 +106,8 @@ export interface ExecutePagesRouteRequest {
   method: string;
   context: SerializedPagesContext;
   projectDir: string;
+  /** Per-project env var overlay for multi-tenant proxy mode */
+  projectEnv?: Record<string, string>;
 }
 
 export interface FetchDataRequest {

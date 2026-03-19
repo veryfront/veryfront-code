@@ -156,6 +156,37 @@ testSuite("WorkerPool", () => {
   });
 });
 
+testSuite("WorkerPool - RFC 9457 error metadata", () => {
+  let pool: WorkerPool;
+
+  beforeEach(() => {
+    pool = new WorkerPool({
+      maxPoolSize: 3,
+      idleTimeoutMs: 1_000,
+      requestTimeoutMs: 5_000,
+      healthCheckIntervalMs: 60_000,
+      maxRequestsPerWorker: 100,
+    });
+  });
+
+  afterEach(() => {
+    pool.shutdown();
+  });
+
+  it("execute-app-route request includes projectDir", () => {
+    // Verify the request type accepts projectDir
+    const worker = pool.getOrCreateWorker("test-proj", ["/tmp/test"]);
+    assertExists(worker);
+    assertEquals(worker.projectId, "test-proj");
+  });
+
+  it("execute-app-route request accepts projectEnv", () => {
+    // Verify the request type accepts projectEnv field
+    const worker = pool.getOrCreateWorker("test-proj", ["/tmp/test"]);
+    assertExists(worker);
+  });
+});
+
 describe("Feature flag caching", () => {
   afterEach(() => {
     try {

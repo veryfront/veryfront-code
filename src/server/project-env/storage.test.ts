@@ -1,6 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { getProjectEnv, isProjectEnvActive, runWithProjectEnv } from "./storage.ts";
+import {
+  getProjectEnv,
+  getProjectEnvSnapshot,
+  isProjectEnvActive,
+  runWithProjectEnv,
+} from "./storage.ts";
 
 describe("project-env/storage", () => {
   it("returns undefined outside any context", () => {
@@ -44,6 +49,23 @@ describe("project-env/storage", () => {
   it("isProjectEnvActive returns true for empty overlay", () => {
     runWithProjectEnv({}, () => {
       assertEquals(isProjectEnvActive(), true);
+    });
+  });
+
+  it("getProjectEnvSnapshot returns undefined outside context", () => {
+    assertEquals(getProjectEnvSnapshot(), undefined);
+  });
+
+  it("getProjectEnvSnapshot returns full env overlay inside context", () => {
+    runWithProjectEnv({ FOO: "bar", BAZ: "qux" }, () => {
+      const snapshot = getProjectEnvSnapshot();
+      assertEquals(snapshot, { FOO: "bar", BAZ: "qux" });
+    });
+  });
+
+  it("getProjectEnvSnapshot returns empty object for empty overlay", () => {
+    runWithProjectEnv({}, () => {
+      assertEquals(getProjectEnvSnapshot(), {});
     });
   });
 

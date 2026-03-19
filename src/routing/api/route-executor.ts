@@ -28,6 +28,7 @@ import type {
   SerializedResponse,
   WorkerResponse,
 } from "#veryfront/security/sandbox/worker-types.ts";
+import { getProjectEnvSnapshot } from "#veryfront/server/project-env/storage.ts";
 
 function isDevelopment(adapter: RuntimeAdapter): boolean {
   const env = adapter.env.get("MODE") ??
@@ -154,6 +155,21 @@ function workerResponseToResponse(
     const { error } = workerResponse;
     logger.error(`API route error in ${pathname} (worker):`, error.message);
 
+    // If the worker serialized RFC 9457 fields, return them directly
+    // to preserve the original status code, type, and detail.
+    if (error.status && error.type) {
+      return Response.json(
+        {
+          type: error.type,
+          title: error.name,
+          status: error.status,
+          detail: error.detail ?? error.message,
+          instance: pathname,
+        },
+        { status: error.status },
+      );
+    }
+
     const ctx = { isLocalProject: isDevelopment(adapter) } as HandlerContext;
     const req = new Request(`http://localhost${pathname}`);
     const err = new Error(error.message);
@@ -201,6 +217,7 @@ function executeAppRouteIsolated(
             request: serialized,
             params: match.params,
             projectDir,
+            projectEnv: getProjectEnvSnapshot(),
           },
         );
 
@@ -253,6 +270,7 @@ function executePagesRouteIsolated(
               cookies: parseCookies(request.headers.get("cookie") ?? ""),
             },
             projectDir,
+            projectEnv: getProjectEnvSnapshot(),
           },
         );
 

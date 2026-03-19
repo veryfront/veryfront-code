@@ -104,6 +104,17 @@ function clearModuleCache(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Project Env Overlay
+// ---------------------------------------------------------------------------
+
+function applyProjectEnv(env: Record<string, string> | undefined): void {
+  if (!env) return;
+  for (const [key, value] of Object.entries(env)) {
+    Deno.env.set(key, value);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Agent Discovery (per-project, cached per worker lifetime)
 // ---------------------------------------------------------------------------
 
@@ -140,6 +151,7 @@ async function ensureAgentDiscovery(projectDir: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedResponse> {
+  applyProjectEnv(req.projectEnv);
   await ensureAgentDiscovery(req.projectDir);
   const mod = await loadModule(req.modulePath);
   const method = req.method.toUpperCase();
@@ -205,6 +217,7 @@ async function handleFetchData(req: FetchDataRequest): Promise<SerializedDataRes
 }
 
 async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<SerializedResponse> {
+  applyProjectEnv(req.projectEnv);
   await ensureAgentDiscovery(req.projectDir);
   const mod = await loadModule(req.modulePath);
   const method = req.method as string;
@@ -225,6 +238,35 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
   const { request, params, cookies } = deserializePagesRequest(req.context);
   const url = new URL(request.url);
 
+  // Build a minimal read-only fs adapter scoped to the project directory
+  const workerFs = {
+    readTextFile: (path: string) => Deno.readTextFile(path),
+    readFile: (path: string) => Deno.readFile(path),
+    exists: async (path: string) => {
+      try {
+        await Deno.stat(path);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    stat: async (path: string) => {
+      const info = await Deno.stat(path);
+      return {
+        isFile: info.isFile,
+        isDirectory: info.isDirectory,
+        isSymlink: info.isSymlink,
+        size: info.size,
+        mtime: info.mtime,
+      };
+    },
+    readDir: async function* (path: string) {
+      for await (const entry of Deno.readDir(path)) {
+        yield { name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory };
+      }
+    },
+  };
+
   // Build a minimal APIContext (subset of the full context)
   const ctx = {
     request,
@@ -244,8 +286,7 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
         ...init,
         headers: { "Content-Type": "text/plain", ...init?.headers },
       }),
-    // fs is NOT provided in the isolated worker — user code that needs fs
-    // must use the main process path (non-isolated mode).
+    fs: workerFs,
   };
 
   const response = await handlerFn(ctx);
