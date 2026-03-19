@@ -171,11 +171,13 @@ describe("registry.ts", () => {
       runtime.registerLoader(expectedRuntime, originalLoader, { overwrite: true });
     });
 
-    it("should register a new custom runtime loader", async () => {
+    it("should register a new custom runtime loader and use it", async () => {
       const mockAdapter = createMockAdapter();
       runtime.registerLoader("memory" as RuntimeId, async () => mockAdapter, { overwrite: true });
 
-      // Verify loader was registered (no throw)
+      // Verify the loader works by setting and getting through the registry
+      await runtime.set(mockAdapter);
+      assertEquals((await runtime.get()).id, "memory");
     });
   });
 

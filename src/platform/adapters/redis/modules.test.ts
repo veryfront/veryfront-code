@@ -34,15 +34,8 @@ describe("platform/adapters/redis/modules", () => {
       assertExists(result);
     });
 
-    it("should return DenoRedis in Deno environment", async () => {
-      clearModuleCache();
-      const result = await getRedisModule();
-      // In Deno, DenoRedis should be loaded (or may fail to load)
-      assertEquals("DenoRedis" in result, true);
-      assertEquals("NodeRedis" in result, true);
-    });
-
     it("should return NodeRedis as null in Deno", async () => {
+      clearModuleCache();
       const result = await getRedisModule();
       assertEquals(result.NodeRedis, null);
     });

@@ -206,13 +206,16 @@ describe("FileCache", () => {
   });
 
   describe("eviction on memory limit", () => {
-    it("should evict entries when maxMemory is exceeded", () => {
-      const smallMemCache = new FileCache({ maxMemory: 50 });
-      smallMemCache.set("key1", "a]repeat-long-string-to-take-space");
-      smallMemCache.set("key2", "another-long-string-to-exceed-limit");
-      // At least one should survive or both evicted for new
-      const stats = smallMemCache.stats();
-      assertEquals(stats.memoryUsed <= 50, true);
+    it("should evict oldest entry when new entry would exceed maxMemory", () => {
+      // estimateSize for strings: string.length * 2
+      // "short" = 5 chars = 10 bytes, "medium-val" = 10 chars = 20 bytes
+      const smallMemCache = new FileCache({ maxMemory: 25 });
+      smallMemCache.set("key1", "short");
+      assertEquals(smallMemCache.has("key1"), true);
+      // Adding second entry (20 bytes) pushes total to 30 > 25, so key1 must be evicted
+      smallMemCache.set("key2", "medium-val");
+      assertEquals(smallMemCache.has("key1"), false);
+      assertEquals(smallMemCache.has("key2"), true);
       smallMemCache.clear();
     });
   });

@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createFSAdapterFromConfig,
@@ -120,13 +120,11 @@ describe("integration.ts", () => {
 
   describe("createFSAdapterFromConfig error propagation", () => {
     it("should propagate error for unsupported type", async () => {
-      let threw = false;
-      try {
-        await createFSAdapterFromConfig({ fs: { type: "unsupported" as any } });
-      } catch {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      await assertRejects(
+        () => createFSAdapterFromConfig({ fs: { type: "unsupported" as any } }),
+        Error,
+        'FSAdapter type "unsupported" is not implemented',
+      );
     });
   });
 });

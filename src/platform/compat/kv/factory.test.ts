@@ -56,7 +56,7 @@ describe("kv/factory", () => {
       assertEquals(result.value, "value123");
       await kv.delete(["test", "kvfactory"]);
       const deleted = await kv.get(["test", "kvfactory"]);
-      assertEquals(deleted.value == null, true);
+      assertEquals(deleted.value, undefined);
       await kv.close();
     });
 
