@@ -200,6 +200,7 @@ function executeAppRouteIsolated(
             method,
             request: serialized,
             params: match.params,
+            projectDir,
           },
         );
 
@@ -288,7 +289,7 @@ export function executeAppRoute(
   adapter: RuntimeAdapter,
   options?: ExecuteRouteOptions,
 ): Promise<Response> {
-  // Isolated path: execute in per-project Worker
+  // Isolated path: execute in per-project Worker, fall back to main process on error
   if (
     isWorkerIsolationEnabled() &&
     options?.modulePath &&
@@ -343,7 +344,7 @@ export function executePagesRoute(
   projectDir?: string,
   options?: ExecuteRouteOptions,
 ): Promise<Response> {
-  // Isolated path: execute in per-project Worker
+  // Isolated path: execute in per-project Worker, fall back to main process on error
   if (
     isWorkerIsolationEnabled() &&
     options?.modulePath &&

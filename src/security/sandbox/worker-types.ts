@@ -94,6 +94,7 @@ export interface ExecuteAppRouteRequest {
   method: string;
   request: SerializedRequest;
   params: Record<string, string | string[]>;
+  projectDir: string;
 }
 
 export interface ExecutePagesRouteRequest {

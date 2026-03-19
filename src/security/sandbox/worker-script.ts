@@ -104,10 +104,43 @@ function clearModuleCache(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Agent Discovery (per-project, cached per worker lifetime)
+// ---------------------------------------------------------------------------
+
+let discoveredProjectDir: string | null = null;
+
+async function ensureAgentDiscovery(projectDir: string): Promise<void> {
+  if (discoveredProjectDir === projectDir) return;
+
+  try {
+    const { discoverAll } = await import(
+      "#veryfront/discovery/discovery-engine.ts"
+    );
+    const { agentRegistry } = await import(
+      "#veryfront/agent/composition/composition.ts"
+    );
+
+    agentRegistry.clear();
+
+    await discoverAll({
+      baseDir: projectDir,
+      verbose: false,
+    });
+
+    discoveredProjectDir = projectDir;
+  } catch {
+    // Discovery may fail in some environments — route handler will
+    // return its own error (e.g. "Agent not found") which the main
+    // process fallback handles.
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Request Handlers
 // ---------------------------------------------------------------------------
 
 async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedResponse> {
+  await ensureAgentDiscovery(req.projectDir);
   const mod = await loadModule(req.modulePath);
   const method = req.method.toUpperCase();
 
@@ -172,6 +205,7 @@ async function handleFetchData(req: FetchDataRequest): Promise<SerializedDataRes
 }
 
 async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<SerializedResponse> {
+  await ensureAgentDiscovery(req.projectDir);
   const mod = await loadModule(req.modulePath);
   const method = req.method as string;
 
