@@ -45,10 +45,10 @@ export const BUILD_HELPER_PERMISSIONS = [
 /**
  * RENDER_WORKER — Per-project Worker for isolated code execution.
  * Read-only filesystem (transformed modules), network (data fetchers),
- * no subprocess/ffi/sys. Env is denied because project env vars are
- * passed via postMessage rather than process environment.
+ * env (API keys and config). No subprocess/ffi/sys.
  */
 export const RENDER_WORKER_PERMISSIONS = [
   "--allow-read",
   "--allow-net",
+  "--allow-env",
 ] as const;

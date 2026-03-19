@@ -38,7 +38,7 @@ function deserializeRequest(s: SerializedRequest): Request {
   return new Request(s.url, {
     method: s.method,
     headers: s.headers,
-    body: s.body,
+    body: s.body as BodyInit | null,
   });
 }
 
@@ -52,7 +52,7 @@ function deserializePagesRequest(
   const request = new Request(s.url, {
     method: s.method,
     headers: s.headers,
-    body: s.body,
+    body: s.body as BodyInit | null,
   });
   return { request, params: s.params, cookies: s.cookies };
 }
@@ -75,7 +75,7 @@ function serializeError(error: unknown): SerializedError {
       stack: error.stack,
     };
     // Preserve RFC 9457 fields if present (VFError instances)
-    const e = error as Record<string, unknown>;
+    const e = error as unknown as Record<string, unknown>;
     if (typeof e.type === "string") serialized.type = e.type;
     if (typeof e.status === "number") serialized.status = e.status;
     if (typeof e.detail === "string") serialized.detail = e.detail;
@@ -114,7 +114,7 @@ async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedRe
   const handlerFn = (mod[method] ?? mod.default) as
     | ((
       request: Request,
-      context: { params: Record<string, string> },
+      context: { params: Record<string, string | string[]> },
     ) => Promise<Response> | Response)
     | undefined;
 
@@ -142,7 +142,7 @@ function deserializeDataContext(
   const request = new Request(s.request.url, {
     method: s.request.method,
     headers: s.request.headers,
-    body: s.request.body,
+    body: s.request.body as BodyInit | null,
   });
   return {
     params: s.params,
@@ -258,15 +258,18 @@ async function handleRenderSSR(
   }
 
   // Build element tree: page is innermost, layouts wrap outward
-  let element: React.ReactElement = React.createElement(
-    PageComponent,
-    req.pageProps,
-  );
+  const createElement = React.createElement as (
+    type: unknown,
+    props: Record<string, unknown> | null,
+    ...children: unknown[]
+  ) => React.ReactElement;
+
+  let element: React.ReactElement = createElement(PageComponent, req.pageProps);
 
   for (let i = 0; i < layoutComponents.length; i++) {
     const Layout = layoutComponents[i];
     const layoutProps = req.layoutProps[i] ?? {};
-    element = React.createElement(Layout, layoutProps, element);
+    element = createElement(Layout, layoutProps, element);
   }
 
   // Streaming mode: send chunks via postMessage
@@ -297,7 +300,7 @@ async function handleRenderSSR(
           chunk: value,
         };
         // Transfer the Uint8Array for zero-copy
-        self.postMessage(chunkMsg, [value.buffer]);
+        self.postMessage(chunkMsg, { transfer: [value.buffer] });
       }
 
       return "streaming";

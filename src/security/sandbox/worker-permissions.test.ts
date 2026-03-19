@@ -8,7 +8,7 @@ describe("worker-permissions", () => {
     assertEquals(perms.read, ["/tmp/project-a", "/cache"]);
     assertEquals(perms.write, false);
     assertEquals(perms.net, true);
-    assertEquals(perms.env, false);
+    assertEquals(perms.env, true);
     assertEquals(perms.run, false);
     assertEquals(perms.ffi, false);
     assertEquals(perms.sys, false);
@@ -19,13 +19,13 @@ describe("worker-permissions", () => {
     assertEquals(perms.read, false);
   });
 
-  it("always denies write, run, ffi, sys, env", () => {
+  it("always denies write, run, ffi, sys", () => {
     const perms = buildWorkerPermissions(["/anything"]);
     assertEquals(perms.write, false);
     assertEquals(perms.run, false);
     assertEquals(perms.ffi, false);
     assertEquals(perms.sys, false);
-    assertEquals(perms.env, false);
+    assertEquals(perms.env, true);
   });
 
   it("always allows net for data fetchers", () => {
