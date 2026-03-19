@@ -150,6 +150,11 @@ describe("platform/core-platform", () => {
       assertEquals(typeof platform, "string");
       assertEquals(platform.length > 0, true);
     });
+
+    it("should return 'deno' in Deno environment", () => {
+      const platform = detectPlatform();
+      assertEquals(platform, "deno");
+    });
   });
 
   describe("getPlatformCapabilities edge cases", () => {
@@ -180,23 +185,56 @@ describe("platform/core-platform", () => {
   });
 
   describe("supportsCapability edge cases", () => {
-    it("should return a boolean for hasFileSystem", () => {
-      assertEquals(typeof supportsCapability("hasFileSystem"), "boolean");
+    it("should return false for streamingRecommended on deno", () => {
+      assertEquals(supportsCapability("streamingRecommended"), false);
     });
 
-    it("should return a boolean for streamingRecommended", () => {
-      assertEquals(typeof supportsCapability("streamingRecommended"), "boolean");
+    it("should return false for null cpuTimeLimit", () => {
+      assertEquals(supportsCapability("cpuTimeLimit"), false);
     });
 
-    it("should return a boolean for canRunMCPServer", () => {
-      assertEquals(typeof supportsCapability("canRunMCPServer"), "boolean");
+    it("should return false for string displayName", () => {
+      assertEquals(supportsCapability("displayName"), false);
+    });
+
+    it("should return true for hasFileSystem on deno", () => {
+      assertEquals(supportsCapability("hasFileSystem"), true);
+    });
+
+    it("should return true for supportsLongRunning on deno", () => {
+      assertEquals(supportsCapability("supportsLongRunning"), true);
+    });
+
+    it("should return false for null memoryLimit on deno", () => {
+      assertEquals(supportsCapability("memoryLimit"), false);
     });
   });
 
   describe("getPlatformWarnings edge cases", () => {
-    it("should return an array", () => {
+    it("should return empty array for deno", () => {
       const warnings = getPlatformWarnings();
-      assertEquals(Array.isArray(warnings), true);
+      assertEquals(warnings, []);
+    });
+  });
+
+  describe("validatePlatformCompatibility - multiple errors", () => {
+    it("should return multiple errors for cloudflare-workers with all requirements", () => {
+      const result = validatePlatformCompatibility(
+        { maxSteps: 100, requiresFileSystem: true, requiresMCP: true, streaming: false },
+        "cloudflare-workers",
+      );
+      assertEquals(result.compatible, false);
+      assertEquals(result.errors.length, 3);
+      assertEquals(result.warnings.length, 1);
+    });
+
+    it("should return errors for unknown platform", () => {
+      const result = validatePlatformCompatibility(
+        { maxSteps: 100, requiresFileSystem: true, requiresMCP: true },
+        "unknown",
+      );
+      assertEquals(result.compatible, false);
+      assertEquals(result.errors.length >= 2, true);
     });
   });
 });

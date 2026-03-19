@@ -7,12 +7,14 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  isBrowserEnvironment,
   isBun,
   isCloudflare,
   isDeno,
   isDenoCompiled,
   isNode,
   isNodeRuntime,
+  isServerEnvironment,
   testDenoCompiledDetection,
 } from "./runtime.ts";
 
@@ -155,6 +157,38 @@ describe("Runtime Detection", () => {
         true,
         "Windows compiled app should be detected",
       );
+    });
+  });
+
+  describe("isServerEnvironment / isBrowserEnvironment", () => {
+    it("isServerEnvironment should return true in test environment", () => {
+      assertEquals(isServerEnvironment(), true);
+    });
+
+    it("isBrowserEnvironment should return false in test environment", () => {
+      assertEquals(isBrowserEnvironment(), false);
+    });
+  });
+
+  describe("runtime constants in Deno test environment", () => {
+    it("isDeno should be true", () => {
+      assertEquals(isDeno, true);
+    });
+
+    it("isBun should be false", () => {
+      assertEquals(isBun, false);
+    });
+
+    it("isNode should be false", () => {
+      assertEquals(isNode, false);
+    });
+
+    it("isCloudflare should be false", () => {
+      assertEquals(isCloudflare, false);
+    });
+
+    it("isNodeRuntime() should return false", () => {
+      assertEquals(isNodeRuntime(), false);
     });
   });
 

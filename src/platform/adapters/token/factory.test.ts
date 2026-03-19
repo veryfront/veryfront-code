@@ -23,4 +23,20 @@ describe("createTokenStorageAdapter", () => {
       'Token storage adapter type "unsupported" is not implemented',
     );
   });
+
+  it("should default to memory type when type not specified", async () => {
+    const adapter = await createTokenStorageAdapter({});
+    assertExists(adapter);
+    assertExists(adapter.get);
+    assertExists(adapter.set);
+    assertExists(adapter.delete);
+  });
+
+  it("should return a working memory adapter", async () => {
+    const adapter = await createTokenStorageAdapter({ type: "memory" });
+    await adapter.set("test-key", "test-value");
+    assertEquals(await adapter.get("test-key"), "test-value");
+    await adapter.delete("test-key");
+    assertEquals(await adapter.get("test-key"), null);
+  });
 });

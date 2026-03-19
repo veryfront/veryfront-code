@@ -36,6 +36,17 @@ describe("react-paths", () => {
         assertEquals(Object.keys(paths).length, 0);
       }
     });
+
+    it("should return empty object on Deno", () => {
+      const paths = getLocalReactPaths();
+      assertEquals(paths, {});
+    });
+
+    it("should return same result on repeated calls (cache)", () => {
+      const paths1 = getLocalReactPaths();
+      const paths2 = getLocalReactPaths();
+      assertEquals(paths1, paths2);
+    });
   });
 
   describe("clearReactPathsCache", () => {
@@ -43,6 +54,27 @@ describe("react-paths", () => {
       clearReactPathsCache();
       const paths = getLocalReactPaths();
       assertEquals(typeof paths, "object");
+    });
+
+    it("should allow fresh resolution after clearing", () => {
+      getLocalReactPaths();
+      clearReactPathsCache();
+      const paths = getLocalReactPaths();
+      assertEquals(typeof paths, "object");
+    });
+  });
+
+  describe("isReactSpecifier edge cases", () => {
+    it("should return true for react-dom/* subpaths", () => {
+      assertEquals(isReactSpecifier("react-dom/test-utils"), true);
+    });
+
+    it("should return true for react/* subpaths", () => {
+      assertEquals(isReactSpecifier("react/compiler"), true);
+    });
+
+    it("should return false for react-native", () => {
+      assertEquals(isReactSpecifier("react-native"), false);
     });
   });
 });

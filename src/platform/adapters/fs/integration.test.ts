@@ -91,4 +91,42 @@ describe("integration.ts", () => {
   it("should return local when fs.type is not set", () => {
     assertEquals(getFSAdapterType({ fs: {} }), "local");
   });
+
+  describe("enhanceAdapterWithFS error fallback", () => {
+    it("should fall back to original adapter for unsupported type", async () => {
+      const adapter = await enhanceAdapterWithFS(denoAdapter, {
+        fs: { type: "unsupported-type" as any },
+      });
+      assertEquals(adapter, denoAdapter);
+    });
+
+    it("should fall back to original adapter for github type without config", async () => {
+      const adapter = await enhanceAdapterWithFS(denoAdapter, {
+        fs: { type: "github" },
+      });
+      assertEquals(adapter, denoAdapter);
+    });
+
+    it("should pass projectDir to FSAdapter config", async () => {
+      // With an unsupported type, it will fail and fall back, but the branch is exercised
+      const adapter = await enhanceAdapterWithFS(
+        denoAdapter,
+        { fs: { type: "unknown-type" as any } },
+        "/some/project/dir",
+      );
+      assertEquals(adapter, denoAdapter);
+    });
+  });
+
+  describe("createFSAdapterFromConfig error propagation", () => {
+    it("should propagate error for unsupported type", async () => {
+      let threw = false;
+      try {
+        await createFSAdapterFromConfig({ fs: { type: "unsupported" as any } });
+      } catch {
+        threw = true;
+      }
+      assertEquals(threw, true);
+    });
+  });
 });

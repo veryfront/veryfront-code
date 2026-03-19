@@ -46,4 +46,39 @@ describe("kv/factory", () => {
       polyfillDenoKv();
     });
   });
+
+  describe("KV store operations", () => {
+    it("should support get/set/delete operations", async () => {
+      const kv = await openKv();
+      await kv.set(["test", "kvfactory"], "value123");
+      const result = await kv.get(["test", "kvfactory"]);
+      assertExists(result);
+      assertEquals(result.value, "value123");
+      await kv.delete(["test", "kvfactory"]);
+      const deleted = await kv.get(["test", "kvfactory"]);
+      assertEquals(deleted.value == null, true);
+      await kv.close();
+    });
+
+    it("should support list operation", async () => {
+      const kv = await openKv();
+      await kv.set(["list", "a"], "1");
+      await kv.set(["list", "b"], "2");
+      const entries: unknown[] = [];
+      for await (const entry of kv.list({ prefix: ["list"] })) {
+        entries.push(entry);
+      }
+      assertEquals(entries.length >= 2, true);
+      await kv.delete(["list", "a"]);
+      await kv.delete(["list", "b"]);
+      kv.close();
+    });
+
+    it("should create store with createKVStore", async () => {
+      const kv = await createKVStore();
+      assertExists(kv.get);
+      assertExists(kv.set);
+      kv.close();
+    });
+  });
 });

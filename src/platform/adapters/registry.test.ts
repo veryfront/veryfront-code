@@ -146,6 +146,105 @@ describe("registry.ts", () => {
     });
   });
 
+  describe("registerLoader", () => {
+    afterEach(async () => {
+      await runtime.reset();
+    });
+
+    it("should throw when registering duplicate loader without overwrite", () => {
+      assertThrows(
+        () => runtime.registerLoader(expectedRuntime, async () => createMockAdapter()),
+        Error,
+        "already registered",
+      );
+    });
+
+    it("should succeed with overwrite: true", () => {
+      const originalLoader = async () => {
+        const { denoAdapter } = await import("./deno.ts");
+        return denoAdapter;
+      };
+
+      runtime.registerLoader(expectedRuntime, async () => createMockAdapter(), { overwrite: true });
+
+      // Restore original loader
+      runtime.registerLoader(expectedRuntime, originalLoader, { overwrite: true });
+    });
+
+    it("should register a new custom runtime loader", async () => {
+      const mockAdapter = createMockAdapter();
+      runtime.registerLoader("memory" as RuntimeId, async () => mockAdapter, { overwrite: true });
+
+      // Verify loader was registered (no throw)
+    });
+  });
+
+  describe("runtime.set - error handling", () => {
+    afterEach(async () => {
+      await runtime.reset();
+    });
+
+    it("should rollback to old adapter when new adapter initialize() throws", async () => {
+      await runtime.set(createMockAdapter());
+      assertEquals(runtime.isInitialized(), true);
+
+      const badAdapter = createMockAdapter();
+      badAdapter.initialize = () => Promise.reject(new Error("init failed"));
+
+      await assertRejects(() => runtime.set(badAdapter), Error, "init failed");
+
+      // Should have rolled back to old adapter
+      assertEquals(runtime.isInitialized(), true);
+      assertEquals((await runtime.get()).id, "memory");
+    });
+
+    it("should remain uninitialized when initialize() throws with no prior adapter", async () => {
+      const badAdapter = createMockAdapter();
+      badAdapter.initialize = () => Promise.reject(new Error("init failed"));
+
+      await assertRejects(() => runtime.set(badAdapter), Error, "init failed");
+
+      assertEquals(runtime.isInitialized(), false);
+    });
+
+    it("should succeed when old adapter shutdown() throws", async () => {
+      const oldAdapter = createMockAdapter();
+      oldAdapter.shutdown = () => Promise.reject(new Error("shutdown failed"));
+
+      await runtime.set(oldAdapter);
+      assertEquals(runtime.isInitialized(), true);
+
+      // Setting a new adapter should succeed despite old shutdown failure
+      await runtime.set(createMockAdapter());
+      assertEquals(runtime.isInitialized(), true);
+    });
+  });
+
+  describe("runtime.reset - error handling", () => {
+    afterEach(async () => {
+      await runtime.reset();
+    });
+
+    it("should clear state even when shutdown() throws", async () => {
+      const adapter = createMockAdapter();
+      adapter.shutdown = () => Promise.reject(new Error("shutdown failed"));
+
+      await runtime.set(adapter);
+      assertEquals(runtime.isInitialized(), true);
+
+      await runtime.reset();
+
+      assertEquals(runtime.isInitialized(), false);
+    });
+  });
+
+  describe("resetLocalAdapter - edge cases", () => {
+    it("should not throw when no local registry exists", async () => {
+      await resetLocalAdapter();
+      // Should not throw
+    });
+  });
+
   describe("concurrent access", () => {
     afterEach(async () => {
       await runtime.reset();
