@@ -38,6 +38,8 @@ export interface LifecycleOptions {
   projectId?: string;
   /** Content source identifier for cache isolation (branch or release) */
   contentSourceId?: string;
+  /** Injectable factory for testing — bypasses real service construction */
+  servicesFactory?: (adapter: RuntimeAdapter) => RendererServices;
 }
 
 export interface RendererServices {
@@ -62,6 +64,7 @@ export class RendererLifecycle {
   private contentSourceId?: string;
   private services?: RendererServices;
   private adapter!: RuntimeAdapter;
+  private servicesFactory?: (adapter: RuntimeAdapter) => RendererServices;
 
   constructor(options: LifecycleOptions) {
     this.configManager = options.configManager;
@@ -69,6 +72,7 @@ export class RendererLifecycle {
     this.moduleServerUrl = options.moduleServerUrl;
     this.projectId = options.projectId;
     this.contentSourceId = options.contentSourceId;
+    this.servicesFactory = options.servicesFactory;
   }
 
   async initialize(): Promise<RendererServices> {
@@ -81,6 +85,13 @@ export class RendererLifecycle {
     if (!this.adapter) {
       const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
       this.adapter = await runtime.get();
+    }
+
+    // Allow tests to bypass the full service graph construction
+    if (this.servicesFactory) {
+      this.services = this.servicesFactory(this.adapter);
+      logger.debug("Renderer services initialized via injected factory");
+      return this.services;
     }
 
     const projectDir = this.configManager.getProjectDir();
