@@ -403,8 +403,12 @@ describe("fallback-wrapper", () => {
     it("should throw VeryfrontError with logError=true when both fail", () => {
       try {
         withFallbackSync(
-          () => { throw new Error("p-err"); },
-          () => { throw new Error("f-err"); },
+          () => {
+            throw new Error("p-err");
+          },
+          () => {
+            throw new Error("f-err");
+          },
           { operationName: "test-op" },
         );
         throw new Error("Should have thrown");
@@ -418,8 +422,12 @@ describe("fallback-wrapper", () => {
   describe("createAdapterFallbackSync - both fail default", () => {
     it("should throw VeryfrontError when both operations fail", () => {
       const wrapper = createAdapterFallbackSync(
-        () => { throw new Error("adapter-err"); },
-        () => { throw new Error("direct-err"); },
+        () => {
+          throw new Error("adapter-err");
+        },
+        () => {
+          throw new Error("direct-err");
+        },
         "test-op",
       );
 
