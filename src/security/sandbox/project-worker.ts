@@ -181,7 +181,7 @@ export class ProjectWorker {
 
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
-        const timer = setTimeout(() => {
+        let timer = setTimeout(() => {
           this.streamHandlers.delete(requestId);
           this.pending.delete(requestId);
           this.updateIdleStatus();
@@ -192,9 +192,24 @@ export class ProjectWorker {
           );
         }, this.requestTimeoutMs);
 
+        const resetTimer = () => {
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            this.streamHandlers.delete(requestId);
+            this.pending.delete(requestId);
+            this.updateIdleStatus();
+            controller.error(
+              TIMEOUT_ERROR.create({
+                detail: `Worker stream timed out after ${this.requestTimeoutMs}ms`,
+              }),
+            );
+          }, this.requestTimeoutMs);
+        };
+
         // Register a stream handler for this request
         this.streamHandlers.set(requestId, {
           onChunk: (chunk: Uint8Array) => {
+            resetTimer();
             controller.enqueue(chunk);
           },
           onEnd: () => {
@@ -280,6 +295,14 @@ export class ProjectWorker {
 
       this.worker!.postMessage({ type: "ping", id });
     });
+  }
+
+  /**
+   * Clear the worker's module cache. Used for dev mode hot reload.
+   */
+  clearModuleCache(): void {
+    if (!this.worker || this._status === "crashed" || this._status === "terminated") return;
+    this.worker.postMessage({ type: "clear-cache" });
   }
 
   /**

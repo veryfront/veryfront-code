@@ -303,8 +303,9 @@ export class RenderPipeline {
           Promise.all(
             dataJobs.map(async (job) => {
               try {
+                const jobPath = (job as LoadedModule & { path?: string }).path;
                 const fetchOptions: FetchDataOptions = {
-                  modulePath: (job as unknown as ModuleToLoad).path,
+                  modulePath: jobPath,
                   projectDir: this.config.projectDir,
                 };
                 const result = await this.dataFetcher

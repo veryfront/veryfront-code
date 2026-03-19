@@ -93,6 +93,7 @@ export interface ExecuteAppRouteRequest {
   modulePath: string;
   method: string;
   request: SerializedRequest;
+  params: Record<string, string | string[]>;
 }
 
 export interface ExecutePagesRouteRequest {

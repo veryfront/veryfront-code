@@ -199,6 +199,7 @@ function executeAppRouteIsolated(
             modulePath,
             method,
             request: serialized,
+            params: match.params,
           },
         );
 

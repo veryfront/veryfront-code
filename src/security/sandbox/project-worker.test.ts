@@ -100,10 +100,45 @@ testSuite("ProjectWorker - error handling", () => {
           headers: [],
           body: null,
         },
+        params: {},
       });
       assertEquals(true, false, "Should have thrown");
     } catch (error) {
       assertExists(error);
     }
+  });
+});
+
+testSuite("ProjectWorker - clearModuleCache", () => {
+  let worker: ProjectWorker;
+
+  beforeEach(() => {
+    worker = new ProjectWorker({
+      projectId: "test-clear-cache",
+      permissions: TEST_PERMISSIONS,
+      requestTimeoutMs: 5_000,
+    });
+  });
+
+  afterEach(() => {
+    worker.terminate();
+  });
+
+  it("clearModuleCache does not throw on running worker", () => {
+    worker.start();
+    worker.clearModuleCache();
+    assertEquals(worker.status, "idle");
+  });
+
+  it("clearModuleCache is no-op on terminated worker", () => {
+    worker.start();
+    worker.terminate();
+    worker.clearModuleCache();
+    assertEquals(worker.status, "terminated");
+  });
+
+  it("clearModuleCache is no-op before start", () => {
+    worker.clearModuleCache();
+    // Should not throw
   });
 });

@@ -99,6 +99,10 @@ async function loadModule(modulePath: string): Promise<Record<string, unknown>> 
   return mod;
 }
 
+function clearModuleCache(): void {
+  moduleCache.clear();
+}
+
 // ---------------------------------------------------------------------------
 // Request Handlers
 // ---------------------------------------------------------------------------
@@ -123,11 +127,7 @@ async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedRe
     };
   }
 
-  // App routes receive (Request, { params }) — params are extracted by the
-  // main process during route matching and are not available here. Pass empty
-  // params since we don't have access to route match data in this phase.
-  // TODO(phase2): Include route params in the request message.
-  const response = await handlerFn(deserializeRequest(req.request), { params: {} });
+  const response = await handlerFn(deserializeRequest(req.request), { params: req.params ?? {} });
   return serializeResponse(response);
 }
 
@@ -315,12 +315,20 @@ async function handleRenderSSR(
 // Message Handler
 // ---------------------------------------------------------------------------
 
-self.onmessage = async (event: MessageEvent<WorkerRequest | { type: "ping"; id: string }>) => {
+self.onmessage = async (
+  event: MessageEvent<WorkerRequest | { type: "ping"; id: string } | { type: "clear-cache" }>,
+) => {
   const msg = event.data;
 
   // Health check
   if (msg.type === "ping") {
     self.postMessage({ type: "pong", id: (msg as { id: string }).id });
+    return;
+  }
+
+  // Module cache invalidation (for dev mode hot reload)
+  if (msg.type === "clear-cache") {
+    clearModuleCache();
     return;
   }
 
