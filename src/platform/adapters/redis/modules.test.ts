@@ -33,5 +33,27 @@ describe("platform/adapters/redis/modules", () => {
       const result = await getRedisModule();
       assertExists(result);
     });
+
+    it("should load exactly one redis module per runtime", async () => {
+      clearModuleCache();
+      const result = await getRedisModule();
+      // Exactly one should be loaded: DenoRedis on Deno, NodeRedis on Node/Bun
+      const hasExactlyOne = (result.DenoRedis !== null) !== (result.NodeRedis !== null);
+      assertEquals(hasExactlyOne, true);
+    });
+  });
+
+  describe("clearModuleCache", () => {
+    it("should not throw", () => {
+      clearModuleCache();
+    });
+
+    it("should allow reloading after clear", async () => {
+      const first = await getRedisModule();
+      clearModuleCache();
+      const second = await getRedisModule();
+      assertExists(first);
+      assertExists(second);
+    });
   });
 });

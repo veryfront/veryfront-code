@@ -366,6 +366,81 @@ describe("fallback-wrapper", () => {
     });
   });
 
+  describe("withFallback - logError defaults", () => {
+    it("should return primary result with logError=true (default)", async () => {
+      const result = await withFallback(
+        () => Promise.resolve("primary"),
+        () => Promise.resolve("fallback"),
+        { operationName: "test-op" },
+      );
+      assertEquals(result, "primary");
+    });
+
+    it("should throw VeryfrontError with logError=true when both fail", async () => {
+      await assertRejects(
+        () =>
+          withFallback(
+            () => Promise.reject(new Error("p-err")),
+            () => Promise.reject(new Error("f-err")),
+            { operationName: "test-op" },
+          ),
+        VeryfrontError,
+        "Both primary and fallback operations failed",
+      );
+    });
+
+    it("should return fallback result with logError=true when primary fails", async () => {
+      const result = await withFallback(
+        () => Promise.reject(new Error("p-err")),
+        () => Promise.resolve("fallback-ok"),
+        { operationName: "test-op" },
+      );
+      assertEquals(result, "fallback-ok");
+    });
+  });
+
+  describe("withFallbackSync - logError defaults", () => {
+    it("should throw VeryfrontError with logError=true when both fail", () => {
+      try {
+        withFallbackSync(
+          () => {
+            throw new Error("p-err");
+          },
+          () => {
+            throw new Error("f-err");
+          },
+          { operationName: "test-op" },
+        );
+        throw new Error("Should have thrown");
+      } catch (error) {
+        if (!(error instanceof VeryfrontError && error.slug === "fallback-exhausted")) throw error;
+        assertEquals(error.message, "Both primary and fallback operations failed for test-op");
+      }
+    });
+  });
+
+  describe("createAdapterFallbackSync - both fail default", () => {
+    it("should throw VeryfrontError when both operations fail", () => {
+      const wrapper = createAdapterFallbackSync(
+        () => {
+          throw new Error("adapter-err");
+        },
+        () => {
+          throw new Error("direct-err");
+        },
+        "test-op",
+      );
+
+      try {
+        wrapper.executeSync();
+        throw new Error("Should have thrown");
+      } catch (error) {
+        if (!(error instanceof VeryfrontError && error.slug === "fallback-exhausted")) throw error;
+        assertEquals(error.message, "Both primary and fallback operations failed for test-op");
+      }
+    });
+  });
+
   describe("FALLBACK_EXHAUSTED", () => {
     it("should create error with slug and context", () => {
       const primaryError = new Error("primary");

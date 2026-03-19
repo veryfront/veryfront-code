@@ -48,6 +48,32 @@ describe("Process Compat", () => {
     it("should reject a browser process shim", () => {
       assertEquals(testHasRuntimeProcess({ env: {} }), false);
     });
+
+    it("should reject null", () => {
+      assertEquals(testHasRuntimeProcess(null), false);
+    });
+
+    it("should reject undefined", () => {
+      assertEquals(testHasRuntimeProcess(undefined), false);
+    });
+
+    it("should reject non-object", () => {
+      assertEquals(testHasRuntimeProcess("string"), false);
+      assertEquals(testHasRuntimeProcess(42), false);
+      assertEquals(testHasRuntimeProcess(true), false);
+    });
+
+    it("should reject process with empty node version", () => {
+      assertEquals(testHasRuntimeProcess({ versions: { node: "" } }), false);
+    });
+
+    it("should reject process with missing versions.node", () => {
+      assertEquals(testHasRuntimeProcess({ versions: {} }), false);
+    });
+
+    it("should reject process with non-string versions.node", () => {
+      assertEquals(testHasRuntimeProcess({ versions: { node: 22 } }), false);
+    });
   });
 
   describe("getEnv / setEnv / deleteEnv", () => {
@@ -224,6 +250,33 @@ describe("Process Compat", () => {
       assertEquals(getEnvBoolean(testKey, true), false);
       setEnv(testKey, "no");
       assertEquals(getEnvBoolean(testKey, true), false);
+    });
+
+    it("should be case-insensitive by default", () => {
+      setEnv(testKey, "TRUE");
+      assertEquals(getEnvBoolean(testKey), true);
+      setEnv(testKey, "True");
+      assertEquals(getEnvBoolean(testKey), true);
+      setEnv(testKey, "FALSE");
+      assertEquals(getEnvBoolean(testKey, true), false);
+    });
+
+    it("should trim whitespace by default", () => {
+      setEnv(testKey, "  true  ");
+      assertEquals(getEnvBoolean(testKey), true);
+      setEnv(testKey, " false ");
+      assertEquals(getEnvBoolean(testKey, true), false);
+    });
+
+    it("should return fallback for unrecognized values", () => {
+      setEnv(testKey, "maybe");
+      assertEquals(getEnvBoolean(testKey, true), true);
+      assertEquals(getEnvBoolean(testKey, false), false);
+    });
+
+    it("should use custom falseValues", () => {
+      setEnv(testKey, "off");
+      assertEquals(getEnvBoolean(testKey, true, { falseValues: ["off"] }), false);
     });
 
     it("should support strict PROXY_MODE-style matching", () => {

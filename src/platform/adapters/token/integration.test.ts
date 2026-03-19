@@ -1,6 +1,7 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  getTokenStorageAdapter,
   getTokenStorageType,
   isTokenStorageConfigured,
   resetTokenStorageAdapter,
@@ -78,6 +79,48 @@ describe("platform/adapters/token/integration", () => {
     it("should be callable multiple times", () => {
       resetTokenStorageAdapter();
       resetTokenStorageAdapter();
+    });
+  });
+
+  describe("getTokenStorageAdapter", () => {
+    afterEach(() => {
+      try {
+        Deno.env.delete("VERYFRONT_API_TOKEN");
+      } catch { /* ok */ }
+      try {
+        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      } catch { /* ok */ }
+      resetTokenStorageAdapter();
+    });
+
+    it("should return a memory adapter when no env vars set", async () => {
+      const adapter = await getTokenStorageAdapter();
+      assertExists(adapter);
+      assertExists(adapter.get);
+      assertExists(adapter.set);
+      assertExists(adapter.delete);
+    });
+
+    it("should return same instance on multiple calls (singleton)", async () => {
+      const adapter1 = await getTokenStorageAdapter();
+      const adapter2 = await getTokenStorageAdapter();
+      assertEquals(adapter1, adapter2);
+    });
+
+    it("should create new instance after reset", async () => {
+      const adapter1 = await getTokenStorageAdapter();
+      resetTokenStorageAdapter();
+      const adapter2 = await getTokenStorageAdapter();
+      assertExists(adapter1);
+      assertExists(adapter2);
+    });
+
+    it("should return a working memory adapter", async () => {
+      const adapter = await getTokenStorageAdapter();
+      await adapter.set("test-key", "test-value");
+      assertEquals(await adapter.get("test-key"), "test-value");
+      await adapter.delete("test-key");
+      assertEquals(await adapter.get("test-key"), null);
     });
   });
 });

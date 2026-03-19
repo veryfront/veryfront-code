@@ -32,7 +32,19 @@ describe("createFSAdapter", () => {
     );
   });
 
-  // Note: Tests for creating actual adapters (veryfront-api, github) are skipped
-  // because they require network connections or complex setup.
-  // Those are covered in integration tests.
+  it("should default to local type when type not specified", async () => {
+    await assertRejects(
+      () => createFSAdapter({}),
+      Error,
+      'FSAdapter type "local" should not use this factory',
+    );
+  });
+
+  it("should throw for memory type (not implemented)", async () => {
+    await assertRejects(
+      () => createFSAdapter({ type: "memory" as any }),
+      Error,
+      'FSAdapter type "memory" is not implemented',
+    );
+  });
 });
