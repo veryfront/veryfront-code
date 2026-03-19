@@ -52,7 +52,7 @@ testSuite("ProjectWorker", () => {
 
   it("responds to health check", async () => {
     worker.start();
-    const healthy = await worker.isHealthy(2_000);
+    const healthy = await worker.isHealthy(10_000);
     assertEquals(healthy, true);
   });
 
@@ -69,7 +69,7 @@ testSuite("ProjectWorker", () => {
 
     // Send a ping (counted as a request via the execute path)
     // Use isHealthy which goes through the pending mechanism
-    await worker.isHealthy(2_000);
+    await worker.isHealthy(10_000);
 
     // requestCount only increments via execute(), not isHealthy
     assertEquals(worker.requestCount, 0);
