@@ -18,6 +18,8 @@ export const SERVER_PERMISSIONS = [
   "--allow-env",
   "--allow-run",
   "--allow-sys",
+  "--unstable-worker-options",
+  "--unstable-net",
 ] as const;
 
 /**

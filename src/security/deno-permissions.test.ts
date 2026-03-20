@@ -16,6 +16,8 @@ describe("deno-permissions", () => {
       assertEquals(flags.includes("allow-env"), true);
       assertEquals(flags.includes("allow-run"), true);
       assertEquals(flags.includes("allow-sys"), true);
+      assertEquals(flags.includes("unstable-worker-options"), true);
+      assertEquals(flags.includes("unstable-net"), true);
       assertEquals(flags.includes("allow-all"), false);
       // ffi and hrtime intentionally excluded from server permissions
       assertEquals(flags.includes("allow-ffi"), false);
