@@ -796,6 +796,172 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("redirects to sign-in for protected domain when JWT token is forged", async () => {
+      const forgedToken =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJ1c2VyLTEyMyJ9.invalid-signature";
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            users: [{ id: "user-123" }],
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://protected.example.com/page", {
+          headers: {
+            host: "protected.example.com",
+            cookie: `authToken=${forgedToken}`,
+          },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 302);
+        assertEquals(ctx.error?.message, "Authentication required");
+        assertEquals(
+          ctx.error?.redirectUrl,
+          "https://veryfront.com/sign-in?from=%2Fpage",
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("redirects to sign-in for protected domain when JWT_SECRET is not configured", async () => {
+      const savedSecret = Deno.env.get("JWT_SECRET");
+      Deno.env.delete("JWT_SECRET");
+
+      try {
+        const memberToken = await new SignJWT({ userId: "user-123" })
+          .setProtectedHeader({ alg: "HS256" })
+          .setExpirationTime("1h")
+          .sign(new TextEncoder().encode("some-other-secret"));
+
+        const { server, port } = createMockServer((req: Request) => {
+          const { pathname } = new URL(req.url);
+
+          if (pathname === "/auth/token") return createTokenResponse();
+
+          if (pathname.startsWith("/projects/")) {
+            return Response.json({
+              id: "proj-123",
+              slug: "protected-project",
+              name: "Protected Project",
+              users: [{ id: "user-123" }],
+              environments: [{
+                id: "env-1",
+                name: "production",
+                domains: ["protected.example.com"],
+                active_release_id: "rel-123",
+                protected: true,
+              }],
+            });
+          }
+
+          return createNotFoundResponse();
+        });
+
+        try {
+          const handler = createHandler(port);
+
+          const req = new Request("http://protected.example.com/page", {
+            headers: {
+              host: "protected.example.com",
+              cookie: `authToken=${memberToken}`,
+            },
+          });
+
+          const ctx = await handler.processRequest(req);
+
+          assertEquals(ctx.error?.status, 302);
+          assertEquals(ctx.error?.message, "Authentication required");
+
+          await handler.close();
+        } finally {
+          await server.shutdown();
+        }
+      } finally {
+        if (savedSecret !== undefined) {
+          Deno.env.set("JWT_SECRET", savedSecret);
+        } else {
+          Deno.env.delete("JWT_SECRET");
+        }
+      }
+    });
+
+    it("rejects JWT signed with a different algorithm", async () => {
+      // Sign with HS384 instead of the expected HS256
+      const wrongAlgToken = await new SignJWT({ userId: "user-123" })
+        .setProtectedHeader({ alg: "HS384" })
+        .setExpirationTime("1h")
+        .sign(new TextEncoder().encode(TEST_JWT_SECRET));
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            users: [{ id: "user-123" }],
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://protected.example.com/page", {
+          headers: {
+            host: "protected.example.com",
+            cookie: `authToken=${wrongAlgToken}`,
+          },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 302);
+        assertEquals(ctx.error?.message, "Authentication required");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("allows access to non-protected environment without auth token", async () => {
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
