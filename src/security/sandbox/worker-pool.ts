@@ -119,32 +119,32 @@ export class WorkerPool {
 
         if (shouldRecycle && !this.recycling.has(projectId)) {
           this.recycling.add(projectId);
-          try {
-            logger.debug("Recycling worker", {
-              projectId,
-              requestCount: worker.requestCount,
-              ageMs: entry ? Date.now() - entry.createdAt : 0,
-              reason: worker.requestCount >= this.config.maxRequestsPerWorker
-                ? "request_count"
-                : "age",
-            });
 
-            // Warm replacement: execute on the current worker while creating
-            // the replacement in the background. The old worker handles this
-            // last request so the caller doesn't pay cold-start latency.
-            const result = worker.execute(request);
+          logger.debug("Recycling worker", {
+            projectId,
+            requestCount: worker.requestCount,
+            ageMs: entry ? Date.now() - entry.createdAt : 0,
+            reason: worker.requestCount >= this.config.maxRequestsPerWorker
+              ? "request_count"
+              : "age",
+          });
 
-            // Create replacement worker in the background after dispatching
-            // the request to the old worker
-            queueMicrotask(() => {
-              this.evictWorker(projectId);
-              this.getOrCreateWorker(projectId, readPaths);
-            });
+          // Warm replacement: execute on the current worker while creating
+          // the replacement in the background. The old worker handles this
+          // last request so the caller doesn't pay cold-start latency.
+          const result = worker.execute(request);
 
-            return result;
-          } finally {
+          // Create replacement worker in the background after dispatching
+          // the request to the old worker. The recycling guard is cleared
+          // here (not in a finally) to prevent concurrent requests from
+          // seeing the old worker between the finally and the microtask.
+          queueMicrotask(() => {
+            this.evictWorker(projectId);
+            this.getOrCreateWorker(projectId, readPaths);
             this.recycling.delete(projectId);
-          }
+          });
+
+          return result;
         }
 
         return worker.execute(request);

@@ -194,7 +194,7 @@ testSuite("WorkerPool - warm recycling", () => {
     pool?.shutdown();
   });
 
-  it("recycles worker without cold-start penalty on triggering request", async () => {
+  it("old worker handles triggering request, replacement created in background", async () => {
     pool = new WorkerPool({
       maxPoolSize: 3,
       idleTimeoutMs: 60_000,
@@ -204,24 +204,50 @@ testSuite("WorkerPool - warm recycling", () => {
       maxWorkerAgeMs: 600_000,
     });
 
-    // Create initial worker and verify it exists
-    const worker1 = pool.getOrCreateWorker("project-recycle", []);
+    const makeRequest = (id: string) => ({
+      type: "execute-app-route" as const,
+      id,
+      modulePath: "/tmp/nonexistent.ts",
+      method: "GET",
+      request: {
+        url: "http://localhost/test",
+        method: "GET",
+        headers: [] as [string, string][],
+        body: null,
+      },
+      params: {},
+      projectDir: "/tmp",
+    });
+
+    // Create initial worker
+    const worker1 = pool.getOrCreateWorker("project-recycle", ["/tmp"]);
     assertExists(worker1);
-    assertEquals(worker1.projectId, "project-recycle");
 
-    // Execute a health check to increment the request counter via the pool
-    // After this the worker has handled a request, so next execute() triggers recycle
-    const healthy = await worker1.isHealthy(5_000);
-    assertEquals(healthy, true);
+    // First execute: increments requestCount to 1 (recycle check sees 0, so no recycle yet)
+    try {
+      await pool.execute("project-recycle", ["/tmp"], makeRequest("req-1"));
+    } catch {
+      // Worker errors on module not found — requestCount still incremented
+    }
+    assertEquals(worker1.requestCount, 1);
 
-    // The pool should still have 1 worker
+    // Second execute: recycle check sees requestCount=1 >= threshold=1, triggers warm recycle
+    try {
+      await pool.execute("project-recycle", ["/tmp"], makeRequest("req-2"));
+    } catch {
+      // Expected error
+    }
+
+    // Allow microtask to process the warm replacement
+    await new Promise((r) => setTimeout(r, 100));
+
+    // After the microtask, a replacement worker should exist
+    const worker2 = pool.getOrCreateWorker("project-recycle", ["/tmp"]);
+    assertExists(worker2);
+
+    // The replacement should be a different instance than the original
+    assert(worker1 !== worker2, "should have created a new worker after recycling");
     assertEquals(pool.getStats().poolSize, 1);
-
-    // After recycle, a new getOrCreateWorker should return a new (or recycled) worker
-    // Allow microtask to process
-    await new Promise((r) => setTimeout(r, 50));
-    const stats = pool.getStats();
-    assertEquals(stats.poolSize, 1);
   });
 
   it("does not recycle when under maxRequestsPerWorker", () => {

@@ -578,5 +578,35 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 500);
     });
+
+    it("should reject via Content-Length header before buffering the body", async () => {
+      // Enable worker isolation
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __resetPoolForTests();
+
+      const handler = {
+        POST: (_req: Request) => new Response("ok"),
+      };
+
+      // Create a small body but with a Content-Length header claiming 20 MB.
+      // The fast path should reject based on Content-Length before reading.
+      const request = new Request("http://localhost/api/test", {
+        method: "POST",
+        body: "small",
+        headers: { "content-length": String(20 * 1024 * 1024) },
+      });
+
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      );
+
+      assertEquals(response.status, 500);
+    });
   });
 });

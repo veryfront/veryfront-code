@@ -114,7 +114,19 @@ export class ServerDataFetcher {
     const pool = getWorkerPool();
     let body: Uint8Array | null = null;
     if (context.request?.body) {
+      // Fast path: reject before buffering if Content-Length is known
+      const contentLength = context.request.headers?.get("content-length");
+      if (contentLength && parseInt(contentLength, 10) > MAX_WORKER_BODY_BYTES) {
+        throw new Error(
+          `Request body too large for isolated data fetch (${
+            (parseInt(contentLength, 10) / 1024 / 1024).toFixed(1)
+          } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
+        );
+      }
+
       body = new Uint8Array(await context.request.arrayBuffer());
+
+      // Fallback: check actual size for chunked/streaming bodies
       if (body.byteLength > MAX_WORKER_BODY_BYTES) {
         throw new Error(
           `Request body too large for isolated data fetch (${
