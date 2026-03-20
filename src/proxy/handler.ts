@@ -151,33 +151,11 @@ function extractUserToken(cookieHeader: string): string | undefined {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
-function decodePayloadUnsafe(token: string): string | undefined {
-  try {
-    const payload = token.split(".")[1];
-    if (!payload) return undefined;
-    let base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const remainder = base64.length % 4;
-    if (remainder === 2) base64 += "==";
-    else if (remainder === 3) base64 += "=";
-    const decoded = JSON.parse(atob(base64));
-    return decoded?.userId;
-  } catch (_) {
-    /* expected: malformed JWT token */
-    return undefined;
-  }
-}
-
 async function extractUserIdFromToken(
   token: string,
-  isLocal: boolean,
   log?: ProxyLogger,
 ): Promise<string | undefined> {
   const jwtSecret = getEnv("JWT_SECRET");
-
-  // In local dev mode without a configured secret, fall back to unverified decode
-  if (!jwtSecret && isLocal) {
-    return decodePayloadUnsafe(token);
-  }
 
   if (!jwtSecret) {
     log?.warn("JWT_SECRET not configured — cannot verify user token");
@@ -186,7 +164,9 @@ async function extractUserIdFromToken(
 
   try {
     const secret = new TextEncoder().encode(jwtSecret);
-    const { payload } = await jwtVerify(token, secret);
+    const { payload } = await jwtVerify(token, secret, {
+      algorithms: ["HS256"],
+    });
     return (payload as { userId?: string }).userId;
   } catch (error) {
     log?.debug("JWT verification failed", {
@@ -310,7 +290,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     userToken: string | undefined,
     users: DomainLookupResult["users"],
     logContext: Record<string, unknown>,
-    isLocal: boolean,
   ): Promise<{ status: number; message: string; redirectUrl?: string } | null> {
     if (!matchingEnv?.protected) return null;
 
@@ -324,7 +303,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       return { status: 302, message: "Authentication required", redirectUrl };
     }
 
-    const userId = await extractUserIdFromToken(userToken, isLocal, logger);
+    const userId = await extractUserIdFromToken(userToken, logger);
     if (!userId) {
       const redirectUrl = makeAuthRedirectUrl(req);
       logger?.info("Could not extract userId from token", {
@@ -353,7 +332,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     lookupKey: string,
     envMatcher: (env: NonNullable<DomainLookupResult["environments"]>[number]) => boolean,
     logContext: Record<string, unknown>,
-    isLocal: boolean,
   ): Promise<
     | { projectId?: string; releaseId?: string; environmentId?: string }
     | { error: { status: number; message: string; redirectUrl?: string } }
@@ -369,7 +347,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       userToken,
       lookupResult.users,
       logContext,
-      isLocal,
     );
     if (protectionError) return { error: protectionError };
 
@@ -478,7 +455,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           userToken,
           lookupResult.users,
           { domain: host },
-          isLocalProject,
         );
         if (protectionError) {
           return makeErrorContext(
@@ -507,7 +483,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           projectSlug,
           (env) => env.name.toLowerCase() === targetEnv,
           { projectSlug },
-          isLocalProject,
         );
 
         if ("error" in resolved) {
@@ -541,7 +516,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           projectSlug,
           (env) => env.name.toLowerCase() === "preview",
           { projectSlug },
-          isLocalProject,
         );
 
         if ("error" in resolved) {
