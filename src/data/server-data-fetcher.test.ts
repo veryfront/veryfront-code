@@ -1,7 +1,8 @@
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ServerDataFetcher } from "./server-data-fetcher.ts";
 import type { DataContext, PageWithData } from "./types.ts";
+import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
 
 describe("ServerDataFetcher", () => {
   function createContext(overrides: Partial<DataContext> = {}): DataContext {
@@ -222,6 +223,49 @@ describe("ServerDataFetcher", () => {
       assertExists(receivedQuery);
       assertEquals(receivedQuery.get("search"), "test");
       assertEquals(receivedQuery.get("page"), "2");
+    });
+  });
+
+  describe("fetchIsolated body size guard", () => {
+    afterEach(() => {
+      try {
+        Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      } catch { /* ok */ }
+      try {
+        Deno.env.delete("WORKER_ISOLATION_DATA");
+      } catch { /* ok */ }
+      __resetPoolForTests();
+    });
+
+    it("should reject oversized request bodies in isolated data fetch", async () => {
+      // Enable data isolation
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_DATA", "1");
+      __resetPoolForTests();
+
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => ({ props: { data: "test" } }),
+      };
+
+      // Create a body larger than 10 MB
+      const largeBody = new Uint8Array(11 * 1024 * 1024);
+      const request = new Request("http://localhost/test", {
+        method: "POST",
+        body: largeBody,
+      });
+
+      await assertRejects(
+        () =>
+          fetcher.fetch(
+            pageModule,
+            createContext({ request }),
+            { modulePath: "/tmp/test/page.ts", projectDir: "/tmp/test" },
+          ),
+        Error,
+        "too large",
+      );
     });
   });
 });

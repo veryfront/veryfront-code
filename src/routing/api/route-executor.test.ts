@@ -1,8 +1,9 @@
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { executeAppRoute, executePagesRoute } from "./route-executor.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
 
 function makeAdapter(mode = "development"): RuntimeAdapter {
   const envMap = new Map<string, string>([["MODE", mode]]);
@@ -464,6 +465,115 @@ describe("routing/api/route-executor", () => {
         makeMatch(),
         "/api/test",
         makeAdapter(),
+      );
+
+      assertEquals(response.status, 500);
+    });
+  });
+
+  describe("body size guard (isolated execution)", () => {
+    afterEach(() => {
+      try {
+        Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      } catch { /* ok */ }
+      try {
+        Deno.env.delete("WORKER_ISOLATION_API");
+      } catch { /* ok */ }
+      __resetPoolForTests();
+    });
+
+    it("should reject oversized request bodies in isolated app route execution", async () => {
+      // Enable worker isolation
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __resetPoolForTests();
+
+      const handler = {
+        POST: (_req: Request) => new Response("ok"),
+      };
+
+      // Create a body larger than 10 MB
+      const largeBody = new Uint8Array(11 * 1024 * 1024);
+      const request = new Request("http://localhost/api/test", {
+        method: "POST",
+        body: largeBody,
+      });
+
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      );
+
+      // Should get an error response due to body size limit
+      assertEquals(response.status, 500);
+    });
+
+    it("should allow normal-sized request bodies in isolated app route execution", async () => {
+      // Enable worker isolation
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __resetPoolForTests();
+
+      const handler = {
+        POST: (_req: Request) => new Response("ok"),
+      };
+
+      // Create a small body (under 10 MB)
+      const smallBody = JSON.stringify({ data: "hello" });
+      const request = new Request("http://localhost/api/test", {
+        method: "POST",
+        body: smallBody,
+      });
+
+      // This will fail at the worker execution level (module not found),
+      // but should NOT fail at the body size guard
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      );
+
+      // The error should be about worker execution, not body size
+      const body = await response.json();
+      const detail = body.detail ?? "";
+      assert(
+        !detail.includes("too large"),
+        "should not reject small request bodies",
+      );
+    });
+
+    it("should reject oversized request bodies in isolated pages route execution", async () => {
+      // Enable worker isolation
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __resetPoolForTests();
+
+      const handler = {
+        POST: (_ctx: unknown) => new Response("ok"),
+      };
+
+      // Create a body larger than 10 MB
+      const largeBody = new Uint8Array(11 * 1024 * 1024);
+      const request = new Request("http://localhost/api/test", {
+        method: "POST",
+        body: largeBody,
+      });
+
+      const response = await executePagesRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        undefined,
+        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
       );
 
       assertEquals(response.status, 500);

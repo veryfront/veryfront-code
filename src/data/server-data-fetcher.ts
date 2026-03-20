@@ -7,6 +7,9 @@ import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-
 import { getWorkerPool, isDataIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
 import type { WorkerResponse } from "#veryfront/security/sandbox/worker-types.ts";
 
+/** Maximum request body size for worker isolation (10 MB) */
+const MAX_WORKER_BODY_BYTES = 10 * 1024 * 1024;
+
 /**
  * Options for isolated data fetching through Worker pool.
  */
@@ -109,7 +112,17 @@ export class ServerDataFetcher {
     context: DataContext,
   ): Promise<DataResult> {
     const pool = getWorkerPool();
-    const body = context.request?.body ? new Uint8Array(await context.request.arrayBuffer()) : null;
+    let body: Uint8Array | null = null;
+    if (context.request?.body) {
+      body = new Uint8Array(await context.request.arrayBuffer());
+      if (body.byteLength > MAX_WORKER_BODY_BYTES) {
+        throw new Error(
+          `Request body too large for isolated data fetch (${
+            (body.byteLength / 1024 / 1024).toFixed(1)
+          } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
+        );
+      }
+    }
 
     const workerResponse: WorkerResponse = await pool.execute(
       projectDir,

@@ -128,9 +128,20 @@ export class WorkerPool {
                 ? "request_count"
                 : "age",
             });
-            this.evictWorker(projectId);
-            const fresh = this.getOrCreateWorker(projectId, readPaths);
-            return fresh.execute(request);
+
+            // Warm replacement: execute on the current worker while creating
+            // the replacement in the background. The old worker handles this
+            // last request so the caller doesn't pay cold-start latency.
+            const result = worker.execute(request);
+
+            // Create replacement worker in the background after dispatching
+            // the request to the old worker
+            queueMicrotask(() => {
+              this.evictWorker(projectId);
+              this.getOrCreateWorker(projectId, readPaths);
+            });
+
+            return result;
           } finally {
             this.recycling.delete(projectId);
           }

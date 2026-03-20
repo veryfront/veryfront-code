@@ -128,8 +128,22 @@ function toHeadResponse(response: Response): Response {
 // Worker Isolation Helpers
 // ---------------------------------------------------------------------------
 
+/** Maximum request body size for worker isolation (10 MB) */
+const MAX_WORKER_BODY_BYTES = 10 * 1024 * 1024;
+
 async function serializeRequest(request: Request): Promise<SerializedRequest> {
-  const body = request.body ? new Uint8Array(await request.arrayBuffer()) : null;
+  let body: Uint8Array | null = null;
+  if (request.body) {
+    body = new Uint8Array(await request.arrayBuffer());
+    if (body.byteLength > MAX_WORKER_BODY_BYTES) {
+      throw createError({
+        type: "api",
+        message: `Request body too large for isolated execution (${
+          (body.byteLength / 1024 / 1024).toFixed(1)
+        } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
+      });
+    }
+  }
   return {
     url: request.url,
     method: request.method,
@@ -251,7 +265,18 @@ function executePagesRouteIsolated(
     async () => {
       try {
         const pool = getWorkerPool();
-        const body = request.body ? new Uint8Array(await request.arrayBuffer()) : null;
+        let body: Uint8Array | null = null;
+        if (request.body) {
+          body = new Uint8Array(await request.arrayBuffer());
+          if (body.byteLength > MAX_WORKER_BODY_BYTES) {
+            throw createError({
+              type: "api",
+              message: `Request body too large for isolated execution (${
+                (body.byteLength / 1024 / 1024).toFixed(1)
+              } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
+            });
+          }
+        }
 
         const workerResponse = await pool.execute(
           projectDir,

@@ -21,6 +21,18 @@ export interface WorkerPermissions {
   sys: boolean;
 }
 
+// Cache compiled binary check — Deno.execPath() is a syscall that never changes at runtime
+const _isCompiledBinary = (() => {
+  try {
+    const exec = typeof Deno !== "undefined" ? Deno.execPath?.() : undefined;
+    if (!exec) return false;
+    const name = exec.split(/[/\\]/).pop()?.toLowerCase() ?? "";
+    return name !== "deno" && name !== "deno.exe";
+  } catch {
+    return false;
+  }
+})();
+
 /**
  * Build scoped permissions for a project worker.
  *
@@ -39,25 +51,16 @@ export function buildWorkerPermissions(
   // is outside the project directory. Rather than trying to enumerate all
   // read paths, grant full read access — the security boundary is enforced
   // by denying write/run/ffi/sys, not by restricting reads.
-  // Check for compiled binary by testing if execPath is NOT "deno"/"deno.exe"
-  try {
-    const exec = typeof Deno !== "undefined" ? Deno.execPath?.() : undefined;
-    if (exec) {
-      const name = exec.split(/[/\\]/).pop()?.toLowerCase() ?? "";
-      if (name !== "deno" && name !== "deno.exe") {
-        return {
-          read: true,
-          write: false,
-          net: true,
-          env: true,
-          run: false,
-          ffi: false,
-          sys: false,
-        };
-      }
-    }
-  } catch {
-    // execPath may not be available
+  if (_isCompiledBinary) {
+    return {
+      read: true,
+      write: false,
+      net: true,
+      env: true,
+      run: false,
+      ffi: false,
+      sys: false,
+    };
   }
 
   return {

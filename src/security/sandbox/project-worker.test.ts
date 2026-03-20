@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { ProjectWorker } from "./project-worker.ts";
@@ -140,5 +140,55 @@ testSuite("ProjectWorker - clearModuleCache", () => {
   it("clearModuleCache is no-op before start", () => {
     worker.clearModuleCache();
     // Should not throw
+  });
+});
+
+testSuite("ProjectWorker - executeStream", () => {
+  let worker: ProjectWorker;
+
+  beforeEach(() => {
+    worker = new ProjectWorker({
+      projectId: "test-stream",
+      permissions: TEST_PERMISSIONS,
+      requestTimeoutMs: 5_000,
+    });
+  });
+
+  afterEach(() => {
+    worker.terminate();
+  });
+
+  it("throws when worker is not started", () => {
+    let threw = false;
+    try {
+      worker.executeStream({
+        type: "render-ssr",
+        id: "test-id",
+        pageModulePath: "/nonexistent.ts",
+        layoutModulePaths: [],
+        pageProps: {},
+        layoutProps: [],
+        delivery: "stream",
+      });
+    } catch {
+      threw = true;
+    }
+    assert(threw, "should throw when worker is not available");
+  });
+
+  it("returns a ReadableStream when worker is started", () => {
+    worker.start();
+    const stream = worker.executeStream({
+      type: "render-ssr",
+      id: "test-id",
+      pageModulePath: "/nonexistent.ts",
+      layoutModulePaths: [],
+      pageProps: {},
+      layoutProps: [],
+      delivery: "stream",
+    });
+    assert(stream instanceof ReadableStream, "should return a ReadableStream");
+    // Cancel the stream to clean up
+    stream.cancel();
   });
 });

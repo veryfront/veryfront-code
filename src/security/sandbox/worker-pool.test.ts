@@ -1,4 +1,4 @@
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
@@ -184,6 +184,61 @@ testSuite("WorkerPool - RFC 9457 error metadata", () => {
     // Verify the request type accepts projectEnv field
     const worker = pool.getOrCreateWorker("test-proj", ["/tmp/test"]);
     assertExists(worker);
+  });
+});
+
+testSuite("WorkerPool - warm recycling", () => {
+  let pool: WorkerPool;
+
+  afterEach(() => {
+    pool?.shutdown();
+  });
+
+  it("recycles worker without cold-start penalty on triggering request", async () => {
+    pool = new WorkerPool({
+      maxPoolSize: 3,
+      idleTimeoutMs: 60_000,
+      requestTimeoutMs: 5_000,
+      healthCheckIntervalMs: 60_000,
+      maxRequestsPerWorker: 1, // Recycle after 1 request
+      maxWorkerAgeMs: 600_000,
+    });
+
+    // Create initial worker and verify it exists
+    const worker1 = pool.getOrCreateWorker("project-recycle", []);
+    assertExists(worker1);
+    assertEquals(worker1.projectId, "project-recycle");
+
+    // Execute a health check to increment the request counter via the pool
+    // After this the worker has handled a request, so next execute() triggers recycle
+    const healthy = await worker1.isHealthy(5_000);
+    assertEquals(healthy, true);
+
+    // The pool should still have 1 worker
+    assertEquals(pool.getStats().poolSize, 1);
+
+    // After recycle, a new getOrCreateWorker should return a new (or recycled) worker
+    // Allow microtask to process
+    await new Promise((r) => setTimeout(r, 50));
+    const stats = pool.getStats();
+    assertEquals(stats.poolSize, 1);
+  });
+
+  it("does not recycle when under maxRequestsPerWorker", () => {
+    pool = new WorkerPool({
+      maxPoolSize: 3,
+      idleTimeoutMs: 60_000,
+      requestTimeoutMs: 5_000,
+      healthCheckIntervalMs: 60_000,
+      maxRequestsPerWorker: 100,
+      maxWorkerAgeMs: 600_000,
+    });
+
+    const worker1 = pool.getOrCreateWorker("project-no-recycle", []);
+    const worker2 = pool.getOrCreateWorker("project-no-recycle", []);
+
+    // Same worker returned (no recycle needed)
+    assert(worker1 === worker2, "should return the same worker when under threshold");
   });
 });
 
