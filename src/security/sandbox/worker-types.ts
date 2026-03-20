@@ -198,6 +198,9 @@ export interface WorkerPoolConfig {
   memoryBudgetMb: number;
 }
 
+/** Maximum request body size for worker isolation (10 MB) */
+export const MAX_WORKER_BODY_BYTES = 10 * 1024 * 1024;
+
 export const DEFAULT_WORKER_POOL_CONFIG: WorkerPoolConfig = {
   maxPoolSize: 20,
   idleTimeoutMs: 300_000,

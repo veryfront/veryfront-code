@@ -32,4 +32,17 @@ describe("worker-permissions", () => {
     const perms = buildWorkerPermissions([]);
     assertEquals(perms.net, true);
   });
+
+  it("returns consistent results across multiple calls (cached execPath)", () => {
+    const perms1 = buildWorkerPermissions(["/path-a"]);
+    const perms2 = buildWorkerPermissions(["/path-b"]);
+
+    // Both calls should produce the same structure (only read paths differ)
+    assertEquals(perms1.write, perms2.write);
+    assertEquals(perms1.net, perms2.net);
+    assertEquals(perms1.env, perms2.env);
+    assertEquals(perms1.run, perms2.run);
+    assertEquals(perms1.ffi, perms2.ffi);
+    assertEquals(perms1.sys, perms2.sys);
+  });
 });

@@ -21,6 +21,7 @@ import type {
 } from "./worker-types.ts";
 
 const logger = serverLogger.component("project-worker");
+const textEncoder = new TextEncoder();
 
 type ExtendedWorkerOptions = {
   type: "module";
@@ -177,7 +178,6 @@ export class ProjectWorker {
     this._status = "busy";
 
     const requestId = request.id;
-    const encoder = new TextEncoder();
 
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
@@ -238,7 +238,7 @@ export class ProjectWorker {
 
             // If we get an ssr-result, emit it as a single chunk
             if (response.type === "ssr-result") {
-              controller.enqueue(encoder.encode(response.html));
+              controller.enqueue(textEncoder.encode(response.html));
               controller.close();
             } else if (response.type === "error") {
               const err = new Error(response.error.message);

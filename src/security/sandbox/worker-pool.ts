@@ -119,21 +119,29 @@ export class WorkerPool {
 
         if (shouldRecycle && !this.recycling.has(projectId)) {
           this.recycling.add(projectId);
-          try {
-            logger.debug("Recycling worker", {
-              projectId,
-              requestCount: worker.requestCount,
-              ageMs: entry ? Date.now() - entry.createdAt : 0,
-              reason: worker.requestCount >= this.config.maxRequestsPerWorker
-                ? "request_count"
-                : "age",
-            });
+
+          logger.debug("Recycling worker", {
+            projectId,
+            requestCount: worker.requestCount,
+            ageMs: entry ? Date.now() - entry.createdAt : 0,
+            reason: worker.requestCount >= this.config.maxRequestsPerWorker
+              ? "request_count"
+              : "age",
+          });
+
+          // Warm replacement: let the old worker handle this last request,
+          // then evict it and create a replacement after the request settles.
+          // This avoids cold-start latency for the caller AND prevents the
+          // old worker from being terminated while it still has pending work.
+          const result = worker.execute(request);
+
+          void result.finally(() => {
             this.evictWorker(projectId);
-            const fresh = this.getOrCreateWorker(projectId, readPaths);
-            return fresh.execute(request);
-          } finally {
+            this.getOrCreateWorker(projectId, readPaths);
             this.recycling.delete(projectId);
-          }
+          });
+
+          return result;
         }
 
         return worker.execute(request);

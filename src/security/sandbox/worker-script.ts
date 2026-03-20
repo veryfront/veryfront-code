@@ -30,6 +30,25 @@ import type {
   WorkerStreamEnd,
 } from "./worker-types.ts";
 
+// Module-level singletons to avoid per-call allocation churn
+const encoder = new TextEncoder();
+
+// Pre-import React at worker startup to avoid cold-start penalty on first SSR request.
+// These are resolved from the project's import map. The dynamic imports are cached
+// by the runtime, so subsequent calls are essentially free.
+let _React: typeof import("react") | null = null;
+let _ReactDOMServer: typeof import("react-dom/server") | null = null;
+
+const _reactReady = (async () => {
+  try {
+    _React = await import("react");
+    _ReactDOMServer = await import("react-dom/server");
+  } catch {
+    // React may not be available in all worker contexts (e.g., API-only workers).
+    // SSR handler will throw a clear error if React is needed but not loaded.
+  }
+})();
+
 // ---------------------------------------------------------------------------
 // Serialization Helpers
 // ---------------------------------------------------------------------------
@@ -168,7 +187,7 @@ async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedRe
       status: 405,
       statusText: "Method Not Allowed",
       headers: [["content-type", "application/json"]],
-      body: new TextEncoder().encode(JSON.stringify({ error: "Method not allowed" })),
+      body: encoder.encode(JSON.stringify({ error: "Method not allowed" })),
     };
   }
 
@@ -231,7 +250,7 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
       status: 405,
       statusText: "Method Not Allowed",
       headers: [["content-type", "application/json"]],
-      body: new TextEncoder().encode(JSON.stringify({ error: "Method not allowed" })),
+      body: encoder.encode(JSON.stringify({ error: "Method not allowed" })),
     };
   }
 
@@ -310,10 +329,15 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
 async function handleRenderSSR(
   req: RenderSSRRequest,
 ): Promise<{ html: string } | "streaming"> {
-  // Dynamic import of React — resolved from the project's import map
-  // which maps to the correct esm.sh version
-  const React = await import("react");
-  const { renderToString } = await import("react-dom/server");
+  // Wait for pre-imported React modules (loaded at worker startup)
+  await _reactReady;
+
+  if (!_React || !_ReactDOMServer) {
+    throw new Error("React modules not available in this worker");
+  }
+
+  const React = _React;
+  const { renderToString } = _ReactDOMServer;
 
   // Import the page component
   const pageMod = await loadModule(req.pageModulePath);
@@ -350,10 +374,7 @@ async function handleRenderSSR(
   // Streaming mode: send chunks via postMessage
   if (req.delivery === "stream") {
     // Use renderToReadableStream if available (React 18+)
-    const serverModule = await import("react-dom/server") as Record<
-      string,
-      unknown
-    >;
+    const serverModule = _ReactDOMServer as unknown as Record<string, unknown>;
     const renderToReadableStream = serverModule.renderToReadableStream as
       | ((element: React.ReactElement) => Promise<ReadableStream<Uint8Array>>)
       | undefined;

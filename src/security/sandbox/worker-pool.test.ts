@@ -1,4 +1,4 @@
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
@@ -9,6 +9,7 @@ import {
   isWorkerIsolationEnabled,
   WorkerPool,
 } from "./worker-pool.ts";
+import { MAX_WORKER_BODY_BYTES } from "./worker-types.ts";
 
 // Worker isolation only works in Deno (requires Deno Worker permissions API)
 const testSuite = isDeno ? describe : describe.skip;
@@ -184,6 +185,137 @@ testSuite("WorkerPool - RFC 9457 error metadata", () => {
     // Verify the request type accepts projectEnv field
     const worker = pool.getOrCreateWorker("test-proj", ["/tmp/test"]);
     assertExists(worker);
+  });
+});
+
+testSuite("WorkerPool - warm recycling", () => {
+  let pool: WorkerPool;
+
+  afterEach(() => {
+    pool?.shutdown();
+  });
+
+  it("old worker handles triggering request, replacement created in background", async () => {
+    pool = new WorkerPool({
+      maxPoolSize: 3,
+      idleTimeoutMs: 60_000,
+      requestTimeoutMs: 5_000,
+      healthCheckIntervalMs: 60_000,
+      maxRequestsPerWorker: 1, // Recycle after 1 request
+      maxWorkerAgeMs: 600_000,
+    });
+
+    const makeRequest = (id: string) => ({
+      type: "execute-app-route" as const,
+      id,
+      modulePath: "/tmp/nonexistent.ts",
+      method: "GET",
+      request: {
+        url: "http://localhost/test",
+        method: "GET",
+        headers: [] as [string, string][],
+        body: null,
+      },
+      params: {},
+      projectDir: "/tmp",
+    });
+
+    // Create initial worker
+    const worker1 = pool.getOrCreateWorker("project-recycle", ["/tmp"]);
+    assertExists(worker1);
+
+    // First execute: increments requestCount to 1 (recycle check sees 0, so no recycle yet)
+    try {
+      await pool.execute("project-recycle", ["/tmp"], makeRequest("req-1"));
+    } catch {
+      // Worker errors on module not found — requestCount still incremented
+    }
+    assertEquals(worker1.requestCount, 1);
+
+    // Second execute: recycle check sees requestCount=1 >= threshold=1, triggers warm recycle
+    try {
+      await pool.execute("project-recycle", ["/tmp"], makeRequest("req-2"));
+    } catch {
+      // Expected error
+    }
+
+    // Allow the .finally() callback to run and create the replacement
+    await new Promise((r) => setTimeout(r, 100));
+
+    // After the .finally() callback, a replacement worker should exist
+    const worker2 = pool.getOrCreateWorker("project-recycle", ["/tmp"]);
+    assertExists(worker2);
+
+    // The replacement should be a different instance than the original
+    assert(worker1 !== worker2, "should have created a new worker after recycling");
+    assertEquals(pool.getStats().poolSize, 1);
+  });
+
+  it("recycling guard prevents concurrent replacements", async () => {
+    pool = new WorkerPool({
+      maxPoolSize: 5,
+      idleTimeoutMs: 60_000,
+      requestTimeoutMs: 5_000,
+      healthCheckIntervalMs: 60_000,
+      maxRequestsPerWorker: 1,
+      maxWorkerAgeMs: 600_000,
+    });
+
+    const makeRequest = (id: string) => ({
+      type: "execute-app-route" as const,
+      id,
+      modulePath: "/tmp/nonexistent.ts",
+      method: "GET",
+      request: {
+        url: "http://localhost/test",
+        method: "GET",
+        headers: [] as [string, string][],
+        body: null,
+      },
+      params: {},
+      projectDir: "/tmp",
+    });
+
+    // First request: increments requestCount to 1
+    const worker1 = pool.getOrCreateWorker("project-guard", ["/tmp"]);
+    try {
+      await pool.execute("project-guard", ["/tmp"], makeRequest("req-1"));
+    } catch { /* expected */ }
+    assertEquals(worker1.requestCount, 1);
+
+    // Fire two concurrent requests that both trigger recycle
+    const p1 = pool.execute("project-guard", ["/tmp"], makeRequest("req-2")).catch(() => {});
+    const p2 = pool.execute("project-guard", ["/tmp"], makeRequest("req-3")).catch(() => {});
+    await Promise.all([p1, p2]);
+
+    // Allow .finally() callbacks to run
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Only one replacement worker should exist (guard prevented double replacement)
+    assertEquals(pool.getStats().poolSize, 1);
+  });
+
+  it("does not recycle when under maxRequestsPerWorker", () => {
+    pool = new WorkerPool({
+      maxPoolSize: 3,
+      idleTimeoutMs: 60_000,
+      requestTimeoutMs: 5_000,
+      healthCheckIntervalMs: 60_000,
+      maxRequestsPerWorker: 100,
+      maxWorkerAgeMs: 600_000,
+    });
+
+    const worker1 = pool.getOrCreateWorker("project-no-recycle", []);
+    const worker2 = pool.getOrCreateWorker("project-no-recycle", []);
+
+    // Same worker returned (no recycle needed)
+    assert(worker1 === worker2, "should return the same worker when under threshold");
+  });
+});
+
+describe("MAX_WORKER_BODY_BYTES", () => {
+  it("is exported as 10 MB", () => {
+    assertEquals(MAX_WORKER_BODY_BYTES, 10 * 1024 * 1024);
   });
 });
 

@@ -23,10 +23,11 @@ import {
   getWorkerPool,
   isWorkerIsolationEnabled,
 } from "#veryfront/security/sandbox/worker-pool.ts";
-import type {
-  SerializedRequest,
-  SerializedResponse,
-  WorkerResponse,
+import {
+  MAX_WORKER_BODY_BYTES,
+  type SerializedRequest,
+  type SerializedResponse,
+  type WorkerResponse,
 } from "#veryfront/security/sandbox/worker-types.ts";
 import { getProjectEnvSnapshot } from "#veryfront/server/project-env/storage.ts";
 
@@ -128,13 +129,48 @@ function toHeadResponse(response: Response): Response {
 // Worker Isolation Helpers
 // ---------------------------------------------------------------------------
 
+function checkContentLengthLimit(request: Request): void {
+  const contentLength = request.headers.get("content-length");
+  if (!contentLength) return;
+
+  const bytes = parseInt(contentLength, 10);
+  if (bytes > MAX_WORKER_BODY_BYTES) {
+    throw createError({
+      type: "api",
+      message: `Request body too large for isolated execution (${
+        (bytes / 1024 / 1024).toFixed(1)
+      } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
+    });
+  }
+}
+
+async function readBodyWithSizeGuard(request: Request): Promise<Uint8Array | null> {
+  if (!request.body) return null;
+
+  // Fast path: reject before buffering if Content-Length is known
+  checkContentLengthLimit(request);
+
+  const body = new Uint8Array(await request.arrayBuffer());
+
+  // Fallback: check actual size for chunked/streaming bodies
+  if (body.byteLength > MAX_WORKER_BODY_BYTES) {
+    throw createError({
+      type: "api",
+      message: `Request body too large for isolated execution (${
+        (body.byteLength / 1024 / 1024).toFixed(1)
+      } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
+    });
+  }
+
+  return body;
+}
+
 async function serializeRequest(request: Request): Promise<SerializedRequest> {
-  const body = request.body ? new Uint8Array(await request.arrayBuffer()) : null;
   return {
     url: request.url,
     method: request.method,
     headers: [...request.headers.entries()],
-    body,
+    body: await readBodyWithSizeGuard(request),
   };
 }
 
@@ -251,7 +287,7 @@ function executePagesRouteIsolated(
     async () => {
       try {
         const pool = getWorkerPool();
-        const body = request.body ? new Uint8Array(await request.arrayBuffer()) : null;
+        const body = await readBodyWithSizeGuard(request);
 
         const workerResponse = await pool.execute(
           projectDir,

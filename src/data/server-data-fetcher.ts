@@ -5,7 +5,10 @@ import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/strea
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import { getWorkerPool, isDataIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
-import type { WorkerResponse } from "#veryfront/security/sandbox/worker-types.ts";
+import {
+  MAX_WORKER_BODY_BYTES,
+  type WorkerResponse,
+} from "#veryfront/security/sandbox/worker-types.ts";
 
 /**
  * Options for isolated data fetching through Worker pool.
@@ -109,7 +112,32 @@ export class ServerDataFetcher {
     context: DataContext,
   ): Promise<DataResult> {
     const pool = getWorkerPool();
-    const body = context.request?.body ? new Uint8Array(await context.request.arrayBuffer()) : null;
+    let body: Uint8Array | null = null;
+    if (context.request?.body) {
+      // Fast path: reject before buffering if Content-Length is known
+      const contentLength = context.request.headers?.get("content-length");
+      if (contentLength) {
+        const bytes = parseInt(contentLength, 10);
+        if (bytes > MAX_WORKER_BODY_BYTES) {
+          throw new Error(
+            `Request body too large for isolated data fetch (${
+              (bytes / 1024 / 1024).toFixed(1)
+            } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
+          );
+        }
+      }
+
+      body = new Uint8Array(await context.request.arrayBuffer());
+
+      // Fallback: check actual size for chunked/streaming bodies
+      if (body.byteLength > MAX_WORKER_BODY_BYTES) {
+        throw new Error(
+          `Request body too large for isolated data fetch (${
+            (body.byteLength / 1024 / 1024).toFixed(1)
+          } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
+        );
+      }
+    }
 
     const workerResponse: WorkerResponse = await pool.execute(
       projectDir,
