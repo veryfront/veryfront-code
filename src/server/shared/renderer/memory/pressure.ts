@@ -59,3 +59,11 @@ export function shouldRejectDueToMemory(): boolean {
   rendererLog.warn("Rejecting request - memory critical", { heapUsedPercent });
   return true;
 }
+
+/**
+ * Get current memory pressure level for use by the worker pool
+ * to decide whether to evict idle workers.
+ */
+export function getMemoryPressureLevel(): MemoryPressureLevel {
+  return getMemoryPressure().level;
+}

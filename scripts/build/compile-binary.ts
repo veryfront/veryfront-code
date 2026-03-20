@@ -14,6 +14,7 @@ const PROJECT_ROOT = fromFileUrl(new URL("../..", import.meta.url));
 const DEFAULT_INCLUDES = [
   "src/platform/polyfills",
   "src/proxy/main.ts",
+  "src/security/sandbox/worker-script.ts",
   "dist/framework-src",
 ];
 interface CompileBinaryOptions {
@@ -49,6 +50,7 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
     "compile",
     "--allow-all",
     "--unstable-net",
+    "--unstable-worker-options",
   ];
 
   for (const include of [
