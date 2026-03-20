@@ -267,5 +267,61 @@ describe("ServerDataFetcher", () => {
         "too large",
       );
     });
+
+    it("should reject via Content-Length header before buffering", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_DATA", "1");
+      __resetPoolForTests();
+
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => ({ props: {} }),
+      };
+
+      // Small body but Content-Length claims 20 MB
+      const request = new Request("http://localhost/test", {
+        method: "POST",
+        body: "small",
+        headers: { "content-length": String(20 * 1024 * 1024) },
+      });
+
+      await assertRejects(
+        () =>
+          fetcher.fetch(
+            pageModule,
+            createContext({ request }),
+            { modulePath: "/tmp/test/page.ts", projectDir: "/tmp/test" },
+          ),
+        Error,
+        "too large",
+      );
+    });
+
+    it("should skip body size guard when request has no body", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_DATA", "1");
+      __resetPoolForTests();
+
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => ({ props: { ok: true } }),
+      };
+
+      // GET request with no body
+      const request = new Request("http://localhost/test", { method: "GET" });
+
+      // This will fail at worker execution, but should NOT fail at body size guard
+      await assertRejects(
+        () =>
+          fetcher.fetch(
+            pageModule,
+            createContext({ request }),
+            { modulePath: "/tmp/test/page.ts", projectDir: "/tmp/test" },
+          ),
+        Error,
+      );
+    });
   });
 });

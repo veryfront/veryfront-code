@@ -9,6 +9,7 @@ import {
   isWorkerIsolationEnabled,
   WorkerPool,
 } from "./worker-pool.ts";
+import { MAX_WORKER_BODY_BYTES } from "./worker-types.ts";
 
 // Worker isolation only works in Deno (requires Deno Worker permissions API)
 const testSuite = isDeno ? describe : describe.skip;
@@ -250,6 +251,50 @@ testSuite("WorkerPool - warm recycling", () => {
     assertEquals(pool.getStats().poolSize, 1);
   });
 
+  it("recycling guard prevents concurrent replacements", async () => {
+    pool = new WorkerPool({
+      maxPoolSize: 5,
+      idleTimeoutMs: 60_000,
+      requestTimeoutMs: 5_000,
+      healthCheckIntervalMs: 60_000,
+      maxRequestsPerWorker: 1,
+      maxWorkerAgeMs: 600_000,
+    });
+
+    const makeRequest = (id: string) => ({
+      type: "execute-app-route" as const,
+      id,
+      modulePath: "/tmp/nonexistent.ts",
+      method: "GET",
+      request: {
+        url: "http://localhost/test",
+        method: "GET",
+        headers: [] as [string, string][],
+        body: null,
+      },
+      params: {},
+      projectDir: "/tmp",
+    });
+
+    // First request: increments requestCount to 1
+    const worker1 = pool.getOrCreateWorker("project-guard", ["/tmp"]);
+    try {
+      await pool.execute("project-guard", ["/tmp"], makeRequest("req-1"));
+    } catch { /* expected */ }
+    assertEquals(worker1.requestCount, 1);
+
+    // Fire two concurrent requests that both trigger recycle
+    const p1 = pool.execute("project-guard", ["/tmp"], makeRequest("req-2")).catch(() => {});
+    const p2 = pool.execute("project-guard", ["/tmp"], makeRequest("req-3")).catch(() => {});
+    await Promise.all([p1, p2]);
+
+    // Allow microtask to process
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Only one replacement worker should exist (guard prevented double replacement)
+    assertEquals(pool.getStats().poolSize, 1);
+  });
+
   it("does not recycle when under maxRequestsPerWorker", () => {
     pool = new WorkerPool({
       maxPoolSize: 3,
@@ -265,6 +310,12 @@ testSuite("WorkerPool - warm recycling", () => {
 
     // Same worker returned (no recycle needed)
     assert(worker1 === worker2, "should return the same worker when under threshold");
+  });
+});
+
+describe("MAX_WORKER_BODY_BYTES", () => {
+  it("is exported as 10 MB", () => {
+    assertEquals(MAX_WORKER_BODY_BYTES, 10 * 1024 * 1024);
   });
 });
 

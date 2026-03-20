@@ -608,5 +608,104 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 500);
     });
+
+    it("should reject large body without Content-Length via fallback check", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __resetPoolForTests();
+
+      const handler = {
+        POST: (_req: Request) => new Response("ok"),
+      };
+
+      // ReadableStream body has no Content-Length header — fallback check catches it
+      const chunks = [new Uint8Array(11 * 1024 * 1024)];
+      const stream = new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(chunk);
+          controller.close();
+        },
+      });
+
+      const request = new Request("http://localhost/api/test", {
+        method: "POST",
+        body: stream,
+        // deno-lint-ignore no-explicit-any
+        duplex: "half" as any,
+      });
+
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      );
+
+      assertEquals(response.status, 500);
+    });
+
+    it("should skip body size guard for requests without a body", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __resetPoolForTests();
+
+      const handler = {
+        GET: (_req: Request) => new Response("ok"),
+      };
+
+      // GET request with no body — should pass the size guard
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      );
+
+      // Error is about worker execution (module not found), not body size
+      const body = await response.json();
+      assert(
+        !(body.detail ?? "").includes("too large"),
+        "should not reject request without body",
+      );
+    });
+
+    it("should allow requests with malformed Content-Length header", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __resetPoolForTests();
+
+      const handler = {
+        POST: (_req: Request) => new Response("ok"),
+      };
+
+      // Malformed Content-Length — parseInt returns NaN, NaN > limit is false
+      const request = new Request("http://localhost/api/test", {
+        method: "POST",
+        body: "small body",
+        headers: { "content-length": "not-a-number" },
+      });
+
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      );
+
+      // Should not reject — NaN comparison passes through
+      const body = await response.json();
+      assert(
+        !(body.detail ?? "").includes("too large"),
+        "should not reject malformed Content-Length",
+      );
+    });
   });
 });

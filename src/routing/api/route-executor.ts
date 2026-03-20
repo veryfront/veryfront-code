@@ -23,10 +23,11 @@ import {
   getWorkerPool,
   isWorkerIsolationEnabled,
 } from "#veryfront/security/sandbox/worker-pool.ts";
-import type {
-  SerializedRequest,
-  SerializedResponse,
-  WorkerResponse,
+import {
+  MAX_WORKER_BODY_BYTES,
+  type SerializedRequest,
+  type SerializedResponse,
+  type WorkerResponse,
 } from "#veryfront/security/sandbox/worker-types.ts";
 import { getProjectEnvSnapshot } from "#veryfront/server/project-env/storage.ts";
 
@@ -128,16 +129,16 @@ function toHeadResponse(response: Response): Response {
 // Worker Isolation Helpers
 // ---------------------------------------------------------------------------
 
-/** Maximum request body size for worker isolation (10 MB) */
-const MAX_WORKER_BODY_BYTES = 10 * 1024 * 1024;
-
 function checkContentLengthLimit(request: Request): void {
   const contentLength = request.headers.get("content-length");
-  if (contentLength && parseInt(contentLength, 10) > MAX_WORKER_BODY_BYTES) {
+  if (!contentLength) return;
+
+  const bytes = parseInt(contentLength, 10);
+  if (bytes > MAX_WORKER_BODY_BYTES) {
     throw createError({
       type: "api",
       message: `Request body too large for isolated execution (${
-        (parseInt(contentLength, 10) / 1024 / 1024).toFixed(1)
+        (bytes / 1024 / 1024).toFixed(1)
       } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
     });
   }
