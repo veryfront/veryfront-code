@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createFileSystem } from "veryfront/platform";
+import { createFileSystem, getEnv } from "veryfront/platform";
 import { basename, extname, join, normalize, relative } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
@@ -8,6 +8,7 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { downloadUploadToFile, listAllUploads, type UploadItem } from "../uploads/command.ts";
 import { putRemoteFileFromLocal } from "../files/command.ts";
 import { knowledgeIngestPythonSource } from "./parser-source.ts";
+import { createJobUserLogger, type Logger, serverLogger } from "veryfront/utils";
 
 const SUPPORTED_EXTENSIONS = new Set([
   ".pdf",
@@ -57,6 +58,8 @@ type KnowledgeSource =
   | { kind: "upload"; input: string; uploadPath: string; localPath: string };
 
 type DownloadResult = { uploadPath: string; localPath: string; bytes?: number };
+
+const knowledgeJobLogger = serverLogger.component("knowledge-ingest");
 
 const KnowledgeIngestArgsSchema = z.object({
   projectSlug: z.string().optional(),
@@ -127,6 +130,27 @@ function getBooleanArg(args: ParsedArgs, ...keys: string[]): boolean {
 
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
+}
+
+function createKnowledgeIngestEventLogger(): Logger | null {
+  const projectId = getEnv("TENANT_PROJECT_ID");
+  const jobId = getEnv("JOB_ID");
+
+  if (!projectId || !jobId) {
+    return null;
+  }
+
+  return createJobUserLogger(knowledgeJobLogger, {
+    projectId,
+    jobId,
+    batchId: getEnv("JOB_BATCH_ID") ?? undefined,
+    jobTarget: getEnv("JOB_TARGET") ?? undefined,
+    task: "knowledge-ingest",
+  });
+}
+
+function buildKnowledgeSourceName(source: KnowledgeSource): string {
+  return basename(source.kind === "upload" ? source.uploadPath : source.localPath);
 }
 
 function showKnowledgeUsage(): void {
@@ -483,6 +507,7 @@ export async function ingestResolvedSources(
     outputDir: string;
     runParser: typeof runKnowledgeParser;
     uploadKnowledgeFile: (remotePath: string, localPath: string) => Promise<{ path: string }>;
+    eventLogger?: Logger | null;
   },
 ): Promise<KnowledgeIngestFileResult[]> {
   if (options.slug && sources.length !== 1) {
@@ -493,6 +518,13 @@ export async function ingestResolvedSources(
   const results: KnowledgeIngestFileResult[] = [];
 
   for (const [index, source] of sources.entries()) {
+    deps.eventLogger?.info("Processing knowledge source", {
+      phase: "file_processing",
+      progress_current: index + 1,
+      progress_total: sources.length,
+      source_name: buildKnowledgeSourceName(source),
+    });
+
     const parser = await deps.runParser({
       filePath: source.localPath,
       outputDir: deps.outputDir,
@@ -506,6 +538,26 @@ export async function ingestResolvedSources(
       options.knowledgePath,
     );
     const uploaded = await deps.uploadKnowledgeFile(remotePath, parser.sandbox_output_path);
+
+    deps.eventLogger?.info("Knowledge source ingested", {
+      phase: "file_completed",
+      progress_current: index + 1,
+      progress_total: sources.length,
+      source_name: buildKnowledgeSourceName(source),
+      remote_path: uploaded.path,
+      warning_count: parser.warnings.length,
+    });
+
+    if (parser.warnings.length > 0) {
+      deps.eventLogger?.warn("Knowledge source emitted warnings", {
+        phase: "file_warning",
+        progress_current: index + 1,
+        progress_total: sources.length,
+        source_name: buildKnowledgeSourceName(source),
+        warning_count: parser.warnings.length,
+      });
+    }
+
     results.push(
       createKnowledgeIngestResult({
         source: buildSourceReference(source),
@@ -544,8 +596,14 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
         const outputDir = options.outputDir ?? await defaultOutputRoot();
         const shouldCleanupOutputDir = options.outputDir === undefined;
         const downloadOutputDir = resolveKnowledgeDownloadOutputDir(outputDir);
+        const eventLogger = createKnowledgeIngestEventLogger();
 
         try {
+          eventLogger?.info("Starting knowledge ingest", {
+            phase: "started",
+            mode: options.path ? "path_prefix" : "explicit_sources",
+          });
+
           const sources = await collectKnowledgeSources(options, {
             client,
             projectSlug: config.projectSlug,
@@ -557,13 +615,25 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
               ),
           });
 
+          eventLogger?.info("Resolved knowledge sources", {
+            phase: "sources_resolved",
+            progress_total: sources.length,
+          });
+
           const results = await ingestResolvedSources(sources, options, {
             client,
             projectSlug: config.projectSlug,
             outputDir,
             runParser: runKnowledgeParser,
+            eventLogger,
             uploadKnowledgeFile: (remotePath, localPath) =>
               putRemoteFileFromLocal(client, config.projectSlug, remotePath, localPath),
+          });
+
+          eventLogger?.info("Completed knowledge ingest", {
+            phase: "completed",
+            progress_current: results.length,
+            progress_total: results.length,
           });
 
           if (options.json) {
@@ -577,6 +647,11 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
               cliLogger.info(`  ${result.summary}`);
             }
           }
+        } catch (error) {
+          eventLogger?.error("Knowledge ingest failed", {
+            phase: "failed",
+          });
+          throw error;
         } finally {
           if (shouldCleanupOutputDir) {
             await Promise.all([

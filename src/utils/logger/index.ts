@@ -12,6 +12,7 @@ export {
   agentLogger,
   bundlerLogger,
   cliLogger,
+  createJobUserLogger,
   createRequestLogger,
   getBaseLogger,
   getDefaultLevel,
