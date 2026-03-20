@@ -31,6 +31,7 @@ npm install veryfront
 | [`veryfront/workflow`](./workflow.md) | DAG-based agentic workflows with human-in-the-loop support. |
 | [`veryfront/prompt`](./prompt.md) | Declare and register prompts exposable over MCP. |
 | [`veryfront/resource`](./resource.md) | Declare and register resources exposable over MCP. |
+| [`veryfront/jobs`](./jobs.md) | Project-scoped jobs and cron jobs with events, logs, batches, and target discovery. |
 | [`veryfront/mcp`](./mcp.md) | MCP server exposing tools, prompts, and resources. |
 | [`veryfront/middleware`](./middleware.md) | CORS, rate limiting, logging, and timeout middleware. |
 | [`veryfront/oauth`](./oauth.md) | OAuth 2.0 with 37 pre-configured providers. |
