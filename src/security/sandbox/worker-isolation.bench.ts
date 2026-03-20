@@ -127,7 +127,7 @@ const TEST_PERMISSIONS: WorkerPermissions = {
 };
 
 Deno.bench({
-  name: "ProjectWorker.isHealthy — ping/pong round-trip",
+  name: "ProjectWorker.isHealthy — cold (includes startup + teardown)",
   group: "health-check",
   baseline: true,
   async fn() {
@@ -301,7 +301,7 @@ Deno.bench({
 // Cleanup — global teardown registered via unload
 // ---------------------------------------------------------------------------
 
-globalThis.addEventListener("unload", () => {
+globalThis.addEventListener("beforeunload", () => {
   lookupPool.shutdown();
   executePool.shutdown();
 });
