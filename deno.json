@@ -309,6 +309,7 @@
     "test:coverage:integration": "rm -rf coverage && VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --fail-fast --allow-all --coverage=coverage '--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts' tests --unstable-worker-options --unstable-net || exit 1",
     "coverage:report": "deno coverage coverage --include=src/ --exclude=tests --exclude=src/**/*_test.ts --exclude=src/**/*_test.tsx --exclude=src/**/*.test.ts --exclude=src/**/*.test.tsx --lcov > coverage/lcov.info && deno run --allow-read scripts/lint/check-coverage.ts 80",
     "coverage:html": "deno coverage coverage --include=src/ --exclude=tests --exclude=src/**/*_test.ts --exclude=src/**/*_test.tsx --exclude=src/**/*.test.ts --exclude=src/**/*.test.tsx --html",
+    "bench": "VF_DISABLE_LRU_INTERVAL=1 NODE_ENV=production LOG_FORMAT=text deno bench --no-check --allow-all --unstable-worker-options --unstable-net $(find src -name '*.bench.ts')",
     "clean": "rm -rf .cache/",
     "lint": "DENO_NO_PACKAGE_JSON=1 deno lint src/ cli/",
     "fmt": "deno fmt src/ cli/",
