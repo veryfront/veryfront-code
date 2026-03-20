@@ -129,16 +129,13 @@ export class WorkerPool {
               : "age",
           });
 
-          // Warm replacement: execute on the current worker while creating
-          // the replacement in the background. The old worker handles this
-          // last request so the caller doesn't pay cold-start latency.
+          // Warm replacement: let the old worker handle this last request,
+          // then evict it and create a replacement after the request settles.
+          // This avoids cold-start latency for the caller AND prevents the
+          // old worker from being terminated while it still has pending work.
           const result = worker.execute(request);
 
-          // Create replacement worker in the background after dispatching
-          // the request to the old worker. The recycling guard is cleared
-          // here (not in a finally) to prevent concurrent requests from
-          // seeing the old worker between the finally and the microtask.
-          queueMicrotask(() => {
+          void result.finally(() => {
             this.evictWorker(projectId);
             this.getOrCreateWorker(projectId, readPaths);
             this.recycling.delete(projectId);

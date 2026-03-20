@@ -239,10 +239,10 @@ testSuite("WorkerPool - warm recycling", () => {
       // Expected error
     }
 
-    // Allow microtask to process the warm replacement
+    // Allow the .finally() callback to run and create the replacement
     await new Promise((r) => setTimeout(r, 100));
 
-    // After the microtask, a replacement worker should exist
+    // After the .finally() callback, a replacement worker should exist
     const worker2 = pool.getOrCreateWorker("project-recycle", ["/tmp"]);
     assertExists(worker2);
 
@@ -288,7 +288,7 @@ testSuite("WorkerPool - warm recycling", () => {
     const p2 = pool.execute("project-guard", ["/tmp"], makeRequest("req-3")).catch(() => {});
     await Promise.all([p1, p2]);
 
-    // Allow microtask to process
+    // Allow .finally() callbacks to run
     await new Promise((r) => setTimeout(r, 100));
 
     // Only one replacement worker should exist (guard prevented double replacement)
