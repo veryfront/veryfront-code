@@ -184,6 +184,11 @@ export const KnowledgeIngestBatchSourceSchema = z.object({
   warning_count: z.number().int().nonnegative(),
 });
 
+export const KnowledgeIngestBatchSourceWithMessageSchema =
+  KnowledgeIngestBatchSourceSchema.extend({
+    message: z.string(),
+  });
+
 export const JobBatchStatusCountsSchema = z.object({
   submitted: z.number().int().nonnegative(),
   working: z.number().int().nonnegative(),
@@ -198,8 +203,12 @@ export const JobBatchResultSchema = z
       kind: z.literal("knowledge_ingest"),
       total_count: z.number().int().nonnegative(),
       completed_count: z.number().int().nonnegative(),
+      skipped_count: z.number().int().nonnegative(),
+      failed_count: z.number().int().nonnegative(),
       processing: z.array(KnowledgeIngestBatchSourceSchema),
       completed: z.array(KnowledgeIngestBatchSourceSchema),
+      skipped: z.array(KnowledgeIngestBatchSourceWithMessageSchema),
+      failed: z.array(KnowledgeIngestBatchSourceWithMessageSchema),
       remaining: z.array(KnowledgeIngestBatchSourceSchema),
       remaining_label: z.enum(["Remaining Files", "Not Ingested Files"]),
     }),
@@ -281,6 +290,9 @@ export type JobEventsResponse = z.infer<typeof JobEventsResponseSchema>;
 export type JobLogsResponse = z.infer<typeof JobLogsResponseSchema>;
 
 export type KnowledgeIngestBatchSource = z.infer<typeof KnowledgeIngestBatchSourceSchema>;
+export type KnowledgeIngestBatchSourceWithMessage = z.infer<
+  typeof KnowledgeIngestBatchSourceWithMessageSchema
+>;
 export type JobBatchStatusCounts = z.infer<typeof JobBatchStatusCountsSchema>;
 export type JobBatchResult = z.infer<typeof JobBatchResultSchema>;
 export type JobBatch = z.infer<typeof JobBatchSchema>;

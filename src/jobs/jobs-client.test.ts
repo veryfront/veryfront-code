@@ -502,7 +502,45 @@ describe("VeryfrontJobsClient", () => {
         },
         created_at: "2026-03-20T12:00:00.000Z",
         updated_at: "2026-03-20T12:10:00.000Z",
-        result: null,
+        result: {
+          kind: "knowledge_ingest",
+          total_count: 3,
+          completed_count: 1,
+          skipped_count: 1,
+          failed_count: 1,
+          processing: [],
+          completed: [
+            {
+              label: "uploads/a.pdf",
+              path: "uploads/a.pdf",
+              upload_id: "33333333-3333-4333-8333-333333333333",
+              remote_path: "knowledge/a.md",
+              warning_count: 0,
+            },
+          ],
+          skipped: [
+            {
+              label: "uploads/b.exe",
+              path: "uploads/b.exe",
+              upload_id: null,
+              remote_path: null,
+              warning_count: 0,
+              message: "Unsupported file type: .exe",
+            },
+          ],
+          failed: [
+            {
+              label: "uploads/c.pdf",
+              path: "uploads/c.pdf",
+              upload_id: "77777777-7777-4777-8777-777777777777",
+              remote_path: null,
+              warning_count: 0,
+              message: "knowledge ingest parser failed: boom",
+            },
+          ],
+          remaining: [],
+          remaining_label: "Not Ingested Files",
+        },
       }),
       jsonResponse({
         data: [makeJobListItem()],
@@ -527,6 +565,9 @@ describe("VeryfrontJobsClient", () => {
     });
 
     assertEquals(batch.job_count, 3);
+    assertEquals(batch.result?.kind, "knowledge_ingest");
+    assertEquals(batch.result?.skipped_count, 1);
+    assertEquals(batch.result?.failed_count, 1);
     assertEquals(jobs.data.length, 1);
     assertStringIncludes(call(1).url, "status=working");
   });

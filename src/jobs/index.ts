@@ -77,6 +77,8 @@ export {
   JobTargetDefinitionsResponseSchema,
   type KnowledgeIngestBatchSource,
   KnowledgeIngestBatchSourceSchema,
+  type KnowledgeIngestBatchSourceWithMessage,
+  KnowledgeIngestBatchSourceWithMessageSchema,
   type KnowledgeIngestFailedFileResult,
   KnowledgeIngestFailedFileResultSchema,
   type KnowledgeIngestFileResult,
