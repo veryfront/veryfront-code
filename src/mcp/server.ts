@@ -320,9 +320,9 @@ export class MCPServer {
         if (!authorized) return new Response("Unauthorized", { status: 401 });
       }
 
-      // Enforce request body size limit
+      // Enforce request body size limit (fast path via Content-Length header)
       const contentLength = request.headers.get("content-length");
-      if (contentLength && parseInt(contentLength, 10) > MAX_REQUEST_BODY_SIZE) {
+      if (contentLength && Number(contentLength) > MAX_REQUEST_BODY_SIZE) {
         return new Response(
           JSON.stringify({
             jsonrpc: "2.0",
