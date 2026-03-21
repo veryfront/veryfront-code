@@ -40,6 +40,10 @@ export const JobResultSchema = z
       files: z.array(KnowledgeIngestFileResultSchema),
     }),
     z.object({
+      kind: z.literal("value"),
+      value: z.unknown(),
+    }),
+    z.object({
       kind: z.literal("artifacts"),
       artifacts: z.array(z.unknown()),
     }),

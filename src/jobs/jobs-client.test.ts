@@ -261,6 +261,38 @@ describe("VeryfrontJobsClient", () => {
     assertEquals(headerValue(0, "Authorization"), "Bearer env-token");
   });
 
+  it("parses generic structured job values", async () => {
+    mockFetch([
+      jsonResponse(
+        makeJob({
+          result: {
+            kind: "value",
+            value: {
+              ok: true,
+              count: 3,
+            },
+          },
+        }),
+      ),
+    ]);
+
+    const client = new VeryfrontJobsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    const job = await client.get("11111111-1111-4111-8111-111111111111");
+
+    assertEquals(job.result, {
+      kind: "value",
+      value: {
+        ok: true,
+        count: 3,
+      },
+    });
+  });
+
   it("returns canonical job events", async () => {
     mockFetch([
       jsonResponse({
