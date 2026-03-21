@@ -468,6 +468,29 @@ describe("collectKnowledgeSources", () => {
     ]);
   });
 
+  it("rejects directory-style upload references in explicit source mode", async () => {
+    await assertRejects(
+      () =>
+        collectKnowledgeSources(
+          {
+            sources: ["uploads/"],
+            path: undefined,
+            all: false,
+            recursive: false,
+          },
+          {
+            client: createMockClient(),
+            projectSlug: "my-project",
+            downloadUploads: async () => {
+              throw new Error("should not download directory-like upload references");
+            },
+          },
+        ),
+      Error,
+      "Directory upload references require --path <prefix> --all: uploads/",
+    );
+  });
+
   it("skips hidden paths and ignored directories when walking local folders but keeps text/code files", async () => {
     const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-local-walk-" });
     const docsDir = join(tempDir, "docs");
@@ -683,6 +706,62 @@ describe("ingestResolvedSources", () => {
     );
 
     assertEquals(parserSlug, "report");
+  });
+
+  it("uses each local file path as the source reference for walked directories", async () => {
+    const results = await ingestResolvedSources(
+      [{
+        kind: "local",
+        input: "/workspace/contracts",
+        localPath: "/workspace/contracts/run_benchmark.py",
+      }],
+      {
+        sources: ["/workspace/contracts"],
+        path: undefined,
+        all: false,
+        recursive: true,
+        outputDir: "/workspace/knowledge",
+        knowledgePath: "knowledge",
+        description: undefined,
+        slug: undefined,
+        json: true,
+        quiet: false,
+        projectDir: undefined,
+        projectSlug: undefined,
+      },
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () => ({
+          success: true,
+          source_path: "/workspace/contracts/run_benchmark.py",
+          source_filename: "run_benchmark.py",
+          source_type: "txt",
+          slug: "contracts-run-benchmark",
+          sandbox_output_path: "/workspace/knowledge/run-benchmark.md",
+          suggested_project_path: "knowledge/run-benchmark.md",
+          description: "Parsed from run_benchmark.py",
+          title: "Run Benchmark",
+          summary: "Parsed as text.",
+          stats: { lines: 1 },
+          warnings: [],
+        }),
+        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+      },
+    );
+
+    assertEquals(results.ingested, [{
+      source: "/workspace/contracts/run_benchmark.py",
+      localSourcePath: "/workspace/contracts/run_benchmark.py",
+      outputPath: "/workspace/knowledge/run-benchmark.md",
+      remotePath: "knowledge/run-benchmark.md",
+      slug: "contracts-run-benchmark",
+      sourceType: "txt",
+      summary: "Parsed as text.",
+      stats: { lines: 1 },
+      warnings: [],
+    }]);
   });
 
   it("records parser failures and continues processing later sources", async () => {

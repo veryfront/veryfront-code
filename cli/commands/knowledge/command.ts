@@ -190,6 +190,18 @@ export function formatKnowledgeUploadSource(uploadPath: string): string {
     : `uploads/${normalizedPath}`;
 }
 
+function resolveExplicitUploadPath(inputPath: string): string {
+  const normalizedInput = normalizeKnowledgeInputPath(inputPath);
+  const displayInput = inputPath.replace(/\\/g, "/");
+  const uploadPath = normalizeProjectUploadPath(inputPath);
+  if (!uploadPath || normalizedInput.endsWith("/")) {
+    throw new Error(
+      `Directory upload references require --path <prefix> --all: ${displayInput}`,
+    );
+  }
+  return uploadPath;
+}
+
 export function isLikelyLocalPath(value: string): boolean {
   return value.startsWith("/") || value.startsWith("./") || value.startsWith("../") ||
     /^[A-Za-z]:[\\/]/.test(value);
@@ -342,7 +354,9 @@ async function collectLocalFiles(
 }
 
 function buildSourceReference(source: KnowledgeSource): string {
-  return source.kind === "upload" ? formatKnowledgeUploadSource(source.uploadPath) : source.input;
+  return source.kind === "upload"
+    ? formatKnowledgeUploadSource(source.uploadPath)
+    : source.localPath;
 }
 
 function buildSuggestedSlug(source: KnowledgeSource, index: number): string {
@@ -427,42 +441,51 @@ export async function runKnowledgeParser(input: {
   const scriptPath = `${tempDir}/ingest_document_to_knowledge.py`;
 
   try {
-    await Deno.writeTextFile(
-      inputJsonPath,
-      JSON.stringify({
-        file_path: input.filePath,
-        output_dir: input.outputDir,
-        description: input.description,
-        slug: input.slug,
-        source_reference: input.sourceReference,
-      }),
-    );
-    await Deno.writeTextFile(scriptPath, knowledgeIngestPythonSource);
-
-    let result: Deno.CommandOutput;
     try {
-      result = await new Deno.Command("python3", {
-        args: [scriptPath, "--input-json", inputJsonPath, "--output-json", outputJsonPath],
-        ...(input.env ? { env: input.env } : {}),
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
-    } catch (error) {
-      if (error instanceof Deno.errors.NotFound) {
-        throw new Error(
-          "knowledge ingest requires python3. Install python3 and the supported parser packages, or run the command inside the Veryfront sandbox.",
-        );
+      await Deno.writeTextFile(
+        inputJsonPath,
+        JSON.stringify({
+          file_path: input.filePath,
+          output_dir: input.outputDir,
+          description: input.description,
+          slug: input.slug,
+          source_reference: input.sourceReference,
+        }),
+      );
+      await Deno.writeTextFile(scriptPath, knowledgeIngestPythonSource);
+
+      let result: Deno.CommandOutput;
+      try {
+        result = await new Deno.Command("python3", {
+          args: [scriptPath, "--input-json", inputJsonPath, "--output-json", outputJsonPath],
+          ...(input.env ? { env: input.env } : {}),
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+      } catch (error) {
+        if (error instanceof Deno.errors.NotFound) {
+          throw new Error(
+            "python3 is required. Install python3 and the supported parser packages, or run the command inside the Veryfront sandbox.",
+          );
+        }
+        throw error;
       }
-      throw error;
-    }
 
-    if (result.code !== 0) {
-      const stderr = new TextDecoder().decode(result.stderr).trim();
-      throw new Error(`knowledge ingest parser failed${stderr ? `: ${stderr}` : ""}`);
-    }
+      if (result.code !== 0) {
+        const stderr = new TextDecoder().decode(result.stderr).trim();
+        throw new Error(stderr || "parser exited unsuccessfully");
+      }
 
-    const raw = await Deno.readTextFile(outputJsonPath);
-    return JSON.parse(raw) as KnowledgeParserResult;
+      const raw = await Deno.readTextFile(outputJsonPath);
+      return JSON.parse(raw) as KnowledgeParserResult;
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("knowledge ingest parser failed")) {
+        throw error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`knowledge ingest parser failed: ${message}`);
+    }
   } finally {
     await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
   }
@@ -500,7 +523,7 @@ export async function collectKnowledgeSources(
         throw new Error(`Local file not found: ${input}`);
       }
 
-      const uploadPath = normalizeProjectUploadPath(input);
+      const uploadPath = resolveExplicitUploadPath(input);
       const skippedUpload = classifySourceOrSkip({
         source: formatKnowledgeUploadSource(uploadPath),
       });

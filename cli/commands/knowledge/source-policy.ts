@@ -67,9 +67,6 @@ const TEXT_FALLBACK_FILENAMES = new Set([
 ]);
 
 const IGNORED_DIRECTORY_NAMES = new Set([
-  "build",
-  "coverage",
-  "dist",
   "node_modules",
 ]);
 
