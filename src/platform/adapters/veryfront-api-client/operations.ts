@@ -154,14 +154,13 @@ export class VeryfrontAPIOperations {
 
   async listBranchFiles(
     projectRef: string,
-    branchName = "main",
+    branchRef = "main",
     options: ListFilesOptions = {},
   ): Promise<FileListResult> {
     const params = buildListParams(options);
-    const url = `/projects/${encodeURIComponent(projectRef)}/branches/${
-      encodeURIComponent(branchName)
-    }/files?${params}`;
-    logger.debug("listBranchFiles", { projectRef, branchName, pattern: options.pattern });
+    params.set("branch", branchRef);
+    const url = `/projects/${encodeURIComponent(projectRef)}/files?${params}`;
+    logger.debug("listBranchFiles", { projectRef, branchRef, pattern: options.pattern });
 
     const raw = await this.request(url);
     const response = ListBranchFilesResponseSchema.parse(raw);
@@ -174,11 +173,11 @@ export class VeryfrontAPIOperations {
 
   async listAllBranchFiles(
     projectRef: string,
-    branchName = "main",
+    branchRef = "main",
     options: Omit<ListFilesOptions, "cursor"> = {},
   ): Promise<ProjectFile[]> {
     const allFiles = await listAllFiles((cursor) =>
-      this.listBranchFiles(projectRef, branchName, {
+      this.listBranchFiles(projectRef, branchRef, {
         ...options,
         cursor,
         limit: DEFAULT_PAGE_LIMIT,
@@ -187,21 +186,22 @@ export class VeryfrontAPIOperations {
 
     logger.debug("listAllBranchFiles DONE", {
       projectRef,
-      branchName,
+      branchRef,
       totalFiles: allFiles.length,
     });
 
     return allFiles;
   }
 
-  getBranchFile(projectRef: string, branchName: string, pathOrId: string): Promise<FileDetail> {
+  getBranchFile(projectRef: string, branchRef: string, pathOrId: string): Promise<FileDetail> {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
-        const url = `/projects/${encodeURIComponent(projectRef)}/branches/${
-          encodeURIComponent(branchName)
-        }/files/${encodeURIComponent(pathOrId)}`;
-        logger.debug("getBranchFile", { projectRef, branchName, pathOrId });
+        const params = new URLSearchParams({ branch: branchRef });
+        const url = `/projects/${encodeURIComponent(projectRef)}/files/${
+          encodeURIComponent(pathOrId)
+        }?${params}`;
+        logger.debug("getBranchFile", { projectRef, branchRef, pathOrId });
 
         const raw = await this.request(url);
         const response = BranchFileDetailSchema.parse(raw);
@@ -217,7 +217,7 @@ export class VeryfrontAPIOperations {
       {
         "api.operation": "getBranchFile",
         "api.project": projectRef,
-        "api.branch": branchName,
+        "api.branch": branchRef,
         "api.path": pathOrId,
       },
     );

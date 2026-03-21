@@ -179,13 +179,13 @@ export const API_ENDPOINTS = {
   },
   listBranchFiles: {
     method: "GET" as const,
-    path: "/projects/{projectRef}/branches/{branchName}/files",
-    description: "List files in a branch (draft/working copy)",
+    path: "/projects/{projectRef}/files?branch={branchRef}",
+    description: "List files for a branch ref or name (omit branch for main branch)",
   },
   getBranchFile: {
     method: "GET" as const,
-    path: "/projects/{projectRef}/branches/{branchName}/files/{pathOrId}",
-    description: "Get file from a branch by path or UUID",
+    path: "/projects/{projectRef}/files/{pathOrId}?branch={branchRef}",
+    description: "Get file from a branch ref or name by path or UUID",
   },
   listEnvironmentFiles: {
     method: "GET" as const,

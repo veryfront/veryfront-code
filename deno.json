@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.76",
+  "version": "0.1.77",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "exclude": [
@@ -114,6 +114,7 @@
     "#cli/shared/types": "./cli/shared/types.ts",
     "#cli/shared/constants": "./cli/shared/constants.ts",
     "#cli/shared/config": "./cli/shared/config.ts",
+    "#cli/shared/project-source-context": "./cli/shared/project-source-context.ts",
     "#cli/shared/slug": "./cli/shared/slug.ts",
     "#cli/shared/reserve-slug": "./cli/shared/reserve-slug.ts",
     "#cli/shared/server-startup": "./cli/shared/server-startup.ts",

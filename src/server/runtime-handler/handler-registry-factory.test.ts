@@ -82,7 +82,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     assertEquals(names.includes("NotFoundHandler"), true);
     assertEquals(names.includes("ApiHandlerWrapper"), true);
     assertEquals(names.includes("HMRHandler"), true);
-    assertEquals(names.includes("InternalWorkflowsListHandler"), true);
+    assertEquals(names.includes("InternalAgentsListHandler"), true);
   });
 
   it("returns handlers sorted by priority (lowest number = highest priority)", () => {
@@ -166,7 +166,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     const stats = registry.getStats();
 
     // Total count should remain the same
-    assertEquals(stats.totalHandlers, 34);
+    assertEquals(stats.totalHandlers, HANDLER_NAMES.length);
 
     // AuthHandler should still be the real one (not overridden)
     assertEquals(stats.handlerNames.includes("AuthHandler"), true);
