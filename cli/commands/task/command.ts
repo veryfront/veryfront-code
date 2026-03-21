@@ -9,6 +9,7 @@ import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import { sanitizeJobOutputForLogging } from "../../utils/sanitize-job-output.ts";
+import { writeJobResultIfConfigured } from "../../utils/write-job-result.ts";
 import type { TaskArgs } from "./handler.ts";
 
 export interface TaskOptions extends TaskArgs {}
@@ -94,6 +95,7 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
       if (result.success) {
         cliLogger.info(`Task completed in ${result.durationMs}ms`);
         if (result.result !== undefined) {
+          await writeJobResultIfConfigured(result.result);
           cliLogger.info(
             `Result: ${JSON.stringify(sanitizeJobOutputForLogging(result.result), null, 2)}`,
           );

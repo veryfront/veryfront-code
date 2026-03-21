@@ -9,6 +9,7 @@ import { downloadUploadToFile, listAllUploads, type UploadItem } from "../upload
 import { putRemoteFileFromLocal } from "../files/command.ts";
 import { knowledgeIngestPythonSource } from "./parser-source.ts";
 import { createJobUserLogger, type Logger, serverLogger } from "veryfront/utils";
+import { writeJobResultIfConfigured } from "../../utils/write-job-result.ts";
 
 const SUPPORTED_EXTENSIONS = new Set([
   ".pdf",
@@ -635,6 +636,8 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
             progress_current: results.length,
             progress_total: results.length,
           });
+
+          await writeJobResultIfConfigured(results);
 
           if (options.json) {
             printJson(results);
