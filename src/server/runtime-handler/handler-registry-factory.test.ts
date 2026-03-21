@@ -82,7 +82,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     assertEquals(names.includes("NotFoundHandler"), true);
     assertEquals(names.includes("ApiHandlerWrapper"), true);
     assertEquals(names.includes("HMRHandler"), true);
-    assertEquals(names.includes("InternalWorkflowsListHandler"), true);
+    assertEquals(names.includes("InternalAgentsListHandler"), true);
   });
 
   it("returns handlers sorted by priority (lowest number = highest priority)", () => {
@@ -166,7 +166,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     const stats = registry.getStats();
 
     // Total count should remain the same
-    assertEquals(stats.totalHandlers, 34);
+    assertEquals(stats.totalHandlers, HANDLER_NAMES.length);
 
     // AuthHandler should still be the real one (not overridden)
     assertEquals(stats.handlerNames.includes("AuthHandler"), true);
@@ -220,7 +220,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     assertEquals(authHandler, mockAuth as Handler);
     assertEquals(ssrHandler, mockSSR as Handler);
     assertEquals(healthHandler, mockHealth as Handler);
-    assertEquals(registry.getStats().totalHandlers, 34);
+    assertEquals(registry.getStats().totalHandlers, HANDLER_NAMES.length);
   });
 
   it("ignores overrides with non-existent handler names", () => {
@@ -234,7 +234,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
 
     // FakeHandler is not in the default list, so it should be ignored
     const stats = registry.getStats();
-    assertEquals(stats.totalHandlers, 34);
+    assertEquals(stats.totalHandlers, HANDLER_NAMES.length);
     assertEquals(stats.handlerNames.includes("FakeHandler"), false);
   });
 
@@ -243,7 +243,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
       overrides: {},
     });
 
-    assertEquals(registry.getStats().totalHandlers, 34);
+    assertEquals(registry.getStats().totalHandlers, HANDLER_NAMES.length);
   });
 
   it("works with debug mode enabled", () => {
@@ -251,7 +251,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
       debug: true,
     });
 
-    assertEquals(registry.getStats().totalHandlers, 34);
+    assertEquals(registry.getStats().totalHandlers, HANDLER_NAMES.length);
   });
 
   it("contains all security handler group", () => {

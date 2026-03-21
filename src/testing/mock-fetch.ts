@@ -17,7 +17,7 @@ export async function withMockFetch<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const prior = getFetchMockQueue().catch(() => undefined);
-  let release: (() => void) | null = null;
+  let release: (() => void) | undefined;
   const next = new Promise<void>((resolve) => {
     release = resolve;
   });
@@ -26,13 +26,22 @@ export async function withMockFetch<T>(
   await prior;
 
   const originalFetch = globalThis.fetch;
-  // @ts-ignore tests intentionally override the host fetch implementation
-  globalThis.fetch = mockFetch;
+  Object.defineProperty(globalThis, "fetch", {
+    value: mockFetch,
+    configurable: true,
+    writable: true,
+  });
 
   try {
     return await fn();
   } finally {
-    globalThis.fetch = originalFetch;
-    release?.();
+    Object.defineProperty(globalThis, "fetch", {
+      value: originalFetch,
+      configurable: true,
+      writable: true,
+    });
+    if (release) {
+      release();
+    }
   }
 }

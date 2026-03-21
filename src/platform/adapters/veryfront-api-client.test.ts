@@ -167,7 +167,7 @@ describe("VeryfrontApiClient", () => {
             );
           }
 
-          if (urlStr.includes("/branches/") && urlStr.includes("/files")) {
+          if (urlStr.includes("/projects/test-project/files?") && urlStr.includes("branch=main")) {
             page++;
 
             if (page === 1) {
@@ -273,7 +273,10 @@ describe("VeryfrontApiClient", () => {
             );
           }
 
-          if (urlStr.includes("/branches/") && urlStr.includes("/files/")) {
+          if (
+            urlStr.includes("/projects/test-project/files/test.ts?") &&
+            urlStr.includes("branch=main")
+          ) {
             return Promise.resolve(
               new Response(
                 JSON.stringify({
@@ -288,7 +291,7 @@ describe("VeryfrontApiClient", () => {
             );
           }
 
-          if (urlStr.includes("/branches/") && urlStr.includes("/files")) {
+          if (urlStr.includes("/projects/test-project/files?") && urlStr.includes("branch=main")) {
             return Promise.resolve(
               new Response(
                 JSON.stringify({

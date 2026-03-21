@@ -36,6 +36,7 @@ import { mcpHelp } from "../commands/mcp/command-help.ts";
 import { issuesHelp } from "../commands/issues/command-help.ts";
 import { startHelp } from "../commands/start/command-help.ts";
 import { taskHelp } from "../commands/task/command-help.ts";
+import { workflowHelp } from "../commands/workflow/command-help.ts";
 
 /**
  * Central registry of all command help definitions.
@@ -71,4 +72,5 @@ export const COMMANDS: CommandRegistry = {
   issues: issuesHelp,
   start: startHelp,
   task: taskHelp,
+  workflow: workflowHelp,
 };
