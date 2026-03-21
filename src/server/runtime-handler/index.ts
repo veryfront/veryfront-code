@@ -54,6 +54,7 @@ import { OpenAPIHandler } from "../handlers/request/openapi.handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs.handler.ts";
 import { InternalAgentsListHandler } from "../handlers/request/internal-agents-list.handler.ts";
 import { InternalTasksListHandler } from "../handlers/request/internal-tasks-list.handler.ts";
+import { InternalWorkflowsListHandler } from "../handlers/request/internal-workflows-list.handler.ts";
 import { AgentStreamHandler } from "../handlers/request/agent-stream.handler.ts";
 import { AgentRunResumeHandler } from "../handlers/request/agent-run-resume.handler.ts";
 import { AgentRunCancelHandler } from "../handlers/request/agent-run-cancel.handler.ts";
@@ -131,6 +132,7 @@ export const HANDLER_NAMES = [
   "OpenAPIDocsHandler",
   "InternalAgentsListHandler",
   "InternalTasksListHandler",
+  "InternalWorkflowsListHandler",
   "AgentStreamHandler",
   "AgentRunResumeHandler",
   "AgentRunCancelHandler",
@@ -186,6 +188,7 @@ const handlerFactories: Record<
   OpenAPIDocsHandler: () => new OpenAPIDocsHandler(),
   InternalAgentsListHandler: () => new InternalAgentsListHandler(),
   InternalTasksListHandler: () => new InternalTasksListHandler(),
+  InternalWorkflowsListHandler: () => new InternalWorkflowsListHandler(),
   AgentStreamHandler: () => new AgentStreamHandler(),
   AgentRunResumeHandler: () => new AgentRunResumeHandler(),
   AgentRunCancelHandler: () => new AgentRunCancelHandler(),
