@@ -755,6 +755,7 @@ describe("Proxy Handler", () => {
         if (pathname === "/auth/token") return createTokenResponse();
 
         if (pathname === "/me") {
+          assertEquals(req.headers.get("authorization"), `Bearer ${memberToken}`);
           return Response.json({ id: "user-123" });
         }
 
@@ -853,10 +854,16 @@ describe("Proxy Handler", () => {
     it("redirects to sign-in for protected domain when JWT token is forged", async () => {
       const forgedToken =
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJ1c2VyLTEyMyJ9.invalid-signature";
+      let currentUserLookupCount = 0;
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
         if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname === "/me") {
+          currentUserLookupCount += 1;
+          return Response.json({ id: "user-123" });
+        }
 
         if (pathname.startsWith("/projects/")) {
           return Response.json({
@@ -895,6 +902,7 @@ describe("Proxy Handler", () => {
           ctx.error?.redirectUrl,
           "https://veryfront.com/sign-in?from=%2Fpage",
         );
+        assertEquals(currentUserLookupCount, 0);
 
         await handler.close();
       } finally {

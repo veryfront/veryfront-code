@@ -40,6 +40,14 @@ interface CurrentUserResult {
   id?: string;
 }
 
+function getUrlHost(url: string): string | undefined {
+  try {
+    return new URL(url).host;
+  } catch {
+    return undefined;
+  }
+}
+
 async function lookupProjectByDomain(
   domain: string,
   apiBaseUrl: string,
@@ -106,11 +114,12 @@ async function lookupCurrentUserId(
   token: string,
   logger?: ProxyLogger,
 ): Promise<string | undefined> {
+  const url = `${apiBaseUrl}/me`;
+  const httpHost = getUrlHost(apiBaseUrl);
+
   return withSpan(
     ProxySpanNames.HTTP_CLIENT_FETCH,
     async () => {
-      const url = `${apiBaseUrl}/me`;
-
       const headers = new Headers({
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
@@ -121,10 +130,17 @@ async function lookupCurrentUserId(
         const response = await fetch(url, { headers });
         if (!response.ok) {
           await response.body?.cancel();
-          logger?.debug("Current user lookup was not authorized", {
-            status: response.status,
-            statusText: response.statusText,
-          });
+          if (response.status === 401 || response.status === 403) {
+            logger?.debug("Current user lookup was not authorized", {
+              status: response.status,
+              statusText: response.statusText,
+            });
+          } else {
+            logger?.warn("Current user lookup returned unexpected status", {
+              status: response.status,
+              statusText: response.statusText,
+            });
+          }
           return undefined;
         }
 
@@ -137,8 +153,8 @@ async function lookupCurrentUserId(
     },
     {
       "http.method": "GET",
-      "http.url": `${apiBaseUrl}/me`,
-      "http.host": new URL(apiBaseUrl).host,
+      "http.url": url,
+      "http.host": httpHost ?? apiBaseUrl,
     },
   );
 }
@@ -201,6 +217,7 @@ async function extractUserIdFromToken(
   token: string,
   apiBaseUrl: string,
   log?: ProxyLogger,
+  allowCurrentUserLookup = false,
 ): Promise<string | undefined> {
   const jwtSecret = getEnv("JWT_SECRET");
 
@@ -217,9 +234,11 @@ async function extractUserIdFromToken(
         error: error instanceof Error ? error.message : String(error),
       });
     }
-  } else {
+  } else if (allowCurrentUserLookup) {
     log?.debug("JWT_SECRET not configured — falling back to current user lookup");
   }
+
+  if (!allowCurrentUserLookup) return undefined;
 
   return lookupCurrentUserId(apiBaseUrl, token, log);
 }
@@ -338,6 +357,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     userToken: string | undefined,
     users: DomainLookupResult["users"],
     logContext: Record<string, unknown>,
+    allowCurrentUserLookup = false,
   ): Promise<{ status: number; message: string; redirectUrl?: string } | null> {
     if (!matchingEnv?.protected) return null;
 
@@ -355,6 +375,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       userToken,
       config.apiBaseUrl,
       logger,
+      allowCurrentUserLookup,
     );
     if (!userId) {
       const redirectUrl = makeAuthRedirectUrl(req);
@@ -384,6 +405,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     lookupKey: string,
     envMatcher: (env: NonNullable<DomainLookupResult["environments"]>[number]) => boolean,
     logContext: Record<string, unknown>,
+    allowCurrentUserLookup = false,
   ): Promise<
     | { projectId?: string; releaseId?: string; environmentId?: string }
     | { error: { status: number; message: string; redirectUrl?: string } }
@@ -399,6 +421,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       userToken,
       lookupResult.users,
       logContext,
+      allowCurrentUserLookup,
     );
     if (protectionError) return { error: protectionError };
 
@@ -507,6 +530,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           userToken,
           lookupResult.users,
           { domain: host },
+          false,
         );
         if (protectionError) {
           return makeErrorContext(
@@ -535,6 +559,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           projectSlug,
           (env) => env.name.toLowerCase() === targetEnv,
           { projectSlug },
+          false,
         );
 
         if ("error" in resolved) {
@@ -568,6 +593,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           projectSlug,
           (env) => env.name.toLowerCase() === "preview",
           { projectSlug },
+          true,
         );
 
         if ("error" in resolved) {
