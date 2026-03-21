@@ -40,7 +40,8 @@ const remoteJwksByUrl = new Map<string, ReturnType<typeof createRemoteJWKSet>>()
 
 function getApiJwks(apiBaseUrl: string, logger?: ProxyLogger) {
   try {
-    const jwksUrl = new URL("/.well-known/jwks.json", apiBaseUrl);
+    const normalizedBaseUrl = apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`;
+    const jwksUrl = new URL(".well-known/jwks.json", normalizedBaseUrl);
     const cacheKey = jwksUrl.toString();
     let jwks = remoteJwksByUrl.get(cacheKey);
 

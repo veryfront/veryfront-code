@@ -69,10 +69,10 @@ async function createRs256Jwt(userId: string): Promise<{
   };
 }
 
-function createHandler(port: number) {
+function createHandler(port: number, apiBasePath = "") {
   return createProxyHandler({
     config: {
-      apiBaseUrl: `http://127.0.0.1:${port}`,
+      apiBaseUrl: `http://127.0.0.1:${port}${apiBasePath}`,
       apiClientId: "test-client",
       apiClientSecret: "test-secret",
       previewApiClientId: "test-client",
@@ -837,6 +837,70 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.environmentId, "env-1");
         assertEquals(jwksRequestCount, 1);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("preserves a path-prefixed API base when resolving JWKS", async () => {
+      const { token: memberToken, jwks } = await createRs256Jwt("user-123");
+      let prefixedJwksRequestCount = 0;
+      let rootJwksRequestCount = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/api/auth/token") return createTokenResponse();
+
+        if (pathname === "/api/.well-known/jwks.json") {
+          prefixedJwksRequestCount += 1;
+          return Response.json(jwks);
+        }
+
+        if (pathname === "/.well-known/jwks.json") {
+          rootJwksRequestCount += 1;
+          return createNotFoundResponse();
+        }
+
+        if (pathname.startsWith("/api/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            users: [{ id: "user-123" }],
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port, "/api");
+
+        const req = new Request(
+          "http://protected-project.preview.veryfront.com/page",
+          {
+            headers: {
+              host: "protected-project.preview.veryfront.com",
+              cookie: `authToken=${memberToken}`,
+            },
+          },
+        );
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "protected-project");
+        assertEquals(ctx.environmentId, "env-1");
+        assertEquals(prefixedJwksRequestCount, 1);
+        assertEquals(rootJwksRequestCount, 0);
 
         await handler.close();
       } finally {
