@@ -184,10 +184,9 @@ export const KnowledgeIngestBatchSourceSchema = z.object({
   warning_count: z.number().int().nonnegative(),
 });
 
-export const KnowledgeIngestBatchSourceWithMessageSchema =
-  KnowledgeIngestBatchSourceSchema.extend({
-    message: z.string(),
-  });
+export const KnowledgeIngestBatchSourceWithMessageSchema = KnowledgeIngestBatchSourceSchema.extend({
+  message: z.string(),
+});
 
 export const JobBatchStatusCountsSchema = z.object({
   submitted: z.number().int().nonnegative(),

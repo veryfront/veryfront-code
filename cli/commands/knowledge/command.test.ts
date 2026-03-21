@@ -845,6 +845,48 @@ describe("ingestResolvedSources", () => {
     }]);
   });
 
+  it("classifies raw parser failures as parser errors", async () => {
+    const results = await ingestResolvedSources(
+      [
+        {
+          kind: "local",
+          input: "/workspace/contracts/broken.pdf",
+          localPath: "/workspace/contracts/broken.pdf",
+        },
+      ],
+      {
+        sources: ["/workspace/contracts/broken.pdf"],
+        path: undefined,
+        all: false,
+        recursive: false,
+        outputDir: "/workspace/knowledge",
+        knowledgePath: "knowledge",
+        description: undefined,
+        slug: undefined,
+        json: true,
+        quiet: false,
+        projectDir: undefined,
+        projectSlug: undefined,
+      },
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () => {
+          throw new Error("python3 is required. Install python3 first.");
+        },
+        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+      },
+    );
+
+    assertEquals(results.failed, [{
+      source: "/workspace/contracts/broken.pdf",
+      localSourcePath: "/workspace/contracts/broken.pdf",
+      reason: "parser_error",
+      message: "python3 is required. Install python3 first.",
+    }]);
+  });
+
   it("rejects a custom slug when more than one resolved source would be written", async () => {
     await assertRejects(
       () =>

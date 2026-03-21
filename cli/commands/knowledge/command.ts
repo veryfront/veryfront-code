@@ -14,6 +14,7 @@ import { classifyKnowledgeDirectoryPath, classifyKnowledgeSourcePath } from "./s
 import {
   buildKnowledgeIngestJobResult,
   type KnowledgeIngestFailedFileResult,
+  type KnowledgeIngestFailureReason,
   type KnowledgeIngestFileResult,
   type KnowledgeIngestSkippedFileResult,
 } from "./result.ts";
@@ -673,6 +674,28 @@ export async function ingestResolvedSources(
   const slugs = options.slug ? [options.slug] : ensureUniqueSlugs(sources);
   const ingested: KnowledgeIngestFileResult[] = [];
   const failed: KnowledgeIngestFailedFileResult[] = [];
+  const recordSourceFailure = (
+    source: KnowledgeSource,
+    sourceReference: string,
+    index: number,
+    message: string,
+    reason: KnowledgeIngestFailureReason,
+  ) => {
+    deps.eventLogger?.error("Knowledge source failed", {
+      phase: "file_failed",
+      progress_current: index + 1,
+      progress_total: sources.length,
+      source_name: buildKnowledgeSourceName(source),
+      error: message,
+    });
+
+    failed.push(createFailedKnowledgeSource({
+      source: sourceReference,
+      localSourcePath: source.localPath,
+      message,
+      reason,
+    }));
+  };
 
   for (const [index, source] of sources.entries()) {
     const sourceReference = buildSourceReference(source);
@@ -684,14 +707,22 @@ export async function ingestResolvedSources(
       source_name: buildKnowledgeSourceName(source),
     });
 
+    let parser: KnowledgeParserResult;
     try {
-      const parser = await deps.runParser({
+      parser = await deps.runParser({
         filePath: source.localPath,
         outputDir: deps.outputDir,
         description: options.description,
         slug: slugs[index],
         sourceReference,
       });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      recordSourceFailure(source, sourceReference, index, message, "parser_error");
+      continue;
+    }
+
+    try {
       const remotePath = deriveKnowledgeRemotePath(
         parser.sandbox_output_path,
         deps.outputDir,
@@ -729,24 +760,7 @@ export async function ingestResolvedSources(
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const reason = message.startsWith("knowledge ingest parser failed")
-        ? "parser_error"
-        : "upload_error";
-
-      deps.eventLogger?.error("Knowledge source failed", {
-        phase: "file_failed",
-        progress_current: index + 1,
-        progress_total: sources.length,
-        source_name: buildKnowledgeSourceName(source),
-        error: message,
-      });
-
-      failed.push(createFailedKnowledgeSource({
-        source: sourceReference,
-        localSourcePath: source.localPath,
-        message,
-        reason,
-      }));
+      recordSourceFailure(source, sourceReference, index, message, "upload_error");
     }
   }
 
