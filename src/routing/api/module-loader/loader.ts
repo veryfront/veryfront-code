@@ -16,6 +16,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isCompiledBinary } from "#veryfront/utils";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
+import { rewriteNpmImports } from "../../../transforms/npm-import-rewrites.ts";
 
 const logger = serverLogger.component("api");
 
@@ -805,64 +806,7 @@ async function rewriteExternalImports(
   }
 
   if (isDeno) {
-    const rewrites = [
-      { pattern: /from\s+["']ai["']/g, replacement: 'from "npm:ai@latest"' },
-      {
-        pattern: /from\s+["']@ai-sdk\/anthropic["']/g,
-        replacement: 'from "npm:@ai-sdk/anthropic@latest"',
-      },
-      {
-        pattern: /from\s+["']@ai-sdk\/openai["']/g,
-        replacement: 'from "npm:@ai-sdk/openai@latest"',
-      },
-      {
-        pattern: /from\s+["']@ai-sdk\/google["']/g,
-        replacement: 'from "npm:@ai-sdk/google@latest"',
-      },
-      {
-        pattern: /from\s+["']@ai-sdk\/mistral["']/g,
-        replacement: 'from "npm:@ai-sdk/mistral@latest"',
-      },
-      {
-        pattern: /from\s+["']@ai-sdk\/provider["']/g,
-        replacement: 'from "npm:@ai-sdk/provider@latest"',
-      },
-      {
-        pattern: /from\s+["']@ai-sdk\/provider-utils["']/g,
-        replacement: 'from "npm:@ai-sdk/provider-utils@latest"',
-      },
-      { pattern: /from\s+["']zod["']/g, replacement: 'from "npm:zod@latest"' },
-      { pattern: /import\s*\(\s*["']ai["']\s*\)/g, replacement: 'import("npm:ai@latest")' },
-      {
-        pattern: /import\s*\(\s*["']@ai-sdk\/anthropic["']\s*\)/g,
-        replacement: 'import("npm:@ai-sdk/anthropic@latest")',
-      },
-      {
-        pattern: /import\s*\(\s*["']@ai-sdk\/openai["']\s*\)/g,
-        replacement: 'import("npm:@ai-sdk/openai@latest")',
-      },
-      {
-        pattern: /import\s*\(\s*["']@ai-sdk\/google["']\s*\)/g,
-        replacement: 'import("npm:@ai-sdk/google@latest")',
-      },
-      {
-        pattern: /import\s*\(\s*["']@ai-sdk\/mistral["']\s*\)/g,
-        replacement: 'import("npm:@ai-sdk/mistral@latest")',
-      },
-      {
-        pattern: /import\s*\(\s*["']@ai-sdk\/provider["']\s*\)/g,
-        replacement: 'import("npm:@ai-sdk/provider@latest")',
-      },
-      {
-        pattern: /import\s*\(\s*["']@ai-sdk\/provider-utils["']\s*\)/g,
-        replacement: 'import("npm:@ai-sdk/provider-utils@latest")',
-      },
-      { pattern: /import\s*\(\s*["']zod["']\s*\)/g, replacement: 'import("npm:zod@latest")' },
-    ];
-
-    for (const { pattern, replacement } of rewrites) {
-      transformed = transformed.replace(pattern, replacement);
-    }
+    transformed = rewriteNpmImports(transformed);
 
     // Rewrite bare Node.js built-in imports to node: prefix for Deno compatibility.
     // npm packages often use require('fs') / from "fs" without the node: prefix.
