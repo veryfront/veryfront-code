@@ -3,8 +3,7 @@ import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { stop as stopEsbuild } from "esbuild";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
-import { deriveTaskId, discoverTasks, findTaskById } from "./discovery.ts";
-import { isTaskDefinition } from "./types.ts";
+import { discoverWorkflows, findWorkflowById } from "./workflow-discovery.ts";
 
 function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
   const normalize = (path: string): string => path.replace(/^\/project\/?/, "").replace(/^\/+/, "");
@@ -98,7 +97,7 @@ function createRuntimeAdapter(files: Record<string, string>): RuntimeAdapter {
   };
 }
 
-describe("task/discovery", () => {
+describe("workflow/discovery/workflow-discovery", () => {
   afterEach(() => {
     clearTranspileCache();
   });
@@ -107,103 +106,47 @@ describe("task/discovery", () => {
     await stopEsbuild();
   });
 
-  describe("deriveTaskId", () => {
-    it("strips the tasks directory prefix and extension", () => {
-      assertEquals(deriveTaskId("tasks/sync-data.ts", "tasks"), "sync-data");
-    });
-
-    it("handles a trailing slash in the tasks directory", () => {
-      assertEquals(deriveTaskId("tasks/sync-data.ts", "tasks/"), "sync-data");
-    });
-
-    it("handles nested file paths", () => {
-      assertEquals(deriveTaskId("tasks/reports/daily.ts", "tasks"), "reports/daily");
-    });
-
-    it("handles alternate script extensions", () => {
-      assertEquals(deriveTaskId("tasks/render.tsx", "tasks"), "render");
-      assertEquals(deriveTaskId("tasks/legacy.js", "tasks"), "legacy");
-      assertEquals(deriveTaskId("tasks/component.jsx", "tasks"), "component");
-    });
-
-    it("handles absolute project paths", () => {
-      assertEquals(deriveTaskId("/project/tasks/cleanup.ts", "/project/tasks"), "cleanup");
-    });
-
-    it("returns the input path when the prefix does not match", () => {
-      assertEquals(deriveTaskId("other/cleanup.ts", "tasks"), "other/cleanup");
-    });
-  });
-
-  describe("isTaskDefinition", () => {
-    it("accepts objects with a runnable export", () => {
-      assertEquals(isTaskDefinition({ run: () => {} }), true);
-      assertEquals(
-        isTaskDefinition({
-          name: "My Task",
-          description: "Does things",
-          run: async () => ({ ok: true }),
-        }),
-        true,
-      );
-    });
-
-    it("rejects non-task values", () => {
-      assertEquals(isTaskDefinition(null), false);
-      assertEquals(isTaskDefinition(undefined), false);
-      assertEquals(isTaskDefinition("not a task"), false);
-      assertEquals(isTaskDefinition(42), false);
-      assertEquals(isTaskDefinition({ name: "no run" }), false);
-      assertEquals(isTaskDefinition({ run: "not a function" }), false);
-    });
-  });
-
-  it("discovers default-exported tasks through the discovery module loader", async () => {
+  it("discovers workflow DSL exports through the discovery module loader", async () => {
     const adapter = createRuntimeAdapter({
-      "/project/tasks/ping.ts": [
-        'import { label } from "./shared.ts";',
-        "export default {",
-        "  name: label,",
-        "  schedulable: true,",
-        "  run() {",
-        "    return { ok: true };",
-        "  },",
-        "};",
+      "/project/app/workflows/ping.ts": [
+        'import { workflow } from "veryfront/workflow";',
+        "export default workflow({",
+        '  id: "ping",',
+        '  description: "Ping workflow",',
+        "  steps: [],",
+        "});",
       ].join("\n"),
-      "/project/tasks/shared.ts": 'export const label = "Ping task";',
     });
 
-    const result = await discoverTasks({
+    const result = await discoverWorkflows({
       projectDir: "/project",
       adapter,
       config: { fs: { type: "veryfront-api" } } as never,
     });
 
     assertEquals(result.errors, []);
-    assertEquals(result.tasks.map((task) => task.id), ["ping"]);
-    assertEquals(result.tasks[0]?.name, "Ping task");
+    assertEquals(result.workflows.map((workflow) => workflow.id), ["ping"]);
+    assertEquals(result.workflows[0]?.exportName, "default");
   });
 
-  it("finds a task by id through the discovery module loader", async () => {
+  it("finds workflows by id through the discovery module loader", async () => {
     const adapter = createRuntimeAdapter({
-      "/project/tasks/ping.ts": [
-        "export const pingTask = {",
-        '  name: "Ping task",',
-        "  run() {",
-        "    return { ok: true };",
-        "  },",
-        "};",
+      "/project/app/workflows/ping.ts": [
+        'import { workflow } from "veryfront/workflow";',
+        "export const pingWorkflow = workflow({",
+        '  id: "ping",',
+        "  steps: [],",
+        "});",
       ].join("\n"),
     });
 
-    const task = await findTaskById("ping", {
+    const workflow = await findWorkflowById("ping", {
       projectDir: "/project",
       adapter,
       config: { fs: { type: "veryfront-api" } } as never,
     });
 
-    assertEquals(task?.id, "ping");
-    assertEquals(task?.name, "Ping task");
-    assertEquals(task?.exportName, "pingTask");
+    assertEquals(workflow?.id, "ping");
+    assertEquals(workflow?.exportName, "pingWorkflow");
   });
 });
