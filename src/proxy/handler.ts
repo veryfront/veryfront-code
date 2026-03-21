@@ -6,7 +6,7 @@ import { cwd, getEnv } from "#veryfront/platform/compat/process.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
-import { jwtVerify } from "jose";
+import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from "jose";
 
 export const INTERNAL_PROXY_HEADERS = [
   "x-token",
@@ -34,6 +34,28 @@ interface DomainLookupResult {
     active_release_id?: string | null;
     protected?: boolean;
   }>;
+}
+
+const remoteJwksByUrl = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+
+function getApiJwks(apiBaseUrl: string, logger?: ProxyLogger) {
+  try {
+    const jwksUrl = new URL("/.well-known/jwks.json", apiBaseUrl);
+    const cacheKey = jwksUrl.toString();
+    let jwks = remoteJwksByUrl.get(cacheKey);
+
+    if (!jwks) {
+      jwks = createRemoteJWKSet(jwksUrl);
+      remoteJwksByUrl.set(cacheKey, jwks);
+    }
+
+    return jwks;
+  } catch (error) {
+    logger?.error("Invalid API base URL for JWKS lookup", error as Error, {
+      apiBaseUrl,
+    });
+    return undefined;
+  }
 }
 
 async function lookupProjectByDomain(
@@ -153,8 +175,42 @@ function extractUserToken(cookieHeader: string): string | undefined {
 
 async function extractUserIdFromToken(
   token: string,
+  apiBaseUrl: string,
   log?: ProxyLogger,
 ): Promise<string | undefined> {
+  let algorithm: string | undefined;
+
+  try {
+    algorithm = decodeProtectedHeader(token).alg;
+  } catch (error) {
+    log?.debug("Failed to decode JWT header", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+
+  if (algorithm === "RS256") {
+    const jwks = getApiJwks(apiBaseUrl, log);
+    if (!jwks) return undefined;
+
+    try {
+      const { payload } = await jwtVerify(token, jwks, {
+        algorithms: ["RS256"],
+      });
+      return (payload as { userId?: string }).userId;
+    } catch (error) {
+      log?.debug("RS256 JWT verification failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  }
+
+  if (algorithm !== "HS256") {
+    log?.debug("Unsupported JWT algorithm", { algorithm: algorithm ?? null });
+    return undefined;
+  }
+
   const jwtSecret = getEnv("JWT_SECRET");
 
   if (!jwtSecret) {
@@ -303,7 +359,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       return { status: 302, message: "Authentication required", redirectUrl };
     }
 
-    const userId = await extractUserIdFromToken(userToken, logger);
+    const userId = await extractUserIdFromToken(
+      userToken,
+      config.apiBaseUrl,
+      logger,
+    );
     if (!userId) {
       const redirectUrl = makeAuthRedirectUrl(req);
       logger?.info("Could not extract userId from token", {
