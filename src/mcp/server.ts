@@ -448,6 +448,7 @@ export class MCPServer {
       "Access-Control-Allow-Origin": matchedOrigin,
       "Access-Control-Allow-Methods": "POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization, X-End-User-Id, X-Project-Id",
+      "Vary": "Origin",
     };
   }
 

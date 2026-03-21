@@ -257,6 +257,7 @@ describe("mcp/server", () => {
 
       assertEquals(response.status, 204);
       assertEquals(response.headers.get("Access-Control-Allow-Origin"), "https://b.com");
+      assertEquals(response.headers.get("Vary"), "Origin");
     });
 
     it("returns no CORS headers when request Origin does not match", async () => {
