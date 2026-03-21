@@ -65,6 +65,7 @@ function makeJob(overrides: Record<string, unknown> = {}) {
     id: "11111111-1111-4111-8111-111111111111",
     project_id: "22222222-2222-4222-8222-222222222222",
     environment_id: null,
+    branch_id: null,
     cron_job_id: null,
     batch_id: null,
     name: "Ingest 1 file",
@@ -90,11 +91,23 @@ function makeJob(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeJobListItem(overrides: Record<string, unknown> = {}) {
+  const { failed_reason: _failedReason, result: _result, ...job } = makeJob();
+  return {
+    ...job,
+    kind: null,
+    failure_detail: null,
+    result_summary: null,
+    ...overrides,
+  };
+}
+
 function makeCronJob(overrides: Record<string, unknown> = {}) {
   return {
     id: "55555555-5555-4555-8555-555555555555",
     project_id: "22222222-2222-4222-8222-222222222222",
     environment_id: null,
+    branch_id: null,
     name: "Nightly ingest",
     status: "active",
     target: "task:knowledge-ingest",
@@ -189,7 +202,19 @@ describe("VeryfrontJobsClient", () => {
   it("lists jobs with filter query params", async () => {
     mockFetch([
       jsonResponse({
-        data: [makeJob()],
+        data: [
+          makeJobListItem({
+            kind: "knowledge_ingest",
+            result_summary: {
+              kind: "knowledge_ingest",
+              state: "partial_success",
+              requested_count: 3,
+              ingested_count: 2,
+              skipped_count: 1,
+              failed_count: 0,
+            },
+          }),
+        ],
         page_info: {
           self: null,
           first: null,
@@ -212,6 +237,16 @@ describe("VeryfrontJobsClient", () => {
     });
 
     assertEquals(response.data.length, 1);
+    assertEquals(response.data[0]?.kind, "knowledge_ingest");
+    assertEquals(response.data[0]?.result_summary, {
+      kind: "knowledge_ingest",
+      state: "partial_success",
+      requested_count: 3,
+      ingested_count: 2,
+      skipped_count: 1,
+      failed_count: 0,
+    });
+    assertEquals("failed_reason" in response.data[0]!, false);
     assertStringIncludes(call(0).url, "limit=50");
     assertStringIncludes(call(0).url, "status=working");
     assertStringIncludes(call(0).url, "batch_id=66666666-6666-4666-8666-666666666666");
@@ -220,7 +255,7 @@ describe("VeryfrontJobsClient", () => {
   it("prefers request-scoped auth and project context when explicit config is omitted", async () => {
     mockFetch([
       jsonResponse({
-        data: [makeJob()],
+        data: [makeJobListItem()],
         page_info: {
           self: null,
           first: null,
@@ -291,6 +326,98 @@ describe("VeryfrontJobsClient", () => {
         count: 3,
       },
     });
+  });
+
+  it("parses structured knowledge-ingest job detail results", async () => {
+    mockFetch([
+      jsonResponse(
+        makeJob({
+          kind: "knowledge_ingest",
+          result_summary: {
+            kind: "knowledge_ingest",
+            state: "partial_success",
+            requested_count: 3,
+            ingested_count: 1,
+            skipped_count: 1,
+            failed_count: 1,
+          },
+          result: {
+            kind: "knowledge_ingest",
+            version: 1,
+            metadata: {
+              requested_count: 3,
+              source_mode: "explicit_sources",
+              knowledge_path: "knowledge",
+            },
+            summary: {
+              requested_count: 3,
+              ingested_count: 1,
+              skipped_count: 1,
+              failed_count: 1,
+            },
+            ingested: [
+              {
+                source: "_knowledge-ingest/batch/a.pdf",
+                localSourcePath: "/workspace/uploads/a.pdf",
+                outputPath: "/tmp/a.md",
+                remotePath: "knowledge/a.md",
+                slug: "a",
+                sourceType: "pdf",
+                summary: "A",
+                stats: {},
+                warnings: [],
+              },
+            ],
+            skipped: [
+              {
+                source: "_knowledge-ingest/batch/b.exe",
+                localSourcePath: null,
+                reason: "unsupported_file_type",
+                message: "Unsupported file type: .exe",
+              },
+            ],
+            failed: [
+              {
+                source: "_knowledge-ingest/batch/c.pdf",
+                localSourcePath: "/workspace/uploads/c.pdf",
+                reason: "parser_error",
+                message: "PDF parser failed",
+              },
+            ],
+          },
+        }),
+      ),
+    ]);
+
+    const client = new VeryfrontJobsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    const job = await client.get("11111111-1111-4111-8111-111111111111");
+
+    assertEquals(job.kind, "knowledge_ingest");
+    assertEquals(job.result_summary, {
+      kind: "knowledge_ingest",
+      state: "partial_success",
+      requested_count: 3,
+      ingested_count: 1,
+      skipped_count: 1,
+      failed_count: 1,
+    });
+    assertEquals(job.result?.kind, "knowledge_ingest");
+    if (job.result?.kind !== "knowledge_ingest") {
+      throw new Error("Expected a knowledge_ingest result");
+    }
+    assertEquals(job.result.summary, {
+      requested_count: 3,
+      ingested_count: 1,
+      skipped_count: 1,
+      failed_count: 1,
+    });
+    assertEquals(job.result.skipped[0]?.reason, "unsupported_file_type");
+    assertEquals(job.result.failed[0]?.reason, "parser_error");
   });
 
   it("returns canonical job events", async () => {
@@ -378,7 +505,7 @@ describe("VeryfrontJobsClient", () => {
         result: null,
       }),
       jsonResponse({
-        data: [makeJob()],
+        data: [makeJobListItem()],
         page_info: {
           self: null,
           first: null,
