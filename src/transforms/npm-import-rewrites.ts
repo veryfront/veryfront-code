@@ -105,7 +105,7 @@ export function rewriteNpmImports(source: string): string {
 }
 
 /** Exported for testing */
-export { REWRITABLE_PACKAGES, buildRules };
+export { buildRules, REWRITABLE_PACKAGES };
 
 /** @internal Reset cached rules — only for testing */
 export function _resetCache(): void {
