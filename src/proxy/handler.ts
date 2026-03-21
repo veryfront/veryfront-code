@@ -36,6 +36,10 @@ interface DomainLookupResult {
   }>;
 }
 
+interface CurrentUserResult {
+  id?: string;
+}
+
 async function lookupProjectByDomain(
   domain: string,
   apiBaseUrl: string,
@@ -97,6 +101,48 @@ async function lookupProjectByDomain(
   );
 }
 
+async function lookupCurrentUserId(
+  apiBaseUrl: string,
+  token: string,
+  logger?: ProxyLogger,
+): Promise<string | undefined> {
+  return withSpan(
+    ProxySpanNames.HTTP_CLIENT_FETCH,
+    async () => {
+      const url = `${apiBaseUrl}/me`;
+
+      const headers = new Headers({
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      });
+      injectContext(headers);
+
+      try {
+        const response = await fetch(url, { headers });
+        if (!response.ok) {
+          await response.body?.cancel();
+          logger?.debug("Current user lookup was not authorized", {
+            status: response.status,
+            statusText: response.statusText,
+          });
+          return undefined;
+        }
+
+        const result = (await response.json()) as CurrentUserResult;
+        return typeof result.id === "string" && result.id ? result.id : undefined;
+      } catch (error) {
+        logger?.error("Current user lookup failed", error as Error);
+        return undefined;
+      }
+    },
+    {
+      "http.method": "GET",
+      "http.url": `${apiBaseUrl}/me`,
+      "http.host": new URL(apiBaseUrl).host,
+    },
+  );
+}
+
 export interface ProxyConfig {
   apiBaseUrl: string;
   apiClientId: string;
@@ -153,27 +199,29 @@ function extractUserToken(cookieHeader: string): string | undefined {
 
 async function extractUserIdFromToken(
   token: string,
+  apiBaseUrl: string,
   log?: ProxyLogger,
 ): Promise<string | undefined> {
   const jwtSecret = getEnv("JWT_SECRET");
 
-  if (!jwtSecret) {
-    log?.warn("JWT_SECRET not configured — cannot verify user token");
-    return undefined;
+  if (jwtSecret) {
+    try {
+      const secret = new TextEncoder().encode(jwtSecret);
+      const { payload } = await jwtVerify(token, secret, {
+        algorithms: ["HS256"],
+      });
+      const userId = (payload as { userId?: string }).userId;
+      if (userId) return userId;
+    } catch (error) {
+      log?.debug("JWT verification failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  } else {
+    log?.debug("JWT_SECRET not configured — falling back to current user lookup");
   }
 
-  try {
-    const secret = new TextEncoder().encode(jwtSecret);
-    const { payload } = await jwtVerify(token, secret, {
-      algorithms: ["HS256"],
-    });
-    return (payload as { userId?: string }).userId;
-  } catch (error) {
-    log?.debug("JWT verification failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return undefined;
-  }
+  return lookupCurrentUserId(apiBaseUrl, token, log);
 }
 
 function isProjectMember(
@@ -303,7 +351,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       return { status: 302, message: "Authentication required", redirectUrl };
     }
 
-    const userId = await extractUserIdFromToken(userToken, logger);
+    const userId = await extractUserIdFromToken(
+      userToken,
+      config.apiBaseUrl,
+      logger,
+    );
     if (!userId) {
       const redirectUrl = makeAuthRedirectUrl(req);
       logger?.info("Could not extract userId from token", {
