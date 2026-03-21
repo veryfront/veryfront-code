@@ -75,7 +75,7 @@ export class BareStrategy implements ImportRewriteStrategy {
       return { specifier: null };
     }
 
-    let packageName = parsed.packageName;
+    const packageName = parsed.packageName;
     let version = parsed.version ?? undefined;
     const subpath = parsed.subpath ?? undefined;
 
