@@ -66,10 +66,15 @@ function buildRules(importMap: Record<string, string>): RewriteRule[] {
 }
 
 function loadImportMapSync(): Record<string, string> {
-  const denoJsonPath = join(cwd(), "deno.json");
-  const content = Deno.readTextFileSync(denoJsonPath);
-  const config = JSON.parse(content);
-  return config.imports ?? {};
+  try {
+    const denoJsonPath = join(cwd(), "deno.json");
+    const content = Deno.readTextFileSync(denoJsonPath);
+    const config = JSON.parse(content);
+    return config.imports ?? {};
+  } catch {
+    // deno.json may not exist (e.g. compiled binary running in user project dir)
+    return {};
+  }
 }
 
 /**
@@ -101,3 +106,8 @@ export function rewriteNpmImports(source: string): string {
 
 /** Exported for testing */
 export { REWRITABLE_PACKAGES, buildRules };
+
+/** @internal Reset cached rules — only for testing */
+export function _resetCache(): void {
+  cachedRules = undefined;
+}

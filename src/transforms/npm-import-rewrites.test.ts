@@ -1,6 +1,12 @@
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { buildRules, REWRITABLE_PACKAGES, rewriteNpmImports } from "./npm-import-rewrites.ts";
+import {
+  _resetCache,
+  buildRules,
+  getNpmRewriteRules,
+  REWRITABLE_PACKAGES,
+  rewriteNpmImports,
+} from "./npm-import-rewrites.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 
@@ -72,6 +78,29 @@ describe("npm-import-rewrites", () => {
       const input = 'import { foo } from "some-other-package"';
       const result = rewriteNpmImports(input);
       assertEquals(result, input);
+    });
+  });
+
+  describe("missing deno.json fallback", () => {
+    it("returns no rules when deno.json is missing", () => {
+      const originalCwd = Deno.cwd();
+      const tmpDir = Deno.makeTempDirSync();
+      try {
+        // Move to a directory without deno.json
+        Deno.chdir(tmpDir);
+        _resetCache();
+
+        const rules = getNpmRewriteRules();
+        assertEquals(rules.length, 0);
+
+        // rewriteNpmImports should be a no-op
+        const input = 'import { generateText } from "ai"';
+        assertEquals(rewriteNpmImports(input), input);
+      } finally {
+        Deno.chdir(originalCwd);
+        _resetCache();
+        Deno.removeSync(tmpDir);
+      }
     });
   });
 });
