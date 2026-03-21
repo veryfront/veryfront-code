@@ -4,7 +4,7 @@ import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { type TransformOptions, transformToESM } from "#veryfront/transforms/esm-transform.ts";
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger, VERSION } from "#veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
 import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "#veryfront/security";
@@ -79,6 +79,10 @@ export default {};
     `export default {};`,
   ].join("\n") + "\n",
   "_dnt.polyfills": `export default {};\n`,
+  // Deno import-map alias stub for browser/HTTP-served framework modules.
+  // Must be a JS module (not JSON) because esbuild strips `with { type: "json" }`
+  // at es2020 target, and browsers reject JSON MIME type without the assertion.
+  "_veryfront/_deno-config": `export default ${JSON.stringify({ version: VERSION })};\n`,
 };
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
@@ -447,6 +451,7 @@ async function findSourceFile(
 ): Promise<FindSourceFileResult | null> {
   // Extensions including .src for compiled binary embedded sources
   const extensions = [
+    ".json",
     ".tsx.src",
     ".ts.src",
     ".jsx.src",
@@ -465,7 +470,7 @@ async function findSourceFile(
 
   const hasKnownExt = extensions.some((ext) => basePath.endsWith(ext));
   const rawBasePathWithoutExt = hasKnownExt
-    ? basePath.replace(/\.(tsx|ts|jsx|js|mdx|md)(\.src)?$/, "")
+    ? basePath.replace(/\.(json|tsx|ts|jsx|js|mdx|md)(\.src)?$/, "")
     : basePath;
   let basePathWithoutExt = rawBasePathWithoutExt.replace(/^\/+/, "");
   if (basePathWithoutExt.startsWith("_vf_modules/")) {
@@ -494,7 +499,7 @@ async function findSourceFile(
       basePath: basePathWithoutExt,
     });
     return {
-      path: `embedded:${basePathWithoutExt}`,
+      path: `embedded:${basePath}`,
       isFrameworkFile: true,
       embeddedContent,
     };
@@ -512,19 +517,23 @@ async function findSourceFile(
         ? basePathWithoutExt.slice(prefix.length)
         : basePathWithoutExt;
 
-      for (const ext of extensions) {
-        const frameworkPath = join(frameworkDir, pathWithinFramework + ext);
-        try {
-          const stat = await platformFs.stat(frameworkPath);
-          if (stat.isFile) {
-            logger.debug(`Found framework ${label} file`, {
-              basePath: basePathWithoutExt,
-              resolvedPath: frameworkPath,
-            });
-            return { path: frameworkPath, isFrameworkFile: true };
+      // Try direct file match first, then index file fallback
+      const candidates = [pathWithinFramework, `${pathWithinFramework}/index`];
+      for (const candidate of candidates) {
+        for (const ext of extensions) {
+          const frameworkPath = join(frameworkDir, candidate + ext);
+          try {
+            const stat = await platformFs.stat(frameworkPath);
+            if (stat.isFile) {
+              logger.debug(`Found framework ${label} file`, {
+                basePath: basePathWithoutExt,
+                resolvedPath: frameworkPath,
+              });
+              return { path: frameworkPath, isFrameworkFile: true };
+            }
+          } catch (_) {
+            /* expected: file may not exist at this extension */
           }
-        } catch (_) {
-          /* expected: file may not exist at this extension */
         }
       }
     }

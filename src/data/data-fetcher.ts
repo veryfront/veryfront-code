@@ -1,10 +1,21 @@
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
-import { ServerDataFetcher } from "./server-data-fetcher.ts";
+import { ServerDataFetcher, type ServerDataFetchOptions } from "./server-data-fetcher.ts";
 import { StaticDataFetcher } from "./static-data-fetcher.ts";
 import { StaticPathsFetcher } from "./static-paths-fetcher.ts";
 import type { DataContext, DataResult, PageWithData, StaticPathsResult } from "./types.ts";
+
+/**
+ * Options for isolated data fetching. Passed through to ServerDataFetcher
+ * when worker isolation is enabled.
+ */
+export interface FetchDataOptions {
+  /** Absolute path to the module containing getServerData */
+  modulePath?: string;
+  /** Project directory for worker scoping */
+  projectDir?: string;
+}
 
 export class DataFetcher {
   private cacheManager: CacheManager;
@@ -23,6 +34,7 @@ export class DataFetcher {
     pageModule: PageWithData,
     context: DataContext,
     mode: "development" | "production" = "development",
+    options?: FetchDataOptions,
   ): Promise<DataResult> {
     const preferServerData = mode === "development" || !pageModule.getStaticData;
     const useServer = preferServerData && !!pageModule.getServerData;
@@ -34,10 +46,14 @@ export class DataFetcher {
       ? "static"
       : "none";
 
+    const isolationOptions: ServerDataFetchOptions | undefined = options
+      ? { modulePath: options.modulePath, projectDir: options.projectDir }
+      : undefined;
+
     return withSpan(
       SpanNames.DATA_FETCH,
       () => {
-        if (useServer) return this.serverFetcher.fetch(pageModule, context);
+        if (useServer) return this.serverFetcher.fetch(pageModule, context, isolationOptions);
         if (useStatic) return this.staticFetcher.fetch(pageModule, context);
         return Promise.resolve({ props: {} });
       },

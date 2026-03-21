@@ -4,6 +4,7 @@ import {
   __registerTraceContextGetter,
   __resetLoggerConfigForTests,
   __resetTraceContextGetterForTests,
+  createJobUserLogger,
   getBaseLogger,
   getDefaultLevel,
   type LogEntry,
@@ -250,6 +251,42 @@ describe("logger", () => {
           assertEquals(entry.veryfrontVersion, VERSION);
           assertEquals(entry.message, "Test message");
           assertEquals(entry.context?.extra, "data");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("should surface job user log routing fields as top-level JSON fields", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const jobLogger = createJobUserLogger(serverLogger, {
+            projectId: "project-123",
+            jobId: "job-456",
+            batchId: "batch-789",
+            jobTarget: "task:knowledge-ingest",
+            task: "knowledge-ingest",
+          });
+
+          jobLogger.info("Knowledge source ingested", {
+            phase: "file_completed",
+            progress_current: 3,
+            progress_total: 10,
+          });
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.project_id, "project-123");
+          assertEquals(entry.job_id, "job-456");
+          assertEquals(entry.batch_id, "batch-789");
+          assertEquals(entry.job_target, "task:knowledge-ingest");
+          assertEquals(entry.task, "knowledge-ingest");
+          assertEquals(entry.event_kind, "job_user_log");
+          assertEquals(entry.user_visible, "true");
+          assertEquals(entry.context?.phase, "file_completed");
+          assertEquals(entry.context?.progress_current, 3);
+          assertEquals(entry.context?.progress_total, 10);
         });
       } finally {
         restore();

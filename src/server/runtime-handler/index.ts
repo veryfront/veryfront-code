@@ -19,6 +19,7 @@ import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { UNKNOWN_ERROR } from "#veryfront/errors/error-registry.ts";
 import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
+import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 
 // Re-export is at the bottom of the file
@@ -51,6 +52,11 @@ import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
 import { MarkdownPreviewHandler } from "../handlers/preview/markdown-preview.handler.ts";
 import { OpenAPIHandler } from "../handlers/request/openapi.handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs.handler.ts";
+import { InternalAgentsListHandler } from "../handlers/request/internal-agents-list.handler.ts";
+import { AgentStreamHandler } from "../handlers/request/agent-stream.handler.ts";
+import { AgentRunResumeHandler } from "../handlers/request/agent-run-resume.handler.ts";
+import { AgentRunCancelHandler } from "../handlers/request/agent-run-cancel.handler.ts";
+import { ChannelInvokeHandler } from "../handlers/request/channel-invoke.handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
 
@@ -106,6 +112,136 @@ export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environmen
 const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("runtime-handler");
+
+/** Handler names in registration order. */
+export const HANDLER_NAMES = [
+  "AuthHandler",
+  "CsrfHandler",
+  "HMRHandler",
+  "CorsHandler",
+  "HealthHandler",
+  "MetricsHandler",
+  "MemoryDebugHandler",
+  "ClientLogHandler",
+  "DevEndpointsHandler",
+  "StylesCSSHandler",
+  "DebugContextHandler",
+  "OpenAPIHandler",
+  "OpenAPIDocsHandler",
+  "InternalAgentsListHandler",
+  "AgentStreamHandler",
+  "AgentRunResumeHandler",
+  "AgentRunCancelHandler",
+  "ChannelInvokeHandler",
+  "DevDashboardHandler",
+  "ProjectsHandler",
+  "StudioBridgeModulesHandler",
+  "CSSHandler",
+  "DevFileHandler",
+  "SnippetHandler",
+  "StaticHandler",
+  "LibModulesHandler",
+  "RSCHandler",
+  "ModuleHandler",
+  "ApiHandlerWrapper",
+  "MarkdownPreviewHandler",
+  "SSRHandler",
+  "NotFoundHandler",
+] as const;
+
+/** Union of all registered handler names. */
+export type HandlerName = (typeof HANDLER_NAMES)[number];
+
+/**
+ * Dependencies for handler registry creation.
+ * All fields are optional — when omitted, the real handler implementation is used.
+ * This allows tests to inject mock handlers for specific slots.
+ */
+export interface HandlerDependencies {
+  /** Override any handler by its typed name. */
+  overrides?: Partial<Record<HandlerName, Handler>>;
+  /** When true, log handler registration details. */
+  debug?: boolean;
+}
+
+/** Factory for each handler. Only called when no override is provided (lazy instantiation). */
+const handlerFactories: Record<
+  HandlerName,
+  (projectDir: string, adapter: RuntimeAdapter) => Handler
+> = {
+  AuthHandler: () => new AuthHandler(),
+  CsrfHandler: () => new CsrfHandler(),
+  HMRHandler: () => new HMRHandler(),
+  CorsHandler: () => new CorsHandler(),
+  HealthHandler: () => new HealthHandler(),
+  MetricsHandler: () => new MetricsHandler(),
+  MemoryDebugHandler: () => new MemoryDebugHandler(),
+  ClientLogHandler: () => new ClientLogHandler(),
+  DevEndpointsHandler: () => new DevEndpointsHandler(),
+  StylesCSSHandler: () => new StylesCSSHandler(),
+  DebugContextHandler: () => new DebugContextHandler(),
+  OpenAPIHandler: () => new OpenAPIHandler(),
+  OpenAPIDocsHandler: () => new OpenAPIDocsHandler(),
+  InternalAgentsListHandler: () => new InternalAgentsListHandler(),
+  AgentStreamHandler: () => new AgentStreamHandler(),
+  AgentRunResumeHandler: () => new AgentRunResumeHandler(),
+  AgentRunCancelHandler: () => new AgentRunCancelHandler(),
+  ChannelInvokeHandler: () => new ChannelInvokeHandler(),
+  DevDashboardHandler: () => new DevDashboardHandler(),
+  ProjectsHandler: () => new ProjectsHandler(),
+  StudioBridgeModulesHandler: () => new StudioBridgeModulesHandler(),
+  CSSHandler: () => new CSSHandler(),
+  DevFileHandler: () => new DevFileHandler(),
+  SnippetHandler: () => new SnippetHandler(),
+  StaticHandler: () => new StaticHandler(),
+  LibModulesHandler: () => new LibModulesHandler(),
+  RSCHandler: () => new RSCHandler(),
+  ModuleHandler: () => new ModuleHandler(),
+  ApiHandlerWrapper: (projectDir, adapter) => new ApiHandlerWrapper(projectDir, adapter),
+  MarkdownPreviewHandler: () => new MarkdownPreviewHandler(),
+  SSRHandler: () => new SSRHandler(),
+  NotFoundHandler: () => new NotFoundHandler(),
+};
+
+/**
+ * Creates a RouteRegistry populated with the standard handler chain.
+ *
+ * Handlers are instantiated lazily — overridden slots skip construction
+ * of the default handler entirely.
+ *
+ * @param projectDir - Root project directory
+ * @param adapter - Runtime adapter for environment access
+ * @param deps - Optional dependency overrides for testing
+ * @returns Object containing the registry and the api handler (for initialization)
+ */
+export function createHandlerRegistry(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  deps: HandlerDependencies = {},
+): { registry: RouteRegistry; apiHandler: ApiHandlerWrapper } {
+  const registry = new RouteRegistry({
+    debug: deps.debug,
+    enableMetrics: true,
+  });
+
+  const overrides = deps.overrides ?? {};
+
+  // Create the ApiHandlerWrapper first — it's special because callers need
+  // the returned instance for initialization regardless of overrides.
+  const apiHandler = overrides.ApiHandlerWrapper
+    ? (overrides.ApiHandlerWrapper as ApiHandlerWrapper)
+    : new ApiHandlerWrapper(projectDir, adapter);
+
+  const handlers = HANDLER_NAMES.map((name) => {
+    if (name === "ApiHandlerWrapper") return apiHandler;
+    if (overrides[name]) return overrides[name]!;
+    return handlerFactories[name](projectDir, adapter);
+  });
+
+  registry.registerAll(handlers);
+
+  return { registry, apiHandler };
+}
 
 export interface RuntimeHandlerOptions {
   projectDir: string;
@@ -181,42 +317,9 @@ export function createVeryfrontHandler(
     }
   })();
 
-  const registry = new RouteRegistry({
+  const { registry, apiHandler } = createHandlerRegistry(projectDir, adapter, {
     debug: opts.debug,
-    enableMetrics: true,
   });
-
-  const apiHandler = new ApiHandlerWrapper(projectDir, adapter);
-
-  registry.registerAll([
-    new AuthHandler(),
-    new CsrfHandler(),
-    new HMRHandler(),
-    new CorsHandler(),
-    new HealthHandler(),
-    new MetricsHandler(),
-    new MemoryDebugHandler(),
-    new ClientLogHandler(),
-    new DevEndpointsHandler(),
-    new StylesCSSHandler(),
-    new DebugContextHandler(),
-    new OpenAPIHandler(),
-    new OpenAPIDocsHandler(),
-    new DevDashboardHandler(),
-    new ProjectsHandler(),
-    new StudioBridgeModulesHandler(),
-    new CSSHandler(),
-    new DevFileHandler(),
-    new SnippetHandler(),
-    new StaticHandler(),
-    new LibModulesHandler(),
-    new RSCHandler(),
-    new ModuleHandler(),
-    apiHandler,
-    new MarkdownPreviewHandler(),
-    new SSRHandler(),
-    new NotFoundHandler(),
-  ]);
 
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
 

@@ -194,6 +194,7 @@ export class AgentRuntime {
     input: string | Message[],
     context?: Record<string, unknown>,
     modelOverride?: string,
+    maxOutputTokensOverride?: number,
   ): Promise<AgentResponse> {
     const requestedModel = resolveConfiguredAgentModel(modelOverride || this.config.model);
     const resolvedModelString = maybeUpgradeLocalModel(requestedModel);
@@ -221,7 +222,13 @@ export class AgentRuntime {
       const chain = new MiddlewareChain(this.config.middleware);
       return chain.execute(
         agentContext,
-        () => this.executeAgentLoop(systemPrompt, messages, resolvedModelString),
+        () =>
+          this.executeAgentLoop(
+            systemPrompt,
+            messages,
+            resolvedModelString,
+            maxOutputTokensOverride,
+          ),
       );
     });
   }
@@ -236,8 +243,10 @@ export class AgentRuntime {
     callbacks?: {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
+      onFinish?: (response: AgentResponse) => void;
     },
     modelOverride?: string,
+    maxOutputTokensOverride?: number,
   ): Promise<ReadableStream<Uint8Array>> {
     const requestedModel = resolveConfiguredAgentModel(modelOverride || this.config.model);
     // Auto-upgrade local/* to a cloud provider when API keys are available.
@@ -290,7 +299,7 @@ export class AgentRuntime {
           });
           sendSSE(controller, encoder, { type: "text-start", id: textPartId });
 
-          await this.executeAgentLoopStreaming(
+          const response = await this.executeAgentLoopStreaming(
             systemPrompt,
             memoryMessages,
             controller,
@@ -300,16 +309,19 @@ export class AgentRuntime {
             toolContext,
             resolvedModelString,
             languageModel,
+            maxOutputTokensOverride,
           );
+          callbacks?.onFinish?.(response);
 
           sendSSE(controller, encoder, { type: "text-end", id: textPartId });
           sendSSE(controller, encoder, { type: "message-finish" });
           controller.close();
         } catch (error) {
           this.status = "error";
+          logger.error("Agent stream error", { error });
           sendSSE(controller, encoder, {
             type: "error",
-            error: error instanceof Error ? error.message : String(error),
+            error: "An internal error occurred",
           });
           controller.close();
         }
@@ -324,6 +336,7 @@ export class AgentRuntime {
     systemPrompt: string,
     messages: Message[],
     modelString?: string,
+    maxOutputTokensOverride?: number,
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
@@ -372,7 +385,7 @@ export class AgentRuntime {
             system: systemPrompt,
             messages: convertToModelMessages(currentMessages),
             tools: convertToolsToAISDK(tools),
-            maxOutputTokens: this.config.memory?.maxTokens ?? DEFAULT_MAX_TOKENS,
+            maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
             temperature: DEFAULT_TEMPERATURE,
           });
         });
@@ -468,7 +481,10 @@ export class AgentRuntime {
               toolCall.status = "executing";
               const startTime = Date.now();
 
-              const result = await executeTool(tc.toolName, toolCall.args, { agentId: this.id });
+              const result = await executeTool(tc.toolName, toolCall.args, {
+                agentId: this.id,
+                toolCallId: tc.toolCallId,
+              });
 
               toolCall.status = "completed";
               toolCall.result = result;
@@ -550,11 +566,13 @@ export class AgentRuntime {
     callbacks?: {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
+      onFinish?: (response: AgentResponse) => void;
     },
     textPartId?: string,
     toolContext?: Record<string, unknown>,
     modelString?: string,
     resolvedModel?: LanguageModel,
+    maxOutputTokensOverride?: number,
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
     const maxSteps = this.computeMaxSteps(maxAgentSteps);
@@ -578,6 +596,7 @@ export class AgentRuntime {
 
     // Request-scoped skill policy (not class-level mutable state)
     let activeSkillPolicy: string[] | undefined;
+    let finalFinishReason: string | undefined;
 
     for (let step = 0; step < maxSteps; step++) {
       sendSSE(controller, encoder, { type: "step-start" });
@@ -596,7 +615,7 @@ export class AgentRuntime {
         system: systemPrompt,
         messages: convertToModelMessages(currentMessages),
         tools: convertToolsToAISDK(tools),
-        maxOutputTokens: this.config.memory?.maxTokens ?? DEFAULT_MAX_TOKENS,
+        maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
         temperature: DEFAULT_TEMPERATURE,
       });
 
@@ -605,6 +624,7 @@ export class AgentRuntime {
         onChunk: callbacks?.onChunk,
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
       });
+      finalFinishReason = state.finishReason ?? finalFinishReason;
 
       const streamParts: MessagePart[] = [];
       if (state.accumulatedText) streamParts.push({ type: "text", text: state.accumulatedText });
@@ -695,6 +715,7 @@ export class AgentRuntime {
 
           const result = await executeTool(tc.name, toolCall.args, {
             agentId: this.id,
+            toolCallId: tc.id,
             ...toolContext,
           });
 
@@ -756,6 +777,7 @@ export class AgentRuntime {
       toolCalls,
       status: "completed",
       usage: totalUsage,
+      metadata: finalFinishReason ? { finishReason: finalFinishReason } : undefined,
     };
   }
 
@@ -815,6 +837,18 @@ export class AgentRuntime {
   private computeMaxSteps(platformLimit: number): number {
     const edgeMaxSteps = this.config.edge?.enabled ? this.config.edge.maxSteps : undefined;
     return getMaxSteps(this.config.maxSteps, edgeMaxSteps, platformLimit);
+  }
+
+  private resolveMaxOutputTokens(maxOutputTokensOverride?: number): number {
+    if (
+      typeof maxOutputTokensOverride === "number" &&
+      Number.isFinite(maxOutputTokensOverride) &&
+      maxOutputTokensOverride > 0
+    ) {
+      return Math.floor(maxOutputTokensOverride);
+    }
+
+    return this.config.memory?.maxTokens ?? DEFAULT_MAX_TOKENS;
   }
 
   /**

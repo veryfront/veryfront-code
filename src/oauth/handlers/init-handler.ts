@@ -76,16 +76,23 @@ export interface OAuthStatusHandlerOptions {
 
   /** EnvReader for dynamic env vars (defaults to getEnv) */
   envReader?: EnvReader;
+
+  /** Optional authentication check — return true if the request is authenticated */
+  isAuthenticated?: (req: Request) => boolean | Promise<boolean>;
 }
 
 export function createOAuthStatusHandler(
   config: OAuthServiceConfig,
   options: OAuthStatusHandlerOptions = {},
-): () => Promise<Response> {
+): (req: Request) => Promise<Response> {
   const tokenStore = options.tokenStore ?? memoryTokenStore;
   const envReader = options.envReader ?? getEnv;
 
-  return async function handler(): Promise<Response> {
+  return async function handler(req: Request): Promise<Response> {
+    if (options.isAuthenticated && !(await options.isAuthenticated(req))) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const tokens = await tokenStore.getTokens(config.serviceId);
 
     const isConnected = !!tokens?.accessToken;
@@ -105,11 +112,19 @@ export function createOAuthStatusHandler(
 
 export function createOAuthDisconnectHandler(
   config: OAuthServiceConfig,
-  options: { tokenStore?: TokenStore } = {},
-): () => Promise<Response> {
+  options: {
+    tokenStore?: TokenStore;
+    /** Optional authentication check — return true if the request is authenticated */
+    isAuthenticated?: (req: Request) => boolean | Promise<boolean>;
+  } = {},
+): (req: Request) => Promise<Response> {
   const tokenStore = options.tokenStore ?? memoryTokenStore;
 
-  return async function handler(): Promise<Response> {
+  return async function handler(req: Request): Promise<Response> {
+    if (options.isAuthenticated && !(await options.isAuthenticated(req))) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     await tokenStore.clearTokens(config.serviceId);
 
     return Response.json({

@@ -145,6 +145,115 @@ describe("VeryfrontApiClient", () => {
     });
   });
 
+  describe("context management", () => {
+    it("default context should be branch main", () => {
+      const client = createClient();
+      const ctx = client.getContext();
+      assertEquals(ctx.type, "branch");
+      assertEquals((ctx as { name: string }).name, "main");
+    });
+
+    it("setContext should update context", () => {
+      const client = createClient();
+      client.setContext({ type: "environment", name: "production" });
+      const ctx = client.getContext();
+      assertEquals(ctx.type, "environment");
+      assertEquals((ctx as { name: string }).name, "production");
+    });
+
+    it("clearContext should revert to default", () => {
+      const client = createClient();
+      client.setContext({ type: "environment", name: "staging" });
+      client.clearContext();
+      const ctx = client.getContext();
+      assertEquals(ctx.type, "branch");
+      assertEquals((ctx as { name: string }).name, "main");
+    });
+
+    it("setContext with release type", () => {
+      const client = createClient();
+      client.setContext({ type: "release", version: "v1.0.0" });
+      const ctx = client.getContext();
+      assertEquals(ctx.type, "release");
+      assertEquals((ctx as { version: string }).version, "v1.0.0");
+    });
+  });
+
+  describe("setRequestBranch context integration", () => {
+    it("setRequestBranch with null should clear context", () => {
+      const client = createClient();
+      client.setRequestBranch("feature-x");
+      client.setRequestBranch(null);
+      assertEquals(client.getRequestBranch(), null);
+      const ctx = client.getContext();
+      assertEquals(ctx.type, "branch");
+      assertEquals((ctx as { name: string }).name, "main");
+    });
+
+    it("setRequestBranch should set branch context", () => {
+      const client = createClient();
+      client.setRequestBranch("feature-y");
+      const ctx = client.getContext();
+      assertEquals(ctx.type, "branch");
+      assertEquals((ctx as { name: string }).name, "feature-y");
+    });
+
+    it("clearRequestBranch should clear both branch and context", () => {
+      const client = createClient();
+      client.setRequestBranch("feature-z");
+      client.clearRequestBranch();
+      assertEquals(client.getRequestBranch(), undefined);
+      const ctx = client.getContext();
+      assertEquals(ctx.type, "branch");
+      assertEquals((ctx as { name: string }).name, "main");
+    });
+  });
+
+  describe("initialize with projectId in config", () => {
+    it("should set initialized=true without API call", async () => {
+      const client = createClient({ ...baseConfig, projectId: "test-id" });
+      await client.initialize();
+      assertEquals(client.isInitialized(), true);
+      assertEquals(client.getProjectId(), "test-id");
+    });
+
+    it("concurrent initialize() calls should only initialize once", async () => {
+      const client = createClient({ ...baseConfig, projectId: "test-id" });
+      await Promise.all([client.initialize(), client.initialize()]);
+      assertEquals(client.isInitialized(), true);
+    });
+
+    it("initialize() when already initialized should return immediately", async () => {
+      const client = createClient({ ...baseConfig, projectId: "test-id" });
+      await client.initialize();
+      await client.initialize();
+      assertEquals(client.isInitialized(), true);
+    });
+  });
+
+  describe("reset", () => {
+    it("should clear initialized state", async () => {
+      const client = createClient({ ...baseConfig, projectId: "test-id" });
+      await client.initialize();
+      assertEquals(client.isInitialized(), true);
+      client.reset();
+      assertEquals(client.isInitialized(), false);
+    });
+  });
+
+  describe("getCachedProject", () => {
+    it("returns undefined before init", () => {
+      const client = createClient();
+      assertEquals(client.getCachedProject(), undefined);
+    });
+
+    it("returns undefined when projectId provided in config", async () => {
+      const client = createClient({ ...baseConfig, projectId: "test-id" });
+      await client.initialize();
+      assertEquals(client.getCachedProject(), undefined);
+    });
+  });
+
   describe("published content guards", () => {
     it("throws when listPublishedFiles called without releaseId or environmentName", () => {
       const client = createClient();

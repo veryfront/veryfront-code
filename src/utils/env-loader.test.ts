@@ -1,5 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { __resetEnvLoaderForTests, loadEnv, supportsEnvFiles } from "./env-loader.ts";
 import { __resetLoggerConfigForTests, type LogEntry, serverLogger } from "./logger/index.ts";
 
@@ -48,7 +49,7 @@ describe("env-loader", () => {
   }
 
   function cleanupKeys(...keys: string[]): void {
-    for (const key of keys) Deno.env.delete(key);
+    for (const key of keys) deleteEnv(key);
   }
 
   describe("supportsEnvFiles", () => {
@@ -63,7 +64,7 @@ describe("env-loader", () => {
       await writeEnvFile(".env", `${key}=hello`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      assertEquals(Deno.env.get(key), "hello");
+      assertEquals(getEnv(key), "hello");
 
       cleanupKeys(key);
     });
@@ -76,7 +77,7 @@ describe("env-loader", () => {
       );
 
       await loadEnv({ cwd: tempDir, override: true });
-      assertEquals(Deno.env.get(key), "value");
+      assertEquals(getEnv(key), "value");
 
       cleanupKeys(key);
     });
@@ -86,7 +87,7 @@ describe("env-loader", () => {
       await writeEnvFile(".env", `${key}="hello world"`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      assertEquals(Deno.env.get(key), "hello world");
+      assertEquals(getEnv(key), "hello world");
 
       cleanupKeys(key);
     });
@@ -96,7 +97,7 @@ describe("env-loader", () => {
       await writeEnvFile(".env", `${key}='hello world'`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      assertEquals(Deno.env.get(key), "hello world");
+      assertEquals(getEnv(key), "hello world");
 
       cleanupKeys(key);
     });
@@ -106,7 +107,7 @@ describe("env-loader", () => {
       await writeEnvFile(".env", `${key}=value # comment`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      assertEquals(Deno.env.get(key), "value");
+      assertEquals(getEnv(key), "value");
 
       cleanupKeys(key);
     });
@@ -117,29 +118,29 @@ describe("env-loader", () => {
       await writeEnvFile(".env", `${key1}=hello\n${key2}=\${${key1}}_world`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      assertEquals(Deno.env.get(key2), "hello_world");
+      assertEquals(getEnv(key2), "hello_world");
 
       cleanupKeys(key1, key2);
     });
 
     it("should not override existing env vars by default", async () => {
       const key = createKey("NOOVERRIDE");
-      Deno.env.set(key, "existing");
+      setEnv(key, "existing");
       await writeEnvFile(".env", `${key}=new`);
 
       await loadEnv({ cwd: tempDir });
-      assertEquals(Deno.env.get(key), "existing");
+      assertEquals(getEnv(key), "existing");
 
       cleanupKeys(key);
     });
 
     it("should override existing env vars when override is true", async () => {
       const key = createKey("OVERRIDE");
-      Deno.env.set(key, "existing");
+      setEnv(key, "existing");
       await writeEnvFile(".env", `${key}=new`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      assertEquals(Deno.env.get(key), "new");
+      assertEquals(getEnv(key), "new");
 
       cleanupKeys(key);
     });
@@ -149,7 +150,7 @@ describe("env-loader", () => {
       await writeEnvFile(".env", `${key}="line1\nline2"`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      assertEquals(Deno.env.get(key), "line1\nline2");
+      assertEquals(getEnv(key), "line1\nline2");
 
       cleanupKeys(key);
     });
@@ -160,7 +161,7 @@ describe("env-loader", () => {
       await writeEnvFile(".env.local", `${key}=from_local`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      assertEquals(Deno.env.get(key), "from_local");
+      assertEquals(getEnv(key), "from_local");
 
       cleanupKeys(key);
     });
@@ -170,7 +171,7 @@ describe("env-loader", () => {
       await writeEnvFile(".env", `noequalssign\n${key}=valid`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      assertEquals(Deno.env.get(key), "valid");
+      assertEquals(getEnv(key), "valid");
 
       cleanupKeys(key);
     });
@@ -184,7 +185,7 @@ describe("env-loader", () => {
       await writeEnvFile(".env", `${key}=`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      assertEquals(Deno.env.get(key), "");
+      assertEquals(getEnv(key), "");
 
       cleanupKeys(key);
     });
@@ -194,7 +195,7 @@ describe("env-loader", () => {
       await writeEnvFile(".env", `${key}=a=b=c`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      assertEquals(Deno.env.get(key), "a=b=c");
+      assertEquals(getEnv(key), "a=b=c");
 
       cleanupKeys(key);
     });
@@ -204,19 +205,19 @@ describe("env-loader", () => {
       await writeEnvFile(".env", `  ${key}  =value`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      assertEquals(Deno.env.get(key), "value");
+      assertEquals(getEnv(key), "value");
 
       cleanupKeys(key);
     });
 
     it("should refresh logger format after loading NODE_ENV from .env", async () => {
-      const previousNodeEnv = Deno.env.get("NODE_ENV");
-      const previousLogFormat = Deno.env.get("LOG_FORMAT");
+      const previousNodeEnv = getEnv("NODE_ENV");
+      const previousLogFormat = getEnv("LOG_FORMAT");
       const { getOutput, reset, restore } = captureConsoleLog();
 
       try {
-        Deno.env.delete("NODE_ENV");
-        Deno.env.delete("LOG_FORMAT");
+        deleteEnv("NODE_ENV");
+        deleteEnv("LOG_FORMAT");
         __resetLoggerConfigForTests();
 
         serverLogger.info("Text before loadEnv");
@@ -233,10 +234,10 @@ describe("env-loader", () => {
         assertEquals(entry.message, "JSON after loadEnv");
       } finally {
         restore();
-        if (previousNodeEnv === undefined) Deno.env.delete("NODE_ENV");
-        else Deno.env.set("NODE_ENV", previousNodeEnv);
-        if (previousLogFormat === undefined) Deno.env.delete("LOG_FORMAT");
-        else Deno.env.set("LOG_FORMAT", previousLogFormat);
+        if (previousNodeEnv === undefined) deleteEnv("NODE_ENV");
+        else setEnv("NODE_ENV", previousNodeEnv);
+        if (previousLogFormat === undefined) deleteEnv("LOG_FORMAT");
+        else setEnv("LOG_FORMAT", previousLogFormat);
         __resetLoggerConfigForTests();
       }
     });

@@ -135,6 +135,7 @@ export {
   type ChatHandlerBeforeStream,
   type ChatHandlerBeforeStreamContext,
   type ChatHandlerBeforeStreamResult,
+  type ChatHandlerConfigWithAgent,
   type ChatHandlerMessageInput,
   type ChatHandlerOptions,
   createChatHandler,

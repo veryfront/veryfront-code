@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
+import { withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
 
 // Load .env file for test configuration (VERYFRONT_BINARY_FRESH, etc.)
 try {
@@ -47,14 +48,24 @@ async function getAvailablePort(): Promise<number> {
 async function computeSourceHash(): Promise<string> {
   const decoder = new TextDecoder();
 
+  // Hash both src/ and scripts/build/ since compile-binary.ts is a build input
   try {
-    const result = await new Deno.Command("git", {
+    const srcResult = await new Deno.Command("git", {
       args: ["rev-parse", "HEAD:src"],
       stdout: "piped",
       stderr: "null",
     }).output();
+    const scriptsResult = await new Deno.Command("git", {
+      args: ["rev-parse", "HEAD:scripts/build"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
 
-    if (result.success) return decoder.decode(result.stdout).trim();
+    if (srcResult.success && scriptsResult.success) {
+      const srcHash = decoder.decode(srcResult.stdout).trim();
+      const scriptsHash = decoder.decode(scriptsResult.stdout).trim();
+      return `${srcHash}-${scriptsHash}`;
+    }
   } catch {
     // fall through
   }
@@ -105,7 +116,7 @@ async function ensureBinaryCompiled(): Promise<void> {
   // Run the same pre-build pipeline used by distribution builds
   console.log("📦 Preparing build artifacts...");
   const prepareResult = await new Deno.Command("deno", {
-    args: ["run", "--allow-all", "scripts/build/prepare-framework-sources.ts"],
+    args: ["task", "build:prepare"],
     stdout: "inherit",
     stderr: "inherit",
   }).output();
@@ -115,17 +126,11 @@ async function ensureBinaryCompiled(): Promise<void> {
   console.log("📦 Compiling binary...");
   const result = await new Deno.Command("deno", {
     args: [
-      "compile",
-      "--allow-all",
-      "--include",
-      "src/platform/polyfills",
-      "--include",
-      "src/proxy/main.ts",
-      "--include",
-      "dist/framework-src",
+      "run",
+      "-A",
+      "scripts/build/compile-binary.ts",
       "--output",
       BINARY_PATH,
-      "cli/main.ts",
     ],
     stdout: "inherit",
     stderr: "inherit",
@@ -185,13 +190,13 @@ async function startBinaryServer(
     const process = new Deno.Command(BINARY_PATH, {
       args: ["serve", "--mode=production", "-p", String(port)],
       cwd: projectDir,
-      env: {
+      env: withProxyModeControlPlaneKey({
         ...Deno.env.toObject(),
         NODE_ENV: nodeEnv,
         LOG_FORMAT: "text",
         VERYFRONT_CACHE_DIR: cacheDir,
         ...extraEnv,
-      },
+      }),
       stdout: "piped",
       stderr: "piped",
     }).spawn();

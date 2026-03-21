@@ -26,6 +26,7 @@ const claudeCodeInputSchema = z.object({
   /** Maximum turns */
   maxTurns: z
     .number()
+    .max(100)
     .optional()
     .default(20)
     .describe("Maximum agentic loop turns"),
@@ -41,12 +42,6 @@ const claudeCodeInputSchema = z.object({
     .record(z.unknown())
     .optional()
     .describe("Additional context to include in the prompt"),
-
-  /** Custom system prompt */
-  system: z
-    .string()
-    .optional()
-    .describe("Custom system prompt override"),
 });
 
 type ClaudeCodeInput = z.infer<typeof claudeCodeInputSchema>;
@@ -108,7 +103,6 @@ export const claudeCodeTool: Tool<ClaudeCodeInput, ClaudeCodeResult> = {
       maxTurns: { type: "number", default: 20 },
       files: { type: "array", items: { type: "string" } },
       context: { type: "object" },
-      system: { type: "string" },
     },
     required: ["task"],
   },
@@ -117,7 +111,6 @@ export const claudeCodeTool: Tool<ClaudeCodeInput, ClaudeCodeResult> = {
     return executeAgent(buildPrompt(input), {
       mode: input.mode as ClaudeCodeMode,
       maxTurns: input.maxTurns,
-      systemPrompt: input.system,
       debug: true,
     });
   },
@@ -140,15 +133,19 @@ export function createClaudeCodeTool(
     id: options.id || claudeCodeTool.id,
     description: options.description || claudeCodeTool.description,
 
-    execute: (input, context) => {
+    execute: (input, _context) => {
       const mergedInput: ClaudeCodeInput = {
         ...input,
         mode: input.mode || options.defaultMode || "code",
         maxTurns: input.maxTurns || options.defaultMaxTurns || 20,
-        system: input.system || options.system,
       };
 
-      return claudeCodeTool.execute(mergedInput, context);
+      return executeAgent(buildPrompt(mergedInput), {
+        mode: mergedInput.mode as ClaudeCodeMode,
+        maxTurns: mergedInput.maxTurns,
+        systemPrompt: options.system,
+        debug: true,
+      });
     },
   };
 }

@@ -36,7 +36,7 @@ import type { PageResolver } from "../page-resolution/index.ts";
 import type { LayoutOrchestrator } from "./layout.ts";
 import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
-import { DataFetcher } from "#veryfront/data/index.ts";
+import { DataFetcher, type FetchDataOptions } from "#veryfront/data/index.ts";
 import type { DataContext, PageWithData } from "#veryfront/data/types.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
@@ -303,8 +303,13 @@ export class RenderPipeline {
           Promise.all(
             dataJobs.map(async (job) => {
               try {
+                const jobPath = (job as LoadedModule & { path?: string }).path;
+                const fetchOptions: FetchDataOptions = {
+                  modulePath: jobPath,
+                  projectDir: this.config.projectDir,
+                };
                 const result = await this.dataFetcher
-                  .fetchData(job.mod as PageWithData, dataContext, this.config.mode);
+                  .fetchData(job.mod as PageWithData, dataContext, this.config.mode, fetchOptions);
                 return { ...job, result, error: null as Error | null };
               } catch (error) {
                 return { ...job, result: null, error: error as Error };
@@ -391,191 +396,205 @@ export class RenderPipeline {
           );
           timing.pageResolve = Math.round(performance.now() - pageResolveStart);
 
-          const skipLayouts = isDotPath(slug, pageInfo.entity.path);
-
-          const layoutCollectStart = performance.now();
-          const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await withSpan(
-            "render.collect_layouts",
-            () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
-            { "render.slug": slug },
+          const sourceFile = extractRelativePathShared(
+            pageInfo.entity.path,
+            this.config.projectDir,
           );
-          timing.layoutCollect = Math.round(performance.now() - layoutCollectStart);
 
-          const layoutPreloadPromise = !skipLayouts && layoutResult.nestedLayouts.length > 0
-            ? this.config.layoutOrchestrator.preloadLayoutModules(layoutResult.nestedLayouts)
-            : Promise.resolve();
+          try {
+            const skipLayouts = isDotPath(slug, pageInfo.entity.path);
 
-          let dataFetchingProps: Record<string, unknown> | undefined;
-          let resolvedParams: Record<string, string | string[]> = options?.params
-            ? { ...options.params }
-            : {};
-          let layoutDataMap = new Map<string, Record<string, unknown>>();
-
-          const dataFetchStart = performance.now();
-          if (options?.request && options?.url) {
-            await withSpan(
-              "render.data_fetching",
-              async () => {
-                try {
-                  const dataResolution = await this.resolveDataFetching(
-                    slug,
-                    pageInfo.entity.path,
-                    layoutResult.nestedLayouts,
-                    options,
-                  );
-                  resolvedParams = dataResolution.params;
-                  dataFetchingProps = Object.keys(dataResolution.pageProps).length > 0
-                    ? dataResolution.pageProps
-                    : undefined;
-                  layoutDataMap = dataResolution.layoutProps;
-                } catch (error) {
-                  if (error instanceof VeryfrontError) throw error;
-
-                  renderPageLog.error("Data fetching error", {
-                    slug,
-                    error: error instanceof Error ? error.message : String(error),
-                  });
-                  throw error;
-                }
-              },
+            const layoutCollectStart = performance.now();
+            const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await withSpan(
+              "render.collect_layouts",
+              () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
               { "render.slug": slug },
             );
-          }
-          timing.dataFetch = Math.round(performance.now() - dataFetchStart);
+            timing.layoutCollect = Math.round(performance.now() - layoutCollectStart);
 
-          const hasResolvedParams = Object.keys(resolvedParams).length > 0;
-          const mergedOptions = (dataFetchingProps || hasResolvedParams)
-            ? {
-              ...options,
-              ...(hasResolvedParams ? { params: resolvedParams } : {}),
-              ...(dataFetchingProps ? { props: { ...options?.props, ...dataFetchingProps } } : {}),
+            const layoutPreloadPromise = !skipLayouts && layoutResult.nestedLayouts.length > 0
+              ? this.config.layoutOrchestrator.preloadLayoutModules(layoutResult.nestedLayouts)
+              : Promise.resolve();
+
+            let dataFetchingProps: Record<string, unknown> | undefined;
+            let resolvedParams: Record<string, string | string[]> = options?.params
+              ? { ...options.params }
+              : {};
+            let layoutDataMap = new Map<string, Record<string, unknown>>();
+
+            const dataFetchStart = performance.now();
+            if (options?.request && options?.url) {
+              await withSpan(
+                "render.data_fetching",
+                async () => {
+                  try {
+                    const dataResolution = await this.resolveDataFetching(
+                      slug,
+                      pageInfo.entity.path,
+                      layoutResult.nestedLayouts,
+                      options,
+                    );
+                    resolvedParams = dataResolution.params;
+                    dataFetchingProps = Object.keys(dataResolution.pageProps).length > 0
+                      ? dataResolution.pageProps
+                      : undefined;
+                    layoutDataMap = dataResolution.layoutProps;
+                  } catch (error) {
+                    if (error instanceof VeryfrontError) throw error;
+
+                    renderPageLog.error("Data fetching error", {
+                      slug,
+                      error: error instanceof Error ? error.message : String(error),
+                    });
+                    throw error;
+                  }
+                },
+                { "render.slug": slug },
+              );
             }
-            : options;
+            timing.dataFetch = Math.round(performance.now() - dataFetchStart);
 
-          const bundlePrepStart = performance.now();
-          const pageBundleResult = await withSpan(
-            "render.prepare_bundles",
-            () =>
-              this.config.pageRenderer.preparePageBundles(
-                pageInfo,
-                slug,
-                cacheResult?.cachedModule,
-                mergedOptions,
-              ),
-            { "render.slug": slug },
-          );
-          timing.bundlePrep = Math.round(performance.now() - bundlePrepStart);
+            const hasResolvedParams = Object.keys(resolvedParams).length > 0;
+            const mergedOptions = (dataFetchingProps || hasResolvedParams)
+              ? {
+                ...options,
+                ...(hasResolvedParams ? { params: resolvedParams } : {}),
+                ...(dataFetchingProps
+                  ? { props: { ...options?.props, ...dataFetchingProps } }
+                  : {}),
+              }
+              : options;
 
-          if (pageBundleResult.scriptResult) return pageBundleResult.scriptResult;
-
-          if (!pageBundleResult.pageElement || !pageBundleResult.pageBundle) {
-            throw RENDER_ERROR.create({
-              detail: "Failed to prepare page bundle",
-              context: { slug },
-            });
-          }
-
-          const { pageElement, pageBundle } = pageBundleResult;
-
-          const mergedFrontmatter = {
-            ...pageInfo.entity.frontmatter,
-            ...(pageBundle as MdxBundle).frontmatter,
-          };
-
-          const headings = (pageBundle as PageBundle).headings || [];
-
-          await layoutPreloadPromise;
-
-          const layoutApplyStart = performance.now();
-          const wrappedElement = await withSpan(
-            "render.apply_layouts",
-            () =>
-              this.config.layoutOrchestrator.applyLayoutsAndWrappers(
-                pageElement,
-                pageInfo,
-                layoutResult.layoutBundle,
-                layoutResult.nestedLayouts,
-                layoutDataMap,
-                options?.url,
-                mergedFrontmatter,
-                headings,
-                options?.projectSlug,
-              ),
-            { "render.slug": slug, "render.layout_count": layoutResult.nestedLayouts.length },
-          );
-          timing.layoutApply = Math.round(performance.now() - layoutApplyStart);
-
-          // Snapshot CSS imports collected during module loading (before SSR rendering).
-          // These are passed to the HTML generator to be included in the output.
-          const collectedCSSImports = getCSSImports();
-
-          const ssrStart = performance.now();
-          const ssrResult = await withSpan(
-            "render.ssr",
-            () =>
-              withTimeoutThrow(
-                this.config.ssrOrchestrator.performSSRRendering(
-                  wrappedElement,
-                  {
-                    pageInfo,
-                    pageBundle,
-                    layoutBundle: layoutResult.layoutBundle,
-                    nestedLayouts: layoutResult.nestedLayouts,
-                    collectedMetadata: pageBundleResult.collectedMetadata,
-                    slug,
-                    cssImports: collectedCSSImports,
-                  },
+            const bundlePrepStart = performance.now();
+            const pageBundleResult = await withSpan(
+              "render.prepare_bundles",
+              () =>
+                this.config.pageRenderer.preparePageBundles(
+                  pageInfo,
+                  slug,
+                  cacheResult?.cachedModule,
                   mergedOptions,
                 ),
-                SSR_RENDER_TIMEOUT_MS,
-                `SSR rendering for ${slug}`,
-              ),
-            { "render.slug": slug, "render.delivery": mergedOptions?.delivery || "full" },
-          );
-          timing.ssr = Math.round(performance.now() - ssrStart);
-
-          if (collectedCSSImports.length > 0) {
-            renderPipelineLog.debug("CSS imports collected for HTML generation", {
-              slug,
-              count: collectedCSSImports.length,
-              paths: collectedCSSImports.map((p) => p.split("/").pop()),
-            });
-          }
-
-          const pageModule = pageBundleResult.clientModuleCode && pageBundleResult.pageModuleType
-            ? {
-              slug,
-              code: pageBundleResult.clientModuleCode,
-              type: pageBundleResult.pageModuleType,
-            }
-            : undefined;
-
-          const result: RenderResult = {
-            html: ssrResult.fullHtml,
-            frontmatter: (pageBundleResult.pageBundle as MdxBundle).frontmatter || {},
-            headings: pageBundleResult.pageBundle.headings || [],
-            nodeMap: pageBundleResult.pageBundle.nodeMap,
-            stream: ssrResult.finalStream,
-            ssrHash: ssrResult.ssrHash,
-            ...(pageModule ? { pageModule } : {}),
-          };
-
-          if (shouldCache && !options?.skipCachePersist) {
-            void this.config.cacheCoordinator.persistResult(result, slug, cacheKey).catch(
-              (error) => {
-                renderPipelineLog.error("Cache persist failed", {
-                  slug,
-                  error: error instanceof Error ? error.message : String(error),
-                  stack: error instanceof Error ? error.stack : undefined,
-                });
-              },
+              { "render.slug": slug },
             );
+            timing.bundlePrep = Math.round(performance.now() - bundlePrepStart);
+
+            if (pageBundleResult.scriptResult) return pageBundleResult.scriptResult;
+
+            if (!pageBundleResult.pageElement || !pageBundleResult.pageBundle) {
+              throw RENDER_ERROR.create({
+                detail: "Failed to prepare page bundle",
+                context: { slug },
+              });
+            }
+
+            const { pageElement, pageBundle } = pageBundleResult;
+
+            const mergedFrontmatter = {
+              ...pageInfo.entity.frontmatter,
+              ...(pageBundle as MdxBundle).frontmatter,
+            };
+
+            const headings = (pageBundle as PageBundle).headings || [];
+
+            await layoutPreloadPromise;
+
+            const layoutApplyStart = performance.now();
+            const wrappedElement = await withSpan(
+              "render.apply_layouts",
+              () =>
+                this.config.layoutOrchestrator.applyLayoutsAndWrappers(
+                  pageElement,
+                  pageInfo,
+                  layoutResult.layoutBundle,
+                  layoutResult.nestedLayouts,
+                  layoutDataMap,
+                  options?.url,
+                  mergedFrontmatter,
+                  headings,
+                  options?.projectSlug,
+                ),
+              { "render.slug": slug, "render.layout_count": layoutResult.nestedLayouts.length },
+            );
+            timing.layoutApply = Math.round(performance.now() - layoutApplyStart);
+
+            // Snapshot CSS imports collected during module loading (before SSR rendering).
+            // These are passed to the HTML generator to be included in the output.
+            const collectedCSSImports = getCSSImports();
+
+            const ssrStart = performance.now();
+            const ssrResult = await withSpan(
+              "render.ssr",
+              () =>
+                withTimeoutThrow(
+                  this.config.ssrOrchestrator.performSSRRendering(
+                    wrappedElement,
+                    {
+                      pageInfo,
+                      pageBundle,
+                      layoutBundle: layoutResult.layoutBundle,
+                      nestedLayouts: layoutResult.nestedLayouts,
+                      collectedMetadata: pageBundleResult.collectedMetadata,
+                      slug,
+                      cssImports: collectedCSSImports,
+                    },
+                    mergedOptions,
+                  ),
+                  SSR_RENDER_TIMEOUT_MS,
+                  `SSR rendering for ${slug}`,
+                ),
+              { "render.slug": slug, "render.delivery": mergedOptions?.delivery || "full" },
+            );
+            timing.ssr = Math.round(performance.now() - ssrStart);
+
+            if (collectedCSSImports.length > 0) {
+              renderPipelineLog.debug("CSS imports collected for HTML generation", {
+                slug,
+                count: collectedCSSImports.length,
+                paths: collectedCSSImports.map((p) => p.split("/").pop()),
+              });
+            }
+
+            const pageModule = pageBundleResult.clientModuleCode && pageBundleResult.pageModuleType
+              ? {
+                slug,
+                code: pageBundleResult.clientModuleCode,
+                type: pageBundleResult.pageModuleType,
+              }
+              : undefined;
+
+            const result: RenderResult = {
+              html: ssrResult.fullHtml,
+              frontmatter: (pageBundleResult.pageBundle as MdxBundle).frontmatter || {},
+              headings: pageBundleResult.pageBundle.headings || [],
+              nodeMap: pageBundleResult.pageBundle.nodeMap,
+              stream: ssrResult.finalStream,
+              ssrHash: ssrResult.ssrHash,
+              ...(pageModule ? { pageModule } : {}),
+            };
+
+            if (shouldCache && !options?.skipCachePersist) {
+              void this.config.cacheCoordinator.persistResult(result, slug, cacheKey).catch(
+                (error) => {
+                  renderPipelineLog.error("Cache persist failed", {
+                    slug,
+                    error: error instanceof Error ? error.message : String(error),
+                    stack: error instanceof Error ? error.stack : undefined,
+                  });
+                },
+              );
+            }
+
+            timing.total = Math.round(performance.now() - pipelineStartTime);
+            renderPipelineLog.debug("Complete", { slug, timing });
+
+            return result;
+          } catch (error) {
+            if (error instanceof Error) {
+              (error as Error & { sourceFile?: string }).sourceFile = sourceFile;
+            }
+            throw error;
           }
-
-          timing.total = Math.round(performance.now() - pipelineStartTime);
-          renderPipelineLog.debug("Complete", { slug, timing });
-
-          return result;
         });
         return result;
       },

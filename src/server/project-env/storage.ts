@@ -36,6 +36,15 @@ export function isProjectEnvActive(): boolean {
   return projectEnvStorage.getStore() !== undefined;
 }
 
+/**
+ * Get a snapshot of the current project env overlay.
+ * Returns undefined if no overlay is active.
+ * Used to forward env vars to isolated workers in proxy mode.
+ */
+export function getProjectEnvSnapshot(): Record<string, string> | undefined {
+  return projectEnvStorage.getStore();
+}
+
 // Register on globalThis so process.ts can access without circular imports.
 // process.ts is low-level (platform/compat), project-env is high-level (server/).
 (globalThis as Record<string, unknown>).__vfProjectEnvGetter = getProjectEnv;

@@ -244,6 +244,20 @@ export interface ChatHandlerOptions {
   beforeStream?: ChatHandlerBeforeStream;
 }
 
+/** Options when passing an agent instance directly. */
+export interface ChatHandlerConfigWithAgent extends ChatHandlerOptions {
+  /** The agent instance to use (bypasses registry lookup). */
+  agent: import("./types.ts").Agent;
+}
+
+function mergeChatHandlerConfig(
+  config: ChatHandlerConfigWithAgent,
+  options?: ChatHandlerOptions,
+): ChatHandlerConfigWithAgent {
+  if (!options) return config;
+  return { ...options, ...config };
+}
+
 /**
  * Extract the raw Request from either a raw Request or a Pages Router APIContext.
  * Pages Router handlers receive `(ctx)` where `ctx.request` is the Request.
@@ -262,6 +276,16 @@ function isRequest(obj: unknown): obj is Request {
     "method" in obj &&
     typeof obj.method === "string"
   );
+}
+
+function extractUserId(request: Request): string {
+  const userId = request.headers.get("x-user-id");
+  if (userId) return userId;
+  agentLogger.warn(
+    "No user identity found in request. Using anonymous fallback. " +
+      "Set x-user-id header or provide a context function for proper user isolation.",
+  );
+  return "anonymous";
 }
 
 function extractRequest(requestOrCtx: unknown): Request {
@@ -287,25 +311,55 @@ function extractRequest(requestOrCtx: unknown): Request {
  * - App Router: `app/api/chat/route.ts` — handler receives `(request, context)`
  * - Pages Router: `pages/api/chat.ts` — handler receives `(ctx)`
  *
+ * Accepts either:
+ * - `createChatHandler("agentId", options?)` — looks up agent by ID from the registry
+ * - `createChatHandler({ agent, ...options })` — uses the provided agent instance directly
+ *
  * @example
  * ```ts
- * import { createChatHandler } from "veryfront/agent";
+ * // By agent ID (requires auto-discovery registration)
  * export const POST = createChatHandler("assistant");
+ *
+ * // By agent instance (no registry needed)
+ * import { myAgent } from "../../agents/my-agent";
+ * export const POST = createChatHandler({ agent: myAgent, beforeStream: ... });
  * ```
  */
 export function createChatHandler(
   agentId: string,
   options?: ChatHandlerOptions,
+): (requestOrCtx: unknown) => Promise<Response>;
+export function createChatHandler(
+  config: ChatHandlerConfigWithAgent,
+  options?: ChatHandlerOptions,
+): (requestOrCtx: unknown) => Promise<Response>;
+export function createChatHandler(
+  agentIdOrConfig: string | ChatHandlerConfigWithAgent,
+  options?: ChatHandlerOptions,
 ) {
   return async function POST(requestOrCtx: unknown): Promise<Response> {
     const request = extractRequest(requestOrCtx);
+
     let agent: ReturnType<typeof getAgent> | undefined;
-    try {
-      agent = getAgent(agentId);
-    } catch (error) {
-      agentLogger.debug("getAgent lookup failed", { error });
-      return Response.json({ error: "Agent not found" }, { status: 404 });
+
+    if (
+      typeof agentIdOrConfig === "object" && agentIdOrConfig !== null && "agent" in agentIdOrConfig
+    ) {
+      // Object-based API: createChatHandler({ agent, beforeStream, ... })
+      const config = mergeChatHandlerConfig(agentIdOrConfig, options);
+      agent = config.agent;
+      options = config;
+    } else {
+      // String-based API: createChatHandler("agentId", options?)
+      const agentId = agentIdOrConfig as string;
+      try {
+        agent = getAgent(agentId);
+      } catch (error) {
+        agentLogger.debug("getAgent lookup failed", { error });
+        return Response.json({ error: "Agent not found" }, { status: 404 });
+      }
     }
+
     if (!agent) {
       return Response.json({ error: "Agent not found" }, { status: 404 });
     }
@@ -316,7 +370,7 @@ export function createChatHandler(
 
       const context = typeof options?.context === "function"
         ? await options.context(request)
-        : options?.context ?? { userId: "current-user" };
+        : options?.context ?? { userId: extractUserId(request) };
 
       const baseMessages = transformUIMessages(rawMessages);
       const beforeStreamResult = await options?.beforeStream?.({
@@ -369,6 +423,11 @@ export function createChatHandler(
           { status: 503 },
         );
       }
+
+      agentLogger.error("Chat handler error", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
 
       return Response.json(
         { error: "Internal server error" },

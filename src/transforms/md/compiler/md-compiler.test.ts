@@ -130,5 +130,107 @@ describe(
         assertEquals(result.compiledCode.includes("className"), true);
       });
     });
+
+    describe("HTML sanitization", () => {
+      it("strips script tags from markdown", async () => {
+        const result = await compileMarkdownRuntime(
+          "runtime",
+          "/tmp/project",
+          '# Title\n\n<script>alert("xss")</script>\n\nSafe text.',
+        );
+        assertEquals(result.rawHtml!.includes("<script>"), false);
+        assertEquals(result.rawHtml!.includes("alert"), false);
+        assertEquals(result.rawHtml!.includes("Safe text"), true);
+      });
+
+      it("strips onclick event handlers from HTML", async () => {
+        const result = await compileMarkdownRuntime(
+          "runtime",
+          "/tmp/project",
+          '<div onclick="alert(1)">Click me</div>',
+        );
+        assertEquals(result.rawHtml!.includes("onclick"), false);
+      });
+
+      it("strips iframe tags", async () => {
+        const result = await compileMarkdownRuntime(
+          "runtime",
+          "/tmp/project",
+          '<iframe src="https://evil.com"></iframe>\n\nSafe text.',
+        );
+        assertEquals(result.rawHtml!.includes("<iframe"), false);
+        assertEquals(result.rawHtml!.includes("Safe text"), true);
+      });
+
+      it("strips javascript: URLs from links", async () => {
+        const result = await compileMarkdownRuntime(
+          "runtime",
+          "/tmp/project",
+          "[click me](javascript:alert(1))",
+        );
+        assertEquals(result.rawHtml!.includes("javascript:"), false);
+      });
+
+      it("preserves safe HTML elements", async () => {
+        const result = await compileMarkdownRuntime(
+          "runtime",
+          "/tmp/project",
+          "**bold** and *italic* and [link](https://example.com)",
+        );
+        assertEquals(result.rawHtml!.includes("<strong>"), true);
+        assertEquals(result.rawHtml!.includes("<em>"), true);
+        assertEquals(result.rawHtml!.includes("https://example.com"), true);
+      });
+
+      it("preserves images with safe src", async () => {
+        const result = await compileMarkdownRuntime(
+          "runtime",
+          "/tmp/project",
+          '![alt text](https://example.com/img.png "title")',
+        );
+        assertEquals(result.rawHtml!.includes("<img"), true);
+        assertEquals(
+          result.rawHtml!.includes("https://example.com/img.png"),
+          true,
+        );
+      });
+
+      it("preserves safe embedded HTML like details/summary", async () => {
+        const result = await compileMarkdownRuntime(
+          "runtime",
+          "/tmp/project",
+          "<details><summary>Click</summary>\n\nHidden content\n\n</details>",
+        );
+        assertEquals(result.rawHtml!.includes("<details>"), true);
+        assertEquals(result.rawHtml!.includes("<summary>"), true);
+        assertEquals(result.rawHtml!.includes("Hidden content"), true);
+      });
+
+      it("strips style tags", async () => {
+        const result = await compileMarkdownRuntime(
+          "runtime",
+          "/tmp/project",
+          "# Title\n\n<style>body{display:none}</style>\n\nVisible text.",
+        );
+        assertEquals(result.rawHtml!.includes("<style>"), false);
+        assertEquals(result.rawHtml!.includes("Visible text"), true);
+      });
+
+      it("preserves data-node attributes in studio embed mode", async () => {
+        const result = await compileMarkdownRuntime(
+          "runtime",
+          "/tmp/project",
+          "# Hello\n\nSome paragraph.",
+          undefined,
+          "content/page.md",
+          "server",
+          undefined,
+          true,
+        );
+        assertEquals(result.rawHtml!.includes("data-node-file"), true);
+        assertEquals(result.rawHtml!.includes("data-node-line"), true);
+        assertEquals(result.rawHtml!.includes("data-node-source"), true);
+      });
+    });
   },
 );

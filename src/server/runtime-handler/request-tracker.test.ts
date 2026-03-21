@@ -141,6 +141,68 @@ describe("server/runtime-handler/request-tracker", () => {
     });
   });
 
+  describe("getStats accumulation", () => {
+    it("tracks total and completed independently", () => {
+      const before = requestTracker.getStats();
+      requestTracker.start("acc-1", "proj", "/a", "GET");
+      requestTracker.start("acc-2", "proj", "/b", "POST");
+      requestTracker.complete("acc-1", 200);
+      const after = requestTracker.getStats();
+      assertEquals(after.total, before.total + 2);
+      assertEquals(after.completed, before.completed + 1);
+      assertEquals(after.inFlight, before.inFlight + 1);
+      requestTracker.complete("acc-2", 200);
+    });
+  });
+
+  describe("getInFlightRequests fields", () => {
+    it("returns requests with all expected fields", () => {
+      requestTracker.start("field-1", "slug-x", "/test", "PUT", "staging", "rel-456");
+      const requests = requestTracker.getInFlightRequests();
+      const found = requests.find((r) => r.requestId === "field-1");
+      assertEquals(found?.projectSlug, "slug-x");
+      assertEquals(found?.path, "/test");
+      assertEquals(found?.method, "PUT");
+      assertEquals(found?.env, "staging");
+      assertEquals(found?.releaseId, "rel-456");
+      assertEquals(typeof found?.startTime, "number");
+      requestTracker.complete("field-1", 200);
+    });
+  });
+
+  describe("complete logging behavior", () => {
+    it("handles module request with short duration (no debug log)", () => {
+      requestTracker.start("fast-mod", "proj", "/_vf_modules/fast.js", "GET");
+      requestTracker.complete("fast-mod", 200);
+      // Just verify no error
+    });
+
+    it("handles regular request completion with logging", () => {
+      requestTracker.start("reg-req", "proj", "/about", "GET");
+      requestTracker.complete("reg-req", 200);
+      // Just verify no error
+    });
+
+    it("handles 404 status completion", () => {
+      requestTracker.start("not-found", "proj", "/missing", "GET");
+      requestTracker.complete("not-found", 404);
+    });
+
+    it("handles 500 status completion", () => {
+      requestTracker.start("error-req", "proj", "/broken", "GET");
+      requestTracker.complete("error-req", 500);
+    });
+  });
+
+  describe("waitForDrain edge cases", () => {
+    it("completes drain when request finished during polling", async () => {
+      requestTracker.start("drain-fast", "proj", "/d", "GET");
+      setTimeout(() => requestTracker.complete("drain-fast", 200), 5);
+      const result = await requestTracker.waitForDrain(1000, 5);
+      assertEquals(result, true);
+    });
+  });
+
   describe("timer cleanup", () => {
     it("should clear both slow and very slow timers on completion", () => {
       const clearedTimers: ReturnType<typeof setTimeout>[] = [];

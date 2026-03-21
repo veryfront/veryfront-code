@@ -59,6 +59,12 @@ export interface LogEntry {
   release_id?: string;
   branch_id?: string;
   branch_name?: string;
+  job_id?: string;
+  batch_id?: string;
+  job_target?: string;
+  task?: string;
+  event_kind?: string;
+  user_visible?: string;
   // Duration for timed operations
   /** @deprecated Use `duration_ms` instead. Kept for Grafana dashboard transition. Planned removal after Grafana dashboard migration is complete. */
   durationMs?: number;
@@ -313,6 +319,12 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "release_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "branch_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "branch_name", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "job_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "batch_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "job_target", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "task", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "event_kind", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "user_visible", (v) => String(v));
     extractToEntryField(entry, mergedContext, "duration_ms", (v) => Number(v));
 
     // Emit snake_case aliases for camelCase fields (transition period)
@@ -566,4 +578,26 @@ export function createRequestLogger(
   },
 ): Logger {
   return baseLogger.child(requestContext);
+}
+
+export function createJobUserLogger(
+  baseLogger: Logger,
+  jobContext: {
+    projectId: string;
+    jobId: string;
+    task: string;
+    batchId?: string | null;
+    jobTarget?: string | null;
+    eventKind?: string;
+  },
+): Logger {
+  return baseLogger.child({
+    project_id: jobContext.projectId,
+    job_id: jobContext.jobId,
+    ...(jobContext.batchId ? { batch_id: jobContext.batchId } : {}),
+    ...(jobContext.jobTarget ? { job_target: jobContext.jobTarget } : {}),
+    task: jobContext.task,
+    event_kind: jobContext.eventKind ?? "job_user_log",
+    user_visible: "true",
+  });
 }

@@ -189,6 +189,7 @@ async function updateTemplates(newVersion: string) {
 	const filesToUpdate = [
 		"cli/commands/init/config-generator.ts",
 		"src/core/utils/constants/cdn.ts",
+		"src/utils/version.ts",
 	];
 
 	for (const filePath of filesToUpdate) {

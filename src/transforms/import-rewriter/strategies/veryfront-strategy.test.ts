@@ -44,6 +44,10 @@ describe("VeryfrontStrategy", () => {
       assertEquals(strategy.matches("veryfront", makeCtx()), true);
     });
 
+    it("should match #deno-config", () => {
+      assertEquals(strategy.matches("#deno-config", makeCtx()), true);
+    });
+
     it("should not match other specifiers", () => {
       assertEquals(strategy.matches("react", makeCtx()), false);
       assertEquals(strategy.matches("lodash", makeCtx()), false);
@@ -93,6 +97,38 @@ describe("VeryfrontStrategy", () => {
       assert(
         !result.specifier!.includes("/workflow/"),
         `head should not resolve to workflow path, got: ${result.specifier}`,
+      );
+    });
+  });
+
+  describe("internal import-map resolution", () => {
+    it("should rewrite #deno-config to the framework-scoped browser stub", () => {
+      const result = strategy.rewrite(
+        makeInfo("#deno-config"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(result.specifier, "/_vf_modules/_veryfront/_deno-config.js");
+    });
+
+    it("should resolve exact internal aliases using deno.json mappings", () => {
+      const result = strategy.rewrite(
+        makeInfo("#veryfront/compat/console"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(
+        result.specifier,
+        "/_vf_modules/_veryfront/platform/compat/console/index.js",
+      );
+    });
+
+    it("should resolve prefix internal aliases using the longest matching mapping", () => {
+      const result = strategy.rewrite(
+        makeInfo("#veryfront/compat/path/index.ts"),
+        makeCtx({ target: "ssr" }),
+      );
+      assertEquals(
+        result.specifier,
+        "/_vf_modules/_veryfront/platform/compat/path/index.js?ssr=true",
       );
     });
   });

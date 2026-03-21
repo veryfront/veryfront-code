@@ -38,5 +38,31 @@ describe("url-conversion", () => {
     it("should produce href starting with file://", () => {
       assertEquals(toFileUrl("/some/path").href.startsWith("file://"), true);
     });
+
+    it("should handle paths with spaces", () => {
+      const result = toFileUrl("/path/with spaces/file.ts");
+      assertEquals(result.href.includes("spaces"), true);
+    });
+
+    it("should handle relative path by resolving", () => {
+      const result = toFileUrl("relative/path.ts");
+      assertEquals(result.protocol, "file:");
+    });
+  });
+
+  describe("fromFileUrl edge cases", () => {
+    it("should handle standard file URL", () => {
+      const result = fromFileUrl("file:///path/to/file.ts");
+      assertEquals(result, "/path/to/file.ts");
+    });
+
+    it("should handle root path", () => {
+      assertEquals(fromFileUrl("file:///"), "/");
+    });
+
+    it("should handle URL object with encoded characters", () => {
+      const url = new URL("file:///path/to/my%20file.ts");
+      assertEquals(fromFileUrl(url), "/path/to/my file.ts");
+    });
   });
 });

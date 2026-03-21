@@ -26,9 +26,61 @@ import {
   toolHandler,
   workflowHandler,
 } from "./handlers/index.ts";
+import { filenameToId } from "./discovery-utils.ts";
 import { join } from "#veryfront/compat/path";
 
 const logger = agentLogger.component("discovery");
+
+type DiscoveryCandidate<T> = {
+  exportName: string;
+  item: T;
+};
+
+function isIndexModule(file: string): boolean {
+  const normalized = file.replace("file://", "");
+  return /(?:^|\/)index\.(?:ts|tsx|js|jsx)$/.test(normalized);
+}
+
+function compareDiscoveryFiles(a: string, b: string): number {
+  const aIsIndex = isIndexModule(a);
+  const bIsIndex = isIndexModule(b);
+  if (aIsIndex !== bIsIndex) return aIsIndex ? 1 : -1;
+  return a.localeCompare(b);
+}
+
+function collectDiscoveryCandidates<T>(
+  module: unknown,
+  handler: DiscoveryHandler<T>,
+): DiscoveryCandidate<T>[] {
+  const defaultItem = (module as { default?: T }).default;
+  if (handler.validate(defaultItem)) {
+    return [{ exportName: "default", item: defaultItem }];
+  }
+
+  const candidates: DiscoveryCandidate<T>[] = [];
+  for (const [exportName, value] of Object.entries(module as Record<string, unknown>)) {
+    if (exportName === "default") continue;
+    if (!handler.validate(value)) continue;
+    candidates.push({ exportName, item: value });
+  }
+
+  return candidates;
+}
+
+function getCandidateId<T>(
+  candidate: DiscoveryCandidate<T>,
+  file: string,
+  dir: string,
+  handler: DiscoveryHandler<T>,
+  useExportNameFallback: boolean,
+): string {
+  const derivedId = handler.getId(candidate.item, file, dir);
+  if (!useExportNameFallback) return derivedId;
+
+  const fileId = filenameToId(file);
+  if (derivedId !== fileId) return derivedId;
+  return candidate.exportName;
+}
 
 /**
  * Discover items of a specific type in a directory
@@ -40,7 +92,8 @@ async function discoverItems<T>(
   handler: DiscoveryHandler<T>,
   verbose?: boolean,
 ): Promise<void> {
-  const files = await findTypeScriptFiles(dir, context);
+  const files = (await findTypeScriptFiles(dir, context)).sort(compareDiscoveryFiles);
+  const resultMap = handler.getResultMap(result);
 
   if (verbose) {
     logger.info(`Found ${files.length} ${handler.typeName} files in ${dir}`);
@@ -49,21 +102,40 @@ async function discoverItems<T>(
   for (const file of files) {
     try {
       const module = await importModule(file, context);
-      const item = (module as { default?: T }).default;
-
-      if (!handler.validate(item)) {
+      const candidates = collectDiscoveryCandidates(module, handler);
+      if (candidates.length === 0) {
         if (verbose) {
           logger.warn(`${file} does not export a valid ${handler.typeName}`);
         }
         continue;
       }
 
-      const id = handler.getId(item, file, dir);
-      const registered = handler.register(id, item, file, dir);
-      handler.getResultMap(result).set(id, registered);
+      const useExportNameFallback = candidates.length > 1 || isIndexModule(file);
+      for (const candidate of candidates) {
+        const id = getCandidateId(
+          candidate,
+          file,
+          dir,
+          handler,
+          useExportNameFallback,
+        );
 
-      if (verbose) {
-        logger.info(`Registered ${handler.typeName}: ${id}`);
+        if (resultMap.has(id)) {
+          if (verbose) {
+            logger.warn(`Duplicate ${handler.typeName} "${id}" in ${file}; keeping first`);
+          }
+          continue;
+        }
+
+        const registered = handler.register(id, candidate.item, file, dir);
+        resultMap.set(id, registered);
+
+        if (verbose) {
+          const exportSuffix = candidate.exportName === "default"
+            ? ""
+            : ` (export: ${candidate.exportName})`;
+          logger.info(`Registered ${handler.typeName}: ${id}${exportSuffix}`);
+        }
       }
     } catch (error) {
       result.errors.push({ file, error: ensureError(error) });

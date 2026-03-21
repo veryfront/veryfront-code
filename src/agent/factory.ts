@@ -1,6 +1,7 @@
 import type {
   Agent,
   AgentConfig,
+  AgentMiddleware,
   AgentResponse,
   AgentStreamResult,
   Message,
@@ -23,6 +24,7 @@ import {
 import { agentRegistry } from "./composition/index.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { COMMON_BLOCKED_PATTERNS, securityMiddleware } from "./middleware/security/validator.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";
 
@@ -117,6 +119,8 @@ export function agent(config: AgentConfig): Agent {
     }
     : originalSystem;
 
+  const resolvedMiddleware = resolveSecurityMiddleware(config);
+
   const platform = detectPlatform();
   const compatibility = validatePlatformCompatibility(
     {
@@ -147,6 +151,7 @@ export function agent(config: AgentConfig): Agent {
     ...publicConfig,
     tools: mergedToolsConfig,
     system: augmentedSystem,
+    middleware: resolvedMiddleware,
   });
 
   const agentInstance: Agent = {
@@ -159,7 +164,7 @@ export function agent(config: AgentConfig): Agent {
     generate(input): Promise<AgentResponse> {
       return withSpan(
         "agent.factory.generate",
-        () => runtime.generate(input.input, input.context, input.model),
+        () => runtime.generate(input.input, input.context, input.model, input.maxOutputTokens),
         { "agent.id": id },
       );
     },
@@ -178,10 +183,16 @@ export function agent(config: AgentConfig): Agent {
             ]
             : (input.messages ?? []);
 
-          const stream = await runtime.stream(inputMessages, input.context, {
-            onToolCall: input.onToolCall,
-            onChunk: input.onChunk,
-          }, input.model);
+          const stream = await runtime.stream(
+            inputMessages,
+            input.context,
+            {
+              onToolCall: input.onToolCall,
+              onChunk: input.onChunk,
+            },
+            input.model,
+            input.maxOutputTokens,
+          );
 
           return createAgentStreamResult(stream);
         },
@@ -197,6 +208,7 @@ export function agent(config: AgentConfig): Agent {
             messages?: Message[];
             context?: Record<string, unknown>;
             model?: string;
+            maxOutputTokens?: number;
           } = await request.json();
 
           // Validate model override against allowlist when configured
@@ -215,7 +227,13 @@ export function agent(config: AgentConfig): Agent {
           }
 
           const messages = body.messages ?? [];
-          const stream = await runtime.stream(messages, body.context, undefined, modelOverride);
+          const stream = await runtime.stream(
+            messages,
+            body.context,
+            undefined,
+            modelOverride,
+            body.maxOutputTokens,
+          );
 
           return new Response(stream, { headers: STREAMING_HEADERS });
         },
@@ -244,7 +262,36 @@ export function agent(config: AgentConfig): Agent {
 // Register on globalThis so compiled-binary runtime shim can delegate to the
 // real factory. External temp-file modules can't import from the embedded
 // binary FS, so they use globalThis bridges instead.
-(globalThis as Record<string, unknown>).__vfAgentFactory = agent;
+if (!("__vfAgentFactory" in globalThis)) {
+  Object.defineProperty(globalThis, "__vfAgentFactory", {
+    value: agent,
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+}
+
+/**
+ * Resolve the middleware array for an agent, prepending security middleware
+ * unless explicitly opted out with `security: false`.
+ */
+export function resolveSecurityMiddleware(
+  config: Pick<AgentConfig, "security" | "middleware">,
+): AgentMiddleware[] {
+  if (config.security === false) return config.middleware ?? [];
+  return [
+    securityMiddleware({
+      input: {
+        maxLength: 50_000,
+        blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection,
+      },
+      output: {
+        filterPII: true,
+      },
+    }),
+    ...(config.middleware ?? []),
+  ];
+}
 
 let agentIdCounter = 0;
 

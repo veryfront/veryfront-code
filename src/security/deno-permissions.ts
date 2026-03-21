@@ -41,3 +41,14 @@ export const BUILD_HELPER_PERMISSIONS = [
   "--allow-write",
   "--allow-env",
 ] as const;
+
+/**
+ * RENDER_WORKER — Per-project Worker for isolated code execution.
+ * Read-only filesystem (transformed modules), network (data fetchers),
+ * env (API keys and config). No subprocess/ffi/sys.
+ */
+export const RENDER_WORKER_PERMISSIONS = [
+  "--allow-read",
+  "--allow-net",
+  "--allow-env",
+] as const;

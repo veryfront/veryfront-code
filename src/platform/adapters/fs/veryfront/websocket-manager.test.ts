@@ -22,7 +22,10 @@ class MockWebSocket {
   onclose: ((this: WebSocket, ev: CloseEvent) => unknown) | null = null;
   onerror: ((this: WebSocket, ev: Event) => unknown) | null = null;
 
-  constructor(readonly url: string) {
+  protocols: string | string[] | undefined;
+
+  constructor(readonly url: string, protocols?: string | string[]) {
+    this.protocols = protocols;
     MockWebSocket.instances.push(this);
   }
 
@@ -407,7 +410,7 @@ describe("WebSocketManager", () => {
     }
   });
 
-  it("should upgrade ws:// to wss:// for non-localhost connections", () => {
+  it("should derive ws:// from http:// base URL", () => {
     const cache = {
       deleteByPrefixAsync: async () => 0,
       deleteByPrefixAndSuffixAsync: async () => 0,
@@ -441,9 +444,91 @@ describe("WebSocketManager", () => {
     const socket = MockWebSocket.instances.at(-1);
     assertExists(socket);
 
-    // http:// should be upgraded to wss:// for non-localhost
+    // http:// base URL should produce ws:// WebSocket URL
+    assertEquals(socket.url.startsWith("ws://"), true);
+    // Token is sent via subprotocol, not query string
+    assertEquals(socket.url.includes("token="), false);
+    assertEquals(socket.protocols, ["bearer-test-token"]);
+
+    manager.dispose();
+  });
+
+  it("should derive wss:// from https:// base URL", () => {
+    const cache = {
+      deleteByPrefixAsync: async () => 0,
+      deleteByPrefixAndSuffixAsync: async () => 0,
+    } as unknown as FileCache;
+
+    const client = {
+      getProjectId: () => "project-1",
+      listAllFiles: async () => [],
+    } as unknown as VeryfrontApiClient;
+
+    const manager = new WebSocketManager({
+      apiBaseUrl: "https://api.example.com/api",
+      apiToken: "test-token",
+      projectSlug: "test-project",
+      cache,
+      client,
+      invalidationCallbacks: {},
+      getContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      }),
+      getContentSource: () => ({ type: "branch", branch: "main" }),
+      getProjectDir: () => undefined,
+      clearMemoryCaches: () => {},
+      clearFileListIndex: () => {},
+      setFileListCache: async () => {},
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances.at(-1);
+    assertExists(socket);
+
+    // https:// base URL should produce wss:// WebSocket URL
     assertEquals(socket.url.startsWith("wss://"), true);
-    assertEquals(socket.url.includes("token=test-token"), true);
+
+    manager.dispose();
+  });
+
+  it("should keep ws:// for K8s internal service hostnames", () => {
+    const cache = {
+      deleteByPrefixAsync: async () => 0,
+      deleteByPrefixAndSuffixAsync: async () => 0,
+    } as unknown as FileCache;
+
+    const client = {
+      getProjectId: () => "project-1",
+      listAllFiles: async () => [],
+    } as unknown as VeryfrontApiClient;
+
+    const manager = new WebSocketManager({
+      apiBaseUrl: "http://veryfront-api:80",
+      apiToken: "test-token",
+      projectSlug: "test-project",
+      cache,
+      client,
+      invalidationCallbacks: {},
+      getContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      }),
+      getContentSource: () => ({ type: "branch", branch: "main" }),
+      getProjectDir: () => undefined,
+      clearMemoryCaches: () => {},
+      clearFileListIndex: () => {},
+      setFileListCache: async () => {},
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances.at(-1);
+    assertExists(socket);
+
+    // K8s internal service (http://) should stay as ws://
+    assertEquals(socket.url.startsWith("ws://"), true);
 
     manager.dispose();
   });

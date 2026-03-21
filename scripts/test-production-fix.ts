@@ -43,7 +43,7 @@ if (USE_COMPILED) {
     console.log("❌ Binary not found. Compile first:");
     console.log("   deno task build:prepare");
     console.log(
-      "   deno compile --allow-all --unstable-net --include src/platform/polyfills --include src/proxy/main.ts --include dist/framework-src --output ./veryfront-local cli/main.ts",
+      "   deno run -A scripts/build/compile-binary.ts --output ./veryfront-local",
     );
     Deno.exit(1);
   }

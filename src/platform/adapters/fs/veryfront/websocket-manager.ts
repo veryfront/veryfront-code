@@ -126,42 +126,30 @@ export class WebSocketManager {
       this.wsConsecutiveFailures = 0;
     }
 
-    let wsUrl = this.deps.apiBaseUrl
+    const wsUrl = this.deps.apiBaseUrl
       .replace(/^http:/, "ws:")
       .replace(/^https:/, "wss:")
       .replace(/\/api$/, "");
 
-    // Enforce TLS for non-localhost connections to protect the auth token
-    if (wsUrl.startsWith("ws://")) {
-      try {
-        const host = new URL(wsUrl.replace(/^ws:/, "http:")).hostname;
-        const isLocal = host === "localhost" || host === "127.0.0.1" ||
-          host === "::1" || host === "[::1]";
-        if (!isLocal) {
-          wsUrl = wsUrl.replace(/^ws:/, "wss:");
-          logger.warn(
-            "Upgraded WebSocket connection to wss:// for non-localhost host",
-            this.getConnectionLogContext({ host }),
-          );
-        }
-      } catch {
-        // If URL parsing fails, upgrade to be safe
-        wsUrl = wsUrl.replace(/^ws:/, "wss:");
-      }
-    }
+    // The WebSocket protocol (ws vs wss) is derived from the configured
+    // apiBaseUrl (http→ws, https→wss). No forced upgrade is needed because
+    // the auth token is sent via a subprotocol header, not in the URL.
 
-    const url = `${wsUrl}/ws/${projectId}/events?token=${this.deps.apiToken}`;
+    const url = `${wsUrl}/ws/${projectId}/events`;
 
     logger.debug(
       "Connecting to WebSocket",
       this.getConnectionLogContext({
-        url: url.replace(this.deps.apiToken, "***"),
+        url,
         consecutiveFailures: this.wsConsecutiveFailures,
       }),
     );
 
     try {
-      this.ws = new WebSocket(url);
+      // Send the API token via a WebSocket subprotocol header instead of
+      // a query-string parameter. Query strings can leak into server
+      // access logs, proxy logs, and the browser's Referer header.
+      this.ws = new WebSocket(url, [`bearer-${this.deps.apiToken}`]);
       this.wsConnectionId = crypto.randomUUID().slice(0, 8);
       this.wsErrorLogged = false;
 
@@ -213,7 +201,7 @@ export class WebSocketManager {
             "WebSocket error",
             this.getConnectionLogContext({
               type: event.type,
-              url: (event.target as WebSocket)?.url?.replace(/token=[^&]+/, "token=***"),
+              url: (event.target as WebSocket)?.url,
               readyState: (event.target as WebSocket)?.readyState,
               consecutiveFailures: this.wsConsecutiveFailures,
             }),

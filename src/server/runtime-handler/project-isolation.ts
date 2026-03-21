@@ -1,5 +1,9 @@
 import { serverLogger } from "#veryfront/utils";
 import { getEnvNumber, unrefTimer } from "#veryfront/compat/process.ts";
+import {
+  getWorkerPool,
+  isWorkerIsolationEnabled,
+} from "#veryfront/security/sandbox/worker-pool.ts";
 
 const logger = serverLogger.component("project-isolation");
 
@@ -155,6 +159,46 @@ export class ProjectIsolationManager {
     });
   }
 
+  /**
+   * Record a worker crash for a project. This counts as a failure
+   * toward the circuit breaker threshold and evicts the worker.
+   */
+  recordWorkerCrash(projectSlug: string | undefined): void {
+    if (!projectSlug) return;
+
+    const state = this.getOrCreateState(projectSlug);
+    const now = Date.now();
+    state.failures.push(now);
+
+    state.failures = state.failures.filter(
+      (t) => now - t < this.config.failureWindowMs,
+    );
+
+    logger.warn("Worker crash recorded", {
+      projectSlug,
+      recentFailures: state.failures.length,
+    });
+
+    // Evict the crashed worker from the pool
+    if (isWorkerIsolationEnabled()) {
+      try {
+        getWorkerPool().evictWorker(projectSlug);
+      } catch {
+        // Pool may not be initialized
+      }
+    }
+
+    if (state.failures.length < this.config.circuitBreakerThreshold) return;
+
+    state.circuitOpenedAt = now;
+    logger.error("Circuit opened due to worker crashes", {
+      projectSlug,
+      recentFailures: state.failures.length,
+      threshold: this.config.circuitBreakerThreshold,
+      resetAfterMs: this.config.circuitResetTimeMs,
+    });
+  }
+
   getStats(): Record<
     string,
     {
@@ -192,6 +236,15 @@ export class ProjectIsolationManager {
   shutdown(): void {
     if (this.cleanupInterval) clearInterval(this.cleanupInterval);
     this.projects.clear();
+
+    // Shut down the worker pool if isolation is enabled
+    if (isWorkerIsolationEnabled()) {
+      try {
+        getWorkerPool().shutdown();
+      } catch {
+        // Pool may not be initialized
+      }
+    }
   }
 }
 

@@ -1,6 +1,7 @@
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, readTextFile, withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { join } from "#veryfront/compat/path";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
@@ -22,18 +23,6 @@ function clearCloudEnv(): void {
       // expected: env may already be unset
     }
   }
-}
-
-function withMockFetch<T>(
-  mockFetch: typeof globalThis.fetch,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = mockFetch;
-
-  return fn().finally(() => {
-    globalThis.fetch = originalFetch;
-  });
 }
 
 function registerTestEmbeddingProvider(): void {
@@ -103,6 +92,24 @@ describe("ragStore", () => {
       assertEquals(Array.isArray(parsed.documents), true);
       assertEquals(Array.isArray(parsed.chunks), true);
       assertEquals(await exists(storagePath + ".tmp"), false);
+    });
+  });
+
+  it("returns empty results for whitespace-only local queries", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      await store.ingest("Doc", "Hello world", {
+        source: "upload:test.txt",
+        type: "txt",
+      });
+
+      const results = await store.search("   ");
+      assertEquals(results, []);
     });
   });
 
@@ -328,6 +335,29 @@ describe("ragStore", () => {
 
         await store.removeDocument(id);
         assertEquals(await store.listDocuments(), []);
+      },
+    );
+  });
+
+  it("returns empty results for whitespace-only cloud queries without making requests", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+
+    let fetchCalls = 0;
+
+    await withMockFetch(
+      async () => {
+        fetchCalls++;
+        throw new Error("fetch should not run for whitespace-only queries");
+      },
+      async () => {
+        const store = ragStore({
+          model: "test/demo",
+        });
+
+        const results = await store.search("   ");
+        assertEquals(results, []);
+        assertEquals(fetchCalls, 0);
       },
     );
   });

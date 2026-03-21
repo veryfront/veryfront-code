@@ -76,6 +76,8 @@ export interface AgentConfig {
    * and registers the skill tools.
    */
   skills?: true | string[];
+  /** Set to false to disable the default security middleware */
+  security?: false;
 }
 
 export type ResolvedAgentConfig = AgentConfig & { model: ModelString };
@@ -132,6 +134,8 @@ export interface Agent {
     context?: Record<string, unknown>;
     /** Override the agent's default model for this request. Must be in `allowedModels` if configured. */
     model?: ModelString;
+    /** Override the maximum model output tokens for this request. */
+    maxOutputTokens?: number;
   }): Promise<AgentResponse>;
 
   stream(input: {
@@ -140,6 +144,8 @@ export interface Agent {
     context?: Record<string, unknown>;
     /** Override the agent's default model for this request. Must be in `allowedModels` if configured. */
     model?: ModelString;
+    /** Override the maximum model output tokens for this request. */
+    maxOutputTokens?: number;
     onToolCall?: (toolCall: ToolCall) => void;
     onChunk?: (chunk: string) => void;
   }): Promise<AgentStreamResult>;

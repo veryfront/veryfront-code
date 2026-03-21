@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
+import { withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
 
 try {
   await loadEnv({ export: true, allowEmptyValues: true, examplePath: null });
@@ -103,7 +104,7 @@ async function startVFSServer(projectDir: string, extraEnv?: Record<string, stri
   const port = await getAvailablePort();
   const cacheDir = await Deno.makeTempDir({ prefix: "vf-vfs-cache-" });
 
-  const env: Record<string, string> = {
+  const env = withProxyModeControlPlaneKey({
     ...Deno.env.toObject(),
     NODE_ENV: "production",
     PROXY_MODE: "1",
@@ -111,7 +112,7 @@ async function startVFSServer(projectDir: string, extraEnv?: Record<string, stri
     LOG_FORMAT: "text",
     VERYFRONT_CACHE_DIR: cacheDir,
     ...extraEnv,
-  };
+  });
 
   const process = new Deno.Command(BINARY_PATH, {
     args: ["serve", "--mode=production", "-p", String(port)],

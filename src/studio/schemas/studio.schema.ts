@@ -63,7 +63,7 @@ export const NavigatorNodeSchema: z.ZodType<{
   })
 );
 
-export const BundlerMessageSchema = z.object({
+export const ErrorMessageSchema = z.object({
   type: z.enum(["error", "warning"]),
   message: z.string(),
   file: z.string().optional(),
@@ -84,16 +84,17 @@ export const MessageFromRendererSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("appUpdated"),
     url: z.string(),
-    id: z.string(),
+    id: z.string().optional(),
     isInitialLoad: z.boolean().optional(),
+    hasError: z.boolean().optional(),
     nodesStore: z.record(z.unknown()).optional(),
-    errors: z.array(BundlerMessageSchema).optional(),
-    warnings: z.array(BundlerMessageSchema).optional(),
+    errors: z.array(ErrorMessageSchema).optional(),
+    warnings: z.array(ErrorMessageSchema).optional(),
   }),
   z.object({
     action: z.literal("runtimeError"),
     url: z.string(),
-    errors: z.array(BundlerMessageSchema).optional(),
+    errors: z.array(ErrorMessageSchema).optional(),
   }),
   z.object({
     action: z.literal("treeUpdated"),
@@ -112,10 +113,6 @@ export const MessageFromRendererSchema = z.discriminatedUnion("action", [
       column: z.number(),
       text: z.string(),
     }).optional(),
-  }),
-  z.object({
-    action: z.literal("errorPageLoaded"),
-    url: z.string(),
   }),
   z.object({
     action: z.literal("onPageTransitionStart"),
@@ -174,6 +171,10 @@ export const MessageFromRendererSchema = z.discriminatedUnion("action", [
     action: z.literal("editNodeProps"),
     id: z.string(),
   }),
+  z.object({
+    action: z.literal("chatMessage"),
+    prompt: z.string(),
+  }),
 ]);
 
 /** postMessage events from Studio to Renderer */
@@ -228,6 +229,6 @@ export type LogMethod = z.infer<typeof logMethodSchema>;
 export type LogMessage = z.infer<typeof LogMessageSchema>;
 export type NavigatorNodeType = z.infer<typeof navigatorNodeTypeSchema>;
 export type NavigatorNode = z.infer<typeof NavigatorNodeSchema>;
-export type BundlerMessage = z.infer<typeof BundlerMessageSchema>;
+export type ErrorMessage = z.infer<typeof ErrorMessageSchema>;
 export type MessageFromRenderer = z.infer<typeof MessageFromRendererSchema>;
 export type MessageFromStudio = z.infer<typeof MessageFromStudioSchema>;

@@ -1,6 +1,171 @@
-import { assertEquals, assertRejects } from "@std/assert";
-import { executeEndpoint } from "./endpoint-executor.ts";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { executeEndpoint, validateEndpointUrl } from "./endpoint-executor.ts";
 import type { IntegrationEndpoint } from "./types.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
+
+Deno.test("validateEndpointUrl", async (t) => {
+  // Valid URLs
+  await t.step("accepts valid HTTPS URL", () => {
+    validateEndpointUrl("https://api.example.com/v1/data");
+  });
+
+  await t.step("accepts HTTPS URL with port", () => {
+    validateEndpointUrl("https://api.example.com:8443/v1/data");
+  });
+
+  await t.step("accepts HTTPS URL with query params", () => {
+    validateEndpointUrl("https://api.example.com/v1?key=value");
+  });
+
+  // Invalid schemes
+  await t.step("rejects HTTP URLs", () => {
+    assertThrows(
+      () => validateEndpointUrl("http://api.example.com/v1"),
+      VeryfrontError,
+      "must use HTTPS",
+    );
+  });
+
+  await t.step("rejects FTP URLs", () => {
+    assertThrows(
+      () => validateEndpointUrl("ftp://files.example.com/data"),
+      VeryfrontError,
+      "must use HTTPS",
+    );
+  });
+
+  await t.step("rejects invalid URLs", () => {
+    assertThrows(
+      () => validateEndpointUrl("not-a-url"),
+      VeryfrontError,
+      "Invalid endpoint URL",
+    );
+  });
+
+  // Localhost
+  await t.step("rejects localhost", () => {
+    assertThrows(
+      () => validateEndpointUrl("https://localhost/api"),
+      VeryfrontError,
+      "must not target localhost",
+    );
+  });
+
+  await t.step("rejects localhost with port", () => {
+    assertThrows(
+      () => validateEndpointUrl("https://localhost:3000/api"),
+      VeryfrontError,
+      "must not target localhost",
+    );
+  });
+
+  // Private IPv4 ranges
+  await t.step("rejects 127.0.0.1 (loopback)", () => {
+    assertThrows(
+      () => validateEndpointUrl("https://127.0.0.1/api"),
+      VeryfrontError,
+      "private/internal",
+    );
+  });
+
+  await t.step("rejects 10.x.x.x (class A private)", () => {
+    assertThrows(
+      () => validateEndpointUrl("https://10.0.0.1/api"),
+      VeryfrontError,
+      "private/internal",
+    );
+  });
+
+  await t.step("rejects 172.16.x.x (class B private)", () => {
+    assertThrows(
+      () => validateEndpointUrl("https://172.16.0.1/api"),
+      VeryfrontError,
+      "private/internal",
+    );
+  });
+
+  await t.step("rejects 172.31.x.x (class B upper bound)", () => {
+    assertThrows(
+      () => validateEndpointUrl("https://172.31.255.255/api"),
+      VeryfrontError,
+      "private/internal",
+    );
+  });
+
+  await t.step("allows 172.32.x.x (outside private range)", () => {
+    validateEndpointUrl("https://172.32.0.1/api");
+  });
+
+  await t.step("rejects 192.168.x.x (class C private)", () => {
+    assertThrows(
+      () => validateEndpointUrl("https://192.168.1.1/api"),
+      VeryfrontError,
+      "private/internal",
+    );
+  });
+
+  await t.step("rejects 169.254.x.x (link-local)", () => {
+    assertThrows(
+      () => validateEndpointUrl("https://169.254.169.254/api"),
+      VeryfrontError,
+      "private/internal",
+    );
+  });
+
+  await t.step("rejects 0.x.x.x", () => {
+    assertThrows(
+      () => validateEndpointUrl("https://0.0.0.0/api"),
+      VeryfrontError,
+      "private/internal",
+    );
+  });
+
+  // IPv6
+  await t.step("rejects ::1 (IPv6 loopback)", () => {
+    assertThrows(
+      () => validateEndpointUrl("https://[::1]/api"),
+      VeryfrontError,
+      "private/internal",
+    );
+  });
+
+  await t.step("rejects fc00:: (IPv6 unique local)", () => {
+    assertThrows(
+      () => validateEndpointUrl("https://[fc00::1]/api"),
+      VeryfrontError,
+      "private/internal",
+    );
+  });
+
+  await t.step("rejects fd12:: (IPv6 unique local)", () => {
+    assertThrows(
+      () => validateEndpointUrl("https://[fd12::1]/api"),
+      VeryfrontError,
+      "private/internal",
+    );
+  });
+
+  await t.step("rejects fe80:: (IPv6 link-local)", () => {
+    assertThrows(
+      () => validateEndpointUrl("https://[fe80::1]/api"),
+      VeryfrontError,
+      "private/internal",
+    );
+  });
+
+  // False positive avoidance
+  await t.step("allows fdic.gov (legitimate domain starting with fd)", () => {
+    validateEndpointUrl("https://fdic.gov/api");
+  });
+
+  await t.step("allows fdroid.org (legitimate domain starting with fd)", () => {
+    validateEndpointUrl("https://fdroid.org/api");
+  });
+
+  await t.step("allows fc-example.com (legitimate domain starting with fc)", () => {
+    validateEndpointUrl("https://fc-example.com/api");
+  });
+});
 
 Deno.test("endpoint-executor", async (t) => {
   await t.step("REST: builds URL with path params", async () => {

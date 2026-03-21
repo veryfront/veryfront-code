@@ -8,6 +8,7 @@
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { resolveInternalModuleTarget } from "../../../veryfront-module-urls.ts";
 import {
   EMBEDDED_SRC_DIR,
   EXTENSIONS,
@@ -19,6 +20,7 @@ import {
 export async function tryReadWithExtensions(
   fs: ReturnType<typeof createFileSystem>,
   basePath: string,
+  existsFn: (path: string) => Promise<boolean> = exists,
 ): Promise<{ sourcePath: string; content: string } | null> {
   // Try all extensions, including .src versions for embedded sources
   const allExtensions = [
@@ -29,7 +31,7 @@ export async function tryReadWithExtensions(
   for (const ext of allExtensions) {
     const sourcePath = basePath + ext;
     try {
-      if (await exists(sourcePath)) {
+      if (await existsFn(sourcePath)) {
         const content = await fs.readTextFile(sourcePath);
         return { sourcePath, content };
       }
@@ -46,6 +48,7 @@ export async function tryReadWithExtensions(
 export async function resolveFrameworkFile(
   vfModulePath: string,
   fs: ReturnType<typeof createFileSystem>,
+  existsFn: (path: string) => Promise<boolean> = exists,
 ): Promise<{ sourcePath: string; content: string } | null> {
   const pathWithoutPrefix = vfModulePath
     .replace(/^\/_vf_modules\//, "")
@@ -77,7 +80,7 @@ export async function resolveFrameworkFile(
       fullPath: pathWithPrefixDir,
     });
 
-    const withPrefix = await tryReadWithExtensions(fs, pathWithPrefixDir);
+    const withPrefix = await tryReadWithExtensions(fs, pathWithPrefixDir, existsFn);
     if (withPrefix) {
       logger.debug(`${LOG_PREFIX} Found with prefix`, { sourcePath: withPrefix.sourcePath });
       return withPrefix;
@@ -92,7 +95,7 @@ export async function resolveFrameworkFile(
       fullPath: pathWithoutPrefixDir,
     });
 
-    const withoutPrefix = await tryReadWithExtensions(fs, pathWithoutPrefixDir);
+    const withoutPrefix = await tryReadWithExtensions(fs, pathWithoutPrefixDir, existsFn);
     if (withoutPrefix) {
       logger.debug(`${LOG_PREFIX} Found without prefix`, { sourcePath: withoutPrefix.sourcePath });
       return withoutPrefix;
@@ -117,10 +120,16 @@ export async function resolveFrameworkFile(
  * then falls back to regular src/. This matches resolveFrameworkFile's behavior
  * and ensures consistent path resolution for cycle detection.
  */
-export async function resolveVeryfrontSourcePath(specifier: string): Promise<string | null> {
+export async function resolveVeryfrontSourcePath(
+  specifier: string,
+  existsFn: (path: string) => Promise<boolean> = exists,
+): Promise<string | null> {
   if (!specifier.startsWith("#veryfront/")) return null;
 
-  const relativePath = specifier.slice("#veryfront/".length);
+  const mappedTarget = resolveInternalModuleTarget(specifier);
+  if (!mappedTarget?.startsWith("./src/")) return null;
+
+  const relativePath = mappedTarget.slice("./src/".length);
   const hasExtension = /\.(tsx?|jsx?|mjs)$/.test(relativePath);
 
   // Check embedded sources first (for compiled binaries), then regular src/
@@ -139,13 +148,13 @@ export async function resolveVeryfrontSourcePath(specifier: string): Promise<str
       // Try exact path with .src suffix first (for embedded sources)
       try {
         const srcPath = basePath + ".src";
-        if (await exists(srcPath)) return srcPath;
+        if (await existsFn(srcPath)) return srcPath;
       } catch (_) {
         /* expected: file may not exist at this path */
       }
       // Try exact path
       try {
-        if (await exists(basePath)) return basePath;
+        if (await existsFn(basePath)) return basePath;
       } catch (_) {
         /* expected: file may not exist at this path */
       }
@@ -162,7 +171,7 @@ export async function resolveVeryfrontSourcePath(specifier: string): Promise<str
     for (const ext of allExtensions) {
       const pathWithExt = basePath + ext;
       try {
-        if (await exists(pathWithExt)) return pathWithExt;
+        if (await existsFn(pathWithExt)) return pathWithExt;
       } catch (_) {
         /* expected: file may not exist at this path */
       }
@@ -172,7 +181,7 @@ export async function resolveVeryfrontSourcePath(specifier: string): Promise<str
     for (const ext of allExtensions) {
       const indexPath = join(basePath, "index" + ext);
       try {
-        if (await exists(indexPath)) return indexPath;
+        if (await existsFn(indexPath)) return indexPath;
       } catch (_) {
         /* expected: file may not exist at this path */
       }
@@ -193,6 +202,7 @@ export async function resolveRelativeFrameworkImport(
   specifier: string,
   fromSourcePath: string,
   _fs: ReturnType<typeof createFileSystem>,
+  existsFn: (path: string) => Promise<boolean> = exists,
 ): Promise<string | null> {
   const fromDir = fromSourcePath.substring(0, fromSourcePath.lastIndexOf("/"));
   const parts = fromDir.split("/").filter(Boolean);
@@ -215,7 +225,7 @@ export async function resolveRelativeFrameworkImport(
   if (/\.(tsx?|jsx?|mjs)$/.test(specifier)) {
     // Try exact path first
     try {
-      if (await exists(basePath)) return basePath;
+      if (await existsFn(basePath)) return basePath;
     } catch (_) {
       /* expected: file may not exist at this path */
     }
@@ -223,7 +233,7 @@ export async function resolveRelativeFrameworkImport(
     // Try with .src suffix for embedded sources
     try {
       const srcPath = basePath + ".src";
-      if (await exists(srcPath)) return srcPath;
+      if (await existsFn(srcPath)) return srcPath;
     } catch (_) {
       /* expected: file may not exist at this path */
     }
@@ -241,7 +251,7 @@ export async function resolveRelativeFrameworkImport(
   for (const ext of allExtensions) {
     const pathWithExt = basePath + ext;
     try {
-      if (await exists(pathWithExt)) return pathWithExt;
+      if (await existsFn(pathWithExt)) return pathWithExt;
     } catch (_) {
       /* expected: file may not exist at this path */
     }
@@ -251,7 +261,7 @@ export async function resolveRelativeFrameworkImport(
   for (const ext of allExtensions) {
     const indexPath = join(basePath, "index" + ext);
     try {
-      if (await exists(indexPath)) return indexPath;
+      if (await existsFn(indexPath)) return indexPath;
     } catch (_) {
       /* expected: file may not exist at this path */
     }

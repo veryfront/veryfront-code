@@ -2,10 +2,11 @@ import { TokenManager, type TokenScope } from "./token-manager.ts";
 import { type ParsedDomain, parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { cwd } from "#veryfront/platform/compat/process.ts";
+import { cwd, getEnv } from "#veryfront/platform/compat/process.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
+import { jwtVerify } from "jose";
 
 export const INTERNAL_PROXY_HEADERS = [
   "x-token",
@@ -150,11 +151,10 @@ function extractUserToken(cookieHeader: string): string | undefined {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
-function extractUserIdFromToken(token: string): string | undefined {
+function decodePayloadUnsafe(token: string): string | undefined {
   try {
     const payload = token.split(".")[1];
     if (!payload) return undefined;
-    // JWT payloads are base64url-encoded: normalize to standard base64 before decoding
     let base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
     const remainder = base64.length % 4;
     if (remainder === 2) base64 += "==";
@@ -163,6 +163,35 @@ function extractUserIdFromToken(token: string): string | undefined {
     return decoded?.userId;
   } catch (_) {
     /* expected: malformed JWT token */
+    return undefined;
+  }
+}
+
+async function extractUserIdFromToken(
+  token: string,
+  isLocal: boolean,
+  log?: ProxyLogger,
+): Promise<string | undefined> {
+  const jwtSecret = getEnv("JWT_SECRET");
+
+  // In local dev mode without a configured secret, fall back to unverified decode
+  if (!jwtSecret && isLocal) {
+    return decodePayloadUnsafe(token);
+  }
+
+  if (!jwtSecret) {
+    log?.warn("JWT_SECRET not configured — cannot verify user token");
+    return undefined;
+  }
+
+  try {
+    const secret = new TextEncoder().encode(jwtSecret);
+    const { payload } = await jwtVerify(token, secret);
+    return (payload as { userId?: string }).userId;
+  } catch (error) {
+    log?.debug("JWT verification failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return undefined;
   }
 }
@@ -275,13 +304,14 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnPath)}`;
   }
 
-  function checkProtectedAccess(
+  async function checkProtectedAccess(
     req: Request,
     matchingEnv: NonNullable<DomainLookupResult["environments"]>[number] | undefined,
     userToken: string | undefined,
     users: DomainLookupResult["users"],
     logContext: Record<string, unknown>,
-  ): { status: number; message: string; redirectUrl?: string } | null {
+    isLocal: boolean,
+  ): Promise<{ status: number; message: string; redirectUrl?: string } | null> {
     if (!matchingEnv?.protected) return null;
 
     if (!userToken) {
@@ -294,9 +324,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       return { status: 302, message: "Authentication required", redirectUrl };
     }
 
-    const userId = extractUserIdFromToken(userToken);
+    const userId = await extractUserIdFromToken(userToken, isLocal, logger);
     if (!userId) {
-      // Malformed token — treat as unauthenticated so user can re-sign-in
       const redirectUrl = makeAuthRedirectUrl(req);
       logger?.info("Could not extract userId from token", {
         ...logContext,
@@ -324,6 +353,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     lookupKey: string,
     envMatcher: (env: NonNullable<DomainLookupResult["environments"]>[number]) => boolean,
     logContext: Record<string, unknown>,
+    isLocal: boolean,
   ): Promise<
     | { projectId?: string; releaseId?: string; environmentId?: string }
     | { error: { status: number; message: string; redirectUrl?: string } }
@@ -333,12 +363,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     const matchingEnv = lookupResult.environments?.find(envMatcher);
 
-    const protectionError = checkProtectedAccess(
+    const protectionError = await checkProtectedAccess(
       req,
       matchingEnv,
       userToken,
       lookupResult.users,
       logContext,
+      isLocal,
     );
     if (protectionError) return { error: protectionError };
 
@@ -441,12 +472,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         releaseId = matchingEnv?.active_release_id ?? undefined;
         environmentId = matchingEnv?.id;
 
-        const protectionError = checkProtectedAccess(
+        const protectionError = await checkProtectedAccess(
           req,
           matchingEnv,
           userToken,
           lookupResult.users,
           { domain: host },
+          isLocalProject,
         );
         if (protectionError) {
           return makeErrorContext(
@@ -475,6 +507,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           projectSlug,
           (env) => env.name.toLowerCase() === targetEnv,
           { projectSlug },
+          isLocalProject,
         );
 
         if ("error" in resolved) {
@@ -508,6 +541,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           projectSlug,
           (env) => env.name.toLowerCase() === "preview",
           { projectSlug },
+          isLocalProject,
         );
 
         if ("error" in resolved) {

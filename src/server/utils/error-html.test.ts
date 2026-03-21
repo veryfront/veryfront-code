@@ -47,7 +47,7 @@ describe("server/utils/error-html", () => {
         minimal: true,
       });
 
-      assertIncludes(html, '"/foo/bar"');
+      assertIncludes(html, "&quot;/foo/bar&quot;");
     });
 
     it("should include Veryfront favicon in styled mode", () => {
@@ -99,6 +99,34 @@ describe("server/utils/error-html", () => {
       const html = ErrorPages.memoryPressure();
 
       assertIncludes(html, "Service Temporarily Unavailable");
+    });
+  });
+
+  describe("postMessage errors", () => {
+    it("should emit postMessage with type 'warning' for 404 pages", () => {
+      const html = ErrorPages.notFound("/missing");
+
+      assertIncludes(html, "type: 'warning'");
+      assertIncludes(html, "appUpdated");
+      assertIncludes(html, "hasError: true");
+    });
+
+    it("should emit postMessage with type 'warning' for undeployed pages", () => {
+      const html = ErrorPages.undeployed();
+
+      assertIncludes(html, "type: 'warning'");
+    });
+
+    it("should emit postMessage with type 'error' for 500 pages", () => {
+      const html = ErrorPages.serverError();
+
+      assertIncludes(html, "type: 'error'");
+    });
+
+    it("should emit postMessage with type 'error' for 503 pages", () => {
+      const html = ErrorPages.memoryPressure();
+
+      assertIncludes(html, "type: 'error'");
     });
   });
 });

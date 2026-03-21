@@ -10,6 +10,53 @@ import { logger } from "#veryfront/utils";
 import type { IntegrationEndpoint } from "./types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
+const PRIVATE_IP_RANGES = [
+  /^127\./, // 127.0.0.0/8
+  /^10\./, // 10.0.0.0/8
+  /^172\.(1[6-9]|2\d|3[01])\./, // 172.16.0.0/12
+  /^192\.168\./, // 192.168.0.0/16
+  /^169\.254\./, // 169.254.0.0/16
+  /^0\./, // 0.0.0.0/8
+  /^::1$/, // IPv6 loopback
+  /^f[cd][0-9a-f]{2}:/i, // IPv6 unique local (fc00::/7)
+  /^fe80:/i, // IPv6 link-local (fe80::/10)
+];
+
+export function validateEndpointUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw INVALID_ARGUMENT.create({ detail: `Invalid endpoint URL: ${url}` });
+  }
+
+  if (parsed.protocol !== "https:") {
+    throw INVALID_ARGUMENT.create({
+      detail: `Endpoint URL must use HTTPS: ${parsed.protocol}`,
+    });
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === "localhost") {
+    throw INVALID_ARGUMENT.create({
+      detail: "Endpoint URL must not target localhost",
+    });
+  }
+
+  // Strip IPv6 brackets for regex matching
+  const bare = hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+
+  for (const range of PRIVATE_IP_RANGES) {
+    if (range.test(bare)) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Endpoint URL must not target private/internal networks",
+      });
+    }
+  }
+}
+
 interface ExecutionContext {
   integration: string;
   toolId: string;
@@ -60,6 +107,8 @@ async function executeGraphQL(
       headers[key] = args[key] !== undefined ? String(args[key]) : String(def.default ?? "");
     }
   }
+
+  validateEndpointUrl(endpoint.url);
 
   logger.debug("Executing GraphQL endpoint", {
     integration: ctx.integration,
@@ -146,6 +195,8 @@ async function executeRest(
     body = JSON.stringify(bodyObj);
     headers["Content-Type"] = endpoint.contentType ?? "application/json";
   }
+
+  validateEndpointUrl(urlObj.toString());
 
   logger.debug("Executing REST endpoint", {
     integration: ctx.integration,

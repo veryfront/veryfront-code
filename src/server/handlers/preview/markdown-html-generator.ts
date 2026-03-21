@@ -116,7 +116,7 @@ export function generateMarkdownHtml(options: MarkdownHtmlOptions): string {
   ${studioScript}
 
   <script type="module">
-    import mermaid from 'https://esm.sh/mermaid@11';
+    import mermaid from 'https://esm.sh/mermaid@11.4.1?pin=v135';
 
     function getMermaidTheme() {
       return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default';

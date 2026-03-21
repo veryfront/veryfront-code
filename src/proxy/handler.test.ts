@@ -2,6 +2,12 @@ import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
+import { SignJWT } from "jose";
+
+const TEST_JWT_SECRET = "test-jwt-secret-for-proxy-handler-tests";
+
+// Set JWT_SECRET so extractUserIdFromToken can verify tokens
+Deno.env.set("JWT_SECRET", TEST_JWT_SECRET);
 
 function createTokenResponse(): Response {
   return Response.json({
@@ -15,12 +21,12 @@ function createNotFoundResponse(): Response {
   return new Response("Not found", { status: 404 });
 }
 
-function createFakeJwt(userId: string): string {
-  const base64UrlEncode = (input: string): string =>
-    btoa(input).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-  const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-  const payload = base64UrlEncode(JSON.stringify({ userId }));
-  return `${header}.${payload}.fake-signature`;
+async function createFakeJwt(userId: string): Promise<string> {
+  const secret = new TextEncoder().encode(TEST_JWT_SECRET);
+  return new SignJWT({ userId })
+    .setProtectedHeader({ alg: "HS256" })
+    .setExpirationTime("1h")
+    .sign(secret);
 }
 
 function createHandler(port: number) {
@@ -264,7 +270,7 @@ describe("Proxy Handler", () => {
     });
 
     it("allows access to protected custom domain with auth token for project member", async () => {
-      const memberToken = createFakeJwt("user-123");
+      const memberToken = await createFakeJwt("user-123");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -312,7 +318,7 @@ describe("Proxy Handler", () => {
     });
 
     it("returns 403 for protected custom domain when authenticated user is not a member", async () => {
-      const nonMemberToken = createFakeJwt("other-user");
+      const nonMemberToken = await createFakeJwt("other-user");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -407,7 +413,7 @@ describe("Proxy Handler", () => {
     });
 
     it("allows access to protected veryfront domain with auth token for project member", async () => {
-      const memberToken = createFakeJwt("user-123");
+      const memberToken = await createFakeJwt("user-123");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -457,7 +463,7 @@ describe("Proxy Handler", () => {
     });
 
     it("returns 403 for protected veryfront domain when authenticated user is not a member", async () => {
-      const nonMemberToken = createFakeJwt("other-user");
+      const nonMemberToken = await createFakeJwt("other-user");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -692,7 +698,7 @@ describe("Proxy Handler", () => {
     });
 
     it("allows access to protected preview domain with auth token for project member", async () => {
-      const memberToken = createFakeJwt("user-123");
+      const memberToken = await createFakeJwt("user-123");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -742,7 +748,7 @@ describe("Proxy Handler", () => {
     });
 
     it("returns 403 for protected preview domain when authenticated user is not a member", async () => {
-      const nonMemberToken = createFakeJwt("other-user");
+      const nonMemberToken = await createFakeJwt("other-user");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 

@@ -7,12 +7,14 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  isBrowserEnvironment,
   isBun,
   isCloudflare,
   isDeno,
   isDenoCompiled,
   isNode,
   isNodeRuntime,
+  isServerEnvironment,
   testDenoCompiledDetection,
 } from "./runtime.ts";
 
@@ -155,6 +157,47 @@ describe("Runtime Detection", () => {
         true,
         "Windows compiled app should be detected",
       );
+    });
+  });
+
+  describe("isServerEnvironment / isBrowserEnvironment", () => {
+    it("isServerEnvironment should return true in test environment", () => {
+      assertEquals(isServerEnvironment(), true);
+    });
+
+    it("isBrowserEnvironment should return false in test environment", () => {
+      assertEquals(isBrowserEnvironment(), false);
+    });
+  });
+
+  describe("runtime constants consistency", () => {
+    it("isDeno should match expected runtime", () => {
+      if (isDeno) {
+        assertEquals(isNode, false);
+        assertEquals(isBun, false);
+      }
+    });
+
+    it("isNode should match expected runtime", () => {
+      if (isNode) {
+        assertEquals(isDeno, false);
+        assertEquals(isBun, false);
+      }
+    });
+
+    it("isBun should match expected runtime", () => {
+      if (isBun) {
+        assertEquals(isDeno, false);
+        assertEquals(isNode, false);
+      }
+    });
+
+    it("isCloudflare should be boolean", () => {
+      assertEquals(typeof isCloudflare, "boolean");
+    });
+
+    it("isNodeRuntime() should agree with isNode constant", () => {
+      assertEquals(isNodeRuntime(), isNode);
     });
   });
 

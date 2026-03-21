@@ -3,4 +3,4 @@
  * @module server/shared/renderer/types
  */
 
-export type { RendererAdapter } from "./adapter.ts";
+export type { RendererAdapter, RendererInitializer } from "./adapter.ts";

@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.55",
+  "version": "0.1.75",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "exclude": [
@@ -34,6 +34,7 @@
     "./resource": "./src/resource/index.ts",
     "./mcp": "./src/mcp/index.ts",
     "./middleware": "./src/middleware/index.ts",
+    "./utils": "./src/utils/index.ts",
     "./oauth": "./src/oauth/index.ts",
     "./provider": "./src/provider/index.ts",
     "./fs": "./src/fs/index.ts",
@@ -71,6 +72,7 @@
     "veryfront/workflow/claude-code": "./src/workflow/claude-code/index.ts",
     "veryfront/workflow/claude-code/react": "./src/workflow/claude-code/react/index.ts",
     "veryfront/workflow/discovery": "./src/workflow/discovery/index.ts",
+    "veryfront/utils": "./src/utils/index.ts",
     "veryfront/utils/box": "./src/utils/box.ts",
     "veryfront/utils/case-utils": "./src/utils/case-utils.ts",
     "veryfront/utils/constants/server": "./src/utils/constants/server.ts",
@@ -225,6 +227,8 @@
     "rehype-highlight": "npm:rehype-highlight@7.0.2",
     "rehype-starry-night": "npm:rehype-starry-night@2.2.0",
     "rehype-slug": "npm:rehype-slug@6.0.0",
+    "rehype-raw": "npm:rehype-raw@7.0.0",
+    "rehype-sanitize": "npm:rehype-sanitize@6.0.0",
     "rehype-stringify": "npm:rehype-stringify@10.0.1",
     "esbuild": "npm:esbuild@0.20.2",
     "esbuild/mod.js": "npm:esbuild@0.20.2",
@@ -249,6 +253,7 @@
     "tailwindcss/colors": "https://esm.sh/tailwindcss@4.1.8/colors",
     "redis": "npm:redis@4.6.13",
     "pg": "npm:pg@8.13.1",
+    "jose": "npm:jose@5.9.6",
     "@opentelemetry/api": "npm:@opentelemetry/api@1",
     "@opentelemetry/core": "npm:@opentelemetry/core@1",
     "@opentelemetry/context-async-hooks": "npm:@opentelemetry/context-async-hooks@1",
@@ -263,7 +268,8 @@
     "class-variance-authority": "npm:class-variance-authority@0.7.1",
     "clsx": "npm:clsx@2.1.1",
     "tailwind-merge": "npm:tailwind-merge@2.6.0",
-    "@kreuzberg/wasm": "npm:@kreuzberg/wasm@4.4.2"
+    "@kreuzberg/wasm": "npm:@kreuzberg/wasm@4.4.2",
+    "#kreuzberg-wasm-glue": "npm:@kreuzberg/wasm@4.4.2/dist/pkg/kreuzberg_wasm.js"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
@@ -291,7 +297,7 @@
     "dev": "deno task generate && deno run --allow-all cli/main.ts dev",
     "production": "deno task generate && deno run --allow-all cli/main.ts serve --mode=production",
     "build:prepare": "deno run -A scripts/build/generate-integrations-module.ts && deno task generate && deno run -A scripts/build/prepare-framework-sources.ts",
-    "build": "deno task build:prepare && deno compile --allow-all --include src/platform/polyfills --include src/proxy/main.ts --include dist/framework-src --output ./bin/veryfront cli/main.ts",
+    "build": "deno task build:prepare && deno run -A scripts/build/compile-binary.ts --output ./bin/veryfront",
     "build:npm": "deno run -A scripts/build/generate-integrations-module.ts && deno task generate && deno run -A scripts/build/build-npm-dnt.ts",
     "release": "deno run -A scripts/release.ts",
     "test": "deno task generate && VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --allow-all '--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts' --unstable-worker-options --unstable-net",
@@ -304,6 +310,7 @@
     "test:coverage:integration": "rm -rf coverage && VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --fail-fast --allow-all --coverage=coverage '--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts' tests --unstable-worker-options --unstable-net || exit 1",
     "coverage:report": "deno coverage coverage --include=src/ --exclude=tests --exclude=src/**/*_test.ts --exclude=src/**/*_test.tsx --exclude=src/**/*.test.ts --exclude=src/**/*.test.tsx --lcov > coverage/lcov.info && deno run --allow-read scripts/lint/check-coverage.ts 80",
     "coverage:html": "deno coverage coverage --include=src/ --exclude=tests --exclude=src/**/*_test.ts --exclude=src/**/*_test.tsx --exclude=src/**/*.test.ts --exclude=src/**/*.test.tsx --html",
+    "bench": "VF_DISABLE_LRU_INTERVAL=1 NODE_ENV=production LOG_FORMAT=text deno bench --no-check --allow-all --unstable-worker-options --unstable-net $(find src -name '*.bench.ts')",
     "clean": "rm -rf .cache/",
     "lint": "DENO_NO_PACKAGE_JSON=1 deno lint src/ cli/",
     "fmt": "deno fmt src/ cli/",

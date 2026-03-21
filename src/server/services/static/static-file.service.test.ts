@@ -67,6 +67,155 @@ describe("server/services/static/static-file.service", () => {
     });
   });
 
+  describe("isAssetRequest", () => {
+    const service = new StaticFileService();
+
+    it("returns true for .js files", () => {
+      assertEquals(service.isAssetRequest("/app.js"), true);
+    });
+
+    it("returns true for .css files", () => {
+      assertEquals(service.isAssetRequest("/styles.css"), true);
+    });
+
+    it("returns true for /_veryfront/ paths", () => {
+      assertEquals(service.isAssetRequest("/_veryfront/chunk.js"), true);
+    });
+
+    it("returns false for .md files", () => {
+      assertEquals(service.isAssetRequest("/readme.md"), false);
+    });
+
+    it("returns false for /.veryfront/ paths", () => {
+      assertEquals(service.isAssetRequest("/.veryfront/config"), false);
+    });
+
+    it("returns false for dotfiles", () => {
+      assertEquals(service.isAssetRequest("/.env"), false);
+    });
+
+    it("returns false for dotfile in subdirectory", () => {
+      assertEquals(service.isAssetRequest("/src/.hidden/file"), false);
+    });
+
+    it("returns true for .well-known paths", () => {
+      assertEquals(service.isAssetRequest("/.well-known/security.txt"), true);
+    });
+
+    it("returns false for paths without dots", () => {
+      assertEquals(service.isAssetRequest("/about"), false);
+    });
+
+    it("returns true for image files", () => {
+      assertEquals(service.isAssetRequest("/logo.png"), true);
+    });
+  });
+
+  describe("clearCache", () => {
+    it("does not throw", () => {
+      StaticFileService.clearCache();
+    });
+  });
+
+  describe("determineCacheStrategy (via resolveFile)", () => {
+    it("returns no-cache for preview mode non-local project", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const fileData = new TextEncoder().encode("body{}");
+      const files = new Map<string, Uint8Array>([
+        ["/project/dist/style.css", fileData],
+      ]);
+      const repo = createMockFsRepo(files);
+      const service = new StaticFileService(repo);
+      const options = makeOptions({ isPreviewMode: true, isLocalProject: false });
+
+      const result = await service.resolveFile("/style.css", options);
+      if (result) {
+        assertEquals(result.cacheStrategy, "no-cache");
+      }
+    });
+
+    it("returns immutable for hashed filename", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const fileData = new TextEncoder().encode("content");
+      // hasHashedFilename requires 8+ hex chars between dots: .a1b2c3d4.
+      const files = new Map<string, Uint8Array>([
+        ["/project/dist/app.a1b2c3d4e5f6.js", fileData],
+      ]);
+      const repo = createMockFsRepo(files);
+      const service = new StaticFileService(repo);
+      const options = makeOptions({ isPreviewMode: false, isLocalProject: true });
+
+      const result = await service.resolveFile("/app.a1b2c3d4e5f6.js", options);
+      if (result) {
+        assertEquals(result.cacheStrategy, "immutable");
+      }
+    });
+
+    it("returns medium for regular public file", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const fileData = new TextEncoder().encode("<svg/>");
+      const files = new Map<string, Uint8Array>([
+        ["/project/public/logo.svg", fileData],
+      ]);
+      const repo = createMockFsRepo(files);
+      const service = new StaticFileService(repo);
+      const options = makeOptions({ isPreviewMode: false, isLocalProject: true });
+
+      const result = await service.resolveFile("/logo.svg", options);
+      if (result) {
+        assertEquals(result.cacheStrategy, "medium");
+      }
+    });
+  });
+
+  describe("manifest resolution", () => {
+    it("resolves file from manifest when manifest exists", async () => {
+      const manifest = {
+        chunks: {
+          chunks: {
+            main: { file: "app.js" },
+          },
+          shared: [],
+        },
+        routes: [],
+      };
+      const manifestJson = JSON.stringify(manifest);
+      const fileData = new TextEncoder().encode("app code");
+
+      const files = new Map<string, Uint8Array>([
+        ["/project/dist/_veryfront/manifest.json", new TextEncoder().encode(manifestJson)],
+        ["/project/dist/_veryfront/app.js", fileData],
+      ]);
+      const repo = createMockFsRepo(files);
+
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const service = new StaticFileService(repo);
+      const options = makeOptions();
+
+      const result = await service.resolveFile("/_veryfront/app.js", options);
+      if (result) {
+        assertEquals(result.source, "manifest");
+        assertEquals(result.data, fileData);
+      }
+    });
+  });
+
   describe("resolveFile", () => {
     it("should return null when file does not exist", async () => {
       __injectDepsForTests({

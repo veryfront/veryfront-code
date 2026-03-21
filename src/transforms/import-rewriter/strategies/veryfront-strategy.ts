@@ -12,7 +12,10 @@ import type {
   RewriteResult,
 } from "../types.ts";
 import { buildVeryfrontModuleUrl } from "../url-builder.ts";
-import { resolveVeryfrontModuleUrl } from "../../veryfront-module-urls.ts";
+import {
+  resolveInternalModuleUrl,
+  resolveVeryfrontModuleUrl,
+} from "../../veryfront-module-urls.ts";
 
 /**
  * SSR-specific module overrides.
@@ -33,12 +36,20 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
     return (
       specifier.startsWith("#veryfront/") ||
       specifier.startsWith("veryfront/") ||
-      specifier === "veryfront"
+      specifier === "veryfront" ||
+      specifier === "#deno-config"
     );
   }
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
     const specifier = info.specifier;
+
+    // Handle #deno-config — Deno import-map alias that doesn't exist in browsers.
+    // Rewrite to a JS module (not JSON) because esbuild strips `with { type: "json" }`
+    // at es2020 target and browsers reject JSON MIME without the assertion.
+    if (specifier === "#deno-config") {
+      return { specifier: "/_vf_modules/_veryfront/_deno-config.js" };
+    }
 
     // Handle #veryfront/* (internal framework imports)
     if (specifier.startsWith("#veryfront/")) {
@@ -46,9 +57,16 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
       // Try resolving via deno.json mappings first (veryfront/head → react/components/Head.js)
       const mapped = resolveVeryfrontModuleUrl(`veryfront/${path}`);
       if (mapped) {
-        // For SSR, append ?ssr=true to signal server-side rendering
         if (ctx.target === "ssr") return { specifier: `${mapped}?ssr=true` };
         return { specifier: mapped };
+      }
+      // Try resolving via #veryfront/* import map (handles paths where the
+      // filesystem layout differs from the specifier, e.g. #veryfront/compat/console
+      // maps to src/platform/compat/console/index.ts, not src/compat/console.ts)
+      const internalMapped = resolveInternalModuleUrl(specifier);
+      if (internalMapped) {
+        if (ctx.target === "ssr") return { specifier: `${internalMapped}?ssr=true` };
+        return { specifier: internalMapped };
       }
       const builtUrl = buildVeryfrontModuleUrl(path);
       if (ctx.target === "ssr") return { specifier: `${builtUrl}?ssr=true` };

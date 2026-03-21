@@ -24,7 +24,11 @@ import { serverLogger } from "#veryfront/utils";
 import { endRequest, startRequest } from "#veryfront/utils";
 import { tryNotFoundFallback } from "./not-found-fallback.ts";
 import { tryErrorPageFallback } from "./error-page-fallback.ts";
-import { type SSRRenderResult, SSRService } from "../../../services/rendering/ssr.service.ts";
+import {
+  type SSRRenderResult,
+  SSRService,
+  type SSRServiceLike,
+} from "../../../services/rendering/ssr.service.ts";
 import { ErrorPages } from "../../../utils/error-html.ts";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
 
@@ -60,7 +64,12 @@ export class SSRHandler extends BaseHandler {
     patterns: [{ pattern: /^(?!\/_).*/, method: ["GET", "HEAD"] }],
   };
 
-  private ssrService = new SSRService();
+  private ssrService: SSRServiceLike;
+
+  constructor(ssrService?: SSRServiceLike) {
+    super();
+    this.ssrService = ssrService ?? new SSRService();
+  }
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
