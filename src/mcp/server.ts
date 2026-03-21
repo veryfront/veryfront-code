@@ -11,6 +11,11 @@ import { VERSION } from "#veryfront/utils/version.ts";
 import { validateContentType } from "#veryfront/security/input-validation/limits.ts";
 import { VeryfrontError } from "#veryfront/security/input-validation/errors.ts";
 import type { IntegrationRuntimeConfig } from "../integrations/types.ts";
+import { logger as baseLogger } from "#veryfront/utils";
+
+const logger = baseLogger.component("mcp-server");
+
+const MAX_REQUEST_BODY_SIZE = 1_048_576; // 1 MB
 
 type JSONRPCParams = Record<string, unknown> | unknown[];
 
@@ -50,6 +55,10 @@ export class MCPServer {
 
   constructor(config: MCPServerConfig) {
     this.config = config;
+
+    if (!config.auth || config.auth.type === "none") {
+      logger.warn("MCP server has no authentication configured — all requests will be accepted");
+    }
   }
 
   /**
@@ -303,11 +312,25 @@ export class MCPServer {
 
   createHTTPHandler(): (request: Request) => Promise<Response> {
     return async (request: Request) => {
-      if (request.method === "OPTIONS") return this.handleCORS();
+      const requestOrigin = request.headers.get("Origin");
+      if (request.method === "OPTIONS") return this.handleCORS(requestOrigin);
 
       if (this.config.auth?.type && this.config.auth.type !== "none") {
         const authorized = await this.validateAuth(request);
         if (!authorized) return new Response("Unauthorized", { status: 401 });
+      }
+
+      // Enforce request body size limit (fast path via Content-Length header)
+      const contentLength = request.headers.get("content-length");
+      if (contentLength && Number(contentLength) > MAX_REQUEST_BODY_SIZE) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32600, message: "Request body too large" },
+          }),
+          { status: 413, headers: { "Content-Type": "application/json" } },
+        );
       }
 
       try {
@@ -326,7 +349,18 @@ export class MCPServer {
 
       let rpcRequest: JSONRPCRequest;
       try {
-        rpcRequest = await request.json();
+        const bodyText = await request.text();
+        if (bodyText.length > MAX_REQUEST_BODY_SIZE) {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: null,
+              error: { code: -32600, message: "Request body too large" },
+            }),
+            { status: 413, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        rpcRequest = JSON.parse(bodyText) as JSONRPCRequest;
       } catch (_) {
         // expected: malformed JSON in request body
         return new Response(
@@ -349,7 +383,7 @@ export class MCPServer {
       return new Response(JSON.stringify(rpcResponse), {
         headers: {
           "Content-Type": "application/json",
-          ...this.getCORSHeaders(),
+          ...this.getCORSHeaders(requestOrigin),
         },
       });
     };
@@ -383,24 +417,38 @@ export class MCPServer {
     if (auth.type !== "bearer") return false;
 
     const token = authHeader.replace("Bearer ", "");
-    if (!auth.validate) return false;
+
+    // When bearer auth is configured without a validate function, reject all requests
+    if (!auth.validate) {
+      logger.warn("Bearer auth configured without validate function — rejecting request");
+      return false;
+    }
 
     return await auth.validate(token);
   }
 
-  private handleCORS(): Response {
-    return new Response(null, { status: 204, headers: this.getCORSHeaders() });
+  private handleCORS(requestOrigin?: string | null): Response {
+    return new Response(null, { status: 204, headers: this.getCORSHeaders(requestOrigin) });
   }
 
-  private getCORSHeaders(): Record<string, string> {
+  private getCORSHeaders(requestOrigin?: string | null): Record<string, string> {
     if (!this.config.cors?.enabled) return {};
 
-    const origin = this.config.cors.origins?.[0] ?? "*";
+    const origins = this.config.cors.origins;
+    if (!origins || origins.length === 0) return {};
+
+    // Match request origin against the configured origins list
+    const matchedOrigin = requestOrigin && origins.includes(requestOrigin)
+      ? requestOrigin
+      : undefined;
+
+    if (!matchedOrigin) return {};
 
     return {
-      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Origin": matchedOrigin,
       "Access-Control-Allow-Methods": "POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization, X-End-User-Id, X-Project-Id",
+      "Vary": "Origin",
     };
   }
 

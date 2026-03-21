@@ -89,7 +89,10 @@ describe("mcp/server", () => {
 
     const handler = server.createHTTPHandler();
     const response = await handler(
-      new Request("http://localhost/mcp", { method: "OPTIONS" }),
+      new Request("http://localhost/mcp", {
+        method: "OPTIONS",
+        headers: { "Origin": "https://example.com" },
+      }),
     );
 
     assertEquals(response.status, 204);
@@ -97,6 +100,238 @@ describe("mcp/server", () => {
     assertExists(allowHeaders);
     assertStringIncludes(allowHeaders, "X-End-User-Id");
     assertStringIncludes(allowHeaders, "X-Project-Id");
+  });
+
+  describe("bearer auth", () => {
+    it("rejects requests when bearer auth has no validate function", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "bearer" },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer some-token",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 401);
+    });
+
+    it("rejects requests without Authorization header", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "bearer", validate: async (token: string) => token === "valid" },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 401);
+    });
+
+    it("accepts requests with valid bearer token", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "bearer", validate: async (token: string) => token === "valid-token" },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer valid-token",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 200);
+    });
+
+    it("rejects requests with invalid bearer token", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "bearer", validate: async (token: string) => token === "valid-token" },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer wrong-token",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 401);
+    });
+  });
+
+  describe("request body size limit", () => {
+    it("rejects requests with Content-Length exceeding 1MB", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": "2000000",
+          },
+          body: "{}",
+        }),
+      );
+
+      assertEquals(response.status, 413);
+      const body = await response.json();
+      assertEquals(body.error.message, "Request body too large");
+    });
+
+    it("rejects requests with body exceeding 1MB even without Content-Length", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+
+      const largeBody = "x".repeat(1_048_577);
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: largeBody,
+        }),
+      );
+
+      assertEquals(response.status, 413);
+      const body = await response.json();
+      assertEquals(body.error.message, "Request body too large");
+    });
+
+    it("accepts requests within the 1MB limit", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 200);
+    });
+  });
+
+  describe("CORS origin matching", () => {
+    it("returns CORS headers when request Origin matches configured origins", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://a.com", "https://b.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "OPTIONS",
+          headers: { "Origin": "https://b.com" },
+        }),
+      );
+
+      assertEquals(response.status, 204);
+      assertEquals(response.headers.get("Access-Control-Allow-Origin"), "https://b.com");
+      assertEquals(response.headers.get("Vary"), "Origin");
+    });
+
+    it("returns no CORS headers when request Origin does not match", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://allowed.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "OPTIONS",
+          headers: { "Origin": "https://evil.com" },
+        }),
+      );
+
+      assertEquals(response.status, 204);
+      assertEquals(response.headers.get("Access-Control-Allow-Origin"), null);
+    });
+
+    it("returns no CORS headers when no origins configured", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "OPTIONS",
+          headers: { "Origin": "https://example.com" },
+        }),
+      );
+
+      assertEquals(response.status, 204);
+      assertEquals(response.headers.get("Access-Control-Allow-Origin"), null);
+    });
+
+    it("returns no CORS headers when CORS is disabled", async () => {
+      const server = createMCPServer({ enabled: true });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "OPTIONS",
+          headers: { "Origin": "https://example.com" },
+        }),
+      );
+
+      assertEquals(response.status, 204);
+      assertEquals(response.headers.get("Access-Control-Allow-Origin"), null);
+    });
+
+    it("includes CORS headers on POST responses when Origin matches", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://example.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Origin": "https://example.com",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get("Access-Control-Allow-Origin"), "https://example.com");
+    });
   });
 
   it("retries loading integrations on subsequent tools/list after a failed fetch", async () => {
