@@ -1,4 +1,11 @@
-import type { DirEntry, FileInfo, FileSystemAdapter, FileWatcher, WatchOptions } from "../base.ts";
+import type {
+  DirEntry,
+  FileInfo,
+  FileSystemAdapter,
+  FileWatcher,
+  ResolveFileOptions,
+  WatchOptions,
+} from "../base.ts";
 import type { ContextualFSAdapter, DirectoryEntry, FSAdapter } from "./veryfront/types.ts";
 
 export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
@@ -224,9 +231,9 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     };
   }
 
-  resolveFile(basePath: string): Promise<string | null> {
+  resolveFile(basePath: string, options?: ResolveFileOptions): Promise<string | null> {
     if (!this._fsAdapter.resolveFile) throw new NotSupportedError("resolveFile", this.adapterType);
-    return this._fsAdapter.resolveFile(basePath);
+    return this._fsAdapter.resolveFile(basePath, options);
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {

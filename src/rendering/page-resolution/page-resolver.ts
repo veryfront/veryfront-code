@@ -7,7 +7,11 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { EntityInfo } from "#veryfront/types";
 import { getEntityBySlug } from "#veryfront/types/entities/getEntityInfo.ts";
-import { detectAppRouter, getAppRouteEntity } from "../router-detection.ts";
+import {
+  detectAppRouter,
+  getAppRouteEntity,
+  primeRouterDetectionCache,
+} from "../router-detection.ts";
 
 const PAGE_EXTENSIONS = /\.(mdx|md|tsx|jsx|ts|js)$/;
 const APP_ROUTER_PAGE_PATTERN = /^page\.(mdx|md|tsx|jsx|ts|js)$/;
@@ -61,39 +65,44 @@ export class PageResolver {
     return withSpan(
       "routing.resolve_page",
       async () => {
-        const useAppRouter = await detectAppRouter(
-          this.projectDir,
-          this.config,
-          this.adapter,
-          { projectId: this.projectId },
-        );
-
         const appDirName = this.config.directories?.app ?? "app";
+        const cacheKey = this.projectId ?? this.projectDir;
 
         let pageInfo: EntityInfo | null | undefined;
 
-        if (useAppRouter) {
+        if (this.config.router === "app") {
           pageInfo = await getAppRouteEntity(
             this.projectDir,
             slug,
             this.adapter,
             appDirName,
           );
-
+          if (pageInfo) {
+            primeRouterDetectionCache(cacheKey, "app");
+          }
+        } else if (this.config.router === "pages") {
+          pageInfo = await getEntityBySlug(this.projectDir, slug, this.adapter);
+          if (pageInfo) {
+            primeRouterDetectionCache(cacheKey, "pages");
+          }
+        } else {
+          // Auto mode stays structural: a single resolved route must not pin router mode
+          // for projects that are still transitioning between app/ and pages/.
+          pageInfo = await getAppRouteEntity(
+            this.projectDir,
+            slug,
+            this.adapter,
+            appDirName,
+          );
           if (!pageInfo) {
-            logger.debug(
-              "App Router resolution failed, falling back to Pages Router",
-              { slug },
-            );
+            pageInfo = await getEntityBySlug(this.projectDir, slug, this.adapter);
           }
         }
-
-        pageInfo ??= await getEntityBySlug(this.projectDir, slug, this.adapter);
 
         if (!pageInfo) {
           throw FILE_NOT_FOUND.create({
             detail: `Page not found: ${slug}`,
-            context: { slug, useAppRouter },
+            context: { slug, router: this.config.router ?? "auto" },
           });
         }
 

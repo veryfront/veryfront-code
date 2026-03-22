@@ -49,6 +49,13 @@ export function clearRouterDetectionCacheForProject(projectId: string): void {
   routerDetectionCache.delete(projectId);
 }
 
+export function primeRouterDetectionCache(
+  projectKey: string,
+  mode: "app" | "pages",
+): void {
+  routerDetectionCache.set(projectKey, mode === "app");
+}
+
 export interface DetectAppRouterOptions {
   /** Project ID for cache isolation in multi-tenant deployments */
   projectId?: string;

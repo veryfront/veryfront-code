@@ -127,14 +127,6 @@ async function tryLoadPageFile(
   slug: string,
   adapter: RuntimeAdapter,
 ): Promise<EntityInfo | null> {
-  try {
-    const info = await adapter.fs.stat(file);
-    if (!info.isFile) return null;
-  } catch (_) {
-    /* expected: file may not exist */
-    return null;
-  }
-
   let raw: string;
   try {
     raw = await adapter.fs.readFile(file);
