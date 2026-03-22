@@ -12,12 +12,17 @@ import { joinPath } from "#veryfront/utils/path-utils.ts";
 import {
   formatCSSError,
   generateTailwindCSS,
+  getProjectCSS,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cache.ts";
 import { serverLogger } from "#veryfront/utils";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
 
 const logger = serverLogger.component("styles-css-handler");
+
+type GeneratedStylesResult =
+  | Awaited<ReturnType<typeof generateTailwindCSS>>
+  | Awaited<ReturnType<typeof getProjectCSS>>;
 
 export class StylesCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -52,11 +57,9 @@ export class StylesCSSHandler extends BaseHandler {
           });
           candidates = new Set<string>();
         }
-        const result = await generateTailwindCSS(rawCss, candidates, {
-          projectSlug: ctx.projectSlug,
-        });
+        const result = await this.generateStylesheet(ctx, rawCss, candidates);
 
-        if (result.error) {
+        if ("error" in result && result.error) {
           const formatted = formatCSSError(result.error);
           logger.error("Tailwind error", {
             error: formatted.message,
@@ -102,6 +105,8 @@ body::before {
         logger.debug("CSS generated", {
           candidates: candidates.size,
           cssLength: result.css.length,
+          fromCache: "fromCache" in result ? result.fromCache : false,
+          cssHash: "hash" in result ? result.hash : undefined,
         });
 
         return this.respond(
@@ -141,5 +146,21 @@ body::before {
       logger.debug("No stylesheet found, using default");
       return DEFAULT_STYLESHEET;
     }
+  }
+
+  private generateStylesheet(
+    ctx: HandlerContext,
+    rawCss: string,
+    candidates: Set<string>,
+  ): Promise<GeneratedStylesResult> {
+    if (!ctx.projectSlug) {
+      return generateTailwindCSS(rawCss, candidates);
+    }
+
+    return getProjectCSS(ctx.projectSlug, rawCss, candidates, {
+      minify: true,
+      environment: "preview",
+      buildMode: "production",
+    });
   }
 }

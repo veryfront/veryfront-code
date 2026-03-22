@@ -23,6 +23,14 @@ interface RouteCandidateOptions {
   developmentMode: boolean;
 }
 
+interface ProjectCandidateOptions {
+  projectScope: string;
+  projectVersion: string;
+  projectDir: string;
+  files: SourceFileLike[];
+  developmentMode: boolean;
+}
+
 const logger = rendererLogger.component("css-candidate-manifest");
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
 const DEV_MANIFEST_TTL_MS = 2_000;
@@ -90,6 +98,29 @@ function buildCandidateManifest(files: SourceFileLike[], projectDir: string): Ca
   return { fileCandidates, allCandidates, builtAt: Date.now() };
 }
 
+function getOrBuildManifest(
+  options: Pick<
+    ProjectCandidateOptions,
+    "projectScope" | "projectVersion" | "projectDir" | "files" | "developmentMode"
+  >,
+): CandidateManifest {
+  const manifestKey = buildManifestCacheKey(options.projectScope, options.projectVersion);
+  const existingManifest = manifestCache.get(manifestKey);
+  const manifest = shouldRebuildManifest(existingManifest, options.developmentMode)
+    ? buildCandidateManifest(options.files, options.projectDir)
+    : existingManifest!;
+
+  if (manifest !== existingManifest) {
+    manifestCache.set(manifestKey, manifest);
+
+    for (const key of routeCandidateCache.keys()) {
+      if (key.startsWith(`${manifestKey}:`)) routeCandidateCache.delete(key);
+    }
+  }
+
+  return manifest;
+}
+
 function addCandidatesForPath(
   target: Set<string>,
   manifest: CandidateManifest,
@@ -109,20 +140,7 @@ function addCandidatesForPath(
  */
 export function getRouteCandidates(options: RouteCandidateOptions): Set<string> {
   const manifestKey = buildManifestCacheKey(options.projectScope, options.projectVersion);
-  const existingManifest = manifestCache.get(manifestKey);
-  const manifest = shouldRebuildManifest(existingManifest, options.developmentMode)
-    ? buildCandidateManifest(options.files, options.projectDir)
-    : existingManifest!;
-
-  if (manifest !== existingManifest) {
-    manifestCache.set(manifestKey, manifest);
-
-    // Clear route subsets when project-level file manifest is rebuilt.
-    for (const key of routeCandidateCache.keys()) {
-      if (key.startsWith(`${manifestKey}:`)) routeCandidateCache.delete(key);
-    }
-  }
-
+  const manifest = getOrBuildManifest(options);
   const routeCacheKey = `${manifestKey}:${options.routeKey}`;
   const cachedRoute = routeCandidateCache.get(routeCacheKey);
   if (cachedRoute) return new Set(cachedRoute);
@@ -154,6 +172,14 @@ export function getRouteCandidates(options: RouteCandidateOptions): Set<string> 
   });
 
   return new Set(routeCandidates);
+}
+
+/**
+ * Resolve full-project Tailwind candidates from a precomputed per-project manifest.
+ */
+export function getProjectCandidates(options: ProjectCandidateOptions): Set<string> {
+  const manifest = getOrBuildManifest(options);
+  return new Set(manifest.allCandidates);
 }
 
 /**

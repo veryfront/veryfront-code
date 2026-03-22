@@ -12,6 +12,8 @@ import { extractCandidates } from "#veryfront/html/styles-builder/tailwind-compi
 import { serverLogger } from "#veryfront/utils";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
+import { getProjectCandidates } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
+import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import type { HandlerContext } from "../types.ts";
 import { FRAMEWORK_CANDIDATES } from "./framework-candidates.generated.ts";
 
@@ -22,6 +24,25 @@ const SKIP_DIRS = new Set(["node_modules", ".cache", ".git", "dist", "build", ".
 
 /** De-duplicated set of framework candidates, computed once at import time. */
 const frameworkCandidates = new Set<string>(FRAMEWORK_CANDIDATES);
+
+interface SourceFileProvider {
+  getAllSourceFiles?: () =>
+    | Array<{ path: string; content?: string }>
+    | Promise<Array<{ path: string; content?: string }>>;
+  getContentContext?: () => ResolvedContentContext | null;
+}
+
+function resolveProjectVersion(
+  ctx: HandlerContext,
+  contentContext: ResolvedContentContext | null,
+): string {
+  if (contentContext?.releaseId) return `release:${contentContext.releaseId}`;
+  if (contentContext?.branch) return `branch:${contentContext.branch}`;
+  if (contentContext?.environmentName) return `environment:${contentContext.environmentName}`;
+  if (ctx.releaseId) return `release:${ctx.releaseId}`;
+  if (ctx.parsedDomain?.branch) return `branch:${ctx.parsedDomain.branch}`;
+  return "live";
+}
 
 /**
  * Extract Tailwind CSS candidate class names from all project source files.
@@ -42,9 +63,8 @@ export async function extractProjectCandidates(ctx: HandlerContext): Promise<Set
 
   // Call method directly on wrappedFs to preserve 'this' context
   const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
-    getAllSourceFiles?: () =>
-      | Array<{ path: string; content?: string }>
-      | Promise<Array<{ path: string; content?: string }>>;
+    getAllSourceFiles?: SourceFileProvider["getAllSourceFiles"];
+    getContentContext?: SourceFileProvider["getContentContext"];
   };
 
   if (typeof fsAdapter.getAllSourceFiles !== "function") {
@@ -56,14 +76,20 @@ export async function extractProjectCandidates(ctx: HandlerContext): Promise<Set
 
   const candidates = new Set<string>(frameworkCandidates);
   const files = await fsAdapter.getAllSourceFiles();
+  const contentContext = typeof fsAdapter.getContentContext === "function"
+    ? fsAdapter.getContentContext()
+    : null;
 
-  for (const file of files) {
-    if (!file.content) continue;
-    if (!SOURCE_EXTENSIONS.some((ext) => file.path.endsWith(ext))) continue;
-
-    for (const cls of extractCandidates(file.content)) {
-      candidates.add(cls);
-    }
+  for (
+    const cls of getProjectCandidates({
+      projectScope: ctx.projectSlug ?? contentContext?.projectSlug ?? ctx.projectDir,
+      projectVersion: resolveProjectVersion(ctx, contentContext),
+      projectDir: ctx.projectDir,
+      files,
+      developmentMode: contentContext?.sourceType === "branch",
+    })
+  ) {
+    candidates.add(cls);
   }
 
   return candidates;
