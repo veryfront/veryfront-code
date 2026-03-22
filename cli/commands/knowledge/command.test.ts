@@ -125,7 +125,7 @@ describe("collectKnowledgeSources", () => {
     await Deno.writeTextFile(localPath, "stub");
 
     try {
-      const sources = await collectKnowledgeSources(
+      const collection = await collectKnowledgeSources(
         {
           sources: [localPath],
           path: undefined,
@@ -141,7 +141,10 @@ describe("collectKnowledgeSources", () => {
         },
       );
 
-      assertEquals(sources, [{ kind: "local", input: localPath, localPath }]);
+      assertEquals(collection, {
+        sources: [{ kind: "local", input: localPath, localPath }],
+        skipped: [],
+      });
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
@@ -149,7 +152,7 @@ describe("collectKnowledgeSources", () => {
 
   it("downloads upload-path sources into the workspace", async () => {
     const calls: string[] = [];
-    const sources = await collectKnowledgeSources(
+    const collection = await collectKnowledgeSources(
       {
         sources: ["uploads/contracts/q1.pdf"],
         path: undefined,
@@ -170,14 +173,17 @@ describe("collectKnowledgeSources", () => {
     );
 
     assertEquals(calls, ["contracts/q1.pdf"]);
-    assertEquals(sources, [
-      {
-        kind: "upload",
-        input: "uploads/contracts/q1.pdf",
-        uploadPath: "contracts/q1.pdf",
-        localPath: "/workspace/uploads/contracts/q1.pdf",
-      },
-    ]);
+    assertEquals(collection, {
+      sources: [
+        {
+          kind: "upload",
+          input: "uploads/contracts/q1.pdf",
+          uploadPath: "contracts/q1.pdf",
+          localPath: "/workspace/uploads/contracts/q1.pdf",
+        },
+      ],
+      skipped: [],
+    });
   });
 
   it("treats uploads/ paths as remote even if a local uploads folder exists", async () => {
@@ -189,7 +195,7 @@ describe("collectKnowledgeSources", () => {
     try {
       Deno.chdir(tempDir);
       const calls: string[] = [];
-      const sources = await collectKnowledgeSources(
+      const collection = await collectKnowledgeSources(
         {
           sources: ["uploads/contracts/q1.pdf"],
           path: undefined,
@@ -210,7 +216,8 @@ describe("collectKnowledgeSources", () => {
       );
 
       assertEquals(calls, ["contracts/q1.pdf"]);
-      assertEquals(sources[0]?.kind, "upload");
+      assertEquals(collection.sources[0]?.kind, "upload");
+      assertEquals(collection.skipped, []);
     } finally {
       Deno.chdir(originalCwd);
       await Deno.remove(tempDir, { recursive: true });
@@ -230,7 +237,7 @@ describe("collectKnowledgeSources", () => {
       },
     });
 
-    const sources = await collectKnowledgeSources(
+    const collection = await collectKnowledgeSources(
       {
         sources: [],
         path: "uploads/",
@@ -253,8 +260,9 @@ describe("collectKnowledgeSources", () => {
     assertEquals(listCalls.length, 1);
     assertEquals(listCalls[0]?.params?.path, undefined);
     assertEquals(downloadCalls, [["a.pdf", "b.pdf"]]);
-    assertEquals(sources.length, 2);
-    assert(sources.every((source) => source.kind === "upload"));
+    assertEquals(collection.sources.length, 2);
+    assert(collection.sources.every((source) => source.kind === "upload"));
+    assertEquals(collection.skipped, []);
   });
 
   it("retries folder-like upload prefixes with a trailing slash", async () => {
@@ -276,7 +284,7 @@ describe("collectKnowledgeSources", () => {
       },
     });
 
-    const sources = await collectKnowledgeSources(
+    const collection = await collectKnowledgeSources(
       {
         sources: [],
         path: "uploads/contracts",
@@ -301,13 +309,14 @@ describe("collectKnowledgeSources", () => {
     assertEquals(listCalls[1]?.params?.path, "contracts/");
     assertEquals(listCalls[1]?.params?.recursive, "false");
     assertEquals(downloadCalls, [["contracts/q1.pdf"]]);
-    assertEquals(sources.length, 1);
-    assertEquals(sources[0]?.kind, "upload");
+    assertEquals(collection.sources.length, 1);
+    assertEquals(collection.sources[0]?.kind, "upload");
+    assertEquals(collection.skipped, []);
   });
 
   it("resolves multiple explicit sources in input order", async () => {
     const downloadCalls: string[][] = [];
-    const sources = await collectKnowledgeSources(
+    const collection = await collectKnowledgeSources(
       {
         sources: [
           "uploads/contracts/a.pdf",
@@ -333,9 +342,12 @@ describe("collectKnowledgeSources", () => {
 
     assertEquals(downloadCalls, [["contracts/a.pdf", "contracts/b.pdf", "contracts/c.pdf"]]);
     assertEquals(
-      sources.map((source) => source.kind === "upload" ? source.uploadPath : source.localPath),
+      collection.sources.map((source) =>
+        source.kind === "upload" ? source.uploadPath : source.localPath
+      ),
       ["contracts/a.pdf", "contracts/b.pdf", "contracts/c.pdf"],
     );
+    assertEquals(collection.skipped, []);
   });
 
   it("batches explicit upload downloads while preserving mixed-source order", async () => {
@@ -345,7 +357,7 @@ describe("collectKnowledgeSources", () => {
 
     try {
       const downloadCalls: string[][] = [];
-      const sources = await collectKnowledgeSources(
+      const collection = await collectKnowledgeSources(
         {
           sources: ["uploads/contracts/a.pdf", localPath, "uploads/contracts/b.pdf"],
           path: undefined,
@@ -372,28 +384,215 @@ describe("collectKnowledgeSources", () => {
       );
 
       assertEquals(downloadCalls, [["contracts/a.pdf", "contracts/b.pdf"]]);
-      assertEquals(sources, [
+      assertEquals(collection, {
+        sources: [
+          {
+            kind: "upload",
+            input: "uploads/contracts/a.pdf",
+            uploadPath: "contracts/a.pdf",
+            localPath: "/workspace/uploads/contracts/a.pdf",
+          },
+          {
+            kind: "local",
+            input: localPath,
+            localPath,
+          },
+          {
+            kind: "upload",
+            input: "uploads/contracts/b.pdf",
+            uploadPath: "contracts/b.pdf",
+            localPath: "/workspace/uploads/contracts/b.pdf",
+          },
+        ],
+        skipped: [],
+      });
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("skips hidden, ignored, and unsupported upload sources while keeping ingestable files", async () => {
+    const downloadCalls: string[][] = [];
+    const collection = await collectKnowledgeSources(
+      {
+        sources: [
+          "uploads/contracts/spec.pdf",
+          "uploads/.env",
+          "uploads/node_modules/react/index.js",
+          "uploads/tools/run_benchmark.py",
+          "uploads/assets/archive.zip",
+        ],
+        path: undefined,
+        all: false,
+        recursive: false,
+      },
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        downloadUploads: async (uploadPaths) => {
+          downloadCalls.push(uploadPaths);
+          return uploadPaths.map((uploadPath) => ({
+            uploadPath,
+            localPath: `/workspace/uploads/${uploadPath}`,
+          }));
+        },
+      },
+    );
+
+    assertEquals(downloadCalls, [["contracts/spec.pdf", "tools/run_benchmark.py"]]);
+    assertEquals(
+      collection.sources.map((source) =>
+        source.kind === "upload" ? source.uploadPath : source.localPath
+      ),
+      ["contracts/spec.pdf", "tools/run_benchmark.py"],
+    );
+    assertEquals(collection.skipped, [
+      {
+        source: "uploads/.env",
+        localSourcePath: null,
+        reason: "hidden_path",
+        message: "Hidden file or directory skipped: .env",
+      },
+      {
+        source: "uploads/node_modules/react/index.js",
+        localSourcePath: null,
+        reason: "ignored_directory",
+        message: "Ignored directory skipped: node_modules",
+      },
+      {
+        source: "uploads/assets/archive.zip",
+        localSourcePath: null,
+        reason: "unsupported_file_type",
+        message: "Unsupported file type: .zip",
+      },
+    ]);
+  });
+
+  it("rejects directory-style upload references in explicit source mode", async () => {
+    await assertRejects(
+      () =>
+        collectKnowledgeSources(
+          {
+            sources: ["uploads/"],
+            path: undefined,
+            all: false,
+            recursive: false,
+          },
+          {
+            client: createMockClient(),
+            projectSlug: "my-project",
+            downloadUploads: async () => {
+              throw new Error("should not download directory-like upload references");
+            },
+          },
+        ),
+      Error,
+      "Directory upload references require --path <prefix> --all: uploads/",
+    );
+  });
+
+  it("skips hidden paths and ignored directories when walking local folders but keeps text/code files", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-local-walk-" });
+    const docsDir = join(tempDir, "docs");
+
+    try {
+      await Deno.mkdir(join(docsDir, "node_modules", "react"), { recursive: true });
+      await Deno.mkdir(join(docsDir, ".cache"), { recursive: true });
+      await Deno.writeTextFile(join(docsDir, "guide.md"), "# Guide");
+      await Deno.writeTextFile(join(docsDir, "run_benchmark.py"), "print('ok')");
+      await Deno.writeTextFile(join(docsDir, ".env"), "SECRET=1");
+      await Deno.writeTextFile(join(docsDir, ".cache", "state.json"), "{}");
+      await Deno.writeTextFile(join(docsDir, "node_modules", "react", "index.js"), "export {}");
+
+      const collection = await collectKnowledgeSources(
         {
-          kind: "upload",
-          input: "uploads/contracts/a.pdf",
-          uploadPath: "contracts/a.pdf",
-          localPath: "/workspace/uploads/contracts/a.pdf",
+          sources: [docsDir],
+          path: undefined,
+          all: false,
+          recursive: true,
         },
         {
-          kind: "local",
-          input: localPath,
-          localPath,
+          client: createMockClient(),
+          projectSlug: "my-project",
+          downloadUploads: async () => {
+            throw new Error("should not download local files");
+          },
+        },
+      );
+
+      assertEquals(
+        collection.sources.map((source) => source.localPath).sort(),
+        [join(docsDir, "guide.md"), join(docsDir, "run_benchmark.py")].sort(),
+      );
+      assertEquals(collection.skipped, [
+        {
+          source: join(docsDir, ".cache"),
+          localSourcePath: null,
+          reason: "hidden_path",
+          message: "Hidden file or directory skipped: .cache",
         },
         {
-          kind: "upload",
-          input: "uploads/contracts/b.pdf",
-          uploadPath: "contracts/b.pdf",
-          localPath: "/workspace/uploads/contracts/b.pdf",
+          source: join(docsDir, ".env"),
+          localSourcePath: join(docsDir, ".env"),
+          reason: "hidden_path",
+          message: "Hidden file or directory skipped: .env",
+        },
+        {
+          source: join(docsDir, "node_modules"),
+          localSourcePath: null,
+          reason: "ignored_directory",
+          message: "Ignored directory skipped: node_modules",
         },
       ]);
     } finally {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }
+  });
+
+  it("skips unsupported files when listing uploads by prefix instead of failing", async () => {
+    const client = createMockClient({
+      get: () =>
+        Promise.resolve({
+          data: [
+            { type: "file", path: "docs/guide.md" },
+            { type: "file", path: "docs/.env" },
+            { type: "file", path: "docs/node_modules/react/index.js" },
+            { type: "file", path: "docs/archive.zip" },
+            { type: "file", path: "docs/run_benchmark.py" },
+          ],
+          page_info: { next: null },
+        }),
+    });
+    const downloadCalls: string[][] = [];
+
+    const collection = await collectKnowledgeSources(
+      {
+        sources: [],
+        path: "uploads/docs",
+        all: true,
+        recursive: true,
+      },
+      {
+        client,
+        projectSlug: "my-project",
+        downloadUploads: async (uploadPaths) => {
+          downloadCalls.push(uploadPaths);
+          return uploadPaths.map((uploadPath) => ({
+            uploadPath,
+            localPath: `/workspace/${uploadPath}`,
+          }));
+        },
+      },
+    );
+
+    assertEquals(downloadCalls, [["docs/guide.md", "docs/run_benchmark.py"]]);
+    assertEquals(
+      collection.sources.map((source) =>
+        source.kind === "upload" ? source.uploadPath : source.localPath
+      ),
+      ["docs/guide.md", "docs/run_benchmark.py"],
+    );
+    assertEquals(collection.skipped.length, 3);
   });
 });
 
@@ -442,17 +641,20 @@ describe("ingestResolvedSources", () => {
       },
     );
 
-    assertEquals(results, [{
-      source: "uploads/contracts/q1.pdf",
-      localSourcePath: "/workspace/uploads/contracts/q1.pdf",
-      outputPath: "/workspace/knowledge/contracts-q1.md",
-      remotePath: "knowledge/contracts-q1.md",
-      slug: "contracts-q1",
-      sourceType: "pdf",
-      summary: "Extracted 4 page(s).",
-      stats: { pages: 4 },
-      warnings: [],
-    }]);
+    assertEquals(results, {
+      ingested: [{
+        source: "uploads/contracts/q1.pdf",
+        localSourcePath: "/workspace/uploads/contracts/q1.pdf",
+        outputPath: "/workspace/knowledge/contracts-q1.md",
+        remotePath: "knowledge/contracts-q1.md",
+        slug: "contracts-q1",
+        sourceType: "pdf",
+        summary: "Extracted 4 page(s).",
+        stats: { pages: 4 },
+        warnings: [],
+      }],
+      failed: [],
+    });
   });
 
   it("uses basename-only slugs for absolute local paths outside /workspace", async () => {
@@ -504,6 +706,185 @@ describe("ingestResolvedSources", () => {
     );
 
     assertEquals(parserSlug, "report");
+  });
+
+  it("uses each local file path as the source reference for walked directories", async () => {
+    const results = await ingestResolvedSources(
+      [{
+        kind: "local",
+        input: "/workspace/contracts",
+        localPath: "/workspace/contracts/run_benchmark.py",
+      }],
+      {
+        sources: ["/workspace/contracts"],
+        path: undefined,
+        all: false,
+        recursive: true,
+        outputDir: "/workspace/knowledge",
+        knowledgePath: "knowledge",
+        description: undefined,
+        slug: undefined,
+        json: true,
+        quiet: false,
+        projectDir: undefined,
+        projectSlug: undefined,
+      },
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () => ({
+          success: true,
+          source_path: "/workspace/contracts/run_benchmark.py",
+          source_filename: "run_benchmark.py",
+          source_type: "txt",
+          slug: "contracts-run-benchmark",
+          sandbox_output_path: "/workspace/knowledge/run-benchmark.md",
+          suggested_project_path: "knowledge/run-benchmark.md",
+          description: "Parsed from run_benchmark.py",
+          title: "Run Benchmark",
+          summary: "Parsed as text.",
+          stats: { lines: 1 },
+          warnings: [],
+        }),
+        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+      },
+    );
+
+    assertEquals(results.ingested, [{
+      source: "/workspace/contracts/run_benchmark.py",
+      localSourcePath: "/workspace/contracts/run_benchmark.py",
+      outputPath: "/workspace/knowledge/run-benchmark.md",
+      remotePath: "knowledge/run-benchmark.md",
+      slug: "contracts-run-benchmark",
+      sourceType: "txt",
+      summary: "Parsed as text.",
+      stats: { lines: 1 },
+      warnings: [],
+    }]);
+  });
+
+  it("records parser failures and continues processing later sources", async () => {
+    const calls: string[] = [];
+
+    const results = await ingestResolvedSources(
+      [
+        {
+          kind: "local",
+          input: "/workspace/contracts/broken.pdf",
+          localPath: "/workspace/contracts/broken.pdf",
+        },
+        {
+          kind: "local",
+          input: "/workspace/contracts/run_benchmark.py",
+          localPath: "/workspace/contracts/run_benchmark.py",
+        },
+      ],
+      {
+        sources: ["/workspace/contracts"],
+        path: undefined,
+        all: false,
+        recursive: false,
+        outputDir: "/workspace/knowledge",
+        knowledgePath: "knowledge",
+        description: undefined,
+        slug: undefined,
+        json: true,
+        quiet: false,
+        projectDir: undefined,
+        projectSlug: undefined,
+      },
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async (input) => {
+          calls.push(input.filePath);
+          if (input.filePath.endsWith("broken.pdf")) {
+            throw new Error("knowledge ingest parser failed: boom");
+          }
+          return {
+            success: true,
+            source_path: input.filePath,
+            source_filename: "run_benchmark.py",
+            source_type: "txt",
+            slug: input.slug ?? "run-benchmark",
+            sandbox_output_path: "/workspace/knowledge/run-benchmark.md",
+            suggested_project_path: "knowledge/run-benchmark.md",
+            description: "Parsed from run_benchmark.py",
+            title: "Run Benchmark",
+            summary: "Parsed as text.",
+            stats: { lines: 1 },
+            warnings: [],
+          };
+        },
+        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+      },
+    );
+
+    assertEquals(calls, [
+      "/workspace/contracts/broken.pdf",
+      "/workspace/contracts/run_benchmark.py",
+    ]);
+    assertEquals(results.ingested, [{
+      source: "/workspace/contracts/run_benchmark.py",
+      localSourcePath: "/workspace/contracts/run_benchmark.py",
+      outputPath: "/workspace/knowledge/run-benchmark.md",
+      remotePath: "knowledge/run-benchmark.md",
+      slug: "contracts-run-benchmark",
+      sourceType: "txt",
+      summary: "Parsed as text.",
+      stats: { lines: 1 },
+      warnings: [],
+    }]);
+    assertEquals(results.failed, [{
+      source: "/workspace/contracts/broken.pdf",
+      localSourcePath: "/workspace/contracts/broken.pdf",
+      reason: "parser_error",
+      message: "knowledge ingest parser failed: boom",
+    }]);
+  });
+
+  it("classifies raw parser failures as parser errors", async () => {
+    const results = await ingestResolvedSources(
+      [
+        {
+          kind: "local",
+          input: "/workspace/contracts/broken.pdf",
+          localPath: "/workspace/contracts/broken.pdf",
+        },
+      ],
+      {
+        sources: ["/workspace/contracts/broken.pdf"],
+        path: undefined,
+        all: false,
+        recursive: false,
+        outputDir: "/workspace/knowledge",
+        knowledgePath: "knowledge",
+        description: undefined,
+        slug: undefined,
+        json: true,
+        quiet: false,
+        projectDir: undefined,
+        projectSlug: undefined,
+      },
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () => {
+          throw new Error("python3 is required. Install python3 first.");
+        },
+        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+      },
+    );
+
+    assertEquals(results.failed, [{
+      source: "/workspace/contracts/broken.pdf",
+      localSourcePath: "/workspace/contracts/broken.pdf",
+      reason: "parser_error",
+      message: "python3 is required. Install python3 first.",
+    }]);
   });
 
   it("rejects a custom slug when more than one resolved source would be written", async () => {

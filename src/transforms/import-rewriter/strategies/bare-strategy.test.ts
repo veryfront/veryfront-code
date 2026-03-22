@@ -97,12 +97,12 @@ describe("BareStrategy", () => {
       assertEquals(result.specifier?.includes("tailwindcss@"), true);
     });
 
-    it("should strip version from versioned specifier", () => {
+    it("should preserve versioned specifiers", () => {
       const result = bareStrategy.rewrite(
         makeInfo("lodash@4.17.21"),
         makeCtx({ target: "browser" }),
       );
-      assertEquals(result.specifier?.includes("esm.sh/lodash"), true);
+      assertEquals(result.specifier?.includes("esm.sh/lodash@4.17.21"), true);
     });
   });
 });

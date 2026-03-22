@@ -14,6 +14,53 @@ def yaml_quote(value: Any) -> str:
 
 
 CODE_FENCE = chr(96) * 3
+TEXT_FILE_EXTENSIONS = {
+    ".c",
+    ".cc",
+    ".conf",
+    ".cpp",
+    ".cs",
+    ".css",
+    ".go",
+    ".h",
+    ".hpp",
+    ".ini",
+    ".java",
+    ".js",
+    ".jsonl",
+    ".jsx",
+    ".kt",
+    ".less",
+    ".lua",
+    ".mjs",
+    ".ndjson",
+    ".php",
+    ".pl",
+    ".py",
+    ".r",
+    ".rb",
+    ".rs",
+    ".sass",
+    ".scala",
+    ".scss",
+    ".sh",
+    ".sql",
+    ".swift",
+    ".toml",
+    ".ts",
+    ".tsx",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".zsh",
+}
+TEXT_FILE_NAMES = {
+    "dockerfile",
+    "makefile",
+    "readme",
+    "license",
+    "changelog",
+}
 
 
 def slugify(value: str) -> str:
@@ -406,6 +453,7 @@ def parse_json(path: str):
 
 def select_parser(path: Path):
     ext = path.suffix.lower()
+    name = path.name.lower()
     if ext == ".pdf":
         return "pdf", prefer_kreuzberg("pdf", parse_pdf)
     if ext in {".csv", ".tsv"}:
@@ -424,6 +472,10 @@ def select_parser(path: Path):
         return ext.lstrip("."), parse_text
     if ext == ".json":
         return "json", parse_json
+    if ext in TEXT_FILE_EXTENSIONS:
+        return ext.lstrip("."), parse_text
+    if not ext and name in TEXT_FILE_NAMES:
+        return "text", parse_text
     raise ValueError(f"Unsupported file type: {ext}")
 
 

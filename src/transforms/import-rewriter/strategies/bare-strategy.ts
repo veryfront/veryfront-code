@@ -13,6 +13,7 @@ import type {
   RewriteResult,
 } from "../types.ts";
 import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
+import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
 
 const logger = rendererLogger.component("esm");
 
@@ -20,10 +21,6 @@ const unversionedImportsWarned = new Set<string>();
 
 function hasVersionSpecifier(specifier: string): boolean {
   return /@[\d^~x][\d.x^~-]*(?=\/|$)/.test(specifier);
-}
-
-function normalizeVersionedSpecifier(specifier: string): string {
-  return specifier.replace(/@[\d^~x][\d.x^~-]*(?=\/|$)/, "");
 }
 
 function warnUnversionedImport(specifier: string, projectId: string): void {
@@ -73,20 +70,22 @@ export class BareStrategy implements ImportRewriteStrategy {
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
     if (ctx.target === "ssr") return { specifier: null };
 
-    const normalized = normalizeVersionedSpecifier(info.specifier);
+    const parsed = parseBarePackageSpecifier(info.specifier);
+    if (parsed == null) {
+      return { specifier: null };
+    }
 
-    let finalSpecifier = normalized;
+    const packageName = parsed.packageName;
+    let version = parsed.version ?? undefined;
+    const subpath = parsed.subpath ?? undefined;
 
-    if (normalized === "tailwindcss" || normalized.startsWith("tailwindcss/")) {
-      finalSpecifier = normalized.replace(
-        /^tailwindcss/,
-        `tailwindcss@${TAILWIND_VERSION}`,
-      );
+    if (packageName === "tailwindcss") {
+      version = TAILWIND_VERSION;
     } else if (!hasVersionSpecifier(info.specifier)) {
       warnUnversionedImport(info.specifier, ctx.projectId);
     }
 
-    const url = buildEsmShUrl(finalSpecifier, undefined, undefined, {
+    const url = buildEsmShUrl(packageName, version, subpath, {
       external: ["react"],
     });
 
