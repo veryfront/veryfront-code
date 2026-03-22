@@ -134,6 +134,43 @@ The preview/runtime layer should only:
 
 It should not do a full project crawl on demand unless it is recovering from an exceptional miss.
 
+## Deployment Modes
+
+This design must continue to work outside the hosted Veryfront Cloud setup.
+
+### Local development / open-source setup
+
+Open-source and local development must not require the hosted Jobs API.
+
+In this mode:
+
+- candidate manifests can be built in-process
+- CSS artifacts can be written to memory, local disk, or Redis-backed caches
+- release-style upfront work can be triggered by local publish/build hooks
+- branch-preview incremental updates can continue to run directly from websocket/file-watch invalidation
+
+If a local jobs runner exists, it can be used. If it does not, the style pipeline must still function through in-process execution.
+
+### Self-hosted single-tenant deployment
+
+Self-hosted installations should be able to choose either:
+
+- in-process/background execution in the application service
+- a separate worker process attached to the same database/cache
+
+Because the code is trusted and the tenant boundary is simpler, this mode does not need the full hosted multi-tenant worker fleet model.
+
+### Hosted cloud deployment
+
+The hosted platform should use project workers/jobs for release/environment artifact preparation, because:
+
+- work is durable
+- work is cross-pod reusable
+- work stays off the API request path
+- multi-tenant isolation is easier to enforce centrally
+
+So jobs are an execution strategy for the hosted platform, not a hard product requirement for open-source or self-hosted setups.
+
 ## JIT Model
 
 Veryfront should keep a JIT architecture, but the JIT unit must become a **content version**, not an individual request.
