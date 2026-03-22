@@ -14,7 +14,7 @@ import { HTTP_OK } from "#veryfront/utils/constants/index.ts";
 import { compileMarkdownRuntime } from "#veryfront/transforms/md/compiler/md-compiler.ts";
 import { extract } from "#std/front-matter/yaml.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { tryNotFoundFallback } from "../request/ssr/not-found-fallback.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
 import { validatePathSync } from "#veryfront/security";
@@ -68,7 +68,9 @@ export class MarkdownPreviewHandler extends BaseHandler {
     const hasMultiProjectSupport = isExtendedFSAdapter(fsAdapter) && fsAdapter.isMultiProjectMode();
 
     if (ctx.projectSlug && hasMultiProjectSupport) {
-      const effectiveToken = ctx.proxyToken || getEnv("VERYFRONT_API_TOKEN") || "";
+      // Framework-owned token: bypass project env overlay so proxy mode works
+      // when a remote project overlay is active.
+      const effectiveToken = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
       const branch = ctx.parsedDomain?.branch ?? null;
 
       return await fsAdapter.runWithContext(

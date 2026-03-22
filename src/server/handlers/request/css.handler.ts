@@ -9,7 +9,7 @@ import {
   extractCacheKeyContext,
   runWithCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 /** Pattern to match hashed CSS URLs: /_vf/css/[8-char-hash].css */
@@ -49,7 +49,9 @@ export class CSSHandler extends BaseHandler {
     // the distributed API cache backend can't authenticate and silently returns
     // null — causing cross-pod cache misses. Wrap the lookup in request context
     // so the API backend can resolve the token and project.
-    const effectiveToken = ctx.proxyToken || getEnv("VERYFRONT_API_TOKEN") || "";
+    // Framework-owned token: bypass project env overlay so proxy mode works
+    // when a remote project overlay is active.
+    const effectiveToken = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
     const lookup = () =>
       runWithCacheKeyContext(cacheCtx, () =>
         getCSSWithJITFallback(
