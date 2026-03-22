@@ -6,6 +6,7 @@
 
 export { type FileContext, VeryfrontApiClient } from "./client.ts";
 export {
+  type EnsureStyleArtifactBuildInput,
   type FileDetail,
   type FileListResult,
   type ListFilesOptions,

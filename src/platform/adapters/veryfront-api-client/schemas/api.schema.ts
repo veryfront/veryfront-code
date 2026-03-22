@@ -148,11 +148,13 @@ export const LookupDomainResponseSchema = z.object({
 });
 
 export const StyleArtifactResolveResponseSchema = z.object({
-  status: z.enum(["ready", "missing"]),
+  status: z.enum(["ready", "missing", "building", "failed"]),
   artifact_hash: z.string().optional(),
   asset_path: z.string().optional(),
   etag: z.string().optional(),
   content_type: z.string().optional(),
+  build_job_id: z.string().uuid().optional(),
+  failure_reason: z.string().optional(),
   updated_at: z.string().optional(),
 });
 
@@ -227,5 +229,11 @@ export const API_ENDPOINTS = {
     path: "/projects/{projectRef}/style-artifacts/current",
     description:
       "Resolve metadata for the latest ready style artifact for a branch, environment, or release selector",
+  },
+  ensureStyleArtifactBuild: {
+    method: "POST" as const,
+    path: "/projects/{projectRef}/style-artifacts/current/builds",
+    description:
+      "Ensure a background style artifact build exists for a branch, environment, or release selector",
   },
 } as const;

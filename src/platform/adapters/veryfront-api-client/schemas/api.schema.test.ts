@@ -247,6 +247,7 @@ describe("schemas", () => {
         "getReleaseFile",
         "lookupDomain",
         "resolveStyleArtifact",
+        "ensureStyleArtifactBuild",
       ] as const;
 
       for (const key of expectedKeys) {
@@ -264,10 +265,15 @@ describe("schemas", () => {
       }
     });
 
-    it("should use GET method for all endpoints", () => {
+    it("should use supported HTTP methods for all endpoints", () => {
       for (const endpoint of Object.values(API_ENDPOINTS)) {
-        assertEquals(endpoint.method, "GET");
+        assertEquals(["GET", "POST"].includes(endpoint.method), true);
       }
+    });
+
+    it("should use the expected methods for style artifact endpoints", () => {
+      assertEquals(API_ENDPOINTS.resolveStyleArtifact.method, "GET");
+      assertEquals(API_ENDPOINTS.ensureStyleArtifactBuild.method, "POST");
     });
 
     it("should have paths starting with /", () => {

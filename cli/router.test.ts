@@ -47,6 +47,7 @@ describe("cli/command-definitions integrity", () => {
       "clean",
       "routes",
       "studio",
+      "styles",
       "lock",
       "generate",
       "pull",
