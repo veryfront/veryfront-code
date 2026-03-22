@@ -178,7 +178,8 @@ export async function getEntityBySlug(
     "types.getEntityBySlug",
     async () => {
       const normalizedSlug = slug === "/" ? "" : slug.replace(/^\/+/, "").replace(/\/+$/, "");
-      const isVeryfrontRoute = normalizedSlug.startsWith(".veryfront/") || normalizedSlug === ".veryfront";
+      const isVeryfrontRoute = normalizedSlug.startsWith(".veryfront/") ||
+        normalizedSlug === ".veryfront";
       const resolveFile = adapter?.fs.resolveFile;
 
       logger.debug("START", {
@@ -366,7 +367,11 @@ export async function getEntityBySlug(
 
       return null;
     },
-    { "entity.slug": slug, "entity.normalized_slug": slug === "/" ? "" : slug.replace(/^\/+/, "").replace(/\/+$/, ""), "entity.projectDir": projectDir },
+    {
+      "entity.slug": slug,
+      "entity.normalized_slug": slug === "/" ? "" : slug.replace(/^\/+/, "").replace(/\/+$/, ""),
+      "entity.projectDir": projectDir,
+    },
   );
 }
 
