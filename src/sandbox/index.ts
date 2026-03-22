@@ -22,6 +22,7 @@ export {
   type CommandJobHeartbeatStatus,
   type CommandJobOutput,
   type CommandJobStatus,
+  type ExecOptions,
   type ExecResult,
   type ExecStreamEvent,
   Sandbox,
