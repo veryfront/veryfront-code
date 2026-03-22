@@ -177,26 +177,29 @@ export async function getEntityBySlug(
   return await withSpan(
     "types.getEntityBySlug",
     async () => {
-      const isVeryfrontRoute = slug.startsWith(".veryfront/") || slug === ".veryfront";
+      const normalizedSlug = slug === "/" ? "" : slug.replace(/^\/+/, "").replace(/\/+$/, "");
+      const isVeryfrontRoute = normalizedSlug.startsWith(".veryfront/") || normalizedSlug === ".veryfront";
       const resolveFile = adapter?.fs.resolveFile;
 
       logger.debug("START", {
         slug,
+        normalizedSlug,
         projectDir,
         isVeryfrontRoute,
         hasResolveFile: !!resolveFile,
       });
 
       if (resolveFile) {
-        const basePaths = [pathHelper.join(projectDir, "pages", slug)];
+        const basePaths = [pathHelper.join(projectDir, "pages", normalizedSlug)];
 
-        if (isVeryfrontRoute) basePaths.unshift(pathHelper.join(projectDir, slug));
-        if (slug === "index" || slug === "") {
+        if (isVeryfrontRoute) basePaths.unshift(pathHelper.join(projectDir, normalizedSlug));
+        if (normalizedSlug === "index" || normalizedSlug === "") {
           basePaths.unshift(pathHelper.join(projectDir, "pages", "index"));
         }
 
         logger.debug("Checking paths (resolveFile branch)", {
           slug,
+          normalizedSlug,
           basePaths,
         });
 
@@ -214,13 +217,14 @@ export async function getEntityBySlug(
           if (info?.entity.isPage) {
             logger.debug("Found page via resolveFile", {
               slug,
+              normalizedSlug,
               path: info.entity.path,
             });
             return info;
           }
         }
 
-        const slugParts = slug.split("/");
+        const slugParts = normalizedSlug === "" ? [] : normalizedSlug.split("/");
         for (let depth = slugParts.length - 1; depth >= 0; depth--) {
           const parentPath = slugParts.slice(0, depth).join("/");
           const pagesDir = parentPath
@@ -265,33 +269,33 @@ export async function getEntityBySlug(
           }
         }
 
-        logger.debug("No page found via resolveFile branch", { slug });
+        logger.debug("No page found via resolveFile branch", { slug, normalizedSlug });
         return null;
       }
 
       const possiblePaths = [
-        pathHelper.join(projectDir, "pages", `${slug}.mdx`),
-        pathHelper.join(projectDir, "pages", `${slug}.md`),
-        pathHelper.join(projectDir, "pages", `${slug}.tsx`),
-        pathHelper.join(projectDir, "pages", `${slug}.jsx`),
-        pathHelper.join(projectDir, "pages", `${slug}.ts`),
-        pathHelper.join(projectDir, "pages", `${slug}/index.mdx`),
-        pathHelper.join(projectDir, "pages", `${slug}/index.md`),
-        pathHelper.join(projectDir, "pages", `${slug}/index.tsx`),
-        pathHelper.join(projectDir, "pages", `${slug}/index.jsx`),
-        pathHelper.join(projectDir, "pages", `${slug}/index.ts`),
+        pathHelper.join(projectDir, "pages", `${normalizedSlug}.mdx`),
+        pathHelper.join(projectDir, "pages", `${normalizedSlug}.md`),
+        pathHelper.join(projectDir, "pages", `${normalizedSlug}.tsx`),
+        pathHelper.join(projectDir, "pages", `${normalizedSlug}.jsx`),
+        pathHelper.join(projectDir, "pages", `${normalizedSlug}.ts`),
+        pathHelper.join(projectDir, "pages", `${normalizedSlug}/index.mdx`),
+        pathHelper.join(projectDir, "pages", `${normalizedSlug}/index.md`),
+        pathHelper.join(projectDir, "pages", `${normalizedSlug}/index.tsx`),
+        pathHelper.join(projectDir, "pages", `${normalizedSlug}/index.jsx`),
+        pathHelper.join(projectDir, "pages", `${normalizedSlug}/index.ts`),
       ];
 
       if (isVeryfrontRoute) {
         possiblePaths.unshift(
-          pathHelper.join(projectDir, `${slug}.mdx`),
-          pathHelper.join(projectDir, `${slug}.md`),
-          pathHelper.join(projectDir, `${slug}.tsx`),
-          pathHelper.join(projectDir, `${slug}.ts`),
+          pathHelper.join(projectDir, `${normalizedSlug}.mdx`),
+          pathHelper.join(projectDir, `${normalizedSlug}.md`),
+          pathHelper.join(projectDir, `${normalizedSlug}.tsx`),
+          pathHelper.join(projectDir, `${normalizedSlug}.ts`),
         );
       }
 
-      if (slug === "index" || slug === "") {
+      if (normalizedSlug === "index" || normalizedSlug === "") {
         possiblePaths.unshift(
           pathHelper.join(projectDir, "pages", "index.mdx"),
           pathHelper.join(projectDir, "pages", "index.md"),
@@ -308,7 +312,7 @@ export async function getEntityBySlug(
         if (info?.entity.isPage) return info;
       }
 
-      const slugParts = slug.split("/");
+      const slugParts = normalizedSlug === "" ? [] : normalizedSlug.split("/");
       for (let depth = slugParts.length - 1; depth >= 0; depth--) {
         const parentPath = slugParts.slice(0, depth).join("/");
         const pagesDir = parentPath
@@ -362,7 +366,7 @@ export async function getEntityBySlug(
 
       return null;
     },
-    { "entity.slug": slug, "entity.projectDir": projectDir },
+    { "entity.slug": slug, "entity.normalized_slug": slug === "/" ? "" : slug.replace(/^\/+/, "").replace(/\/+$/, ""), "entity.projectDir": projectDir },
   );
 }
 
