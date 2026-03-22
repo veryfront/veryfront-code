@@ -246,6 +246,7 @@ describe("schemas", () => {
         "listReleaseFiles",
         "getReleaseFile",
         "lookupDomain",
+        "resolveStyleArtifact",
       ] as const;
 
       for (const key of expectedKeys) {
