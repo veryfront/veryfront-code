@@ -753,6 +753,95 @@ describe("Sandbox", () => {
     });
   });
 
+  describe("listCommandJobs()", () => {
+    it("should list command jobs", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        jsonResponse({
+          jobs: [
+            {
+              id: "job-1",
+              status: "running",
+              exit_code: null,
+              signal: null,
+              started_at: "2026-01-01T00:00:00Z",
+              finished_at: null,
+              heartbeat_status: "disabled",
+              last_heartbeat_at: null,
+              last_heartbeat_error: null,
+              heartbeat_failure_count: 0,
+            },
+            {
+              id: "job-2",
+              status: "completed",
+              exit_code: 0,
+              signal: null,
+              started_at: "2026-01-01T00:00:00Z",
+              finished_at: "2026-01-01T00:01:00Z",
+              heartbeat_status: "disabled",
+              last_heartbeat_at: null,
+              last_heartbeat_error: null,
+              heartbeat_failure_count: 0,
+            },
+          ],
+        }),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const jobs = await sandbox.listCommandJobs();
+
+      assertEquals(jobs.length, 2);
+      assertEquals(jobs[0]!.id, "job-1");
+      assertEquals(jobs[0]!.status, "running");
+      assertEquals(jobs[1]!.id, "job-2");
+      assertEquals(jobs[1]!.status, "completed");
+      assertEquals(jobs[1]!.exitCode, 0);
+
+      assertStringIncludes(call(1).url, "/exec/jobs");
+      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+    });
+
+    it("should handle array response format", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        jsonResponse([
+          {
+            id: "job-1",
+            status: "running",
+            exit_code: null,
+            signal: null,
+            started_at: "2026-01-01T00:00:00Z",
+            finished_at: null,
+            heartbeat_status: "disabled",
+            last_heartbeat_at: null,
+            last_heartbeat_error: null,
+            heartbeat_failure_count: 0,
+          },
+        ]),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const jobs = await sandbox.listCommandJobs();
+
+      assertEquals(jobs.length, 1);
+      assertEquals(jobs[0]!.id, "job-1");
+    });
+
+    it("should throw on list failure", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        textResponse("Internal Server Error", 500),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      await assertRejects(
+        () => sandbox.listCommandJobs(),
+        Error,
+        "List command jobs failed",
+      );
+    });
+  });
+
   describe("cancelCommandJob()", () => {
     it("should cancel a command job", async () => {
       mockFetch([
