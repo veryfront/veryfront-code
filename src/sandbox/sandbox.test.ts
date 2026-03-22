@@ -442,6 +442,104 @@ describe("Sandbox", () => {
     });
   });
 
+  describe("executeCommand() with ExecOptions", () => {
+    it("should pass cwd, timeout_seconds, and env in the request body", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        ndjsonResponse([
+          { type: "stdout", data: "ok\n" },
+          { type: "exit", exitCode: 0 },
+        ]),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const result = await sandbox.executeCommand("ls", {
+        cwd: "/workspace/app",
+        timeout_seconds: 30,
+        env: { NODE_ENV: "test" },
+      });
+
+      assertEquals(result.stdout, "ok\n");
+      assertEquals(result.exitCode, 0);
+      assertEquals(jsonBody(1), {
+        command: "ls",
+        cwd: "/workspace/app",
+        timeout_seconds: 30,
+        env: { NODE_ENV: "test" },
+      });
+    });
+
+    it("should not include undefined options in request body", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        ndjsonResponse([
+          { type: "exit", exitCode: 0 },
+        ]),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      await sandbox.executeCommand("pwd");
+
+      assertEquals(jsonBody(1), { command: "pwd" });
+    });
+  });
+
+  describe("executeStream() with ExecOptions", () => {
+    it("should pass options in the request body", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        ndjsonResponse([
+          { type: "stdout", data: "out\n" },
+          { type: "exit", exitCode: 0 },
+        ]),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const events: ExecStreamEvent[] = [];
+      for await (const event of sandbox.executeStream("cmd", { cwd: "/tmp" })) {
+        events.push(event);
+      }
+
+      assertEquals(events.length, 2);
+      assertEquals(jsonBody(1), { command: "cmd", cwd: "/tmp" });
+    });
+  });
+
+  describe("startCommandJob() with ExecOptions", () => {
+    it("should pass options in the request body", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        jsonResponse({
+          id: "job-opts",
+          status: "running",
+          exit_code: null,
+          signal: null,
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: null,
+          heartbeat_status: "disabled",
+          last_heartbeat_at: null,
+          last_heartbeat_error: null,
+          heartbeat_failure_count: 0,
+        }),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const job = await sandbox.startCommandJob("npm test", {
+        cwd: "/workspace",
+        timeout_seconds: 120,
+        env: { CI: "true" },
+      });
+
+      assertEquals(job.id, "job-opts");
+      assertEquals(jsonBody(1), {
+        command: "npm test",
+        cwd: "/workspace",
+        timeout_seconds: 120,
+        env: { CI: "true" },
+      });
+    });
+  });
+
   describe("readFile()", () => {
     it("should read a file from sandbox", async () => {
       mockFetch([

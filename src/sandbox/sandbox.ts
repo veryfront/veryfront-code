@@ -17,6 +17,16 @@ import {
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
+/** Options for command execution: working directory, timeout, and environment variables. */
+export interface ExecOptions {
+  /** Working directory for the command. */
+  cwd?: string;
+  /** Timeout in seconds for the command. */
+  timeout_seconds?: number;
+  /** Additional environment variables for the command. */
+  env?: Record<string, string>;
+}
+
 /** Options for creating a sandbox session. */
 export interface SandboxOptions {
   /** Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL env. */
@@ -240,12 +250,12 @@ export class Sandbox {
   }
 
   /** Execute a bash command in the sandbox and return buffered result. */
-  async executeCommand(command: string): Promise<ExecResult> {
+  async executeCommand(command: string, options?: ExecOptions): Promise<ExecResult> {
     let stdout = "";
     let stderr = "";
     let exitCode = 1;
 
-    for await (const event of this.executeStream(command)) {
+    for await (const event of this.executeStream(command, options)) {
       switch (event.type) {
         case "stdout":
           stdout += event.data ?? "";
@@ -263,14 +273,14 @@ export class Sandbox {
   }
 
   /** Execute a bash command with streaming output (NDJSON). */
-  async *executeStream(command: string): AsyncGenerator<ExecStreamEvent> {
+  async *executeStream(command: string, options?: ExecOptions): AsyncGenerator<ExecStreamEvent> {
     const res = await fetch(`${this.endpoint}/exec`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.authToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ command }),
+      body: JSON.stringify({ command, ...options }),
     });
 
     if (!res.ok) {
@@ -341,14 +351,14 @@ export class Sandbox {
   }
 
   /** Start an async command job in the sandbox. */
-  async startCommandJob(command: string): Promise<CommandJob> {
+  async startCommandJob(command: string, options?: ExecOptions): Promise<CommandJob> {
     const res = await fetch(`${this.endpoint}/exec/jobs`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.authToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ command }),
+      body: JSON.stringify({ command, ...options }),
     });
 
     if (!res.ok) {
