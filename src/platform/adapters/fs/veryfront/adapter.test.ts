@@ -460,6 +460,140 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(cached?.[0]?.path, "pages/index.tsx");
     });
 
+    it("does not pregenerate CSS during branch initialization", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () =>
+        Promise.resolve([{
+          path: "pages/index.tsx",
+          content: "export default function Page() {}",
+        }]);
+
+      let pregenerationCalls = 0;
+      (
+        adapter as unknown as {
+          triggerCSSPregeneration: (
+            files: Array<{ path: string; content?: string }>,
+          ) => Promise<void>;
+        }
+      ).triggerCSSPregeneration = async () => {
+        pregenerationCalls++;
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+
+      await adapter.initialize();
+
+      assertEquals(pregenerationCalls, 0);
+    });
+
+    it("does not pregenerate CSS during branch cache warmup", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+
+      const files = [{
+        path: "pages/index.tsx",
+        content: "export default function Page() { return null }",
+      }];
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve(files);
+      };
+
+      let pregenerationCalls = 0;
+      (
+        adapter as unknown as {
+          triggerCSSPregeneration: (
+            files: Array<{ path: string; content?: string }>,
+          ) => Promise<void>;
+        }
+      ).triggerCSSPregeneration = async () => {
+        pregenerationCalls++;
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+
+      await adapter.initialize();
+      assertEquals(listAllFilesCalls, 1);
+      assertEquals(pregenerationCalls, 0);
+
+      const cacheKey = buildFileListCacheKey(adapter.getContentContext());
+      const cache = (adapter as unknown as {
+        cache: {
+          delete: (key: string) => boolean;
+          getAsync: <T>(key: string) => Promise<T | undefined>;
+        };
+      }).cache;
+
+      assertEquals(cache.delete(cacheKey), true);
+      assertEquals(await adapter.getAllSourceFiles(), []);
+
+      await waitFor(async () => {
+        const cached = await cache.getAsync<Array<{ path: string; content?: string }>>(cacheKey);
+        return Array.isArray(cached) && cached.length === 1;
+      });
+
+      assertEquals(listAllFilesCalls, 2);
+      assertEquals(pregenerationCalls, 0);
+    });
+
     it("should deduplicate concurrent background file list warmups", async () => {
       const adapter = createAdapter({
         veryfront: {

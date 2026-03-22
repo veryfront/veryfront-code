@@ -188,7 +188,7 @@ function readEnvSnapshot(): EnvironmentConfig {
       ? parseNumber(v8MaxOldSpaceSizeRaw, 0) || undefined
       : undefined,
 
-    veryfrontVersion: getEnv("VERYFRONT_VERSION") || undefined,
+    veryfrontVersion: getEnv("VERYFRONT_VERSION") || getEnv("RELEASE_VERSION") || undefined,
   };
 }
 

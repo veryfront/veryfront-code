@@ -1,6 +1,6 @@
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { hasDenoRuntime, hasNodeProcess } from "../runtime-guards.ts";
-import { VERSION } from "../version.ts";
+import { RUNTIME_VERSION } from "../version.ts";
 import {
   ANSI,
   colorize,
@@ -286,7 +286,7 @@ class ConsoleLogger implements Logger {
       timestamp: new Date().toISOString(),
       level,
       service: this.prefix.toLowerCase(),
-      veryfrontVersion: VERSION,
+      veryfrontVersion: RUNTIME_VERSION,
       message,
     };
 

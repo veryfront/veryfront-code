@@ -350,10 +350,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
         sourceFilesWithContent: fileSummary.sourceFilesWithContent,
       });
 
-      // Trigger CSS pre-generation after the initial file snapshot is ready.
-      // This keeps stylesheet generation off the first styles request for both
-      // preview branches and published content.
-      if (fileSummary.sourceFilesWithContent > 0) {
+      // Trigger CSS pre-generation after the initial file snapshot is ready for
+      // published contexts. Branch previews should first try remote metadata
+      // recovery on cold starts instead of repopulating the prepared cache here.
+      if (fileSummary.sourceFilesWithContent > 0 && this.shouldBackgroundPregenerateStyles()) {
         this.triggerCSSPregeneration(files).catch(() => {
           // Error already logged in triggerCSSPregeneration
         });
@@ -403,6 +403,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return isPrefixBeingInvalidated(prefix);
   }
 
+  private shouldBackgroundPregenerateStyles(): boolean {
+    // Branch previews should recover the last registered stylesheet artifact on
+    // cold starts before rebuilding CSS locally. Live edit pokes still
+    // pregenerate through the WebSocket path after branch content changes.
+    return this.contentContext?.sourceType !== "branch";
+  }
+
   private scheduleFileListWarmup(reason: string, cacheKey?: string): void {
     if (!this.initialized || !this.contentContext) return;
 
@@ -446,7 +453,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         await this.cache.setAsync(effectiveCacheKey, files);
         const fileSummary = summarizeFileList(files);
 
-        if (fileSummary.sourceFilesWithContent > 0) {
+        if (fileSummary.sourceFilesWithContent > 0 && this.shouldBackgroundPregenerateStyles()) {
           this.triggerCSSPregeneration(files).catch(() => {
             // Error already logged in triggerCSSPregeneration
           });
