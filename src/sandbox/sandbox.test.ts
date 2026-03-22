@@ -3,7 +3,7 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/te
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithProjectEnv } from "../server/project-env/storage.ts";
-import type { ExecStreamEvent } from "./sandbox.ts";
+import type { CommandJob, CommandJobOutput, ExecStreamEvent } from "./sandbox.ts";
 import { Sandbox } from "./sandbox.ts";
 
 // Mock fetch for testing
@@ -527,6 +527,271 @@ describe("Sandbox", () => {
       assertStringIncludes(call(1).url, "/sandbox-sessions/s7");
       assertEquals(call(1).init?.method, "DELETE");
       assertEquals(headerValue(1, "Authorization"), "Bearer token");
+    });
+  });
+
+  describe("list()", () => {
+    it("should list sandbox sessions", async () => {
+      mockFetch([
+        jsonResponse({
+          data: [
+            {
+              id: "sess-1",
+              short_id: "s1",
+              endpoint: "https://sb1.test",
+              status: "running",
+              created_at: "2026-01-01T00:00:00Z",
+            },
+            {
+              id: "sess-2",
+              short_id: "s2",
+              endpoint: "https://sb2.test",
+              status: "stopped",
+              created_at: "2026-01-02T00:00:00Z",
+            },
+          ],
+          page_info: {
+            self: "/sandbox-sessions?cursor=abc",
+            next: "/sandbox-sessions?cursor=def",
+            prev: null,
+          },
+        }),
+      ]);
+
+      const result = await Sandbox.list({ authToken: "test-token", apiUrl: "https://api.test.com" });
+
+      assertEquals(result.data.length, 2);
+      assertEquals(result.data[0]!.id, "sess-1");
+      assertEquals(result.data[0]!.shortId, "s1");
+      assertEquals(result.data[0]!.createdAt, "2026-01-01T00:00:00Z");
+      assertEquals(result.data[1]!.status, "stopped");
+      assertEquals(result.pageInfo.next, "/sandbox-sessions?cursor=def");
+      assertEquals(result.pageInfo.prev, null);
+      assertEquals(result.pageInfo.first, null);
+
+      assertStringIncludes(call(0).url, "/sandbox-sessions");
+      assertEquals(headerValue(0, "Authorization"), "Bearer test-token");
+    });
+
+    it("should pass cursor and limit as query params", async () => {
+      mockFetch([
+        jsonResponse({ data: [], page_info: { self: null, next: null, prev: null } }),
+      ]);
+
+      await Sandbox.list({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        cursor: "abc123",
+        limit: 10,
+      });
+
+      assertStringIncludes(call(0).url, "cursor=abc123");
+      assertStringIncludes(call(0).url, "limit=10");
+    });
+
+    it("should throw on list failure", async () => {
+      mockFetch([
+        textResponse("Forbidden", 403),
+      ]);
+
+      await assertRejects(
+        () => Sandbox.list({ authToken: "bad-token", apiUrl: "https://api.test.com" }),
+        Error,
+        "Failed to list sandboxes",
+      );
+    });
+  });
+
+  describe("startCommandJob()", () => {
+    it("should start a command job", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        jsonResponse({
+          id: "job-1",
+          status: "running",
+          exit_code: null,
+          signal: null,
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: null,
+          heartbeat_status: "disabled",
+          last_heartbeat_at: null,
+          last_heartbeat_error: null,
+          heartbeat_failure_count: 0,
+        }),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const job = await sandbox.startCommandJob("npm test");
+
+      assertEquals(job.id, "job-1");
+      assertEquals(job.status, "running");
+      assertEquals(job.exitCode, null);
+      assertEquals(job.startedAt, "2026-01-01T00:00:00Z");
+      assertEquals(job.heartbeatStatus, "disabled");
+      assertEquals(job.heartbeatFailureCount, 0);
+
+      assertEquals(call(1).init?.method, "POST");
+      assertStringIncludes(call(1).url, "/exec/jobs");
+      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+      assertEquals(headerValue(1, "Content-Type"), "application/json");
+      assertEquals(jsonBody(1), { command: "npm test" });
+    });
+
+    it("should throw on start failure", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        textResponse("Internal Server Error", 500),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      await assertRejects(
+        () => sandbox.startCommandJob("bad-cmd"),
+        Error,
+        "Start command job failed",
+      );
+    });
+  });
+
+  describe("getCommandJob()", () => {
+    it("should get a command job by id", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        jsonResponse({
+          id: "job-2",
+          status: "completed",
+          exit_code: 0,
+          signal: null,
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: "2026-01-01T00:01:00Z",
+          heartbeat_status: "healthy",
+          last_heartbeat_at: "2026-01-01T00:00:30Z",
+          last_heartbeat_error: null,
+          heartbeat_failure_count: 0,
+        }),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const job = await sandbox.getCommandJob("job-2");
+
+      assertEquals(job.id, "job-2");
+      assertEquals(job.status, "completed");
+      assertEquals(job.exitCode, 0);
+      assertEquals(job.finishedAt, "2026-01-01T00:01:00Z");
+      assertEquals(job.heartbeatStatus, "healthy");
+      assertEquals(job.lastHeartbeatAt, "2026-01-01T00:00:30Z");
+
+      assertStringIncludes(call(1).url, "/exec/jobs/job-2");
+      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+    });
+
+    it("should throw on get failure", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        textResponse("Not found", 404),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      await assertRejects(
+        () => sandbox.getCommandJob("nonexistent"),
+        Error,
+        "Get command job failed",
+      );
+    });
+  });
+
+  describe("getCommandJobOutput()", () => {
+    it("should get command job output", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        jsonResponse({
+          id: "job-3",
+          status: "completed",
+          exit_code: 0,
+          signal: null,
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: "2026-01-01T00:01:00Z",
+          heartbeat_status: "disabled",
+          last_heartbeat_at: null,
+          last_heartbeat_error: null,
+          heartbeat_failure_count: 0,
+          stdout: "hello world\n",
+          stderr: "",
+          stdout_truncated: false,
+          stderr_truncated: false,
+        }),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const output = await sandbox.getCommandJobOutput("job-3");
+
+      assertEquals(output.id, "job-3");
+      assertEquals(output.stdout, "hello world\n");
+      assertEquals(output.stderr, "");
+      assertEquals(output.stdoutTruncated, false);
+      assertEquals(output.stderrTruncated, false);
+      assertEquals(output.exitCode, 0);
+
+      assertStringIncludes(call(1).url, "/exec/jobs/job-3/output");
+      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+    });
+
+    it("should throw on output fetch failure", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        textResponse("Not found", 404),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      await assertRejects(
+        () => sandbox.getCommandJobOutput("nonexistent"),
+        Error,
+        "Get command job output failed",
+      );
+    });
+  });
+
+  describe("cancelCommandJob()", () => {
+    it("should cancel a command job", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        jsonResponse({
+          id: "job-4",
+          status: "canceled",
+          exit_code: null,
+          signal: "SIGTERM",
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: "2026-01-01T00:00:30Z",
+          heartbeat_status: "disabled",
+          last_heartbeat_at: null,
+          last_heartbeat_error: null,
+          heartbeat_failure_count: 0,
+        }),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const job = await sandbox.cancelCommandJob("job-4");
+
+      assertEquals(job.id, "job-4");
+      assertEquals(job.status, "canceled");
+      assertEquals(job.signal, "SIGTERM");
+
+      assertStringIncludes(call(1).url, "/exec/jobs/job-4/cancel");
+      assertEquals(call(1).init?.method, "POST");
+      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+    });
+
+    it("should throw on cancel failure", async () => {
+      mockFetch([
+        jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
+        textResponse("Not found", 404),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      await assertRejects(
+        () => sandbox.cancelCommandJob("nonexistent"),
+        Error,
+        "Cancel command job failed",
+      );
     });
   });
 
