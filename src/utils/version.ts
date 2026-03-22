@@ -3,7 +3,7 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 
 // Keep in sync with deno.json version.
 // scripts/release.ts updates this constant during releases.
-export const VERSION = "0.1.92";
+export const VERSION = "0.1.93";
 
 export function normalizeVeryfrontVersion(version: string | undefined): string | undefined {
   if (!version) return undefined;

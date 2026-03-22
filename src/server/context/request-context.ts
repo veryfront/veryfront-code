@@ -1,4 +1,4 @@
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 
 export interface RequestContext {
@@ -27,7 +27,9 @@ export function createRequestContext(req: Request): RequestContext {
     : "production";
 
   return {
-    token: req.headers.get("x-token") ?? getEnv("VERYFRONT_API_TOKEN") ?? "",
+    // Framework-owned token: bypass project env overlay so proxy mode works
+    // when a remote project overlay is active.
+    token: req.headers.get("x-token") ?? getHostEnv("VERYFRONT_API_TOKEN") ?? "",
     slug: req.headers.get("x-project-slug") ?? parsed.slug ?? "",
     branch: parsed.branch,
     mode,
