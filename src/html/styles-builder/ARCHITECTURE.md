@@ -229,7 +229,6 @@ For style extraction only, Veryfront should ship with a default non-runtime igno
 Good default candidates:
 
 - `knowledge/**`
-- `docs/**`
 - `coverage/**`
 - `dist/**`
 - `build/**`
@@ -238,6 +237,10 @@ Good default candidates:
 - `node_modules/**`
 
 These conventions must apply only to style/indexing work, not runtime module resolution.
+
+They also must not hide configured route roots. If a directory is being used as
+`app`, `pages`, or any other configured runtime content root, it must stay in
+the style candidate graph even if its name would otherwise look documentation-like.
 
 ### Optional config
 
