@@ -25,6 +25,8 @@ import type {
 import { generateId, parseDuration } from "../types.ts";
 import { hasLockSupport, type WorkflowBackend } from "../backends/types.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { env as getProcessEnv } from "#veryfront/compat/process.ts";
+import { mergeInjectedWorkflowEnv } from "../../jobs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
@@ -194,6 +196,7 @@ export class WorkflowExecutor {
         releaseId: requestCtx.releaseId ?? null,
       }
       : undefined;
+    const injectedProjectEnv = mergeInjectedWorkflowEnv(undefined, getProcessEnv());
 
     const run: WorkflowRun<TInput, TOutput> = {
       id: options?.runId ?? generateId("run"),
@@ -203,7 +206,10 @@ export class WorkflowExecutor {
       input,
       nodeStates: {},
       currentNodes: [],
-      context: { input },
+      context: {
+        input,
+        ...(injectedProjectEnv ? { env: injectedProjectEnv } : {}),
+      },
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),

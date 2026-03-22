@@ -96,6 +96,44 @@ describe("WorkflowClient", () => {
         assertEquals(error.status, 404);
       }
     });
+
+    it("captures injected project env on the workflow run context", async () => {
+      const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+      const originalProjectApiUrl = Deno.env.get("VERYFRONT_PROJECT_API_URL");
+
+      try {
+        Deno.env.set(
+          "VERYFRONT_TASK_ENV_JSON",
+          JSON.stringify({
+            SERVICENOW_USERNAME: "automation@example.com",
+            AI_GATEWAY_TOKEN: "project-token",
+            VERYFRONT_API_TOKEN: "should-be-filtered",
+          }),
+        );
+        Deno.env.set("VERYFRONT_PROJECT_API_URL", "https://api.veryfront.com");
+
+        const handle = await client.start("test-workflow", { topic: "test" });
+        const run = await backend.getRun(handle.runId);
+
+        assertExists(run);
+        assertEquals(run.context.env, {
+          SERVICENOW_USERNAME: "automation@example.com",
+          AI_GATEWAY_TOKEN: "project-token",
+        });
+      } finally {
+        if (originalTaskEnvJson === undefined) {
+          Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+        } else {
+          Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
+        }
+
+        if (originalProjectApiUrl === undefined) {
+          Deno.env.delete("VERYFRONT_PROJECT_API_URL");
+        } else {
+          Deno.env.set("VERYFRONT_PROJECT_API_URL", originalProjectApiUrl);
+        }
+      }
+    });
   });
 
   describe("getRun()", () => {

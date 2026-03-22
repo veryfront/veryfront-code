@@ -7,6 +7,7 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
+import { buildTaskContextEnv } from "../jobs/runtime-env.ts";
 import type { DiscoveredTask } from "./discovery.ts";
 import type { TaskContext } from "./types.ts";
 
@@ -61,14 +62,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
   }
 
   const allEnv = getProcessEnv();
-  const env: Record<string, string> = envAllowlist
-    ? Object.fromEntries(
-      envAllowlist.flatMap((k) => {
-        const value = allEnv[k];
-        return value === undefined ? [] : [[k, value] as const];
-      }),
-    )
-    : { ...allEnv };
+  const env = buildTaskContextEnv(allEnv, envAllowlist);
 
   const ctx: TaskContext = {
     env,
