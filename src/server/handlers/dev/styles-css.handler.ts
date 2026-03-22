@@ -9,20 +9,22 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
-import {
-  formatCSSError,
-  generateTailwindCSS,
-  getProjectCSS,
-} from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { formatCSSError, getProjectCSS } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cache.ts";
+import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
+import {
+  createPreparedProjectCSSContext,
+  storePreparedProjectCSS,
+  tryGetPreparedProjectCSS,
+} from "#veryfront/html/styles-builder/prepared-project-css-cache.ts";
+import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { serverLogger } from "#veryfront/utils";
+import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
 
 const logger = serverLogger.component("styles-css-handler");
 
-type GeneratedStylesResult =
-  | Awaited<ReturnType<typeof generateTailwindCSS>>
-  | Awaited<ReturnType<typeof getProjectCSS>>;
+type GeneratedStylesResult = Awaited<ReturnType<typeof getProjectCSS>>;
 
 export class StylesCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -38,6 +40,9 @@ export class StylesCSSHandler extends BaseHandler {
     try {
       return await this.withProxyContext(ctx, async () => {
         const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
+        const projectScope = ctx.projectSlug ?? ctx.projectDir;
+        const styleProfile = createStyleScopeProfile(ctx.config);
+        const contentContext = this.getContentContext(ctx);
         let rawCss: string;
         try {
           rawCss = await this.loadStylesheet(ctx);
@@ -46,6 +51,29 @@ export class StylesCSSHandler extends BaseHandler {
             error: error instanceof Error ? error.message : String(error),
           });
           rawCss = DEFAULT_STYLESHEET;
+        }
+        const preparedContext = this.createPreparedCSSContext(
+          projectScope,
+          rawCss,
+          styleProfile.hash,
+          contentContext,
+          ctx,
+        );
+
+        if (preparedContext) {
+          const prepared = await tryGetPreparedProjectCSS(preparedContext);
+          if (prepared) {
+            logger.debug("Prepared CSS cache hit", {
+              projectScope,
+              projectVersion: preparedContext.projectVersion,
+              styleProfileHash: styleProfile.hash,
+              cssHash: prepared.hash,
+            });
+
+            return this.respond(
+              responseBuilder.withContentType("text/css; charset=utf-8", prepared.css, HTTP_OK),
+            );
+          }
         }
 
         let candidates: Set<string>;
@@ -57,10 +85,11 @@ export class StylesCSSHandler extends BaseHandler {
           });
           candidates = new Set<string>();
         }
-        const result = await this.generateStylesheet(ctx, rawCss, candidates);
-
-        if ("error" in result && result.error) {
-          const formatted = formatCSSError(result.error);
+        let result: GeneratedStylesResult;
+        try {
+          result = await this.generateStylesheet(ctx, rawCss, candidates);
+        } catch (error) {
+          const formatted = formatCSSError(error instanceof Error ? error : String(error));
           logger.error("Tailwind error", {
             error: formatted.message,
             suggestion: formatted.suggestion,
@@ -103,11 +132,19 @@ body::before {
         }
 
         logger.debug("CSS generated", {
+          projectScope,
           candidates: candidates.size,
           cssLength: result.css.length,
           fromCache: "fromCache" in result ? result.fromCache : false,
           cssHash: "hash" in result ? result.hash : undefined,
         });
+
+        if (preparedContext && "hash" in result) {
+          await storePreparedProjectCSS(preparedContext, {
+            css: result.css,
+            hash: result.hash,
+          });
+        }
 
         return this.respond(
           responseBuilder.withContentType("text/css; charset=utf-8", result.css, HTTP_OK),
@@ -153,14 +190,49 @@ body::before {
     rawCss: string,
     candidates: Set<string>,
   ): Promise<GeneratedStylesResult> {
-    if (!ctx.projectSlug) {
-      return generateTailwindCSS(rawCss, candidates);
-    }
+    const projectScope = ctx.projectSlug ?? ctx.projectDir;
 
-    return getProjectCSS(ctx.projectSlug, rawCss, candidates, {
+    return getProjectCSS(projectScope, rawCss, candidates, {
       minify: true,
       environment: "preview",
       buildMode: "production",
     });
+  }
+
+  private getContentContext(ctx: HandlerContext): ResolvedContentContext | null {
+    const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
+    if (typeof wrappedFs.getUnderlyingAdapter !== "function") return null;
+
+    const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
+      getContentContext?: () => ResolvedContentContext | null;
+    };
+
+    return typeof fsAdapter.getContentContext === "function" ? fsAdapter.getContentContext() : null;
+  }
+
+  private createPreparedCSSContext(
+    projectScope: string | undefined,
+    rawCss: string,
+    styleProfileHash: string,
+    contentContext: ResolvedContentContext | null,
+    ctx: HandlerContext,
+  ) {
+    if (!projectScope) return undefined;
+
+    return createPreparedProjectCSSContext(
+      projectScope,
+      resolveStyleContentVersion(contentContext, {
+        releaseId: ctx.releaseId,
+        branch: ctx.parsedDomain?.branch,
+        environmentName: ctx.environmentName,
+      }),
+      rawCss,
+      styleProfileHash,
+      {
+        minify: true,
+        environment: "preview",
+        buildMode: "production",
+      },
+    );
   }
 }

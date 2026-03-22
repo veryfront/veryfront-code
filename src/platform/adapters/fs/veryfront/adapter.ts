@@ -245,6 +245,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       },
       clearFileListIndex: () => this.readOps.clearFileListIndex(),
       setFileListCache: (cacheKey, files) => this.cache.setAsync(cacheKey, files),
+      pregenerateStyles: (files) => this.triggerCSSPregeneration(files),
     });
 
     logger.debug("Created", {
@@ -349,12 +350,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
         sourceFilesWithContent: fileSummary.sourceFilesWithContent,
       });
 
-      // Trigger CSS pre-generation for non-branch environments (fire-and-forget)
-      // This runs in parallel with the rest of initialization
-      if (
-        this.contentContext.sourceType !== "branch" &&
-        fileSummary.sourceFilesWithContent > 0
-      ) {
+      // Trigger CSS pre-generation after the initial file snapshot is ready.
+      // This keeps stylesheet generation off the first styles request for both
+      // preview branches and published content.
+      if (fileSummary.sourceFilesWithContent > 0) {
         this.triggerCSSPregeneration(files).catch(() => {
           // Error already logged in triggerCSSPregeneration
         });
@@ -445,6 +444,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
         const files = await fetchFileListForContext(this.client, warmupContext);
         await this.cache.setAsync(effectiveCacheKey, files);
+        const fileSummary = summarizeFileList(files);
+
+        if (fileSummary.sourceFilesWithContent > 0) {
+          this.triggerCSSPregeneration(files).catch(() => {
+            // Error already logged in triggerCSSPregeneration
+          });
+        }
 
         logger.debug("File list warmup complete", {
           reason,
@@ -716,34 +722,57 @@ export class VeryfrontFSAdapter implements FSAdapter {
       const { pregenerateCSSFromFiles, findStylesheetFromFiles } = await import(
         "../../../../html/styles-builder/css-pregeneration.ts"
       );
+      const { resolveStyleContentVersion } = await import(
+        "../../../../html/styles-builder/content-version.ts"
+      );
+      const { createStyleScopeProfile } = await import(
+        "../../../../html/styles-builder/style-scope-profile.ts"
+      );
 
       let stylesheetPath: string | undefined;
+      let styleProfile = createStyleScopeProfile();
       const projectDir = this.normalizer.getProjectDir();
 
-      if (projectDir) {
-        try {
-          const { runtime } = await import("#veryfront/platform/adapters/registry.ts");
-          const { getConfig } = await import("#veryfront/config");
-          const adapter = await runtime.get();
-          const cacheKey = this.client.getProjectId() || this.projectSlug;
-          const config = await getConfig(projectDir, adapter, { cacheKey });
-          stylesheetPath = config?.tailwind?.stylesheet;
-        } catch (error) {
-          logger.debug("Failed to load config for CSS pre-generation", {
-            projectSlug: this.projectSlug,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
+      if (!projectDir) {
+        logger.debug("Skipping CSS pre-generation without projectDir", {
+          projectSlug: this.projectSlug,
+        });
+        return;
+      }
+
+      try {
+        const { runtime } = await import("#veryfront/platform/adapters/registry.ts");
+        const { getConfig } = await import("#veryfront/config");
+        const adapter = await runtime.get();
+        const cacheKey = this.client.getProjectId() || this.projectSlug;
+        const config = await getConfig(projectDir, adapter, { cacheKey });
+        stylesheetPath = config?.tailwind?.stylesheet;
+        styleProfile = createStyleScopeProfile(config);
+      } catch (error) {
+        logger.debug("Failed to load config for CSS pre-generation", {
+          projectSlug: this.projectSlug,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
 
       const stylesheet = findStylesheetFromFiles(files, stylesheetPath);
+      const projectVersion = resolveStyleContentVersion(this.contentContext, {
+        branch: this.contentContext?.branch ?? null,
+        releaseId: this.contentContext?.releaseId ?? null,
+        environmentName: this.contentContext?.environmentName ?? null,
+      });
 
       await pregenerateCSSFromFiles({
         projectSlug: this.projectSlug,
+        projectVersion,
+        projectDir,
         files,
+        styleProfile,
         stylesheet,
         stylesheetPath,
         minify: true,
+        environment: "preview",
+        buildMode: "production",
       });
     } catch (error) {
       logger.warn("CSS pre-generation failed", {

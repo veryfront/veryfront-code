@@ -8,20 +8,35 @@
 
 import { serverLogger } from "#veryfront/utils";
 import { extractCandidatesFromFiles, getProjectCSS } from "./tailwind-compiler.ts";
+import {
+  createPreparedProjectCSSContext,
+  storePreparedProjectCSS,
+} from "./prepared-project-css-cache.ts";
+import type { StyleScopeProfile } from "./style-scope-profile.ts";
 
 const logger = serverLogger.component("css-pregeneration");
 
 interface CSSPregenerationOptions {
   /** Project slug for cache keying */
   projectSlug: string;
+  /** Current content version for the prepared stylesheet artifact */
+  projectVersion: string;
+  /** Project root used for style scope filtering */
+  projectDir?: string;
   /** List of files with content to extract candidates from */
   files: Array<{ path: string; content?: string }>;
+  /** Style scope profile for convention-based filtering */
+  styleProfile: StyleScopeProfile;
   /** Optional custom stylesheet (globals.css content) */
   stylesheet?: string;
   /** Optional stylesheet path (from config) to locate content in files */
   stylesheetPath?: string;
   /** Enable minification (default: true) */
   minify?: boolean;
+  /** Environment segment used for prepared artifact cache partitioning */
+  environment?: string;
+  /** Build mode recorded in the prepared artifact profile */
+  buildMode?: "development" | "production";
 }
 
 /**
@@ -39,34 +54,56 @@ interface CSSPregenerationOptions {
 export async function pregenerateCSSFromFiles(
   options: CSSPregenerationOptions,
 ): Promise<void> {
-  const { projectSlug, files, stylesheet, stylesheetPath, minify = true } = options;
+  const {
+    projectSlug,
+    projectVersion,
+    projectDir,
+    files,
+    styleProfile,
+    stylesheet,
+    stylesheetPath,
+    minify = true,
+    environment = "preview",
+    buildMode = "production",
+  } = options;
   const startTime = performance.now();
 
   try {
-    const candidates = extractCandidatesFromFiles(files);
-
-    if (candidates.size === 0) {
-      logger.debug("No candidates found, skipping", {
-        projectSlug,
-        fileCount: files.length,
-      });
-      return;
-    }
-
     const resolvedStylesheet = stylesheet ?? findStylesheetFromFiles(files, stylesheetPath);
+    const candidates = extractCandidatesFromFiles(files, {
+      projectDir,
+      styleProfile,
+    });
 
     logger.debug("Starting", {
       projectSlug,
+      projectVersion,
       fileCount: files.length,
       candidateCount: candidates.size,
       hasStylesheet: Boolean(resolvedStylesheet),
+      styleProfileHash: styleProfile.hash,
     });
 
-    const result = await getProjectCSS(projectSlug, resolvedStylesheet, candidates, { minify });
+    const result = await getProjectCSS(projectSlug, resolvedStylesheet, candidates, {
+      minify,
+      environment,
+      buildMode,
+    });
+    await storePreparedProjectCSS(
+      createPreparedProjectCSSContext(
+        projectSlug,
+        projectVersion,
+        resolvedStylesheet,
+        styleProfile.hash,
+        { minify, environment, buildMode },
+      ),
+      { css: result.css, hash: result.hash },
+    );
     const duration = performance.now() - startTime;
 
     logger.debug("Complete", {
       projectSlug,
+      projectVersion,
       candidateCount: candidates.size,
       cssLength: result.css.length,
       cssHash: result.hash,
