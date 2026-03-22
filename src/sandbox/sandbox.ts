@@ -39,6 +39,60 @@ export interface ExecStreamEvent {
   exitCode?: number;
 }
 
+/** Status of an async command job. */
+export type CommandJobStatus = "running" | "completed" | "failed" | "canceled";
+
+/** Heartbeat health status for a command job. */
+export type CommandJobHeartbeatStatus = "disabled" | "healthy" | "degraded";
+
+/** An async command job running in a sandbox. */
+export interface CommandJob {
+  id: string;
+  status: CommandJobStatus;
+  exitCode: number | null;
+  signal: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  heartbeatStatus: CommandJobHeartbeatStatus;
+  lastHeartbeatAt: string | null;
+  lastHeartbeatError: string | null;
+  heartbeatFailureCount: number;
+}
+
+/** A command job with its captured output. */
+export interface CommandJobOutput extends CommandJob {
+  stdout: string;
+  stderr: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+}
+
+/** A sandbox session summary returned by list. */
+export interface SandboxSession {
+  id: string;
+  shortId: string;
+  endpoint: string;
+  status: string;
+  createdAt: string;
+}
+
+/** Options for listing sandbox sessions. */
+export interface SandboxListOptions extends SandboxOptions {
+  cursor?: string;
+  limit?: number;
+}
+
+/** Paginated result of sandbox sessions. */
+export interface SandboxListResult {
+  data: SandboxSession[];
+  pageInfo: {
+    self: string | null;
+    first: null;
+    next: string | null;
+    prev: string | null;
+  };
+}
+
 /** Client for isolated ephemeral compute environments with command execution and file I/O. */
 export class Sandbox {
   private constructor(
@@ -113,6 +167,47 @@ export class Sandbox {
 
     const { endpoint } = await res.json();
     return new Sandbox(endpoint, id, authToken, apiUrl);
+  }
+
+  /** List sandbox sessions with optional pagination. */
+  static async list(options: SandboxListOptions = {}): Promise<SandboxListResult> {
+    const apiUrl = Sandbox.resolveApiUrl(options);
+    const authToken = Sandbox.resolveAuthToken(options);
+
+    const params = new URLSearchParams();
+    if (options.cursor) params.set("cursor", options.cursor);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+
+    const query = params.toString();
+    const url = `${apiUrl}/sandbox-sessions${query ? `?${query}` : ""}`;
+
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+
+    if (!res.ok) {
+      throw REQUEST_ERROR.create({
+        detail: `Failed to list sandboxes: ${res.status} ${await res.text()}`,
+      });
+    }
+
+    const json = await res.json();
+
+    return {
+      data: json.data.map((s: Record<string, unknown>) => ({
+        id: s.id,
+        shortId: s.short_id,
+        endpoint: s.endpoint,
+        status: s.status,
+        createdAt: s.created_at,
+      })),
+      pageInfo: {
+        self: json.page_info?.self ?? null,
+        first: null,
+        next: json.page_info?.next ?? null,
+        prev: json.page_info?.prev ?? null,
+      },
+    };
   }
 
   private static async waitForReady(
@@ -243,6 +338,94 @@ export class Sandbox {
         detail: `Write files failed: ${res.status} ${await res.text()}`,
       });
     }
+  }
+
+  /** Start an async command job in the sandbox. */
+  async startCommandJob(command: string): Promise<CommandJob> {
+    const res = await fetch(`${this.endpoint}/exec/jobs`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ command }),
+    });
+
+    if (!res.ok) {
+      throw REQUEST_ERROR.create({
+        detail: `Start command job failed: ${res.status} ${await res.text()}`,
+      });
+    }
+
+    return Sandbox.mapCommandJob(await res.json());
+  }
+
+  /** Get the status of an async command job. */
+  async getCommandJob(jobId: string): Promise<CommandJob> {
+    const res = await fetch(`${this.endpoint}/exec/jobs/${jobId}`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    });
+
+    if (!res.ok) {
+      throw REQUEST_ERROR.create({
+        detail: `Get command job failed: ${res.status} ${await res.text()}`,
+      });
+    }
+
+    return Sandbox.mapCommandJob(await res.json());
+  }
+
+  /** Get the output of an async command job. */
+  async getCommandJobOutput(jobId: string): Promise<CommandJobOutput> {
+    const res = await fetch(`${this.endpoint}/exec/jobs/${jobId}/output`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    });
+
+    if (!res.ok) {
+      throw REQUEST_ERROR.create({
+        detail: `Get command job output failed: ${res.status} ${await res.text()}`,
+      });
+    }
+
+    const json = await res.json();
+    return {
+      ...Sandbox.mapCommandJob(json),
+      stdout: json.stdout,
+      stderr: json.stderr,
+      stdoutTruncated: json.stdout_truncated,
+      stderrTruncated: json.stderr_truncated,
+    };
+  }
+
+  /** Cancel an async command job. */
+  async cancelCommandJob(jobId: string): Promise<CommandJob> {
+    const res = await fetch(`${this.endpoint}/exec/jobs/${jobId}/cancel`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    });
+
+    if (!res.ok) {
+      throw REQUEST_ERROR.create({
+        detail: `Cancel command job failed: ${res.status} ${await res.text()}`,
+      });
+    }
+
+    return Sandbox.mapCommandJob(await res.json());
+  }
+
+  private static mapCommandJob(json: Record<string, unknown>): CommandJob {
+    return {
+      id: json.id as string,
+      status: json.status as CommandJobStatus,
+      exitCode: json.exit_code as number | null,
+      signal: json.signal as string | null,
+      startedAt: json.started_at as string,
+      finishedAt: json.finished_at as string | null,
+      heartbeatStatus: json.heartbeat_status as CommandJobHeartbeatStatus,
+      lastHeartbeatAt: json.last_heartbeat_at as string | null,
+      lastHeartbeatError: json.last_heartbeat_error as string | null,
+      heartbeatFailureCount: json.heartbeat_failure_count as number,
+    };
   }
 
   /** Send a heartbeat to prevent idle timeout. */
