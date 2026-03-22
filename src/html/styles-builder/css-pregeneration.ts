@@ -39,6 +39,60 @@ interface CSSPregenerationOptions {
   buildMode?: "development" | "production";
 }
 
+export interface PreparedCSSArtifactBuildResult {
+  css: string;
+  hash: string;
+  candidateCount: number;
+  fromCache: boolean;
+  context: ReturnType<typeof createPreparedProjectCSSContext>;
+}
+
+export async function buildPreparedCSSArtifactFromFiles(
+  options: CSSPregenerationOptions,
+): Promise<PreparedCSSArtifactBuildResult> {
+  const {
+    projectSlug,
+    projectVersion,
+    projectDir,
+    files,
+    styleProfile,
+    stylesheet,
+    stylesheetPath,
+    minify = true,
+    environment = "preview",
+    buildMode = "production",
+  } = options;
+
+  const resolvedStylesheet = stylesheet ?? findStylesheetFromFiles(files, stylesheetPath);
+  const candidates = extractCandidatesFromFiles(files, {
+    projectDir,
+    styleProfile,
+  });
+
+  const result = await getProjectCSS(projectSlug, resolvedStylesheet, candidates, {
+    minify,
+    environment,
+    buildMode,
+  });
+  const context = createPreparedProjectCSSContext(
+    projectSlug,
+    projectVersion,
+    resolvedStylesheet,
+    styleProfile.hash,
+    { minify, environment, buildMode },
+  );
+
+  await storePreparedProjectCSS(context, { css: result.css, hash: result.hash });
+
+  return {
+    css: result.css,
+    hash: result.hash,
+    candidateCount: candidates.size,
+    fromCache: result.fromCache,
+    context,
+  };
+}
+
 /**
  * Pre-generate and cache CSS from file list.
  *
@@ -57,54 +111,28 @@ export async function pregenerateCSSFromFiles(
   const {
     projectSlug,
     projectVersion,
-    projectDir,
     files,
     styleProfile,
     stylesheet,
-    stylesheetPath,
-    minify = true,
-    environment = "preview",
-    buildMode = "production",
   } = options;
   const startTime = performance.now();
 
   try {
-    const resolvedStylesheet = stylesheet ?? findStylesheetFromFiles(files, stylesheetPath);
-    const candidates = extractCandidatesFromFiles(files, {
-      projectDir,
-      styleProfile,
-    });
-
     logger.debug("Starting", {
       projectSlug,
       projectVersion,
       fileCount: files.length,
-      candidateCount: candidates.size,
-      hasStylesheet: Boolean(resolvedStylesheet),
+      hasStylesheet: Boolean(stylesheet),
       styleProfileHash: styleProfile.hash,
     });
 
-    const result = await getProjectCSS(projectSlug, resolvedStylesheet, candidates, {
-      minify,
-      environment,
-      buildMode,
-    });
-    await storePreparedProjectCSS(
-      createPreparedProjectCSSContext(
-        projectSlug,
-        projectVersion,
-        resolvedStylesheet,
-        styleProfile.hash,
-        { minify, environment, buildMode },
-      ),
-      { css: result.css, hash: result.hash },
-    );
+    const result = await buildPreparedCSSArtifactFromFiles(options);
     const duration = performance.now() - startTime;
 
     logger.debug("Complete", {
       projectSlug,
       projectVersion,
-      candidateCount: candidates.size,
+      candidateCount: result.candidateCount,
       cssLength: result.css.length,
       cssHash: result.hash,
       fromCache: result.fromCache,

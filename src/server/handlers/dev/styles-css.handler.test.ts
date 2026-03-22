@@ -49,7 +49,10 @@ function mockTailwindFetch(): { restore: () => void; getCallCount: () => number 
 function createHandlerAdapter(
   files: Array<{ path: string; content?: string }>,
   contentContext: ResolvedContentContext,
-  client?: Pick<VeryfrontApiClient, "resolveStyleArtifact" | "upsertStyleArtifact">,
+  client?: Pick<
+    VeryfrontApiClient,
+    "ensureStyleArtifactBuild" | "resolveStyleArtifact" | "upsertStyleArtifact"
+  >,
 ): RuntimeAdapter & { setFiles: (nextFiles: Array<{ path: string; content?: string }>) => void } {
   const adapter = createMockAdapter();
   adapter.fs.files.set("/project/globals.css", TEST_STYLESHEET);
@@ -57,7 +60,10 @@ function createHandlerAdapter(
   const underlyingAdapter: {
     getAllSourceFiles: () => Promise<Array<{ path: string; content?: string }>>;
     getContentContext: () => ResolvedContentContext;
-    getClient?: () => Pick<VeryfrontApiClient, "resolveStyleArtifact" | "upsertStyleArtifact">;
+    getClient?: () => Pick<
+      VeryfrontApiClient,
+      "ensureStyleArtifactBuild" | "resolveStyleArtifact" | "upsertStyleArtifact"
+    >;
   } = {
     getAllSourceFiles: async () => currentFiles,
     getContentContext: () => contentContext,
@@ -195,7 +201,11 @@ describe("server/handlers/dev/styles-css.handler", () => {
           ? { status: "ready" as const, artifactHash: storedHash }
           : { status: "missing" as const };
       },
-      upsertStyleArtifact: async (input: { artifactHash: string }) => {
+      ensureStyleArtifactBuild: async () => ({ status: "building" as const }),
+      upsertStyleArtifact: async (input: { artifactHash?: string }) => {
+        if (!input.artifactHash) {
+          throw new Error("artifactHash is required");
+        }
         storedHash = input.artifactHash;
         return {
           status: "ready" as const,
@@ -244,6 +254,67 @@ describe("server/handlers/dev/styles-css.handler", () => {
       assertEquals(secondBody, firstBody);
       assertEquals(fetchMock.getCallCount(), initialFetchCount);
       assertEquals(resolveCalls > 0, true);
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("ensures background style artifact builds for environment selectors before local fallback", async () => {
+    const fetchMock = mockTailwindFetch();
+    let ensureCalls = 0;
+    let upsertCalls = 0;
+    const client = {
+      resolveStyleArtifact: async () => ({ status: "missing" as const }),
+      ensureStyleArtifactBuild: async () => {
+        ensureCalls++;
+        return {
+          status: "building" as const,
+          buildJobId: "11111111-1111-4111-a111-111111111111",
+        };
+      },
+      upsertStyleArtifact: async (input: { artifactHash?: string }) => {
+        if (!input.artifactHash) {
+          throw new Error("artifactHash is required");
+        }
+        upsertCalls++;
+        return {
+          status: "ready" as const,
+          artifactHash: input.artifactHash,
+          assetPath: `/_vf/css/${input.artifactHash}.css`,
+        };
+      },
+    };
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [{
+        path: "/project/pages/index.tsx",
+        content: '<div className="text-sky-500">Hello</div>',
+      }],
+      { sourceType: "environment", projectSlug: PROJECT_SLUG, environmentName: "Preview" },
+      client,
+    );
+    const ctx = makeCtx(adapter);
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await handler.handle(req, ctx);
+      const body = await result.response!.text();
+
+      assertEquals(result.response!.status, 200);
+      assertEquals(body.length > 0, true);
+      assertEquals(ensureCalls, 1);
+      assertEquals(upsertCalls, 1);
     } finally {
       fetchMock.restore();
       clearCSSCache();

@@ -97,6 +97,7 @@
     "veryfront/config": "./src/config/index.ts",
     "veryfront/build": "./src/build/index.ts",
     "veryfront/rendering": "./src/rendering/index.ts",
+    "veryfront/rendering/styles": "./src/rendering/styles.ts",
     "veryfront/cache": "./src/cache/index.ts",
     "veryfront/security": "./src/security/index.ts",
     "veryfront/errors": "./src/errors/index.ts",

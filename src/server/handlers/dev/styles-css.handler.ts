@@ -27,6 +27,7 @@ import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-sc
 import { serverLogger } from "#veryfront/utils";
 import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import type {
+  EnsureStyleArtifactBuildInput,
   ResolveStyleArtifactInput,
   VeryfrontApiClient,
 } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
@@ -351,6 +352,9 @@ body::before {
       });
 
       if (resolved.status !== "ready" || !resolved.artifactHash) {
+        if (resolved.status !== "building") {
+          await this.ensureRemotePreparedCSSBuild(client, selector, styleProfileHash);
+        }
         return undefined;
       }
 
@@ -408,6 +412,33 @@ body::before {
     } catch (error) {
       logger.debug("Failed to register prepared CSS artifact", {
         cssHash,
+        styleProfileHash,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private shouldEnsureRemoteStyleArtifactBuild(selector: StyleArtifactSelectorContext): boolean {
+    return Boolean(selector.environmentName || selector.releaseId);
+  }
+
+  private async ensureRemotePreparedCSSBuild(
+    client: VeryfrontApiClient,
+    selector: StyleArtifactSelectorContext,
+    styleProfileHash: string,
+  ): Promise<void> {
+    if (!this.shouldEnsureRemoteStyleArtifactBuild(selector)) return;
+
+    try {
+      await client.ensureStyleArtifactBuild(
+        {
+          ...selector,
+          styleProfileHash,
+        } satisfies EnsureStyleArtifactBuildInput,
+      );
+    } catch (error) {
+      logger.debug("Failed to ensure remote prepared CSS build", {
+        selector,
         styleProfileHash,
         error: error instanceof Error ? error.message : String(error),
       });

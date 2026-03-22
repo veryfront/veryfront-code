@@ -1,5 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import {
+  type EnsureStyleArtifactBuildInput,
   type FileDetail,
   type FileListResult,
   type ListFilesOptions,
@@ -348,6 +349,13 @@ export class VeryfrontApiClient {
     projectRef = this.getProjectSlug()!,
   ): Promise<ProjectStyleArtifactResolution> {
     return this.operations.resolveStyleArtifact(projectRef, input);
+  }
+
+  ensureStyleArtifactBuild(
+    input: EnsureStyleArtifactBuildInput,
+    projectRef = this.getProjectSlug()!,
+  ): Promise<ProjectStyleArtifactResolution> {
+    return this.operations.ensureStyleArtifactBuild(projectRef, input);
   }
 
   upsertStyleArtifact(

@@ -64,19 +64,28 @@ export interface ResolveStyleArtifactInput extends StyleArtifactSelector {
   styleProfileHash: string;
 }
 
+export interface EnsureStyleArtifactBuildInput extends ResolveStyleArtifactInput {
+  force?: boolean;
+}
+
 export interface UpsertStyleArtifactInput extends ResolveStyleArtifactInput {
-  artifactHash: string;
+  status?: "building" | "ready" | "failed";
+  artifactHash?: string;
   assetPath?: string;
   contentType?: string;
   etag?: string;
+  buildJobId?: string;
+  failureReason?: string;
 }
 
 export interface ProjectStyleArtifactResolution {
-  status: "ready" | "missing";
+  status: "ready" | "missing" | "building" | "failed";
   artifactHash?: string;
   assetPath?: string;
   etag?: string;
   contentType?: string;
+  buildJobId?: string;
+  failureReason?: string;
   updatedAt?: string;
 }
 
@@ -128,6 +137,8 @@ function mapStyleArtifactResolution(raw: unknown): ProjectStyleArtifactResolutio
     assetPath: response.asset_path,
     etag: response.etag,
     contentType: response.content_type,
+    buildJobId: response.build_job_id,
+    failureReason: response.failure_reason,
     updatedAt: response.updated_at,
   };
 }
@@ -491,6 +502,37 @@ export class VeryfrontAPIOperations {
     return mapStyleArtifactResolution(await this.request(url));
   }
 
+  async ensureStyleArtifactBuild(
+    projectRef: string,
+    input: EnsureStyleArtifactBuildInput,
+  ): Promise<ProjectStyleArtifactResolution> {
+    const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current/builds`;
+    logger.debug("ensureStyleArtifactBuild", {
+      projectRef,
+      branch: input.branch,
+      environmentName: input.environmentName,
+      releaseId: input.releaseId,
+      styleProfileHash: input.styleProfileHash,
+      force: input.force ?? false,
+    });
+
+    return mapStyleArtifactResolution(
+      await this.request(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          style_profile_hash: input.styleProfileHash,
+          branch: input.branch,
+          environment_name: input.environmentName,
+          release_id: input.releaseId,
+          force: input.force ?? false,
+        }),
+      }),
+    );
+  }
+
   async upsertStyleArtifact(
     projectRef: string,
     input: UpsertStyleArtifactInput,
@@ -502,6 +544,7 @@ export class VeryfrontAPIOperations {
       environmentName: input.environmentName,
       releaseId: input.releaseId,
       styleProfileHash: input.styleProfileHash,
+      status: input.status ?? "ready",
       artifactHash: input.artifactHash,
     });
 
@@ -516,10 +559,13 @@ export class VeryfrontAPIOperations {
           branch: input.branch,
           environment_name: input.environmentName,
           release_id: input.releaseId,
+          status: input.status ?? "ready",
           artifact_hash: input.artifactHash,
           asset_path: input.assetPath,
           content_type: input.contentType,
           etag: input.etag,
+          build_job_id: input.buildJobId,
+          failure_reason: input.failureReason,
         }),
       }),
     );

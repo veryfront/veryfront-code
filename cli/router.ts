@@ -29,6 +29,7 @@ import { handleRoutesCommand } from "./commands/routes/handler.ts";
 import { handleServeCommand } from "./commands/serve/handler.ts";
 import { handleStartCommand } from "./commands/start/handler.ts";
 import { handleStudioCommand } from "./commands/studio/handler.ts";
+import { handleStylesCommand } from "./commands/styles/handler.ts";
 import { handleUpCommand } from "./commands/up/index.ts";
 import { handleTaskCommand } from "./commands/task/handler.ts";
 import { handleWorkflowCommand } from "./commands/workflow/handler.ts";
@@ -55,6 +56,7 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "analyze-chunks": handleAnalyzeChunksCommand,
   "routes": handleRoutesCommand,
   "studio": handleStudioCommand,
+  "styles": handleStylesCommand,
   "lock": handleLockCommand,
   "generate": handleGenerateCommand,
   "g": handleGenerateCommand,

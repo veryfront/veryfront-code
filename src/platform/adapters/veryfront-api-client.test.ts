@@ -409,11 +409,87 @@ describe("VeryfrontApiClient", () => {
           const result = await client.upsertStyleArtifact({
             styleProfileHash: "profile-2",
             environmentName: "Preview",
+            status: "ready",
             artifactHash: "hash-2",
           });
 
           assertEquals(result.status, "ready");
           assertEquals(result.assetPath, "/_vf/css/hash-2.css");
+        },
+      );
+    });
+
+    it("should parse non-ready style artifact states", async () => {
+      await withMockFetch(
+        (url, init) => {
+          const urlStr = typeof url === "string" ? url : url.toString();
+
+          if (urlStr.includes("/projects/test-project/style-artifacts/current?")) {
+            assertEquals(init?.method ?? "GET", "GET");
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  status: "building",
+                  build_job_id: "11111111-1111-4111-a111-111111111111",
+                  updated_at: "2026-03-22T00:00:00.000Z",
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } },
+              ),
+            );
+          }
+
+          return Promise.resolve(
+            new Response("Not found", { status: 404, statusText: "Not Found" }),
+          );
+        },
+        async () => {
+          const result = await client.resolveStyleArtifact({
+            styleProfileHash: "profile-3",
+            branch: "main",
+          });
+
+          assertEquals(result.status, "building");
+          assertEquals(result.buildJobId, "11111111-1111-4111-a111-111111111111");
+        },
+      );
+    });
+
+    it("should enqueue a style artifact build with a POST request", async () => {
+      await withMockFetch(
+        (url, init) => {
+          const urlStr = typeof url === "string" ? url : url.toString();
+
+          if (urlStr.endsWith("/projects/test-project/style-artifacts/current/builds")) {
+            assertEquals(init?.method, "POST");
+            const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+            assertEquals(body?.style_profile_hash, "profile-4");
+            assertEquals(body?.environment_name, "Production");
+            assertEquals(body?.force, false);
+
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  status: "building",
+                  build_job_id: "22222222-2222-4222-a222-222222222222",
+                  updated_at: "2026-03-22T00:00:00.000Z",
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } },
+              ),
+            );
+          }
+
+          return Promise.resolve(
+            new Response("Not found", { status: 404, statusText: "Not Found" }),
+          );
+        },
+        async () => {
+          const result = await client.ensureStyleArtifactBuild({
+            styleProfileHash: "profile-4",
+            environmentName: "Production",
+          });
+
+          assertEquals(result.status, "building");
+          assertEquals(result.buildJobId, "22222222-2222-4222-a222-222222222222");
         },
       );
     });
