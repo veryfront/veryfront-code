@@ -21,6 +21,7 @@ import {
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { buildMdxEsmPathCacheKey, MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE } from "../cache-format.ts";
+import { ensureMdxModuleDependencies } from "../module-fetcher/dependency-recovery.ts";
 
 export type CacheLookupResult =
   | { status: "hit"; path: string }
@@ -341,6 +342,7 @@ export async function lookupMdxEsmCache(
   cacheDir: string,
   projectDir?: string,
   _contentHash?: string, // Intentionally unused - kept for API compatibility
+  recoveryOptions?: { projectId: string; contentSourceId: string },
 ): Promise<CacheLookupResult> {
   const cache = await getModulePathCache(cacheDir);
   const cacheKey = toMdxEsmCacheKey(filePath, projectDir);
@@ -408,7 +410,22 @@ export async function lookupMdxEsmCache(
     // CRITICAL: Check that all file:// dependencies actually exist on disk.
     // The distributed cache may contain code referencing file:// paths from other pods
     // that don't exist locally (e.g., HTTP bundles, MDX-ESM modules).
-    const missingDeps = await findMissingFileDependencies(cachedCode);
+    let missingDeps = await findMissingFileDependencies(cachedCode);
+    if (missingDeps.length > 0 && recoveryOptions) {
+      const recovered = await ensureMdxModuleDependencies(cachedCode, {
+        ...recoveryOptions,
+        log: logger,
+      });
+      if (recovered.recovered.length > 0) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Recovered cached MDX-ESM dependencies`, {
+          filePath,
+          cachedPath,
+          recovered: recovered.recovered.slice(0, 5),
+        });
+      }
+      missingDeps = await findMissingFileDependencies(cachedCode);
+    }
+
     if (missingDeps.length > 0) {
       logger.warn(
         `${LOG_PREFIX_MDX_LOADER} Cached module has ${missingDeps.length} missing file dependencies, invalidating`,

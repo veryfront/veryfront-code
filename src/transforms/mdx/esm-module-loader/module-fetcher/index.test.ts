@@ -18,10 +18,11 @@ import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
 
 function getTransformCacheKey(
   projectId: string,
+  contentSourceId: string,
   normalizedPath: string,
   contentHash: string,
 ): string {
-  return `${MDX_ESM_CACHE_NAMESPACE}:${projectId}:${normalizedPath}:${contentHash}`;
+  return `${MDX_ESM_CACHE_NAMESPACE}:${projectId}:${contentSourceId}:${normalizedPath}:${contentHash}:ssr`;
 }
 
 function getVersionedPathCacheKey(normalizedPath: string): string {
@@ -105,22 +106,33 @@ function hashString(input: string): string {
 describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () => {
   describe("getTransformCacheKey", () => {
     it("includes namespace, project, path, and hash", () => {
-      const key = getTransformCacheKey("proj1", "_vf_modules/pages/index.js", "abc123");
+      const key = getTransformCacheKey(
+        "proj1",
+        "preview-main",
+        "_vf_modules/pages/index.js",
+        "abc123",
+      );
       assertEquals(
         key,
-        `${MDX_ESM_CACHE_NAMESPACE}:proj1:_vf_modules/pages/index.js:abc123`,
+        `${MDX_ESM_CACHE_NAMESPACE}:proj1:preview-main:_vf_modules/pages/index.js:abc123:ssr`,
       );
     });
 
     it("produces different keys for different content hashes", () => {
-      const k1 = getTransformCacheKey("p", "path", "hash1");
-      const k2 = getTransformCacheKey("p", "path", "hash2");
+      const k1 = getTransformCacheKey("p", "preview-main", "path", "hash1");
+      const k2 = getTransformCacheKey("p", "preview-main", "path", "hash2");
       assertEquals(k1 !== k2, true);
     });
 
     it("produces different keys for different projects", () => {
-      const k1 = getTransformCacheKey("proj-a", "path", "hash");
-      const k2 = getTransformCacheKey("proj-b", "path", "hash");
+      const k1 = getTransformCacheKey("proj-a", "preview-main", "path", "hash");
+      const k2 = getTransformCacheKey("proj-b", "preview-main", "path", "hash");
+      assertEquals(k1 !== k2, true);
+    });
+
+    it("produces different keys for different content sources", () => {
+      const k1 = getTransformCacheKey("proj-a", "preview-main", "path", "hash");
+      const k2 = getTransformCacheKey("proj-a", "release-42", "path", "hash");
       assertEquals(k1 !== k2, true);
     });
   });

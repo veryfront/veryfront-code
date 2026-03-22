@@ -151,6 +151,7 @@ export async function processVfModuleImports(
     projectDir,
     context.projectId,
     {
+      contentSourceId: context.contentSourceId,
       reactVersion: context.reactVersion,
       projectSlug: context.projectSlug,
       logger: logger.child({

@@ -11,6 +11,11 @@ import { computeConfigHashSync } from "../../../cache/config-hash.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
+import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
+import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
+import { buildMdxEsmModuleRecoveryCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 
 /** Hash source as the loader sees it (after node position injection for .tsx in dev/preview) */
 function hashAsLoader(source: string, filePath: string, projectDir: string): string {
@@ -18,6 +23,25 @@ function hashAsLoader(source: string, filePath: string, projectDir: string): str
     ? filePath.slice(projectDir.length).replace(/^\/+/, "")
     : filePath;
   return hashCodeHex(injectNodePositions(source, { filePath: rel }));
+}
+
+class FakeDistributedCache implements CacheBackend {
+  readonly type = "redis" as const;
+  private values = new Map<string, string>();
+
+  get(key: string): Promise<string | null> {
+    return Promise.resolve(this.values.get(key) ?? null);
+  }
+
+  set(key: string, value: string): Promise<void> {
+    this.values.set(key, value);
+    return Promise.resolve();
+  }
+
+  del(key: string): Promise<void> {
+    this.values.delete(key);
+    return Promise.resolve();
+  }
 }
 
 describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, () => {
@@ -62,7 +86,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     }
   });
 
-  it("invalidates cache when import fails with 'Cannot find module' (P1)", async () => {
+  it("invalidates stale cache entries with missing local dependencies and retransforms", async () => {
     clearSSRModuleCache();
 
     const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-p1-" });
@@ -92,16 +116,15 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
 
       const uniqueId = crypto.randomUUID().slice(0, 8);
       const brokenTempPath = join(projectDir, `broken-${uniqueId}.mjs`);
+      const missingDependencyPath = join(projectDir, `this-file-does-not-exist-${uniqueId}.mjs`);
       await writeTextFile(
         brokenTempPath,
-        `import { missing } from "./this-file-does-not-exist-${uniqueId}.mjs";\nexport default function CacheInvalTest() { return null; }`,
+        `import { missing } from "file://${missingDependencyPath}";\nexport default function CacheInvalTest() { return null; }`,
       );
 
       const fakeEntry = { tempPath: brokenTempPath, contentHash };
       globalModuleCache.set(contentCacheKey, fakeEntry);
       globalModuleCache.set(filePathCacheKey, fakeEntry);
-
-      verifiedHttpBundlePaths.set(`${brokenTempPath}:${contentHash}`, true);
 
       await writeTextFile(filePath, source);
 
@@ -113,23 +136,89 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         dev: true,
       });
 
-      try {
-        await loader.loadModule(filePath, source);
-        assert(false, "Expected loadModule to throw");
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        assert(
-          msg.includes("Cannot find module") || msg.includes("Module not found"),
-          `Expected module-not-found error, got: ${msg}`,
-        );
-      }
+      const component = await loader.loadModule(filePath, source);
+      assertEquals(component.name, "CacheInvalTest");
 
       assertEquals(
         globalModuleCache.has(filePathCacheKey),
-        false,
-        "Cache entry should be invalidated after 'Cannot find module' error",
+        true,
+        "Cache entry should be refreshed after invalidating the stale module",
       );
     } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("recovers missing vfmod dependencies before invalidating cached SSR modules", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-recover-vfmod-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "RecoveredViaCache.tsx");
+    const projectId = "project-recover-vfmod";
+    const contentSourceId = "preview-main";
+    const distributedCache = new FakeDistributedCache();
+
+    try {
+      __injectCachesForTests({ cacheBackend: distributedCache });
+      await mkdir(componentsDir, { recursive: true });
+
+      const source = "export default function RecoveredViaCache() { return null; }";
+      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const configHash = computeConfigHashSync({ dev: true });
+      const reactVersion = "default";
+
+      const filePathCacheKey = buildSSRModuleCacheKey(
+        VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+      );
+      const contentCacheKey = buildSSRModuleCacheKey(
+        VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+      );
+
+      const vfmodDir = join(getMdxEsmCacheDir(), projectId, contentSourceId);
+      const childPath = join(vfmodDir, "vfmod-child.mjs");
+      const cachedTempPath = join(projectDir, `recover-vfmod-${crypto.randomUUID()}.mjs`);
+
+      await distributedCache.set(
+        buildMdxEsmModuleRecoveryCacheKey(projectId, contentSourceId, "vfmod-child.mjs"),
+        tokenizeAllVeryFrontPaths(`export default null;`),
+      );
+
+      await writeTextFile(
+        cachedTempPath,
+        [
+          `import child from "file://${childPath}";`,
+          `export default function RecoveredViaCache() {`,
+          `  return child;`,
+          `}`,
+        ].join("\n"),
+      );
+
+      const fakeEntry = { tempPath: cachedTempPath, contentHash };
+      globalModuleCache.set(contentCacheKey, fakeEntry);
+      globalModuleCache.set(filePathCacheKey, fakeEntry);
+
+      await writeTextFile(filePath, source);
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId,
+        adapter: denoAdapter,
+        dev: true,
+      });
+
+      const component = await loader.loadModule(filePath, source);
+      assertEquals(component.name, "RecoveredViaCache");
+      assertEquals(globalModuleCache.has(filePathCacheKey), true);
+    } finally {
+      __injectCachesForTests(null);
+      await remove(join(getMdxEsmCacheDir(), projectId, contentSourceId), { recursive: true })
+        .catch(() => {});
       await remove(projectDir, { recursive: true });
     }
   });

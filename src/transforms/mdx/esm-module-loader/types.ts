@@ -51,6 +51,7 @@ export interface ModuleFetcherContext {
   adapter: RuntimeAdapter;
   projectDir: string;
   projectId: string;
+  contentSourceId?: string;
   projectSlug?: string;
   isLocalProject?: boolean;
   /**

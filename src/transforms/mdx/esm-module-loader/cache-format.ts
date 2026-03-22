@@ -10,10 +10,11 @@ const CACHE_NAMESPACE_SENTINEL = "__vf_cache_namespace__";
 function formatMdxEsmTransformCacheKey(
   namespace: string,
   projectId: string,
+  contentSourceId: string,
   normalizedPath: string,
   contentHash: string,
 ): string {
-  return `${namespace}:${projectId}:${normalizedPath}:${contentHash}:ssr`;
+  return `${namespace}:${projectId}:${contentSourceId}:${normalizedPath}:${contentHash}:ssr`;
 }
 
 function formatMdxEsmPathCacheKey(namespace: string, normalizedPath: string): string {
@@ -22,6 +23,15 @@ function formatMdxEsmPathCacheKey(namespace: string, normalizedPath: string): st
 
 function formatMdxEsmModuleFileName(namespace: string, contentHash: string): string {
   return `vfmod-${namespace}-${contentHash}.mjs`;
+}
+
+function formatMdxEsmModuleRecoveryCacheKey(
+  namespace: string,
+  projectId: string,
+  contentSourceId: string,
+  fileName: string,
+): string {
+  return `${namespace}:${projectId}:${contentSourceId}:${fileName}:vfmod`;
 }
 
 function formatMdxJsxCacheFileName(namespace: string, filePath: string): string {
@@ -42,11 +52,18 @@ function buildMdxEsmCacheSchemaSample() {
     transformKey: formatMdxEsmTransformCacheKey(
       CACHE_NAMESPACE_SENTINEL,
       "__vf_project__",
+      "preview-main",
       "_vf_modules/pages/index.js",
       "deadbeef",
     ),
     pathKey: formatMdxEsmPathCacheKey(CACHE_NAMESPACE_SENTINEL, "_vf_modules/pages/index.js"),
     moduleFile: formatMdxEsmModuleFileName(CACHE_NAMESPACE_SENTINEL, "deadbeef"),
+    moduleRecoveryKey: formatMdxEsmModuleRecoveryCacheKey(
+      CACHE_NAMESPACE_SENTINEL,
+      "__vf_project__",
+      "preview-main",
+      formatMdxEsmModuleFileName(CACHE_NAMESPACE_SENTINEL, "deadbeef"),
+    ),
     jsxFile: formatMdxJsxCacheFileName(CACHE_NAMESPACE_SENTINEL, "/tmp/project/Button.tsx"),
     unresolvedVfModulesPattern: UNRESOLVED_VF_MODULES_PATTERN.source,
     allFileUrlPattern: ALL_FILE_URL_PATTERN_SOURCE,
@@ -84,12 +101,14 @@ export const FRAMEWORK_VF_MODULE_CACHE_NAMESPACE = createCacheNamespace(
 
 export function buildMdxEsmTransformCacheKey(
   projectId: string,
+  contentSourceId: string,
   normalizedPath: string,
   contentHash: string,
 ): string {
   return formatMdxEsmTransformCacheKey(
     MDX_ESM_CACHE_NAMESPACE,
     projectId,
+    contentSourceId,
     normalizedPath,
     contentHash,
   );
@@ -101,6 +120,19 @@ export function buildMdxEsmPathCacheKey(normalizedPath: string): string {
 
 export function buildMdxEsmModuleFileName(contentHash: string): string {
   return formatMdxEsmModuleFileName(MDX_ESM_CACHE_NAMESPACE, contentHash);
+}
+
+export function buildMdxEsmModuleRecoveryCacheKey(
+  projectId: string,
+  contentSourceId: string,
+  fileName: string,
+): string {
+  return formatMdxEsmModuleRecoveryCacheKey(
+    MDX_ESM_CACHE_NAMESPACE,
+    projectId,
+    contentSourceId,
+    fileName,
+  );
 }
 
 export function buildMdxJsxCacheFileName(filePath: string): string {
