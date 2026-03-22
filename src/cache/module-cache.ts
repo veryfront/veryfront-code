@@ -106,29 +106,30 @@ function createMapInterface(cache: LRUCache<string, string>): ModuleCacheMap {
   return new LRUBackedMap(cache);
 }
 
-class LRUBackedMap extends Map<string, string> implements ModuleCacheMap {
+class LRUBackedMap implements ModuleCacheMap {
+  readonly [Symbol.toStringTag] = "Map";
+
   constructor(private readonly cache: LRUCache<string, string>) {
-    super();
   }
 
-  override get(key: string): string | undefined {
+  get(key: string): string | undefined {
     return this.cache.get(key);
   }
 
-  override set(key: string, value: string): this {
+  set(key: string, value: string): this {
     this.cache.set(key, value);
     return this;
   }
 
-  override has(key: string): boolean {
+  has(key: string): boolean {
     return this.cache.has(key);
   }
 
-  override delete(key: string): boolean {
+  delete(key: string): boolean {
     return this.cache.delete(key);
   }
 
-  override clear(): void {
+  clear(): void {
     this.cache.clear();
   }
 
@@ -149,15 +150,15 @@ class LRUBackedMap extends Map<string, string> implements ModuleCacheMap {
     return value;
   }
 
-  override get size(): number {
+  get size(): number {
     return this.cache.size;
   }
 
-  override keys(): MapIterator<string> {
+  keys(): MapIterator<string> {
     return this.cache.keys() as unknown as MapIterator<string>;
   }
 
-  override values(): MapIterator<string> {
+  values(): MapIterator<string> {
     const keysIter = this.cache.keys();
     const cacheRef = this.cache;
     return (function* () {
@@ -168,7 +169,7 @@ class LRUBackedMap extends Map<string, string> implements ModuleCacheMap {
     })() as unknown as MapIterator<string>;
   }
 
-  override entries(): MapIterator<[string, string]> {
+  entries(): MapIterator<[string, string]> {
     const keysIter = this.cache.keys();
     const cacheRef = this.cache;
     return (function* () {
@@ -179,7 +180,7 @@ class LRUBackedMap extends Map<string, string> implements ModuleCacheMap {
     })() as unknown as MapIterator<[string, string]>;
   }
 
-  override forEach(
+  forEach(
     callback: (value: string, key: string, map: Map<string, string>) => void,
     thisArg?: unknown,
   ): void {
@@ -188,7 +189,7 @@ class LRUBackedMap extends Map<string, string> implements ModuleCacheMap {
     }
   }
 
-  override [Symbol.iterator](): MapIterator<[string, string]> {
+  [Symbol.iterator](): MapIterator<[string, string]> {
     return this.entries();
   }
 }
