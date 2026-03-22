@@ -98,7 +98,9 @@ function createRuntimeAdapter(files: Record<string, string>): RuntimeAdapter {
   };
 }
 
-describe("task/discovery", () => {
+// Discovery uses the shared esbuild service under the hood, which outlives
+// individual test cases until stopEsbuild() runs in afterAll.
+describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterEach(() => {
     clearTranspileCache();
   });
