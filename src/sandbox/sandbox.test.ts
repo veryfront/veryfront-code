@@ -3,7 +3,7 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/te
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithProjectEnv } from "../server/project-env/storage.ts";
-import type { CommandJob, CommandJobOutput, ExecStreamEvent } from "./sandbox.ts";
+import type { ExecStreamEvent } from "./sandbox.ts";
 import { Sandbox } from "./sandbox.ts";
 
 // Mock fetch for testing
@@ -558,7 +558,10 @@ describe("Sandbox", () => {
         }),
       ]);
 
-      const result = await Sandbox.list({ authToken: "test-token", apiUrl: "https://api.test.com" });
+      const result = await Sandbox.list({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
 
       assertEquals(result.data.length, 2);
       assertEquals(result.data[0]!.id, "sess-1");
