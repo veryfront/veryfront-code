@@ -1,6 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
+import { buildFileListCacheKey } from "./cache-keys.ts";
 import type { FSAdapterConfig, ResolvedContentContext } from "./types.ts";
 
 function createAdapter(
@@ -15,6 +16,20 @@ function createAdapter(
     },
     ...overrides,
   });
+}
+
+async function waitFor(
+  predicate: () => Promise<boolean>,
+  timeoutMs = 200,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  throw new Error("Timed out waiting for condition");
 }
 
 describe("VeryfrontFSAdapter", () => {
@@ -376,6 +391,144 @@ describe("VeryfrontFSAdapter", () => {
           processRef.off("unhandledRejection", nodeStyleHandler);
         }
       }
+    });
+
+    it("should rehydrate a missing file list cache in the background", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+
+      const files = [{
+        path: "pages/index.tsx",
+        content: "export default function Page() { return null }",
+      }];
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve(files);
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+
+      await adapter.initialize();
+      assertEquals(listAllFilesCalls, 1);
+
+      const cacheKey = buildFileListCacheKey(adapter.getContentContext());
+      const cache = (adapter as unknown as {
+        cache: {
+          delete: (key: string) => boolean;
+          getAsync: <T>(key: string) => Promise<T | undefined>;
+        };
+      }).cache;
+
+      assertEquals(cache.delete(cacheKey), true);
+      assertEquals(await adapter.getAllSourceFiles(), []);
+
+      await waitFor(async () => {
+        const cached = await cache.getAsync<Array<{ path: string; content?: string }>>(cacheKey);
+        return Array.isArray(cached) && cached.length === 1;
+      });
+
+      const cached = await cache.getAsync<Array<{ path: string; content?: string }>>(cacheKey);
+      assertEquals(listAllFilesCalls, 2);
+      assertEquals(cached?.[0]?.path, "pages/index.tsx");
+    });
+
+    it("should deduplicate concurrent background file list warmups", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+
+      const files = [{
+        path: "pages/index.tsx",
+        content: "export default function Page() { return null }",
+      }];
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = async () => {
+        listAllFilesCalls++;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return files;
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+
+      await adapter.initialize();
+      assertEquals(listAllFilesCalls, 1);
+
+      const cacheKey = buildFileListCacheKey(adapter.getContentContext());
+      const cache = (adapter as unknown as {
+        cache: {
+          delete: (key: string) => boolean;
+          getAsync: <T>(key: string) => Promise<T | undefined>;
+        };
+      }).cache;
+
+      assertEquals(cache.delete(cacheKey), true);
+
+      await Promise.all([
+        adapter.getAllSourceFiles(),
+        adapter.getAllSourceFiles(),
+        adapter.getAllSourceFiles(),
+      ]);
+
+      await waitFor(async () => {
+        const cached = await cache.getAsync<Array<{ path: string; content?: string }>>(cacheKey);
+        return Array.isArray(cached) && cached.length === 1;
+      });
+
+      assertEquals(listAllFilesCalls, 2);
     });
   });
 });

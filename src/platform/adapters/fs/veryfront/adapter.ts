@@ -49,6 +49,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   /** Resolves when file list initialization is complete (for coordinating reads) */
   private fileListReadyResolve: (() => void) | null = null;
+  /** Single-flight background rewarm when the file list cache disappears */
+  private fileListWarmupPromise: Promise<void> | null = null;
+  private fileListWarmupKey: string | null = null;
 
   private projectData?: Project;
   private apiBaseUrl: string;
@@ -140,6 +143,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
           resultSize: result?.length ?? 0,
         });
 
+        if (!result?.length) {
+          this.scheduleFileListWarmup("getFileList miss", cacheKey);
+        }
+
         return result;
       },
       hasCachedFileList: async () => {
@@ -157,6 +164,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
           hasResult,
           resultSize: result?.length ?? 0,
         });
+
+        if (!hasResult) {
+          this.scheduleFileListWarmup("hasCachedFileList miss", cacheKey);
+        }
 
         return hasResult;
       },
@@ -201,6 +212,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
           resultSize: result?.length ?? 0,
           hasContent: result?.filter((f) => f.content)?.length ?? 0,
         });
+
+        if (!result?.length) {
+          this.scheduleFileListWarmup("getFileListCache miss", cacheKey);
+        }
 
         return result;
       },
@@ -389,6 +404,73 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return isPrefixBeingInvalidated(prefix);
   }
 
+  private scheduleFileListWarmup(reason: string, cacheKey?: string): void {
+    if (!this.initialized || !this.contentContext) return;
+
+    const effectiveCacheKey = cacheKey ?? buildFileListCacheKey(this.contentContext);
+
+    if (this.fileListWarmupPromise && this.fileListWarmupKey === effectiveCacheKey) {
+      logger.debug("File list warmup already in progress", {
+        reason,
+        cacheKey: effectiveCacheKey,
+      });
+      return;
+    }
+
+    const warmupContext = this.contentContext;
+    let warmupPromise: Promise<void> | null = null;
+    warmupPromise = (async () => {
+      try {
+        const existing = await this.cache.getAsync<Array<{ path: string; content?: string }>>(
+          effectiveCacheKey,
+        );
+
+        if (existing?.length) {
+          logger.debug("Skipping file list warmup because cache is already populated", {
+            reason,
+            cacheKey: effectiveCacheKey,
+            fileCount: existing.length,
+          });
+          return;
+        }
+
+        logger.debug("Starting file list warmup", {
+          reason,
+          cacheKey: effectiveCacheKey,
+          sourceType: warmupContext.sourceType,
+          branch: warmupContext.branch,
+          environmentName: warmupContext.environmentName,
+          releaseId: warmupContext.releaseId,
+        });
+
+        const files = await fetchFileListForContext(this.client, warmupContext);
+        await this.cache.setAsync(effectiveCacheKey, files);
+
+        logger.debug("File list warmup complete", {
+          reason,
+          cacheKey: effectiveCacheKey,
+          totalFiles: files.length,
+          filesWithContent: files.filter((file) => file.content).length,
+        });
+      } catch (error) {
+        logger.warn("File list warmup failed", {
+          reason,
+          cacheKey: effectiveCacheKey,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        if (warmupPromise && this.fileListWarmupPromise === warmupPromise) {
+          this.fileListWarmupPromise = null;
+          this.fileListWarmupKey = null;
+        }
+      }
+    })();
+
+    this.fileListWarmupPromise = warmupPromise;
+    this.fileListWarmupKey = effectiveCacheKey;
+    this.readOps.setFileListReadyPromise(warmupPromise);
+  }
+
   getPokeMetrics(): {
     received: number;
     invalidationsTriggered: number;
@@ -442,6 +524,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     this.initialized = false;
+    this.fileListWarmupPromise = null;
+    this.fileListWarmupKey = null;
 
     logger.debug("Disposed");
   }
@@ -473,6 +557,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         hasFiles: !!files,
         fileCount: files?.length ?? 0,
       });
+      this.scheduleFileListWarmup("getAllSourceFiles miss", cacheKey);
       return [];
     }
 
@@ -584,6 +669,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (contextChanged) {
       this.statOps.clearIndex();
       this.dirOps.clearTree();
+      this.fileListWarmupPromise = null;
+      this.fileListWarmupKey = null;
       logger.debug("Cleared index and dirTree due to context change", {
         oldContext,
         newContext: context,
