@@ -1,4 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
+import type { ReloadProjectInfo } from "../../reload-notifier.ts";
 import { getClientCount, getOpenSockets } from "./hmr-client-manager.ts";
 
 const logger = serverLogger.component("hmr-handler");
@@ -19,6 +20,13 @@ export function getMetrics(): { clients: number } & HMRMetrics {
   return { clients: getClientCount(), ...metrics };
 }
 
+function buildStyleUpdatePayload(project?: ReloadProjectInfo): Record<string, string> {
+  const payload: Record<string, string> = {};
+  if (project?.styleAssetPath) payload.styleHref = project.styleAssetPath;
+  if (project?.styleArtifactHash) payload.styleHash = project.styleArtifactHash;
+  return payload;
+}
+
 function requiresFullReload(path: string): boolean {
   const ext = path.split(".").pop()?.toLowerCase();
   return ext === "mdx" || ext === "md" || path.includes("veryfront.config");
@@ -28,11 +36,12 @@ function requiresFullReload(path: string): boolean {
  * Broadcast update to all connected HMR clients, optionally filtered by projectSlug.
  * No server-side debounce here — ReloadNotifier already debounces (300ms).
  */
-export function broadcastUpdate(changedPaths?: string[], projectSlug?: string): void {
+export function broadcastUpdate(changedPaths?: string[], project?: ReloadProjectInfo): void {
   logger.debug("broadcastUpdate called", {
     changedPaths,
     totalClients: getClientCount(),
-    projectSlug,
+    projectSlug: project?.projectSlug,
+    styleAssetPath: project?.styleAssetPath,
   });
 
   const timestamp = Date.now();
@@ -44,12 +53,13 @@ export function broadcastUpdate(changedPaths?: string[], projectSlug?: string): 
 
   if (needsFullReload) {
     const message = JSON.stringify({ type: "reload", timestamp });
-    broadcastMessage(message, projectSlug);
+    broadcastMessage(message, project?.projectSlug);
     metrics.messagesForwarded++;
   } else {
+    const stylePayload = buildStyleUpdatePayload(project);
     for (const path of changedPaths) {
-      const message = JSON.stringify({ type: "update", path, timestamp });
-      broadcastMessage(message, projectSlug);
+      const message = JSON.stringify({ type: "update", path, timestamp, ...stylePayload });
+      broadcastMessage(message, project?.projectSlug);
       metrics.messagesForwarded++;
     }
   }

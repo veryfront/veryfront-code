@@ -82,7 +82,13 @@ function withJsonLogFormat<T>(fn: () => T): T {
   }
 }
 
-function createWebSocketManager(): WebSocketManager {
+function createWebSocketManager(options: {
+  client?: Partial<VeryfrontApiClient>;
+  invalidationCallbacks?: InvalidationCallbacks;
+  pregenerateStyles?: (
+    files: Array<{ path: string; content?: string }>,
+  ) => Promise<{ hash: string; assetPath: string } | undefined>;
+} = {}): WebSocketManager {
   const cache = {
     deleteByPrefixAsync: async () => 0,
     deleteByPrefixAndSuffixAsync: async () => 0,
@@ -91,9 +97,10 @@ function createWebSocketManager(): WebSocketManager {
   const client = {
     getProjectId: () => "project-1",
     listAllFiles: async () => [],
+    ...options.client,
   } as unknown as VeryfrontApiClient;
 
-  const invalidationCallbacks: InvalidationCallbacks = {};
+  const invalidationCallbacks: InvalidationCallbacks = options.invalidationCallbacks ?? {};
 
   return new WebSocketManager({
     apiBaseUrl: "https://api.example.com/api",
@@ -112,6 +119,7 @@ function createWebSocketManager(): WebSocketManager {
     clearMemoryCaches: () => {},
     clearFileListIndex: () => {},
     setFileListCache: async () => {},
+    pregenerateStyles: options.pregenerateStyles,
   });
 }
 
@@ -128,6 +136,10 @@ describe("WebSocketManager", () => {
     scheduledTimers.delete(timerId);
     timer.callback();
     return timer.delay;
+  };
+
+  const flushMicrotasks = async (): Promise<void> => {
+    for (let i = 0; i < 6; i++) await Promise.resolve();
   };
 
   beforeEach(() => {
@@ -609,6 +621,62 @@ describe("WebSocketManager", () => {
 
     // IPv6 loopback should stay as ws://
     assertEquals(socket.url.startsWith("ws://"), true);
+
+    manager.dispose();
+  });
+
+  it("includes pregenerated preview stylesheet metadata in reload callbacks", async () => {
+    let capturedProject: InvalidationCallbacks extends {
+      triggerReload?: (changedPaths?: string[], project?: infer T) => void;
+    } ? T | undefined
+      : never;
+    let capturedChangedPaths: string[] | undefined;
+
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: async () => [{
+          path: "app/page.tsx",
+          type: "page",
+          size: 32,
+          updated_at: "2026-03-22T00:00:00.000Z",
+          content: "<div class='text-red-500'/>",
+        }],
+      },
+      invalidationCallbacks: {
+        triggerReload: (changedPaths, project) => {
+          capturedChangedPaths = changedPaths;
+          capturedProject = project;
+        },
+      },
+      pregenerateStyles: async () => ({
+        hash: "hash-1",
+        assetPath: "/_vf/css/hash-1.css",
+      }),
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: {
+            changedPaths: ["app/page.tsx"],
+            branchName: "main",
+          },
+        }),
+      }),
+    );
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+
+    assertEquals(capturedChangedPaths, ["app/page.tsx"]);
+    assertEquals(capturedProject?.styleArtifactHash, "hash-1");
+    assertEquals(capturedProject?.styleAssetPath, "/_vf/css/hash-1.css");
 
     manager.dispose();
   });

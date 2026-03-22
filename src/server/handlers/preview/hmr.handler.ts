@@ -77,7 +77,7 @@ export class HMRHandler extends BaseHandler {
         return;
       }
 
-      broadcastUpdate(changedPaths, project?.projectSlug);
+      broadcastUpdate(changedPaths, project);
     });
 
     startPingInterval();
