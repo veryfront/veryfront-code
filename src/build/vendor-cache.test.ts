@@ -1,9 +1,13 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { generateVendorCacheKey } from "./vendor-cache.ts";
+import { generateVendorCacheKey, VENDOR_CACHE_NAMESPACE } from "./vendor-cache.ts";
 
 describe("build/vendor-cache", () => {
   describe("generateVendorCacheKey", () => {
+    it("uses a derived namespace instead of a manually bumped transform version", () => {
+      assertEquals(VENDOR_CACHE_NAMESPACE.startsWith("vendor-build-"), true);
+    });
+
     it("should return a key with vendor prefix and project id", async () => {
       const key = await generateVendorCacheKey("proj1", "18.3.1", {});
       assertEquals(key.startsWith("vendor:proj1:"), true);

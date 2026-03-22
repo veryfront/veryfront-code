@@ -121,11 +121,13 @@ describe("init command integration", () => {
   });
 
   describe("file generation", () => {
-    it("should create .env file for templates with env vars", async () => {
+    it("should create .env file when scaffolded integrations declare env vars", async () => {
       const result = await runInitCommand([
         projectName,
         "-t",
         "ai-agent",
+        "--integrations",
+        "github",
         "--skip-install",
         "--skip-env-prompt",
       ]);
@@ -134,11 +136,13 @@ describe("init command integration", () => {
       assertEquals(await exists(join(projectDir, ".env")), true);
     });
 
-    it("should create .env.example file for templates with env vars", async () => {
+    it("should create .env.example file when scaffolded integrations declare env vars", async () => {
       const result = await runInitCommand([
         projectName,
         "-t",
         "ai-agent",
+        "--integrations",
+        "github",
         "--skip-install",
         "--skip-env-prompt",
       ]);

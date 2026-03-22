@@ -1,6 +1,6 @@
 // Keep in sync with deno.json version.
 // scripts/release.ts updates this constant during releases.
-export const VERSION = "0.1.88";
+export const VERSION = "0.1.89";
 
 export const SERVER_START_TIME: number = Date.now();
 

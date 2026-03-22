@@ -10,11 +10,10 @@
 import { join } from "#veryfront/compat/path";
 import * as posix from "#std/path/posix";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getLocalFs, saveModulePathCache } from "../cache/index.ts";
 import { hashString } from "../utils/hash.ts";
-import { getVersionedPathCacheKey } from "./cache-keys.ts";
+import { buildMdxEsmModuleFileName, buildMdxEsmPathCacheKey } from "../cache-format.ts";
 import { hasUnresolvedImports } from "./nested-imports.ts";
 import { recordModuleToSession } from "./render-sessions.ts";
 
@@ -60,13 +59,14 @@ export async function cacheModule(
   }
 
   const contentHash = hashString(normalizedPath + moduleCode);
-  const cachePath = join(esmCacheDir, `vfmod-v${VERSION}-${contentHash}.mjs`);
+  const cachePath = join(esmCacheDir, buildMdxEsmModuleFileName(contentHash));
+  const pathCacheKey = buildMdxEsmPathCacheKey(normalizedPath);
 
   const localFs = getLocalFs();
   try {
     const stat = await localFs.stat(cachePath);
     if (stat?.isFile) {
-      pathCache.set(getVersionedPathCacheKey(normalizedPath), cachePath);
+      pathCache.set(pathCacheKey, cachePath);
       log.debug(`${LOG_PREFIX_MDX_LOADER} Content cache hit: ${normalizedPath}`);
       recordModuleToSession(normalizedPath);
       return cachePath;
@@ -77,7 +77,7 @@ export async function cacheModule(
 
   await localFs.mkdir(esmCacheDir, { recursive: true });
   await localFs.writeTextFile(cachePath, moduleCode);
-  pathCache.set(getVersionedPathCacheKey(normalizedPath), cachePath);
+  pathCache.set(pathCacheKey, cachePath);
   await saveModulePathCache(esmCacheDir);
   log.debug(`${LOG_PREFIX_MDX_LOADER} Cached vf_module: ${normalizedPath} -> ${cachePath}`);
 

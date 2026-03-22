@@ -13,6 +13,7 @@ import { FRAMEWORK_ROOT, LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
+import { MDX_ESM_MJS_FILE_URL_PATTERN_SOURCE } from "../cache-format.ts";
 
 /**
  * Check if cached code has file:// paths that are incompatible with this environment.
@@ -110,7 +111,7 @@ export async function findMissingFileDependenciesInCode(
   log: Logger,
 ): Promise<string[]> {
   const localFs = getLocalFs();
-  const pattern = /file:\/\/([^"'\s]+\.mjs)/gi;
+  const pattern = new RegExp(MDX_ESM_MJS_FILE_URL_PATTERN_SOURCE, "gi");
   const missing: string[] = [];
   const checked = new Set<string>();
 
