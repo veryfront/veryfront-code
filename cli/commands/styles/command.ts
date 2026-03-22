@@ -1,14 +1,18 @@
 import { z } from "zod";
 import { getConfig } from "veryfront/config";
-import { enhanceAdapterWithFS, getEnv, isExtendedFSAdapter, runtime } from "veryfront/platform";
-import { cliLogger, exitProcess } from "#cli/utils";
+import {
+  enhanceAdapterWithFS,
+  getEnv,
+  isExtendedFSAdapter,
+  runtime,
+  type VeryfrontApiClient,
+} from "veryfront/platform";
 import {
   buildPreparedCSSArtifactFromFiles,
-} from "#veryfront/html/styles-builder/css-pregeneration.ts";
-import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
-import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
-import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
-import type { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
+  createStyleScopeProfile,
+  resolveStyleContentVersion,
+} from "veryfront/rendering/styles";
+import { cliLogger, exitProcess } from "#cli/utils";
 import type { StylesArgs } from "./handler.ts";
 import { writeJobResultIfConfigured } from "../../utils/write-job-result.ts";
 
@@ -29,6 +33,12 @@ const StyleArtifactBuildConfigSchema = z.object({
 });
 
 type StyleArtifactBuildConfig = z.infer<typeof StyleArtifactBuildConfigSchema>;
+
+interface StyleBuildContentContext {
+  branch?: string;
+  environmentName?: string;
+  releaseId?: string;
+}
 
 interface StyleArtifactBuildResult {
   kind: "style_artifact";
@@ -123,7 +133,7 @@ function requireEnv(name: string): string {
 
 function getUnderlyingVeryfrontClient(adapter: Awaited<ReturnType<typeof enhanceAdapterWithFS>>): {
   client: VeryfrontApiClient;
-  contentContext: ResolvedContentContext | null;
+  contentContext: StyleBuildContentContext | null;
   getAllSourceFiles: () => Promise<Array<{ path: string; content?: string }>>;
 } {
   if (!isExtendedFSAdapter(adapter.fs)) {
@@ -132,7 +142,7 @@ function getUnderlyingVeryfrontClient(adapter: Awaited<ReturnType<typeof enhance
 
   const fsAdapter = adapter.fs.getUnderlyingAdapter() as {
     getAllSourceFiles?: () => Promise<Array<{ path: string; content?: string }>>;
-    getContentContext?: () => ResolvedContentContext | null;
+    getContentContext?: () => StyleBuildContentContext | null;
     getClient?: () => VeryfrontApiClient;
   };
 
@@ -225,7 +235,7 @@ export async function stylesCommand(options: StylesArgs): Promise<void> {
       throw new Error("No project files were available to build the style artifact");
     }
 
-    const projectVersion = resolveStyleContentVersion(sourceAdapter.contentContext, {
+    const projectVersion = resolveStyleContentVersion(null, {
       branch: sourceAdapter.contentContext?.branch ?? null,
       releaseId: sourceAdapter.contentContext?.releaseId ?? null,
       environmentName: sourceAdapter.contentContext?.environmentName ?? null,
