@@ -21,8 +21,7 @@ import {
   setCachedTransformAsync,
 } from "#veryfront/transforms/esm/transform-cache.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
-import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
-import { validateBundleGroup } from "#veryfront/transforms/esm/bundle-manifest.ts";
+import { validateCachedBundlesByManifestOrCode } from "#veryfront/transforms/esm/cached-bundle-validation.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
@@ -32,7 +31,6 @@ import {
   lookupMdxEsmCache,
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -344,27 +342,21 @@ export async function transformModuleWithDeps(
   const cacheDir = getHttpBundleCacheDir();
   let bundlesValid = true;
 
-  if (transformResult.cacheHit && transformResult.bundleManifestId) {
-    const validation = await validateBundleGroup(transformResult.bundleManifestId, cacheDir);
+  if (transformResult.cacheHit) {
+    const validation = await validateCachedBundlesByManifestOrCode(
+      transformedCode,
+      transformResult.bundleManifestId,
+      cacheDir,
+    );
     if (!validation.valid) {
-      logger.warn("Bundle manifest validation failed, re-transforming", {
+      logger.warn("Cached HTTP bundle validation failed, re-transforming", {
         filePath,
-        manifestId: transformResult.bundleManifestId.slice(0, 12),
+        manifestId: transformResult.bundleManifestId?.slice(0, 12),
         failedHashes: validation.failedHashes,
+        reason: validation.reason,
+        source: validation.source,
       });
       bundlesValid = false;
-    }
-  } else {
-    const bundlePaths = extractHttpBundlePaths(transformedCode);
-    if (bundlePaths.length > 0) {
-      const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-      if (failed.length > 0) {
-        logger.warn("HTTP bundle recovery failed, re-transforming", {
-          filePath,
-          failed,
-        });
-        bundlesValid = false;
-      }
     }
   }
 

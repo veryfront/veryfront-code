@@ -31,10 +31,8 @@ import {
   ssrVfModulesPlugin,
 } from "./stages/index.ts";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
-import { ensureHttpBundlesExist } from "../esm/http-cache.ts";
-import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { validateBundleGroup } from "../esm/bundle-manifest.ts";
+import { validateCachedBundlesByManifestOrCode } from "../esm/cached-bundle-validation.ts";
 import { extractFrameworkBundlePaths } from "../shared/framework-bundle-paths.ts";
 
 const SSR_PIPELINE: TransformPlugin[] = [
@@ -130,31 +128,15 @@ async function validateCachedBundles(
   cacheKey: string,
 ): Promise<boolean> {
   const cacheDir = getHttpBundleCacheDir();
+  const validation = await validateCachedBundlesByManifestOrCode(code, bundleManifestId, cacheDir);
+  if (validation.valid) return true;
 
-  // If we have a manifest ID, use the faster manifest-based validation
-  if (bundleManifestId) {
-    const validation = await validateBundleGroup(bundleManifestId, cacheDir);
-    if (validation.valid) return true;
-
-    logger.debug("Bundle manifest validation failed", {
-      cacheKey: cacheKey.slice(-40),
-      manifestId: bundleManifestId.slice(0, 12),
-      failedCount: validation.failedHashes.length,
-    });
-    return false;
-  }
-
-  // Fall back to extracting bundle paths from code and validating each
-  const bundlePaths = extractHttpBundlePaths(code);
-  if (bundlePaths.length === 0) return true;
-
-  const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-  if (failed.length === 0) return true;
-
-  logger.debug("HTTP bundle validation failed", {
+  logger.debug("Cached HTTP bundle validation failed", {
     cacheKey: cacheKey.slice(-40),
-    failedCount: failed.length,
-    totalBundles: bundlePaths.length,
+    manifestId: bundleManifestId?.slice(0, 12),
+    failedCount: validation.failedHashes.length,
+    reason: validation.reason,
+    source: validation.source,
   });
   return false;
 }
