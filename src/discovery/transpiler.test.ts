@@ -87,7 +87,8 @@ describe("embedding module static import", () => {
   });
 });
 
-describe("discovery/transpiler", () => {
+// esbuild starts a child process that lives across tests, so we disable sanitizers
+describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterEach(() => {
     clearTranspileCache();
   });
