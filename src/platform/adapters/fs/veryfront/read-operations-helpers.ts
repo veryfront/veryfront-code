@@ -6,6 +6,8 @@ import type { ResolvedContentContext } from "./types.ts";
 
 export { READ_OPERATION_EXTENSION_PRIORITY };
 
+export type NotFoundLikeError = Error & { code?: string };
+
 interface ReadContextProviderLike {
   isProductionMode: () => boolean;
   isPersistentCacheInvalidated?: (prefix: string) => boolean;
@@ -78,6 +80,10 @@ export function getResolvedCacheKey(
   return `${cacheKeyPrefix}:${normalizedResolvedPath}`;
 }
 
+export function buildExtensionCandidatePaths(basePath: string): string[] {
+  return READ_OPERATION_EXTENSION_PRIORITY.map((ext) => `${basePath}${ext}`);
+}
+
 export function splitKnownFileExtension(
   apiPath: string,
 ): { originalExtension: string; basePath: string } | null {
@@ -94,4 +100,8 @@ export function splitKnownFileExtension(
 export function isNotFoundLikeError(error: unknown): boolean {
   const errorMessage = error instanceof Error ? error.message : String(error);
   return errorMessage.includes("404") || errorMessage.includes("Not Found");
+}
+
+export function createNotFoundLikeError(path: string): NotFoundLikeError {
+  return Object.assign(new Error(`404 Not Found: ${path}`), { code: "ENOENT" });
 }

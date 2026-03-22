@@ -8,7 +8,12 @@ import {
 const logger = baseLogger.component("content-metrics");
 
 type FileType = "page" | "layout" | "component" | "api" | "data" | "config" | "other";
-export type MissReason = "cold_start" | "not_in_filelist" | "invalidation" | "no_filelist_cache";
+export type MissReason =
+  | "cold_start"
+  | "not_in_filelist"
+  | "invalidation"
+  | "no_filelist_cache"
+  | "indexed_without_content";
 
 interface PerRequestMetrics {
   startTime: number;
@@ -52,7 +57,13 @@ function createFreshRequestMetrics(): PerRequestMetrics {
     networkFetches: 0,
     networkMs: 0,
     fetchesByType: { page: 0, layout: 0, component: 0, api: 0, data: 0, config: 0, other: 0 },
-    missReasons: { cold_start: 0, not_in_filelist: 0, invalidation: 0, no_filelist_cache: 0 },
+    missReasons: {
+      cold_start: 0,
+      not_in_filelist: 0,
+      invalidation: 0,
+      no_filelist_cache: 0,
+      indexed_without_content: 0,
+    },
     isPreviewMode: null,
     filesAccessed: new Set(),
   };
