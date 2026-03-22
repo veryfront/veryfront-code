@@ -43,49 +43,55 @@ export async function getEntityInfo(
       }
 
       try {
+        const shouldReadDirectly = adapter
+          ? isExtendedFSAdapter(adapter.fs) && adapter.fs.isVeryfrontAdapter()
+          : false;
+
+        let content: string;
         if (adapter) {
-          try {
-            const stat = await withFallback(
-              () => adapter.fs.stat(normalizedPath),
-              async () => {
-                const exists = await fs.exists(filePath);
-                if (!exists) {
-                  throw toError(
-                    createError({
-                      type: "file",
-                      message: "File not found",
-                      context: { path: filePath, operation: "read" },
-                    }),
-                  );
-                }
-                return await fs.stat(filePath);
-              },
-              { operationName: "stat:getEntityInfo", logError: false },
-            );
+          if (!shouldReadDirectly) {
+            try {
+              const stat = await withFallback(
+                () => adapter.fs.stat(normalizedPath),
+                async () => {
+                  const exists = await fs.exists(filePath);
+                  if (!exists) {
+                    throw toError(
+                      createError({
+                        type: "file",
+                        message: "File not found",
+                        context: { path: filePath, operation: "read" },
+                      }),
+                    );
+                  }
+                  return await fs.stat(filePath);
+                },
+                { operationName: "stat:getEntityInfo", logError: false },
+              );
 
-            if (!stat.isFile) return null;
-          } catch (error) {
-            entityInfoScope.runSync(
-              () => {
-                throw error;
-              },
-              { path: filePath, details: { reason: "stat-failed" } },
-              undefined,
-            );
-            return null;
+              if (!stat.isFile) return null;
+            } catch (error) {
+              entityInfoScope.runSync(
+                () => {
+                  throw error;
+                },
+                { path: filePath, details: { reason: "stat-failed" } },
+                undefined,
+              );
+              return null;
+            }
           }
-        } else {
-          const exists = await fs.exists(filePath);
-          if (!exists) return null;
-        }
 
-        const content = adapter
-          ? await withFallback(
+          content = await withFallback(
             () => adapter.fs.readFile(normalizedPath),
             () => fs.readTextFile(filePath),
             { operationName: "readFile:getEntityInfo", logError: false },
-          )
-          : await fs.readTextFile(filePath);
+          );
+        } else {
+          const exists = await fs.exists(filePath);
+          if (!exists) return null;
+          content = await fs.readTextFile(filePath);
+        }
 
         const ext = pathHelper.extname(filePath).toLowerCase();
 

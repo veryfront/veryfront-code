@@ -63,6 +63,46 @@ describe("rendering/page-resolution/page-resolver", () => {
     });
   });
 
+  describe("resolvePage", () => {
+    it("primes router detection from the resolved app route", async () => {
+      const adapter = {
+        fs: {
+          readFile: async (path: string) => {
+            if (path === "/project/app/page.tsx") {
+              return "export default function Page() { return null; }";
+            }
+            throw new Error("File not found");
+          },
+          resolveFile: async (path: string) => {
+            if (path === "/project/app/page") {
+              return "/project/app/page.tsx";
+            }
+            return null;
+          },
+          exists: async () => false,
+          readDir: async function* () {},
+          writeFile: async () => {},
+          mkdir: async () => {},
+        },
+        env: { get: () => undefined },
+      } as unknown as RuntimeAdapter;
+
+      const config = createMockConfig();
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        projectId: "project-1",
+        config,
+        adapter,
+      });
+
+      const page = await resolver.resolvePage("/");
+      const routerMode = await resolver.getRouterMode();
+
+      assertEquals(page.entity.path, "/project/app/page.tsx");
+      assertEquals(routerMode, "app");
+    });
+  });
+
   describe("getAllPages - app router discovery", () => {
     it("should discover pages from app directory with page.tsx files", async () => {
       const adapter = createMockAdapter(

@@ -372,7 +372,46 @@ describe("StatOperations", () => {
 
       assertEquals(await statOps.resolveFile("missing/component"), null);
       assertEquals(await statOps.resolveFile("missing/component"), null);
+      assertEquals(searchCallCount, 4);
+    });
+
+    it("should resolve via API search without building the full index", async () => {
+      let listAllFilesCallCount = 0;
+      let searchCallCount = 0;
+
+      const client = createMockClient({
+        listAllFiles: () => {
+          listAllFilesCallCount++;
+          return Promise.resolve([]);
+        },
+        searchFiles: (pattern: string) => {
+          searchCallCount++;
+          if (pattern === "pages/about.*") {
+            return Promise.resolve([{ path: "pages/about.tsx" }]);
+          }
+          return Promise.resolve([]);
+        },
+      });
+
+      const statOps = new StatOperations(
+        client,
+        new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 }),
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => ({
+            sourceType: "branch" as const,
+            projectSlug: "test",
+            branch: "main",
+          }),
+          isPersistentCacheInvalidated: () => false,
+        },
+      );
+
+      assertEquals(await statOps.resolveFile("pages/about"), "pages/about.tsx");
       assertEquals(searchCallCount, 1);
+      assertEquals(listAllFilesCallCount, 0);
     });
   });
 
@@ -565,7 +604,7 @@ describe("StatOperations", () => {
         now += 30_001;
 
         await statOps.resolveFile("missing-after-cooldown");
-        assertEquals(searchCallCount, 6);
+        assertEquals(searchCallCount, 9);
       } finally {
         Date.now = originalNow;
       }

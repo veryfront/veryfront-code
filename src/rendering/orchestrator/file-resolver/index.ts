@@ -48,6 +48,22 @@ export async function findSourceFile(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<string | null> {
+  if (adapter.fs.resolveFile) {
+    const directBases = [joinCandidateBase(projectDir, basePath)];
+    const withoutComponents = basePath.replace(/^components\//, "");
+    if (withoutComponents !== basePath) {
+      directBases.push(joinCandidateBase(projectDir, withoutComponents));
+    }
+
+    for (const candidateBase of directBases) {
+      const resolved = await adapter.fs.resolveFile(candidateBase);
+      if (resolved) {
+        logger.debug("[FileResolver] Found file via resolveFile:", resolved);
+        return resolved;
+      }
+    }
+  }
+
   const candidates = buildCandidatePaths(projectDir, basePath, SOURCE_EXTENSIONS);
 
   const withoutComponents = basePath.replace(/^components\//, "");
@@ -62,4 +78,9 @@ export async function findSourceFile(
   );
 
   return result;
+}
+
+function joinCandidateBase(projectDir: string, basePath: string): string {
+  if (basePath.startsWith("/")) return basePath;
+  return `${projectDir.replace(/\/+$/, "")}/${basePath.replace(/^\/+/, "")}`;
 }
