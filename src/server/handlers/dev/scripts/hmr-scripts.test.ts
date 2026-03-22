@@ -7,6 +7,7 @@ describe("server/handlers/dev/scripts/hmr-scripts", () => {
     const script = getHMRScript(3000);
     assertStringIncludes(script, "async function swapTailwindStylesheet(nextHref)");
     assertStringIncludes(script, "pending.setAttribute('data-vf-tailwind-pending', 'true');");
+    assertStringIncludes(script, "pending.removeAttribute('data-vf-tailwind-pending');");
     assertStringIncludes(script, "pending.id = 'vf-tailwind-css';");
     assertStringIncludes(script, "current.remove();");
   });

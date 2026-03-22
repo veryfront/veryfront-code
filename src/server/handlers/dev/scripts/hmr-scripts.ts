@@ -99,6 +99,7 @@ function getUpdateJSFunction(logPrefix: string): string {
           return;
         }
 
+        pending.removeAttribute('data-vf-tailwind-pending');
         pending.id = 'vf-tailwind-css';
         current.remove();
         resolve(true);
