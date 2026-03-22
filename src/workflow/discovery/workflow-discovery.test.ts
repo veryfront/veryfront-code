@@ -97,56 +97,62 @@ function createRuntimeAdapter(files: Record<string, string>): RuntimeAdapter {
   };
 }
 
-describe("workflow/discovery/workflow-discovery", () => {
-  afterEach(() => {
-    clearTranspileCache();
-  });
-
-  afterAll(async () => {
-    await stopEsbuild();
-  });
-
-  it("discovers workflow DSL exports through the discovery module loader", async () => {
-    const adapter = createRuntimeAdapter({
-      "/project/app/workflows/ping.ts": [
-        'import { workflow } from "veryfront/workflow";',
-        "export default workflow({",
-        '  id: "ping",',
-        '  description: "Ping workflow",',
-        "  steps: [],",
-        "});",
-      ].join("\n"),
+// Discovery uses the shared esbuild service under the hood, which outlives
+// individual test cases until stopEsbuild() runs in afterAll.
+describe(
+  "workflow/discovery/workflow-discovery",
+  { sanitizeOps: false, sanitizeResources: false },
+  () => {
+    afterEach(() => {
+      clearTranspileCache();
     });
 
-    const result = await discoverWorkflows({
-      projectDir: "/project",
-      adapter,
-      config: { fs: { type: "veryfront-api" } } as never,
+    afterAll(async () => {
+      await stopEsbuild();
     });
 
-    assertEquals(result.errors, []);
-    assertEquals(result.workflows.map((workflow) => workflow.id), ["ping"]);
-    assertEquals(result.workflows[0]?.exportName, "default");
-  });
+    it("discovers workflow DSL exports through the discovery module loader", async () => {
+      const adapter = createRuntimeAdapter({
+        "/project/app/workflows/ping.ts": [
+          'import { workflow } from "veryfront/workflow";',
+          "export default workflow({",
+          '  id: "ping",',
+          '  description: "Ping workflow",',
+          "  steps: [],",
+          "});",
+        ].join("\n"),
+      });
 
-  it("finds workflows by id through the discovery module loader", async () => {
-    const adapter = createRuntimeAdapter({
-      "/project/app/workflows/ping.ts": [
-        'import { workflow } from "veryfront/workflow";',
-        "export const pingWorkflow = workflow({",
-        '  id: "ping",',
-        "  steps: [],",
-        "});",
-      ].join("\n"),
+      const result = await discoverWorkflows({
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(result.errors, []);
+      assertEquals(result.workflows.map((workflow) => workflow.id), ["ping"]);
+      assertEquals(result.workflows[0]?.exportName, "default");
     });
 
-    const workflow = await findWorkflowById("ping", {
-      projectDir: "/project",
-      adapter,
-      config: { fs: { type: "veryfront-api" } } as never,
-    });
+    it("finds workflows by id through the discovery module loader", async () => {
+      const adapter = createRuntimeAdapter({
+        "/project/app/workflows/ping.ts": [
+          'import { workflow } from "veryfront/workflow";',
+          "export const pingWorkflow = workflow({",
+          '  id: "ping",',
+          "  steps: [],",
+          "});",
+        ].join("\n"),
+      });
 
-    assertEquals(workflow?.id, "ping");
-    assertEquals(workflow?.exportName, "pingWorkflow");
-  });
-});
+      const workflow = await findWorkflowById("ping", {
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(workflow?.id, "ping");
+      assertEquals(workflow?.exportName, "pingWorkflow");
+    });
+  },
+);
