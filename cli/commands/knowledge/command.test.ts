@@ -8,9 +8,11 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "veryfront/platform/path";
 import {
+  buildSuggestedSlug,
   collectKnowledgeSources,
   createKnowledgeIngestResult,
   deriveKnowledgeRemotePath,
+  ensureUniqueSlugs,
   formatKnowledgeUploadSource,
   ingestResolvedSources,
   isLikelyLocalPath,
@@ -18,6 +20,7 @@ import {
   normalizeProjectUploadPath,
   resolveKnowledgeDownloadOutputDir,
   runKnowledgeParser,
+  stripChatUploadPrefix,
 } from "./command.ts";
 import { knowledgeIngestPythonSource } from "./parser-source.ts";
 import type { ApiClient } from "#cli/shared/config";
@@ -932,6 +935,114 @@ describe("ingestResolvedSources", () => {
       Error,
       "--slug can only be used with a single explicit source.",
     );
+  });
+});
+
+describe("stripChatUploadPrefix", () => {
+  it("strips a Studio chat-upload prefix from a filename", () => {
+    assertEquals(
+      stripChatUploadPrefix(
+        "chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents",
+      ),
+      "agents",
+    );
+  });
+
+  it("returns the original string when no prefix is present", () => {
+    assertEquals(stripChatUploadPrefix("agents"), "agents");
+    assertEquals(stripChatUploadPrefix("my-report"), "my-report");
+  });
+
+  it("handles uppercase hex in UUIDs", () => {
+    assertEquals(
+      stripChatUploadPrefix(
+        "chat-909D3DBC-5A9A-4156-97E4-BCCEB5C2EC0D-1773942180291-fv1qg5-report",
+      ),
+      "report",
+    );
+  });
+
+  it("preserves filenames that start with chat- but lack the full prefix", () => {
+    assertEquals(stripChatUploadPrefix("chat-summary"), "chat-summary");
+  });
+});
+
+describe("buildSuggestedSlug", () => {
+  it("uses the original filename for uploads with a chat prefix", () => {
+    const slug = buildSuggestedSlug(
+      {
+        kind: "upload",
+        input: "uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
+        uploadPath: "chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
+        localPath:
+          "/workspace/uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
+      },
+      0,
+    );
+    assertEquals(slug, "agents");
+  });
+
+  it("preserves clean upload filenames without a chat prefix", () => {
+    const slug = buildSuggestedSlug(
+      {
+        kind: "upload",
+        input: "uploads/contracts/q1.pdf",
+        uploadPath: "contracts/q1.pdf",
+        localPath: "/workspace/uploads/contracts/q1.pdf",
+      },
+      0,
+    );
+    assertEquals(slug, "contracts-q1");
+  });
+
+  it("strips the chat prefix from nested upload paths", () => {
+    const slug = buildSuggestedSlug(
+      {
+        kind: "upload",
+        input:
+          "uploads/docs/chat-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-1700000000000-abc12-readme.txt",
+        uploadPath:
+          "docs/chat-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-1700000000000-abc12-readme.txt",
+        localPath:
+          "/workspace/uploads/docs/chat-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-1700000000000-abc12-readme.txt",
+      },
+      0,
+    );
+    assertEquals(slug, "docs-readme");
+  });
+
+  it("uses basename only for absolute local paths outside /workspace", () => {
+    const slug = buildSuggestedSlug(
+      {
+        kind: "local",
+        input: "/var/folders/random/AGENTS.md",
+        localPath: "/var/folders/random/AGENTS.md",
+      },
+      0,
+    );
+    assertEquals(slug, "agents");
+  });
+});
+
+describe("ensureUniqueSlugs", () => {
+  it("appends a numeric suffix for duplicate slugs", () => {
+    const slugs = ensureUniqueSlugs([
+      {
+        kind: "upload",
+        input: "uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
+        uploadPath: "chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
+        localPath:
+          "/workspace/uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
+      },
+      {
+        kind: "upload",
+        input: "uploads/chat-11111111-2222-3333-4444-555555555555-1700000000000-xyz99-agents.md",
+        uploadPath: "chat-11111111-2222-3333-4444-555555555555-1700000000000-xyz99-agents.md",
+        localPath:
+          "/workspace/uploads/chat-11111111-2222-3333-4444-555555555555-1700000000000-xyz99-agents.md",
+      },
+    ]);
+    assertEquals(slugs, ["agents", "agents-2"]);
   });
 });
 
