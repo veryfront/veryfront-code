@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  getProjectCandidates,
   getRouteCandidates,
   invalidateProjectCandidateManifests,
 } from "./css-candidate-manifest.ts";
@@ -122,6 +123,32 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
         developmentMode: true,
       });
       assertEquals(result.size, 0);
+    });
+  });
+
+  describe("getProjectCandidates", () => {
+    it("should return all extracted candidates for a project manifest", () => {
+      invalidateProjectCandidateManifests();
+      const result = getProjectCandidates({
+        projectScope: "project-all",
+        projectVersion: "v1",
+        projectDir: "/project",
+        files: [
+          {
+            path: "/project/pages/index.tsx",
+            content: '<div className="text-red-500">Home</div>',
+          },
+          {
+            path: "/project/components/Card.tsx",
+            content: '<div className="rounded-lg shadow-sm">Card</div>',
+          },
+        ],
+        developmentMode: false,
+      });
+
+      assertEquals(result.has("text-red-500"), true);
+      assertEquals(result.has("rounded-lg"), true);
+      assertEquals(result.has("shadow-sm"), true);
     });
   });
 });
