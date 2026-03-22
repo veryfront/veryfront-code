@@ -174,6 +174,12 @@ function extractUserToken(cookieHeader: string): string | undefined {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
+function getStatusFromError(error: unknown): number | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = message.match(/failed: (\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
 async function extractUserIdFromToken(
   token: string,
   apiBaseUrl: string,
@@ -460,6 +466,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const userToken = extractUserToken(cookieHeader);
 
     let token: string | undefined;
+    let tokenFetchError: unknown;
 
     if (isLocalProject) {
       logger?.debug("Local project, skipping token fetch", { localPath });
@@ -475,6 +482,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           try {
             token = await tokenManager.getToken(scope, projectSlug, customDomain);
           } catch (error) {
+            tokenFetchError = error;
             logger?.error("Token fetch failed", error as Error, { projectSlug, customDomain });
           }
         }
@@ -486,6 +494,29 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       }
 
       const base = { scope, host, parsedDomain };
+
+      if (projectSlug && scope === "preview" && !token) {
+        const status = getStatusFromError(tokenFetchError);
+        if (status === 404) {
+          logger?.info("Preview project not found", { projectSlug, host });
+          return makeErrorContext(
+            base,
+            404,
+            "Preview project not found",
+            undefined,
+            undefined,
+            "project-not-found",
+          );
+        }
+
+        logger?.warn("Preview request has no usable token", {
+          projectSlug,
+          host,
+          hadUserToken: !!userToken,
+          hadTokenFetchError: !!tokenFetchError,
+        });
+        return makeErrorContext(base, 502, "Failed to authenticate preview request");
+      }
 
       if (isCustomDomain && !projectSlug) {
         if (!token) {
@@ -586,6 +617,18 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             resolved.error.message,
             token,
             resolved.error.redirectUrl,
+          );
+        }
+
+        if (!resolved.projectId) {
+          logger?.info("Preview project not found after lookup", { projectSlug, host });
+          return makeErrorContext(
+            base,
+            404,
+            "Preview project not found",
+            token,
+            undefined,
+            "project-not-found",
           );
         }
 
