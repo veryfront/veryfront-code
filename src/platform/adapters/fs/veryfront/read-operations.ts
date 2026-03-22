@@ -41,6 +41,7 @@ export interface ContentContextProvider {
       updated_at?: string;
     }> | undefined
   >;
+  hasCachedFileList?: () => Promise<boolean>;
   /** True if cache prefix is being deleted - skip persistent cache reads */
   isPersistentCacheInvalidated?: (prefix: string) => boolean;
   /** Back-compat: release-scoped invalidation */

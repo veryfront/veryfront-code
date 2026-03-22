@@ -1,6 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
-import type { FileInfo } from "../../base.ts";
+import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
 import { VeryfrontOperationsBase } from "./base-operations.ts";
 import { createError, toError } from "#veryfront/errors";
@@ -326,9 +326,13 @@ export class StatOperations extends VeryfrontOperationsBase {
     return files;
   }
 
-  private buildResolveSearchPatterns(normalizedPath: string): string[] {
+  private buildResolveSearchPatterns(
+    normalizedPath: string,
+    options?: ResolveFileOptions,
+  ): string[] {
     const patterns = new Set<string>();
     const pathWithoutExt = stripKnownExtension(normalizedPath, EXTENSION_PRIORITY);
+    const allowPagesPrefix = options?.allowPagesPrefix !== false;
     const addPattern = (pattern: string): void => {
       if (pattern.length > 0) patterns.add(pattern);
     };
@@ -339,12 +343,12 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
 
     addPattern(`${pathWithoutExt}.*`);
-    if (!pathWithoutExt.startsWith("pages/")) {
+    if (allowPagesPrefix && !pathWithoutExt.startsWith("pages/")) {
       addPattern(`pages/${pathWithoutExt}.*`);
     }
 
     addPattern(`${pathWithoutExt}/index.*`);
-    if (!pathWithoutExt.startsWith("pages/")) {
+    if (allowPagesPrefix && !pathWithoutExt.startsWith("pages/")) {
       addPattern(`pages/${pathWithoutExt}/index.*`);
     }
 
@@ -361,6 +365,7 @@ export class StatOperations extends VeryfrontOperationsBase {
 
   private async tryResolveViaApiSearch(
     normalizedPath: string,
+    options?: ResolveFileOptions,
   ): Promise<string | null | undefined> {
     if (isFrameworkSourcePath(normalizedPath)) {
       logger.debug("Skipping API search for framework path", { normalizedPath });
@@ -372,7 +377,7 @@ export class StatOperations extends VeryfrontOperationsBase {
       return undefined;
     }
 
-    const patterns = this.buildResolveSearchPatterns(normalizedPath);
+    const patterns = this.buildResolveSearchPatterns(normalizedPath, options);
     let sawSuccessfulSearch = false;
 
     for (const pattern of patterns) {
@@ -432,6 +437,10 @@ export class StatOperations extends VeryfrontOperationsBase {
   }
 
   private async hasCachedFileList(): Promise<boolean> {
+    if (this.contextProvider?.hasCachedFileList) {
+      return await this.contextProvider.hasCachedFileList();
+    }
+
     const files = await this.contextProvider?.getFileList?.();
     return Array.isArray(files) && files.length > 0;
   }
@@ -447,7 +456,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
   }
 
-  async resolveFile(basePath: string): Promise<string | null> {
+  async resolveFile(basePath: string, options?: ResolveFileOptions): Promise<string | null> {
     const resolveStart = performance.now();
     const normalizedPath = this.normalizer.normalize(basePath);
     const ctx = this.contextProvider?.getContentContext();
@@ -477,7 +486,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     const attemptedApiResolve = !hasCachedFileList;
 
     if (!hasCachedFileList) {
-      const apiResolved = await this.tryResolveViaApiSearch(normalizedPath);
+      const apiResolved = await this.tryResolveViaApiSearch(normalizedPath, options);
       if (typeof apiResolved === "string") {
         this.cache.set(cacheKey, apiResolved);
         return apiResolved;
@@ -522,7 +531,7 @@ export class StatOperations extends VeryfrontOperationsBase {
       return resolvedDirect;
     }
 
-    if (!pathWithoutExt.startsWith("pages/")) {
+    if (options?.allowPagesPrefix !== false && !pathWithoutExt.startsWith("pages/")) {
       const resolvedPages = resolveByExtensionPriority(
         fileIdx,
         `pages/${pathWithoutExt}`,

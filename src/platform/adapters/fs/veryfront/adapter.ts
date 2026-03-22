@@ -9,7 +9,7 @@ import type {
   InvalidationCallbacks,
   ResolvedContentContext,
 } from "./types.ts";
-import type { FileInfo } from "../../base.ts";
+import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -141,6 +141,24 @@ export class VeryfrontFSAdapter implements FSAdapter {
         });
 
         return result;
+      },
+      hasCachedFileList: async () => {
+        if (!this.contentContext) {
+          logger.debug("hasCachedFileList: no contentContext");
+          return false;
+        }
+
+        const cacheKey = buildFileListCacheKey(this.contentContext);
+        const result = await this.cache.getAsync<Array<{ path: string }>>(cacheKey);
+        const hasResult = Array.isArray(result) && result.length > 0;
+
+        logger.debug("hasCachedFileList lookup", {
+          cacheKey,
+          hasResult,
+          resultSize: result?.length ?? 0,
+        });
+
+        return hasResult;
       },
       isPersistentCacheInvalidated: (prefix: string) => this.isPersistentCacheInvalidated(prefix),
       isReleaseBeingInvalidated: (releaseId: string) =>
@@ -410,9 +428,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.statOps.exists(path);
   }
 
-  async resolveFile(basePath: string): Promise<string | null> {
+  async resolveFile(
+    basePath: string,
+    options?: ResolveFileOptions,
+  ): Promise<string | null> {
     await this.ensureInitialized();
-    return this.statOps.resolveFile(basePath);
+    return this.statOps.resolveFile(basePath, options);
   }
 
   dispose(): void {

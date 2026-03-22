@@ -5,6 +5,7 @@ import {
   buildGitHubStatCacheKey,
   buildGitHubTreeCacheKey,
 } from "#veryfront/cache";
+import type { ResolveFileOptions } from "../../base.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubApiClient } from "./github-api-client.ts";
 import type { FileIndexEntry, FileInfo, GitHubTreeEntry, ResolvedGitHubConfig } from "./types.ts";
@@ -176,7 +177,7 @@ export class GitHubStatOperations {
     }
   }
 
-  async resolveFile(basePath: string): Promise<string | null> {
+  async resolveFile(basePath: string, options?: ResolveFileOptions): Promise<string | null> {
     await this.ensureIndex();
 
     const normalizedPath = normalizeGitHubPath(basePath, this.projectDir);
@@ -185,7 +186,7 @@ export class GitHubStatOperations {
     if (cached !== undefined) return cached;
 
     const resolved = this.tryResolve(normalizedPath) ??
-      this.tryResolveWithPagesPrefix(normalizedPath);
+      (options?.allowPagesPrefix === false ? null : this.tryResolveWithPagesPrefix(normalizedPath));
 
     this.cache.set(cacheKey, resolved);
     return resolved;

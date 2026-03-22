@@ -86,19 +86,16 @@ export class PageResolver {
             primeRouterDetectionCache(cacheKey, "pages");
           }
         } else {
+          // Auto mode stays structural: a single resolved route must not pin router mode
+          // for projects that are still transitioning between app/ and pages/.
           pageInfo = await getAppRouteEntity(
             this.projectDir,
             slug,
             this.adapter,
             appDirName,
           );
-          if (pageInfo) {
-            primeRouterDetectionCache(cacheKey, "app");
-          } else {
+          if (!pageInfo) {
             pageInfo = await getEntityBySlug(this.projectDir, slug, this.adapter);
-            if (pageInfo) {
-              primeRouterDetectionCache(cacheKey, "pages");
-            }
           }
         }
 

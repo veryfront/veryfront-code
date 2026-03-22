@@ -64,7 +64,7 @@ describe("rendering/page-resolution/page-resolver", () => {
   });
 
   describe("resolvePage", () => {
-    it("primes router detection from the resolved app route", async () => {
+    it("keeps auto router detection aligned with the structural app router", async () => {
       const adapter = {
         fs: {
           readFile: async (path: string) => {
@@ -79,8 +79,22 @@ describe("rendering/page-resolution/page-resolver", () => {
             }
             return null;
           },
-          exists: async () => false,
-          readDir: async function* () {},
+          stat: async (path: string) => {
+            if (path === "/project/app") {
+              return {
+                isFile: false,
+                isDirectory: true,
+                isSymlink: false,
+              };
+            }
+            throw new Error("File not found");
+          },
+          exists: async (path: string) => path === "/project/app",
+          readDir: async function* (path: string) {
+            if (path === "/project/app") {
+              yield { name: "page.tsx", isFile: true, isDirectory: false };
+            }
+          },
           writeFile: async () => {},
           mkdir: async () => {},
         },
@@ -162,6 +176,78 @@ describe("rendering/page-resolution/page-resolver", () => {
 
       assertEquals(page.entity.path, "/project/pages/index.tsx");
       assertEquals(routerMode, "pages");
+    });
+
+    it("does not poison auto router detection from a pages fallback", async () => {
+      const adapter = {
+        fs: {
+          readFile: async (path: string) => {
+            if (path === "/project/pages/index.tsx") {
+              return "export default function Page() { return null; }";
+            }
+            throw new Error("File not found");
+          },
+          resolveFile: async (path: string) => {
+            if (path === "/project/app/page") {
+              return null;
+            }
+            if (path === "/project/pages/index") {
+              return "/project/pages/index.tsx";
+            }
+            return null;
+          },
+          stat: async (path: string) => {
+            if (path === "/project/pages/index.tsx") {
+              return {
+                isFile: true,
+                isDirectory: false,
+                isSymlink: false,
+              };
+            }
+            if (path === "/project/app" || path === "/project/pages") {
+              return {
+                isFile: false,
+                isDirectory: true,
+                isSymlink: false,
+              };
+            }
+            throw new Error("File not found");
+          },
+          exists: async (path: string) => path === "/project/app" || path === "/project/pages",
+          readDir: async function* (path: string) {
+            if (path === "/project/app") {
+              yield { name: "dashboard", isFile: false, isDirectory: true };
+              return;
+            }
+
+            if (path === "/project/app/dashboard") {
+              yield { name: "page.tsx", isFile: true, isDirectory: false };
+              return;
+            }
+
+            if (path === "/project/pages") {
+              yield { name: "index.tsx", isFile: true, isDirectory: false };
+            }
+          },
+          writeFile: async () => {},
+          mkdir: async () => {},
+        },
+        env: { get: () => undefined },
+      } as unknown as RuntimeAdapter;
+
+      const config = createMockConfig();
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        projectId: "mixed-project",
+        config,
+        adapter,
+      });
+
+      const page = await resolver.resolvePage("/");
+      const routerMode = await resolver.getRouterMode();
+
+      assertEquals(page.entity.path, "/project/pages/index.tsx");
+      assertEquals(routerMode, "app");
     });
   });
 

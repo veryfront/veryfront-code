@@ -6,6 +6,7 @@
  * @module rendering/orchestrator/file-resolver
  */
 
+import { join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { buildCandidatePaths, findFirstExisting } from "./candidates.ts";
@@ -49,14 +50,16 @@ export async function findSourceFile(
   adapter: RuntimeAdapter,
 ): Promise<string | null> {
   if (adapter.fs.resolveFile) {
-    const directBases = [joinCandidateBase(projectDir, basePath)];
+    const directBases = [join(projectDir, basePath)];
     const withoutComponents = basePath.replace(/^components\//, "");
     if (withoutComponents !== basePath) {
-      directBases.push(joinCandidateBase(projectDir, withoutComponents));
+      directBases.push(join(projectDir, withoutComponents));
     }
 
     for (const candidateBase of directBases) {
-      const resolved = await adapter.fs.resolveFile(candidateBase);
+      const resolved = await adapter.fs.resolveFile(candidateBase, {
+        allowPagesPrefix: false,
+      });
       if (resolved) {
         logger.debug("[FileResolver] Found file via resolveFile:", resolved);
         return resolved;
@@ -78,9 +81,4 @@ export async function findSourceFile(
   );
 
   return result;
-}
-
-function joinCandidateBase(projectDir: string, basePath: string): string {
-  if (basePath.startsWith("/")) return basePath;
-  return `${projectDir.replace(/\/+$/, "")}/${basePath.replace(/^\/+/, "")}`;
 }

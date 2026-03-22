@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { logger as baseLogger } from "#veryfront/utils";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
-import type { FileInfo } from "../../base.ts";
+import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import type { VeryfrontFSAdapter } from "./index.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
@@ -213,9 +213,12 @@ export class MultiProjectFSAdapter implements FSAdapter {
     }
   }
 
-  async resolveFile(basePath: string): Promise<string | null> {
+  async resolveFile(
+    basePath: string,
+    options?: ResolveFileOptions,
+  ): Promise<string | null> {
     const adapter = await this.getAdapter();
-    return adapter.resolveFile(basePath);
+    return adapter.resolveFile(basePath, options);
   }
 
   dispose(): void {
