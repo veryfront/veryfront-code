@@ -9,6 +9,12 @@
  */
 
 import { extractCandidates } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
+import {
+  createStyleScopeProfile,
+  shouldIncludeStylePath,
+  shouldTraverseStyleDirectory,
+} from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { serverLogger } from "#veryfront/utils";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
@@ -20,7 +26,6 @@ import { FRAMEWORK_CANDIDATES } from "./framework-candidates.generated.ts";
 const logger = serverLogger.component("styles-candidate-scanner");
 
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
-const SKIP_DIRS = new Set(["node_modules", ".cache", ".git", "dist", "build", ".vscode"]);
 
 /** De-duplicated set of framework candidates, computed once at import time. */
 const frameworkCandidates = new Set<string>(FRAMEWORK_CANDIDATES);
@@ -32,18 +37,6 @@ interface SourceFileProvider {
   getContentContext?: () => ResolvedContentContext | null;
 }
 
-function resolveProjectVersion(
-  ctx: HandlerContext,
-  contentContext: ResolvedContentContext | null,
-): string {
-  if (contentContext?.releaseId) return `release:${contentContext.releaseId}`;
-  if (contentContext?.branch) return `branch:${contentContext.branch}`;
-  if (contentContext?.environmentName) return `environment:${contentContext.environmentName}`;
-  if (ctx.releaseId) return `release:${ctx.releaseId}`;
-  if (ctx.parsedDomain?.branch) return `branch:${ctx.parsedDomain.branch}`;
-  return "live";
-}
-
 /**
  * Extract Tailwind CSS candidate class names from all project source files.
  *
@@ -52,6 +45,7 @@ function resolveProjectVersion(
  * method is available (local dev mode).
  */
 export async function extractProjectCandidates(ctx: HandlerContext): Promise<Set<string>> {
+  const styleProfile = createStyleScopeProfile(ctx.config);
   const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
 
   if (typeof wrappedFs.getUnderlyingAdapter !== "function") {
@@ -83,8 +77,13 @@ export async function extractProjectCandidates(ctx: HandlerContext): Promise<Set
   for (
     const cls of getProjectCandidates({
       projectScope: ctx.projectSlug ?? contentContext?.projectSlug ?? ctx.projectDir,
-      projectVersion: resolveProjectVersion(ctx, contentContext),
+      projectVersion: resolveStyleContentVersion(contentContext, {
+        releaseId: ctx.releaseId,
+        branch: ctx.parsedDomain?.branch,
+        environmentName: ctx.environmentName,
+      }),
       projectDir: ctx.projectDir,
+      styleProfile,
       files,
       developmentMode: contentContext?.sourceType === "branch",
     })
@@ -100,6 +99,7 @@ export async function extractProjectCandidates(ctx: HandlerContext): Promise<Set
  * Used in local development mode where projects are read directly from disk.
  */
 async function scanLocalFiles(projectDir: string, ctx: HandlerContext): Promise<Set<string>> {
+  const styleProfile = createStyleScopeProfile(ctx.config);
   const candidates = new Set<string>(frameworkCandidates);
   const fs = createFileSystem();
 
@@ -116,11 +116,14 @@ async function scanLocalFiles(projectDir: string, ctx: HandlerContext): Promise<
       const fullPath = join(dir, entry.name);
 
       if (entry.isDirectory) {
-        if (!SKIP_DIRS.has(entry.name)) await scanDir(fullPath);
+        if (shouldTraverseStyleDirectory(styleProfile, fullPath, projectDir)) {
+          await scanDir(fullPath);
+        }
         continue;
       }
 
       if (!entry.isFile) continue;
+      if (!shouldIncludeStylePath(styleProfile, fullPath, projectDir)) continue;
       if (!SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) continue;
 
       try {

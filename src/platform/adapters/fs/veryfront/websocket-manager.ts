@@ -42,6 +42,7 @@ interface WebSocketDeps {
     cacheKey: string,
     files: Array<{ path: string; content?: string }>,
   ) => Promise<void>;
+  pregenerateStyles?: (files: Array<{ path: string; content?: string }>) => Promise<void>;
 }
 
 export class WebSocketManager {
@@ -628,6 +629,7 @@ export class WebSocketManager {
           const cacheKey = buildFileListCacheKey(contentContext);
           await this.deps.setFileListCache(cacheKey, files);
           this.deps.clearFileListIndex();
+          await this.deps.pregenerateStyles?.(files);
 
           logger.debug("Fresh files cached (memory + Redis)", {
             cacheKey,
@@ -770,6 +772,7 @@ export class WebSocketManager {
           const cacheKey = buildFileListCacheKey(contentContext);
           await this.deps.setFileListCache(cacheKey, files);
           this.deps.clearFileListIndex();
+          await this.deps.pregenerateStyles?.(files);
 
           logger.debug("FRESH FILES FETCHED", {
             cacheKey,

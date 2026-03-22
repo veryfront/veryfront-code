@@ -9,6 +9,8 @@ import {
   invalidateCompiler,
   invalidateProjectCSS,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { invalidatePreparedProjectCSS } from "#veryfront/html/styles-builder/prepared-project-css-cache.ts";
+import { invalidateProjectCandidateManifests } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
 import { StylesCSSHandler } from "./styles-css.handler.ts";
 
 const TEST_STYLESHEET = `@import "tailwindcss";`;
@@ -46,20 +48,26 @@ function mockTailwindFetch(): { restore: () => void; getCallCount: () => number 
 function createHandlerAdapter(
   files: Array<{ path: string; content?: string }>,
   contentContext: ResolvedContentContext,
-): RuntimeAdapter {
+): RuntimeAdapter & { setFiles: (nextFiles: Array<{ path: string; content?: string }>) => void } {
   const adapter = createMockAdapter();
   adapter.fs.files.set("/project/globals.css", TEST_STYLESHEET);
+  let currentFiles = files;
 
   return {
     ...adapter,
+    setFiles: (nextFiles) => {
+      currentFiles = nextFiles;
+    },
     fs: {
       ...adapter.fs,
       getUnderlyingAdapter: () => ({
-        getAllSourceFiles: async () => files,
+        getAllSourceFiles: async () => currentFiles,
         getContentContext: () => contentContext,
       }),
     },
-  } as unknown as RuntimeAdapter;
+  } as RuntimeAdapter & {
+    setFiles: (nextFiles: Array<{ path: string; content?: string }>) => void;
+  };
 }
 
 function makeCtx(adapter: RuntimeAdapter): HandlerContext {
@@ -87,6 +95,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       clearCSSCache();
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
 
       const first = await handler.handle(req, ctx);
       const firstBody = await first.response!.text();
@@ -110,6 +120,56 @@ describe("server/handlers/dev/styles-css.handler", () => {
       clearCSSCache();
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("serves prepared CSS without rescanning files after the first request", async () => {
+    const fetchMock = mockTailwindFetch();
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [{
+        path: "/project/pages/index.tsx",
+        content: '<div className="text-fuchsia-500">Hello</div>',
+      }],
+      { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
+    );
+    const ctx = makeCtx(adapter);
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const first = await handler.handle(req, ctx);
+      const firstBody = await first.response!.text();
+      const initialFetchCount = fetchMock.getCallCount();
+
+      assertEquals(first.response!.status, 200);
+      assertEquals(firstBody.length > 0, true);
+
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      adapter.setFiles([]);
+
+      const second = await handler.handle(req, ctx);
+      const secondBody = await second.response!.text();
+
+      assertEquals(second.response!.status, 200);
+      assertEquals(secondBody, firstBody);
+      assertEquals(fetchMock.getCallCount(), initialFetchCount);
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
     }
   });
 });

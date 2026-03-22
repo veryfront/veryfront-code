@@ -29,6 +29,9 @@ import {
   rewriteCssModuleContent,
 } from "#veryfront/transforms/css-modules/naming.ts";
 import { getRouteCandidates } from "./css-candidate-manifest.ts";
+import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
+import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
+import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 
 const logger = rendererLogger.component("html-generator");
 
@@ -453,8 +456,15 @@ export class HTMLGenerator {
     if (typeof wrappedFs.getUnderlyingAdapter !== "function") return undefined;
 
     const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
+      getContentContext?: () => ResolvedContentContext | null;
       getProjectData?: () => { updated_at?: string } | undefined;
     };
+
+    const contentContext = typeof fsAdapter.getContentContext === "function"
+      ? fsAdapter.getContentContext()
+      : null;
+
+    if (contentContext) return resolveStyleContentVersion(contentContext);
 
     return fsAdapter.getProjectData?.()?.updated_at;
   }
@@ -505,6 +515,7 @@ export class HTMLGenerator {
       projectScope,
       projectVersion,
       projectDir: this.config.projectDir,
+      styleProfile: createStyleScopeProfile(this.config.config),
       routeKey,
       routeFilePaths,
       files,

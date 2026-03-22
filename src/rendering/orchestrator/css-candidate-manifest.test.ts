@@ -1,5 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import {
   getProjectCandidates,
   getRouteCandidates,
@@ -149,6 +150,53 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
       assertEquals(result.has("text-red-500"), true);
       assertEquals(result.has("rounded-lg"), true);
       assertEquals(result.has("shadow-sm"), true);
+    });
+
+    it("applies the default style scope conventions when building manifests", () => {
+      invalidateProjectCandidateManifests();
+      const result = getProjectCandidates({
+        projectScope: "project-scope-defaults",
+        projectVersion: "v1",
+        projectDir: "/project",
+        styleProfile: createStyleScopeProfile(),
+        files: [
+          {
+            path: "/project/pages/index.tsx",
+            content: '<div className="text-red-500">Home</div>',
+          },
+          {
+            path: "/project/knowledge/reference.tsx",
+            content: '<div className="text-blue-500">Reference</div>',
+          },
+        ],
+        developmentMode: false,
+      });
+
+      assertEquals(result.has("text-red-500"), true);
+      assertEquals(result.has("text-blue-500"), false);
+    });
+
+    it("keeps configured runtime roots in the candidate graph", () => {
+      invalidateProjectCandidateManifests();
+      const result = getProjectCandidates({
+        projectScope: "project-scope-protected",
+        projectVersion: "v1",
+        projectDir: "/project",
+        styleProfile: createStyleScopeProfile({
+          directories: {
+            app: "knowledge/app",
+          },
+        }),
+        files: [
+          {
+            path: "/project/knowledge/app/page.tsx",
+            content: '<div className="text-emerald-500">Hello</div>',
+          },
+        ],
+        developmentMode: false,
+      });
+
+      assertEquals(result.has("text-emerald-500"), true);
     });
   });
 });
