@@ -190,7 +190,7 @@ async function doFetchAndCacheModule(
   parentModulePath?: string,
 ): Promise<string | null> {
   const log = getLog(context);
-  const { esmCacheDir, adapter, projectDir, projectId } = context;
+  const { esmCacheDir, adapter, projectDir, projectId, contentSourceId } = context;
 
   const pathCache = await getModulePathCache(esmCacheDir);
   const versionedKey = getVersionedPathCacheKey(normalizedPath);
@@ -209,6 +209,12 @@ async function doFetchAndCacheModule(
             log,
             pathCache,
             versionedKey,
+            context.contentSourceId
+              ? {
+                projectId: context.projectId,
+                contentSourceId: context.contentSourceId,
+              }
+              : undefined,
           )
         ) {
           recordModuleToSession(normalizedPath);
@@ -252,7 +258,9 @@ async function doFetchAndCacheModule(
     const { sourceCode, actualFilePath } = resolved;
 
     const contentHash = hashString(sourceCode);
-    const transformCacheKey = getTransformCacheKey(projectId, normalizedPath, contentHash);
+    const transformCacheKey = contentSourceId
+      ? getTransformCacheKey(projectId, contentSourceId, normalizedPath, contentHash)
+      : null;
 
     let moduleCode: string | null = null;
     let needsDistributedCacheWrite = false;
@@ -260,14 +268,18 @@ async function doFetchAndCacheModule(
     // Try distributed cache read with full validation.
     // Returns null only if no distributed backend is configured.
     // Otherwise returns { code, distributedCache } where code may be null (miss).
-    const distResult = await readDistributedCache(
-      transformCacheKey,
-      normalizedPath,
-      projectSlug,
-      projectDir,
-      context.reactVersion,
-      log,
-    );
+    const distResult = transformCacheKey
+      ? await readDistributedCache(
+        transformCacheKey,
+        projectId,
+        contentSourceId,
+        normalizedPath,
+        projectSlug,
+        projectDir,
+        context.reactVersion,
+        log,
+      )
+      : null;
     if (distResult?.code) {
       moduleCode = distResult.code;
     }
@@ -402,10 +414,12 @@ async function doFetchAndCacheModule(
 
     // Write to distributed cache AFTER nested imports are resolved.
     // This ensures other pods get fully-resolved code without /_vf_modules/ paths.
-    if (needsDistributedCacheWrite && distResult?.distributedCache) {
+    if (needsDistributedCacheWrite && distResult?.distributedCache && transformCacheKey) {
       writeDistributedCache(
         distResult.distributedCache,
         transformCacheKey,
+        projectId,
+        contentSourceId!,
         moduleCode,
         normalizedPath,
         log,
@@ -449,6 +463,7 @@ export function createModuleFetcherContext(
   projectDir: string,
   projectId: string,
   options?: {
+    contentSourceId?: string;
     isLocalProject?: boolean;
     projectSlug?: string;
     reactVersion?: string;

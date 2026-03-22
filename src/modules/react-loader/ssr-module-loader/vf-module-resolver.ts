@@ -78,6 +78,7 @@ export async function resolveVfModuleImports(
     options.projectDir,
     options.projectId,
     {
+      contentSourceId: options.contentSourceId,
       reactVersion: options.reactVersion,
       projectSlug: options.projectId,
       strictMissingModules: false,

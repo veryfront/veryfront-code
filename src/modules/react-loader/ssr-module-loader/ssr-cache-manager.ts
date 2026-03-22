@@ -24,6 +24,7 @@ import {
 } from "./http-bundle-helpers.ts";
 import { buildTempModulePath, buildTmpDirPath, getTmpDirCacheKey } from "./tmp-paths.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
+import { ensureMdxModuleDependencies } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/dependency-recovery.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
@@ -167,7 +168,7 @@ export class SSRCacheManager {
     try {
       const cachedCode = await this.fs.readTextFile(cachedEntry.tempPath);
       const isValid = await this.validateCachedCode(cachedCode, filePath, "memory-cache", {
-        checkLocalPaths: false,
+        checkLocalPaths: true,
         checkInvalidEsmShPath: false,
       });
       if (!isValid) {
@@ -235,11 +236,14 @@ export class SSRCacheManager {
 
   private async hasMissingLocalPaths(code: string, filePath: string): Promise<boolean> {
     const allPaths = extractAllFilePaths(code);
+    let hasMissingPath = false;
+
     for (const path of allPaths) {
       try {
         const stat = await this.fs.stat(path);
         if (!stat.isFile) {
-          return true;
+          hasMissingPath = true;
+          break;
         }
       } catch (error) {
         logger.debug("Redis cache has invalid local path, re-transforming", {
@@ -247,6 +251,34 @@ export class SSRCacheManager {
           missingPath: path.slice(-60),
           error,
         });
+        hasMissingPath = true;
+        break;
+      }
+    }
+
+    if (
+      hasMissingPath &&
+      this.options.projectId &&
+      this.options.contentSourceId
+    ) {
+      const recovered = await ensureMdxModuleDependencies(code, {
+        projectId: this.options.projectId,
+        contentSourceId: this.options.contentSourceId,
+        log: logger,
+      });
+      if (recovered.recovered.length > 0) {
+        logger.debug("Recovered missing local vfmod dependencies for SSR cache entry", {
+          file: filePath.slice(-40),
+          recovered: recovered.recovered.slice(0, 5),
+        });
+      }
+    }
+
+    for (const path of allPaths) {
+      try {
+        const stat = await this.fs.stat(path);
+        if (!stat.isFile) return true;
+      } catch (_) {
         return true;
       }
     }

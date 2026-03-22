@@ -23,6 +23,9 @@ import {
   findMissingFileDependenciesInCode,
   hasIncompatibleFrameworkPaths,
 } from "./framework-validator.ts";
+import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
+import { buildMdxEsmModuleFileName, buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
+import { hashString } from "../utils/hash.ts";
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
@@ -59,6 +62,8 @@ interface DistributedCacheReadResult {
  */
 export async function readDistributedCache(
   transformCacheKey: string,
+  projectId: string,
+  contentSourceId: string | undefined,
   normalizedPath: string,
   projectSlug: string,
   projectDir: string,
@@ -129,10 +134,26 @@ export async function readDistributedCache(
     // that don't exist on this machine.
     if (moduleCode) {
       const missingDeps = await findMissingFileDependenciesInCode(moduleCode, log);
-      if (missingDeps.length > 0) {
+      if (missingDeps.length > 0 && contentSourceId) {
+        const recovered = await ensureMdxModuleDependencies(moduleCode, {
+          distributedCache,
+          projectId,
+          contentSourceId,
+          log,
+        });
+        if (recovered.recovered.length > 0) {
+          log.debug(`${LOG_PREFIX_MDX_LOADER} Recovered missing vfmod dependencies from cache`, {
+            normalizedPath,
+            recovered: recovered.recovered.slice(0, 5),
+          });
+        }
+      }
+
+      const unresolvedDeps = await findMissingFileDependenciesInCode(moduleCode, log);
+      if (unresolvedDeps.length > 0) {
         log.warn(
-          `${LOG_PREFIX_MDX_LOADER} Cached code has ${missingDeps.length} missing file dependencies, invalidating`,
-          { normalizedPath, missingDeps: missingDeps.slice(0, 5) },
+          `${LOG_PREFIX_MDX_LOADER} Cached code has ${unresolvedDeps.length} missing file dependencies, invalidating`,
+          { normalizedPath, missingDeps: unresolvedDeps.slice(0, 5) },
         );
         moduleCode = null;
       }
@@ -177,6 +198,8 @@ export async function readDistributedCache(
 export function writeDistributedCache(
   distributedCache: DistributedCache,
   transformCacheKey: string,
+  projectId: string,
+  contentSourceId: string,
   moduleCode: string,
   normalizedPath: string,
   log: Logger,
@@ -191,6 +214,23 @@ export function writeDistributedCache(
     .catch((error) => {
       log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
         normalizedPath,
+        error,
+      });
+    });
+
+  const moduleFileName = buildMdxEsmModuleFileName(hashString(normalizedPath + moduleCode));
+  const moduleRecoveryKey = buildMdxEsmModuleRecoveryCacheKey(
+    projectId,
+    contentSourceId,
+    moduleFileName,
+  );
+
+  distributedCache
+    .set(moduleRecoveryKey, portableCode, TRANSFORM_CACHE_TTL_SECONDS)
+    .catch((error) => {
+      log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed vfmod recovery set failed`, {
+        normalizedPath,
+        moduleRecoveryKey,
         error,
       });
     });

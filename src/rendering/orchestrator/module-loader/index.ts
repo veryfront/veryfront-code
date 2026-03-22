@@ -223,7 +223,18 @@ export async function transformModuleWithDeps(
     const sourceKey = encodeURIComponent(contentSourceId);
     const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
 
-    const mdxCacheResult = await lookupMdxEsmCache(filePath, mdxCacheDir, projectDir);
+    const mdxCacheResult = await lookupMdxEsmCache(
+      filePath,
+      mdxCacheDir,
+      projectDir,
+      undefined,
+      contentSourceId
+        ? {
+          projectId,
+          contentSourceId,
+        }
+        : undefined,
+    );
     if (mdxCacheResult.status === "hit") {
       moduleCache.set(cacheKey, mdxCacheResult.path);
       return mdxCacheResult.path;
