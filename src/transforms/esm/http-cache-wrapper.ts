@@ -16,6 +16,7 @@ import { rendererLogger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { HTTP_MODULE_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import type {
   BundleHash,
@@ -43,6 +44,26 @@ const getDistributedCache = createDistributedCacheAccessor(
   () => CacheBackends.httpModule(),
   "HTTP-CACHE-WRAPPER",
 );
+
+let testDistributedCacheAccessor: (() => Promise<CacheBackend | null>) | null = null;
+
+function resolveDistributedCache(): Promise<CacheBackend | null> {
+  return testDistributedCacheAccessor ? testDistributedCacheAccessor() : getDistributedCache();
+}
+
+export function __setDistributedCacheAccessorForTests(
+  accessor: (() => Promise<CacheBackend | null>) | null,
+): void {
+  testDistributedCacheAccessor = accessor;
+}
+
+export async function initializeHttpModuleDistributedCache(): Promise<boolean> {
+  const distributed = await resolveDistributedCache();
+  if (!distributed) return false;
+
+  logger.info("Initialized distributed cache backend", { backend: distributed.type });
+  return true;
+}
 
 /**
  * Generate versioned cache key for HTTP bundles.
@@ -158,7 +179,7 @@ class HttpBundleCache {
    * @returns Result containing local code or failure reason
    */
   async getCodeByHash(hash: BundleHash | string): Promise<GetCodeResult> {
-    const distributed = await getDistributedCache();
+    const distributed = await resolveDistributedCache();
     if (!distributed) {
       return { code: null, wasGzipped: false, failReason: "not_found" };
     }
@@ -214,7 +235,7 @@ class HttpBundleCache {
    * @returns Result containing local code or failure reason
    */
   async getCodeByUrl(hash: BundleHash | string): Promise<GetCodeResult> {
-    const distributed = await getDistributedCache();
+    const distributed = await resolveDistributedCache();
     if (!distributed) {
       return { code: null, wasGzipped: false, failReason: "not_found" };
     }
@@ -265,7 +286,7 @@ class HttpBundleCache {
     url: NormalizedUrl | string,
     ttl: number = HTTP_MODULE_DISTRIBUTED_TTL_SEC,
   ): Promise<void> {
-    const distributed = await getDistributedCache();
+    const distributed = await resolveDistributedCache();
     if (!distributed) return;
 
     const hashStr = typeof hash === "string" ? hash : (hash as unknown as string);
@@ -305,7 +326,7 @@ class HttpBundleCache {
   async getBatchCodes(
     hashes: Array<BundleHash | string>,
   ): Promise<Map<string, LocalModuleCode>> {
-    const distributed = await getDistributedCache();
+    const distributed = await resolveDistributedCache();
     if (!distributed) return new Map();
 
     const results = new Map<string, LocalModuleCode>();
@@ -357,7 +378,7 @@ class HttpBundleCache {
    * @returns Original URL or null
    */
   async getOriginalUrl(hash: BundleHash | string): Promise<string | null> {
-    const distributed = await getDistributedCache();
+    const distributed = await resolveDistributedCache();
     if (!distributed) return null;
 
     const hashStr = typeof hash === "string" ? hash : (hash as unknown as string);
@@ -378,7 +399,7 @@ class HttpBundleCache {
    * @returns true if deletion was attempted, false if cache unavailable
    */
   async deleteCode(hash: BundleHash | string): Promise<boolean> {
-    const distributed = await getDistributedCache();
+    const distributed = await resolveDistributedCache();
     if (!distributed) return false;
 
     const hashStr = typeof hash === "string" ? hash : (hash as unknown as string);
@@ -403,7 +424,7 @@ class HttpBundleCache {
    * Check if distributed cache is available.
    */
   async isAvailable(): Promise<boolean> {
-    const distributed = await getDistributedCache();
+    const distributed = await resolveDistributedCache();
     return distributed !== null;
   }
 }
