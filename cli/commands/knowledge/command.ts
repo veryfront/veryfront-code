@@ -218,6 +218,23 @@ function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "document";
 }
 
+/**
+ * Strip the chat-upload prefix that Studio prepends to uploaded files.
+ *
+ * Studio stores uploads with a generated prefix like:
+ *   chat-<uuid>-<timestamp>-<shortid>-<original-filename>
+ *
+ * This function removes the prefix so knowledge files use the clean
+ * original filename (e.g. "agents" instead of
+ * "chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents").
+ */
+const CHAT_UPLOAD_PREFIX_RE =
+  /^chat-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-\d+-[a-z0-9]+-/i;
+
+export function stripChatUploadPrefix(name: string): string {
+  return name.replace(CHAT_UPLOAD_PREFIX_RE, "");
+}
+
 function defaultOutputRoot(): Promise<string> {
   return Deno.makeTempDir({ prefix: "veryfront-knowledge-" });
 }
@@ -360,7 +377,7 @@ function buildSourceReference(source: KnowledgeSource): string {
     : source.localPath;
 }
 
-function buildSuggestedSlug(source: KnowledgeSource, index: number): string {
+export function buildSuggestedSlug(source: KnowledgeSource, index: number): string {
   const normalized = normalize(
     source.kind === "upload" ? source.uploadPath : source.localPath,
   ).replace(/\\/g, "/");
@@ -382,9 +399,20 @@ function buildSuggestedSlug(source: KnowledgeSource, index: number): string {
     stripped = normalized.replace(/\.[^.]+$/, "");
   }
 
+  // Strip Studio's chat-upload prefix from the filename portion so that
+  // knowledge files use the original clean filename.
+  const lastSlash = stripped.lastIndexOf("/");
+  if (lastSlash >= 0) {
+    const dir = stripped.slice(0, lastSlash + 1);
+    const file = stripChatUploadPrefix(stripped.slice(lastSlash + 1));
+    stripped = file ? `${dir}${file}` : stripped;
+  } else {
+    stripped = stripChatUploadPrefix(stripped) || stripped;
+  }
+
   return slugify(stripped || basename(normalized, extname(normalized)) || `document-${index + 1}`);
 }
-function ensureUniqueSlugs(sources: KnowledgeSource[]): string[] {
+export function ensureUniqueSlugs(sources: KnowledgeSource[]): string[] {
   const counts = new Map<string, number>();
   return sources.map((source, index) => {
     const baseSlug = buildSuggestedSlug(source, index);
