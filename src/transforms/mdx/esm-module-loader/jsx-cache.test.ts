@@ -10,6 +10,7 @@ import {
 } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
 import { FRAMEWORK_ROOT } from "./constants.ts";
+import { buildMdxJsxCacheFileName } from "./cache-format.ts";
 import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
 
 describe("ensureCachedJsxModulePatched", () => {
@@ -17,7 +18,7 @@ describe("ensureCachedJsxModulePatched", () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-cache-test-" });
 
     try {
-      const cachedPath = join(tempDir, "jsx-v1-deadbeef.mjs");
+      const cachedPath = join(tempDir, buildMdxJsxCacheFileName("/tmp/source/Head.tsx"));
       const badCode = [
         `import "../../../_dnt.polyfills.js";`,
         `export const value = 1;`,

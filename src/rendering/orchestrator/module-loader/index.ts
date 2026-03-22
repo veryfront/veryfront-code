@@ -25,12 +25,12 @@ import { validateCachedBundlesByManifestOrCode } from "#veryfront/transforms/esm
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
 import {
   getModulePathCache,
   lookupMdxEsmCache,
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
+import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -455,7 +455,7 @@ export async function transformModuleWithDeps(
 
   if (contentSourceId) {
     const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
-    const mdxCacheKey = `v${VERSION}:${normalizedPath}`;
+    const mdxCacheKey = buildMdxEsmPathCacheKey(normalizedPath);
     const cache = await getModulePathCache(tmpDir);
     cache.set(mdxCacheKey, tempFilePath);
 

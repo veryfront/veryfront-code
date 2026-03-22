@@ -18,9 +18,9 @@ import {
   type FileSystem,
   isNotFoundError,
 } from "#veryfront/platform/compat/fs.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { buildMdxEsmPathCacheKey, MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE } from "../cache-format.ts";
 
 export type CacheLookupResult =
   | { status: "hit"; path: string }
@@ -33,8 +33,6 @@ export const verifiedModuleDeps = new LRUCache<string, true>({
   maxEntries: MAX_VERIFIED_MODULE_DEPS,
 });
 
-const FILE_PATH_PATTERN = /file:\/\/([^"'\s]+)/gi;
-
 /**
  * Check if cached code has file:// paths from a different environment.
  * Checks both HTTP bundle paths and MDX ESM cache paths.
@@ -43,7 +41,7 @@ function hasIncompatibleCachePaths(code: string): boolean {
   const localCacheBaseDir = getCacheBaseDir();
   const localHttpCacheDir = getHttpBundleCacheDir();
   const localMdxCacheDir = getMdxEsmCacheDir();
-  const pattern = new RegExp(FILE_PATH_PATTERN.source, "gi");
+  const pattern = new RegExp(MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE, "gi");
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {
@@ -87,7 +85,7 @@ function hasIncompatibleCachePaths(code: string): boolean {
  */
 async function findMissingFileDependencies(code: string): Promise<string[]> {
   const localFs = getLocalFs();
-  const pattern = new RegExp(FILE_PATH_PATTERN.source, "gi");
+  const pattern = new RegExp(MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE, "gi");
   const missing: string[] = [];
   let match;
   while ((match = pattern.exec(code)) !== null) {
@@ -335,7 +333,7 @@ function toMdxEsmCacheKey(filePath: string, projectDir?: string): string {
   relativePath = relativePath.replace(/^\/+/, "");
   const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
 
-  return `v${VERSION}:_vf_modules/${jsPath}`;
+  return buildMdxEsmPathCacheKey(`_vf_modules/${jsPath}`);
 }
 
 export async function lookupMdxEsmCache(
@@ -429,9 +427,9 @@ export async function lookupMdxEsmCache(
     }
 
     // Note: We intentionally skip contentHash validation for MDX-ESM cached files.
-    // The MDX-ESM cache uses transformed-code hashes in filenames (vfmod-v{VERSION}-{hash}.mjs),
+    // The MDX-ESM cache uses transformed-code hashes in namespaced filenames,
     // while the SSR loader provides source-code hashes. These will never match.
-    // The cache version in the key (v{VERSION}:) provides sufficient staleness protection,
+    // The cache namespace in the key provides sufficient staleness protection,
     // and the file's existence confirms it's a valid transform for this codebase.
     // This allows both loaders to share the same module instance, preventing
     // duplicate React contexts which break hooks like useContext.
