@@ -4,13 +4,9 @@
  */
 
 import type { Context, Span, Tracer } from "@opentelemetry/api";
-import denoConfig from "#deno-config" with { type: "json" };
 import { getEnv } from "./env.ts";
 import { proxyLogger } from "./logger.ts";
-
-// Get version from environment variable or root deno.json
-const VERYFRONT_VERSION: string = getEnv("VERYFRONT_VERSION") ??
-  (typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0");
+import { PROXY_RUNTIME_VERSION } from "./version.ts";
 
 let initialized = false;
 let tracerProvider: { shutdown: () => Promise<void> } | null = null;
@@ -98,7 +94,7 @@ export async function initializeOTLPWithApis(): Promise<void> {
     const resourceAttrs = parseResourceAttributes(getEnv("OTEL_RESOURCE_ATTRIBUTES"));
     const resource = new Resource({
       [ATTR_SERVICE_NAME]: config.serviceName,
-      [ATTR_SERVICE_VERSION]: VERYFRONT_VERSION,
+      [ATTR_SERVICE_VERSION]: PROXY_RUNTIME_VERSION,
       ...resourceAttrs,
     });
 

@@ -10,7 +10,7 @@ import { loadConfig } from "./config.ts";
 import { initializeInstruments } from "../instruments/index.ts";
 import { MetricsRecorder } from "./recorder.ts";
 import type { MetricsConfig, MetricsInstruments, OpenTelemetryAPI, RuntimeState } from "./types.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 
 const logger = serverLogger.component("metrics");
 
@@ -80,7 +80,7 @@ export class MetricsManager {
 
     try {
       this.api = await import("@opentelemetry/api");
-      this.meter = this.api.metrics.getMeter(finalConfig.prefix, VERSION);
+      this.meter = this.api.metrics.getMeter(finalConfig.prefix, RUNTIME_VERSION);
 
       this.instruments = initializeInstruments(this.meter, finalConfig, this.runtimeState);
       this.recorder.instruments = this.instruments;

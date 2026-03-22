@@ -3,7 +3,7 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { joinPath } from "#veryfront/utils/path-utils.ts";
 import { HTTP_OK, HTTP_UNAVAILABLE, PRIORITY_HIGH } from "#veryfront/utils/constants/index.ts";
 import { isTracingDegraded, isTracingEnabled } from "#veryfront/observability/tracing/index.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 
 let serverInitialized = false;
 
@@ -73,7 +73,7 @@ export class HealthHandler extends BaseHandler {
           status: tracingDegraded ? "degraded" : "ok",
           timestamp: new Date().toISOString(),
           mode: hasStaticBuild ? "static+ssr" : "ssr",
-          version: VERSION,
+          version: RUNTIME_VERSION,
           tracing: {
             enabled: isTracingEnabled(),
             degraded: tracingDegraded,
