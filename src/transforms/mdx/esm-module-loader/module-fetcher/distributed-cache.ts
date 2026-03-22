@@ -9,14 +9,11 @@
 
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache";
-import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
+import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
-import {
-  createBundleManifest,
-  storeBundleManifest,
-  validateBundleGroup,
-} from "../../../esm/bundle-manifest.ts";
+import { createBundleManifest, storeBundleManifest } from "../../../esm/bundle-manifest.ts";
+import { validateCachedBundlesByManifestOrCode } from "../../../esm/cached-bundle-validation.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { FRAMEWORK_ROOT, LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
@@ -86,30 +83,22 @@ export async function readDistributedCache(
     const bundleManifestKey = `${transformCacheKey}:bm`;
     const manifestId = await distributedCache.get(bundleManifestKey).catch(() => null);
 
-    if (manifestId) {
+    if (moduleCode) {
       const cacheDir = getHttpBundleCacheDir();
-      const validation = await validateBundleGroup(manifestId, cacheDir);
+      const validation = await validateCachedBundlesByManifestOrCode(
+        moduleCode,
+        manifestId ?? undefined,
+        cacheDir,
+      );
       if (!validation.valid) {
-        log.warn(`${LOG_PREFIX_MDX_LOADER} Bundle manifest validation failed`, {
+        log.warn(`${LOG_PREFIX_MDX_LOADER} Cached HTTP bundle validation failed`, {
           normalizedPath,
-          manifestId: manifestId.slice(0, 12),
+          manifestId: manifestId?.slice(0, 12),
           failedHashes: validation.failedHashes,
+          reason: validation.reason,
+          source: validation.source,
         });
         moduleCode = null;
-      }
-    } else {
-      // Use detokenized code for bundle path extraction
-      const bundlePaths = extractHttpBundlePaths(moduleCode);
-      if (bundlePaths.length > 0) {
-        const cacheDir = getHttpBundleCacheDir();
-        const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-        if (failed.length > 0) {
-          log.warn(`${LOG_PREFIX_MDX_LOADER} Some HTTP bundles could not be recovered`, {
-            normalizedPath,
-            failed,
-          });
-          moduleCode = null;
-        }
       }
     }
 
