@@ -2,13 +2,15 @@ import { serverLogger } from "#veryfront/utils";
 
 const logger = serverLogger.component("reload-notifier");
 
-interface ReloadProjectInfo {
+export interface ReloadProjectInfo {
   projectSlug?: string;
   projectId?: string;
   projectDir?: string;
   environment?: "preview" | "production";
   branch?: string | null;
   releaseId?: string | null;
+  styleArtifactHash?: string;
+  styleAssetPath?: string;
 }
 
 type ReloadListener = (changedPaths?: string[], project?: ReloadProjectInfo) => void;

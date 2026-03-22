@@ -25,6 +25,11 @@ const WS_RECONNECT_MAX_FAILURES = 10;
 const WS_HEARTBEAT_INTERVAL_MS = 60000;
 const WS_HEARTBEAT_TIMEOUT_MS = 300000;
 
+interface PreviewStyleArtifactInfo {
+  hash: string;
+  assetPath: string;
+}
+
 interface WebSocketDeps {
   apiBaseUrl: string;
   apiToken: string;
@@ -42,7 +47,9 @@ interface WebSocketDeps {
     cacheKey: string,
     files: Array<{ path: string; content?: string }>,
   ) => Promise<void>;
-  pregenerateStyles?: (files: Array<{ path: string; content?: string }>) => Promise<void>;
+  pregenerateStyles?: (
+    files: Array<{ path: string; content?: string }>,
+  ) => Promise<PreviewStyleArtifactInfo | undefined>;
 }
 
 export class WebSocketManager {
@@ -556,6 +563,7 @@ export class WebSocketManager {
     const contentContext = this.deps.getContentContext();
     const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
     const previewInvalidationVersion = this.previewInvalidationVersion;
+    let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let succeeded = false;
 
     try {
@@ -629,11 +637,12 @@ export class WebSocketManager {
           const cacheKey = buildFileListCacheKey(contentContext);
           await this.deps.setFileListCache(cacheKey, files);
           this.deps.clearFileListIndex();
-          await this.deps.pregenerateStyles?.(files);
+          preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
 
           logger.debug("Fresh files cached (memory + Redis)", {
             cacheKey,
             fileCount: files.length,
+            styleAssetPath: preparedStyleArtifact?.assetPath,
           });
         } catch (error) {
           logger.warn("Failed to fetch files during selective invalidation", {
@@ -663,6 +672,8 @@ export class WebSocketManager {
         environment,
         branch: contentContext?.branch ?? null,
         releaseId: contentContext?.releaseId ?? null,
+        styleArtifactHash: preparedStyleArtifact?.hash,
+        styleAssetPath: preparedStyleArtifact?.assetPath,
       };
 
       this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
@@ -690,6 +701,7 @@ export class WebSocketManager {
     const contentContext = this.deps.getContentContext();
     const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
     const previewInvalidationVersion = this.previewInvalidationVersion;
+    let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let succeeded = false;
 
     try {
@@ -772,11 +784,12 @@ export class WebSocketManager {
           const cacheKey = buildFileListCacheKey(contentContext);
           await this.deps.setFileListCache(cacheKey, files);
           this.deps.clearFileListIndex();
-          await this.deps.pregenerateStyles?.(files);
+          preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
 
           logger.debug("FRESH FILES FETCHED", {
             cacheKey,
             fileCount: files.length,
+            styleAssetPath: preparedStyleArtifact?.assetPath,
           });
         } catch (error) {
           logger.warn("Failed to fetch files during invalidation", { error });
@@ -800,6 +813,8 @@ export class WebSocketManager {
         environment,
         branch: contentContext?.branch ?? null,
         releaseId: contentContext?.releaseId ?? null,
+        styleArtifactHash: preparedStyleArtifact?.hash,
+        styleAssetPath: preparedStyleArtifact?.assetPath,
       };
 
       this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);

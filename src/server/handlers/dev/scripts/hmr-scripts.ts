@@ -57,11 +57,94 @@ function getUpdateJSFunction(logPrefix: string): string {
     return false;
   }
 
+  async function swapTailwindStylesheet(nextHref) {
+    const current = document.getElementById('vf-tailwind-css');
+    if (!(current instanceof HTMLLinkElement) || !nextHref || !current.parentNode) {
+      return false;
+    }
+
+    const nextUrl = new URL(nextHref, window.location.origin).toString();
+    const currentHref = current.getAttribute('href');
+    const currentUrl = currentHref ? new URL(currentHref, window.location.href).toString() : '';
+    if (currentUrl === nextUrl) {
+      return true;
+    }
+
+    const pending = current.cloneNode(false);
+    if (!(pending instanceof HTMLLinkElement)) {
+      return false;
+    }
+
+    pending.removeAttribute('id');
+    pending.setAttribute('data-vf-tailwind-pending', 'true');
+    pending.href = nextHref;
+
+    await new Promise((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => {
+        cleanup(new Error('stylesheet-timeout'));
+      }, 5000);
+
+      let settled = false;
+
+      function cleanup(error) {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeoutId);
+        pending.removeEventListener('load', onLoad);
+        pending.removeEventListener('error', onError);
+
+        if (error) {
+          pending.remove();
+          reject(error);
+          return;
+        }
+
+        pending.id = 'vf-tailwind-css';
+        current.remove();
+        resolve(true);
+      }
+
+      function onLoad() {
+        cleanup(null);
+      }
+
+      function onError() {
+        cleanup(new Error('stylesheet-load-failed'));
+      }
+
+      pending.addEventListener('load', onLoad, { once: true });
+      pending.addEventListener('error', onError, { once: true });
+      current.parentNode.insertBefore(pending, current.nextSibling);
+    });
+
+    return true;
+  }
+
+  async function applyStyleUpdate(changedPath, styleHref) {
+    if (styleHref) {
+      try {
+        const swapped = await swapTailwindStylesheet(styleHref);
+        if (swapped) {
+          ${
+    logPrefix === "[HMR]"
+      ? `console.log('${logPrefix} Swapped stylesheet:', styleHref);`
+      : `dlog('${logPrefix} Swapped stylesheet:', styleHref);`
+  }
+          return true;
+        }
+      } catch (error) {
+        console.warn('${logPrefix} Failed to swap stylesheet:', error);
+      }
+    }
+
+    return refreshStylesheets(changedPath) || refreshStylesheets();
+  }
+
   function getRenderPath() {
     return window.location.pathname + window.location.search + window.location.hash;
   }
 
-  async function updateJS(path) {
+  async function updateJS(path, styleHref) {
     ${
     logPrefix === "[HMR]"
       ? `console.log('${logPrefix} Updating JS module:', path);`
@@ -83,7 +166,7 @@ function getUpdateJSFunction(logPrefix: string): string {
       }
 
       // Refresh Tailwind CSS (new classes may be needed from JS changes)
-      refreshStylesheets();
+      await applyStyleUpdate(path, styleHref);
 
       // Re-render the page with fresh modules
       if (window.__veryfrontRenderPage) {
@@ -271,6 +354,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
 
   // Debounce updates to prevent flashing from rapid-fire changes
   let pendingPaths = [];
+  let pendingStyleHref = null;
   let updateDebounceTimer = null;
   const UPDATE_DEBOUNCE_MS = 150;
 
@@ -282,7 +366,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
 
     // CSS changes: hot-swap stylesheet without full page reload
     if (update.path.endsWith('.css')) {
-      const didRefresh = refreshStylesheets(update.path) || refreshStylesheets();
+      const didRefresh = await applyStyleUpdate(update.path, update.styleHref);
       if (!didRefresh) {
         notifyStudioAndReload('css-update-no-stylesheet');
         return;
@@ -293,12 +377,17 @@ function generateHMRClient(opts: HMRScriptOptions): string {
 
     // Debounce JS updates — batch rapid updates into single re-render
     pendingPaths.push(update.path);
+    if (typeof update.styleHref === 'string') {
+      pendingStyleHref = update.styleHref;
+    }
 
     if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
 
     updateDebounceTimer = setTimeout(async () => {
       const paths = pendingPaths;
+      const styleHref = pendingStyleHref;
       pendingPaths = [];
+      pendingStyleHref = null;
       updateDebounceTimer = null;
 
       if (paths.length > 1) {
@@ -306,7 +395,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
       }
 
       // Single re-render handles all paths (server propagates timestamps to all imports)
-      if (paths.length > 0) await updateJS(paths[0]);
+      if (paths.length > 0) await updateJS(paths[0], styleHref);
     }, UPDATE_DEBOUNCE_MS);
   }
 ${getUpdateJSFunction(logPrefix)}

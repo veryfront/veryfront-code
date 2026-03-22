@@ -724,9 +724,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
    */
   private async triggerCSSPregeneration(
     files: Array<{ path: string; content?: string }>,
-  ): Promise<void> {
+  ): Promise<{ hash: string; assetPath: string } | undefined> {
     try {
-      const { pregenerateCSSFromFiles, findStylesheetFromFiles } = await import(
+      const { buildPreparedCSSArtifactFromFiles, findStylesheetFromFiles } = await import(
         "../../../../html/styles-builder/css-pregeneration.ts"
       );
       const { resolveStyleContentVersion } = await import(
@@ -744,7 +744,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         logger.debug("Skipping CSS pre-generation without projectDir", {
           projectSlug: this.projectSlug,
         });
-        return;
+        return undefined;
       }
 
       try {
@@ -769,7 +769,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         environmentName: this.contentContext?.environmentName ?? null,
       });
 
-      await pregenerateCSSFromFiles({
+      const result = await buildPreparedCSSArtifactFromFiles({
         projectSlug: this.projectSlug,
         projectVersion,
         projectDir,
@@ -781,11 +781,25 @@ export class VeryfrontFSAdapter implements FSAdapter {
         environment: "preview",
         buildMode: "production",
       });
+
+      logger.debug("CSS pre-generation complete", {
+        projectSlug: this.projectSlug,
+        projectVersion,
+        cssHash: result.hash,
+        candidateCount: result.candidateCount,
+        fromCache: result.fromCache,
+      });
+
+      return {
+        hash: result.hash,
+        assetPath: `/_vf/css/${result.hash}.css`,
+      };
     } catch (error) {
       logger.warn("CSS pre-generation failed", {
         projectSlug: this.projectSlug,
         error: error instanceof Error ? error.message : String(error),
       });
+      return undefined;
     }
   }
 }

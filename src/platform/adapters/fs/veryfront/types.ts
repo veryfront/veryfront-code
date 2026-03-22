@@ -120,6 +120,8 @@ export interface InvalidationProjectContext {
   environment?: "preview" | "production";
   branch?: string | null;
   releaseId?: string | null;
+  styleArtifactHash?: string;
+  styleAssetPath?: string;
 }
 
 export interface InvalidationCallbacks {
