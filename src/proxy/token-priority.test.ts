@@ -32,6 +32,19 @@ function createTokenServer(token: string) {
         expires_in: 3600,
       });
     }
+    if (pathname.startsWith("/projects/")) {
+      return Response.json({
+        id: "proj-123",
+        slug: "my-project",
+        name: "My Project",
+        environments: [{
+          id: "env-1",
+          name: "preview",
+          active_release_id: null,
+          protected: false,
+        }],
+      });
+    }
     return new Response("Not found", { status: 404 });
   });
 }
@@ -140,27 +153,50 @@ describe("Token Priority Cascade", () => {
 
   describe("static API token fallback", () => {
     it("uses static API token when OAuth credentials are empty", async () => {
-      const handler = createProxyHandler({
-        config: {
-          apiBaseUrl: "http://localhost:9999",
-          apiClientId: "",
-          apiClientSecret: "",
-          previewApiClientId: "",
-          previewApiClientSecret: "",
-          apiToken: "static-api-token",
-        },
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: null,
+              protected: false,
+            }],
+          });
+        }
+
+        return new Response("Not found", { status: 404 });
       });
 
-      const req = new Request("http://my-project.preview.veryfront.com/page", {
-        headers: { host: "my-project.preview.veryfront.com" },
-      });
+      try {
+        const handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            apiClientId: "",
+            apiClientSecret: "",
+            previewApiClientId: "",
+            previewApiClientSecret: "",
+            apiToken: "static-api-token",
+          },
+        });
 
-      const ctx = await handler.processRequest(req);
+        const req = new Request("http://my-project.preview.veryfront.com/page", {
+          headers: { host: "my-project.preview.veryfront.com" },
+        });
 
-      assertEquals(ctx.token, "static-api-token");
-      assertEquals(ctx.error, undefined);
+        const ctx = await handler.processRequest(req);
 
-      await handler.close();
+        assertEquals(ctx.token, "static-api-token");
+        assertEquals(ctx.error, undefined);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
     });
   });
 

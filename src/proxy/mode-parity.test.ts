@@ -222,6 +222,19 @@ describe("Proxy-Renderer Mode Parity", () => {
             expires_in: 3600,
           });
         }
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "test-project",
+            name: "Test Project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: null,
+              protected: false,
+            }],
+          });
+        }
         return new Response("Not found", { status: 404 });
       });
 

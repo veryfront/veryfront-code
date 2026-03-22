@@ -234,31 +234,55 @@ describe("Proxy Handler", () => {
       }
     });
 
-    it("extracts project slug from veryfront subdomain without lookup", async () => {
-      const handler = createProxyHandler({
-        config: {
-          apiBaseUrl: "http://localhost:9999",
-          apiClientId: "",
-          apiClientSecret: "",
-          previewApiClientId: "",
-          previewApiClientSecret: "",
-          apiToken: "fallback-token",
-        },
+    it("extracts project slug from veryfront subdomain with static API token fallback", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: null,
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
       });
 
-      // Use preview subdomain to avoid production releaseId requirement
-      const req = new Request("http://my-project.preview.veryfront.com/page", {
-        headers: { host: "my-project.preview.veryfront.com" },
-      });
+      try {
+        const handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            apiClientId: "",
+            apiClientSecret: "",
+            previewApiClientId: "",
+            previewApiClientSecret: "",
+            apiToken: "fallback-token",
+          },
+        });
 
-      const ctx = await handler.processRequest(req);
+        const req = new Request("http://my-project.preview.veryfront.com/page", {
+          headers: { host: "my-project.preview.veryfront.com" },
+        });
 
-      assertEquals(ctx.projectSlug, "my-project");
-      assertEquals(ctx.error, undefined);
-      assertEquals(ctx.token, "fallback-token");
-      assertEquals(ctx.environment, "preview");
+        const ctx = await handler.processRequest(req);
 
-      await handler.close();
+        assertEquals(ctx.projectSlug, "my-project");
+        assertEquals(ctx.projectId, "proj-123");
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.token, "fallback-token");
+        assertEquals(ctx.environment, "preview");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
     });
   });
 
@@ -737,6 +761,34 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("returns 404 for missing preview project without auth token", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createNotFoundResponse();
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://missing-project.preview.veryfront.com/page", {
+          headers: { host: "missing-project.preview.veryfront.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(ctx.error?.message, "Preview project not found");
+        assertEquals(ctx.error?.slug, "project-not-found");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("allows access to protected preview domain with auth token for project member", async () => {
       const memberToken = await createFakeJwt("user-123");
       const { server, port } = createMockServer((req: Request) => {
@@ -780,6 +832,34 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.environmentId, "env-1");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("returns 404 for missing preview project with auth token", async () => {
+      const memberToken = await createFakeJwt("user-123");
+      const { server, port } = createMockServer((_req: Request) => {
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://missing-project.preview.veryfront.com/page", {
+          headers: {
+            host: "missing-project.preview.veryfront.com",
+            cookie: `authToken=${memberToken}`,
+          },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(ctx.error?.message, "Preview project not found");
+        assertEquals(ctx.error?.slug, "project-not-found");
 
         await handler.close();
       } finally {
