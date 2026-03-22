@@ -93,9 +93,7 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: 2.6.7
+      - uses: ./.github/actions/setup-deno
 
       - name: Compile binary
         run: deno task build
@@ -194,9 +192,7 @@ jobs:
             name: veryfront-windows-x64.exe
     steps:
       - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: 2.6.7
+      - uses: ./.github/actions/setup-deno
 
       - run: deno task build:prepare
 
@@ -229,9 +225,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: 2.6.7
+      - uses: ./.github/actions/setup-deno
 
       - uses: actions/setup-node@v4
         with:
@@ -337,9 +331,7 @@ jobs:
           echo "version=${{ needs.version-check.outputs.version }}" >> $GITHUB_OUTPUT
           echo "Publishing stable: ${{ needs.version-check.outputs.version }}"
 
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: 2.6.7
+      - uses: ./.github/actions/setup-deno
 
       - uses: actions/setup-node@v4
         with:
