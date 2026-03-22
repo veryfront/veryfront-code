@@ -117,15 +117,19 @@ describe("rendering/page-resolution/page-resolver", () => {
     });
 
     it("falls back to pages router when app routes are absent", async () => {
+      const resolveCalls: string[] = [];
+      const readCalls: string[] = [];
       const adapter = {
         fs: {
           readFile: async (path: string) => {
+            readCalls.push(path);
             if (path === "/project/pages/index.tsx") {
               return "export default function Page() { return null; }";
             }
             throw new Error("File not found");
           },
           resolveFile: async (path: string) => {
+            resolveCalls.push(path);
             if (path === "/project/app/page") {
               return null;
             }
@@ -176,6 +180,8 @@ describe("rendering/page-resolution/page-resolver", () => {
 
       assertEquals(page.entity.path, "/project/pages/index.tsx");
       assertEquals(routerMode, "pages");
+      assertEquals(resolveCalls.includes("/project/app/page"), false);
+      assertEquals(readCalls.some((path) => path.startsWith("/project/app")), false);
     });
 
     it("does not poison auto router detection from a pages fallback", async () => {

@@ -86,15 +86,26 @@ export class PageResolver {
             primeRouterDetectionCache(cacheKey, "pages");
           }
         } else {
-          // Auto mode stays structural: a single resolved route must not pin router mode
-          // for projects that are still transitioning between app/ and pages/.
-          pageInfo = await getAppRouteEntity(
+          // Auto mode stays structural: detect the dominant router once, then keep
+          // pages fallback available for mixed or in-transition projects.
+          const useAppRouter = await detectAppRouter(
             this.projectDir,
-            slug,
+            this.config,
             this.adapter,
-            appDirName,
+            { projectId: this.projectId },
           );
-          if (!pageInfo) {
+
+          if (useAppRouter) {
+            pageInfo = await getAppRouteEntity(
+              this.projectDir,
+              slug,
+              this.adapter,
+              appDirName,
+            );
+            if (!pageInfo) {
+              pageInfo = await getEntityBySlug(this.projectDir, slug, this.adapter);
+            }
+          } else {
             pageInfo = await getEntityBySlug(this.projectDir, slug, this.adapter);
           }
         }

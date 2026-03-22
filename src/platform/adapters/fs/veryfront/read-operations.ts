@@ -3,13 +3,15 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { logContentMetric, type MissReason } from "./content-metrics.ts";
-import { FileListIndex } from "./file-list-index.ts";
+import { FileListIndex, type FileListMatchResult } from "./file-list-index.ts";
 import { InFlightRequestDeduper } from "./in-flight-dedupe.ts";
 import { getRequestScopedFile, setRequestScopedFile } from "./multi-project-adapter.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import {
   assertProjectSourcePath,
+  buildExtensionCandidatePaths,
   buildReadFetchState,
+  createNotFoundLikeError,
   getResolvedCacheKey,
   isNotFoundLikeError,
   READ_OPERATION_EXTENSION_PRIORITY as EXTENSION_PRIORITY,
@@ -184,17 +186,23 @@ export class ReadOperations {
     skipPersistentCaches: boolean,
     isPreviewMode: boolean,
     ctx: ResolvedContentContext | null,
-  ): Promise<string | null> {
+  ): Promise<FileListMatchResult> {
     // File list cache is enabled for BOTH preview and production modes.
     // The file list is an in-memory index built from API response at init, updated by WebSocket pokes.
     // This is safe because:
     // - File list is refreshed on every WebSocket poke (websocket-manager.ts:483-500)
     // - Request-scoped cache ensures consistency within a single render
     // - Persistent cache is only written for production mode (to avoid staleness risk in preview)
-    if (!skipPersistentCaches) {
-      const fileListContent = await this.fileListIndex.lookup(normalizedPath);
-      if (!fileListContent) return null;
+    if (skipPersistentCaches) {
+      logger.debug("Skipping file list cache due to invalidation", {
+        path: normalizedPath,
+        cacheKeyPrefix,
+      });
+      return { status: "unavailable", fresh: false };
+    }
 
+    const match = await this.fileListIndex.match(normalizedPath);
+    if (match.status === "hit" && match.content) {
       logContentMetric("FILE_LIST_HIT", {
         path: normalizedPath,
         mode: ctx?.sourceType ?? "unknown",
@@ -204,24 +212,12 @@ export class ReadOperations {
       // Only cache to persistent storage for production mode
       // Preview mode uses file list cache directly without persisting (fresher, WebSocket-driven)
       if (isProduction) {
-        this.cache.set(cacheKey, fileListContent);
+        this.cache.set(cacheKey, match.content);
       }
-      setRequestScopedFile(cacheKey, fileListContent);
-      return fileListContent;
+      setRequestScopedFile(cacheKey, match.content);
     }
 
-    // Skip only happens during cache invalidation (both preview and production)
-    logContentMetric("CACHE_MISS", {
-      path: normalizedPath,
-      mode: ctx?.sourceType ?? "unknown",
-      missReason: "invalidation" as MissReason,
-      isPreviewMode,
-    });
-    logger.debug("Skipping file list cache due to invalidation", {
-      path: normalizedPath,
-      cacheKeyPrefix,
-    });
-    return null;
+    return match;
   }
 
   private setupInFlightFetch(
@@ -232,6 +228,7 @@ export class ReadOperations {
     isProduction: boolean,
     isPreviewMode: boolean,
     ctx: ResolvedContentContext | null,
+    missReason: MissReason,
   ): Promise<string> {
     const cleanupResult = this.inFlightRequests.cleanup();
     if (cleanupResult) {
@@ -249,11 +246,10 @@ export class ReadOperations {
     }
 
     // Track why we're making a network fetch (for optimization analysis)
-    const hasFileListCache = !!this.getFileListCache;
     logContentMetric("CACHE_MISS", {
       path: normalizedPath,
       mode: ctx?.sourceType ?? "unknown",
-      missReason: (hasFileListCache ? "not_in_filelist" : "no_filelist_cache") as MissReason,
+      missReason,
       isPreviewMode,
     });
 
@@ -377,10 +373,10 @@ export class ReadOperations {
     isProduction: boolean,
     ctx: ResolvedContentContext | null,
     isPreviewMode: boolean,
-  ): Promise<string | null> {
-    const candidatePaths = EXTENSION_PRIORITY.map((ext) => `${normalizedPath}${ext}`);
-    const resolved = await this.fileListIndex.findFirstWithContent(candidatePaths);
-    if (!resolved) return null;
+  ): Promise<FileListMatchResult> {
+    const candidatePaths = buildExtensionCandidatePaths(normalizedPath);
+    const resolved = await this.fileListIndex.findFirstMatch(candidatePaths);
+    if (resolved.status !== "hit" || !resolved.path || !resolved.content) return resolved;
 
     const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolved.path);
 
@@ -402,7 +398,7 @@ export class ReadOperations {
 
     this.cacheResolvedContent(cacheKey, resolvedCacheKey, resolved.content, isProduction);
 
-    return resolved.content;
+    return resolved;
   }
 
   private cacheResolvedContent(
@@ -472,7 +468,7 @@ export class ReadOperations {
     );
     if (persistentCached) return persistentCached;
 
-    const fileListCached = await this.getFileListCacheHit(
+    const fileListMatch = await this.getFileListCacheHit(
       normalizedPath,
       cacheKeyPrefix,
       cacheKey,
@@ -481,7 +477,19 @@ export class ReadOperations {
       isPreviewMode,
       ctx,
     );
-    if (fileListCached) return fileListCached;
+    if (fileListMatch.status === "hit" && fileListMatch.content) return fileListMatch.content;
+    if (fileListMatch.status === "present_without_content") {
+      return this.setupInFlightFetch(
+        normalizedPath,
+        apiPath,
+        cacheKey,
+        isPublished,
+        isProduction,
+        isPreviewMode,
+        ctx,
+        "indexed_without_content",
+      );
+    }
 
     if (!hasKnownExt) {
       if (!skipPersistentCaches) {
@@ -493,7 +501,47 @@ export class ReadOperations {
           ctx,
           isPreviewMode,
         );
-        if (resolvedFromFileList) return resolvedFromFileList;
+        if (resolvedFromFileList.status === "hit" && resolvedFromFileList.content) {
+          return resolvedFromFileList.content;
+        }
+
+        if (
+          resolvedFromFileList.status === "present_without_content" &&
+          resolvedFromFileList.path
+        ) {
+          const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolvedFromFileList.path);
+          const resolvedApiPath = this.getOriginalApiPath?.(resolvedFromFileList.path) ??
+            resolvedFromFileList.path;
+          const fetchedResolved = await this.setupInFlightFetch(
+            resolvedFromFileList.path,
+            resolvedApiPath,
+            resolvedCacheKey,
+            isPublished,
+            isProduction,
+            isPreviewMode,
+            ctx,
+            "indexed_without_content",
+          );
+
+          this.extensionResolutionCache.set(normalizedPath, resolvedFromFileList.path);
+          this.cacheResolvedContent(
+            cacheKey,
+            resolvedCacheKey,
+            fetchedResolved,
+            isProduction && !skipPersistentCaches,
+          );
+
+          return fetchedResolved;
+        }
+
+        if (
+          fileListMatch.status === "missing" &&
+          fileListMatch.fresh &&
+          resolvedFromFileList.status === "missing" &&
+          resolvedFromFileList.fresh
+        ) {
+          throw createNotFoundLikeError(normalizedPath);
+        }
       }
 
       const resolved = await this.tryResolveExtensionlessPath(
@@ -506,6 +554,10 @@ export class ReadOperations {
       if (resolved) return resolved;
     }
 
+    if (fileListMatch.status === "missing" && fileListMatch.fresh) {
+      throw createNotFoundLikeError(normalizedPath);
+    }
+
     return this.setupInFlightFetch(
       normalizedPath,
       apiPath,
@@ -514,6 +566,11 @@ export class ReadOperations {
       isProduction,
       isPreviewMode,
       ctx,
+      skipPersistentCaches
+        ? "invalidation"
+        : fileListMatch.status === "missing" && fileListMatch.fresh
+        ? "not_in_filelist"
+        : "no_filelist_cache",
     );
   }
 
