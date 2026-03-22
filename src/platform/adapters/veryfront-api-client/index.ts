@@ -9,6 +9,10 @@ export {
   type FileDetail,
   type FileListResult,
   type ListFilesOptions,
+  type ProjectStyleArtifactResolution,
+  type ResolveStyleArtifactInput,
+  type StyleArtifactSelector,
+  type UpsertStyleArtifactInput,
   VeryfrontAPIOperations,
 } from "./operations.ts";
 export { type RequestOptions, requestWithRetry, type RetryConfig } from "./retry-handler.ts";
@@ -39,4 +43,6 @@ export {
   ProjectSchema,
   ReleaseFileDetailSchema,
   ReleaseFileListItemSchema,
+  type StyleArtifactResolveResponse,
+  StyleArtifactResolveResponseSchema,
 } from "./schemas/index.ts";

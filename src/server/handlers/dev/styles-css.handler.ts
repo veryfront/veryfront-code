@@ -9,22 +9,33 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
-import { formatCSSError, getProjectCSS } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import {
+  formatCSSError,
+  getCSSByHashAsync,
+  getProjectCSS,
+  regenerateCSSByHash,
+} from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cache.ts";
 import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import {
   createPreparedProjectCSSContext,
+  type PreparedProjectCSSRequestContext,
   storePreparedProjectCSS,
   tryGetPreparedProjectCSS,
 } from "#veryfront/html/styles-builder/prepared-project-css-cache.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
+import type {
+  ResolveStyleArtifactInput,
+  VeryfrontApiClient,
+} from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
 
 const logger = serverLogger.component("styles-css-handler");
 
 type GeneratedStylesResult = Awaited<ReturnType<typeof getProjectCSS>>;
+type StyleArtifactSelectorContext = Omit<ResolveStyleArtifactInput, "styleProfileHash">;
 
 export class StylesCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -74,6 +85,25 @@ export class StylesCSSHandler extends BaseHandler {
               responseBuilder.withContentType("text/css; charset=utf-8", prepared.css, HTTP_OK),
             );
           }
+        }
+
+        const remotePrepared = await this.tryResolveRemotePreparedCSS(
+          ctx,
+          projectScope,
+          styleProfile.hash,
+          contentContext,
+          preparedContext,
+        );
+        if (remotePrepared) {
+          logger.debug("Prepared CSS resolved via style artifact metadata", {
+            projectScope,
+            styleProfileHash: styleProfile.hash,
+            cssHash: remotePrepared.hash,
+          });
+
+          return this.respond(
+            responseBuilder.withContentType("text/css; charset=utf-8", remotePrepared.css, HTTP_OK),
+          );
         }
 
         let candidates: Set<string>;
@@ -146,6 +176,15 @@ body::before {
           });
         }
 
+        if ("hash" in result) {
+          await this.registerPreparedCSSArtifact(
+            ctx,
+            styleProfile.hash,
+            contentContext,
+            result.hash,
+          );
+        }
+
         return this.respond(
           responseBuilder.withContentType("text/css; charset=utf-8", result.css, HTTP_OK),
         );
@@ -210,6 +249,17 @@ body::before {
     return typeof fsAdapter.getContentContext === "function" ? fsAdapter.getContentContext() : null;
   }
 
+  private getVeryfrontApiClient(ctx: HandlerContext): VeryfrontApiClient | null {
+    const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
+    if (typeof wrappedFs.getUnderlyingAdapter !== "function") return null;
+
+    const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
+      getClient?: () => VeryfrontApiClient;
+    };
+
+    return typeof fsAdapter.getClient === "function" ? fsAdapter.getClient() : null;
+  }
+
   private createPreparedCSSContext(
     projectScope: string | undefined,
     rawCss: string,
@@ -234,5 +284,133 @@ body::before {
         buildMode: "production",
       },
     );
+  }
+
+  private resolveStyleArtifactSelector(
+    contentContext: ResolvedContentContext | null,
+    ctx: HandlerContext,
+  ): StyleArtifactSelectorContext | null {
+    if (contentContext?.sourceType === "branch" && contentContext.branch) {
+      return {
+        branch: contentContext.branch,
+      };
+    }
+
+    if (contentContext?.sourceType === "environment" && contentContext.environmentName) {
+      return {
+        environmentName: contentContext.environmentName,
+      };
+    }
+
+    if (contentContext?.sourceType === "release" && contentContext.releaseId) {
+      return {
+        releaseId: contentContext.releaseId,
+      };
+    }
+
+    if (ctx.parsedDomain?.branch) {
+      return {
+        branch: ctx.parsedDomain.branch,
+      };
+    }
+
+    if (ctx.environmentName) {
+      return {
+        environmentName: ctx.environmentName,
+      };
+    }
+
+    if (ctx.releaseId) {
+      return {
+        releaseId: ctx.releaseId,
+      };
+    }
+
+    return null;
+  }
+
+  private async tryResolveRemotePreparedCSS(
+    ctx: HandlerContext,
+    projectScope: string | undefined,
+    styleProfileHash: string,
+    contentContext: ResolvedContentContext | null,
+    preparedContext?: PreparedProjectCSSRequestContext,
+  ): Promise<{ css: string; hash: string } | undefined> {
+    if (!projectScope) return undefined;
+
+    const selector = this.resolveStyleArtifactSelector(contentContext, ctx);
+    if (!selector) return undefined;
+
+    const client = this.getVeryfrontApiClient(ctx);
+    if (!client) return undefined;
+
+    try {
+      const resolved = await client.resolveStyleArtifact({
+        ...selector,
+        styleProfileHash,
+      });
+
+      if (resolved.status !== "ready" || !resolved.artifactHash) {
+        return undefined;
+      }
+
+      const css = await this.getPreparedCSSByHash(resolved.artifactHash, projectScope);
+      if (!css) return undefined;
+
+      if (preparedContext) {
+        await storePreparedProjectCSS(preparedContext, {
+          css,
+          hash: resolved.artifactHash,
+        });
+      }
+
+      return {
+        css,
+        hash: resolved.artifactHash,
+      };
+    } catch (error) {
+      logger.debug("Failed to resolve prepared CSS via style artifact metadata", {
+        projectScope,
+        styleProfileHash,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  }
+
+  private async getPreparedCSSByHash(
+    cssHash: string,
+    projectScope: string,
+  ): Promise<string | undefined> {
+    const cached = await getCSSByHashAsync(cssHash);
+    if (cached) return cached;
+    return regenerateCSSByHash(cssHash, projectScope);
+  }
+
+  private async registerPreparedCSSArtifact(
+    ctx: HandlerContext,
+    styleProfileHash: string,
+    contentContext: ResolvedContentContext | null,
+    cssHash: string,
+  ): Promise<void> {
+    const selector = this.resolveStyleArtifactSelector(contentContext, ctx);
+    if (!selector) return;
+
+    const client = this.getVeryfrontApiClient(ctx);
+    if (!client) return;
+
+    try {
+      await client.upsertStyleArtifact({
+        ...selector,
+        styleProfileHash,
+        artifactHash: cssHash,
+      });
+    } catch (error) {
+      logger.debug("Failed to register prepared CSS artifact", {
+        cssHash,
+        styleProfileHash,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

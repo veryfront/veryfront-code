@@ -147,6 +147,15 @@ export const LookupDomainResponseSchema = z.object({
   release_id: z.string().uuid().nullable(),
 });
 
+export const StyleArtifactResolveResponseSchema = z.object({
+  status: z.enum(["ready", "missing"]),
+  artifact_hash: z.string().optional(),
+  asset_path: z.string().optional(),
+  etag: z.string().optional(),
+  content_type: z.string().optional(),
+  updated_at: z.string().optional(),
+});
+
 export type Project = z.infer<typeof ProjectSchema>;
 export type ProjectFile = z.infer<typeof ProjectFileSchema>;
 export type PageInfo = z.infer<typeof PageInfoSchema>;
@@ -165,6 +174,7 @@ export type ListReleaseFilesResponse = z.infer<typeof ListReleaseFilesResponseSc
 export type ReleaseFileDetail = z.infer<typeof ReleaseFileDetailSchema>;
 
 export type LookupDomainResponse = z.infer<typeof LookupDomainResponseSchema>;
+export type StyleArtifactResolveResponse = z.infer<typeof StyleArtifactResolveResponseSchema>;
 
 export const API_ENDPOINTS = {
   listProjects: {
@@ -211,5 +221,11 @@ export const API_ENDPOINTS = {
     method: "GET" as const,
     path: "/projects/{domain}",
     description: "Look up project by custom domain (resolved via project_reference)",
+  },
+  resolveStyleArtifact: {
+    method: "GET" as const,
+    path: "/projects/{projectRef}/style-artifacts/current",
+    description:
+      "Resolve metadata for the latest ready style artifact for a branch, environment, or release selector",
   },
 } as const;

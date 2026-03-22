@@ -35,4 +35,6 @@ export {
   ReleaseFileDetailSchema,
   type ReleaseFileListItem,
   ReleaseFileListItemSchema,
+  type StyleArtifactResolveResponse,
+  StyleArtifactResolveResponseSchema,
 } from "./api.schema.ts";
