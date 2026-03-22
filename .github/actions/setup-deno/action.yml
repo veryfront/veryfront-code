@@ -12,7 +12,7 @@ runs:
   steps:
     - uses: denoland/setup-deno@v2
       with:
-        deno-version: lts
+        deno-version: 2.6.7
         cache: true
         cache-hash: ${{ hashFiles('deno.json') }}
 

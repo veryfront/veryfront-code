@@ -95,7 +95,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: lts
+          deno-version: 2.6.7
 
       - name: Compile binary
         run: deno task build
@@ -196,7 +196,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: lts
+          deno-version: 2.6.7
 
       - run: deno task build:prepare
 
@@ -231,7 +231,7 @@ jobs:
 
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: lts
+          deno-version: 2.6.7
 
       - uses: actions/setup-node@v4
         with:
@@ -339,7 +339,7 @@ jobs:
 
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: lts
+          deno-version: 2.6.7
 
       - uses: actions/setup-node@v4
         with:
