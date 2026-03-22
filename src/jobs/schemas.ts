@@ -115,7 +115,7 @@ const BaseJobSchema = z.object({
   id: z.string().uuid(),
   project_id: z.string().uuid(),
   environment_id: z.string().uuid().nullable(),
-  branch_id: z.string().nullable(),
+  branch_id: z.string().nullable().optional(),
   cron_job_id: z.string().uuid().nullable(),
   batch_id: z.string().uuid().nullable(),
   name: z.string(),
@@ -134,7 +134,7 @@ const BaseJobSchema = z.object({
 });
 
 export const JobSchema = BaseJobSchema.extend({
-  failed_reason: z.string().nullable(),
+  failed_reason: z.string().nullable().optional(),
   kind: JobKindSchema.optional().default(null),
   failure_detail: z.string().nullable().optional().default(null),
   result_summary: JobResultSummarySchema.optional().default(null),
@@ -242,7 +242,7 @@ export const CronJobSchema = z.object({
   id: z.string().uuid(),
   project_id: z.string().uuid(),
   environment_id: z.string().uuid().nullable(),
-  branch_id: z.string().nullable(),
+  branch_id: z.string().nullable().optional(),
   name: z.string(),
   status: CronJobStatusSchema,
   target: z.string(),
