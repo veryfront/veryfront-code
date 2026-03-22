@@ -407,6 +407,23 @@ export class Sandbox {
     };
   }
 
+  /** List all command jobs in the sandbox. */
+  async listCommandJobs(): Promise<CommandJob[]> {
+    const res = await fetch(`${this.endpoint}/exec/jobs`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    });
+
+    if (!res.ok) {
+      throw REQUEST_ERROR.create({
+        detail: `List command jobs failed: ${res.status} ${await res.text()}`,
+      });
+    }
+
+    const json = await res.json();
+    const jobs = Array.isArray(json) ? json : (json.jobs ?? []);
+    return jobs.map((j: Record<string, unknown>) => Sandbox.mapCommandJob(j));
+  }
+
   /** Cancel an async command job. */
   async cancelCommandJob(jobId: string): Promise<CommandJob> {
     const res = await fetch(`${this.endpoint}/exec/jobs/${jobId}/cancel`, {
