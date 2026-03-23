@@ -97,11 +97,13 @@ async function createClient(options: RedisClientOptions): Promise<RedisClient> {
   if (useTls) {
     clientOpts.socket = { tls: true };
   }
-  if (options.password ?? getEnv("REDIS_PASSWORD")) {
-    clientOpts.password = options.password ?? getEnv("REDIS_PASSWORD");
+  const password = options.password ?? getEnv("REDIS_PASSWORD");
+  if (password) {
+    clientOpts.password = password;
   }
-  if (options.username ?? getEnv("REDIS_USERNAME")) {
-    clientOpts.username = options.username ?? getEnv("REDIS_USERNAME");
+  const username = options.username ?? getEnv("REDIS_USERNAME");
+  if (username) {
+    clientOpts.username = username;
   }
 
   const client = createClientFn(clientOpts);
