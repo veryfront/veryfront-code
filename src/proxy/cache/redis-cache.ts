@@ -16,6 +16,9 @@ export class RedisCache implements TokenCache {
   private readonly prefix: string;
   private readonly url: string;
   private readonly connectTimeout: number;
+  private readonly tls: boolean;
+  private readonly password?: string;
+  private readonly username?: string;
   private hits = 0;
   private misses = 0;
   private connected = false;
@@ -24,6 +27,9 @@ export class RedisCache implements TokenCache {
     this.url = options.url;
     this.prefix = options.prefix ?? DEFAULT_PREFIX;
     this.connectTimeout = options.connectTimeout ?? DEFAULT_CONNECT_TIMEOUT_MS;
+    this.tls = options.tls ?? options.url.startsWith("rediss://");
+    this.password = options.password;
+    this.username = options.username;
   }
 
   private key(k: string): string {
@@ -212,18 +218,24 @@ export class RedisCache implements TokenCache {
     return withSpan("cache.redis.connect", async () => {
       if (this.connected && this.client) return;
 
-      const client = createClient({
+      // deno-lint-ignore no-explicit-any
+      const clientOpts: Record<string, any> = {
         url: this.url,
         socket: {
           connectTimeout: this.connectTimeout,
-          reconnectStrategy: (retries) => {
+          tls: this.tls || undefined,
+          reconnectStrategy: (retries: number) => {
             if (retries > MAX_RECONNECT_RETRIES) {
               return new Error("Max reconnection attempts reached");
             }
             return Math.min(retries * RECONNECT_BACKOFF_BASE_MS, RECONNECT_BACKOFF_MAX_MS);
           },
         },
-      });
+      };
+      if (this.password) clientOpts.password = this.password;
+      if (this.username) clientOpts.username = this.username;
+
+      const client = createClient(clientOpts);
 
       client.on("error", (err) => {
         logger.error("[RedisCache] Client error", {
