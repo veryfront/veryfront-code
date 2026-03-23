@@ -364,7 +364,9 @@
     "rlm:explore": "deno run -A scripts/rlm-ts/apps/explore.ts",
     "rlm:audit": "deno run -A scripts/rlm-ts/apps/audit.ts",
     "start-split": "deno task generate && deno run --allow-all cli/main.ts serve --split",
-    "start-split:binary": "deno task generate && deno run --allow-all cli/main.ts serve --split --binary"
+    "start-split:binary": "deno task generate && deno run --allow-all cli/main.ts serve --split --binary",
+    "sbom": "deno run --allow-read --allow-write scripts/build/generate-sbom.ts",
+    "sbom:json": "deno run --allow-read --allow-write scripts/build/generate-sbom.ts --output dist/sbom.json"
   },
   "lint": {
     "include": [
