@@ -235,8 +235,8 @@
     "rehype-raw": "npm:rehype-raw@7.0.0",
     "rehype-sanitize": "npm:rehype-sanitize@6.0.0",
     "rehype-stringify": "npm:rehype-stringify@10.0.1",
-    "esbuild": "npm:esbuild@0.20.2",
-    "esbuild/mod.js": "npm:esbuild@0.20.2",
+    "esbuild": "npm:esbuild@0.27.4",
+    "esbuild/mod.js": "npm:esbuild@0.27.4",
     "es-module-lexer": "npm:es-module-lexer@1.5.0",
     "gray-matter": "npm:gray-matter@4.0.3",
     "zod": "npm:zod@3.25.76",
@@ -417,7 +417,7 @@
       "npm:onnxruntime-node@1.21.0"
     ],
     "deny": [
-      "npm:esbuild@0.20.2",
+      "npm:esbuild@0.27.4",
       "npm:protobufjs@7.5.4"
     ]
   }
