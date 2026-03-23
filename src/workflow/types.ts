@@ -48,6 +48,7 @@ type DurationString = string;
  */
 export interface WorkflowContext {
   input: unknown;
+  env?: Record<string, string>;
   _tenant?: CapturedTenantContext;
   [nodeId: string]: unknown;
 }

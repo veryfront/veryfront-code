@@ -101,5 +101,203 @@ describe("src/task/runner", () => {
 
       assertEquals(receivedProjectId, "proj-123");
     });
+
+    it("should merge injected task env into ctx.env without exposing reserved runtime env", async () => {
+      let receivedEnv: Record<string, string> = {};
+      const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+      const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const originalTenantToken = Deno.env.get("TENANT_TOKEN");
+      const task = makeTask({
+        run: (ctx) => {
+          receivedEnv = ctx.env;
+          return null;
+        },
+      });
+
+      try {
+        Deno.env.set(
+          "VERYFRONT_TASK_ENV_JSON",
+          JSON.stringify({
+            SERVICENOW_USERNAME: "automation@example.com",
+            AI_GATEWAY_TOKEN: "project-token",
+            VERYFRONT_API_TOKEN: "should-be-filtered",
+          }),
+        );
+        Deno.env.set("VERYFRONT_API_TOKEN", "tenant-token");
+        Deno.env.set("TENANT_TOKEN", "raw-tenant-token");
+
+        await runTask({ task });
+      } finally {
+        if (originalTaskEnvJson === undefined) {
+          Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+        } else {
+          Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
+        }
+
+        if (originalApiToken === undefined) {
+          Deno.env.delete("VERYFRONT_API_TOKEN");
+        } else {
+          Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+        }
+
+        if (originalTenantToken === undefined) {
+          Deno.env.delete("TENANT_TOKEN");
+        } else {
+          Deno.env.set("TENANT_TOKEN", originalTenantToken);
+        }
+      }
+
+      assertEquals(receivedEnv.SERVICENOW_USERNAME, "automation@example.com");
+      assertEquals(receivedEnv.AI_GATEWAY_TOKEN, "project-token");
+      assertEquals(receivedEnv.VERYFRONT_API_TOKEN, undefined);
+      assertEquals(receivedEnv.TENANT_TOKEN, undefined);
+      assertEquals(receivedEnv.VERYFRONT_TASK_ENV_JSON, undefined);
+    });
+
+    it("should ignore unsafe injected env keys", async () => {
+      let receivedEnv: Record<string, string> = {};
+      const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+      const task = makeTask({
+        run: (ctx) => {
+          receivedEnv = ctx.env;
+          return null;
+        },
+      });
+      const injectedEnv = Object.create(null) as Record<string, string>;
+      injectedEnv.SERVICENOW_USERNAME = "automation@example.com";
+      Object.defineProperty(injectedEnv, "__proto__", {
+        value: "polluted",
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(injectedEnv, "constructor", {
+        value: "polluted",
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(injectedEnv, "prototype", {
+        value: "polluted",
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+
+      try {
+        Deno.env.set(
+          "VERYFRONT_TASK_ENV_JSON",
+          JSON.stringify(injectedEnv),
+        );
+
+        await runTask({ task });
+      } finally {
+        if (originalTaskEnvJson === undefined) {
+          Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+        } else {
+          Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
+        }
+      }
+
+      assertEquals(receivedEnv.SERVICENOW_USERNAME, "automation@example.com");
+      assertEquals(Object.keys(receivedEnv).includes("__proto__"), false);
+      assertEquals(Object.keys(receivedEnv).includes("constructor"), false);
+      assertEquals(Object.keys(receivedEnv).includes("prototype"), false);
+    });
+
+    it("should apply envAllowlist to injected task env", async () => {
+      let receivedEnv: Record<string, string> = {};
+      const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+      const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const task = makeTask({
+        run: (ctx) => {
+          receivedEnv = ctx.env;
+          return null;
+        },
+      });
+
+      try {
+        Deno.env.set(
+          "VERYFRONT_TASK_ENV_JSON",
+          JSON.stringify({
+            SERVICENOW_USERNAME: "automation@example.com",
+            AI_GATEWAY_TOKEN: "project-token",
+            VERYFRONT_API_TOKEN: "should-be-filtered",
+          }),
+        );
+        Deno.env.set("VERYFRONT_API_TOKEN", "tenant-token");
+
+        await runTask({ task, envAllowlist: ["SERVICENOW_USERNAME", "AI_GATEWAY_TOKEN"] });
+      } finally {
+        if (originalTaskEnvJson === undefined) {
+          Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+        } else {
+          Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
+        }
+
+        if (originalApiToken === undefined) {
+          Deno.env.delete("VERYFRONT_API_TOKEN");
+        } else {
+          Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+        }
+      }
+
+      assertEquals(receivedEnv.SERVICENOW_USERNAME, "automation@example.com");
+      assertEquals(receivedEnv.AI_GATEWAY_TOKEN, "project-token");
+      assertEquals(receivedEnv.VERYFRONT_API_TOKEN, undefined);
+      assertEquals(receivedEnv.VERYFRONT_TASK_ENV_JSON, undefined);
+    });
+
+    it("should hide platform control env from ctx.env while preserving injected project env", async () => {
+      let receivedEnv: Record<string, string> = {};
+      const originalProjectApiUrl = Deno.env.get("VERYFRONT_PROJECT_API_URL");
+      const originalBranchId = Deno.env.get("TENANT_BRANCH_ID");
+      const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+      const task = makeTask({
+        run: (ctx) => {
+          receivedEnv = ctx.env;
+          return null;
+        },
+      });
+
+      try {
+        Deno.env.set("VERYFRONT_PROJECT_API_URL", "https://api.veryfront.com");
+        Deno.env.set("TENANT_BRANCH_ID", "branch-123");
+        Deno.env.set(
+          "VERYFRONT_TASK_ENV_JSON",
+          JSON.stringify({
+            AI_GATEWAY_TOKEN: "project-token",
+            SERVICENOW_PASSWORD: "servicenow-password",
+            VERYFRONT_API_TOKEN: "should-be-filtered",
+          }),
+        );
+
+        await runTask({ task });
+      } finally {
+        if (originalProjectApiUrl === undefined) {
+          Deno.env.delete("VERYFRONT_PROJECT_API_URL");
+        } else {
+          Deno.env.set("VERYFRONT_PROJECT_API_URL", originalProjectApiUrl);
+        }
+
+        if (originalBranchId === undefined) {
+          Deno.env.delete("TENANT_BRANCH_ID");
+        } else {
+          Deno.env.set("TENANT_BRANCH_ID", originalBranchId);
+        }
+
+        if (originalTaskEnvJson === undefined) {
+          Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+        } else {
+          Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
+        }
+      }
+
+      assertEquals(receivedEnv.VERYFRONT_PROJECT_API_URL, undefined);
+      assertEquals(receivedEnv.TENANT_BRANCH_ID, undefined);
+      assertEquals(receivedEnv.VERYFRONT_API_TOKEN, undefined);
+      assertEquals(receivedEnv.AI_GATEWAY_TOKEN, "project-token");
+      assertEquals(receivedEnv.SERVICENOW_PASSWORD, "servicenow-password");
+    });
   });
 });

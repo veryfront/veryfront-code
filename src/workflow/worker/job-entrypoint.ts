@@ -22,7 +22,9 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { env as getProcessEnv } from "#veryfront/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { mergeInjectedWorkflowEnv } from "../../jobs/runtime-env.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { CapturedTenantContext, WorkflowDefinition } from "../types.ts";
@@ -116,10 +118,26 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
 
   try {
     // Fetch the workflow run
-    const run = await backend.getRun(runId);
+    let run = await backend.getRun(runId);
     if (!run) {
       logger.error(`Workflow run not found: ${runId}`);
       return EXIT_CODES.NOT_FOUND;
+    }
+
+    const injectedEnv = mergeInjectedWorkflowEnv(run.context.env, getProcessEnv());
+    if (injectedEnv) {
+      const currentEnv = run.context.env;
+      const currentSerialized = currentEnv ? JSON.stringify(currentEnv) : "";
+      const nextSerialized = JSON.stringify(injectedEnv);
+      if (currentSerialized !== nextSerialized) {
+        await backend.updateRun(runId, {
+          context: {
+            ...run.context,
+            env: injectedEnv,
+          },
+        });
+        run = (await backend.getRun(runId)) ?? run;
+      }
     }
 
     // Get tenant context (from env or from stored run)
