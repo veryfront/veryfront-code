@@ -6,9 +6,9 @@
  * Outputs CycloneDX 1.5 JSON to dist/sbom.json (or specified path).
  */
 
-import { parse } from "jsr:@std/flags";
+import { parseArgs } from "#std/flags";
 
-const args = parse(Deno.args, { string: ["output"], default: { output: "dist/sbom.json" } });
+const args = parseArgs(Deno.args, { string: ["output"], default: { output: "dist/sbom.json" } });
 
 const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
 const imports: Record<string, string> = denoConfig.imports ?? {};
@@ -37,7 +37,7 @@ function parseEsmShSpecifier(target: string): { name: string; version: string } 
 const seen = new Set<string>();
 const components: CycloneDXComponent[] = [];
 
-for (const [specifier, target] of Object.entries(imports)) {
+for (const [_specifier, target] of Object.entries(imports)) {
   // Skip local paths and jsr imports
   if (target.startsWith("./") || target.startsWith("../") || target.startsWith("jsr:")) continue;
 
@@ -59,7 +59,7 @@ for (const [specifier, target] of Object.entries(imports)) {
     type: "library",
     name: parsed.name,
     version: parsed.version,
-    purl: `pkg:npm/${encodeURIComponent(parsed.name)}@${parsed.version}`,
+    purl: `pkg:npm/${parsed.name.split("/").map(encodeURIComponent).join("/")}@${parsed.version}`,
   };
 
   if (target.startsWith("https://esm.sh/")) {
