@@ -38,6 +38,9 @@ export interface RedisCacheOptions {
   url: string;
   prefix?: string;
   connectTimeout?: number;
+  tls?: boolean;
+  password?: string;
+  username?: string;
 }
 
 export type CacheOptions =

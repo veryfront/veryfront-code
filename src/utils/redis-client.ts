@@ -19,10 +19,13 @@ export interface RedisClient {
   isOpen?: boolean;
 }
 
-interface RedisClientOptions {
+export interface RedisClientOptions {
   url?: string;
   connectTimeout?: number;
   autoReconnect?: boolean;
+  tls?: boolean;
+  password?: string;
+  username?: string;
 }
 
 let sharedClient: RedisClient | null = null;
@@ -64,12 +67,14 @@ export async function getRedisClient(options: RedisClientOptions = {}): Promise<
 }
 
 async function createClient(options: RedisClientOptions): Promise<RedisClient> {
-  let createClientFn: ((opts: { url?: string }) => RedisClient) | undefined;
+  // deno-lint-ignore no-explicit-any
+  let createClientFn: ((opts: Record<string, any>) => RedisClient) | undefined;
 
   try {
     const redisClientModule = "npm:@redis/client@1.5.8";
     const mod = await import(redisClientModule);
-    createClientFn = mod.createClient as (opts: { url?: string }) => RedisClient;
+    // deno-lint-ignore no-explicit-any
+    createClientFn = mod.createClient as (opts: Record<string, any>) => RedisClient;
   } catch (error) {
     logger.debug("Failed to load @redis/client module", { error });
     throw DEPENDENCY_MISSING.create({
@@ -78,7 +83,28 @@ async function createClient(options: RedisClientOptions): Promise<RedisClient> {
     });
   }
 
-  const client = createClientFn({ url: options.url ?? getEnv("REDIS_URL") });
+  const url = options.url ?? getEnv("REDIS_URL");
+  const useTls = options.tls ?? url?.startsWith("rediss://") ?? false;
+
+  if (!useTls && getEnv("NODE_ENV") === "production") {
+    logger.warn(
+      "Redis connection without TLS in production. Set REDIS_URL to rediss:// or pass tls: true.",
+    );
+  }
+
+  // deno-lint-ignore no-explicit-any
+  const clientOpts: Record<string, any> = { url };
+  if (useTls) {
+    clientOpts.socket = { tls: true };
+  }
+  if (options.password ?? getEnv("REDIS_PASSWORD")) {
+    clientOpts.password = options.password ?? getEnv("REDIS_PASSWORD");
+  }
+  if (options.username ?? getEnv("REDIS_USERNAME")) {
+    clientOpts.username = options.username ?? getEnv("REDIS_USERNAME");
+  }
+
+  const client = createClientFn(clientOpts);
 
   if (typeof client.on === "function") {
     client.on("error", (err: unknown) => {
