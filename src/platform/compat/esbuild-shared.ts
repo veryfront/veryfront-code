@@ -1,4 +1,4 @@
-export const ESBUILD_VERSION = "0.20.2";
+export const ESBUILD_VERSION = "0.27.4";
 
 export function getEsbuildBinaryName(): string {
   const archMap: Record<string, string> = {
