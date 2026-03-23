@@ -75,8 +75,13 @@ interface RequestHeaders {
  * Extract project-related headers from a request.
  */
 export function extractRequestHeaders(req: Request, url: URL): RequestHeaders {
+  const forwardedHost = req.headers.get("x-forwarded-host") ?? undefined;
+  const host = forwardedHost ?? req.headers.get("host") ?? url.host;
+  const parsedDomain = parseProjectDomain(host);
+  const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
+
   return {
-    projectSlug: req.headers.get("x-project-slug") ?? undefined,
+    projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,
     projectId: req.headers.get("x-project-id") ?? undefined,
     releaseId: req.headers.get("x-release-id") ?? undefined,
     branchId: req.headers.get("x-branch-id") ?? undefined,
@@ -146,12 +151,13 @@ export async function resolveProject(
   const deps = getDeps();
   const parsedDomain = deps.parseProjectDomain(host);
   const configuredSlug = opts.config?.fs?.veryfront?.projectSlug;
+  const resolvedSlugBeforeDefault = opts.reqCtx.slug || opts.wsSlugOverride || configuredSlug;
 
   // Initial resolution from headers/config/context
   // Use || for slug (empty string should fall through to defaults)
-  let projectSlug = opts.reqCtx.slug || opts.wsSlugOverride || configuredSlug ||
-    opts.defaultProjectSlug;
-  let projectId: string | undefined = headers.projectId ?? opts.defaultProjectId;
+  let projectSlug = resolvedSlugBeforeDefault || opts.defaultProjectSlug;
+  let projectId: string | undefined = headers.projectId ??
+    (!resolvedSlugBeforeDefault ? opts.defaultProjectId : undefined);
   let releaseId: string | undefined = headers.releaseId;
   let environmentName: string | undefined;
   let proxyEnv = parseProxyEnvironment(headers.environment ?? null);

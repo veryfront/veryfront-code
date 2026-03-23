@@ -17,6 +17,7 @@ export function createRequestContext(req: Request): RequestContext {
   // is in the Host header (e.g., "flow-ops.lvh.me:3010"). Prefer Host header.
   const effectiveHost = forwardedHost ?? hostHeader ?? hostname;
   const parsed = parseProjectDomain(effectiveHost);
+  const headerProjectSlug = req.headers.get("x-project-slug")?.trim() || undefined;
 
   const xEnvironment = req.headers.get("x-environment");
 
@@ -30,7 +31,7 @@ export function createRequestContext(req: Request): RequestContext {
     // Framework-owned token: bypass project env overlay so proxy mode works
     // when a remote project overlay is active.
     token: req.headers.get("x-token") ?? getHostEnv("VERYFRONT_API_TOKEN") ?? "",
-    slug: req.headers.get("x-project-slug") ?? parsed.slug ?? "",
+    slug: headerProjectSlug ?? parsed.slug ?? "",
     branch: parsed.branch,
     mode,
   };

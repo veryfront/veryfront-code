@@ -135,6 +135,15 @@ describe("createRequestContext", () => {
       assertEquals(ctx.slug, "override-slug");
     });
 
+    it("falls back to the parsed domain slug when x-project-slug is blank", () => {
+      const req = makeRequest("https://127.0.0.1/page", {
+        "x-forwarded-host": "my-app.preview.lvh.me",
+        "x-project-slug": "   ",
+      });
+      const ctx = createRequestContext(req);
+      assertEquals(ctx.slug, "my-app");
+    });
+
     it("defaults token to empty string when no header and no env", () => {
       const req = makeRequest("https://example.com/page", {
         host: "example.com",

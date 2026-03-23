@@ -284,6 +284,32 @@ describe("Proxy Handler", () => {
         await server.shutdown();
       }
     });
+
+    it("falls back to the request URL host when the Host header is absent", async () => {
+      const handler = createProxyHandler({
+        config: {
+          apiBaseUrl: "http://localhost:9999",
+          apiClientId: "",
+          apiClientSecret: "",
+          previewApiClientId: "",
+          previewApiClientSecret: "",
+          localProjects: {
+            "my-project": ".",
+          },
+        },
+      });
+
+      const req = new Request("http://my-project.preview.lvh.me:3001/page");
+
+      const ctx = await handler.processRequest(req);
+
+      assertEquals(ctx.projectSlug, "my-project");
+      assertEquals(ctx.environment, "preview");
+      assertEquals(ctx.localPath, ".");
+      assertEquals(ctx.error, undefined);
+
+      await handler.close();
+    });
   });
 
   describe("protected environments", () => {
