@@ -14,13 +14,20 @@ export interface Extract<T> {
 }
 
 type GrayMatterResult<T> = { data: T; content: string; matter?: string };
-type GrayMatterFn = <T = Record<string, unknown>>(content: string) => GrayMatterResult<T>;
+type GrayMatterOptions = { engines?: Record<string, boolean> };
+type GrayMatterFn = <T = Record<string, unknown>>(
+  content: string,
+  options?: GrayMatterOptions,
+) => GrayMatterResult<T>;
 
 const grayMatter: GrayMatterFn = (grayMatterImport as { default?: GrayMatterFn }).default ??
   (grayMatterImport as GrayMatterFn);
 
+/** Security: JS engine disabled to prevent arbitrary code execution from untrusted frontmatter */
+const SAFE_OPTIONS: GrayMatterOptions = { engines: { js: false } };
+
 export function extract<T = Record<string, unknown>>(text: string): Extract<T> {
-  const result = grayMatter<T>(text);
+  const result = grayMatter<T>(text, SAFE_OPTIONS);
   return {
     attrs: result.data,
     body: result.content,
