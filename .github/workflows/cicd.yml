@@ -55,9 +55,9 @@ jobs:
           retry_wait_seconds: 10
           command: |
             if [ "${{ matrix.suite }}" = "integration" ]; then
-              VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --frozen
+              VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
             else
-              deno task test:unit --frozen
+              deno task test:unit --no-lock
             fi
 
   # ============================================
@@ -79,7 +79,7 @@ jobs:
           max_attempts: 2
           retry_wait_seconds: 30
           command: |
-            VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary --frozen
+            VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary --no-lock
 
   # ============================================
   # CI: Split Mode Test
