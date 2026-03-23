@@ -39,7 +39,7 @@ for (const [specifier, target] of Object.entries(imports)) {
     continue;
   }
 
-  if (target.match(/\.(tar\.gz|tgz|tar)$/)) {
+  if (target.match(/\.(tar\.gz|tgz|tar)([?#]|$)/)) {
     issues.push({
       specifier,
       target,
@@ -51,13 +51,14 @@ for (const [specifier, target] of Object.entries(imports)) {
 
   // Check npm: imports for version pinning
   if (target.startsWith("npm:")) {
-    const hasVersion = target.match(/npm:.+@\d/);
-    if (!hasVersion) {
+    // Require exact semver (x.y.z), not just major-only like @1
+    const hasExactVersion = target.match(/npm:.+@\d+\.\d+\.\d/);
+    if (!hasExactVersion) {
       issues.push({
         specifier,
         target,
         severity: "warning",
-        message: "Unpinned npm version — specify exact version for reproducibility",
+        message: "Unpinned npm version — specify exact version (x.y.z) for reproducibility",
       });
     }
     continue;
@@ -76,7 +77,9 @@ for (const [specifier, target] of Object.entries(imports)) {
 
     // Check esm.sh for version pinning
     if (target.startsWith("https://esm.sh/")) {
-      const hasVersion = target.match(/esm\.sh\/.+@\d/);
+      // Check package path (before ?) for version, not query string params
+      const urlPath = target.split("?")[0];
+      const hasVersion = urlPath.match(/esm\.sh\/.+@\d/);
       if (!hasVersion) {
         issues.push({
           specifier,
