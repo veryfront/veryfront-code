@@ -131,7 +131,9 @@ function requireEnv(name: string): string {
   return value;
 }
 
-function getUnderlyingVeryfrontClient(adapter: Awaited<ReturnType<typeof enhanceAdapterWithFS>>): {
+export function getUnderlyingVeryfrontClient(
+  adapter: Awaited<ReturnType<typeof enhanceAdapterWithFS>>,
+): {
   client: VeryfrontApiClient;
   contentContext: StyleBuildContentContext | null;
   getAllSourceFiles: () => Promise<Array<{ path: string; content?: string }>>;
@@ -158,7 +160,7 @@ function getUnderlyingVeryfrontClient(adapter: Awaited<ReturnType<typeof enhance
     contentContext: typeof fsAdapter.getContentContext === "function"
       ? fsAdapter.getContentContext()
       : null,
-    getAllSourceFiles: fsAdapter.getAllSourceFiles,
+    getAllSourceFiles: fsAdapter.getAllSourceFiles.bind(fsAdapter),
   };
 }
 
