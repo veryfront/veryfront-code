@@ -839,6 +839,61 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("allows signed internal agent stream requests through protected preview using inbound token", async () => {
+      let tokenEndpointHits = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenEndpointHits += 1;
+          return createTokenResponse();
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request(
+          "http://protected-project.preview.veryfront.com/internal/agents/stream",
+          {
+            headers: {
+              host: "protected-project.preview.veryfront.com",
+              "x-token": "project-agent-token",
+              "x-veryfront-control-plane-jws": "signed-request",
+            },
+          },
+        );
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "protected-project");
+        assertEquals(ctx.environmentId, "env-1");
+        assertEquals(ctx.token, "project-agent-token");
+        assertEquals(tokenEndpointHits, 0);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("returns 404 for missing preview project with auth token", async () => {
       const memberToken = await createFakeJwt("user-123");
       const { server, port } = createMockServer((_req: Request) => {
