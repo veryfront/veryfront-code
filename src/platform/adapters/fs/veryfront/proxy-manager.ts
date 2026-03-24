@@ -1,5 +1,5 @@
 import { logger as baseLogger } from "#veryfront/utils";
-import { CACHE_INVARIANT_VIOLATION, INVALID_ARGUMENT } from "#veryfront/errors";
+import { CACHE_INVARIANT_VIOLATION, INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
 import { buildProxyManagerCacheKey } from "#veryfront/cache";
 import { VeryfrontFSAdapter } from "./index.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
@@ -24,9 +24,80 @@ interface ProxyFSAdapterManagerConfig {
   maxIdleMs?: number;
 }
 
+interface NegativeCacheEntry {
+  fallbackBranch: string | null;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+interface ApiErrorDetails {
+  responseText?: string;
+  url?: string;
+}
+
+function isPushPreviewBranch(branch: string | null | undefined, productionMode: boolean): boolean {
+  return !productionMode && !!branch && branch !== "main" && branch.startsWith("push-");
+}
+
+function getApiErrorDetails(error: unknown): ApiErrorDetails | null {
+  if (!(error instanceof VeryfrontError) || !error.context || typeof error.context !== "object") {
+    return null;
+  }
+
+  const details =
+    (error.context as { details?: { responseText?: unknown; url?: unknown } }).details;
+  if (!details || typeof details !== "object") return null;
+
+  const apiErrorDetails: ApiErrorDetails = {};
+  if (typeof details.responseText === "string") {
+    apiErrorDetails.responseText = details.responseText;
+  }
+  if (typeof details.url === "string") {
+    apiErrorDetails.url = details.url;
+  }
+
+  return apiErrorDetails.responseText || apiErrorDetails.url ? apiErrorDetails : null;
+}
+
+function getProblemDetail(error: unknown): string | null {
+  const responseText = getApiErrorDetails(error)?.responseText;
+  if (!responseText) return null;
+
+  try {
+    const parsed = JSON.parse(responseText) as { detail?: unknown };
+    return typeof parsed.detail === "string" ? parsed.detail : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getPushRefFallbackBranch(
+  error: unknown,
+  branch: string | null | undefined,
+  productionMode = false,
+): string | null {
+  if (!branch || !isPushPreviewBranch(branch, productionMode)) return null;
+  if (!(error instanceof VeryfrontError) || error.status !== 404) return null;
+
+  const apiErrorDetails = getApiErrorDetails(error);
+  if (
+    !apiErrorDetails?.url?.includes("/files?") ||
+    !apiErrorDetails.url.includes(`branch=${encodeURIComponent(branch)}`)
+  ) {
+    return null;
+  }
+
+  const detail = getProblemDetail(error);
+  if (detail && !detail.includes(`Branch '${branch}' not found`)) {
+    return null;
+  }
+
+  return "main";
+}
+
 export class ProxyFSAdapterManager {
   private adapters = new Map<string, ProjectAdapter>();
   private pendingAdapters = new Map<string, Promise<VeryfrontFSAdapter>>();
+  private negativeCacheEntries = new Map<string, NegativeCacheEntry>();
   private baseConfig: FSAdapterConfig;
   private maxAdapters: number;
   private maxIdleMs: number;
@@ -119,6 +190,37 @@ export class ProxyFSAdapterManager {
       hasExisting: this.adapters.has(cacheKey),
       totalCachedAdapters: this.adapters.size,
     });
+
+    const negativeEntry = this.negativeCacheEntries.get(cacheKey);
+    if (negativeEntry?.fallbackBranch && negativeEntry.fallbackBranch !== effectiveBranch) {
+      logger.warn("Using cached fallback branch for push ref", {
+        branch: effectiveBranch,
+        cacheKey,
+        fallbackBranch: negativeEntry.fallbackBranch,
+        projectSlug,
+      });
+      return this.getAdapter(
+        projectSlug,
+        token,
+        projectId,
+        effectiveProductionMode,
+        effectiveReleaseId,
+        effectiveEnvironmentName,
+        negativeEntry.fallbackBranch,
+      );
+    }
+
+    // Reject known-bad cache keys only when there is no fallback target.
+    if (negativeEntry) {
+      logger.warn("Rejecting adapter request for negatively-cached key", {
+        cacheKey,
+        projectSlug,
+      });
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Adapter for "${cacheKey}" is negatively cached (previous initialization returned 404). Retry after 60s.`,
+      });
+    }
 
     const existing = this.adapters.get(cacheKey);
     if (existing) {
@@ -349,12 +451,51 @@ export class ProxyFSAdapterManager {
         this.adapters.set(cacheKey, projectAdapter);
         return adapter;
       } catch (error) {
+        const fallbackBranch = getPushRefFallbackBranch(error, branch, productionMode);
+
+        if (fallbackBranch) {
+          const NEGATIVE_CACHE_TTL_MS = 60_000;
+          logger.warn("Push ref initialization returned 404, retrying with fallback branch", {
+            branch,
+            cacheKey,
+            duration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
+            fallbackBranch,
+            projectSlug,
+          });
+          const existingEntry = this.negativeCacheEntries.get(cacheKey);
+          if (existingEntry) {
+            clearTimeout(existingEntry.timer);
+          }
+          const timer = setTimeout(() => {
+            this.negativeCacheEntries.delete(cacheKey);
+            logger.debug("Negative cache sentinel expired", { cacheKey });
+          }, NEGATIVE_CACHE_TTL_MS);
+          // Unref so the timer doesn't keep processes/tests alive
+          try {
+            Deno.unrefTimer(timer);
+          } catch {
+            // Not available in all runtimes
+          }
+          this.negativeCacheEntries.set(cacheKey, { fallbackBranch, timer });
+
+          return await this.getAdapter(
+            projectSlug,
+            token,
+            projectId,
+            productionMode,
+            releaseId,
+            environmentName,
+            fallbackBranch,
+          );
+        }
+
         logger.error("Adapter initialization failed", {
           cacheKey,
           projectSlug,
           duration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
           error: error instanceof Error ? error.message : String(error),
         });
+
         throw error;
       } finally {
         projectAdapter.initializing = undefined;
@@ -430,6 +571,12 @@ export class ProxyFSAdapterManager {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = undefined;
     }
+
+    // Clear negative cache timers
+    for (const entry of this.negativeCacheEntries.values()) {
+      clearTimeout(entry.timer);
+    }
+    this.negativeCacheEntries.clear();
 
     for (const [cacheKey, adapter] of this.adapters) {
       logger.debug("Disposing adapter", { cacheKey });

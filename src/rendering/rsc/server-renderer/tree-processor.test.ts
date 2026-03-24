@@ -111,9 +111,8 @@ describe("rendering/rsc/server-renderer/tree-processor", {
       const clientManifest = new Map<string, ClientComponentMeta>();
       clientManifest.set("ClientComp", {
         id: "ClientComp",
-        name: "ClientComp",
-        exportName: "default",
-        chunks: [],
+        path: "./components/ClientComp.tsx",
+        exports: ["default"],
       });
 
       const clientRefs = new Map<string, string>();
@@ -160,7 +159,7 @@ describe("rendering/rsc/server-renderer/tree-processor", {
     it("should handle string children", async () => {
       const result = await renderChildren("hello", new Map(), new Map());
       assertEquals(result.length, 1);
-      assertEquals(result[0].type, "html");
+      assertEquals(result[0]!.type, "html");
       assertEquals((result[0] as { html: string }).html, "hello");
     });
 
@@ -174,7 +173,7 @@ describe("rendering/rsc/server-renderer/tree-processor", {
       const children = React.createElement("div", null, "content");
       const result = await renderChildren(children, new Map(), new Map());
       assertEquals(result.length, 1);
-      assertEquals(result[0].type, "html");
+      assertEquals(result[0]!.type, "html");
     });
 
     it("should handle array of children", async () => {

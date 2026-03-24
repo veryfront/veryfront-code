@@ -1,6 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ProxyFSAdapterManager } from "./proxy-manager.ts";
+import { API_CLIENT_ERROR } from "#veryfront/errors";
+import { getPushRefFallbackBranch, ProxyFSAdapterManager } from "./proxy-manager.ts";
 
 const baseConfig = {
   veryfront: {
@@ -33,6 +34,81 @@ async function assertGetAdapterRejects(
 }
 
 describe("ProxyFSAdapterManager", () => {
+  describe("getPushRefFallbackBranch", () => {
+    it("returns main for orphaned push ref branch-file 404s", () => {
+      const branch = "push-20260324t121046";
+      const error = API_CLIENT_ERROR.create({
+        detail: "API request failed: 404 Not Found",
+        status: 404,
+        context: {
+          details: {
+            responseText: JSON.stringify({ detail: `Branch '${branch}' not found` }),
+            url:
+              `https://api.example.com/projects/my-project/files?limit=100&sort_by=updated_at&sort_order=desc&branch=${
+                encodeURIComponent(branch)
+              }`,
+          },
+        },
+      });
+
+      assertEquals(getPushRefFallbackBranch(error, branch), "main");
+    });
+
+    it("does not fall back for non-push branches", () => {
+      const branch = "feature-x";
+      const error = API_CLIENT_ERROR.create({
+        detail: "API request failed: 404 Not Found",
+        status: 404,
+        context: {
+          details: {
+            responseText: JSON.stringify({ detail: `Branch '${branch}' not found` }),
+            url:
+              `https://api.example.com/projects/my-project/files?limit=100&sort_by=updated_at&sort_order=desc&branch=${
+                encodeURIComponent(branch)
+              }`,
+          },
+        },
+      });
+
+      assertEquals(getPushRefFallbackBranch(error, branch), null);
+    });
+
+    it("does not fall back for project lookup 404s", () => {
+      const branch = "push-20260324t121046";
+      const error = API_CLIENT_ERROR.create({
+        detail: "API request failed: 404 Not Found",
+        status: 404,
+        context: {
+          details: {
+            responseText: JSON.stringify({ detail: "Project 'my-project' not found" }),
+            url: "https://api.example.com/projects/my-project",
+          },
+        },
+      });
+
+      assertEquals(getPushRefFallbackBranch(error, branch), null);
+    });
+
+    it("does not fall back outside preview mode", () => {
+      const branch = "push-20260324t121046";
+      const error = API_CLIENT_ERROR.create({
+        detail: "API request failed: 404 Not Found",
+        status: 404,
+        context: {
+          details: {
+            responseText: JSON.stringify({ detail: `Branch '${branch}' not found` }),
+            url:
+              `https://api.example.com/projects/my-project/files?limit=100&sort_by=updated_at&sort_order=desc&branch=${
+                encodeURIComponent(branch)
+              }`,
+          },
+        },
+      });
+
+      assertEquals(getPushRefFallbackBranch(error, branch, true), null);
+    });
+  });
+
   describe("class", () => {
     it("should export ProxyFSAdapterManager class", () => {
       assertExists(ProxyFSAdapterManager);
