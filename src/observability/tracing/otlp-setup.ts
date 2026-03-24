@@ -108,13 +108,13 @@ export async function initializeOTLP(): Promise<void> {
       "@opentelemetry/sdk-trace-base"
     );
     const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
-    const { Resource } = await import("@opentelemetry/resources");
+    const { resourceFromAttributes } = await import("@opentelemetry/resources");
     const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = await import(
       "@opentelemetry/semantic-conventions"
     );
     const { AsyncLocalStorageContextManager } = await import("@opentelemetry/context-async-hooks");
 
-    const resource = new Resource({
+    const resource = resourceFromAttributes({
       [ATTR_SERVICE_NAME]: config.serviceName,
       [ATTR_SERVICE_VERSION]: RUNTIME_VERSION,
     });
@@ -125,11 +125,13 @@ export async function initializeOTLP(): Promise<void> {
       headers: config.headers,
     });
 
-    const provider = new BasicTracerProvider({ resource });
-    provider.addSpanProcessor(new BatchSpanProcessor(exporter));
-
     const contextManager = new AsyncLocalStorageContextManager();
     contextManager.enable();
+
+    const provider = new BasicTracerProvider({
+      resource,
+      spanProcessors: [new BatchSpanProcessor(exporter)],
+    });
     provider.register({ contextManager });
 
     tracerProvider = provider;
