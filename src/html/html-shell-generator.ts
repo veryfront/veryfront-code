@@ -274,10 +274,8 @@ async function generateHTMLShellPartsImpl(
       `<link id="vf-tailwind-css" rel="stylesheet" href="/_vf_styles/styles.css?t=${Date.now()}">`;
   }
 
-  // Markdown preview mode: .md files in preview/local dev with prose !== false
-  // Only applies to standalone markdown files (not in pages/ or app/)
-  const isMarkdownPreview = (isLocalProject || isPreviewMode) &&
-    options.pageType === "md" &&
+  // Markdown styles: .md files with prose !== false get GitHub markdown CSS
+  const isMarkdownPreview = options.pageType === "md" &&
     checkMarkdownPreview(options.pagePath, options.frontmatter);
 
   const markdownPreviewStyles = isMarkdownPreview

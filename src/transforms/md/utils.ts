@@ -7,30 +7,14 @@
  */
 
 /**
- * Check if a file path is inside pages/ or app/ directories.
- * Files in these directories are routed normally, not as standalone markdown.
- */
-function isInRoutableDir(filePath: string | undefined): boolean {
-  if (!filePath) return false;
-
-  return (
-    filePath.startsWith("pages/") ||
-    filePath.startsWith("app/") ||
-    filePath.includes("/pages/") ||
-    filePath.includes("/app/")
-  );
-}
-
-/**
  * Check if a markdown file should be rendered with GitHub preview styles.
- * Returns true for standalone .md files not in pages/app directories,
- * unless opted out via `prose: false` frontmatter.
+ * Returns true for all .md files unless opted out via `prose: false` frontmatter.
+ * This includes both standalone files and routable pages (pages/, app/).
  */
 export function isMarkdownPreview(
-  filePath: string | undefined,
+  _filePath: string | undefined,
   frontmatter?: Record<string, unknown>,
 ): boolean {
-  if (isInRoutableDir(filePath)) return false;
   if (frontmatter?.prose === false) return false;
   return true;
 }
