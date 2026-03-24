@@ -2,8 +2,10 @@ export const knowledgeIngestPythonSource = String.raw`#!/usr/bin/env python3
 import argparse
 import csv
 import json
+import os
 import re
 import subprocess
+import tempfile
 from datetime import date
 from pathlib import Path
 from typing import Any, Optional
@@ -14,6 +16,26 @@ def yaml_quote(value: Any) -> str:
 
 
 CODE_FENCE = chr(96) * 3
+DEFAULT_DOCLING_TIMEOUT_SECONDS = 900.0
+
+
+def read_timeout_seconds(env_name: str, default_seconds: float) -> float:
+    raw_value = os.environ.get(env_name)
+    if raw_value is None or raw_value.strip() == "":
+        return default_seconds
+
+    try:
+        timeout_seconds = float(raw_value)
+    except ValueError:
+        return default_seconds
+
+    return timeout_seconds if timeout_seconds > 0 else default_seconds
+
+
+DOCLING_TIMEOUT_SECONDS = read_timeout_seconds(
+    "VERYFRONT_KNOWLEDGE_DOCLING_TIMEOUT_SECONDS",
+    DEFAULT_DOCLING_TIMEOUT_SECONDS,
+)
 
 
 def slugify(value: str) -> str:
@@ -72,105 +94,77 @@ def build_frontmatter(source: str, source_type: str, description: str) -> str:
     ])
 
 
-def metadata_int(metadata: dict[str, Any], *keys: str) -> Optional[int]:
-    for key in keys:
-        value = metadata.get(key)
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
-    return None
-
-
-def metadata_string_list(metadata: dict[str, Any], *keys: str) -> Optional[list[str]]:
-    for key in keys:
-        value = metadata.get(key)
-        if isinstance(value, list) and all(isinstance(item, str) for item in value):
-            return value
-    return None
-
-
-def build_kreuzberg_stats(source_type: str, content: str, metadata: dict[str, Any]):
-    stats: dict[str, Any] = {
+def build_docling_stats(content: str):
+    return {
         "characters": len(content),
         "lines": len(content.splitlines()) if content else 0,
-        "engine": "kreuzberg",
+        "engine": "docling",
     }
 
-    if isinstance(metadata.get("mime_type"), str):
-        stats["mime_type"] = metadata["mime_type"]
 
-    if source_type == "pdf":
-        stats["pages"] = metadata_int(metadata, "page_count") or 0
-        stats["tables"] = metadata_int(metadata, "table_count") or 0
-    elif source_type in {"xlsx", "xls"}:
-        stats["sheets"] = metadata_int(metadata, "sheet_count") or 0
-        stats["rows"] = metadata_int(metadata, "row_count") or 0
-        stats["sheet_names"] = metadata_string_list(metadata, "sheet_names") or []
-    elif source_type == "docx":
-        stats["paragraphs"] = metadata_int(metadata, "paragraph_count") or 0
-        stats["tables"] = metadata_int(metadata, "table_count") or 0
-    elif source_type == "pptx":
-        stats["slides"] = metadata_int(metadata, "slide_count", "page_count") or 0
-        stats["tables"] = metadata_int(metadata, "table_count") or 0
-    elif source_type == "html":
-        stats["tables"] = metadata_int(metadata, "table_count") or 0
+def run_docling_markdown(path: str):
+    with tempfile.TemporaryDirectory(prefix="veryfront-docling-") as output_dir:
+        try:
+            completed = subprocess.run(
+                [
+                    "docling",
+                    path,
+                    "--to",
+                    "md",
+                    "--image-export-mode",
+                    "placeholder",
+                    "--output",
+                    output_dir,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=DOCLING_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(
+                f"docling extract timed out after {DOCLING_TIMEOUT_SECONDS:g}s"
+            ) from error
 
-    return stats
+        if completed.returncode != 0:
+            detail = completed.stderr.strip() or completed.stdout.strip() or f"exit code {completed.returncode}"
+            raise RuntimeError(f"docling extract failed: {detail}")
+
+        markdown_files = sorted(Path(output_dir).rglob("*.md"))
+        if not markdown_files:
+            raise RuntimeError("docling extract did not produce a markdown file")
+
+        return markdown_files[0].read_text(encoding="utf-8")
 
 
-def parse_with_kreuzberg(path: str, source_type: str):
+def parse_with_docling(path: str):
     warnings: list[str] = []
-    completed = subprocess.run(
-        [
-            "kreuzberg",
-            "extract",
-            path,
-            "--format",
-            "json",
-            "--output-format",
-            "markdown",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip() or f"exit code {completed.returncode}"
-        raise RuntimeError(f"kreuzberg extract failed: {detail}")
-
-    try:
-        payload = json.loads(completed.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"kreuzberg extract returned invalid JSON: {error}") from error
-
-    content = payload.get("content", "")
-    if not isinstance(content, str):
-        raise RuntimeError("kreuzberg extract did not return string content")
-
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-    normalized_content = clean_text(content)
-    stats = build_kreuzberg_stats(source_type, normalized_content, metadata)
-
+    normalized_content = clean_text(run_docling_markdown(path))
+    stats = build_docling_stats(normalized_content)
     return normalized_content or "_No extractable text found in document._", stats, warnings
 
 
-def prefer_kreuzberg(source_type: str, fallback_parser):
+def prefer_docling(fallback_parser):
     def parser(path: str):
         try:
-            return parse_with_kreuzberg(path, source_type)
+            return parse_with_docling(path)
         except FileNotFoundError as error:
-            if getattr(error, "filename", "") == "kreuzberg":
+            if getattr(error, "filename", "") == "docling":
                 return fallback_parser(path)
             raise
         except RuntimeError as error:
             content, stats, warnings = fallback_parser(path)
             warnings.append(
-                "kreuzberg extraction failed; fell back to the built-in parser: "
+                "docling extraction failed; fell back to the built-in parser: "
                 + str(error)
             )
             return content, stats, warnings
 
     return parser
+
+
+def build_parser(fallback_parser, prefers_docling: bool):
+    return prefer_docling(fallback_parser) if prefers_docling else fallback_parser
 
 
 def parse_csv_like(path: str, delimiter: str = ","):
@@ -404,31 +398,36 @@ def parse_json(path: str):
     return f"{CODE_FENCE}json\n{rendered}\n{CODE_FENCE}", stats, warnings
 
 
-def select_parser(path: Path):
+def select_parser_definition(path: Path):
     ext = path.suffix.lower()
     if ext == ".pdf":
-        return "pdf", prefer_kreuzberg("pdf", parse_pdf)
+        return "pdf", parse_pdf, True
     if ext in {".csv", ".tsv"}:
         delimiter = "\t" if ext == ".tsv" else ","
-        return ext.lstrip("."), lambda file_path: parse_csv_like(file_path, delimiter)
+        return ext.lstrip("."), lambda file_path: parse_csv_like(file_path, delimiter), False
     if ext in {".xlsx", ".xls"}:
         source_type = ext.lstrip(".")
-        return source_type, prefer_kreuzberg(source_type, parse_excel)
+        return source_type, parse_excel, True
     if ext == ".docx":
-        return "docx", prefer_kreuzberg("docx", parse_docx)
+        return "docx", parse_docx, True
     if ext == ".pptx":
-        return "pptx", prefer_kreuzberg("pptx", parse_pptx)
+        return "pptx", parse_pptx, True
     if ext in {".html", ".htm"}:
-        return "html", prefer_kreuzberg("html", parse_html)
+        return "html", parse_html, True
     if ext in {".txt", ".md", ".mdx"}:
-        return ext.lstrip("."), parse_text
+        return ext.lstrip("."), parse_text, False
     if ext == ".json":
-        return "json", parse_json
+        return "json", parse_json, False
     raise ValueError(f"Unsupported file type: {ext}")
 
 
+def select_parser(path: Path):
+    source_type, fallback_parser, prefers_docling = select_parser_definition(path)
+    return source_type, build_parser(fallback_parser, prefers_docling)
+
+
 def build_summary(source_type: str, stats: dict[str, Any]) -> str:
-    if stats.get("engine") == "kreuzberg":
+    if stats.get("engine") == "docling":
         return f"Converted {source_type.upper()} to markdown ({stats.get('characters', 0)} chars)."
     if source_type in {"csv", "tsv"}:
         return f"Parsed {stats.get('rows', 0)} rows across {stats.get('columns', 0)} columns."
@@ -488,6 +487,69 @@ def ingest_document_to_knowledge(file_path: str, output_dir: Optional[str] = Non
     }
 
 
+def ingest_documents_to_knowledge(documents: list[dict[str, Any]], output_dir: Optional[str] = None):
+    output_root = Path(output_dir or "/workspace/knowledge")
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    prepared_documents: list[dict[str, Any]] = []
+    for index, document in enumerate(documents):
+        file_path = document["file_path"]
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        slug = document.get("slug") or slugify(path.stem)
+        source_type, fallback_parser, prefers_docling = select_parser_definition(path)
+        prepared_documents.append({
+            "index": index,
+            "path": path,
+            "slug": slug,
+            "description": document.get("description"),
+            "source_reference": document.get("source_reference"),
+            "source_type": source_type,
+            "fallback_parser": fallback_parser,
+            "prefers_docling": prefers_docling,
+        })
+
+    results = []
+    for document in prepared_documents:
+        parser = build_parser(
+            document["fallback_parser"],
+            document["prefers_docling"],
+        )
+        content, stats, warnings = parser(str(document["path"]))
+
+        content = clean_text(content)
+        resolved_description = document["description"] or f"Parsed from {document['path'].name}"
+        title = titleize_filename(document["path"])
+        frontmatter = build_frontmatter(
+            document["source_reference"] or document["path"].name,
+            document["source_type"],
+            resolved_description,
+        )
+        markdown = f"{frontmatter}\n\n# {title}\n\n{content}\n"
+
+        output_path = output_root / f"{document['slug']}.md"
+        output_path.write_text(markdown, encoding="utf-8")
+
+        results.append({
+            "success": True,
+            "source_path": str(document["path"]),
+            "source_filename": document["path"].name,
+            "source_type": document["source_type"],
+            "slug": document["slug"],
+            "sandbox_output_path": str(output_path),
+            "suggested_project_path": f"knowledge/{document['slug']}.md",
+            "description": resolved_description,
+            "title": title,
+            "summary": build_summary(document["source_type"], stats),
+            "stats": stats,
+            "warnings": warnings,
+        })
+
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description="Convert a local document into knowledge-base markdown")
     parser.add_argument("--input-json", required=True)
@@ -496,20 +558,27 @@ def main():
 
     try:
         payload = json.loads(Path(args.input_json).read_text(encoding="utf-8"))
-        result = ingest_document_to_knowledge(
-            file_path=payload["file_path"],
-            output_dir=payload.get("output_dir"),
-            description=payload.get("description"),
-            slug=payload.get("slug"),
-            source_reference=payload.get("source_reference"),
-        )
+        files_payload = payload.get("files")
+        if isinstance(files_payload, list):
+            result = ingest_documents_to_knowledge(
+                documents=files_payload,
+                output_dir=payload.get("output_dir"),
+            )
+        else:
+            result = ingest_document_to_knowledge(
+                file_path=payload["file_path"],
+                output_dir=payload.get("output_dir"),
+                description=payload.get("description"),
+                slug=payload.get("slug"),
+                source_reference=payload.get("source_reference"),
+            )
     except ModuleNotFoundError as error:
         missing_package = error.name or "required package"
         raise SystemExit(
             "Missing Python package '"
             + missing_package
             + "'. Install knowledge parser dependencies with: "
-            + "pip install pandas openpyxl xlrd pdfplumber python-docx python-pptx beautifulsoup4 lxml"
+            + "pip install docling pandas openpyxl xlrd pdfplumber python-docx python-pptx beautifulsoup4 lxml"
         )
 
     Path(args.output_json).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

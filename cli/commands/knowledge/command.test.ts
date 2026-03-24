@@ -18,6 +18,7 @@ import {
   normalizeProjectUploadPath,
   resolveKnowledgeDownloadOutputDir,
   runKnowledgeParser,
+  runKnowledgeParsers,
 } from "./command.ts";
 import { knowledgeIngestPythonSource } from "./parser-source.ts";
 import type { ApiClient } from "#cli/shared/config";
@@ -366,7 +367,7 @@ describe("ingestResolvedSources", () => {
         client: createMockClient(),
         projectSlug: "my-project",
         outputDir: "/workspace/knowledge",
-        runParser: async () => ({
+        runParsers: async () => [{
           success: true,
           source_path: "/workspace/uploads/contracts/q1.pdf",
           source_filename: "q1.pdf",
@@ -379,7 +380,7 @@ describe("ingestResolvedSources", () => {
           summary: "Extracted 4 page(s).",
           stats: { pages: 4 },
           warnings: [],
-        }),
+        }],
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
@@ -424,14 +425,14 @@ describe("ingestResolvedSources", () => {
         client: createMockClient(),
         projectSlug: "my-project",
         outputDir: "/workspace/knowledge",
-        runParser: async (input) => {
-          parserSlug = input.slug;
-          return {
+        runParsers: async (input) => {
+          parserSlug = input.files[0]?.slug;
+          return [{
             success: true,
             source_path: "/var/folders/random/report.pdf",
             source_filename: "report.pdf",
             source_type: "pdf",
-            slug: input.slug ?? "report",
+            slug: input.files[0]?.slug ?? "report",
             sandbox_output_path: "/workspace/knowledge/report.md",
             suggested_project_path: "knowledge/report.md",
             description: "Parsed from report.pdf",
@@ -439,7 +440,7 @@ describe("ingestResolvedSources", () => {
             summary: "Extracted 1 page(s).",
             stats: { pages: 1 },
             warnings: [],
-          };
+          }];
         },
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
@@ -482,8 +483,8 @@ describe("ingestResolvedSources", () => {
             client: createMockClient(),
             projectSlug: "my-project",
             outputDir: "/workspace/knowledge",
-            runParser: async () => {
-              throw new Error("runParser should not be called");
+            runParsers: async () => {
+              throw new Error("runParsers should not be called");
             },
             uploadKnowledgeFile: async () => {
               throw new Error("uploadKnowledgeFile should not be called");
@@ -493,6 +494,107 @@ describe("ingestResolvedSources", () => {
       Error,
       "--slug can only be used with a single explicit source.",
     );
+  });
+
+  it("batches multiple parser inputs into a single helper invocation", async () => {
+    let parserCalls = 0;
+    let parserInput: {
+      filePath: string;
+      description?: string;
+      slug?: string;
+      sourceReference?: string;
+    }[] = [];
+
+    const results = await ingestResolvedSources(
+      [
+        {
+          kind: "upload",
+          input: "uploads/contracts/a.pdf",
+          uploadPath: "contracts/a.pdf",
+          localPath: "/workspace/uploads/contracts/a.pdf",
+        },
+        {
+          kind: "upload",
+          input: "uploads/contracts/b.pdf",
+          uploadPath: "contracts/b.pdf",
+          localPath: "/workspace/uploads/contracts/b.pdf",
+        },
+      ],
+      {
+        sources: ["uploads/contracts/a.pdf", "uploads/contracts/b.pdf"],
+        path: undefined,
+        all: false,
+        recursive: false,
+        outputDir: "/workspace/knowledge",
+        knowledgePath: "knowledge",
+        description: "Contracts batch",
+        slug: undefined,
+        json: true,
+        quiet: false,
+        projectDir: undefined,
+        projectSlug: undefined,
+      },
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParsers: async (input) => {
+          parserCalls += 1;
+          parserInput = input.files;
+          return [
+            {
+              success: true,
+              source_path: "/workspace/uploads/contracts/a.pdf",
+              source_filename: "a.pdf",
+              source_type: "pdf",
+              slug: "contracts-a",
+              sandbox_output_path: "/workspace/knowledge/contracts-a.md",
+              suggested_project_path: "knowledge/contracts-a.md",
+              description: "Contracts batch",
+              title: "A",
+              summary: "Extracted 1 page(s).",
+              stats: { pages: 1 },
+              warnings: [],
+            },
+            {
+              success: true,
+              source_path: "/workspace/uploads/contracts/b.pdf",
+              source_filename: "b.pdf",
+              source_type: "pdf",
+              slug: "contracts-b",
+              sandbox_output_path: "/workspace/knowledge/contracts-b.md",
+              suggested_project_path: "knowledge/contracts-b.md",
+              description: "Contracts batch",
+              title: "B",
+              summary: "Extracted 2 page(s).",
+              stats: { pages: 2 },
+              warnings: [],
+            },
+          ];
+        },
+        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+      },
+    );
+
+    assertEquals(parserCalls, 1);
+    assertEquals(parserInput, [
+      {
+        filePath: "/workspace/uploads/contracts/a.pdf",
+        description: "Contracts batch",
+        slug: "contracts-a",
+        sourceReference: "uploads/contracts/a.pdf",
+      },
+      {
+        filePath: "/workspace/uploads/contracts/b.pdf",
+        description: "Contracts batch",
+        slug: "contracts-b",
+        sourceReference: "uploads/contracts/b.pdf",
+      },
+    ]);
+    assertEquals(results.map((result) => result.remotePath), [
+      "knowledge/contracts-a.md",
+      "knowledge/contracts-b.md",
+    ]);
   });
 });
 
@@ -542,29 +644,44 @@ describe("runKnowledgeParser", () => {
     }
   });
 
-  it("prefers kreuzberg for PDF extraction when the binary is available", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-kreuzberg-" });
+  it("prefers docling placeholder markdown for PDF extraction when the binary is available", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-docling-" });
     const binDir = join(tempDir, "bin");
     const filePath = join(tempDir, "offer.pdf");
     const outputDir = join(tempDir, "knowledge-output");
-    const kreuzbergPath = join(binDir, "kreuzberg");
+    const doclingPath = join(binDir, "docling");
+    const argsLogPath = join(tempDir, "docling-args.log");
     const originalPath = Deno.env.get("PATH") ?? "";
 
     try {
       await Deno.mkdir(binDir, { recursive: true });
       await Deno.writeTextFile(filePath, "stub pdf bytes");
       await Deno.writeTextFile(
-        kreuzbergPath,
+        doclingPath,
         [
           "#!/bin/sh",
-          'if [ "$1" != "extract" ]; then',
-          '  echo "unexpected command" >&2',
+          'printf "%s\\n" "$@" > "$DOCLING_ARGS_LOG"',
+          'out_dir=""',
+          'prev=""',
+          'for arg in "$@"; do',
+          '  if [ "$prev" = "--output" ]; then',
+          '    out_dir="$arg"',
+          "  fi",
+          '  prev="$arg"',
+          "done",
+          'if [ -z "$out_dir" ]; then',
+          '  echo "missing output dir" >&2',
           "  exit 64",
           "fi",
-          'printf \'%s\\n\' \'{"content":"## Fake PDF\\n\\nParsed by kreuzberg","metadata":{"mime_type":"application/pdf","page_count":3,"table_count":1}}\'',
+          'mkdir -p "$out_dir"',
+          "cat <<'EOF' > \"$out_dir/offer.md\"",
+          "## Fake PDF",
+          "",
+          "Parsed by docling",
+          "EOF",
         ].join("\n"),
       );
-      await Deno.chmod(kreuzbergPath, 0o755);
+      await Deno.chmod(doclingPath, 0o755);
 
       const result = await runKnowledgeParser({
         filePath,
@@ -572,35 +689,44 @@ describe("runKnowledgeParser", () => {
         description: "Offer PDF",
         slug: "offer-pdf",
         sourceReference: "uploads/offers/offer.pdf",
-        env: { PATH: `${binDir}:${originalPath}` },
+        env: {
+          PATH: `${binDir}:${originalPath}`,
+          DOCLING_ARGS_LOG: argsLogPath,
+        },
       });
 
       assertEquals(result.source_type, "pdf");
       assertEquals(result.slug, "offer-pdf");
-      assertEquals(result.stats.engine, "kreuzberg");
-      assertEquals(result.stats.pages, 3);
-      assertEquals(result.stats.tables, 1);
+      assertEquals(result.stats.engine, "docling");
       assertStringIncludes(result.summary, "Converted PDF to markdown");
+
+      const argsLog = await Deno.readTextFile(argsLogPath);
+      assertStringIncludes(argsLog, filePath);
+      assertStringIncludes(argsLog, "--to");
+      assertStringIncludes(argsLog, "md");
+      assertStringIncludes(argsLog, "--image-export-mode");
+      assertStringIncludes(argsLog, "placeholder");
+      assertStringIncludes(argsLog, "--output");
 
       const markdown = await Deno.readTextFile(result.sandbox_output_path);
       assertStringIncludes(markdown, 'source: "uploads/offers/offer.pdf"');
       assertStringIncludes(markdown, 'description: "Offer PDF"');
       assertStringIncludes(markdown, "# Offer");
-      assertStringIncludes(markdown, "Parsed by kreuzberg");
+      assertStringIncludes(markdown, "Parsed by docling");
     } finally {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }
   });
 
-  it("falls back to the built-in parser when kreuzberg extraction fails", async () => {
+  it("falls back to the built-in parser when docling extraction fails", async () => {
     const tempDir = await Deno.makeTempDir({
-      prefix: "veryfront-knowledge-parser-kreuzberg-fallback-",
+      prefix: "veryfront-knowledge-parser-docling-fallback-",
     });
     const binDir = join(tempDir, "bin");
     const pythonDir = join(tempDir, "python");
     const filePath = join(tempDir, "fallback.pdf");
     const outputDir = join(tempDir, "knowledge-output");
-    const kreuzbergPath = join(binDir, "kreuzberg");
+    const doclingPath = join(binDir, "docling");
     const originalPath = Deno.env.get("PATH") ?? "";
 
     try {
@@ -608,10 +734,10 @@ describe("runKnowledgeParser", () => {
       await Deno.mkdir(pythonDir, { recursive: true });
       await Deno.writeTextFile(filePath, "stub pdf bytes");
       await Deno.writeTextFile(
-        kreuzbergPath,
+        doclingPath,
         [
           "#!/bin/sh",
-          'echo "boom" >&2',
+          'echo "docling boom" >&2',
           "exit 2",
         ].join("\n"),
       );
@@ -642,7 +768,7 @@ describe("runKnowledgeParser", () => {
           "    return _Pdf(path)",
         ].join("\n"),
       );
-      await Deno.chmod(kreuzbergPath, 0o755);
+      await Deno.chmod(doclingPath, 0o755);
 
       const result = await runKnowledgeParser({
         filePath,
@@ -660,13 +786,189 @@ describe("runKnowledgeParser", () => {
       assertEquals(result.warnings.length, 1);
       assertStringIncludes(
         result.warnings[0] ?? "",
-        "kreuzberg extraction failed; fell back to the built-in parser",
+        "docling extraction failed; fell back to the built-in parser",
       );
 
       const markdown = await Deno.readTextFile(result.sandbox_output_path);
       assertStringIncludes(markdown, "# Fallback");
       assertStringIncludes(markdown, "## Page 1");
       assertStringIncludes(markdown, "Fallback PDF text");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("falls back to the built-in parser when docling times out", async () => {
+    const tempDir = await Deno.makeTempDir({
+      prefix: "veryfront-knowledge-parser-docling-timeout-",
+    });
+    const binDir = join(tempDir, "bin");
+    const pythonDir = join(tempDir, "python");
+    const filePath = join(tempDir, "timeout.pdf");
+    const outputDir = join(tempDir, "knowledge-output");
+    const doclingPath = join(binDir, "docling");
+    const originalPath = Deno.env.get("PATH") ?? "";
+
+    try {
+      await Deno.mkdir(binDir, { recursive: true });
+      await Deno.mkdir(pythonDir, { recursive: true });
+      await Deno.writeTextFile(filePath, "stub pdf bytes");
+      await Deno.writeTextFile(
+        doclingPath,
+        [
+          "#!/bin/sh",
+          "sleep 1",
+          "exit 0",
+        ].join("\n"),
+      );
+      await Deno.writeTextFile(
+        join(pythonDir, "pdfplumber.py"),
+        [
+          "class _Page:",
+          "    def __init__(self, text):",
+          "        self._text = text",
+          "",
+          "    def extract_text(self):",
+          "        return self._text",
+          "",
+          "    def extract_tables(self):",
+          "        return []",
+          "",
+          "class _Pdf:",
+          "    def __init__(self, path):",
+          '        self.pages = [_Page("Timed out fallback PDF text")]',
+          "",
+          "    def __enter__(self):",
+          "        return self",
+          "",
+          "    def __exit__(self, exc_type, exc, tb):",
+          "        return False",
+          "",
+          "def open(path):",
+          "    return _Pdf(path)",
+        ].join("\n"),
+      );
+      await Deno.chmod(doclingPath, 0o755);
+
+      const result = await runKnowledgeParser({
+        filePath,
+        outputDir,
+        sourceReference: "uploads/offers/timeout.pdf",
+        env: {
+          PATH: `${binDir}:${originalPath}`,
+          PYTHONPATH: pythonDir,
+          VERYFRONT_KNOWLEDGE_DOCLING_TIMEOUT_SECONDS: "0.01",
+        },
+      });
+
+      assertEquals(result.source_type, "pdf");
+      assertEquals(result.stats.engine, undefined);
+      assertEquals(result.warnings.length, 1);
+      assertStringIncludes(
+        result.warnings[0] ?? "",
+        "docling extraction failed; fell back to the built-in parser: docling extract timed out",
+      );
+
+      const markdown = await Deno.readTextFile(result.sandbox_output_path);
+      assertStringIncludes(markdown, "Timed out fallback PDF text");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+});
+
+describe("runKnowledgeParsers", () => {
+  it("uses docling for multiple supported rich documents", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-batch-" });
+    const binDir = join(tempDir, "bin");
+    const fileA = join(tempDir, "offer.pdf");
+    const fileB = join(tempDir, "notes.docx");
+    const fileC = join(tempDir, "slides.pptx");
+    const outputDir = join(tempDir, "knowledge-output");
+    const doclingPath = join(binDir, "docling");
+    const doclingArgsLogPath = join(tempDir, "docling-args.log");
+    const originalPath = Deno.env.get("PATH") ?? "";
+
+    try {
+      await Deno.mkdir(binDir, { recursive: true });
+      await Deno.writeTextFile(fileA, "stub pdf bytes");
+      await Deno.writeTextFile(fileB, "stub docx bytes");
+      await Deno.writeTextFile(fileC, "stub pptx bytes");
+      await Deno.writeTextFile(
+        doclingPath,
+        [
+          "#!/bin/sh",
+          'printf "%s\\n" "---" "$@" >> "$DOCLING_ARGS_LOG"',
+          'input="$1"',
+          'name=$(basename "$input")',
+          'stem="${name%.*}"',
+          'out_dir=""',
+          'prev=""',
+          'for arg in "$@"; do',
+          '  if [ "$prev" = "--output" ]; then',
+          '    out_dir="$arg"',
+          "  fi",
+          '  prev="$arg"',
+          "done",
+          'if [ -z "$out_dir" ]; then',
+          '  echo "missing output dir" >&2',
+          "  exit 64",
+          "fi",
+          'mkdir -p "$out_dir"',
+          'cat <<EOF > "$out_dir/$stem.md"',
+          "## Fake $stem",
+          "",
+          "Parsed by docling $name",
+          "EOF",
+        ].join("\n"),
+      );
+      await Deno.chmod(doclingPath, 0o755);
+
+      const results = await runKnowledgeParsers({
+        files: [
+          {
+            filePath: fileA,
+            description: "Batch docs",
+            slug: "offer-pdf",
+            sourceReference: "uploads/offers/offer.pdf",
+          },
+          {
+            filePath: fileB,
+            description: "Batch docs",
+            slug: "notes-docx",
+            sourceReference: "uploads/offers/notes.docx",
+          },
+          {
+            filePath: fileC,
+            description: "Batch docs",
+            slug: "slides-pptx",
+            sourceReference: "uploads/offers/slides.pptx",
+          },
+        ],
+        outputDir,
+        env: {
+          PATH: `${binDir}:${originalPath}`,
+          DOCLING_ARGS_LOG: doclingArgsLogPath,
+        },
+      });
+
+      assertEquals(results.length, 3);
+      assertEquals(results.map((result) => result.source_type), ["pdf", "docx", "pptx"]);
+      assert(results.every((result) => result.stats.engine === "docling"));
+
+      const doclingArgsLog = await Deno.readTextFile(doclingArgsLogPath);
+      assertStringIncludes(doclingArgsLog, fileA);
+      assertStringIncludes(doclingArgsLog, fileB);
+      assertStringIncludes(doclingArgsLog, fileC);
+      assertStringIncludes(doclingArgsLog, "--image-export-mode");
+      assertStringIncludes(doclingArgsLog, "placeholder");
+
+      const firstMarkdown = await Deno.readTextFile(results[0]!.sandbox_output_path);
+      const secondMarkdown = await Deno.readTextFile(results[1]!.sandbox_output_path);
+      const thirdMarkdown = await Deno.readTextFile(results[2]!.sandbox_output_path);
+      assertStringIncludes(firstMarkdown, "Parsed by docling offer.pdf");
+      assertStringIncludes(secondMarkdown, "Parsed by docling notes.docx");
+      assertStringIncludes(thirdMarkdown, "Parsed by docling slides.pptx");
     } finally {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }
