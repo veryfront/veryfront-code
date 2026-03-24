@@ -71,7 +71,7 @@ describe("script-handlers", () => {
       // When esbuild is not available but the file exists, it should
       // still return a response (either the raw source or a fallback).
       const adapter = createMockAdapter({
-        readFile: () => Promise.resolve('const boot = () => {}; boot();'),
+        readFile: () => Promise.resolve("const boot = () => {}; boot();"),
       });
       const response = await handleClientScript(adapter);
       assertEquals(response.status, 200);

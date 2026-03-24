@@ -24,7 +24,9 @@ describe("compile-binary includes", () => {
     assertEquals(
       hasRscRendering,
       true,
-      `Expected --include flag for src/rendering/rsc, got includes: ${JSON.stringify(includeFlags)}`,
+      `Expected --include flag for src/rendering/rsc, got includes: ${
+        JSON.stringify(includeFlags)
+      }`,
     );
   });
 });
