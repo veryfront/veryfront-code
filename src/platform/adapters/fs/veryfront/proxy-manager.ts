@@ -27,6 +27,7 @@ interface ProxyFSAdapterManagerConfig {
 export class ProxyFSAdapterManager {
   private adapters = new Map<string, ProjectAdapter>();
   private pendingAdapters = new Map<string, Promise<VeryfrontFSAdapter>>();
+  private negativeCacheKeys = new Map<string, ReturnType<typeof setTimeout>>();
   private baseConfig: FSAdapterConfig;
   private maxAdapters: number;
   private maxIdleMs: number;
@@ -119,6 +120,19 @@ export class ProxyFSAdapterManager {
       hasExisting: this.adapters.has(cacheKey),
       totalCachedAdapters: this.adapters.size,
     });
+
+    // Negative caching: reject known-bad cache keys (e.g. orphaned push refs
+    // that returned 404) to prevent retry loops. The sentinel expires after 60s.
+    if (this.negativeCacheKeys.has(cacheKey)) {
+      logger.warn("Rejecting adapter request for negatively-cached key", {
+        cacheKey,
+        projectSlug,
+      });
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Adapter for "${cacheKey}" is negatively cached (previous initialization returned 404). Retry after 60s.`,
+      });
+    }
 
     const existing = this.adapters.get(cacheKey);
     if (existing) {
@@ -361,20 +375,26 @@ export class ProxyFSAdapterManager {
         });
 
         // Negative caching: if the branch/push-ref doesn't exist (404),
-        // cache a poisoned entry for 60s to prevent retry loops.
-        // Without this, every request re-creates a new adapter that hits
-        // the same 404, causing continuous error spam.
+        // add a sentinel to prevent retry loops. Without this, every request
+        // re-creates a new adapter that hits the same 404.
         if (is404) {
-          logger.warn("Negative caching failed adapter for 60s to prevent retry loop", {
+          const NEGATIVE_CACHE_TTL_MS = 60_000;
+          logger.warn("Adding negative cache sentinel for 60s to prevent retry loop", {
             cacheKey,
             projectSlug,
             branch,
           });
-          this.adapters.set(cacheKey, projectAdapter);
-          setTimeout(() => {
-            this.adapters.delete(cacheKey);
-            logger.debug("Negative cache entry expired", { cacheKey });
-          }, 60_000);
+          const timer = setTimeout(() => {
+            this.negativeCacheKeys.delete(cacheKey);
+            logger.debug("Negative cache sentinel expired", { cacheKey });
+          }, NEGATIVE_CACHE_TTL_MS);
+          // Unref so the timer doesn't keep processes/tests alive
+          try {
+            Deno.unrefTimer(timer);
+          } catch {
+            // Not available in all runtimes
+          }
+          this.negativeCacheKeys.set(cacheKey, timer);
         }
 
         throw error;
@@ -452,6 +472,12 @@ export class ProxyFSAdapterManager {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = undefined;
     }
+
+    // Clear negative cache timers
+    for (const timer of this.negativeCacheKeys.values()) {
+      clearTimeout(timer);
+    }
+    this.negativeCacheKeys.clear();
 
     for (const [cacheKey, adapter] of this.adapters) {
       logger.debug("Disposing adapter", { cacheKey });
