@@ -1,3 +1,4 @@
+import denoConfig from "#deno-config" with { type: "json" };
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -18,6 +19,10 @@ describe("version", () => {
 
     it("should look like a semver version", () => {
       assert(/^\d+\.\d+\.\d+/.test(VERSION), `VERSION "${VERSION}" does not match semver pattern`);
+    });
+
+    it("should stay in sync with deno.json", () => {
+      assertEquals(VERSION, denoConfig.version);
     });
   });
 
