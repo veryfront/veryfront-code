@@ -237,7 +237,7 @@
     "rehype-stringify": "npm:rehype-stringify@10.0.1",
     "esbuild": "npm:esbuild@0.27.4",
     "esbuild/mod.js": "npm:esbuild@0.27.4",
-    "es-module-lexer": "npm:es-module-lexer@1.5.0",
+    "es-module-lexer": "npm:es-module-lexer@2.0.0",
     "gray-matter": "npm:gray-matter@4.0.3",
     "zod": "npm:zod@3.25.76",
     "mime-types": "npm:mime-types@2.1.35",

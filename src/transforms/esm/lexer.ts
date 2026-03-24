@@ -60,7 +60,7 @@ export type ImportSpecifier = {
   ss: number; // Start of import statement
   se: number; // End of import statement
   d: number; // > -1 if dynamic import
-  a: number; // assert index
+  a: number; // import attribute index
 };
 
 function logParseError(error: unknown, code: string): void {
