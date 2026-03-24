@@ -275,8 +275,7 @@ async function generateHTMLShellPartsImpl(
   }
 
   // Markdown styles: .md files with prose !== false get GitHub markdown CSS
-  const isMarkdownPreview =
-    options.pageType === "md" &&
+  const isMarkdownPreview = options.pageType === "md" &&
     checkMarkdownPreview(options.pagePath, options.frontmatter);
 
   const markdownPreviewStyles = isMarkdownPreview
