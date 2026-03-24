@@ -1,4 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
+import { clearTrackedAgents } from "#veryfront/discovery";
 import type { HandlerContext } from "../../types.ts";
 
 const logger = serverLogger.component("api-wrapper");
@@ -17,8 +18,22 @@ const discoveredProjects = new Map<string, Promise<void>>();
 /** Build a discovery cache key that incorporates the release/version. */
 function discoveryKey(ctx: HandlerContext): string {
   const slug = ctx.projectSlug ?? ctx.projectDir;
-  const version = ctx.releaseId ?? "preview";
-  return `${slug}:${version}`;
+  const environment = ctx.enriched?.environment ?? ctx.resolvedEnvironment ??
+    (ctx.releaseId ? "production" : "preview");
+
+  if (environment === "production") {
+    return `${slug}:release:${ctx.releaseId ?? "unknown"}`;
+  }
+
+  const branch = ctx.requestContext?.branch ?? ctx.enriched?.branch ?? ctx.parsedDomain?.branch ??
+    "main";
+  return `${slug}:preview:${branch}`;
+}
+
+function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
+  const environment = ctx.enriched?.environment ?? ctx.resolvedEnvironment ??
+    (ctx.releaseId ? "production" : "preview");
+  return environment === "production";
 }
 
 /**
@@ -29,12 +44,13 @@ function discoveryKey(ctx: HandlerContext): string {
  */
 export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void> {
   const key = discoveryKey(ctx);
+  const cacheCompletedDiscovery = shouldCacheCompletedDiscovery(ctx);
 
   const existing = discoveredProjects.get(key);
   if (existing) return existing;
 
   const promise = (async () => {
-    const { discoverAll } = await import("#veryfront/discovery");
+    const { clearTranspileCache, discoverAll } = await import("#veryfront/discovery");
     const { agentRegistry } = await import(
       "#veryfront/agent/composition/composition.ts"
     );
@@ -42,6 +58,8 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
 
     // Clear stale entries for this project scope before re-discovery.
     // This prevents agents/tools removed in a new release from lingering.
+    clearTrackedAgents();
+    clearTranspileCache();
     agentRegistry.clear();
     toolRegistry.clear();
 
@@ -82,5 +100,9 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
+  } finally {
+    if (!cacheCompletedDiscovery) {
+      discoveredProjects.delete(key);
+    }
   }
 }
