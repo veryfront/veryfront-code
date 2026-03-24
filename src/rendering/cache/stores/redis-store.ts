@@ -261,7 +261,7 @@ export class RedisCacheStore implements CacheStore {
 
     if (!this.client) return;
 
-    await this.client.destroy();
+    await this.client.disconnect();
     this.client = null;
   }
 }

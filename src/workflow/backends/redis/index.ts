@@ -639,10 +639,8 @@ export class RedisBackend implements WorkflowBackend {
   async destroy(): Promise<void> {
     if (this.client) {
       try {
-        // redis v5: quit→close, disconnect→destroy
-        if (typeof this.client.close === "function") await this.client.close();
-        else if (typeof this.client.quit === "function") await this.client.quit();
-        else if (typeof this.client.destroy === "function") await this.client.destroy();
+        if (typeof this.client.quit === "function") await this.client.quit();
+        else if (typeof this.client.disconnect === "function") await this.client.disconnect();
       } catch {
         // Ignore errors during cleanup — connection may already be closed
       }
