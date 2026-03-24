@@ -31,7 +31,7 @@ export async function parseJsonBody<T>(
     if (!(error instanceof z.ZodError)) throw error;
 
     throw createValidationError("Validation failed", {
-      errors: error.errors.map((e) => ({
+      errors: error.issues.map((e) => ({
         path: e.path.join("."),
         message: e.message,
         code: e.code,
@@ -69,7 +69,7 @@ export async function parseFormData<T>(
     if (!(error instanceof z.ZodError)) throw error;
 
     throw createValidationError("Form validation failed", {
-      errors: error.errors,
+      errors: error.issues,
     });
   }
 }
@@ -100,7 +100,7 @@ export function parseQueryParams<T>(request: Request, schema: z.ZodSchema<T>): T
     if (!(error instanceof z.ZodError)) throw error;
 
     throw createValidationError("Query parameter validation failed", {
-      errors: error.errors,
+      errors: error.issues,
     });
   }
 }

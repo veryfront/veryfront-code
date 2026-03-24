@@ -28,7 +28,7 @@ const channelInvokeHistoryMessageSchema = z.object({
   id: z.string(),
   role: z.enum(["user", "assistant", "system", "tool"]),
   parts: z.array(rawHistoryPartSchema),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   createdAt: z.string().optional(),
 });
 
@@ -79,7 +79,7 @@ const channelToolCallPartSchema = z.object({
   type: z.literal("tool_call"),
   id: z.string(),
   name: z.string(),
-  input: z.record(z.unknown()),
+  input: z.record(z.string(), z.unknown()),
   state: z.enum(["streaming", "pending", "completed", "error"]),
 });
 

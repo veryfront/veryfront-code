@@ -87,7 +87,7 @@ export function errorResponse(
  */
 export const ToolsCallParamsSchema = z.object({
   name: z.string(),
-  arguments: z.record(z.unknown()).optional(),
+  arguments: z.record(z.string(), z.unknown()).optional(),
 });
 
 /**

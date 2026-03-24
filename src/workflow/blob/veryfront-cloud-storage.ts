@@ -18,7 +18,7 @@ const UploadCreateResponseSchema = z.object({
   file_upload_url: z.string().url(),
   file_path: z.string(),
   upload_id: z.string(),
-  required_headers: z.record(z.string()),
+  required_headers: z.record(z.string(), z.string()),
 });
 
 const UploadMetadataResponseSchema = z.object({
@@ -47,7 +47,7 @@ const BlobMetadataSchema = z.object({
   mimeType: z.string(),
   createdAt: z.string(),
   expiresAt: z.string().optional(),
-  metadata: z.record(z.string()).optional(),
+  metadata: z.record(z.string(), z.string()).optional(),
 });
 
 type UploadMetadataResponse = z.infer<typeof UploadMetadataResponseSchema>;

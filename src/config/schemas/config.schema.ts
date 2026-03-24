@@ -57,7 +57,7 @@ export const veryfrontConfigSchema = z
     layout: z.union([z.string(), z.literal(false)]).optional(),
     /** Path to the app wrapper component (e.g., 'components/app.tsx'), or false to disable */
     app: z.union([z.string(), z.literal(false)]).optional(),
-    theme: z.object({ colors: z.record(z.string()).optional() }).partial().optional(),
+    theme: z.object({ colors: z.record(z.string(), z.string()).optional() }).partial().optional(),
     build: z
       .object({
         outDir: z.string().optional(),
@@ -141,8 +141,8 @@ export const veryfrontConfigSchema = z
       .object({
         importMap: z
           .object({
-            imports: z.record(z.string()).optional(),
-            scopes: z.record(z.record(z.string())).optional(),
+            imports: z.record(z.string(), z.string()).optional(),
+            scopes: z.record(z.string(), z.record(z.string())).optional(),
           })
           .partial()
           .optional(),
@@ -158,7 +158,7 @@ export const veryfrontConfigSchema = z
           })
           .partial()
           .optional(),
-        csp: z.record(z.array(z.string())).optional(),
+        csp: z.record(z.string(), z.array(z.string())).optional(),
         remoteHosts: z.array(z.string().url()).optional(),
         cors: corsSchema.optional(),
         /**
@@ -326,7 +326,7 @@ export const veryfrontConfigSchema = z
           .optional(),
         memory: z
           .object({
-            files: z.record(z.union([z.string(), z.instanceof(Uint8Array)])).optional(),
+            files: z.record(z.string(), z.union([z.string(), z.instanceof(Uint8Array)])).optional(),
           })
           .partial()
           .optional(),
@@ -462,7 +462,7 @@ export const veryfrontConfigSchema = z
         /** Extend the Tailwind theme (merged with veryfront defaults) */
         theme: z
           .object({
-            extend: z.record(z.unknown()).optional(),
+            extend: z.record(z.string(), z.unknown()).optional(),
           })
           .partial()
           .optional(),

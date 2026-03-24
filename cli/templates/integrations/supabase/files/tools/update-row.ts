@@ -15,7 +15,7 @@ export default tool({
       .record(z.unknown())
       .optional()
       .describe('Filter conditions to match rows to update (e.g., {"status": "pending"})'),
-    data: z.record(z.unknown()).describe("The data to update as key-value pairs"),
+    data: z.record(z.string(), z.unknown()).describe("The data to update as key-value pairs"),
   }),
   async execute({ tableName, id, filter, data }) {
     if (id == null && filter == null) {

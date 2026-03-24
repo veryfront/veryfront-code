@@ -239,7 +239,7 @@
     "esbuild/mod.js": "npm:esbuild@0.27.4",
     "es-module-lexer": "npm:es-module-lexer@2.0.0",
     "gray-matter": "npm:gray-matter@4.0.3",
-    "zod": "npm:zod@3.25.76",
+    "zod": "npm:zod@4.3.6",
     "mime-types": "npm:mime-types@3.0.2",
     "mdast": "npm:@types/mdast@4.0.3",
     "hast": "npm:@types/hast@3.0.3",

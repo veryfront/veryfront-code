@@ -54,7 +54,7 @@ export const ProjectSchema = z.object({
   provider_id: z.string().nullish(),
   layout: z.string().nullish(),
   layout_id: z.string().nullish(),
-  config: z.union([z.string(), z.record(z.unknown())]).optional(),
+  config: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
 });
 
 export const ProjectFileSchema = z.object({

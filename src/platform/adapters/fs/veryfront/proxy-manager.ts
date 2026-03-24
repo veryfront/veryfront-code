@@ -158,7 +158,7 @@ export class ProxyFSAdapterManager {
 
     if (!validationResult.success) {
       logger.error("Validation failed", {
-        errors: validationResult.error.errors,
+        errors: validationResult.error.issues,
         params: {
           projectSlug,
           productionMode: effectiveProductionMode,

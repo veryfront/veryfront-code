@@ -88,8 +88,8 @@ export const OAuthConfigSchema = z.object({
   requiredApis: z
     .array(z.object({ name: z.string(), enableUrl: z.string() }))
     .optional(),
-  additionalParams: z.record(z.string()).optional(),
-  additionalAuthParams: z.record(z.string()).optional(),
+  additionalParams: z.record(z.string(), z.string()).optional(),
+  additionalAuthParams: z.record(z.string(), z.string()).optional(),
   fields: z.array(OAuthFieldSchema).optional(),
   envVars: z
     .record(z.object({ description: z.string(), required: z.boolean() }))
@@ -127,7 +127,7 @@ export const IntegrationConfigSchema = z.object({
   tools: z.array(IntegrationToolSchema),
   prompts: z.array(IntegrationPromptSchema).optional(),
   suggestedWith: z.array(z.string()).optional(),
-  dependencies: z.record(z.string()).optional(),
+  dependencies: z.record(z.string(), z.string()).optional(),
   category: z.string().optional(),
 });
 

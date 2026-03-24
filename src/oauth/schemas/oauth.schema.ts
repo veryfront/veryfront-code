@@ -9,8 +9,8 @@ export const OAuthProviderConfigSchema = z.object({
   revocationUrl: z.string().url().optional(),
   clientIdEnvVar: z.string(),
   clientSecretEnvVar: z.string(),
-  additionalAuthParams: z.record(z.string()).optional(),
-  additionalTokenParams: z.record(z.string()).optional(),
+  additionalAuthParams: z.record(z.string(), z.string()).optional(),
+  additionalTokenParams: z.record(z.string(), z.string()).optional(),
   useBasicAuth: z.boolean().optional(),
   tokenResponseMapping: z
     .object({
@@ -46,7 +46,7 @@ export const OAuthStateSchema = z.object({
   redirectUri: z.string().url(),
   scopes: z.array(z.string()),
   createdAt: z.number().int(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const TokenExchangeResultSchema = z.object({
@@ -60,7 +60,7 @@ export const AuthorizationUrlOptionsSchema = z.object({
   scopes: z.array(z.string()).optional(),
   state: z.string().optional(),
   usePkce: z.boolean().optional(),
-  additionalParams: z.record(z.string()).optional(),
+  additionalParams: z.record(z.string(), z.string()).optional(),
   redirectUri: z.string().optional(),
 });
 

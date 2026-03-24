@@ -16,7 +16,9 @@ interface ZodLikeSchema {
 function hasValidZodTypeName(schema: unknown): schema is ZodLikeSchema {
   if (schema === null || typeof schema !== "object") return false;
   if (!("_def" in schema)) return false;
-  return !!(schema as ZodLikeSchema)._def?.typeName;
+  // zod v3 uses _def.typeName, v4 uses _def.type
+  const def = (schema as ZodLikeSchema)._def;
+  return !!(def?.typeName ?? (def as Record<string, unknown>)?.type);
 }
 
 function getSchemaShape(schema: ZodLikeSchema): Record<string, unknown> | null {

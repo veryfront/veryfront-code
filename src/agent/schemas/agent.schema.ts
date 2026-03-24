@@ -28,14 +28,14 @@ export const ToolCallPartWithArgsSchema = z.object({
   type: z.string().regex(/^tool-.+$/),
   toolCallId: z.string(),
   toolName: z.string(),
-  args: z.record(z.unknown()),
+  args: z.record(z.string(), z.unknown()),
 });
 
 export const ToolCallPartWithInputSchema = z.object({
   type: z.string().regex(/^tool-.+$/),
   toolCallId: z.string(),
   toolName: z.string(),
-  input: z.record(z.unknown()),
+  input: z.record(z.string(), z.unknown()),
 });
 
 export const ToolCallPartSchema = z.union([
@@ -60,7 +60,7 @@ export const MessagePartSchema = z.union([
     type: z.literal("tool-call"),
     toolCallId: z.string(),
     toolName: z.string(),
-    args: z.record(z.unknown()),
+    args: z.record(z.string(), z.unknown()),
   }),
   ToolResultPartSchema,
 ]);
@@ -70,19 +70,19 @@ export const MessageSchema = z.object({
   role: z.enum(["user", "assistant", "system", "tool"]),
   parts: z.array(MessagePartSchema),
   timestamp: z.number().int().nonnegative().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const StreamToolCallSchema = z.object({
   id: z.string(),
   name: z.string(),
-  arguments: z.record(z.unknown()),
+  arguments: z.record(z.string(), z.unknown()),
 });
 
 export const ToolCallSchema = z.object({
   id: z.string(),
   name: z.string(),
-  args: z.record(z.unknown()),
+  args: z.record(z.string(), z.unknown()),
   status: z.enum(["pending", "executing", "completed", "error"]),
   result: z.unknown().optional(),
   error: z.string().optional(),
@@ -102,16 +102,16 @@ export const AgentResponseSchema = z.object({
       totalTokens: z.number().int().nonnegative(),
     })
     .optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const AgentContextSchema = z.object({
   agentId: z.string(),
   model: z.string().optional(),
   input: z.union([z.string(), z.array(MessageSchema)]),
-  data: z.record(z.unknown()).optional(),
+  data: z.record(z.string(), z.unknown()).optional(),
   platform: z.any(), // Platform type is complex
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 // Inferred types
