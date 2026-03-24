@@ -6,8 +6,8 @@
  * @module ai/agent/runtime/tool-helpers
  */
 
-import type { Tool, ToolDefinition } from "#veryfront/tool";
-import { toolRegistry } from "#veryfront/tool";
+import type { Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
+import { executeTool, toolRegistry } from "#veryfront/tool";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -66,6 +66,44 @@ export function isDynamicTool(name: string): boolean {
  */
 // deno-lint-ignore no-explicit-any -- generic erasure: accepts Tool with any input/output types
 export type ToolConfigEntry = Tool<any, any> | boolean;
+
+export function resolveConfiguredTool(
+  toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
+  toolName: string,
+): Tool | null {
+  if (!toolsConfig) {
+    return null;
+  }
+
+  if (toolsConfig === true) {
+    return toolRegistry.get(toolName) ?? null;
+  }
+
+  const configuredEntry = toolsConfig[toolName];
+  if (configuredEntry === true) {
+    return toolRegistry.get(toolName) ?? null;
+  }
+
+  if (configuredEntry && typeof configuredEntry === "object") {
+    return configuredEntry;
+  }
+
+  return null;
+}
+
+export async function executeConfiguredTool(
+  toolName: string,
+  input: Record<string, unknown>,
+  toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
+  context?: ToolExecutionContext,
+): Promise<unknown> {
+  const configuredTool = resolveConfiguredTool(toolsConfig, toolName);
+  if (configuredTool) {
+    return await configuredTool.execute(input, context);
+  }
+
+  return await executeTool(toolName, input, context);
+}
 
 function logToolDefinition(name: string, def: ToolDefinition): void {
   logger.debug(

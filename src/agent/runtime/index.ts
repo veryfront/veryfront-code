@@ -22,7 +22,6 @@ import {
   type ToolCall,
 } from "../types.ts";
 import { ensureModelReady, findAvailableCloudModel, resolveModel } from "#veryfront/provider";
-import { executeTool } from "#veryfront/tool";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
 import { createMemory, type Memory } from "../memory/index.ts";
@@ -41,7 +40,12 @@ import { AGENT_DEFAULTS } from "../ai-defaults.ts";
 
 // Re-export from submodules
 export { generateMessageId, sendSSE } from "./sse-utils.ts";
-export { getAvailableTools, isDynamicTool, parseToolArgs } from "./tool-helpers.ts";
+export {
+  executeConfiguredTool,
+  getAvailableTools,
+  isDynamicTool,
+  parseToolArgs,
+} from "./tool-helpers.ts";
 export type { ParsedToolArgs, ToolConfigEntry } from "./tool-helpers.ts";
 export { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 export { createStreamState, processStream } from "./ai-stream-handler.ts";
@@ -55,7 +59,12 @@ export {
 
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE } from "./constants.ts";
 import { generateMessageId, sendSSE } from "./sse-utils.ts";
-import { getAvailableTools, isDynamicTool, parseToolArgs } from "./tool-helpers.ts";
+import {
+  executeConfiguredTool,
+  getAvailableTools,
+  isDynamicTool,
+  parseToolArgs,
+} from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 import {
   filterToolsForSkill,
@@ -481,10 +490,15 @@ export class AgentRuntime {
               toolCall.status = "executing";
               const startTime = Date.now();
 
-              const result = await executeTool(tc.toolName, toolCall.args, {
-                agentId: this.id,
-                toolCallId: tc.toolCallId,
-              });
+              const result = await executeConfiguredTool(
+                tc.toolName,
+                toolCall.args,
+                this.config.tools,
+                {
+                  agentId: this.id,
+                  toolCallId: tc.toolCallId,
+                },
+              );
 
               toolCall.status = "completed";
               toolCall.result = result;
@@ -713,11 +727,16 @@ export class AgentRuntime {
 
           callbacks?.onToolCall?.(toolCall);
 
-          const result = await executeTool(tc.name, toolCall.args, {
-            agentId: this.id,
-            toolCallId: tc.id,
-            ...toolContext,
-          });
+          const result = await executeConfiguredTool(
+            tc.name,
+            toolCall.args,
+            this.config.tools,
+            {
+              agentId: this.id,
+              toolCallId: tc.id,
+              ...toolContext,
+            },
+          );
 
           toolCall.status = "completed";
           toolCall.result = result;
