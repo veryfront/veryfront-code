@@ -22,6 +22,34 @@ export const INTERNAL_PROXY_HEADERS = [
   "x-branch-name",
 ] as const;
 
+const INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS = [
+  "x-veryfront-control-plane-jws",
+  "x-veryfront-dispatch-jws",
+] as const;
+
+function isInternalControlPlanePath(pathname: string): boolean {
+  return pathname === "/channels/invoke" ||
+    pathname.startsWith("/internal/agents/") ||
+    pathname.startsWith("/internal/tasks/") ||
+    pathname.startsWith("/internal/workflows/");
+}
+
+function isSignedInternalControlPlaneRequest(req: Request): boolean {
+  const pathname = new URL(req.url).pathname;
+  if (!isInternalControlPlanePath(pathname)) {
+    return false;
+  }
+
+  const hasSignature = INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS.some((header) =>
+    !!req.headers.get(header)
+  );
+  if (!hasSignature) {
+    return false;
+  }
+
+  return !!req.headers.get("x-token");
+}
+
 interface DomainLookupResult {
   id: string;
   slug: string;
@@ -356,6 +384,18 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   ): Promise<{ status: number; message: string; redirectUrl?: string } | null> {
     if (!matchingEnv?.protected) return null;
 
+    if (isSignedInternalControlPlaneRequest(req)) {
+      logger?.debug(
+        "Allowing signed internal control-plane request through protected environment",
+        {
+          ...logContext,
+          environmentName: matchingEnv.name,
+          pathname: new URL(req.url).pathname,
+        },
+      );
+      return null;
+    }
+
     if (!userToken) {
       const redirectUrl = makeAuthRedirectUrl(req);
       logger?.info("Protected environment requires authentication", {
@@ -464,6 +504,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     const cookieHeader = req.headers.get("cookie") ?? "";
     const userToken = extractUserToken(cookieHeader);
+    const signedInternalControlPlaneRequest = isSignedInternalControlPlaneRequest(req);
 
     let token: string | undefined;
     let tokenFetchError: unknown;
@@ -471,7 +512,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     if (isLocalProject) {
       logger?.debug("Local project, skipping token fetch", { localPath });
     } else {
-      if (scope === "preview" && userToken) {
+      if (signedInternalControlPlaneRequest) {
+        token = req.headers.get("x-token") ?? undefined;
+        logger?.debug("Using signed control-plane token for internal request", {
+          pathname: new URL(req.url).pathname,
+          scope,
+        });
+      } else if (scope === "preview" && userToken) {
         token = userToken;
         logger?.debug("Using user auth token for preview");
       }
