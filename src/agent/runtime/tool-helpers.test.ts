@@ -1,6 +1,8 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseToolArgs } from "./tool-helpers.ts";
+import { z } from "zod";
+import { tool, toolRegistry } from "#veryfront/tool";
+import { executeConfiguredTool, parseToolArgs, resolveConfiguredTool } from "./tool-helpers.ts";
 
 describe("tool-helpers", () => {
   describe("parseToolArgs", () => {
@@ -51,6 +53,104 @@ describe("tool-helpers", () => {
       const result = parseToolArgs({});
       assertEquals(result.args, {});
       assertEquals(result.error, undefined);
+    });
+  });
+
+  describe("resolveConfiguredTool", () => {
+    it("returns an inline configured tool without requiring registry registration", () => {
+      const injectedTool = tool({
+        id: "studio_invoke_agent",
+        description: "Invoke another project agent",
+        inputSchema: z.object({ prompt: z.string() }),
+        execute: async ({ prompt }) => ({ echoed: prompt }),
+      });
+
+      const resolvedTool = resolveConfiguredTool(
+        {
+          studio_invoke_agent: injectedTool,
+        },
+        "studio_invoke_agent",
+      );
+
+      assertEquals(resolvedTool, injectedTool);
+    });
+
+    it("falls back to the shared registry when the config entry is true", () => {
+      toolRegistry.clearAll();
+
+      const sharedTool = tool({
+        id: "shared-search",
+        description: "Shared search",
+        inputSchema: z.object({ query: z.string() }),
+        execute: async ({ query }) => ({ query }),
+      });
+      toolRegistry.register("shared-search", sharedTool);
+
+      const resolvedTool = resolveConfiguredTool(
+        {
+          "shared-search": true,
+        },
+        "shared-search",
+      );
+
+      assertEquals(resolvedTool, sharedTool);
+      toolRegistry.clearAll();
+    });
+  });
+
+  describe("executeConfiguredTool", () => {
+    it("executes an inline configured tool before consulting the registry", async () => {
+      toolRegistry.clearAll();
+
+      const injectedTool = tool({
+        id: "studio_invoke_agent",
+        description: "Invoke another project agent",
+        inputSchema: z.object({ prompt: z.string() }),
+        execute: async ({ prompt }) => ({ text: prompt.toUpperCase() }),
+      });
+
+      const result = await executeConfiguredTool(
+        "studio_invoke_agent",
+        { prompt: "childself" },
+        {
+          studio_invoke_agent: injectedTool,
+        },
+        { toolCallId: "tool-1" },
+      );
+
+      assertEquals(result, { text: "CHILDSELF" });
+    });
+
+    it("falls back to the registry when no inline tool is configured", async () => {
+      toolRegistry.clearAll();
+
+      const sharedTool = tool({
+        id: "shared-search",
+        description: "Shared search",
+        inputSchema: z.object({ query: z.string() }),
+        execute: async ({ query }) => ({ source: "registry", query }),
+      });
+      toolRegistry.register("shared-search", sharedTool);
+
+      const result = await executeConfiguredTool(
+        "shared-search",
+        { query: "docs" },
+        undefined,
+        { toolCallId: "tool-2" },
+      );
+
+      assertEquals(result, { source: "registry", query: "docs" });
+      toolRegistry.clearAll();
+    });
+
+    it("preserves the missing-tool error when nothing is configured", async () => {
+      toolRegistry.clearAll();
+
+      await assertRejects(
+        () => executeConfiguredTool("studio_invoke_agent", { prompt: "test" }, undefined),
+        Error,
+        'Tool "studio_invoke_agent" not found',
+      );
     });
   });
 });
