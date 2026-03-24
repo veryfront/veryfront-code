@@ -157,7 +157,9 @@ export function createExecuteSkillScriptTool(): Tool {
       skillId: z.string().describe("The ID of the skill"),
       script: z.string().describe("Relative path to the script (e.g. 'scripts/setup.sh')"),
       args: z.array(z.string()).optional().describe("Arguments to pass to the script"),
-      env: z.record(z.string(), z.string()).optional().describe("Environment variables for the script"),
+      env: z.record(z.string(), z.string()).optional().describe(
+        "Environment variables for the script",
+      ),
       timeoutMs: z
         .number()
         .int()

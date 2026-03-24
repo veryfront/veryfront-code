@@ -109,14 +109,16 @@ export function extractArgs<T extends z.ZodRawShape>(
  * }
  * ```
  */
-export function createArgParser<T extends z.ZodRawShape>(
-  schema: z.ZodObject<T>,
-  argMap: ArgMap<z.infer<z.ZodObject<T>>>,
-): (args: ParsedArgs) => z.SafeParseReturnType<unknown, z.infer<z.ZodObject<T>>> {
+// deno-lint-ignore no-explicit-any
+export function createArgParser<T = any>(
+  schema: z.ZodType<T>,
+  argMap: ArgMap<T>,
+): (args: ParsedArgs) => z.SafeParseReturnType<unknown, T> {
   return function parseArgs(
     args: ParsedArgs,
-  ): z.SafeParseReturnType<unknown, z.infer<z.ZodObject<T>>> {
-    return schema.safeParse(extractArgs(args, argMap));
+  ): z.SafeParseReturnType<unknown, T> {
+    // deno-lint-ignore no-explicit-any
+    return schema.safeParse(extractArgs(args, argMap as any)) as any;
   };
 }
 
