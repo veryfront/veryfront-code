@@ -11,6 +11,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should create renderer with empty client manifest", () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
+        projectDir: "/tmp/test-project",
       });
       assertEquals(renderer instanceof RSCRenderer, true);
     });
@@ -18,6 +19,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should create renderer with production mode", () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
+        projectDir: "/tmp/test-project",
         mode: "production",
       });
       assertEquals(renderer instanceof RSCRenderer, true);
@@ -26,6 +28,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should create renderer with development mode", () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
+        projectDir: "/tmp/test-project",
         mode: "development",
       });
       assertEquals(renderer instanceof RSCRenderer, true);
@@ -36,6 +39,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should render a simple HTML element", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
+        projectDir: "/tmp/test-project",
       });
 
       function SimpleComponent() {
@@ -51,6 +55,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should render a React element directly", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
+        projectDir: "/tmp/test-project",
       });
 
       const element = React.createElement("p", null, "direct element") as React.ReactElement;
@@ -61,6 +66,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should return empty clientRefs for server-only components", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
+        projectDir: "/tmp/test-project",
       });
 
       function ServerOnly() {
@@ -74,6 +80,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should accept custom props", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
+        projectDir: "/tmp/test-project",
       });
 
       function PropsComponent(props: { name: string }) {
@@ -87,6 +94,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should handle component returning null", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
+        projectDir: "/tmp/test-project",
       });
 
       function NullComponent() {
@@ -100,6 +108,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should clear client refs between renders", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
+        projectDir: "/tmp/test-project",
       });
 
       function Comp1() {
