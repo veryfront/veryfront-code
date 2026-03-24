@@ -334,33 +334,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     logger.debug("Step 4: fetchFileList START", { projectSlug, cacheKey });
 
     try {
-      let files: Array<{ path: string; content?: string }>;
-      try {
-        files = await fetchFileListForContext(this.client, this.contentContext);
-      } catch (fetchError) {
-        // Fallback: if a branch/push-ref returns 404, retry with "main".
-        // This handles orphaned push refs that were garbage-collected.
-        const is404 = fetchError instanceof Error &&
-          (fetchError.message.includes("404") || fetchError.message.includes("Not Found"));
-        const isBranch = this.contentContext.sourceType === "branch";
-        const branchName = this.contentContext.branch;
-        const isNotMain = branchName && branchName !== "main";
-
-        if (is404 && isBranch && isNotMain) {
-          logger.warn("Branch not found, falling back to main", {
-            projectSlug,
-            failedBranch: branchName,
-          });
-          this.contentContext = {
-            ...this.contentContext,
-            branch: "main",
-          };
-          this.client.setContext({ type: "branch", name: "main" });
-          files = await fetchFileListForContext(this.client, this.contentContext);
-        } else {
-          throw fetchError;
-        }
-      }
+      const files = await fetchFileListForContext(this.client, this.contentContext);
       const fileSummary = summarizeFileList(files);
 
       await this.cache.setAsync(cacheKey, files);
