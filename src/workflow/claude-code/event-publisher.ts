@@ -96,7 +96,7 @@ interface RedisClient {
   publish(channel: string, message: string): Promise<number>;
   subscribe(channel: string, listener: (message: string) => void): Promise<void>;
   unsubscribe(channel: string): Promise<void>;
-  quit(): Promise<void>;
+  close(): Promise<void>;
 }
 
 export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCodeEventSubscriber {
@@ -193,8 +193,8 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
     if (!this.initialized) return;
 
     await Promise.all([
-      this.publishClient?.quit(),
-      this.subscribeClient?.quit(),
+      this.publishClient?.close(),
+      this.subscribeClient?.close(),
     ]);
 
     this.publishClient = null;

@@ -196,7 +196,7 @@ export class RedisCache implements TokenCache {
       }
 
       try {
-        await client.quit();
+        await client.close();
       } catch (_) {
         // expected: close errors are non-critical
       } finally {
