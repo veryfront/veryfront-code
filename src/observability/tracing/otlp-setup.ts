@@ -132,12 +132,14 @@ export async function initializeOTLP(): Promise<void> {
       resource,
       spanProcessors: [new BatchSpanProcessor(exporter)],
     });
-    provider.register({ contextManager });
+
+    // In OTel SDK v2, provider.register() is removed.
+    // Set global tracer provider and context manager via the API directly.
+    traceApi = await import("@opentelemetry/api");
+    traceApi.trace.setGlobalTracerProvider(provider);
+    traceApi.context.setGlobalContextManager(contextManager);
 
     tracerProvider = provider;
-
-    // MUST be set before marking as initialized, otherwise withSpan will skip creating spans.
-    traceApi = await import("@opentelemetry/api");
 
     initialized = true;
     logger.info("OpenTelemetry OTLP tracing initialized", {

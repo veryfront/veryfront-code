@@ -107,7 +107,9 @@ export async function initializeOTLPWithApis(): Promise<void> {
       resource,
       spanProcessors: [new BatchSpanProcessor(exporter)],
     });
-    provider.register();
+
+    // In OTel SDK v2, provider.register() is removed.
+    trace.setGlobalTracerProvider(provider);
 
     tracerProvider = provider;
     tracer = trace.getTracer(config.serviceName);
