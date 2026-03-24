@@ -108,13 +108,13 @@ export async function initializeOTLP(): Promise<void> {
       "@opentelemetry/sdk-trace-base"
     );
     const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
-    const { Resource } = await import("@opentelemetry/resources");
+    const { resourceFromAttributes } = await import("@opentelemetry/resources");
     const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = await import(
       "@opentelemetry/semantic-conventions"
     );
     const { AsyncLocalStorageContextManager } = await import("@opentelemetry/context-async-hooks");
 
-    const resource = new Resource({
+    const resource = resourceFromAttributes({
       [ATTR_SERVICE_NAME]: config.serviceName,
       [ATTR_SERVICE_VERSION]: RUNTIME_VERSION,
     });
@@ -125,17 +125,21 @@ export async function initializeOTLP(): Promise<void> {
       headers: config.headers,
     });
 
-    const provider = new BasicTracerProvider({ resource });
-    provider.addSpanProcessor(new BatchSpanProcessor(exporter));
-
     const contextManager = new AsyncLocalStorageContextManager();
     contextManager.enable();
-    provider.register({ contextManager });
+
+    const provider = new BasicTracerProvider({
+      resource,
+      spanProcessors: [new BatchSpanProcessor(exporter)],
+    });
+
+    // In OTel SDK v2, provider.register() is removed.
+    // Set global tracer provider and context manager via the API directly.
+    traceApi = await import("@opentelemetry/api");
+    traceApi.trace.setGlobalTracerProvider(provider);
+    traceApi.context.setGlobalContextManager(contextManager);
 
     tracerProvider = provider;
-
-    // MUST be set before marking as initialized, otherwise withSpan will skip creating spans.
-    traceApi = await import("@opentelemetry/api");
 
     initialized = true;
     logger.info("OpenTelemetry OTLP tracing initialized", {

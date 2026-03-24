@@ -34,6 +34,12 @@ export interface KnowledgeParserResult {
   warnings: string[];
 }
 
+export interface KnowledgeParserInput {
+  filePath: string;
+  description?: string;
+  slug?: string;
+  sourceReference?: string;
+}
 type KnowledgeSource =
   | { kind: "local"; input: string; localPath: string }
   | { kind: "upload"; input: string; uploadPath: string; localPath: string };
@@ -464,6 +470,33 @@ export async function runKnowledgeParser(input: {
   sourceReference?: string;
   env?: Record<string, string>;
 }): Promise<KnowledgeParserResult> {
+  const [result] = await runKnowledgeParsers({
+    files: [{
+      filePath: input.filePath,
+      description: input.description,
+      slug: input.slug,
+      sourceReference: input.sourceReference,
+    }],
+    outputDir: input.outputDir,
+    env: input.env,
+  });
+
+  if (!result) {
+    throw new Error("knowledge ingest parser returned no results");
+  }
+
+  return result;
+}
+
+export async function runKnowledgeParsers(input: {
+  files: KnowledgeParserInput[];
+  outputDir: string;
+  env?: Record<string, string>;
+}): Promise<KnowledgeParserResult[]> {
+  if (!input.files.length) {
+    return [];
+  }
+
   const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-" });
   const inputJsonPath = `${tempDir}/input.json`;
   const outputJsonPath = `${tempDir}/output.json`;
@@ -474,11 +507,13 @@ export async function runKnowledgeParser(input: {
       await Deno.writeTextFile(
         inputJsonPath,
         JSON.stringify({
-          file_path: input.filePath,
+          files: input.files.map((file) => ({
+            file_path: file.filePath,
+            description: file.description,
+            slug: file.slug,
+            source_reference: file.sourceReference,
+          })),
           output_dir: input.outputDir,
-          description: input.description,
-          slug: input.slug,
-          source_reference: input.sourceReference,
         }),
       );
       await Deno.writeTextFile(scriptPath, knowledgeIngestPythonSource);
@@ -506,7 +541,8 @@ export async function runKnowledgeParser(input: {
       }
 
       const raw = await Deno.readTextFile(outputJsonPath);
-      return JSON.parse(raw) as KnowledgeParserResult;
+      const parsed = JSON.parse(raw) as KnowledgeParserResult | KnowledgeParserResult[];
+      return Array.isArray(parsed) ? parsed : [parsed];
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("knowledge ingest parser failed")) {
         throw error;

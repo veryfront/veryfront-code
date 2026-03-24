@@ -36,7 +36,8 @@ export const knowledgeHelp: CommandHelp = {
     "Primary subcommand: ingest",
     "`uploads/...` means a remote project upload; use `./uploads/...` or `/workspace/uploads/...` to force a local file",
     "`ingest` orchestrates upload resolution, parsing, and project file writes",
-    "Requires python3; non-text formats also require the supported parser packages unless you run inside the Veryfront sandbox",
-    "The Veryfront sandbox image includes `kreuzberg`, and knowledge ingest falls back to the built-in parser when `kreuzberg` is unavailable or extraction fails",
+    "Requires python3; install `docling` locally to match the sandbox parsing path for PDF, Office, and HTML sources",
+    "Supported PDF, Office, and HTML sources are parsed through `docling` when it is available",
+    "The Veryfront sandbox image includes `docling`, and knowledge ingest falls back to the built-in parser when `docling` is unavailable or extraction fails",
   ],
 };

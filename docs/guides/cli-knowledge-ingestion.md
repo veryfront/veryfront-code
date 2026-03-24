@@ -32,6 +32,7 @@ The command handles the orchestration for you:
 - Resolves whether the input is a remote upload or a local file
 - Pulls remote uploads into the workspace when needed
 - Parses supported documents into markdown
+- Uses `docling` for supported PDF, Office, and HTML sources
 - Writes the resulting `knowledge/*.md` file back into the project
 
 ## Why this matters
@@ -62,13 +63,15 @@ veryfront login
 
 `veryfront knowledge ingest` requires `python3`.
 
-Inside the Veryfront sandbox image, the embedded parser prefers `kreuzberg` for PDF, Office, and HTML extraction.
+Inside the Veryfront sandbox image, the embedded parser uses `docling` for PDF, Office, and HTML extraction.
 
-If you are running outside the Veryfront sandbox image and do not have `kreuzberg` installed, or if `kreuzberg` fails to extract a specific file, non-text formats fall back to the parser dependencies:
+If you are running outside the Veryfront sandbox image, install `docling` to match the sandbox parsing path:
 
 ```bash
-pip install pandas openpyxl xlrd pdfplumber python-docx python-pptx beautifulsoup4 lxml
+pip install docling pandas openpyxl xlrd pdfplumber python-docx python-pptx beautifulsoup4 lxml
 ```
+
+If `docling` is unavailable or fails to extract a specific file, non-text formats fall back to the built-in parser dependencies listed above.
 
 ## Single-file examples
 
@@ -103,6 +106,7 @@ veryfront knowledge ingest uploads/contracts/a.pdf uploads/contracts/b.pdf uploa
 ```
 
 The command preserves input order in the JSON result array, so agent workflows can match each output back to the original source path.
+Inside the sandbox, `knowledge ingest` may run longer than typical shell commands, since slow but valid `docling` runs are allowed to complete.
 
 ## Batch ingestion
 
@@ -217,9 +221,9 @@ veryfront knowledge ingest uploads/contracts/q1.pdf --project my-project --json
 
 Install the parser packages listed above, or run the command inside the Veryfront sandbox image where the knowledge-ingestion stack is already available.
 
-### `kreuzberg` is not installed
+### `docling` is not installed
 
-Inside the sandbox image, `kreuzberg` is preinstalled. Outside the sandbox, the command falls back to the Python parser stack for supported formats when `kreuzberg` is not installed or extraction fails, so install the parser packages above if you do not want to install `kreuzberg` locally.
+Inside the sandbox image, `docling` is preinstalled. Outside the sandbox, install `docling` if you want the same extraction path locally. If `docling` is not installed or extraction fails, the command falls back to the Python parser stack for supported formats.
 
 ## Recommended agent flow
 
