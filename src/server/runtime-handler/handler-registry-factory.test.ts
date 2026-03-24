@@ -82,6 +82,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     assertEquals(names.includes("NotFoundHandler"), true);
     assertEquals(names.includes("ApiHandlerWrapper"), true);
     assertEquals(names.includes("HMRHandler"), true);
+    assertEquals(names.includes("InternalAgentsListHandler"), true);
   });
 
   it("returns handlers sorted by priority (lowest number = highest priority)", () => {
@@ -90,13 +91,18 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
 
     // Verify the handlers are sorted by priority
     for (let i = 1; i < handlers.length; i++) {
-      const prevPriority = handlers[i - 1].metadata.priority;
-      const currPriority = handlers[i].metadata.priority;
+      const previousHandler = handlers[i - 1];
+      const currentHandler = handlers[i];
+      assertExists(previousHandler);
+      assertExists(currentHandler);
+
+      const prevPriority = previousHandler.metadata.priority;
+      const currPriority = currentHandler.metadata.priority;
       assertEquals(
         prevPriority <= currPriority,
         true,
-        `Handler "${handlers[i - 1].metadata.name}" (priority ${prevPriority}) ` +
-          `should come before "${handlers[i].metadata.name}" (priority ${currPriority})`,
+        `Handler "${previousHandler.metadata.name}" (priority ${prevPriority}) ` +
+          `should come before "${currentHandler.metadata.name}" (priority ${currPriority})`,
       );
     }
   });
@@ -118,6 +124,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     const { registry } = createHandlerRegistry(projectDir, adapter);
     const handlers = registry.getHandlers();
     const last = handlers[handlers.length - 1];
+    assertExists(last);
 
     assertEquals(last.metadata.name, "NotFoundHandler");
     assertEquals(last.metadata.priority, HandlerPriority.FALLBACK);
@@ -159,7 +166,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     const stats = registry.getStats();
 
     // Total count should remain the same
-    assertEquals(stats.totalHandlers, 32);
+    assertEquals(stats.totalHandlers, HANDLER_NAMES.length);
 
     // AuthHandler should still be the real one (not overridden)
     assertEquals(stats.handlerNames.includes("AuthHandler"), true);
@@ -213,7 +220,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     assertEquals(authHandler, mockAuth as Handler);
     assertEquals(ssrHandler, mockSSR as Handler);
     assertEquals(healthHandler, mockHealth as Handler);
-    assertEquals(registry.getStats().totalHandlers, 32);
+    assertEquals(registry.getStats().totalHandlers, HANDLER_NAMES.length);
   });
 
   it("ignores overrides with non-existent handler names", () => {
@@ -222,12 +229,12 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     const { registry } = createHandlerRegistry(projectDir, adapter, {
       overrides: {
         FakeHandler: mockFake,
-      },
+      } as unknown as Partial<Record<(typeof HANDLER_NAMES)[number], Handler>>,
     });
 
     // FakeHandler is not in the default list, so it should be ignored
     const stats = registry.getStats();
-    assertEquals(stats.totalHandlers, 32);
+    assertEquals(stats.totalHandlers, HANDLER_NAMES.length);
     assertEquals(stats.handlerNames.includes("FakeHandler"), false);
   });
 
@@ -236,7 +243,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
       overrides: {},
     });
 
-    assertEquals(registry.getStats().totalHandlers, 32);
+    assertEquals(registry.getStats().totalHandlers, HANDLER_NAMES.length);
   });
 
   it("works with debug mode enabled", () => {
@@ -244,7 +251,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
       debug: true,
     });
 
-    assertEquals(registry.getStats().totalHandlers, 32);
+    assertEquals(registry.getStats().totalHandlers, HANDLER_NAMES.length);
   });
 
   it("contains all security handler group", () => {

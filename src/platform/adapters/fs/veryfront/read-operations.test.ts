@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -50,7 +50,7 @@ function createReadOps(
   cacheEnabled: boolean,
   contextProvider?: ContentContextProvider,
   pathResolver?: (path: string) => string,
-  getFileListCache?: () => Promise<Array<{ path: string; content: string }>>,
+  getFileListCache?: () => Promise<Array<{ path: string; content?: string }>>,
   pathNormalizer = new PathNormalizer(),
 ): ReadOperations {
   return new ReadOperations(
@@ -370,7 +370,7 @@ describe("ReadOperations", () => {
       assertEquals(apiFetchCount, 0);
     });
 
-    it("should fall back to API for explicit dotted files missing from file list cache", async () => {
+    it("should fail fast for explicit files missing from a fresh file list cache", async () => {
       let resolveCallCount = 0;
       let apiFetchCount = 0;
 
@@ -395,11 +395,75 @@ describe("ReadOperations", () => {
 
       readOps.setFileListReadyPromise(Promise.resolve());
 
+      await assertRejects(
+        () => readOps.readTextFile("deno.json"),
+        Error,
+        "404 Not Found",
+      );
+
+      assertEquals(resolveCallCount, 0);
+      assertEquals(apiFetchCount, 0);
+    });
+
+    it("should fetch an exact indexed file when the file list omits inline content", async () => {
+      let fileFetchCount = 0;
+
+      const client = createMockClient({
+        getPublishedFileContent: (path: string) => {
+          fileFetchCount++;
+          return Promise.resolve(`content for ${path}`);
+        },
+      });
+
+      const readOps = createReadOps(
+        client,
+        true,
+        createReleaseContext("rel-deno-inline-miss"),
+        (path: string) => path,
+        () => Promise.resolve([{ path: "deno.json" }]),
+      );
+
+      readOps.setFileListReadyPromise(Promise.resolve());
+
       const content = await readOps.readTextFile("deno.json");
 
-      assertEquals(content, "published API content");
-      assertEquals(resolveCallCount, 1);
-      assertEquals(apiFetchCount, 1);
+      assertEquals(content, "content for deno.json");
+      assertEquals(fileFetchCount, 1);
+    });
+
+    it("should fetch the resolved extension candidate directly when the file list knows the path", async () => {
+      let resolveCallCount = 0;
+      let publishedFetchPath: string | undefined;
+
+      const client = createMockClient({
+        resolveFileWithExtension: () => {
+          resolveCallCount++;
+          return Promise.resolve({
+            path: "pages/home.tsx",
+            content: "resolved via API",
+          });
+        },
+        getPublishedFileContent: (path: string) => {
+          publishedFetchPath = path;
+          return Promise.resolve("content from exact fetch");
+        },
+      });
+
+      const readOps = createReadOps(
+        client,
+        true,
+        createReleaseContext("rel-candidate-inline-miss"),
+        (path: string) => path,
+        () => Promise.resolve([{ path: "pages/home.tsx" }]),
+      );
+
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const content = await readOps.readTextFile("pages/home");
+
+      assertEquals(content, "content from exact fetch");
+      assertEquals(resolveCallCount, 0);
+      assertEquals(publishedFetchPath, "pages/home.tsx");
     });
 
     it("should cache extension resolution to avoid repeated API calls", async () => {

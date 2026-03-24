@@ -21,18 +21,16 @@ import {
   setCachedTransformAsync,
 } from "#veryfront/transforms/esm/transform-cache.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
-import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
-import { validateBundleGroup } from "#veryfront/transforms/esm/bundle-manifest.ts";
+import { validateCachedBundlesByManifestOrCode } from "#veryfront/transforms/esm/cached-bundle-validation.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
 import {
   getModulePathCache,
   lookupMdxEsmCache,
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
+import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -225,7 +223,18 @@ export async function transformModuleWithDeps(
     const sourceKey = encodeURIComponent(contentSourceId);
     const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
 
-    const mdxCacheResult = await lookupMdxEsmCache(filePath, mdxCacheDir, projectDir);
+    const mdxCacheResult = await lookupMdxEsmCache(
+      filePath,
+      mdxCacheDir,
+      projectDir,
+      undefined,
+      contentSourceId
+        ? {
+          projectId,
+          contentSourceId,
+        }
+        : undefined,
+    );
     if (mdxCacheResult.status === "hit") {
       moduleCache.set(cacheKey, mdxCacheResult.path);
       return mdxCacheResult.path;
@@ -344,27 +353,21 @@ export async function transformModuleWithDeps(
   const cacheDir = getHttpBundleCacheDir();
   let bundlesValid = true;
 
-  if (transformResult.cacheHit && transformResult.bundleManifestId) {
-    const validation = await validateBundleGroup(transformResult.bundleManifestId, cacheDir);
+  if (transformResult.cacheHit) {
+    const validation = await validateCachedBundlesByManifestOrCode(
+      transformedCode,
+      transformResult.bundleManifestId,
+      cacheDir,
+    );
     if (!validation.valid) {
-      logger.warn("Bundle manifest validation failed, re-transforming", {
+      logger.warn("Cached HTTP bundle validation failed, re-transforming", {
         filePath,
-        manifestId: transformResult.bundleManifestId.slice(0, 12),
+        manifestId: transformResult.bundleManifestId?.slice(0, 12),
         failedHashes: validation.failedHashes,
+        reason: validation.reason,
+        source: validation.source,
       });
       bundlesValid = false;
-    }
-  } else {
-    const bundlePaths = extractHttpBundlePaths(transformedCode);
-    if (bundlePaths.length > 0) {
-      const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-      if (failed.length > 0) {
-        logger.warn("HTTP bundle recovery failed, re-transforming", {
-          filePath,
-          failed,
-        });
-        bundlesValid = false;
-      }
     }
   }
 
@@ -463,7 +466,7 @@ export async function transformModuleWithDeps(
 
   if (contentSourceId) {
     const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
-    const mdxCacheKey = `v${VERSION}:${normalizedPath}`;
+    const mdxCacheKey = buildMdxEsmPathCacheKey(normalizedPath);
     const cache = await getModulePathCache(tmpDir);
     cache.set(mdxCacheKey, tempFilePath);
 

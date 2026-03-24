@@ -2,10 +2,11 @@ import { TokenManager, type TokenScope } from "./token-manager.ts";
 import { type ParsedDomain, parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { cwd } from "#veryfront/platform/compat/process.ts";
+import { cwd, getEnv } from "#veryfront/platform/compat/process.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
+import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from "jose";
 
 export const INTERNAL_PROXY_HEADERS = [
   "x-token",
@@ -33,6 +34,29 @@ interface DomainLookupResult {
     active_release_id?: string | null;
     protected?: boolean;
   }>;
+}
+
+const remoteJwksByUrl = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+
+function getApiJwks(apiBaseUrl: string, logger?: ProxyLogger) {
+  try {
+    const normalizedBaseUrl = apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`;
+    const jwksUrl = new URL(".well-known/jwks.json", normalizedBaseUrl);
+    const cacheKey = jwksUrl.toString();
+    let jwks = remoteJwksByUrl.get(cacheKey);
+
+    if (!jwks) {
+      jwks = createRemoteJWKSet(jwksUrl);
+      remoteJwksByUrl.set(cacheKey, jwks);
+    }
+
+    return jwks;
+  } catch (error) {
+    logger?.error("Invalid API base URL for JWKS lookup", error as Error, {
+      apiBaseUrl,
+    });
+    return undefined;
+  }
 }
 
 async function lookupProjectByDomain(
@@ -150,19 +174,67 @@ function extractUserToken(cookieHeader: string): string | undefined {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
-function extractUserIdFromToken(token: string): string | undefined {
+function getStatusFromError(error: unknown): number | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = message.match(/failed: (\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
+async function extractUserIdFromToken(
+  token: string,
+  apiBaseUrl: string,
+  log?: ProxyLogger,
+): Promise<string | undefined> {
+  let algorithm: string | undefined;
+
   try {
-    const payload = token.split(".")[1];
-    if (!payload) return undefined;
-    // JWT payloads are base64url-encoded: normalize to standard base64 before decoding
-    let base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const remainder = base64.length % 4;
-    if (remainder === 2) base64 += "==";
-    else if (remainder === 3) base64 += "=";
-    const decoded = JSON.parse(atob(base64));
-    return decoded?.userId;
-  } catch (_) {
-    /* expected: malformed JWT token */
+    algorithm = decodeProtectedHeader(token).alg;
+  } catch (error) {
+    log?.debug("Failed to decode JWT header", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+
+  if (algorithm === "RS256") {
+    const jwks = getApiJwks(apiBaseUrl, log);
+    if (!jwks) return undefined;
+
+    try {
+      const { payload } = await jwtVerify(token, jwks, {
+        algorithms: ["RS256"],
+      });
+      return (payload as { userId?: string }).userId;
+    } catch (error) {
+      log?.debug("RS256 JWT verification failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  }
+
+  if (algorithm !== "HS256") {
+    log?.debug("Unsupported JWT algorithm", { algorithm: algorithm ?? null });
+    return undefined;
+  }
+
+  const jwtSecret = getEnv("JWT_SECRET");
+
+  if (!jwtSecret) {
+    log?.warn("JWT_SECRET not configured — cannot verify user token");
+    return undefined;
+  }
+
+  try {
+    const secret = new TextEncoder().encode(jwtSecret);
+    const { payload } = await jwtVerify(token, secret, {
+      algorithms: ["HS256"],
+    });
+    return (payload as { userId?: string }).userId;
+  } catch (error) {
+    log?.debug("JWT verification failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return undefined;
   }
 }
@@ -275,13 +347,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnPath)}`;
   }
 
-  function checkProtectedAccess(
+  async function checkProtectedAccess(
     req: Request,
     matchingEnv: NonNullable<DomainLookupResult["environments"]>[number] | undefined,
     userToken: string | undefined,
     users: DomainLookupResult["users"],
     logContext: Record<string, unknown>,
-  ): { status: number; message: string; redirectUrl?: string } | null {
+  ): Promise<{ status: number; message: string; redirectUrl?: string } | null> {
     if (!matchingEnv?.protected) return null;
 
     if (!userToken) {
@@ -294,9 +366,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       return { status: 302, message: "Authentication required", redirectUrl };
     }
 
-    const userId = extractUserIdFromToken(userToken);
+    const userId = await extractUserIdFromToken(
+      userToken,
+      config.apiBaseUrl,
+      logger,
+    );
     if (!userId) {
-      // Malformed token — treat as unauthenticated so user can re-sign-in
       const redirectUrl = makeAuthRedirectUrl(req);
       logger?.info("Could not extract userId from token", {
         ...logContext,
@@ -333,7 +408,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     const matchingEnv = lookupResult.environments?.find(envMatcher);
 
-    const protectionError = checkProtectedAccess(
+    const protectionError = await checkProtectedAccess(
       req,
       matchingEnv,
       userToken,
@@ -391,6 +466,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const userToken = extractUserToken(cookieHeader);
 
     let token: string | undefined;
+    let tokenFetchError: unknown;
 
     if (isLocalProject) {
       logger?.debug("Local project, skipping token fetch", { localPath });
@@ -406,6 +482,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           try {
             token = await tokenManager.getToken(scope, projectSlug, customDomain);
           } catch (error) {
+            tokenFetchError = error;
             logger?.error("Token fetch failed", error as Error, { projectSlug, customDomain });
           }
         }
@@ -417,6 +494,29 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       }
 
       const base = { scope, host, parsedDomain };
+
+      if (projectSlug && scope === "preview" && !token) {
+        const status = getStatusFromError(tokenFetchError);
+        if (status === 404) {
+          logger?.info("Preview project not found", { projectSlug, host });
+          return makeErrorContext(
+            base,
+            404,
+            "Preview project not found",
+            undefined,
+            undefined,
+            "project-not-found",
+          );
+        }
+
+        logger?.warn("Preview request has no usable token", {
+          projectSlug,
+          host,
+          hadUserToken: !!userToken,
+          hadTokenFetchError: !!tokenFetchError,
+        });
+        return makeErrorContext(base, 502, "Failed to authenticate preview request");
+      }
 
       if (isCustomDomain && !projectSlug) {
         if (!token) {
@@ -441,7 +541,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         releaseId = matchingEnv?.active_release_id ?? undefined;
         environmentId = matchingEnv?.id;
 
-        const protectionError = checkProtectedAccess(
+        const protectionError = await checkProtectedAccess(
           req,
           matchingEnv,
           userToken,
@@ -517,6 +617,18 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             resolved.error.message,
             token,
             resolved.error.redirectUrl,
+          );
+        }
+
+        if (!resolved.projectId) {
+          logger?.info("Preview project not found after lookup", { projectSlug, host });
+          return makeErrorContext(
+            base,
+            404,
+            "Preview project not found",
+            token,
+            undefined,
+            "project-not-found",
           );
         }
 

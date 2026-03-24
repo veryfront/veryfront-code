@@ -1,10 +1,40 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { detokenize, tokenize } from "./http-cache-wrapper.ts";
+import { ApiCacheBackend } from "#veryfront/cache/backend.ts";
+import {
+  __setDistributedCacheAccessorForTests,
+  detokenize,
+  initializeHttpModuleDistributedCache,
+  tokenize,
+} from "./http-cache-wrapper.ts";
 import { CACHE_DIR_TOKEN } from "./http-cache-invariants.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 
 describe("transforms/esm/http-cache-wrapper", () => {
+  describe("initializeHttpModuleDistributedCache", () => {
+    it("returns false when no distributed cache is available", async () => {
+      __setDistributedCacheAccessorForTests(async () => null);
+
+      try {
+        assertEquals(await initializeHttpModuleDistributedCache(), false);
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+      }
+    });
+
+    it("returns true when a distributed cache backend is available", async () => {
+      __setDistributedCacheAccessorForTests(
+        async () => new ApiCacheBackend({ apiBaseUrl: "http://veryfront-api:80" }),
+      );
+
+      try {
+        assertEquals(await initializeHttpModuleDistributedCache(), true);
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+      }
+    });
+  });
+
   describe("tokenize / detokenize roundtrip", () => {
     it("roundtrips local cache paths through tokenize and detokenize", () => {
       const cacheDir = getCacheBaseDir().replace(/\/$/, "");

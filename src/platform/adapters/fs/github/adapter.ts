@@ -1,6 +1,7 @@
 import { logger } from "#veryfront/utils";
 import { CONFIG_INVALID } from "#veryfront/errors";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import type { ResolveFileOptions } from "../../base.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import type { FSAdapter, FSAdapterConfig } from "../veryfront/types.ts";
 import { GitHubApiClient } from "./github-api-client.ts";
@@ -115,9 +116,9 @@ export class GitHubFSAdapter implements FSAdapter {
     return this.dirOps.readdir(path);
   }
 
-  async resolveFile(basePath: string): Promise<string | null> {
+  async resolveFile(basePath: string, options?: ResolveFileOptions): Promise<string | null> {
     await this.ensureInitialized();
-    return this.statOps.resolveFile(basePath);
+    return this.statOps.resolveFile(basePath, options);
   }
 
   getCacheStats(): {

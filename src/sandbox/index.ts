@@ -17,4 +17,17 @@
  * @module
  */
 
-export { type ExecResult, type ExecStreamEvent, Sandbox, type SandboxOptions } from "./sandbox.ts";
+export {
+  type CommandJob,
+  type CommandJobHeartbeatStatus,
+  type CommandJobOutput,
+  type CommandJobStatus,
+  type ExecOptions,
+  type ExecResult,
+  type ExecStreamEvent,
+  Sandbox,
+  type SandboxListOptions,
+  type SandboxListResult,
+  type SandboxOptions,
+  type SandboxSession,
+} from "./sandbox.ts";

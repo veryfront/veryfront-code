@@ -3,6 +3,13 @@
  * (breakpoints, timeouts, HTTP codes), hashing, memoization, and feature flags.
  *
  * @module utils
+ *
+ * @example Structured logging
+ * ```ts
+ * import { serverLogger } from "veryfront/utils";
+ *
+ * serverLogger.info("Booting server", { project_id: "proj_123" });
+ * ```
  */
 
 export {
@@ -17,11 +24,13 @@ export {
 export {
   agentLogger,
   bundlerLogger,
+  createJobUserLogger,
   logger,
   refreshLoggerConfig,
   rendererLogger,
   serverLogger,
 } from "./logger/index.ts";
+export type { Logger } from "./logger/index.ts";
 
 export {
   BREAKPOINT_LG,

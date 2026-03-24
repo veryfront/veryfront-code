@@ -9,6 +9,8 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import { buildEsmShUrl } from "../import-rewriter/url-builder.ts";
+import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "./package-registry.ts";
 
 const logger = rendererLogger.component("http-cache");
@@ -149,7 +151,16 @@ export function resolveBareSpecifier(
   const mapped = resolveImport(specifier, importMap);
   if (mapped !== specifier) return mapped;
 
-  return `https://esm.sh/${specifier}?target=es2022`;
+  const parsed = parseBarePackageSpecifier(specifier);
+  if (parsed == null) {
+    return `https://esm.sh/${specifier}?target=es2022`;
+  }
+
+  return buildEsmShUrl(
+    parsed.packageName,
+    parsed.version ?? undefined,
+    parsed.subpath ?? undefined,
+  );
 }
 
 /**

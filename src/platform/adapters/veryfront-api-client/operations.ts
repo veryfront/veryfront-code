@@ -1,6 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { z } from "zod";
-import { requestWithRetry, type RetryConfig } from "./retry-handler.ts";
+import { type RequestOptions, requestWithRetry, type RetryConfig } from "./retry-handler.ts";
 import { API_CLIENT_ERROR } from "./types.ts";
 import {
   BranchFileDetailSchema,
@@ -15,6 +15,7 @@ import {
   type ProjectFile,
   ProjectSchema,
   ReleaseFileDetailSchema,
+  StyleArtifactResolveResponseSchema,
 } from "./schemas/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -53,6 +54,41 @@ export interface FileDetail {
   release_version?: string | null;
 }
 
+export interface StyleArtifactSelector {
+  branch?: string;
+  environmentName?: string;
+  releaseId?: string;
+}
+
+export interface ResolveStyleArtifactInput extends StyleArtifactSelector {
+  styleProfileHash: string;
+}
+
+export interface EnsureStyleArtifactBuildInput extends ResolveStyleArtifactInput {
+  force?: boolean;
+}
+
+export interface UpsertStyleArtifactInput extends ResolveStyleArtifactInput {
+  status?: "building" | "ready" | "failed";
+  artifactHash?: string;
+  assetPath?: string;
+  contentType?: string;
+  etag?: string;
+  buildJobId?: string;
+  failureReason?: string;
+}
+
+export interface ProjectStyleArtifactResolution {
+  status: "ready" | "missing" | "building" | "failed";
+  artifactHash?: string;
+  assetPath?: string;
+  etag?: string;
+  contentType?: string;
+  buildJobId?: string;
+  failureReason?: string;
+  updatedAt?: string;
+}
+
 function buildListParams(options: ListFilesOptions): URLSearchParams {
   const { cursor, limit = DEFAULT_PAGE_LIMIT, pattern, sortBy = "updated_at", sortOrder = "desc" } =
     options;
@@ -78,6 +114,32 @@ function mapProjectFile<T extends ProjectFile>(file: T): ProjectFile {
     type: file.type,
     size: file.size,
     updated_at: file.updated_at,
+  };
+}
+
+function buildStyleArtifactParams(input: ResolveStyleArtifactInput): URLSearchParams {
+  const params = new URLSearchParams({
+    style_profile_hash: input.styleProfileHash,
+  });
+
+  if (input.branch) params.set("branch", input.branch);
+  if (input.environmentName) params.set("environment_name", input.environmentName);
+  if (input.releaseId) params.set("release_id", input.releaseId);
+
+  return params;
+}
+
+function mapStyleArtifactResolution(raw: unknown): ProjectStyleArtifactResolution {
+  const response = StyleArtifactResolveResponseSchema.parse(raw);
+  return {
+    status: response.status,
+    artifactHash: response.artifact_hash,
+    assetPath: response.asset_path,
+    etag: response.etag,
+    contentType: response.content_type,
+    buildJobId: response.build_job_id,
+    failureReason: response.failure_reason,
+    updatedAt: response.updated_at,
   };
 }
 
@@ -154,14 +216,13 @@ export class VeryfrontAPIOperations {
 
   async listBranchFiles(
     projectRef: string,
-    branchName = "main",
+    branchRef = "main",
     options: ListFilesOptions = {},
   ): Promise<FileListResult> {
     const params = buildListParams(options);
-    const url = `/projects/${encodeURIComponent(projectRef)}/branches/${
-      encodeURIComponent(branchName)
-    }/files?${params}`;
-    logger.debug("listBranchFiles", { projectRef, branchName, pattern: options.pattern });
+    params.set("branch", branchRef);
+    const url = `/projects/${encodeURIComponent(projectRef)}/files?${params}`;
+    logger.debug("listBranchFiles", { projectRef, branchRef, pattern: options.pattern });
 
     const raw = await this.request(url);
     const response = ListBranchFilesResponseSchema.parse(raw);
@@ -174,11 +235,11 @@ export class VeryfrontAPIOperations {
 
   async listAllBranchFiles(
     projectRef: string,
-    branchName = "main",
+    branchRef = "main",
     options: Omit<ListFilesOptions, "cursor"> = {},
   ): Promise<ProjectFile[]> {
     const allFiles = await listAllFiles((cursor) =>
-      this.listBranchFiles(projectRef, branchName, {
+      this.listBranchFiles(projectRef, branchRef, {
         ...options,
         cursor,
         limit: DEFAULT_PAGE_LIMIT,
@@ -187,21 +248,22 @@ export class VeryfrontAPIOperations {
 
     logger.debug("listAllBranchFiles DONE", {
       projectRef,
-      branchName,
+      branchRef,
       totalFiles: allFiles.length,
     });
 
     return allFiles;
   }
 
-  getBranchFile(projectRef: string, branchName: string, pathOrId: string): Promise<FileDetail> {
+  getBranchFile(projectRef: string, branchRef: string, pathOrId: string): Promise<FileDetail> {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
-        const url = `/projects/${encodeURIComponent(projectRef)}/branches/${
-          encodeURIComponent(branchName)
-        }/files/${encodeURIComponent(pathOrId)}`;
-        logger.debug("getBranchFile", { projectRef, branchName, pathOrId });
+        const params = new URLSearchParams({ branch: branchRef });
+        const url = `/projects/${encodeURIComponent(projectRef)}/files/${
+          encodeURIComponent(pathOrId)
+        }?${params}`;
+        logger.debug("getBranchFile", { projectRef, branchRef, pathOrId });
 
         const raw = await this.request(url);
         const response = BranchFileDetailSchema.parse(raw);
@@ -217,7 +279,7 @@ export class VeryfrontAPIOperations {
       {
         "api.operation": "getBranchFile",
         "api.project": projectRef,
-        "api.branch": branchName,
+        "api.branch": branchRef,
         "api.path": pathOrId,
       },
     );
@@ -423,11 +485,102 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  private request(endpoint: string): Promise<unknown> {
+  async resolveStyleArtifact(
+    projectRef: string,
+    input: ResolveStyleArtifactInput,
+  ): Promise<ProjectStyleArtifactResolution> {
+    const params = buildStyleArtifactParams(input);
+    const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current?${params}`;
+    logger.debug("resolveStyleArtifact", {
+      projectRef,
+      branch: input.branch,
+      environmentName: input.environmentName,
+      releaseId: input.releaseId,
+      styleProfileHash: input.styleProfileHash,
+    });
+
+    return mapStyleArtifactResolution(await this.request(url));
+  }
+
+  async ensureStyleArtifactBuild(
+    projectRef: string,
+    input: EnsureStyleArtifactBuildInput,
+  ): Promise<ProjectStyleArtifactResolution> {
+    const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current/builds`;
+    logger.debug("ensureStyleArtifactBuild", {
+      projectRef,
+      branch: input.branch,
+      environmentName: input.environmentName,
+      releaseId: input.releaseId,
+      styleProfileHash: input.styleProfileHash,
+      force: input.force ?? false,
+    });
+
+    return mapStyleArtifactResolution(
+      await this.request(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          style_profile_hash: input.styleProfileHash,
+          branch: input.branch,
+          environment_name: input.environmentName,
+          release_id: input.releaseId,
+          force: input.force ?? false,
+        }),
+      }),
+    );
+  }
+
+  async upsertStyleArtifact(
+    projectRef: string,
+    input: UpsertStyleArtifactInput,
+  ): Promise<ProjectStyleArtifactResolution> {
+    const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current`;
+    logger.debug("upsertStyleArtifact", {
+      projectRef,
+      branch: input.branch,
+      environmentName: input.environmentName,
+      releaseId: input.releaseId,
+      styleProfileHash: input.styleProfileHash,
+      status: input.status ?? "ready",
+      artifactHash: input.artifactHash,
+    });
+
+    return mapStyleArtifactResolution(
+      await this.request(url, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          style_profile_hash: input.styleProfileHash,
+          branch: input.branch,
+          environment_name: input.environmentName,
+          release_id: input.releaseId,
+          status: input.status ?? "ready",
+          artifact_hash: input.artifactHash,
+          asset_path: input.assetPath,
+          content_type: input.contentType,
+          etag: input.etag,
+          build_job_id: input.buildJobId,
+          failure_reason: input.failureReason,
+        }),
+      }),
+    );
+  }
+
+  private request(endpoint: string, options: RequestOptions = {}): Promise<unknown> {
     return withSpan(
       SpanNames.API_REQUEST,
       () =>
-        requestWithRetry(`${this.apiBaseUrl}${endpoint}`, this.tokenProvider(), this.retryConfig),
+        requestWithRetry(
+          `${this.apiBaseUrl}${endpoint}`,
+          this.tokenProvider(),
+          this.retryConfig,
+          options,
+        ),
       { "api.endpoint": endpoint, "api.base_url": this.apiBaseUrl },
     );
   }

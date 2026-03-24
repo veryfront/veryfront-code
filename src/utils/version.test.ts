@@ -1,6 +1,13 @@
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createBuildVersion, SERVER_START_TIME, VERSION } from "./version.ts";
+import {
+  createBuildVersion,
+  normalizeVeryfrontVersion,
+  resolveRuntimeVersion,
+  RUNTIME_VERSION,
+  SERVER_START_TIME,
+  VERSION,
+} from "./version.ts";
 
 describe("version", () => {
   describe("VERSION", () => {
@@ -11,6 +18,51 @@ describe("version", () => {
 
     it("should look like a semver version", () => {
       assert(/^\d+\.\d+\.\d+/.test(VERSION), `VERSION "${VERSION}" does not match semver pattern`);
+    });
+  });
+
+  describe("normalizeVeryfrontVersion", () => {
+    it("strips a leading v from release tags", () => {
+      assertEquals(normalizeVeryfrontVersion("v1.2.3"), "1.2.3");
+    });
+
+    it("preserves plain semver values", () => {
+      assertEquals(normalizeVeryfrontVersion("1.2.3"), "1.2.3");
+    });
+  });
+
+  describe("resolveRuntimeVersion", () => {
+    it("prefers VERYFRONT_VERSION over other sources", () => {
+      assertEquals(
+        resolveRuntimeVersion({
+          veryfrontVersion: "v1.2.3",
+          releaseVersion: "v2.0.0",
+          denoVersion: "3.0.0",
+          fallbackVersion: "4.0.0",
+        }),
+        "1.2.3",
+      );
+    });
+
+    it("falls back to release version before deno metadata", () => {
+      assertEquals(
+        resolveRuntimeVersion({
+          releaseVersion: "v2.0.0",
+          denoVersion: "3.0.0",
+          fallbackVersion: "4.0.0",
+        }),
+        "2.0.0",
+      );
+    });
+
+    it("falls back to deno metadata before the hard-coded fallback", () => {
+      assertEquals(
+        resolveRuntimeVersion({
+          denoVersion: "3.0.0",
+          fallbackVersion: "4.0.0",
+        }),
+        "3.0.0",
+      );
     });
   });
 
@@ -28,7 +80,7 @@ describe("version", () => {
 
   describe("createBuildVersion", () => {
     it("should return object with framework version", () => {
-      assertEquals(createBuildVersion().framework, VERSION);
+      assertEquals(createBuildVersion().framework, RUNTIME_VERSION);
     });
 
     it("should return object with server start time", () => {

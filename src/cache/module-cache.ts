@@ -17,6 +17,11 @@ const logger = rendererLogger.component("module-cache");
 let moduleCache: LRUCache<string, string> | null = null;
 let esmCache: LRUCache<string, string> | null = null;
 
+export interface ModuleCacheMap extends Map<string, string> {
+  getOrInsert(key: string, value: string): string;
+  getOrInsertComputed(key: string, callback: (key: string) => string): string;
+}
+
 interface ModuleCacheStats {
   moduleCache: {
     size: number;
@@ -89,71 +94,104 @@ export function getEsmCache(): LRUCache<string, string> {
   return getOrInitPodCache(esmPodCacheOptions);
 }
 
-export function createModuleCache(): Map<string, string> {
+export function createModuleCache(): ModuleCacheMap {
   return createMapInterface(getModuleCache());
 }
 
-export function createEsmCache(): Map<string, string> {
+export function createEsmCache(): ModuleCacheMap {
   return createMapInterface(getEsmCache());
 }
 
-function createMapInterface(cache: LRUCache<string, string>): Map<string, string> {
-  const map: Map<string, string> = {
-    get(key: string): string | undefined {
-      return cache.get(key);
-    },
-    set(key: string, value: string): Map<string, string> {
-      cache.set(key, value);
-      return map;
-    },
-    has(key: string): boolean {
-      return cache.has(key);
-    },
-    delete(key: string): boolean {
-      return cache.delete(key);
-    },
-    clear(): void {
-      cache.clear();
-    },
-    get size(): number {
-      return cache.size;
-    },
-    keys(): MapIterator<string> {
-      return cache.keys() as unknown as MapIterator<string>;
-    },
-    values(): MapIterator<string> {
-      const keysIter = cache.keys();
-      const cacheRef = cache;
-      return (function* () {
-        for (const key of keysIter) {
-          const value = cacheRef.get(key);
-          if (value !== undefined) yield value;
-        }
-      })() as unknown as MapIterator<string>;
-    },
-    entries(): MapIterator<[string, string]> {
-      const keysIter = cache.keys();
-      const cacheRef = cache;
-      return (function* () {
-        for (const key of keysIter) {
-          const value = cacheRef.get(key);
-          if (value !== undefined) yield [key, value] as [string, string];
-        }
-      })() as unknown as MapIterator<[string, string]>;
-    },
-    forEach(callback: (value: string, key: string, map: Map<string, string>) => void): void {
-      for (const key of cache.keys()) {
-        const value = cache.get(key);
-        if (value !== undefined) callback(value, key, map);
-      }
-    },
-    [Symbol.iterator](): MapIterator<[string, string]> {
-      return map.entries();
-    },
-    [Symbol.toStringTag]: "Map",
-  };
+function createMapInterface(cache: LRUCache<string, string>): ModuleCacheMap {
+  return new LRUBackedMap(cache);
+}
 
-  return map;
+class LRUBackedMap implements ModuleCacheMap {
+  readonly [Symbol.toStringTag] = "Map";
+
+  constructor(private readonly cache: LRUCache<string, string>) {
+  }
+
+  get(key: string): string | undefined {
+    return this.cache.get(key);
+  }
+
+  set(key: string, value: string): this {
+    this.cache.set(key, value);
+    return this;
+  }
+
+  has(key: string): boolean {
+    return this.cache.has(key);
+  }
+
+  delete(key: string): boolean {
+    return this.cache.delete(key);
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+
+  getOrInsert(key: string, value: string): string {
+    const existing = this.cache.get(key);
+    if (existing !== undefined) return existing;
+
+    this.cache.set(key, value);
+    return value;
+  }
+
+  getOrInsertComputed(key: string, callback: (key: string) => string): string {
+    const existing = this.cache.get(key);
+    if (existing !== undefined) return existing;
+
+    const value = callback(key);
+    this.cache.set(key, value);
+    return value;
+  }
+
+  get size(): number {
+    return this.cache.size;
+  }
+
+  keys(): MapIterator<string> {
+    return this.cache.keys() as unknown as MapIterator<string>;
+  }
+
+  values(): MapIterator<string> {
+    const keysIter = this.cache.keys();
+    const cacheRef = this.cache;
+    return (function* () {
+      for (const key of keysIter) {
+        const value = cacheRef.get(key);
+        if (value !== undefined) yield value;
+      }
+    })() as unknown as MapIterator<string>;
+  }
+
+  entries(): MapIterator<[string, string]> {
+    const keysIter = this.cache.keys();
+    const cacheRef = this.cache;
+    return (function* () {
+      for (const key of keysIter) {
+        const value = cacheRef.get(key);
+        if (value !== undefined) yield [key, value] as [string, string];
+      }
+    })() as unknown as MapIterator<[string, string]>;
+  }
+
+  forEach(
+    callback: (value: string, key: string, map: Map<string, string>) => void,
+    thisArg?: unknown,
+  ): void {
+    for (const [key, value] of this.entries()) {
+      callback.call(thisArg, value, key, this);
+    }
+  }
+
+  [Symbol.iterator](): MapIterator<[string, string]> {
+    return this.entries();
+  }
 }
 
 export function getModuleCacheStats(): ModuleCacheStats {

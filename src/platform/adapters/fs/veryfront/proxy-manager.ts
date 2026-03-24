@@ -3,18 +3,8 @@ import { CACHE_INVARIANT_VIOLATION, INVALID_ARGUMENT } from "#veryfront/errors";
 import { buildProxyManagerCacheKey } from "#veryfront/cache";
 import { VeryfrontFSAdapter } from "./index.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
-import {
-  clearSSRModuleCache,
-  clearSSRModuleCacheForProject,
-} from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
-import { clearRouterDetectionCacheForProject } from "#veryfront/rendering/router-detection.ts";
-import {
-  clearModulePathCache,
-  invalidateModulePaths,
-} from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import { clearSnippetCacheForProject } from "#veryfront/rendering/snippet-renderer.ts";
-import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
 import { GetAdapterParamsSchema } from "./schemas/index.ts";
+import { createDefaultInvalidationCallbacks } from "./default-invalidation-callbacks.ts";
 
 const logger = baseLogger.component("proxy-fs-adapter-manager");
 
@@ -305,16 +295,9 @@ export class ProxyFSAdapterManager {
         projectId,
         apiToken: effectiveToken,
       },
-      invalidationCallbacks: {
-        clearSSRModuleCache,
-        clearModulePathCache,
-        invalidateModulePaths,
-        clearSSRModuleCacheForProject,
-        clearRouterDetectionCacheForProject,
-        clearSnippetCacheForProject,
-        clearRendererCacheForProject,
-        ...this.baseConfig.invalidationCallbacks,
-      },
+      invalidationCallbacks: createDefaultInvalidationCallbacks(
+        this.baseConfig.invalidationCallbacks,
+      ),
     };
 
     const adapter = new VeryfrontFSAdapter(config);

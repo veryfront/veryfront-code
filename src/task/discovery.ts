@@ -25,7 +25,7 @@ import { logger as baseLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
-import { loadHandlerModule } from "#veryfront/routing/api/module-loader/loader.ts";
+import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
 import type { TaskDefinition } from "./types.ts";
 import { isTaskDefinition } from "./types.ts";
 
@@ -144,17 +144,13 @@ export async function discoverTasks(
 
     for (const file of files) {
       try {
-        const module = await loadHandlerModule({
-          projectDir,
-          modulePath: file.path,
+        const module = await importDiscoveryModule(file.path, {
           adapter,
-          config,
+          projectDir,
         });
 
-        if (!module) continue;
-
         // Prefer default export (aligned with discovery-engine behaviour)
-        const defaultExport = (module as Record<string, unknown>).default;
+        const defaultExport = module.default;
         if (isTaskDefinition(defaultExport)) {
           const id = deriveTaskId(file.path, baseDir);
           tasks.push({
@@ -248,16 +244,12 @@ export async function findTaskById(
       if (id !== taskId) continue;
 
       try {
-        const module = await loadHandlerModule({
-          projectDir,
-          modulePath: file.path,
+        const module = await importDiscoveryModule(file.path, {
           adapter,
-          config,
+          projectDir,
         });
 
-        if (!module) continue;
-
-        const defaultExport = (module as Record<string, unknown>).default;
+        const defaultExport = module.default;
         if (isTaskDefinition(defaultExport)) {
           if (debug) {
             logger.info(`Found task "${id}" in ${file.path} (export: default)`);

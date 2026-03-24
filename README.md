@@ -18,6 +18,8 @@ Purpose-built for TypeScript and React, Veryfront gives you everything you need 
 
 - [**Workflows**](https://veryfront.com/docs/code/guides/workflows) — Orchestrate multi-step AI pipelines with branching, parallelism, and human-in-the-loop approval gates.
 
+- [**Jobs & Cron Jobs**](https://veryfront.com/docs/code/guides/jobs) — Run durable project-scoped background work now or on a schedule through the Veryfront platform.
+
 - [**Multi-Agent**](https://veryfront.com/docs/code/guides/multi-agent) — Compose agents that delegate to each other as tools for complex, coordinated tasks.
 
 - [**Memory & Streaming**](https://veryfront.com/docs/code/guides/memory-and-streaming) — Give agents conversation history and streaming responses. Built-in chat UI components for React.

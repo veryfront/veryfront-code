@@ -13,6 +13,13 @@ import { FRAMEWORK_ROOT, LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
+import { MDX_ESM_MJS_FILE_URL_PATTERN_SOURCE } from "../cache-format.ts";
+import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
+
+interface MdxRecoveryOptions {
+  projectId: string;
+  contentSourceId: string;
+}
 
 /**
  * Check if cached code has file:// paths that are incompatible with this environment.
@@ -110,7 +117,7 @@ export async function findMissingFileDependenciesInCode(
   log: Logger,
 ): Promise<string[]> {
   const localFs = getLocalFs();
-  const pattern = /file:\/\/([^"'\s]+\.mjs)/gi;
+  const pattern = new RegExp(MDX_ESM_MJS_FILE_URL_PATTERN_SOURCE, "gi");
   const missing: string[] = [];
   const checked = new Set<string>();
 
@@ -156,6 +163,7 @@ export async function validateCachedModule(
   log: Logger,
   pathCache: Map<string, string>,
   versionedKey: string,
+  recoveryOptions?: MdxRecoveryOptions,
 ): Promise<boolean> {
   // Reject caches with raw HTTP URLs - all modules should use file:// paths.
   // This ensures consistency between compiled and non-compiled modes.
@@ -189,6 +197,36 @@ export async function validateCachedModule(
       pathCache.delete(versionedKey);
       return false;
     }
+  }
+
+  if (recoveryOptions) {
+    const recovered = await ensureMdxModuleDependencies(cachedCode, {
+      ...recoveryOptions,
+      log,
+    });
+    if (recovered.recovered.length > 0) {
+      log.debug(`${LOG_PREFIX_MDX_LOADER} Recovered cached module vfmod dependencies`, {
+        normalizedPath,
+        cachedPath,
+        recovered: recovered.recovered.slice(0, 5),
+      });
+    }
+  }
+
+  const missingDeps = await findMissingFileDependenciesInCode(cachedCode, log);
+  if (missingDeps.length > 0) {
+    log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has missing vfmod dependencies`, {
+      normalizedPath,
+      cachedPath,
+      missingDeps: missingDeps.slice(0, 5),
+    });
+    pathCache.delete(versionedKey);
+    try {
+      await getLocalFs().remove(cachedPath);
+    } catch (_) {
+      /* expected: cached file may already be removed */
+    }
+    return false;
   }
 
   if (!(await hasIncompatibleFrameworkPaths(cachedCode, log))) return true;

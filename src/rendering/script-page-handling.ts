@@ -6,6 +6,7 @@
  */
 
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
+import { rewriteNpmImports } from "../transforms/npm-import-rewrites.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
@@ -43,11 +44,6 @@ interface ScriptPageOptions {
   props?: ComponentProps;
   nonce?: string;
 }
-
-const NPM_REWRITES: ReadonlyArray<{ pattern: RegExp; replacement: string }> = [
-  { pattern: /from\s+["']ai["']/g, replacement: 'from "npm:ai@latest"' },
-  { pattern: /from\s+["']zod["']/g, replacement: 'from "npm:zod@latest"' },
-];
 
 const ESBUILD_EXTERNALS = [
   "ai",
@@ -309,17 +305,6 @@ async function readFileWithFallback(
       );
     }
   }
-}
-
-function rewriteNpmImports(code: string): string {
-  const isDeno = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined";
-  if (!isDeno) return code;
-
-  let result = code;
-  for (const { pattern, replacement } of NPM_REWRITES) {
-    result = result.replace(pattern, replacement);
-  }
-  return result;
 }
 
 async function transpileWithEsbuild(

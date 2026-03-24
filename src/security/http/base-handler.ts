@@ -6,6 +6,7 @@ import type {
   RoutePattern,
 } from "#veryfront/types";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { serverLogger } from "#veryfront/utils";
 import { ResponseBuilder } from "./response/index.ts";
 
@@ -77,7 +78,7 @@ export abstract class BaseHandler implements Handler {
   }
 
   protected logDebug(message: string, extra?: Record<string, unknown>, ctx?: HandlerContext): void {
-    if (!ctx?.debug && !ctx?.adapter.env.get("VERYFRONT_DEBUG")) return;
+    if (!ctx?.debug && !getHostEnv("VERYFRONT_DEBUG")) return;
     serverLogger.debug(`[${this.metadata.name}] ${message}`, extra ?? undefined);
   }
 
@@ -107,7 +108,9 @@ export abstract class BaseHandler implements Handler {
     fn: () => Promise<T>,
     options: { requireToken?: boolean } = {},
   ): Promise<T> {
-    const effectiveToken = ctx.proxyToken || ctx.adapter.env.get("VERYFRONT_API_TOKEN") || "";
+    // Framework-owned token: bypass project env overlay so proxy mode works
+    // when a remote project overlay is active.
+    const effectiveToken = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
     const fsWrapper = ctx.adapter.fs as {
       setRequestToken?: (t: string) => void;
       setRequestBranch?: (b: string | null) => void;

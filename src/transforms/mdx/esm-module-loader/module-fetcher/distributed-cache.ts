@@ -9,14 +9,11 @@
 
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache";
-import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
+import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
-import {
-  createBundleManifest,
-  storeBundleManifest,
-  validateBundleGroup,
-} from "../../../esm/bundle-manifest.ts";
+import { createBundleManifest, storeBundleManifest } from "../../../esm/bundle-manifest.ts";
+import { validateCachedBundlesByManifestOrCode } from "../../../esm/cached-bundle-validation.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { FRAMEWORK_ROOT, LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
@@ -26,6 +23,9 @@ import {
   findMissingFileDependenciesInCode,
   hasIncompatibleFrameworkPaths,
 } from "./framework-validator.ts";
+import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
+import { buildMdxEsmModuleFileName, buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
+import { hashString } from "../utils/hash.ts";
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
@@ -62,6 +62,8 @@ interface DistributedCacheReadResult {
  */
 export async function readDistributedCache(
   transformCacheKey: string,
+  projectId: string,
+  contentSourceId: string | undefined,
   normalizedPath: string,
   projectSlug: string,
   projectDir: string,
@@ -86,30 +88,22 @@ export async function readDistributedCache(
     const bundleManifestKey = `${transformCacheKey}:bm`;
     const manifestId = await distributedCache.get(bundleManifestKey).catch(() => null);
 
-    if (manifestId) {
+    if (moduleCode) {
       const cacheDir = getHttpBundleCacheDir();
-      const validation = await validateBundleGroup(manifestId, cacheDir);
+      const validation = await validateCachedBundlesByManifestOrCode(
+        moduleCode,
+        manifestId ?? undefined,
+        cacheDir,
+      );
       if (!validation.valid) {
-        log.warn(`${LOG_PREFIX_MDX_LOADER} Bundle manifest validation failed`, {
+        log.warn(`${LOG_PREFIX_MDX_LOADER} Cached HTTP bundle validation failed`, {
           normalizedPath,
-          manifestId: manifestId.slice(0, 12),
+          manifestId: manifestId?.slice(0, 12),
           failedHashes: validation.failedHashes,
+          reason: validation.reason,
+          source: validation.source,
         });
         moduleCode = null;
-      }
-    } else {
-      // Use detokenized code for bundle path extraction
-      const bundlePaths = extractHttpBundlePaths(moduleCode);
-      if (bundlePaths.length > 0) {
-        const cacheDir = getHttpBundleCacheDir();
-        const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-        if (failed.length > 0) {
-          log.warn(`${LOG_PREFIX_MDX_LOADER} Some HTTP bundles could not be recovered`, {
-            normalizedPath,
-            failed,
-          });
-          moduleCode = null;
-        }
       }
     }
 
@@ -140,10 +134,26 @@ export async function readDistributedCache(
     // that don't exist on this machine.
     if (moduleCode) {
       const missingDeps = await findMissingFileDependenciesInCode(moduleCode, log);
-      if (missingDeps.length > 0) {
+      if (missingDeps.length > 0 && contentSourceId) {
+        const recovered = await ensureMdxModuleDependencies(moduleCode, {
+          distributedCache,
+          projectId,
+          contentSourceId,
+          log,
+        });
+        if (recovered.recovered.length > 0) {
+          log.debug(`${LOG_PREFIX_MDX_LOADER} Recovered missing vfmod dependencies from cache`, {
+            normalizedPath,
+            recovered: recovered.recovered.slice(0, 5),
+          });
+        }
+      }
+
+      const unresolvedDeps = await findMissingFileDependenciesInCode(moduleCode, log);
+      if (unresolvedDeps.length > 0) {
         log.warn(
-          `${LOG_PREFIX_MDX_LOADER} Cached code has ${missingDeps.length} missing file dependencies, invalidating`,
-          { normalizedPath, missingDeps: missingDeps.slice(0, 5) },
+          `${LOG_PREFIX_MDX_LOADER} Cached code has ${unresolvedDeps.length} missing file dependencies, invalidating`,
+          { normalizedPath, missingDeps: unresolvedDeps.slice(0, 5) },
         );
         moduleCode = null;
       }
@@ -188,6 +198,8 @@ export async function readDistributedCache(
 export function writeDistributedCache(
   distributedCache: DistributedCache,
   transformCacheKey: string,
+  projectId: string,
+  contentSourceId: string,
   moduleCode: string,
   normalizedPath: string,
   log: Logger,
@@ -202,6 +214,23 @@ export function writeDistributedCache(
     .catch((error) => {
       log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
         normalizedPath,
+        error,
+      });
+    });
+
+  const moduleFileName = buildMdxEsmModuleFileName(hashString(normalizedPath + moduleCode));
+  const moduleRecoveryKey = buildMdxEsmModuleRecoveryCacheKey(
+    projectId,
+    contentSourceId,
+    moduleFileName,
+  );
+
+  distributedCache
+    .set(moduleRecoveryKey, portableCode, TRANSFORM_CACHE_TTL_SECONDS)
+    .catch((error) => {
+      log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed vfmod recovery set failed`, {
+        normalizedPath,
+        moduleRecoveryKey,
         error,
       });
     });

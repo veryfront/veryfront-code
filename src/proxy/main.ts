@@ -35,12 +35,12 @@ import {
   withSpan,
 } from "./tracing.ts";
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
-import { ErrorPages } from "../server/utils/error-html.ts";
 import { RendererRouter } from "./renderer-router.ts";
 import { ServerResolver } from "./server-resolver.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
+import { createProxyErrorResponse, jsonErrorResponse } from "./error-response.ts";
 
 function getLocalProjects(): Record<string, string> {
   const raw = getEnv("LOCAL_PROJECTS");
@@ -272,13 +272,6 @@ function handleWebSocketUpgrade(req: Request): Response {
   return response;
 }
 
-function jsonErrorResponse(status: number, body: Record<string, unknown>): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
 function forwardToServer(req: Request): Promise<Response> {
   const startTime = performance.now();
   const url = new URL(req.url);
@@ -309,25 +302,7 @@ function forwardToServer(req: Request): Promise<Response> {
             const logLevel = ctx.error.status < 500 ? "warn" : "error";
             proxyLogger[logLevel](`${ctx.error.status} ${req.method} ${url.pathname}`, { ms });
             endSpan(spanInfo?.span, ctx.error.status);
-
-            if (ctx.error.redirectUrl) {
-              return new Response(null, {
-                status: 302,
-                headers: { Location: ctx.error.redirectUrl },
-              });
-            }
-
-            if (ctx.error.slug === "release-not-found") {
-              return new Response(ErrorPages.notFound(), {
-                status: 404,
-                headers: { "Content-Type": "text/html; charset=utf-8" },
-              });
-            }
-
-            return jsonErrorResponse(ctx.error.status, {
-              error: ctx.error.message,
-              status: ctx.error.status,
-            });
+            return createProxyErrorResponse(ctx.error);
           }
 
           const reqLogger = proxyLogger.child({

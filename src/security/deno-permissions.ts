@@ -17,8 +17,9 @@ export const SERVER_PERMISSIONS = [
   "--allow-net",
   "--allow-env",
   "--allow-run",
-  "--allow-ffi",
   "--allow-sys",
+  "--unstable-worker-options",
+  "--unstable-net",
 ] as const;
 
 /**
@@ -39,5 +40,16 @@ export const WORKFLOW_JOB_PERMISSIONS = [
 export const BUILD_HELPER_PERMISSIONS = [
   "--allow-read",
   "--allow-write",
+  "--allow-env",
+] as const;
+
+/**
+ * RENDER_WORKER — Per-project Worker for isolated code execution.
+ * Read-only filesystem (transformed modules), network (data fetchers),
+ * env (API keys and config). No subprocess/ffi/sys.
+ */
+export const RENDER_WORKER_PERMISSIONS = [
+  "--allow-read",
+  "--allow-net",
   "--allow-env",
 ] as const;

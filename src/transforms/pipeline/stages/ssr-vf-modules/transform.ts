@@ -15,7 +15,6 @@ import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
 import { buildReactUrl, getReactImportMap } from "../../../import-rewriter/url-builder.ts";
 import { findRelativeImports } from "./import-finder.ts";
 import { resolveRelativeFrameworkImport, resolveVeryfrontSourcePath } from "./path-resolver.ts";
@@ -30,6 +29,7 @@ import {
   transformingFiles,
   veryfrontTransformCache,
 } from "./constants.ts";
+import { buildFrameworkVfModuleCacheFileName } from "../../../mdx/esm-module-loader/cache-format.ts";
 
 const DENO_CONFIG_STUB_CODE = `export default ${JSON.stringify(denoConfig)};`;
 
@@ -46,10 +46,10 @@ export function isCyclePlaceholder(code: string): boolean {
 /**
  * Cache transformed framework code and return the file:// path.
  *
- * Cache key format: vfmod-{VERSION}-{pathHash}-{envKey}-{contentHash}.mjs
+ * Cache key format: vfmod-{namespace}-{pathHash}-{envKey}-{contentHash}.mjs
  *
  * Cache invalidation is handled by:
- * - VERSION prefix: Auto-invalidates on framework releases
+ * - namespace prefix: Auto-rolls when the framework vfmod cache shape changes
  * - envKey (FRAMEWORK_ROOT hash): Prevents cross-environment contamination
  *   (compiled binary vs source have different FRAMEWORK_ROOT values)
  * - contentHash: Content-based invalidation
@@ -66,7 +66,7 @@ export async function cacheTransformedCode(
   const envKey = hashCodeHex(FRAMEWORK_ROOT).slice(0, 8);
   const contentHash = hashCodeHex(transformed);
   const pathHash = hashCodeHex(vfModulePath);
-  const fileName = `vfmod-${VERSION}-${pathHash}-${envKey}-${contentHash}.mjs`;
+  const fileName = buildFrameworkVfModuleCacheFileName(pathHash, envKey, contentHash);
   const frameworkCacheDir = join(cacheDir, "framework");
   const cachePath = join(frameworkCacheDir, fileName);
 

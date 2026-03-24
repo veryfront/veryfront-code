@@ -38,10 +38,13 @@ interface BundleManifest {
   ttlSeconds: number;
 }
 
+export type ManifestValidationReason = "manifest_missing" | "bundle_missing";
+
 /** Result of manifest validation. */
-interface ManifestValidationResult {
+export interface ManifestValidationResult {
   valid: boolean;
   failedHashes: string[];
+  reason?: ManifestValidationReason;
 }
 
 /**
@@ -148,7 +151,7 @@ export async function validateBundleGroup(
     logger.debug(`${LOG_PREFIX} Manifest not found in distributed cache`, {
       manifestId: manifestId.slice(0, 12),
     });
-    return { valid: false, failedHashes: [] };
+    return { valid: false, failedHashes: [], reason: "manifest_missing" };
   }
 
   const missingBundles: Array<{ path: string; hash: string }> = [];
@@ -178,7 +181,7 @@ export async function validateBundleGroup(
       manifestId: manifestId.slice(0, 12),
       unrecoverable: unrecoverableHashes,
     });
-    return { valid: false, failedHashes: unrecoverableHashes };
+    return { valid: false, failedHashes: unrecoverableHashes, reason: "bundle_missing" };
   }
 
   logger.info(`${LOG_PREFIX} All missing bundles recovered successfully`, {

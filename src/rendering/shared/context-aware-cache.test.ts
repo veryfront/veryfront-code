@@ -232,6 +232,110 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(store.data.size, 0);
     });
 
+    it("should clear slug using deleteByPrefix when available", async () => {
+      const store = createInMemoryStore();
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const ctx = makeMockCtx();
+
+      const result = {
+        html: "<h1>Slug</h1>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "s",
+      };
+
+      await cache.persistResult(result as any, "my-page", ctx);
+      const beforeClear = await cache.checkCache("my-page", ctx);
+      assertEquals(beforeClear.hit, true);
+
+      await cache.clearSlug("my-page", ctx);
+      const afterClear = await cache.checkCache("my-page", ctx);
+      assertEquals(afterClear.hit, false);
+    });
+
+    it("should clear slug without deleteByPrefix (fallback to individual deletes)", async () => {
+      // Create a store WITHOUT deleteByPrefix
+      const data = new Map<string, unknown>();
+      const deletedKeys: string[] = [];
+      const storeWithoutPrefix: CacheStore = {
+        get: (key: string) => Promise.resolve(data.get(key)),
+        set: (key: string, value: unknown) => {
+          data.set(key, value);
+          return Promise.resolve();
+        },
+        delete: (key: string) => {
+          deletedKeys.push(key);
+          data.delete(key);
+          return Promise.resolve();
+        },
+        clear: () => {
+          data.clear();
+          return Promise.resolve();
+        },
+        destroy: () => Promise.resolve(),
+      };
+
+      const cache = new ContextAwareCacheCoordinator({ store: storeWithoutPrefix });
+      const ctx = makeMockCtx();
+
+      await cache.clearSlug("test-slug", ctx);
+      // Should have attempted to delete keys containing the target slug
+      assertEquals(deletedKeys.length >= 1, true);
+      assertEquals(deletedKeys.every((k) => k.includes("test-slug")), true);
+    });
+
+    it("should clear for context using prefix deletion", async () => {
+      const store = createInMemoryStore();
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const ctx = makeMockCtx();
+
+      const result = {
+        html: "<h1>Ctx</h1>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "c",
+      };
+
+      await cache.persistResult(result as any, "ctx-page", ctx);
+      await cache.clearForContext(ctx);
+
+      const lookup = await cache.checkCache("ctx-page", ctx);
+      assertEquals(lookup.hit, false);
+    });
+
+    it("should return stats with populated store that has size property", async () => {
+      const baseStore = createInMemoryStore();
+      // Add a size getter that getStats() can read
+      Object.defineProperty(baseStore, "size", {
+        get() {
+          return baseStore.data.size;
+        },
+        enumerable: true,
+      });
+      const cache = new ContextAwareCacheCoordinator({ store: baseStore });
+      const ctx = makeMockCtx();
+
+      const result = {
+        html: "<h1>Stats</h1>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "st",
+      };
+
+      await cache.persistResult(result as any, "stats-page", ctx);
+      const stats = cache.getStats();
+      assertEquals(stats.size >= 1, true);
+    });
+
+    it("should return size 0 when store has no size property", () => {
+      const cache = new ContextAwareCacheCoordinator();
+      const stats = cache.getStats();
+      assertEquals(stats.size, 0);
+    });
+
     it("should clone cached results to prevent mutation", async () => {
       const store = createInMemoryStore();
       const cache = new ContextAwareCacheCoordinator({ store });

@@ -17,6 +17,9 @@ export interface RequestOptions {
   returnText?: boolean;
   /** Request timeout in milliseconds. Defaults to 30000ms (30 seconds). */
   timeoutMs?: number;
+  method?: string;
+  body?: BodyInit | null;
+  headers?: HeadersInit;
 }
 
 /** Default timeout for API requests (30 seconds) */
@@ -47,13 +50,19 @@ export async function requestWithRetry(
         async () => {
           const startTime = performance.now();
 
-          const headers = new Headers({
-            Authorization: `Bearer ${apiToken}`,
-            "Content-Type": "application/json",
-          });
+          const headers = new Headers(options.headers);
+          headers.set("Authorization", `Bearer ${apiToken}`);
+          if (!headers.has("Content-Type")) {
+            headers.set("Content-Type", "application/json");
+          }
           injectContext(headers);
 
-          const response = await fetch(url, { headers, signal: controller.signal });
+          const response = await fetch(url, {
+            method: options.method ?? "GET",
+            headers,
+            body: options.body,
+            signal: controller.signal,
+          });
           const duration = performance.now() - startTime;
 
           recordApiRequest(response.status);
@@ -88,7 +97,7 @@ export async function requestWithRetry(
           return { data, status: response.status, duration };
         },
         {
-          "http.method": "GET",
+          "http.method": options.method ?? "GET",
           "http.url": url,
           "http.target": urlPath,
           "http.host": urlObj.host,

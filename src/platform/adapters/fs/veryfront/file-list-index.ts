@@ -7,6 +7,13 @@ interface FileListCacheEntry {
   content?: string;
 }
 
+export interface FileListMatchResult {
+  status: "unavailable" | "missing" | "present_without_content" | "hit";
+  fresh: boolean;
+  path?: string;
+  content?: string;
+}
+
 function hashPreview(content: string): number {
   return content
     .slice(0, 100)
@@ -22,8 +29,10 @@ const INDEX_STALENESS_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 
 export class FileListIndex {
   private index: Map<string, string> | null = null;
+  private pathSet: Set<string> | null = null;
   private indexKey: string | null = null;
   private indexBuiltAt = 0;
+  private indexFresh = false;
   private readyPromise: Promise<void> | null = null;
 
   constructor(
@@ -39,8 +48,10 @@ export class FileListIndex {
 
     const indexedWithContent = this.index.size;
     this.index = null;
+    this.pathSet = null;
     this.indexKey = null;
     this.indexBuiltAt = 0;
+    this.indexFresh = false;
     logger.debug("Cleared file list index", { indexedWithContent });
   }
 
@@ -56,21 +67,39 @@ export class FileListIndex {
   }
 
   async lookup(normalizedPath: string): Promise<string | undefined> {
+    const match = await this.match(normalizedPath);
+    return match.status === "hit" ? match.content : undefined;
+  }
+
+  async match(normalizedPath: string): Promise<FileListMatchResult> {
     await this.ensureReady();
 
-    const index = await this.getOrBuild();
-    if (!index) {
+    const snapshot = await this.getOrBuild();
+    if (!snapshot) {
       logger.debug("No file list cache available");
-      return undefined;
+      return { status: "unavailable", fresh: false };
     }
 
-    const content = index.get(normalizedPath);
-    if (!content) {
+    if (!snapshot.paths.has(normalizedPath)) {
       logger.debug("Content not in file list index", {
         path: normalizedPath,
-        indexSize: index.size,
+        indexSize: snapshot.content.size,
+        fresh: snapshot.fresh,
       });
-      return undefined;
+      return { status: "missing", fresh: snapshot.fresh };
+    }
+
+    const content = snapshot.content.get(normalizedPath);
+    if (!content) {
+      logger.debug("File list index contains path without inline content", {
+        path: normalizedPath,
+        fresh: snapshot.fresh,
+      });
+      return {
+        status: "present_without_content",
+        fresh: snapshot.fresh,
+        path: normalizedPath,
+      };
     }
 
     logger.debug("FILE_LIST_CACHE_HIT - serving from file list cache", {
@@ -80,26 +109,60 @@ export class FileListIndex {
       contentPreview: previewText(content, 200).replace(/\n/g, "\\n"),
     });
 
-    return content;
+    return {
+      status: "hit",
+      fresh: snapshot.fresh,
+      path: normalizedPath,
+      content,
+    };
   }
 
   async findFirstWithContent(
     normalizedPaths: string[],
   ): Promise<{ path: string; content: string } | undefined> {
-    await this.ensureReady();
-
-    const index = await this.getOrBuild();
-    if (!index) return undefined;
-
-    for (const path of normalizedPaths) {
-      const content = index.get(path);
-      if (content) return { path, content };
-    }
-
-    return undefined;
+    const match = await this.findFirstMatch(normalizedPaths);
+    if (match.status !== "hit" || !match.path || !match.content) return undefined;
+    return { path: match.path, content: match.content };
   }
 
-  private async getOrBuild(): Promise<Map<string, string> | null> {
+  async findFirstMatch(
+    normalizedPaths: string[],
+  ): Promise<FileListMatchResult> {
+    await this.ensureReady();
+
+    const snapshot = await this.getOrBuild();
+    if (!snapshot) return { status: "unavailable", fresh: false };
+
+    for (const path of normalizedPaths) {
+      if (!snapshot.paths.has(path)) continue;
+
+      const content = snapshot.content.get(path);
+      if (content) {
+        return {
+          status: "hit",
+          fresh: snapshot.fresh,
+          path,
+          content,
+        };
+      }
+
+      return {
+        status: "present_without_content",
+        fresh: snapshot.fresh,
+        path,
+      };
+    }
+
+    return { status: "missing", fresh: snapshot.fresh };
+  }
+
+  private async getOrBuild(): Promise<
+    {
+      content: Map<string, string>;
+      paths: Set<string>;
+      fresh: boolean;
+    } | null
+  > {
     if (!this.getFileListCache) {
       logger.debug("getOrBuildFileListIndex: no getFileListCache function");
       return null;
@@ -118,7 +181,12 @@ export class FileListIndex {
             indexSize: this.index.size,
             indexAgeMs: age,
           });
-          return this.index;
+          this.indexFresh = false;
+          return {
+            content: this.index,
+            paths: this.pathSet ?? new Set<string>(),
+            fresh: false,
+          };
         }
         logger.debug("getOrBuildFileListIndex: in-memory index too stale, discarding", {
           indexSize: this.index.size,
@@ -126,7 +194,9 @@ export class FileListIndex {
           staleLimitMs: INDEX_STALENESS_LIMIT_MS,
         });
         this.index = null;
+        this.pathSet = null;
         this.indexKey = null;
+        this.indexFresh = false;
       }
       logger.debug(
         "[ReadOperations] getOrBuildFileListIndex: getFileListCache returned null/undefined",
@@ -146,19 +216,28 @@ export class FileListIndex {
     const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
       fileList[fileList.length - 1]?.path ?? ""
     }`;
-    if (this.index && this.indexKey === indexKey) {
+    if (this.index && this.pathSet && this.indexKey === indexKey) {
       this.indexBuiltAt = Date.now();
-      return this.index;
+      this.indexFresh = true;
+      return {
+        content: this.index,
+        paths: this.pathSet,
+        fresh: true,
+      };
     }
 
     const index = new Map<string, string>();
+    const pathSet = new Set<string>();
     for (const file of fileList) {
+      pathSet.add(file.path);
       if (file.content) index.set(file.path, file.content);
     }
 
     this.index = index;
+    this.pathSet = pathSet;
     this.indexKey = indexKey;
     this.indexBuiltAt = Date.now();
+    this.indexFresh = true;
 
     const sampleFile = fileList.find((f) => /welcome/i.test(f.path));
     const sampleContent = sampleFile?.content;
@@ -171,6 +250,10 @@ export class FileListIndex {
       sampleContentPreview: sampleContent?.slice(0, 200)?.replace(/\n/g, "\\n"),
     });
 
-    return index;
+    return {
+      content: index,
+      paths: pathSet,
+      fresh: true,
+    };
   }
 }

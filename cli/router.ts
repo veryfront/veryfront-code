@@ -29,8 +29,10 @@ import { handleRoutesCommand } from "./commands/routes/handler.ts";
 import { handleServeCommand } from "./commands/serve/handler.ts";
 import { handleStartCommand } from "./commands/start/handler.ts";
 import { handleStudioCommand } from "./commands/studio/handler.ts";
+import { handleStylesCommand } from "./commands/styles/handler.ts";
 import { handleUpCommand } from "./commands/up/index.ts";
 import { handleTaskCommand } from "./commands/task/handler.ts";
+import { handleWorkflowCommand } from "./commands/workflow/handler.ts";
 import { handleWorkerCommand } from "./commands/worker/handler.ts";
 import { login, logout, whoami } from "./auth/index.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
@@ -54,6 +56,7 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "analyze-chunks": handleAnalyzeChunksCommand,
   "routes": handleRoutesCommand,
   "studio": handleStudioCommand,
+  "styles": handleStylesCommand,
   "lock": handleLockCommand,
   "generate": handleGenerateCommand,
   "g": handleGenerateCommand,
@@ -81,6 +84,7 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "issues": handleIssuesCommand,
   "start": handleStartCommand,
   "task": handleTaskCommand,
+  "workflow": handleWorkflowCommand,
   "worker": handleWorkerCommand,
 };
 

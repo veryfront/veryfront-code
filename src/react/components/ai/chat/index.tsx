@@ -508,7 +508,17 @@ Chat.displayName = "Chat";
 // ChatComponents — Compound API via Object.assign
 // ---------------------------------------------------------------------------
 
-export const ChatComponents = Object.assign(Chat, {
+export type ChatComponentsType = typeof Chat & {
+  Root: typeof ChatRoot;
+  MessageList: typeof ChatMessageList;
+  Composer: typeof ChatComposer;
+  Empty: typeof ChatEmpty;
+  If: typeof ChatIf;
+  Message: typeof Message;
+  ErrorBanner: typeof ErrorBanner;
+};
+
+export const ChatComponents: ChatComponentsType = Object.assign(Chat, {
   Root: ChatRoot,
   MessageList: ChatMessageList,
   Composer: ChatComposer,

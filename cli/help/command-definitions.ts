@@ -16,6 +16,7 @@ import { doctorHelp } from "../commands/doctor/command-help.ts";
 import { cleanHelp } from "../commands/clean/command-help.ts";
 import { routesHelp } from "../commands/routes/command-help.ts";
 import { studioHelp } from "../commands/studio/command-help.ts";
+import { stylesHelp } from "../commands/styles/command-help.ts";
 import { lockHelp } from "../commands/lock/command-help.ts";
 import { analyzeChunksHelp } from "../commands/analyze-chunks/command-help.ts";
 import { generateHelp } from "../commands/generate/command-help.ts";
@@ -36,6 +37,7 @@ import { mcpHelp } from "../commands/mcp/command-help.ts";
 import { issuesHelp } from "../commands/issues/command-help.ts";
 import { startHelp } from "../commands/start/command-help.ts";
 import { taskHelp } from "../commands/task/command-help.ts";
+import { workflowHelp } from "../commands/workflow/command-help.ts";
 
 /**
  * Central registry of all command help definitions.
@@ -50,6 +52,7 @@ export const COMMANDS: CommandRegistry = {
   clean: cleanHelp,
   routes: routesHelp,
   studio: studioHelp,
+  styles: stylesHelp,
   lock: lockHelp,
   "analyze-chunks": analyzeChunksHelp,
   generate: generateHelp,
@@ -71,4 +74,5 @@ export const COMMANDS: CommandRegistry = {
   issues: issuesHelp,
   start: startHelp,
   task: taskHelp,
+  workflow: workflowHelp,
 };

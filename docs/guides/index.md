@@ -39,6 +39,7 @@ Learn Veryfront from the ground up — pages, routing, AI agents, and production
 
 | Guide                              | Description                                                                                       |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
+| [Jobs & Cron Jobs](./jobs.md)      | Create one-off jobs, schedule cron jobs, inspect events, and work with batch summaries.           |
 | [Providers](./providers.md)        | Unified LLM interface for OpenAI, Anthropic, and Google.                                          |
 | [Middleware](./middleware.md)      | CORS, rate limiting, logging, and custom middleware pipelines.                                    |
 | [OAuth](./oauth.md)                | OAuth 2.0 with 37 pre-configured providers.                                                       |

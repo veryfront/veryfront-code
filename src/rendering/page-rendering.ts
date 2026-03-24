@@ -15,6 +15,64 @@ interface MDXPageResult {
   collectedMetadata: Record<string, unknown>;
 }
 
+interface PreparedMDXPageBundles {
+  pageBundle: PageBundle;
+  serverModuleCode: string;
+}
+
+export async function prepareMDXPageBundles(
+  pageInfo: EntityInfo,
+  projectDir: string,
+  options?: {
+    precompiledModule?: string;
+    studioEmbed?: boolean;
+  },
+): Promise<PreparedMDXPageBundles> {
+  const { frontmatter, content, path } = pageInfo.entity;
+  const fmArg = frontmatter && Object.keys(frontmatter).length > 0 ? frontmatter : undefined;
+
+  const ssrBundle = await compileContent(
+    "development",
+    projectDir,
+    content,
+    fmArg,
+    path,
+    "server",
+    undefined,
+    options?.studioEmbed,
+  );
+
+  const pageBundle = ssrBundle as PageBundle;
+
+  if (options?.precompiledModule) {
+    pageBundle.clientModuleCode = options.precompiledModule;
+  } else {
+    const browserBundle = await compileContent(
+      "development",
+      projectDir,
+      content,
+      fmArg,
+      path,
+      "browser",
+      undefined,
+      options?.studioEmbed,
+    );
+    pageBundle.clientModuleCode = browserBundle.compiledCode;
+  }
+
+  const clientModuleCode = pageBundle.clientModuleCode;
+  if (!clientModuleCode) {
+    throw RENDER_ERROR.create({
+      detail: "MDX compilation produced no client module code",
+    });
+  }
+
+  return {
+    pageBundle,
+    serverModuleCode: ssrBundle.compiledCode,
+  };
+}
+
 export function handleMDXPage(
   pageInfo: EntityInfo,
   slug: string,
@@ -42,49 +100,16 @@ export function handleMDXPage(
   return withSpan(
     "rendering.handleMDXPage",
     async () => {
-      const { frontmatter, content, path } = pageInfo.entity;
-      const fmArg = frontmatter && Object.keys(frontmatter).length > 0 ? frontmatter : undefined;
-
-      const ssrBundle = await compileContent(
-        "development",
-        projectDir,
-        content,
-        fmArg,
-        path,
-        "server",
-        undefined,
-        options?.studioEmbed,
-      );
-
-      const pageBundle = ssrBundle as PageBundle;
+      const { frontmatter, path } = pageInfo.entity;
+      const { pageBundle, serverModuleCode } = await prepareMDXPageBundles(pageInfo, projectDir, {
+        precompiledModule: options?.precompiledModule,
+        studioEmbed: options?.studioEmbed,
+      });
       let collectedMetadata: Record<string, unknown> = {};
 
       try {
-        if (options?.precompiledModule) {
-          pageBundle.clientModuleCode = options.precompiledModule;
-        } else {
-          const browserBundle = await compileContent(
-            "development",
-            projectDir,
-            content,
-            fmArg,
-            path,
-            "browser",
-            undefined,
-            options?.studioEmbed,
-          );
-          pageBundle.clientModuleCode = browserBundle.compiledCode;
-        }
-
-        const clientModuleCode = pageBundle.clientModuleCode;
-        if (!clientModuleCode) {
-          throw RENDER_ERROR.create({
-            detail: "MDX compilation produced no client module code",
-          });
-        }
-
         const mod = (await mdxRenderer.loadModuleESM(
-          clientModuleCode,
+          serverModuleCode,
           adapter,
           options?.projectId,
           projectDir,

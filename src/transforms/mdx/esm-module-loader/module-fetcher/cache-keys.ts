@@ -4,7 +4,7 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/cache-keys
  */
 
-import { VERSION } from "#veryfront/utils/version.ts";
+import { buildMdxEsmPathCacheKey, buildMdxEsmTransformCacheKey } from "../cache-format.ts";
 
 /**
  * Build cache key for transformed module.
@@ -15,12 +15,13 @@ import { VERSION } from "#veryfront/utils/version.ts";
  */
 export function getTransformCacheKey(
   projectId: string,
+  contentSourceId: string,
   normalizedPath: string,
   contentHash: string,
 ): string {
-  return `v${VERSION}:${projectId}:${normalizedPath}:${contentHash}:ssr`;
+  return buildMdxEsmTransformCacheKey(projectId, contentSourceId, normalizedPath, contentHash);
 }
 
 export function getVersionedPathCacheKey(normalizedPath: string): string {
-  return `v${VERSION}:${normalizedPath}`;
+  return buildMdxEsmPathCacheKey(normalizedPath);
 }

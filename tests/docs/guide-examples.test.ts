@@ -9,6 +9,14 @@
  */
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createJobsClient } from "../../src/jobs/index.ts";
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 // === Guide: tools.mdx ===
 import { tool } from "../../src/tool/index.ts";
@@ -262,6 +270,181 @@ describe("Guide: workflows.mdx", () => {
 
     assertExists(pipeline);
     assertEquals(pipeline.id, "typed-pipeline");
+  });
+});
+
+// === Guide: jobs.mdx ===
+describe("Guide: jobs.mdx", () => {
+  it("should create a one-off job and read canonical events", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const responses = [
+      jsonResponse({
+        id: "11111111-1111-4111-8111-111111111111",
+        project_id: "22222222-2222-4222-8222-222222222222",
+        environment_id: null,
+        cron_job_id: null,
+        batch_id: null,
+        name: "Ingest 1 file to knowledge base",
+        status: "submitted",
+        target: "task:knowledge-ingest",
+        config: {
+          file_count: 1,
+          upload_ids: ["33333333-3333-4333-8333-333333333333"],
+        },
+        context_id: null,
+        timeout_seconds: 300,
+        backoff_limit: 3,
+        exit_code: null,
+        failed_reason: null,
+        failure_detail: null,
+        result: null,
+        started_at: null,
+        completed_at: null,
+        created_by: "44444444-4444-4444-8444-444444444444",
+        created_at: "2026-03-20T12:00:00.000Z",
+        updated_at: "2026-03-20T12:00:00.000Z",
+      }),
+      jsonResponse({
+        entries: [
+          {
+            timestamp: "2026-03-20T12:01:00.000Z",
+            level: "info",
+            message: "Processing knowledge source",
+            service: "job-runner",
+          },
+        ],
+        next_cursor: null,
+        stats: {
+          bytes_processed: 10,
+          lines_processed: 1,
+          query_time_ms: 2,
+        },
+      }),
+    ];
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+      calls.push({ url, init });
+      const next = responses.shift();
+      if (!next) {
+        throw new Error(`No mock response for ${url}`);
+      }
+      return next;
+    }) as typeof fetch;
+
+    try {
+      const jobs = createJobsClient({
+        apiUrl: "https://api.test.com",
+        authToken: "test-token",
+        projectReference: "dreamy-haven",
+      });
+
+      const job = await jobs.create({
+        name: "Ingest 1 file to knowledge base",
+        target: "task:knowledge-ingest",
+        config: {
+          file_count: 1,
+          upload_ids: ["33333333-3333-4333-8333-333333333333"],
+        },
+      });
+
+      const events = await jobs.events(job.id);
+
+      assertEquals(job.target, "task:knowledge-ingest");
+      assertEquals(events.entries.length, 1);
+      assert(calls[0]?.url.includes("/projects/dreamy-haven/jobs"));
+      assert(calls[1]?.url.includes(`/jobs/${job.id}/events`));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("should create a cron job and discover target definitions", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const responses = [
+      jsonResponse({
+        id: "55555555-5555-4555-8555-555555555555",
+        project_id: "22222222-2222-4222-8222-222222222222",
+        environment_id: null,
+        name: "Nightly knowledge sync",
+        status: "active",
+        target: "task:knowledge-ingest",
+        schedule: "0 2 * * *",
+        timezone: "Europe/Stockholm",
+        config: {
+          file_count: 1,
+          upload_ids: ["33333333-3333-4333-8333-333333333333"],
+        },
+        timeout_seconds: 300,
+        backoff_limit: 3,
+        concurrency_policy: "Forbid",
+        last_scheduled_at: null,
+        last_successful_at: null,
+        created_by: "44444444-4444-4444-8444-444444444444",
+        created_at: "2026-03-20T12:00:00.000Z",
+        updated_at: "2026-03-20T12:00:00.000Z",
+      }),
+      jsonResponse({
+        reserved_families: ["task:*", "workflow:*", "deploy:*"],
+        data: [
+          {
+            target: "task:knowledge-ingest",
+            family: "task",
+            description: "Convert uploaded files into knowledge documents.",
+            input_schema: { type: "object" },
+            output_schema: { type: "object" },
+          },
+        ],
+      }),
+    ];
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+      calls.push({ url, init });
+      const next = responses.shift();
+      if (!next) {
+        throw new Error(`No mock response for ${url}`);
+      }
+      return next;
+    }) as typeof fetch;
+
+    try {
+      const jobs = createJobsClient({
+        apiUrl: "https://api.test.com",
+        authToken: "test-token",
+        projectReference: "dreamy-haven",
+      });
+
+      const cronJob = await jobs.cron.create({
+        name: "Nightly knowledge sync",
+        target: "task:knowledge-ingest",
+        schedule: "0 2 * * *",
+        timezone: "Europe/Stockholm",
+        config: {
+          file_count: 1,
+          upload_ids: ["33333333-3333-4333-8333-333333333333"],
+        },
+      });
+
+      const targets = await jobs.targets.list();
+
+      assertEquals(cronJob.status, "active");
+      assertEquals(targets.data[0]?.target, "task:knowledge-ingest");
+      assert(calls[0]?.url.includes("/projects/dreamy-haven/cron-jobs"));
+      assert(calls[1]?.url.includes("/projects/dreamy-haven/job-targets"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

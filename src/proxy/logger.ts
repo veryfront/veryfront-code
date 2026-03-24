@@ -1,8 +1,7 @@
-// Import version from root deno.json (the source of truth)
-import denoConfig from "#deno-config" with { type: "json" };
 import { getEnv } from "./env.ts";
 import { getTraceContext } from "./tracing.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { PROXY_RUNTIME_VERSION } from "./version.ts";
 
 // NOTE: Formatting utilities are INLINED below instead of imported from ../utils/logger/core.ts
 // because the proxy Docker build only copies src/proxy/ and has no access to src/utils/.
@@ -42,10 +41,6 @@ export function runWithProxyRequestContext<T>(
 function getProxyRequestContext(): ProxyRequestContext | undefined {
   return requestContextStore.getStore();
 }
-
-// Get version from environment variable or root deno.json
-const VERYFRONT_VERSION: string = getEnv("VERYFRONT_VERSION") ??
-  (typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0");
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -293,7 +288,7 @@ class ProxyLogger {
       timestamp: new Date().toISOString(),
       level,
       service: "proxy",
-      veryfrontVersion: VERYFRONT_VERSION,
+      veryfrontVersion: PROXY_RUNTIME_VERSION,
       message,
       ...(traceCtx.traceId && { traceId: traceCtx.traceId, spanId: traceCtx.spanId }),
       // Include request context fields at top level (like renderer logs)

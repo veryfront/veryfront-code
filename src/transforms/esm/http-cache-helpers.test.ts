@@ -218,6 +218,11 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertEquals(result.includes("target=es2022"), true);
     });
 
+    it("preserves pinned package versions", () => {
+      const result = resolveBareSpecifier("@tanstack/react-query@5.94.4", emptyImportMap);
+      assertEquals(result, "https://esm.sh/@tanstack/react-query@5.94.4?target=es2022");
+    });
+
     it("resolves react subpaths", () => {
       const result = resolveBareSpecifier("react/jsx-runtime", emptyImportMap);
       assertEquals(result.includes("react"), true);

@@ -36,6 +36,7 @@ function createBranchContextWithFiles(files: ProjectFile[]): ContentContextProvi
       branch: "main",
     }),
     getFileList: () => Promise.resolve(files),
+    hasCachedFileList: () => Promise.resolve(files.length > 0),
     isPersistentCacheInvalidated: () => false,
   };
 }
@@ -344,6 +345,16 @@ describe("StatOperations", () => {
       assertEquals(await statOps.resolveFile("pages/index"), "pages/index.tsx");
     });
 
+    it("should not add pages/ prefix when disabled for source resolution", async () => {
+      const statOps = createStatOps(
+        createMockClient(),
+        new PathNormalizer(),
+        createBranchContextWithFiles([makeFile("pages/about.tsx")]),
+      );
+
+      assertEquals(await statOps.resolveFile("about", { allowPagesPrefix: false }), null);
+    });
+
     it("should resolve with different extension when original not found", async () => {
       const statOps = createStatOps(
         createMockClient(),
@@ -372,7 +383,77 @@ describe("StatOperations", () => {
 
       assertEquals(await statOps.resolveFile("missing/component"), null);
       assertEquals(await statOps.resolveFile("missing/component"), null);
+      assertEquals(searchCallCount, 4);
+    });
+
+    it("should resolve via API search without building the full index", async () => {
+      let listAllFilesCallCount = 0;
+      let searchCallCount = 0;
+
+      const client = createMockClient({
+        listAllFiles: () => {
+          listAllFilesCallCount++;
+          return Promise.resolve([]);
+        },
+        searchFiles: (pattern: string) => {
+          searchCallCount++;
+          if (pattern === "pages/about.*") {
+            return Promise.resolve([{ path: "pages/about.tsx" }]);
+          }
+          return Promise.resolve([]);
+        },
+      });
+
+      const statOps = new StatOperations(
+        client,
+        new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 }),
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => ({
+            sourceType: "branch" as const,
+            projectSlug: "test",
+            branch: "main",
+          }),
+          isPersistentCacheInvalidated: () => false,
+        },
+      );
+
+      assertEquals(await statOps.resolveFile("pages/about"), "pages/about.tsx");
       assertEquals(searchCallCount, 1);
+      assertEquals(listAllFilesCallCount, 0);
+    });
+
+    it("should skip pages/ API search patterns when pages prefix is disabled", async () => {
+      const patterns: string[] = [];
+
+      const client = createMockClient({
+        searchFiles: (pattern: string) => {
+          patterns.push(pattern);
+          return Promise.resolve([]);
+        },
+      });
+
+      const statOps = new StatOperations(
+        client,
+        new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 }),
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => ({
+            sourceType: "branch" as const,
+            projectSlug: "test",
+            branch: "main",
+          }),
+          hasCachedFileList: () => Promise.resolve(false),
+          isPersistentCacheInvalidated: () => false,
+        },
+      );
+
+      assertEquals(await statOps.resolveFile("about", { allowPagesPrefix: false }), null);
+      assertEquals(patterns, ["about.*", "about/index.*"]);
     });
   });
 
@@ -565,7 +646,9 @@ describe("StatOperations", () => {
         now += 30_001;
 
         await statOps.resolveFile("missing-after-cooldown");
-        assertEquals(searchCallCount, 6);
+        // First request exhausts 4 patterns, second request trips the breaker on its first pattern,
+        // and the post-cooldown request gets another full 4-pattern attempt.
+        assertEquals(searchCallCount, 9);
       } finally {
         Date.now = originalNow;
       }

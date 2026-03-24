@@ -17,7 +17,7 @@ import type {
 import { PRIORITY_LOW } from "#veryfront/utils/constants/index.ts";
 import { generateNonce } from "#veryfront/security/http/response/security-handler.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-context.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -115,7 +115,9 @@ export class SSRHandler extends BaseHandler {
       if (ctx.projectSlug && isExtended && fsAdapter.isMultiProjectMode()) {
         const prodMode = isProductionMode(ctx, url);
         const branch = ctx.parsedDomain?.branch ?? null;
-        const effectiveToken = ctx.proxyToken || getEnv("VERYFRONT_API_TOKEN") || "";
+        // Framework-owned token: bypass project env overlay so proxy mode works
+        // when a remote project overlay is active.
+        const effectiveToken = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
 
         logger.debug("Using multi-project context", {
           projectSlug: ctx.projectSlug,

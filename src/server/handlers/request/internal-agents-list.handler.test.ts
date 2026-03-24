@@ -281,63 +281,76 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
       requestId: "agents-1",
     });
 
-    const ctx = {
-      ...createCtx(publicKeyPem),
-      adapter: {
-        env: {
-          get: (key: string) => {
-            if (key === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") return publicKeyPem;
-            if (key === "VERYFRONT_API_TOKEN") return "server-api-token";
-            return undefined;
-          },
-          set: () => {},
-          toObject: () => ({}),
-        },
-        fs: {
-          isMultiProjectMode: () => true,
-          runWithContext: async (
-            _projectSlug: string,
-            token: string,
-            fn: () => Promise<unknown>,
-          ) => {
-            receivedToken = token;
-            return await fn();
-          },
-        },
-      },
-      proxyToken: undefined,
-      resolvedEnvironment: "production",
-      requestContext: { token: "", slug: "demo-project", branch: null, mode: "production" },
-    } as unknown as ReturnType<typeof createCtx>;
+    // withProxyContext now reads VERYFRONT_API_TOKEN via getHostEnv() (bypassing
+    // project env overlays), so we set it on the real host environment.
+    const tokenKey = "VERYFRONT_API_TOKEN";
+    const originalToken = Deno.env.get(tokenKey);
+    Deno.env.set(tokenKey, "server-api-token");
 
-    const result = await handler.handle(
-      new Request("https://example.com/internal/agents/list", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-veryfront-control-plane-jws": jws,
+    try {
+      const ctx = {
+        ...createCtx(publicKeyPem),
+        adapter: {
+          env: {
+            get: (key: string) => {
+              if (key === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") return publicKeyPem;
+              return getEnv(key);
+            },
+            set: () => {},
+            toObject: () => ({}),
+          },
+          fs: {
+            isMultiProjectMode: () => true,
+            runWithContext: async (
+              _projectSlug: string,
+              token: string,
+              fn: () => Promise<unknown>,
+            ) => {
+              receivedToken = token;
+              return await fn();
+            },
+          },
         },
-        body,
-      }),
-      ctx,
-    );
+        proxyToken: undefined,
+        resolvedEnvironment: "production",
+        requestContext: { token: "", slug: "demo-project", branch: null, mode: "production" },
+      } as unknown as ReturnType<typeof createCtx>;
 
-    assertExists(result.response);
-    assertEquals(result.response.status, 200);
-    assertEquals(receivedToken, "server-api-token");
-    assertEquals(discoveryCalls, 1);
-    assertEquals(await result.response.json(), {
-      agents: [
-        {
-          id: "assistant-1",
-          name: "Project Smoke Agent",
-          description: null,
-          model: "anthropic/claude-sonnet-4-6",
-          version: null,
-          skills: [],
-        },
-      ],
-    });
+      const result = await handler.handle(
+        new Request("https://example.com/internal/agents/list", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals(receivedToken, "server-api-token");
+      assertEquals(discoveryCalls, 1);
+      assertEquals(await result.response.json(), {
+        agents: [
+          {
+            id: "assistant-1",
+            name: "Project Smoke Agent",
+            description: null,
+            model: "anthropic/claude-sonnet-4-6",
+            version: null,
+            skills: [],
+          },
+        ],
+      });
+    } finally {
+      if (originalToken === undefined) {
+        Deno.env.delete(tokenKey);
+      } else {
+        Deno.env.set(tokenKey, originalToken);
+      }
+    }
   });
 
   it("uses the host verification key when project overlays hide adapter env reads", async () => {

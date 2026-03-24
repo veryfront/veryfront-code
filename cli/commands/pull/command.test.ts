@@ -106,7 +106,7 @@ describe("buildFilesListUrl", () => {
     const source: PullSource = { type: "branch", name: "feature-x" };
     assertEquals(
       buildFilesListUrl("my-project", source),
-      "/projects/my-project/branches/feature-x/files",
+      "/projects/my-project/files?branch=feature-x",
     );
   });
 
@@ -114,7 +114,7 @@ describe("buildFilesListUrl", () => {
     const source: PullSource = { type: "branch", name: "feature/new stuff" };
     assertEquals(
       buildFilesListUrl("my-project", source),
-      "/projects/my-project/branches/feature%2Fnew%20stuff/files",
+      "/projects/my-project/files?branch=feature%2Fnew%20stuff",
     );
   });
 
@@ -164,7 +164,7 @@ describe("buildFileContentUrl", () => {
     const source: PullSource = { type: "branch", name: "feature-x" };
     assertEquals(
       buildFileContentUrl("my-project", "pages/index.tsx", source),
-      "/projects/my-project/branches/feature-x/files/pages%2Findex.tsx",
+      "/projects/my-project/files/pages%2Findex.tsx?branch=feature-x",
     );
   });
 
@@ -220,7 +220,7 @@ describe("listAllFiles", () => {
   it("should fetch files from branch", async () => {
     await testListAllFiles(
       { type: "branch", name: "feature-x" },
-      "/projects/my-project/branches/feature-x/files",
+      "/projects/my-project/files?branch=feature-x",
     );
   });
 
@@ -281,6 +281,13 @@ describe("getFileContent", () => {
     await testGetFileContent(
       { type: "main" },
       "/projects/my-project/files/pages%2Findex.tsx",
+    );
+  });
+
+  it("should fetch file content from branch", async () => {
+    await testGetFileContent(
+      { type: "branch", name: "feature-x" },
+      "/projects/my-project/files/pages%2Findex.tsx?branch=feature-x",
     );
   });
 

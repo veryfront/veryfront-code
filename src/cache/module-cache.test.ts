@@ -149,6 +149,37 @@ describe("cache/module-cache", () => {
       const map = createModuleCache();
       assertEquals(map.set("k", "v"), map);
     });
+
+    it("should support getOrInsert", () => {
+      const map = createModuleCache();
+
+      assertEquals(map.getOrInsert("k1", "v1"), "v1");
+      assertEquals(map.get("k1"), "v1");
+      assertEquals(map.getOrInsert("k1", "ignored"), "v1");
+      assertEquals(map.get("k1"), "v1");
+    });
+
+    it("should support getOrInsertComputed", () => {
+      const map = createModuleCache();
+
+      let calls = 0;
+      assertEquals(
+        map.getOrInsertComputed("k1", (key) => {
+          calls++;
+          return `${key}-value`;
+        }),
+        "k1-value",
+      );
+      assertEquals(map.get("k1"), "k1-value");
+      assertEquals(
+        map.getOrInsertComputed("k1", () => {
+          calls++;
+          return "ignored";
+        }),
+        "k1-value",
+      );
+      assertEquals(calls, 1);
+    });
   });
 
   describe("createEsmCache", () => {

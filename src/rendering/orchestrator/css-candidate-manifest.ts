@@ -1,4 +1,8 @@
 import { extractCandidates } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import {
+  filterFilesForStyleScope,
+  type StyleScopeProfile,
+} from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { getRouteModulePaths } from "#veryfront/modules/manifest/route-module-manifest.ts";
 import { rendererLogger } from "#veryfront/utils";
 
@@ -17,8 +21,18 @@ interface RouteCandidateOptions {
   projectScope: string;
   projectVersion: string;
   projectDir: string;
+  styleProfile?: StyleScopeProfile;
   routeKey: string;
   routeFilePaths: string[];
+  files: SourceFileLike[];
+  developmentMode: boolean;
+}
+
+interface ProjectCandidateOptions {
+  projectScope: string;
+  projectVersion: string;
+  projectDir: string;
+  styleProfile?: StyleScopeProfile;
   files: SourceFileLike[];
   developmentMode: boolean;
 }
@@ -43,8 +57,12 @@ function toRelativeProjectPath(path: string, projectDir: string): string {
   return normalized.replace(/^\/+/, "");
 }
 
-function buildManifestCacheKey(projectScope: string, projectVersion: string): string {
-  return `${projectScope}:${projectVersion}`;
+function buildManifestCacheKey(
+  projectScope: string,
+  projectVersion: string,
+  styleProfileHash?: string,
+): string {
+  return `${projectScope}:${projectVersion}:${styleProfileHash ?? "default"}`;
 }
 
 function shouldRebuildManifest(
@@ -90,6 +108,36 @@ function buildCandidateManifest(files: SourceFileLike[], projectDir: string): Ca
   return { fileCandidates, allCandidates, builtAt: Date.now() };
 }
 
+function getOrBuildManifest(
+  options: Pick<
+    ProjectCandidateOptions,
+    "projectScope" | "projectVersion" | "projectDir" | "files" | "developmentMode" | "styleProfile"
+  >,
+): CandidateManifest {
+  const manifestKey = buildManifestCacheKey(
+    options.projectScope,
+    options.projectVersion,
+    options.styleProfile?.hash,
+  );
+  const existingManifest = manifestCache.get(manifestKey);
+  const scopedFiles = options.styleProfile
+    ? filterFilesForStyleScope(options.files, options.styleProfile, options.projectDir)
+    : options.files;
+  const manifest = shouldRebuildManifest(existingManifest, options.developmentMode)
+    ? buildCandidateManifest(scopedFiles, options.projectDir)
+    : existingManifest!;
+
+  if (manifest !== existingManifest) {
+    manifestCache.set(manifestKey, manifest);
+
+    for (const key of routeCandidateCache.keys()) {
+      if (key.startsWith(`${manifestKey}:`)) routeCandidateCache.delete(key);
+    }
+  }
+
+  return manifest;
+}
+
 function addCandidatesForPath(
   target: Set<string>,
   manifest: CandidateManifest,
@@ -108,21 +156,12 @@ function addCandidatesForPath(
  * Resolve route-scoped Tailwind candidates from a precomputed per-project manifest.
  */
 export function getRouteCandidates(options: RouteCandidateOptions): Set<string> {
-  const manifestKey = buildManifestCacheKey(options.projectScope, options.projectVersion);
-  const existingManifest = manifestCache.get(manifestKey);
-  const manifest = shouldRebuildManifest(existingManifest, options.developmentMode)
-    ? buildCandidateManifest(options.files, options.projectDir)
-    : existingManifest!;
-
-  if (manifest !== existingManifest) {
-    manifestCache.set(manifestKey, manifest);
-
-    // Clear route subsets when project-level file manifest is rebuilt.
-    for (const key of routeCandidateCache.keys()) {
-      if (key.startsWith(`${manifestKey}:`)) routeCandidateCache.delete(key);
-    }
-  }
-
+  const manifestKey = buildManifestCacheKey(
+    options.projectScope,
+    options.projectVersion,
+    options.styleProfile?.hash,
+  );
+  const manifest = getOrBuildManifest(options);
   const routeCacheKey = `${manifestKey}:${options.routeKey}`;
   const cachedRoute = routeCandidateCache.get(routeCacheKey);
   if (cachedRoute) return new Set(cachedRoute);
@@ -149,11 +188,20 @@ export function getRouteCandidates(options: RouteCandidateOptions): Set<string> 
   logger.debug("Resolved route candidates", {
     projectScope: options.projectScope,
     projectVersion: options.projectVersion,
+    styleProfileHash: options.styleProfile?.hash,
     route: options.routeKey,
     count: routeCandidates.size,
   });
 
   return new Set(routeCandidates);
+}
+
+/**
+ * Resolve full-project Tailwind candidates from a precomputed per-project manifest.
+ */
+export function getProjectCandidates(options: ProjectCandidateOptions): Set<string> {
+  const manifest = getOrBuildManifest(options);
+  return new Set(manifest.allCandidates);
 }
 
 /**

@@ -36,6 +36,53 @@ DOCLING_TIMEOUT_SECONDS = read_timeout_seconds(
     "VERYFRONT_KNOWLEDGE_DOCLING_TIMEOUT_SECONDS",
     DEFAULT_DOCLING_TIMEOUT_SECONDS,
 )
+TEXT_FILE_EXTENSIONS = {
+    ".c",
+    ".cc",
+    ".conf",
+    ".cpp",
+    ".cs",
+    ".css",
+    ".go",
+    ".h",
+    ".hpp",
+    ".ini",
+    ".java",
+    ".js",
+    ".jsonl",
+    ".jsx",
+    ".kt",
+    ".less",
+    ".lua",
+    ".mjs",
+    ".ndjson",
+    ".php",
+    ".pl",
+    ".py",
+    ".r",
+    ".rb",
+    ".rs",
+    ".sass",
+    ".scala",
+    ".scss",
+    ".sh",
+    ".sql",
+    ".swift",
+    ".toml",
+    ".ts",
+    ".tsx",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".zsh",
+}
+TEXT_FILE_NAMES = {
+    "dockerfile",
+    "makefile",
+    "readme",
+    "license",
+    "changelog",
+}
 
 
 def slugify(value: str) -> str:
@@ -400,6 +447,7 @@ def parse_json(path: str):
 
 def select_parser_definition(path: Path):
     ext = path.suffix.lower()
+    name = path.name.lower()
     if ext == ".pdf":
         return "pdf", parse_pdf, True
     if ext in {".csv", ".tsv"}:
@@ -418,6 +466,10 @@ def select_parser_definition(path: Path):
         return ext.lstrip("."), parse_text, False
     if ext == ".json":
         return "json", parse_json, False
+    if ext in TEXT_FILE_EXTENSIONS:
+        return ext.lstrip("."), parse_text, False
+    if not ext and name in TEXT_FILE_NAMES:
+        return "text", parse_text, False
     raise ValueError(f"Unsupported file type: {ext}")
 
 

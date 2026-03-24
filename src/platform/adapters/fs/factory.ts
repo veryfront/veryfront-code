@@ -1,19 +1,7 @@
 import type { FSAdapter, FSAdapterConfig } from "./veryfront/types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import {
-  clearSSRModuleCache,
-  clearSSRModuleCacheForProject,
-} from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
-import { clearRouterDetectionCacheForProject } from "#veryfront/rendering/router-detection.ts";
-import {
-  clearModulePathCache,
-  invalidateModulePaths,
-} from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import { clearSnippetCacheForProject } from "#veryfront/rendering/snippet-renderer.ts";
-import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
-import { invalidateProjectCSS } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
-import { invalidateProjectCandidateManifests } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
+import { createDefaultInvalidationCallbacks } from "./veryfront/default-invalidation-callbacks.ts";
 
 export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
   const type = config.type ?? "local";
@@ -36,20 +24,7 @@ export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
       if (type === "veryfront-api") {
         const configWithCallbacks: FSAdapterConfig = {
           ...config,
-          invalidationCallbacks: {
-            clearSSRModuleCache,
-            clearModulePathCache,
-            invalidateModulePaths,
-            clearSSRModuleCacheForProject,
-            clearRouterDetectionCacheForProject,
-            clearSnippetCacheForProject,
-            clearRendererCacheForProject,
-            clearProjectCSSCache: (projectSlug: string) => {
-              invalidateProjectCSS(projectSlug);
-              invalidateProjectCandidateManifests(projectSlug);
-            },
-            ...config.invalidationCallbacks,
-          },
+          invalidationCallbacks: createDefaultInvalidationCallbacks(config.invalidationCallbacks),
         };
 
         if (proxyMode) {

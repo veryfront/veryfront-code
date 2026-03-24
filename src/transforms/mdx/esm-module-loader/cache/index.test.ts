@@ -11,9 +11,9 @@ import {
 } from "./index.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { exists, remove, writeTextFile } from "#veryfront/compat/fs.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
 import { cacheModule } from "../module-fetcher/module-cache.ts";
 import { rendererLogger as log } from "#veryfront/utils";
+import { buildMdxEsmModuleFileName, buildMdxEsmPathCacheKey } from "../cache-format.ts";
 
 describe("MDX module path cache", () => {
   it("isolates per cache dir", async () => {
@@ -57,8 +57,8 @@ describe("invalidateModulePaths — disk persistence", () => {
     clearModulePathCache();
 
     const cacheDir = await makeTempDir({ prefix: "vf-mdx-invalidate-" });
-    const versionedKey = `v${VERSION}:_vf_modules/components/EmptyState.js`;
-    const staleMjsPath = join(cacheDir, `vfmod-v${VERSION}-stale1234.mjs`);
+    const versionedKey = buildMdxEsmPathCacheKey("_vf_modules/components/EmptyState.js");
+    const staleMjsPath = join(cacheDir, buildMdxEsmModuleFileName("stale1234"));
 
     try {
       // Simulate a cached module: _index.json entry + .mjs file on disk
@@ -103,8 +103,8 @@ describe("invalidateModulePaths — disk persistence", () => {
     clearModulePathCache();
 
     const cacheDir = await makeTempDir({ prefix: "vf-mdx-invalidate-disk-" });
-    const versionedKey = `v${VERSION}:_vf_modules/components/EmptyState.js`;
-    const staleMjsPath = join(cacheDir, `vfmod-v${VERSION}-stale5678.mjs`);
+    const versionedKey = buildMdxEsmPathCacheKey("_vf_modules/components/EmptyState.js");
+    const staleMjsPath = join(cacheDir, buildMdxEsmModuleFileName("stale5678"));
 
     try {
       // Create the stale .mjs file
@@ -191,8 +191,8 @@ describe("invalidateModulePaths — edge cases", () => {
     clearModulePathCache();
 
     const cacheDir = await makeTempDir({ prefix: "vf-mdx-verified-deps-" });
-    const versionedKey = `v${VERSION}:_vf_modules/components/EmptyState.js`;
-    const staleMjsPath = join(cacheDir, `vfmod-v${VERSION}-verified1234.mjs`);
+    const versionedKey = buildMdxEsmPathCacheKey("_vf_modules/components/EmptyState.js");
+    const staleMjsPath = join(cacheDir, buildMdxEsmModuleFileName("verified1234"));
     const verifyKey = `${staleMjsPath}:${versionedKey}`;
 
     try {
@@ -229,10 +229,10 @@ describe("invalidateModulePaths — edge cases", () => {
 
     const cacheDirA = await makeTempDir({ prefix: "vf-mdx-rapid-a-" });
     const cacheDirB = await makeTempDir({ prefix: "vf-mdx-rapid-b-" });
-    const keyA = `v${VERSION}:_vf_modules/components/Header.js`;
-    const keyB = `v${VERSION}:_vf_modules/components/Footer.js`;
-    const mjsA = join(cacheDirA, `vfmod-v${VERSION}-header.mjs`);
-    const mjsB = join(cacheDirB, `vfmod-v${VERSION}-footer.mjs`);
+    const keyA = buildMdxEsmPathCacheKey("_vf_modules/components/Header.js");
+    const keyB = buildMdxEsmPathCacheKey("_vf_modules/components/Footer.js");
+    const mjsA = join(cacheDirA, buildMdxEsmModuleFileName("header"));
+    const mjsB = join(cacheDirB, buildMdxEsmModuleFileName("footer"));
 
     try {
       // Set up two entries in two different cache dirs
@@ -286,10 +286,10 @@ describe("invalidateModulePaths — edge cases", () => {
     clearModulePathCache();
 
     const cacheDir = await makeTempDir({ prefix: "vf-mdx-selective-" });
-    const emptyStateKey = `v${VERSION}:_vf_modules/components/EmptyState.js`;
-    const headerKey = `v${VERSION}:_vf_modules/components/Header.js`;
-    const emptyStateMjs = join(cacheDir, `vfmod-v${VERSION}-empty.mjs`);
-    const headerMjs = join(cacheDir, `vfmod-v${VERSION}-header.mjs`);
+    const emptyStateKey = buildMdxEsmPathCacheKey("_vf_modules/components/EmptyState.js");
+    const headerKey = buildMdxEsmPathCacheKey("_vf_modules/components/Header.js");
+    const emptyStateMjs = join(cacheDir, buildMdxEsmModuleFileName("empty"));
+    const headerMjs = join(cacheDir, buildMdxEsmModuleFileName("header"));
 
     try {
       await writeTextFile(emptyStateMjs, `export default "EmptyState";`);
@@ -330,8 +330,8 @@ describe("invalidateModulePaths — edge cases", () => {
     clearModulePathCache();
 
     const cacheDir = await makeTempDir({ prefix: "vf-mdx-no-false-" });
-    const newKey = `v${VERSION}:_vf_modules/components/EmptyStateNew.js`;
-    const newMjs = join(cacheDir, `vfmod-v${VERSION}-new.mjs`);
+    const newKey = buildMdxEsmPathCacheKey("_vf_modules/components/EmptyStateNew.js");
+    const newMjs = join(cacheDir, buildMdxEsmModuleFileName("new"));
 
     try {
       await writeTextFile(newMjs, `export default "EmptyStateNew";`);
@@ -362,8 +362,8 @@ describe("invalidateModulePaths — edge cases", () => {
     clearModulePathCache();
 
     const cacheDir = await makeTempDir({ prefix: "vf-mdx-leadslash-" });
-    const versionedKey = `v${VERSION}:_vf_modules/components/EmptyState.js`;
-    const mjsPath = join(cacheDir, `vfmod-v${VERSION}-slash.mjs`);
+    const versionedKey = buildMdxEsmPathCacheKey("_vf_modules/components/EmptyState.js");
+    const mjsPath = join(cacheDir, buildMdxEsmModuleFileName("slash"));
 
     try {
       await writeTextFile(mjsPath, `export default "test";`);
@@ -392,8 +392,8 @@ describe("invalidateModulePaths — edge cases", () => {
 
     for (const ext of extensions) {
       const cacheDir = await makeTempDir({ prefix: `vf-mdx-ext-${ext.slice(1)}-` });
-      const versionedKey = `v${VERSION}:_vf_modules/utils/helper.js`;
-      const mjsPath = join(cacheDir, `vfmod-v${VERSION}-ext.mjs`);
+      const versionedKey = buildMdxEsmPathCacheKey("_vf_modules/utils/helper.js");
+      const mjsPath = join(cacheDir, buildMdxEsmModuleFileName("ext"));
 
       try {
         await writeTextFile(mjsPath, `export default "test";`);
@@ -425,8 +425,8 @@ describe("invalidateModulePaths — edge cases", () => {
     clearModulePathCache();
 
     const cacheDir = await makeTempDir({ prefix: "vf-mdx-deep-" });
-    const versionedKey = `v${VERSION}:_vf_modules/lib/utils/formatting/date.js`;
-    const mjsPath = join(cacheDir, `vfmod-v${VERSION}-deep.mjs`);
+    const versionedKey = buildMdxEsmPathCacheKey("_vf_modules/lib/utils/formatting/date.js");
+    const mjsPath = join(cacheDir, buildMdxEsmModuleFileName("deep"));
 
     try {
       await writeTextFile(mjsPath, `export default "date";`);
@@ -455,9 +455,9 @@ describe("invalidateModulePaths — edge cases", () => {
 
     const cacheDirA = await makeTempDir({ prefix: "vf-mdx-multi-a-" });
     const cacheDirB = await makeTempDir({ prefix: "vf-mdx-multi-b-" });
-    const key = `v${VERSION}:_vf_modules/components/EmptyState.js`;
-    const mjsA = join(cacheDirA, `vfmod-v${VERSION}-a.mjs`);
-    const mjsB = join(cacheDirB, `vfmod-v${VERSION}-b.mjs`);
+    const key = buildMdxEsmPathCacheKey("_vf_modules/components/EmptyState.js");
+    const mjsA = join(cacheDirA, buildMdxEsmModuleFileName("a"));
+    const mjsB = join(cacheDirB, buildMdxEsmModuleFileName("b"));
 
     try {
       await writeTextFile(mjsA, `export default "A";`);
@@ -510,7 +510,7 @@ describe("invalidateModulePaths — edge cases", () => {
       // Verify _index.json has the entry
       clearModulePathCache();
       const loaded1 = await getModulePathCache(cacheDir);
-      const versionedKey = `v${VERSION}:${normalizedPath}`;
+      const versionedKey = buildMdxEsmPathCacheKey(normalizedPath);
       assertEquals(loaded1.get(versionedKey), oldPath, "phase 1: _index.json has old entry");
 
       // Phase 2: Invalidate (simulates poke)

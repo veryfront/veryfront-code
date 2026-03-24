@@ -35,11 +35,17 @@ describe("retry-handler", () => {
 
     describe("trace context propagation", () => {
       let capturedHeaders: Headers | undefined;
+      let capturedMethod: string | undefined;
+      let capturedBody: BodyInit | null | undefined;
 
       beforeEach((): void => {
         capturedHeaders = undefined;
+        capturedMethod = undefined;
+        capturedBody = undefined;
         setFetch((_url, init) => {
           capturedHeaders = init?.headers as Headers | undefined;
+          capturedMethod = init?.method;
+          capturedBody = init?.body;
           return Promise.resolve(
             new Response(JSON.stringify({ ok: true }), { status: 200 }),
           );
@@ -56,6 +62,27 @@ describe("retry-handler", () => {
         assertExists(capturedHeaders, "Headers should be passed to fetch");
         assertEquals(capturedHeaders.get("Authorization"), "Bearer test-token");
         assertEquals(capturedHeaders.get("Content-Type"), "application/json");
+      });
+
+      it("should forward custom method, body, and headers", async () => {
+        await requestWithRetry(
+          "https://api.test.com/endpoint",
+          "test-token",
+          { maxRetries: 0, initialDelay: 100, maxDelay: 1000 },
+          {
+            method: "POST",
+            body: JSON.stringify({ name: "job" }),
+            headers: {
+              "X-Test": "yes",
+            },
+          },
+        );
+
+        assertEquals(capturedMethod, "POST");
+        assertEquals(capturedBody, JSON.stringify({ name: "job" }));
+        assertExists(capturedHeaders, "Headers should be passed to fetch");
+        assertEquals(capturedHeaders.get("Authorization"), "Bearer test-token");
+        assertEquals(capturedHeaders.get("X-Test"), "yes");
       });
     });
 

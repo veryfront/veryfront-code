@@ -5,7 +5,28 @@
  * Provides per-project vendor bundle management with automatic invalidation.
  **************************************************/
 
-const TRANSFORM_VERSION = "3";
+import { createCacheNamespace } from "#veryfront/utils/cache-namespace.ts";
+
+function buildVendorCacheConfig(
+  reactVersion: string,
+  dependencies: Record<string, string>,
+): {
+  react: string;
+  deps: Array<[string, string]>;
+} {
+  return {
+    react: reactVersion,
+    deps: Object.entries(dependencies).sort(([left], [right]) => left.localeCompare(right)),
+  };
+}
+
+export const VENDOR_CACHE_NAMESPACE = createCacheNamespace("vendor-build", {
+  configSample: buildVendorCacheConfig("19.1.1", {
+    "@radix-ui/react-slot": "1.2.3",
+    react: "19.1.1",
+  }),
+  digest: "sha256-16hex",
+});
 
 export async function generateVendorCacheKey(
   projectId: string,
@@ -13,9 +34,8 @@ export async function generateVendorCacheKey(
   dependencies: Record<string, string>,
 ): Promise<string> {
   const configStr = JSON.stringify({
-    transformVersion: TRANSFORM_VERSION,
-    react: reactVersion,
-    deps: Object.entries(dependencies).sort(([a], [b]) => a.localeCompare(b)),
+    namespace: VENDOR_CACHE_NAMESPACE,
+    ...buildVendorCacheConfig(reactVersion, dependencies),
   });
 
   const data = new TextEncoder().encode(configStr);

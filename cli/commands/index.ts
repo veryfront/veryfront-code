@@ -22,3 +22,4 @@ export { serveCommand } from "./serve/index.ts";
 export { doctorCommand } from "./doctor/index.ts";
 export { installCommand, uninstallCommand } from "./install/index.ts";
 export { workerCommand } from "./worker/index.ts";
+export { workflowCommand } from "./workflow/index.ts";

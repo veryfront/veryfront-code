@@ -11,7 +11,6 @@ import { join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
 import { replaceSpecifiers } from "../../esm/lexer.ts";
 import { getLocalReactPaths, isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
 import {
@@ -23,7 +22,7 @@ import {
   REACT_IMPORT_PATTERN,
 } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
-import { hashString } from "./utils/hash.ts";
+import { buildMdxJsxCacheFileName } from "./cache-format.ts";
 import { rewriteDntImports } from "./module-fetcher/index.ts";
 import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
 import type { ESMLoaderContext } from "./types.ts";
@@ -128,7 +127,7 @@ export async function transformJsxImports(
   const transformResults = await Promise.all(
     importsToProcess.map(async ({ fullMatch, importClause, filePath, ext }) => {
       try {
-        const transformedFileName = `jsx-v${VERSION}-${hashString(filePath)}.mjs`;
+        const transformedFileName = buildMdxJsxCacheFileName(filePath);
         const transformedPath = join(esmCacheDir, transformedFileName);
 
         try {

@@ -9,6 +9,8 @@ import { computeHash } from "../utils/index.ts";
 import type { HTMLGenerationContext, HTMLGenerator } from "./html.ts";
 import type { RenderOptions } from "./types.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
+import { getWorkerPool, isSSRIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
+import type { WorkerResponse } from "#veryfront/security/sandbox/worker-types.ts";
 
 const logger = rendererLogger.component("ssr-orchestrator");
 
@@ -24,6 +26,24 @@ export interface SSRRenderingResult {
   fullHtml: string;
   finalStream: ReadableStream | null;
   ssrHash: string;
+}
+
+/**
+ * Options for isolated SSR rendering through the Worker pool.
+ * When provided and SSR isolation is enabled, the rendering happens
+ * in a per-project Worker instead of the main process.
+ */
+export interface SSRIsolationOptions {
+  /** Temp file path for the page component module */
+  pageModulePath: string;
+  /** Ordered layout module temp paths (innermost → outermost) */
+  layoutModulePaths: string[];
+  /** Page component props */
+  pageProps: Record<string, unknown>;
+  /** Layout props (one entry per layout, matching layoutModulePaths order) */
+  layoutProps: Record<string, unknown>[];
+  /** Project directory for worker scoping */
+  projectDir: string;
 }
 
 function getElementTypeName(el: React.ReactElement | null | undefined): string {
@@ -45,7 +65,18 @@ export class SSROrchestrator {
     pageElement: React.ReactElement,
     generationContext: Omit<HTMLGenerationContext, "html" | "ssrHash">,
     options?: RenderOptions,
+    isolationOptions?: SSRIsolationOptions,
   ): Promise<SSRRenderingResult> {
+    // Isolated SSR path: render in per-project Worker
+    if (
+      isSSRIsolationEnabled() &&
+      isolationOptions?.pageModulePath &&
+      isolationOptions?.projectDir
+    ) {
+      return this.performIsolatedSSR(generationContext, options, isolationOptions);
+    }
+
+    // Default path: render in main process
     logger.debug("performSSRRendering called", {
       elementType: getElementTypeName(pageElement),
       hasChildren: !!(pageElement.props as Record<string, unknown>)?.children,
@@ -130,6 +161,94 @@ export class SSROrchestrator {
       finalStream: wantsStream ? this.createStream(fullHtml) : null,
       ssrHash,
     };
+  }
+
+  /**
+   * Perform SSR rendering in an isolated per-project Worker.
+   *
+   * The Worker imports user modules from their temp file paths,
+   * constructs the React element tree, and renders to HTML.
+   * For streaming, the Worker sends chunks via postMessage.
+   */
+  private async performIsolatedSSR(
+    generationContext: Omit<HTMLGenerationContext, "html" | "ssrHash">,
+    options: RenderOptions | undefined,
+    isolation: SSRIsolationOptions,
+  ): Promise<SSRRenderingResult> {
+    const wantsStream = options?.delivery === "stream";
+    const pool = getWorkerPool();
+    const requestId = crypto.randomUUID();
+
+    return withSpan(
+      "ssr.isolated_render",
+      async () => {
+        const worker = pool.getOrCreateWorker(isolation.projectDir, [isolation.projectDir]);
+
+        if (wantsStream) {
+          // Streaming mode: get a ReadableStream of chunks from the Worker
+          const stream = worker.executeStream({
+            type: "render-ssr",
+            id: requestId,
+            pageModulePath: isolation.pageModulePath,
+            layoutModulePaths: isolation.layoutModulePaths,
+            pageProps: isolation.pageProps,
+            layoutProps: isolation.layoutProps,
+            delivery: "stream",
+          });
+
+          const ssrHash = `stream-isolated-${Date.now()}`;
+
+          // Generate HTML stream using the framework's HTML generator
+          const finalStream = await this.config.htmlGenerator.generateHTMLStream(stream, {
+            ...generationContext,
+            ssrHash,
+            options: { ...generationContext.options, ...options },
+            collectedHead: undefined,
+          });
+
+          return { fullHtml: "", finalStream, ssrHash };
+        }
+
+        // String mode: render to HTML in Worker, get result back
+        const workerResponse: WorkerResponse = await worker.execute({
+          type: "render-ssr",
+          id: requestId,
+          pageModulePath: isolation.pageModulePath,
+          layoutModulePaths: isolation.layoutModulePaths,
+          pageProps: isolation.pageProps,
+          layoutProps: isolation.layoutProps,
+          delivery: "string",
+        });
+
+        if (workerResponse.type === "error") {
+          const err = new Error(workerResponse.error.message);
+          err.name = workerResponse.error.name;
+          throw err;
+        }
+
+        if (workerResponse.type !== "ssr-result") {
+          throw new Error(`Unexpected worker response type: ${workerResponse.type}`);
+        }
+
+        const html = workerResponse.html;
+        const ssrHash = await computeHash(html);
+
+        const fullHtml = await this.config.htmlGenerator.generateFullHTML({
+          ...generationContext,
+          html,
+          ssrHash,
+          options: { ...generationContext.options, ...options },
+          collectedHead: undefined,
+        });
+
+        return { fullHtml, finalStream: null, ssrHash };
+      },
+      {
+        "ssr.isolated": true,
+        "ssr.wants_stream": wantsStream,
+        "ssr.project_dir": isolation.projectDir,
+      },
+    );
   }
 
   private createStream(html: string): ReadableStream | null {

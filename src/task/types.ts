@@ -26,6 +26,12 @@ export interface TaskDefinition {
   name?: string;
   /** Task description */
   description?: string;
+  /** Optional JSON-schema-like input contract surfaced in APIs/UIs */
+  inputSchema?: Record<string, unknown>;
+  /** Optional JSON-schema-like output contract surfaced in APIs/UIs */
+  outputSchema?: Record<string, unknown>;
+  /** Whether this task can be scheduled via cron jobs */
+  schedulable?: boolean;
   /** The function to execute */
   run: (ctx: TaskContext) => Promise<unknown> | unknown;
 }

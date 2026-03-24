@@ -9,7 +9,7 @@ import type {
   InvalidationCallbacks,
   ResolvedContentContext,
 } from "./types.ts";
-import type { FileInfo } from "../../base.ts";
+import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -49,6 +49,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   /** Resolves when file list initialization is complete (for coordinating reads) */
   private fileListReadyResolve: (() => void) | null = null;
+  /** Single-flight background rewarm when the file list cache disappears */
+  private fileListWarmupPromise: Promise<void> | null = null;
+  private fileListWarmupKey: string | null = null;
 
   private projectData?: Project;
   private apiBaseUrl: string;
@@ -140,7 +143,33 @@ export class VeryfrontFSAdapter implements FSAdapter {
           resultSize: result?.length ?? 0,
         });
 
+        if (!result?.length) {
+          this.scheduleFileListWarmup("getFileList miss", cacheKey);
+        }
+
         return result;
+      },
+      hasCachedFileList: async () => {
+        if (!this.contentContext) {
+          logger.debug("hasCachedFileList: no contentContext");
+          return false;
+        }
+
+        const cacheKey = buildFileListCacheKey(this.contentContext);
+        const result = await this.cache.getAsync<Array<{ path: string }>>(cacheKey);
+        const hasResult = Array.isArray(result) && result.length > 0;
+
+        logger.debug("hasCachedFileList lookup", {
+          cacheKey,
+          hasResult,
+          resultSize: result?.length ?? 0,
+        });
+
+        if (!hasResult) {
+          this.scheduleFileListWarmup("hasCachedFileList miss", cacheKey);
+        }
+
+        return hasResult;
       },
       isPersistentCacheInvalidated: (prefix: string) => this.isPersistentCacheInvalidated(prefix),
       isReleaseBeingInvalidated: (releaseId: string) =>
@@ -184,6 +213,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
           hasContent: result?.filter((f) => f.content)?.length ?? 0,
         });
 
+        if (!result?.length) {
+          this.scheduleFileListWarmup("getFileListCache miss", cacheKey);
+        }
+
         return result;
       },
     );
@@ -212,6 +245,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       },
       clearFileListIndex: () => this.readOps.clearFileListIndex(),
       setFileListCache: (cacheKey, files) => this.cache.setAsync(cacheKey, files),
+      pregenerateStyles: (files) => this.triggerCSSPregeneration(files),
     });
 
     logger.debug("Created", {
@@ -316,12 +350,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
         sourceFilesWithContent: fileSummary.sourceFilesWithContent,
       });
 
-      // Trigger CSS pre-generation for non-branch environments (fire-and-forget)
-      // This runs in parallel with the rest of initialization
-      if (
-        this.contentContext.sourceType !== "branch" &&
-        fileSummary.sourceFilesWithContent > 0
-      ) {
+      // Trigger CSS pre-generation after the initial file snapshot is ready for
+      // published contexts. Branch previews should first try remote metadata
+      // recovery on cold starts instead of repopulating the prepared cache here.
+      if (fileSummary.sourceFilesWithContent > 0 && this.shouldBackgroundPregenerateStyles()) {
         this.triggerCSSPregeneration(files).catch(() => {
           // Error already logged in triggerCSSPregeneration
         });
@@ -371,6 +403,87 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return isPrefixBeingInvalidated(prefix);
   }
 
+  private shouldBackgroundPregenerateStyles(): boolean {
+    // Branch previews should recover the last registered stylesheet artifact on
+    // cold starts before rebuilding CSS locally. Live edit pokes still
+    // pregenerate through the WebSocket path after branch content changes.
+    return this.contentContext?.sourceType !== "branch";
+  }
+
+  private scheduleFileListWarmup(reason: string, cacheKey?: string): void {
+    if (!this.initialized || !this.contentContext) return;
+
+    const effectiveCacheKey = cacheKey ?? buildFileListCacheKey(this.contentContext);
+
+    if (this.fileListWarmupPromise && this.fileListWarmupKey === effectiveCacheKey) {
+      logger.debug("File list warmup already in progress", {
+        reason,
+        cacheKey: effectiveCacheKey,
+      });
+      return;
+    }
+
+    const warmupContext = this.contentContext;
+    let warmupPromise: Promise<void> | null = null;
+    warmupPromise = (async () => {
+      try {
+        const existing = await this.cache.getAsync<Array<{ path: string; content?: string }>>(
+          effectiveCacheKey,
+        );
+
+        if (existing?.length) {
+          logger.debug("Skipping file list warmup because cache is already populated", {
+            reason,
+            cacheKey: effectiveCacheKey,
+            fileCount: existing.length,
+          });
+          return;
+        }
+
+        logger.debug("Starting file list warmup", {
+          reason,
+          cacheKey: effectiveCacheKey,
+          sourceType: warmupContext.sourceType,
+          branch: warmupContext.branch,
+          environmentName: warmupContext.environmentName,
+          releaseId: warmupContext.releaseId,
+        });
+
+        const files = await fetchFileListForContext(this.client, warmupContext);
+        await this.cache.setAsync(effectiveCacheKey, files);
+        const fileSummary = summarizeFileList(files);
+
+        if (fileSummary.sourceFilesWithContent > 0 && this.shouldBackgroundPregenerateStyles()) {
+          this.triggerCSSPregeneration(files).catch(() => {
+            // Error already logged in triggerCSSPregeneration
+          });
+        }
+
+        logger.debug("File list warmup complete", {
+          reason,
+          cacheKey: effectiveCacheKey,
+          totalFiles: files.length,
+          filesWithContent: files.filter((file) => file.content).length,
+        });
+      } catch (error) {
+        logger.warn("File list warmup failed", {
+          reason,
+          cacheKey: effectiveCacheKey,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        if (warmupPromise && this.fileListWarmupPromise === warmupPromise) {
+          this.fileListWarmupPromise = null;
+          this.fileListWarmupKey = null;
+        }
+      }
+    })();
+
+    this.fileListWarmupPromise = warmupPromise;
+    this.fileListWarmupKey = effectiveCacheKey;
+    this.readOps.setFileListReadyPromise(warmupPromise);
+  }
+
   getPokeMetrics(): {
     received: number;
     invalidationsTriggered: number;
@@ -410,9 +523,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.statOps.exists(path);
   }
 
-  async resolveFile(basePath: string): Promise<string | null> {
+  async resolveFile(
+    basePath: string,
+    options?: ResolveFileOptions,
+  ): Promise<string | null> {
     await this.ensureInitialized();
-    return this.statOps.resolveFile(basePath);
+    return this.statOps.resolveFile(basePath, options);
   }
 
   dispose(): void {
@@ -421,6 +537,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     this.initialized = false;
+    this.fileListWarmupPromise = null;
+    this.fileListWarmupKey = null;
 
     logger.debug("Disposed");
   }
@@ -452,6 +570,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         hasFiles: !!files,
         fileCount: files?.length ?? 0,
       });
+      this.scheduleFileListWarmup("getAllSourceFiles miss", cacheKey);
       return [];
     }
 
@@ -563,6 +682,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (contextChanged) {
       this.statOps.clearIndex();
       this.dirOps.clearTree();
+      this.fileListWarmupPromise = null;
+      this.fileListWarmupKey = null;
       logger.debug("Cleared index and dirTree due to context change", {
         oldContext,
         newContext: context,
@@ -603,45 +724,82 @@ export class VeryfrontFSAdapter implements FSAdapter {
    */
   private async triggerCSSPregeneration(
     files: Array<{ path: string; content?: string }>,
-  ): Promise<void> {
+  ): Promise<{ hash: string; assetPath: string } | undefined> {
     try {
-      const { pregenerateCSSFromFiles, findStylesheetFromFiles } = await import(
+      const { buildPreparedCSSArtifactFromFiles, findStylesheetFromFiles } = await import(
         "../../../../html/styles-builder/css-pregeneration.ts"
+      );
+      const { resolveStyleContentVersion } = await import(
+        "../../../../html/styles-builder/content-version.ts"
+      );
+      const { createStyleScopeProfile } = await import(
+        "../../../../html/styles-builder/style-scope-profile.ts"
       );
 
       let stylesheetPath: string | undefined;
+      let styleProfile = createStyleScopeProfile();
       const projectDir = this.normalizer.getProjectDir();
 
-      if (projectDir) {
-        try {
-          const { runtime } = await import("#veryfront/platform/adapters/registry.ts");
-          const { getConfig } = await import("#veryfront/config");
-          const adapter = await runtime.get();
-          const cacheKey = this.client.getProjectId() || this.projectSlug;
-          const config = await getConfig(projectDir, adapter, { cacheKey });
-          stylesheetPath = config?.tailwind?.stylesheet;
-        } catch (error) {
-          logger.debug("Failed to load config for CSS pre-generation", {
-            projectSlug: this.projectSlug,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
+      if (!projectDir) {
+        logger.debug("Skipping CSS pre-generation without projectDir", {
+          projectSlug: this.projectSlug,
+        });
+        return undefined;
+      }
+
+      try {
+        const { runtime } = await import("#veryfront/platform/adapters/registry.ts");
+        const { getConfig } = await import("#veryfront/config");
+        const adapter = await runtime.get();
+        const cacheKey = this.client.getProjectId() || this.projectSlug;
+        const config = await getConfig(projectDir, adapter, { cacheKey });
+        stylesheetPath = config?.tailwind?.stylesheet;
+        styleProfile = createStyleScopeProfile(config);
+      } catch (error) {
+        logger.debug("Failed to load config for CSS pre-generation", {
+          projectSlug: this.projectSlug,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
 
       const stylesheet = findStylesheetFromFiles(files, stylesheetPath);
+      const projectVersion = resolveStyleContentVersion(this.contentContext, {
+        branch: this.contentContext?.branch ?? null,
+        releaseId: this.contentContext?.releaseId ?? null,
+        environmentName: this.contentContext?.environmentName ?? null,
+      });
 
-      await pregenerateCSSFromFiles({
+      const result = await buildPreparedCSSArtifactFromFiles({
         projectSlug: this.projectSlug,
+        projectVersion,
+        projectDir,
         files,
+        styleProfile,
         stylesheet,
         stylesheetPath,
         minify: true,
+        environment: "preview",
+        buildMode: "production",
       });
+
+      logger.debug("CSS pre-generation complete", {
+        projectSlug: this.projectSlug,
+        projectVersion,
+        cssHash: result.hash,
+        candidateCount: result.candidateCount,
+        fromCache: result.fromCache,
+      });
+
+      return {
+        hash: result.hash,
+        assetPath: `/_vf/css/${result.hash}.css`,
+      };
     } catch (error) {
       logger.warn("CSS pre-generation failed", {
         projectSlug: this.projectSlug,
         error: error instanceof Error ? error.message : String(error),
       });
+      return undefined;
     }
   }
 }

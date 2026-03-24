@@ -27,7 +27,7 @@ import { logger as baseLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
-import { loadHandlerModule } from "#veryfront/routing/api/module-loader/loader.ts";
+import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
 import type { WorkflowDefinition } from "../types.ts";
 
 const logger = baseLogger.component("workflow-discovery");
@@ -167,16 +167,10 @@ export async function discoverWorkflows(
     // Load and extract workflows from each file
     for (const file of files) {
       try {
-        const module = await loadHandlerModule({
-          projectDir,
-          modulePath: file.path,
+        const module = await importDiscoveryModule(file.path, {
           adapter,
-          config,
+          projectDir,
         });
-
-        if (!module) {
-          continue;
-        }
 
         // Extract workflows from module exports
         for (const [exportName, value] of Object.entries(module)) {

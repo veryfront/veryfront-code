@@ -6,6 +6,9 @@
  * @module html/styles-builder/candidate-extractor
  */
 
+import type { StyleScopeProfile } from "./style-scope-profile.ts";
+import { shouldIncludeStylePath } from "./style-scope-profile.ts";
+
 /**
  * Extract potential Tailwind class name candidates from source code content.
  * Uses a comprehensive regex pattern matching Tailwind v4 utility patterns.
@@ -17,12 +20,22 @@ export function extractCandidates(content: string): string[] {
 
 export function extractCandidatesFromFiles(
   files: Array<{ path: string; content?: string }>,
+  options: {
+    projectDir?: string;
+    styleProfile?: StyleScopeProfile;
+  } = {},
 ): Set<string> {
   const candidates = new Set<string>();
   const sourceExtensions = [".tsx", ".jsx", ".ts", ".js", ".mdx"];
 
   for (const file of files) {
     if (!file.content) continue;
+    if (
+      options.styleProfile &&
+      !shouldIncludeStylePath(options.styleProfile, file.path, options.projectDir)
+    ) {
+      continue;
+    }
     if (!sourceExtensions.some((ext) => file.path.endsWith(ext))) continue;
 
     for (const candidate of extractCandidates(file.content)) {

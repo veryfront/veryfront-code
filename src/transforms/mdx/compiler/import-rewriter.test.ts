@@ -8,7 +8,7 @@ describe("transforms/mdx/compiler/import-rewriter", () => {
     it("rewrites relative import for SSR", () => {
       const config: ImportRewriterConfig = {
         filePath: "/project/app/page.mdx",
-        target: "ssr",
+        target: "server",
       };
       const body = `import { foo } from "./utils.js";`;
       const result = rewriteBodyImports(body, config);
@@ -28,7 +28,7 @@ describe("transforms/mdx/compiler/import-rewriter", () => {
     it("leaves bare imports unchanged", () => {
       const config: ImportRewriterConfig = {
         filePath: "/project/app/page.mdx",
-        target: "ssr",
+        target: "server",
       };
       const body = `import React from "react";`;
       const result = rewriteBodyImports(body, config);
@@ -48,7 +48,7 @@ describe("transforms/mdx/compiler/import-rewriter", () => {
     it("leaves @/ alias unchanged for SSR", () => {
       const config: ImportRewriterConfig = {
         filePath: "/project/app/page.mdx",
-        target: "ssr",
+        target: "server",
       };
       const body = `import { Button } from "@/components/Button";`;
       const result = rewriteBodyImports(body, config);
@@ -58,7 +58,7 @@ describe("transforms/mdx/compiler/import-rewriter", () => {
     it("does not touch non-import lines", () => {
       const config: ImportRewriterConfig = {
         filePath: "/project/app/page.mdx",
-        target: "ssr",
+        target: "server",
       };
       const body = `const x = 1;\nimport React from "react";`;
       const result = rewriteBodyImports(body, config);
@@ -68,7 +68,7 @@ describe("transforms/mdx/compiler/import-rewriter", () => {
     it("handles export from statement", () => {
       const config: ImportRewriterConfig = {
         filePath: "/project/app/page.mdx",
-        target: "ssr",
+        target: "server",
       };
       const body = `export { foo } from "./utils.js";`;
       const result = rewriteBodyImports(body, config);
@@ -89,7 +89,7 @@ describe("transforms/mdx/compiler/import-rewriter", () => {
     it("handles empty body", () => {
       const config: ImportRewriterConfig = {
         filePath: "/project/app/page.mdx",
-        target: "ssr",
+        target: "server",
       };
       assertEquals(rewriteBodyImports("", config), "");
     });
@@ -109,7 +109,7 @@ describe("transforms/mdx/compiler/import-rewriter", () => {
     it("rewrites relative from imports for SSR", () => {
       const config: ImportRewriterConfig = {
         filePath: "/project/app/page.mdx",
-        target: "ssr",
+        target: "server",
       };
       const code = `from "./utils.js"`;
       const result = rewriteCompiledImports(code, config);

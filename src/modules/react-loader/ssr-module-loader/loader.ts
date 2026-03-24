@@ -54,6 +54,7 @@ import { preflightLocalImports } from "./preflight-imports.ts";
 import { resolveVfModuleImports } from "./vf-module-resolver.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
+import { ensureMdxModuleDependencies } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/dependency-recovery.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
@@ -230,6 +231,35 @@ export class SSRModuleLoader {
       }
 
       if (classifiedError.type === "module-not-found") {
+        if (this.options.contentSourceId) {
+          try {
+            const cachedCode = await this.cache.getFs().readTextFile(cacheEntry.tempPath);
+            const recovered = await ensureMdxModuleDependencies(cachedCode, {
+              projectId: this.options.projectId,
+              contentSourceId: this.options.contentSourceId,
+              log: logger,
+            });
+            if (recovered.missing.length === 0 && recovered.recovered.length > 0) {
+              const retryTempPath = cacheEntry.tempPath.replace(/\.mjs$/, "") +
+                `-recovered-${cacheEntry.contentHash}.mjs`;
+              await this.cache.getFs().writeTextFile(retryTempPath, cachedCode);
+              logger.info("Recovered vfmod dependencies for cached SSR module, retrying import", {
+                file: filePath.slice(-40),
+                recovered: recovered.recovered.slice(0, 5),
+                retryTempPath,
+              });
+              return (await import(
+                `file://${retryTempPath}?v=${cacheEntry.contentHash}&retry=1`
+              )) as Record<string, unknown>;
+            }
+          } catch (recoveryError) {
+            logger.debug("Failed to recover vfmod dependencies for cached SSR module", {
+              file: filePath.slice(-40),
+              error: recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
+            });
+          }
+        }
+
         logger.error(
           "[SSR-MODULE-LOADER] Cached module has missing dependency, invalidating cache",
           {
@@ -426,6 +456,10 @@ export class SSRModuleLoader {
         mdxCacheDir,
         this.options.projectDir,
         contentHash,
+        {
+          projectId: this.options.projectId,
+          contentSourceId: this.options.contentSourceId,
+        },
       );
 
       if (mdxCacheResult.status === "hit") {

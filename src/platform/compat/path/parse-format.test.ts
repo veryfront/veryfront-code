@@ -61,5 +61,46 @@ describe("platform/compat/path/parse-format", () => {
       });
       assertEquals(result, "file.ts");
     });
+
+    it("should format from name and ext when base is missing", () => {
+      const result = format({ root: "", dir: "", base: "", ext: ".js", name: "index" });
+      assertEquals(result, "index.js");
+    });
+
+    it("should handle empty pathObject", () => {
+      const result = format({ root: "", dir: "", base: "", ext: "", name: "" });
+      assertEquals(result, "");
+    });
+  });
+
+  describe("parse edge cases", () => {
+    it("should parse dotfile", () => {
+      const { name, ext, base } = parse(".gitignore");
+      assertEquals(base, ".gitignore");
+      assertEquals(name, ".gitignore");
+      assertEquals(ext, "");
+    });
+
+    it("should parse file with multiple dots", () => {
+      const { name, ext } = parse("/path/to/file.test.ts");
+      assertEquals(ext, ".ts");
+      assertEquals(name, "file.test");
+    });
+
+    it("should parse root path", () => {
+      const { root, dir, base } = parse("/");
+      assertEquals(root, "/");
+      assertEquals(dir, "/");
+      assertEquals(base, "");
+    });
+
+    it("should parse filename only", () => {
+      const { root, base, name, ext } = parse("file.txt");
+      assertEquals(root, "");
+      assertEquals(base, "file.txt");
+      assertEquals(name, "file");
+      assertEquals(ext, ".txt");
+      // dir is "." on Deno, "" on Node/Bun — both valid
+    });
   });
 });

@@ -1,3 +1,4 @@
+import type { ResolveFileOptions } from "../../base.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import type { GitHubConfig } from "../github/types.ts";
 import type { DirectoryEntry } from "../shared-types.ts";
@@ -26,7 +27,7 @@ export interface FSAdapter {
   initialize?(): Promise<void>;
   shutdown?(): Promise<void>;
 
-  resolveFile?(basePath: string): Promise<string | null>;
+  resolveFile?(basePath: string, options?: ResolveFileOptions): Promise<string | null>;
 }
 
 export interface ContextualFSAdapter extends FSAdapter {
@@ -119,6 +120,8 @@ export interface InvalidationProjectContext {
   environment?: "preview" | "production";
   branch?: string | null;
   releaseId?: string | null;
+  styleArtifactHash?: string;
+  styleAssetPath?: string;
 }
 
 export interface InvalidationCallbacks {

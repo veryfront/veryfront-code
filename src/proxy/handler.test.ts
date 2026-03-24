@@ -2,6 +2,12 @@ import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
+
+const TEST_JWT_SECRET = "test-jwt-secret-for-proxy-handler-tests";
+
+// Set JWT_SECRET so extractUserIdFromToken can verify tokens
+Deno.env.set("JWT_SECRET", TEST_JWT_SECRET);
 
 function createTokenResponse(): Response {
   return Response.json({
@@ -15,18 +21,58 @@ function createNotFoundResponse(): Response {
   return new Response("Not found", { status: 404 });
 }
 
-function createFakeJwt(userId: string): string {
-  const base64UrlEncode = (input: string): string =>
-    btoa(input).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-  const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-  const payload = base64UrlEncode(JSON.stringify({ userId }));
-  return `${header}.${payload}.fake-signature`;
+async function createFakeJwt(userId: string): Promise<string> {
+  const secret = new TextEncoder().encode(TEST_JWT_SECRET);
+  return new SignJWT({ userId })
+    .setProtectedHeader({ alg: "HS256" })
+    .setExpirationTime("1h")
+    .sign(secret);
 }
 
-function createHandler(port: number) {
+async function createRs256Jwt(userId: string): Promise<{
+  token: string;
+  jwks: {
+    keys: Array<{
+      alg: "RS256";
+      e: string;
+      kid: string;
+      kty: "RSA";
+      n: string;
+      use: "sig";
+    }>;
+  };
+}> {
+  const kid = "test-rs256-key";
+  const { privateKey, publicKey } = await generateKeyPair("RS256");
+  const token = await new SignJWT({ userId })
+    .setProtectedHeader({ alg: "RS256", kid })
+    .setExpirationTime("1h")
+    .sign(privateKey);
+  const exported = await exportJWK(publicKey);
+
+  if (exported.kty !== "RSA" || !exported.n || !exported.e) {
+    throw new Error("Expected RSA public JWK");
+  }
+
+  return {
+    token,
+    jwks: {
+      keys: [{
+        alg: "RS256",
+        e: exported.e,
+        kid,
+        kty: "RSA",
+        n: exported.n,
+        use: "sig",
+      }],
+    },
+  };
+}
+
+function createHandler(port: number, apiBasePath = "") {
   return createProxyHandler({
     config: {
-      apiBaseUrl: `http://127.0.0.1:${port}`,
+      apiBaseUrl: `http://127.0.0.1:${port}${apiBasePath}`,
       apiClientId: "test-client",
       apiClientSecret: "test-secret",
       previewApiClientId: "test-client",
@@ -188,31 +234,55 @@ describe("Proxy Handler", () => {
       }
     });
 
-    it("extracts project slug from veryfront subdomain without lookup", async () => {
-      const handler = createProxyHandler({
-        config: {
-          apiBaseUrl: "http://localhost:9999",
-          apiClientId: "",
-          apiClientSecret: "",
-          previewApiClientId: "",
-          previewApiClientSecret: "",
-          apiToken: "fallback-token",
-        },
+    it("extracts project slug from veryfront subdomain with static API token fallback", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: null,
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
       });
 
-      // Use preview subdomain to avoid production releaseId requirement
-      const req = new Request("http://my-project.preview.veryfront.com/page", {
-        headers: { host: "my-project.preview.veryfront.com" },
-      });
+      try {
+        const handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            apiClientId: "",
+            apiClientSecret: "",
+            previewApiClientId: "",
+            previewApiClientSecret: "",
+            apiToken: "fallback-token",
+          },
+        });
 
-      const ctx = await handler.processRequest(req);
+        const req = new Request("http://my-project.preview.veryfront.com/page", {
+          headers: { host: "my-project.preview.veryfront.com" },
+        });
 
-      assertEquals(ctx.projectSlug, "my-project");
-      assertEquals(ctx.error, undefined);
-      assertEquals(ctx.token, "fallback-token");
-      assertEquals(ctx.environment, "preview");
+        const ctx = await handler.processRequest(req);
 
-      await handler.close();
+        assertEquals(ctx.projectSlug, "my-project");
+        assertEquals(ctx.projectId, "proj-123");
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.token, "fallback-token");
+        assertEquals(ctx.environment, "preview");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
     });
   });
 
@@ -264,7 +334,7 @@ describe("Proxy Handler", () => {
     });
 
     it("allows access to protected custom domain with auth token for project member", async () => {
-      const memberToken = createFakeJwt("user-123");
+      const memberToken = await createFakeJwt("user-123");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -312,7 +382,7 @@ describe("Proxy Handler", () => {
     });
 
     it("returns 403 for protected custom domain when authenticated user is not a member", async () => {
-      const nonMemberToken = createFakeJwt("other-user");
+      const nonMemberToken = await createFakeJwt("other-user");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -407,7 +477,7 @@ describe("Proxy Handler", () => {
     });
 
     it("allows access to protected veryfront domain with auth token for project member", async () => {
-      const memberToken = createFakeJwt("user-123");
+      const memberToken = await createFakeJwt("user-123");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -457,7 +527,7 @@ describe("Proxy Handler", () => {
     });
 
     it("returns 403 for protected veryfront domain when authenticated user is not a member", async () => {
-      const nonMemberToken = createFakeJwt("other-user");
+      const nonMemberToken = await createFakeJwt("other-user");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -691,8 +761,36 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("returns 404 for missing preview project without auth token", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createNotFoundResponse();
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://missing-project.preview.veryfront.com/page", {
+          headers: { host: "missing-project.preview.veryfront.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(ctx.error?.message, "Preview project not found");
+        assertEquals(ctx.error?.slug, "project-not-found");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("allows access to protected preview domain with auth token for project member", async () => {
-      const memberToken = createFakeJwt("user-123");
+      const memberToken = await createFakeJwt("user-123");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -741,8 +839,157 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("returns 404 for missing preview project with auth token", async () => {
+      const memberToken = await createFakeJwt("user-123");
+      const { server, port } = createMockServer((_req: Request) => {
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://missing-project.preview.veryfront.com/page", {
+          headers: {
+            host: "missing-project.preview.veryfront.com",
+            cookie: `authToken=${memberToken}`,
+          },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(ctx.error?.message, "Preview project not found");
+        assertEquals(ctx.error?.slug, "project-not-found");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("allows access to protected preview domain with RS256 auth token verified via JWKS", async () => {
+      const { token: memberToken, jwks } = await createRs256Jwt("user-123");
+      let jwksRequestCount = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname === "/.well-known/jwks.json") {
+          jwksRequestCount += 1;
+          return Response.json(jwks);
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            users: [{ id: "user-123" }],
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request(
+          "http://protected-project.preview.veryfront.com/page",
+          {
+            headers: {
+              host: "protected-project.preview.veryfront.com",
+              cookie: `authToken=${memberToken}`,
+            },
+          },
+        );
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "protected-project");
+        assertEquals(ctx.environmentId, "env-1");
+        assertEquals(jwksRequestCount, 1);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("preserves a path-prefixed API base when resolving JWKS", async () => {
+      const { token: memberToken, jwks } = await createRs256Jwt("user-123");
+      let prefixedJwksRequestCount = 0;
+      let rootJwksRequestCount = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/api/auth/token") return createTokenResponse();
+
+        if (pathname === "/api/.well-known/jwks.json") {
+          prefixedJwksRequestCount += 1;
+          return Response.json(jwks);
+        }
+
+        if (pathname === "/.well-known/jwks.json") {
+          rootJwksRequestCount += 1;
+          return createNotFoundResponse();
+        }
+
+        if (pathname.startsWith("/api/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            users: [{ id: "user-123" }],
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port, "/api");
+
+        const req = new Request(
+          "http://protected-project.preview.veryfront.com/page",
+          {
+            headers: {
+              host: "protected-project.preview.veryfront.com",
+              cookie: `authToken=${memberToken}`,
+            },
+          },
+        );
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "protected-project");
+        assertEquals(ctx.environmentId, "env-1");
+        assertEquals(prefixedJwksRequestCount, 1);
+        assertEquals(rootJwksRequestCount, 0);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("returns 403 for protected preview domain when authenticated user is not a member", async () => {
-      const nonMemberToken = createFakeJwt("other-user");
+      const nonMemberToken = await createFakeJwt("other-user");
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -783,6 +1030,172 @@ describe("Proxy Handler", () => {
 
         assertEquals(ctx.error?.status, 403);
         assertEquals(ctx.error?.message, "Access denied");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("redirects to sign-in for protected domain when JWT token is forged", async () => {
+      const forgedToken =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJ1c2VyLTEyMyJ9.invalid-signature";
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            users: [{ id: "user-123" }],
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://protected.example.com/page", {
+          headers: {
+            host: "protected.example.com",
+            cookie: `authToken=${forgedToken}`,
+          },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 302);
+        assertEquals(ctx.error?.message, "Authentication required");
+        assertEquals(
+          ctx.error?.redirectUrl,
+          "https://veryfront.com/sign-in?from=%2Fpage",
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("redirects to sign-in for protected domain when JWT_SECRET is not configured", async () => {
+      const savedSecret = Deno.env.get("JWT_SECRET");
+      Deno.env.delete("JWT_SECRET");
+
+      try {
+        const memberToken = await new SignJWT({ userId: "user-123" })
+          .setProtectedHeader({ alg: "HS256" })
+          .setExpirationTime("1h")
+          .sign(new TextEncoder().encode("some-other-secret"));
+
+        const { server, port } = createMockServer((req: Request) => {
+          const { pathname } = new URL(req.url);
+
+          if (pathname === "/auth/token") return createTokenResponse();
+
+          if (pathname.startsWith("/projects/")) {
+            return Response.json({
+              id: "proj-123",
+              slug: "protected-project",
+              name: "Protected Project",
+              users: [{ id: "user-123" }],
+              environments: [{
+                id: "env-1",
+                name: "production",
+                domains: ["protected.example.com"],
+                active_release_id: "rel-123",
+                protected: true,
+              }],
+            });
+          }
+
+          return createNotFoundResponse();
+        });
+
+        try {
+          const handler = createHandler(port);
+
+          const req = new Request("http://protected.example.com/page", {
+            headers: {
+              host: "protected.example.com",
+              cookie: `authToken=${memberToken}`,
+            },
+          });
+
+          const ctx = await handler.processRequest(req);
+
+          assertEquals(ctx.error?.status, 302);
+          assertEquals(ctx.error?.message, "Authentication required");
+
+          await handler.close();
+        } finally {
+          await server.shutdown();
+        }
+      } finally {
+        if (savedSecret !== undefined) {
+          Deno.env.set("JWT_SECRET", savedSecret);
+        } else {
+          Deno.env.delete("JWT_SECRET");
+        }
+      }
+    });
+
+    it("rejects JWT signed with a different algorithm", async () => {
+      // Sign with HS384 instead of the expected HS256
+      const wrongAlgToken = await new SignJWT({ userId: "user-123" })
+        .setProtectedHeader({ alg: "HS384" })
+        .setExpirationTime("1h")
+        .sign(new TextEncoder().encode(TEST_JWT_SECRET));
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            users: [{ id: "user-123" }],
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://protected.example.com/page", {
+          headers: {
+            host: "protected.example.com",
+            cookie: `authToken=${wrongAlgToken}`,
+          },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 302);
+        assertEquals(ctx.error?.message, "Authentication required");
 
         await handler.close();
       } finally {

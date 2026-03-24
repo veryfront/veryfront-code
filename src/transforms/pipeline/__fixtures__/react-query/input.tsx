@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query@5.90.5";
 
 export default function UserProfile(): JSX.Element {
   const { data, isLoading } = useQuery({

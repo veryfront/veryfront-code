@@ -94,6 +94,7 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
 
       assertEquals(result.valid, false);
       assertEquals(result.failedHashes.length, 0);
+      assertEquals(result.reason, "manifest_missing");
     });
   });
 });

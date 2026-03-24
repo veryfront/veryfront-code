@@ -42,6 +42,34 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
       const index = new FileListIndex(async () => []);
       assertEquals(await index.lookup("test.ts"), undefined);
     });
+
+    it("should report exact path presence even when inline content is missing", async () => {
+      const index = new FileListIndex(async () => [
+        { path: "deno.json" },
+      ]);
+
+      assertEquals(await index.match("deno.json"), {
+        status: "present_without_content",
+        fresh: true,
+        path: "deno.json",
+      });
+    });
+
+    it("should find the first existing candidate path in priority order", async () => {
+      const index = new FileListIndex(async () => [
+        { path: "pages/home.tsx" },
+        { path: "pages/home.jsx", content: "jsx content" },
+      ]);
+
+      assertEquals(
+        await index.findFirstMatch(["pages/home.tsx", "pages/home.jsx"]),
+        {
+          status: "present_without_content",
+          fresh: true,
+          path: "pages/home.tsx",
+        },
+      );
+    });
   });
 
   describe("clear", () => {

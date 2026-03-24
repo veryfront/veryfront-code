@@ -1,9 +1,13 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import {
+  type EnsureStyleArtifactBuildInput,
   type FileDetail,
   type FileListResult,
   type ListFilesOptions,
+  type ProjectStyleArtifactResolution,
+  type ResolveStyleArtifactInput,
   type TokenProvider,
+  type UpsertStyleArtifactInput,
   VeryfrontAPIOperations,
 } from "./operations.ts";
 import { API_CLIENT_ERROR, type VeryfrontAPIConfig } from "./types.ts";
@@ -338,6 +342,27 @@ export class VeryfrontApiClient {
 
   lookupProjectByDomain(domain: string) {
     return this.operations.lookupProjectByDomain(domain);
+  }
+
+  resolveStyleArtifact(
+    input: ResolveStyleArtifactInput,
+    projectRef = this.getProjectSlug()!,
+  ): Promise<ProjectStyleArtifactResolution> {
+    return this.operations.resolveStyleArtifact(projectRef, input);
+  }
+
+  ensureStyleArtifactBuild(
+    input: EnsureStyleArtifactBuildInput,
+    projectRef = this.getProjectSlug()!,
+  ): Promise<ProjectStyleArtifactResolution> {
+    return this.operations.ensureStyleArtifactBuild(projectRef, input);
+  }
+
+  upsertStyleArtifact(
+    input: UpsertStyleArtifactInput,
+    projectRef = this.getProjectSlug()!,
+  ): Promise<ProjectStyleArtifactResolution> {
+    return this.operations.upsertStyleArtifact(projectRef, input);
   }
 
   // =============================================================================

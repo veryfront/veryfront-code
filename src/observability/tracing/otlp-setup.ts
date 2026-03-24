@@ -11,7 +11,7 @@
 
 import { getOtelTracingConfig } from "#veryfront/config/env.ts";
 import { serverLogger } from "#veryfront/utils";
-import { VERSION } from "#veryfront/utils/version.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 
 const logger = serverLogger.component("otel");
 
@@ -116,7 +116,7 @@ export async function initializeOTLP(): Promise<void> {
 
     const resource = new Resource({
       [ATTR_SERVICE_NAME]: config.serviceName,
-      [ATTR_SERVICE_VERSION]: VERSION,
+      [ATTR_SERVICE_VERSION]: RUNTIME_VERSION,
     });
 
     const endpointBase = config.endpoint.replace(/\/$/, "");

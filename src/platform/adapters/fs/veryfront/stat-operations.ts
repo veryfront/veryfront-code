@@ -1,6 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
-import type { FileInfo } from "../../base.ts";
+import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
 import { VeryfrontOperationsBase } from "./base-operations.ts";
 import { createError, toError } from "#veryfront/errors";
@@ -326,6 +326,125 @@ export class StatOperations extends VeryfrontOperationsBase {
     return files;
   }
 
+  private buildResolveSearchPatterns(
+    normalizedPath: string,
+    options?: ResolveFileOptions,
+  ): string[] {
+    const patterns = new Set<string>();
+    const pathWithoutExt = stripKnownExtension(normalizedPath, EXTENSION_PRIORITY);
+    const allowPagesPrefix = options?.allowPagesPrefix !== false;
+    const addPattern = (pattern: string): void => {
+      if (pattern.length > 0) patterns.add(pattern);
+    };
+
+    if (EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext))) {
+      addPattern(normalizedPath);
+      return [...patterns];
+    }
+
+    addPattern(`${pathWithoutExt}.*`);
+    if (allowPagesPrefix && !pathWithoutExt.startsWith("pages/")) {
+      addPattern(`pages/${pathWithoutExt}.*`);
+    }
+
+    addPattern(`${pathWithoutExt}/index.*`);
+    if (allowPagesPrefix && !pathWithoutExt.startsWith("pages/")) {
+      addPattern(`pages/${pathWithoutExt}/index.*`);
+    }
+
+    return [...patterns];
+  }
+
+  private normalizeMatchedPaths(
+    matches: Array<{ path: string }>,
+  ): Array<{ path: string }> {
+    return matches.map((match) => ({
+      path: normalizeIndexedFilePath(match as ProjectFile).normalizedPath,
+    }));
+  }
+
+  private async tryResolveViaApiSearch(
+    normalizedPath: string,
+    options?: ResolveFileOptions,
+  ): Promise<string | null | undefined> {
+    if (isFrameworkSourcePath(normalizedPath)) {
+      logger.debug("Skipping API search for framework path", { normalizedPath });
+      return null;
+    }
+
+    if (!this.apiSearchCircuitBreaker.canSearch()) {
+      logger.warn("API search circuit breaker open, skipping", { normalizedPath });
+      return undefined;
+    }
+
+    const patterns = this.buildResolveSearchPatterns(normalizedPath, options);
+    let sawSuccessfulSearch = false;
+
+    for (const pattern of patterns) {
+      try {
+        const matches = await this.client.searchFiles(pattern);
+        sawSuccessfulSearch = true;
+        this.apiSearchCircuitBreaker.recordSuccess();
+
+        const normalizedMatches = this.normalizeMatchedPaths(matches);
+        if (pattern === normalizedPath) {
+          const exactMatch = normalizedMatches.find((match) => match.path === normalizedPath);
+          if (exactMatch) {
+            logger.debug("resolveFile found exact file via API search", {
+              normalizedPath,
+              pattern,
+            });
+            return exactMatch.path;
+          }
+          continue;
+        }
+
+        const sortedMatches = sortPathsByExtensionPriority(normalizedMatches, EXTENSION_PRIORITY);
+        const first = sortedMatches[0];
+        if (first) {
+          logger.debug("resolveFile found via API search", {
+            normalizedPath,
+            pattern,
+            resolvedPath: first.path,
+          });
+          return first.path;
+        }
+      } catch (error) {
+        const result = this.apiSearchCircuitBreaker.recordFailure();
+        if (result.tripped) {
+          logger.warn("API search circuit breaker tripped", {
+            failures: result.failures,
+          });
+          return undefined;
+        }
+        logger.error("API pattern search failed", { pattern, error });
+      }
+
+      if (!this.apiSearchCircuitBreaker.canSearch()) {
+        logger.warn("API search circuit breaker open, aborting remaining patterns", {
+          normalizedPath,
+        });
+        return undefined;
+      }
+    }
+
+    if (sawSuccessfulSearch) {
+      logger.debug("resolveFile not found via API search", { normalizedPath, patterns });
+      return null;
+    }
+
+    return undefined;
+  }
+
+  private async hasCachedFileList(): Promise<boolean> {
+    if (this.contextProvider?.hasCachedFileList) {
+      return await this.contextProvider.hasCachedFileList();
+    }
+
+    const files = await this.contextProvider?.getFileList?.();
+    return Array.isArray(files) && files.length > 0;
+  }
+
   async exists(path: string): Promise<boolean> {
     const normalizedPath = this.normalizer.normalize(path);
     try {
@@ -337,7 +456,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
   }
 
-  async resolveFile(basePath: string): Promise<string | null> {
+  async resolveFile(basePath: string, options?: ResolveFileOptions): Promise<string | null> {
     const resolveStart = performance.now();
     const normalizedPath = this.normalizer.normalize(basePath);
     const ctx = this.contextProvider?.getContentContext();
@@ -348,6 +467,36 @@ export class StatOperations extends VeryfrontOperationsBase {
       normalizedPath,
       cacheKey,
     });
+
+    const cached = await this.cache.getAsync<string>(cacheKey);
+    if (cached === NOT_FOUND_SENTINEL) {
+      logger.debug("resolveFile cached negative result", { normalizedPath });
+      return null;
+    }
+
+    if (cached !== undefined) {
+      logger.debug("resolveFile cache hit", {
+        normalizedPath,
+        cached,
+      });
+      return cached;
+    }
+
+    const hasCachedFileList = await this.hasCachedFileList();
+    const attemptedApiResolve = !hasCachedFileList;
+
+    if (!hasCachedFileList) {
+      const apiResolved = await this.tryResolveViaApiSearch(normalizedPath, options);
+      if (typeof apiResolved === "string") {
+        this.cache.set(cacheKey, apiResolved);
+        return apiResolved;
+      }
+
+      if (apiResolved === null) {
+        this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+        return null;
+      }
+    }
 
     const indexStart = performance.now();
     await this.ensureIndexBuilt();
@@ -382,7 +531,7 @@ export class StatOperations extends VeryfrontOperationsBase {
       return resolvedDirect;
     }
 
-    if (!pathWithoutExt.startsWith("pages/")) {
+    if (options?.allowPagesPrefix !== false && !pathWithoutExt.startsWith("pages/")) {
       const resolvedPages = resolveByExtensionPriority(
         fileIdx,
         `pages/${pathWithoutExt}`,
@@ -410,6 +559,15 @@ export class StatOperations extends VeryfrontOperationsBase {
       return indexPath;
     }
 
+    if (attemptedApiResolve) {
+      logger.debug("resolveFile not found after pre-index API search", {
+        normalizedPath,
+        indexMs,
+      });
+      this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+      return null;
+    }
+
     if (isFrameworkSourcePath(normalizedPath)) {
       logger.debug("Skipping API search for framework path", { normalizedPath });
       return null;
@@ -425,32 +583,10 @@ export class StatOperations extends VeryfrontOperationsBase {
       return null;
     }
 
-    const cacheCheckStart = performance.now();
-    const cached = await this.cache.getAsync<string>(cacheKey);
-    const cacheCheckMs = Math.round(performance.now() - cacheCheckStart);
-
-    if (cached === NOT_FOUND_SENTINEL) {
-      logger.debug("resolveFile cached negative result", {
-        normalizedPath,
-        cacheCheckMs,
-      });
-      return null;
-    }
-
-    if (cached !== undefined) {
-      logger.debug("resolveFile cache hit (unexpected)", {
-        normalizedPath,
-        cached,
-        cacheCheckMs,
-      });
-      return cached;
-    }
-
     const searchPattern = `${pathWithoutExt}.*`;
     logger.debug("Searching for file via API", {
       pattern: searchPattern,
       normalizedPath,
-      cacheCheckMs,
     });
 
     try {

@@ -27,9 +27,11 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { env as getProcessEnv } from "#veryfront/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
+import { mergeInjectedWorkflowEnv } from "../../jobs/runtime-env.ts";
 import { discoverWorkflows } from "../discovery/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { WorkflowBackend } from "../backends/types.ts";
@@ -109,10 +111,26 @@ export async function runDynamicWorkflowJob(
 
   try {
     // Fetch the workflow run
-    const run = await backend.getRun(runId);
+    let run = await backend.getRun(runId);
     if (!run) {
       logger.error(`Workflow run not found: ${runId}`);
       return DYNAMIC_EXIT_CODES.NOT_FOUND;
+    }
+
+    const injectedEnv = mergeInjectedWorkflowEnv(run.context.env, getProcessEnv());
+    if (injectedEnv) {
+      const currentEnv = run.context.env;
+      const currentSerialized = currentEnv ? JSON.stringify(currentEnv) : "";
+      const nextSerialized = JSON.stringify(injectedEnv);
+      if (currentSerialized !== nextSerialized) {
+        await backend.updateRun(runId, {
+          context: {
+            ...run.context,
+            env: injectedEnv,
+          },
+        });
+        run = (await backend.getRun(runId)) ?? run;
+      }
     }
 
     // Get tenant context (from env or from stored run)
