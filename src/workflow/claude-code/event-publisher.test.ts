@@ -83,16 +83,16 @@ describe("workflow/claude-code/event-publisher", () => {
     const publisher = new RedisEventPublisher({ url: "redis://example" });
     const publisherState = publisher as unknown as {
       initialized: boolean;
-      publishClient: { quit: () => Promise<void> };
-      subscribeClient: { quit: () => Promise<void> };
+      publishClient: { close: () => Promise<void> };
+      subscribeClient: { close: () => Promise<void> };
     };
 
     publisherState.initialized = true;
     publisherState.publishClient = {
-      quit: () => new Promise<void>(() => {}),
+      close: () => new Promise<void>(() => {}),
     };
     publisherState.subscribeClient = {
-      quit: () => Promise.reject(new Error("quit failed")),
+      close: () => Promise.reject(new Error("close failed")),
     };
 
     const result = await raceWithTimeout(
@@ -106,6 +106,6 @@ describe("workflow/claude-code/event-publisher", () => {
       100,
     );
 
-    assertEquals(result, { status: "rejected", message: "quit failed" });
+    assertEquals(result, { status: "rejected", message: "close failed" });
   });
 });

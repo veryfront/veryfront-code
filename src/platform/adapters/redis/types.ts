@@ -79,6 +79,6 @@ export interface NodeRedisClient {
     options?: { NX?: boolean; PX?: number; EX?: number },
   ): Promise<string | null>;
   get(key: string): Promise<string | null>;
-  quit(): Promise<void>;
-  disconnect(): Promise<void>;
+  close(): Promise<void>;
+  destroy(): Promise<void>;
 }

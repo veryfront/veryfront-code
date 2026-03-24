@@ -118,21 +118,23 @@ export class RedisCache implements TokenCache {
         const client = await this.getConnectedClient();
 
         const pattern = `${this.prefix}*`;
-        let cursor = 0;
+        // redis v5: scan cursor is string-based to prevent Number.MAX_SAFE_INTEGER overflow
+        let cursor = "0";
         let totalDeleted = 0;
 
         do {
-          const { cursor: nextCursor, keys } = await client.scan(cursor, {
+          // deno-lint-ignore no-explicit-any
+          const result = await (client as any).scan(cursor, {
             MATCH: pattern,
             COUNT: DEFAULT_SCAN_COUNT,
           });
 
-          cursor = nextCursor;
+          cursor = String(result.cursor);
 
-          if (keys.length > 0) {
-            totalDeleted += await client.del(keys);
+          if (result.keys.length > 0) {
+            totalDeleted += await client.del(result.keys);
           }
-        } while (cursor !== 0);
+        } while (cursor !== "0");
 
         if (totalDeleted > 0) {
           logger.info(`[RedisCache] Cleared ${totalDeleted} keys`);
@@ -196,7 +198,7 @@ export class RedisCache implements TokenCache {
       }
 
       try {
-        await client.quit();
+        await client.close();
       } catch (_) {
         // expected: close errors are non-critical
       } finally {

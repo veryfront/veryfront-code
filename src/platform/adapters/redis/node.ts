@@ -116,10 +116,12 @@ export class NodeRedisAdapter implements RedisAdapter {
   }
 
   quit(): Promise<void> {
-    return this.client.quit();
+    // redis v5: quit() renamed to close()
+    return this.client.close();
   }
 
   disconnect(): Promise<void> {
-    return this.client.disconnect();
+    // redis v5: disconnect() renamed to destroy()
+    return this.client.destroy();
   }
 }
