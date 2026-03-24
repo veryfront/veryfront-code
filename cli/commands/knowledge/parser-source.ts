@@ -123,16 +123,16 @@ def run_docling_markdown(path: str):
             )
         except subprocess.TimeoutExpired as error:
             raise RuntimeError(
-                f"docling extract timed out after {DOCLING_TIMEOUT_SECONDS:g}s"
+                f"docling conversion timed out after {DOCLING_TIMEOUT_SECONDS:g}s"
             ) from error
 
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip() or f"exit code {completed.returncode}"
-            raise RuntimeError(f"docling extract failed: {detail}")
+            raise RuntimeError(f"docling conversion failed: {detail}")
 
         markdown_files = sorted(Path(output_dir).rglob("*.md"))
         if not markdown_files:
-            raise RuntimeError("docling extract did not produce a markdown file")
+            raise RuntimeError("docling conversion did not produce a markdown file")
 
         return markdown_files[0].read_text(encoding="utf-8")
 
@@ -155,7 +155,7 @@ def prefer_docling(fallback_parser):
         except RuntimeError as error:
             content, stats, warnings = fallback_parser(path)
             warnings.append(
-                "docling extraction failed; fell back to the built-in parser: "
+                "docling conversion failed; fell back to the built-in parser: "
                 + str(error)
             )
             return content, stats, warnings

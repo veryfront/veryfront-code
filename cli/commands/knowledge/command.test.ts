@@ -786,7 +786,7 @@ describe("runKnowledgeParser", () => {
       assertEquals(result.warnings.length, 1);
       assertStringIncludes(
         result.warnings[0] ?? "",
-        "docling extraction failed; fell back to the built-in parser",
+        "docling conversion failed; fell back to the built-in parser",
       );
 
       const markdown = await Deno.readTextFile(result.sandbox_output_path);
@@ -866,7 +866,7 @@ describe("runKnowledgeParser", () => {
       assertEquals(result.warnings.length, 1);
       assertStringIncludes(
         result.warnings[0] ?? "",
-        "docling extraction failed; fell back to the built-in parser: docling extract timed out",
+        "docling conversion failed; fell back to the built-in parser: docling conversion timed out",
       );
 
       const markdown = await Deno.readTextFile(result.sandbox_output_path);

@@ -106,7 +106,7 @@ veryfront knowledge ingest uploads/contracts/a.pdf uploads/contracts/b.pdf uploa
 ```
 
 The command preserves input order in the JSON result array, so agent workflows can match each output back to the original source path.
-Inside the sandbox, knowledge-ingest commands get a longer execution window than ordinary shell commands so slow but valid `docling` runs can finish.
+Inside the sandbox, `knowledge ingest` may run longer than typical shell commands, since slow but valid `docling` runs are allowed to complete.
 
 ## Batch ingestion
 
