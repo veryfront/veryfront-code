@@ -86,13 +86,13 @@ export async function initializeOTLPWithApis(): Promise<void> {
       "@opentelemetry/sdk-trace-base"
     );
     const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
-    const { Resource } = await import("@opentelemetry/resources");
+    const { resourceFromAttributes } = await import("@opentelemetry/resources");
     const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = await import(
       "@opentelemetry/semantic-conventions"
     );
 
     const resourceAttrs = parseResourceAttributes(getEnv("OTEL_RESOURCE_ATTRIBUTES"));
-    const resource = new Resource({
+    const resource = resourceFromAttributes({
       [ATTR_SERVICE_NAME]: config.serviceName,
       [ATTR_SERVICE_VERSION]: PROXY_RUNTIME_VERSION,
       ...resourceAttrs,
@@ -103,9 +103,13 @@ export async function initializeOTLPWithApis(): Promise<void> {
       headers: config.headers,
     });
 
-    const provider = new BasicTracerProvider({ resource });
-    provider.addSpanProcessor(new BatchSpanProcessor(exporter));
-    provider.register();
+    const provider = new BasicTracerProvider({
+      resource,
+      spanProcessors: [new BatchSpanProcessor(exporter)],
+    });
+
+    // In OTel SDK v2, provider.register() is removed.
+    trace.setGlobalTracerProvider(provider);
 
     tracerProvider = provider;
     tracer = trace.getTracer(config.serviceName);
