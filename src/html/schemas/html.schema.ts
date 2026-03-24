@@ -26,7 +26,7 @@ export const HTMLGenerationOptionsSchema = z.object({
   projectDir: z.string().optional(),
   globalCSS: z.string().optional(),
   frontmatter: z.record(z.string(), z.unknown()).optional(),
-  layoutProps: z.record(z.string(), z.record(z.unknown())).optional(),
+  layoutProps: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
   studioEmbed: z.boolean().optional(),
   projectId: z.string().optional(),
   pageId: z.string().optional(),
