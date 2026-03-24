@@ -349,12 +349,34 @@ export class ProxyFSAdapterManager {
         this.adapters.set(cacheKey, projectAdapter);
         return adapter;
       } catch (error) {
+        const is404 = error instanceof Error &&
+          (error.message.includes("404") || error.message.includes("Not Found"));
+
         logger.error("Adapter initialization failed", {
           cacheKey,
           projectSlug,
           duration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
           error: error instanceof Error ? error.message : String(error),
+          is404,
         });
+
+        // Negative caching: if the branch/push-ref doesn't exist (404),
+        // cache a poisoned entry for 60s to prevent retry loops.
+        // Without this, every request re-creates a new adapter that hits
+        // the same 404, causing continuous error spam.
+        if (is404) {
+          logger.warn("Negative caching failed adapter for 60s to prevent retry loop", {
+            cacheKey,
+            projectSlug,
+            branch,
+          });
+          this.adapters.set(cacheKey, projectAdapter);
+          setTimeout(() => {
+            this.adapters.delete(cacheKey);
+            logger.debug("Negative cache entry expired", { cacheKey });
+          }, 60_000);
+        }
+
         throw error;
       } finally {
         projectAdapter.initializing = undefined;

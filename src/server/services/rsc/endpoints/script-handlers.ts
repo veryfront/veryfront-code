@@ -21,27 +21,37 @@ async function buildOrServeScript(
     stdin: import("esbuild").StdinOptions;
   },
 ): Promise<Response> {
+  // If a pre-built bundle was injected at compile time, serve it directly
+  if (fallbackBundle) return jsResponse(fallbackBundle);
+
   let esbuild: typeof import("esbuild") | null = null;
 
   try {
-    esbuild = await import("esbuild");
     const src = await adapter.fs.readFile(path);
-    const result = await esbuild.build(esbuildOptions);
+    esbuild = await import("esbuild");
+    const result = await esbuild.build({
+      ...esbuildOptions,
+      stdin: { ...esbuildOptions.stdin, contents: src },
+    });
     const out = result.outputFiles?.[0]?.text ?? src;
 
     return jsResponse(out);
   } catch (error) {
-    if (fallbackBundle) return jsResponse(fallbackBundle);
-
     serverLogger.debug(
       "[ScriptHandlers] Build failed, serving raw TypeScript",
       error,
     );
 
-    const src = await adapter.fs.readFile(path);
-    return new Response(src, {
-      headers: { "content-type": "application/typescript" },
-    });
+    try {
+      const src = await adapter.fs.readFile(path);
+      return new Response(src, {
+        headers: { "content-type": "application/typescript" },
+      });
+    } catch {
+      return new Response("// client-boot: source not available", {
+        headers: { "content-type": "application/javascript" },
+      });
+    }
   } finally {
     if (shouldStopEsbuild()) {
       try {
@@ -67,8 +77,6 @@ export async function handleClientScript(
     import.meta.url,
   ).pathname;
 
-  const contents = await adapter.fs.readFile(path);
-
   return buildOrServeScript(adapter, path, CLIENT_BOOT_BUNDLE, {
     bundle: true,
     write: false,
@@ -76,7 +84,7 @@ export async function handleClientScript(
     platform: "browser",
     target: "es2020",
     stdin: {
-      contents,
+      contents: "",
       loader: "ts",
       resolveDir: path.substring(0, path.lastIndexOf("/")),
       sourcefile: path,
@@ -91,8 +99,6 @@ export async function handleDomScript(adapter: RuntimeAdapter): Promise<Response
     import.meta.url,
   ).pathname;
 
-  const contents = await adapter.fs.readFile(path);
-
   return buildOrServeScript(adapter, path, CLIENT_DOM_BUNDLE, {
     bundle: true,
     write: false,
@@ -100,7 +106,7 @@ export async function handleDomScript(adapter: RuntimeAdapter): Promise<Response
     platform: "browser",
     target: "es2020",
     stdin: {
-      contents,
+      contents: "",
       loader: "ts",
       resolveDir: path.substring(0, path.lastIndexOf("/")),
       sourcefile: path,

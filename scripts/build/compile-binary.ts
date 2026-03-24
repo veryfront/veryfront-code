@@ -15,6 +15,7 @@ const DEFAULT_INCLUDES = [
   "src/platform/polyfills",
   "src/proxy/main.ts",
   "src/security/sandbox/worker-script.ts",
+  "src/rendering/rsc",
   "dist/framework-src",
 ];
 interface CompileBinaryOptions {
