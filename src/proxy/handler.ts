@@ -385,11 +385,14 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     if (!matchingEnv?.protected) return null;
 
     if (isSignedInternalControlPlaneRequest(req)) {
-      logger?.debug("Allowing signed internal control-plane request through protected environment", {
-        ...logContext,
-        environmentName: matchingEnv.name,
-        pathname: new URL(req.url).pathname,
-      });
+      logger?.debug(
+        "Allowing signed internal control-plane request through protected environment",
+        {
+          ...logContext,
+          environmentName: matchingEnv.name,
+          pathname: new URL(req.url).pathname,
+        },
+      );
       return null;
     }
 
