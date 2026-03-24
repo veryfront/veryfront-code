@@ -12,7 +12,7 @@
  * This includes both standalone files and routable pages (pages/, app/).
  */
 export function isMarkdownPreview(
-  filePath: string | undefined,
+  _filePath: string | undefined,
   frontmatter?: Record<string, unknown>,
 ): boolean {
   if (frontmatter?.prose === false) return false;
