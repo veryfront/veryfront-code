@@ -12,20 +12,20 @@ describe("transforms/md/utils", () => {
       assertEquals(isMarkdownPreview(undefined), true);
     });
 
-    it("returns false for file in pages/ directory", () => {
-      assertEquals(isMarkdownPreview("pages/about.md"), false);
+    it("returns true for file in pages/ directory", () => {
+      assertEquals(isMarkdownPreview("pages/about.md"), true);
     });
 
-    it("returns false for file in app/ directory", () => {
-      assertEquals(isMarkdownPreview("app/docs/intro.md"), false);
+    it("returns true for file in app/ directory", () => {
+      assertEquals(isMarkdownPreview("app/docs/intro.md"), true);
     });
 
-    it("returns false for nested pages/ directory", () => {
-      assertEquals(isMarkdownPreview("src/pages/about.md"), false);
+    it("returns true for nested pages/ directory", () => {
+      assertEquals(isMarkdownPreview("src/pages/about.md"), true);
     });
 
-    it("returns false for nested app/ directory", () => {
-      assertEquals(isMarkdownPreview("src/app/docs/intro.md"), false);
+    it("returns true for nested app/ directory", () => {
+      assertEquals(isMarkdownPreview("src/app/docs/intro.md"), true);
     });
 
     it("returns false when frontmatter has prose: false", () => {
@@ -42,6 +42,10 @@ describe("transforms/md/utils", () => {
 
     it("returns true for deeply nested non-routable path", () => {
       assertEquals(isMarkdownPreview("docs/guides/getting-started.md"), true);
+    });
+
+    it("returns false for pages/ with prose: false", () => {
+      assertEquals(isMarkdownPreview("pages/about.md", { prose: false }), false);
     });
   });
 });
