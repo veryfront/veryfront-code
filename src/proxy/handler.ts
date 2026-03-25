@@ -475,9 +475,9 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     let releaseId: string | undefined;
     let environmentId: string | undefined;
 
-    const isCustomDomain = !projectSlug && !parsedDomain.isVeryfrontDomain;
+    const requiresDomainLookup = !projectSlug && !parsedDomain.isVeryfrontDomain;
 
-    if (!projectSlug && parsedDomain.isVeryfrontDomain && !isCustomDomain) {
+    if (!projectSlug && parsedDomain.isVeryfrontDomain && !requiresDomainLookup) {
       return {
         token: undefined,
         projectSlug: undefined,
