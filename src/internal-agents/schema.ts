@@ -22,14 +22,17 @@ export const RunIdSchema = z.string().min(1).max(128).regex(AGENT_ID_PATTERN);
 
 export const AgentIdSchema = z.string().min(1).max(128).regex(AGENT_ID_PATTERN);
 
-export const StudioToolNameSchema = z
+export const ClientToolNameSchema = z
   .string()
   .min(1)
   .max(128)
-  .regex(/^studio_[a-zA-Z0-9_]+$/, "Tool names must use the studio_ prefix");
+  .regex(
+    /^[a-zA-Z][a-zA-Z0-9._:-]*$/,
+    "Tool names must start with a letter and use a valid client-tool format",
+  );
 
 export const RuntimeInjectedToolSchema = z.object({
-  name: StudioToolNameSchema,
+  name: ClientToolNameSchema,
   description: z.string().max(1024).optional(),
   parameters: z.record(z.unknown()).optional().refine(
     (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
