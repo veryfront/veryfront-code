@@ -15,6 +15,17 @@ export function isMarkdownPreview(
   _filePath: string | undefined,
   frontmatter?: Record<string, unknown>,
 ): boolean {
+  // Opt-out via frontmatter
   if (frontmatter?.prose === false) return false;
+
+  // Only enable markdown preview for markdown files
+  if (typeof _filePath !== 'string') return false;
+
+  const lowerPath = _filePath.toLowerCase();
+  const isMarkdownFile =
+    lowerPath.endsWith('.md') || lowerPath.endsWith('.markdown');
+
+  if (!isMarkdownFile) return false;
+
   return true;
 }
