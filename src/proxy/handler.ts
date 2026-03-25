@@ -71,11 +71,14 @@ function getApiJwks(apiBaseUrl: string, logger?: ProxyLogger) {
     const normalizedBaseUrl = apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`;
     const jwksUrl = new URL(".well-known/jwks.json", normalizedBaseUrl);
     const cacheKey = jwksUrl.toString();
-    let jwks = remoteJwksByUrl.get(cacheKey);
 
+    // Lazily initialize and cache JWKS in a single, idempotent step to avoid
+    // unsynchronized read/then-write on the shared Map across concurrent calls.
+    let jwks = remoteJwksByUrl.get(cacheKey);
     if (!jwks) {
-      jwks = createRemoteJWKSet(jwksUrl);
-      remoteJwksByUrl.set(cacheKey, jwks);
+      const created = createRemoteJWKSet(jwksUrl);
+      remoteJwksByUrl.set(cacheKey, created);
+      jwks = created;
     }
 
     return jwks;
