@@ -9,7 +9,7 @@
 import type { Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { executeTool, toolRegistry } from "#veryfront/tool";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
-import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
+import { SKILL_TOOL_IDS } from "#veryfront/skill/types";
 import { serverLogger } from "#veryfront/utils";
 
 const logger = serverLogger.component("agent");
