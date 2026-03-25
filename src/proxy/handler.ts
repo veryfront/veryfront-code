@@ -203,6 +203,23 @@ function extractUserToken(cookieHeader: string): string | undefined {
 }
 
 function getStatusFromError(error: unknown): number | null {
+  // Prefer structured status information when available.
+  if (error && typeof error === "object") {
+    const anyError = error as { status?: unknown; statusCode?: unknown; code?: unknown };
+    const statusLike =
+      typeof anyError.status === "number"
+        ? anyError.status
+        : typeof anyError.statusCode === "number"
+          ? anyError.statusCode
+          : typeof anyError.code === "number"
+            ? anyError.code
+            : null;
+    if (statusLike !== null) {
+      return statusLike;
+    }
+  }
+
+  // Fallback for legacy/unstructured errors: derive from message text.
   const message = error instanceof Error ? error.message : String(error);
   const match = message.match(/failed: (\d+)/);
   return match ? Number(match[1]) : null;
