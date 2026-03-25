@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { generateMessageId, sendSSE } from "./sse-utils.ts";
+import { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
 
 function createController(chunks: Uint8Array[]): ReadableStreamDefaultController {
   return {
@@ -35,6 +35,18 @@ describe("sse-utils", () => {
       const parsed = JSON.parse(decoded.replace("data: ", "").trim());
       assertEquals(parsed.type, "complex");
       assertEquals(parsed.data.nested, true);
+    });
+  });
+
+  describe("closeSSEStream", () => {
+    it("ignores closed stream controller close errors", () => {
+      const controller = {
+        close() {
+          throw new TypeError("The stream controller cannot close or enqueue");
+        },
+      } as unknown as ReadableStreamDefaultController;
+
+      closeSSEStream(controller);
     });
   });
 
