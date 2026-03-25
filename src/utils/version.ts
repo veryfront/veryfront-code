@@ -45,10 +45,10 @@ export interface BuildVersion {
   projectUpdated?: string;
 }
 
-export function createBuildVersion(projectUpdatedAt?: string): BuildVersion {
+export function createBuildVersion(projectUpdated?: string): BuildVersion {
   return {
     framework: RUNTIME_VERSION,
     serverStart: SERVER_START_TIME,
-    projectUpdated: projectUpdatedAt,
+    projectUpdated,
   };
 }
