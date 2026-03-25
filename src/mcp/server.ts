@@ -424,7 +424,9 @@ export class MCPServer {
       return false;
     }
 
-    return await (auth.validate as (token: string) => Promise<boolean>)(token);
+    // z.function() in v4 doesn't carry arg/return types — cast to expected signature
+    const validate = auth.validate as (token: string) => Promise<boolean>;
+    return await validate(token);
   }
 
   private handleCORS(requestOrigin?: string | null): Response {

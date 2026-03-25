@@ -75,16 +75,16 @@ export function extractArg(
 /**
  * Extract all arguments according to an arg map
  */
-export function extractArgs(
+export function extractArgs<T>(
   args: ParsedArgs,
-  argMap: ArgMap<Record<string, unknown>>,
+  argMap: ArgMap<T>,
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
   for (const [field, spec] of Object.entries(argMap)) {
     if (!spec) continue;
 
-    const value = extractArg(args, spec);
+    const value = extractArg(args, spec as ArgSpec);
     if (value !== undefined) result[field] = value;
   }
 
@@ -114,14 +114,16 @@ export function extractArgs(
  * }
  * ```
  */
-// deno-lint-ignore no-explicit-any
-export function createArgParser<T = any>(
+export function createArgParser<T>(
   schema: z.ZodType<T>,
   argMap: ArgMap<T>,
 ): (args: ParsedArgs) => SafeParseResult<T> {
   return function parseArgs(args: ParsedArgs): SafeParseResult<T> {
-    // deno-lint-ignore no-explicit-any
-    return schema.safeParse(extractArgs(args, argMap as any)) as any;
+    const result = schema.safeParse(extractArgs(args, argMap));
+    if (result.success) {
+      return { success: true, data: result.data };
+    }
+    return { success: false, error: result.error };
   };
 }
 

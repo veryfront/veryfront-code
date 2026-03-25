@@ -2,6 +2,25 @@ import type { z } from "zod";
 import type { JsonSchema } from "./json-schema.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
+/** Zod internal _def shape — covers fields from both v3 and v4. */
+interface ZodDef {
+  typeName?: string; // v3
+  type?: string; // v4
+  value?: unknown; // v3 literal
+  values?: unknown; // v3 enum / v4 literal
+  entries?: Record<string, unknown>; // v4 enum
+  shape?: (() => Record<string, z.ZodTypeAny>) | Record<string, z.ZodTypeAny>;
+  element?: z.ZodTypeAny; // v4 array/record
+  items?: z.ZodTypeAny[]; // tuple
+  options?: z.ZodTypeAny[] | Map<string, z.ZodTypeAny>; // union
+  valueType?: z.ZodTypeAny; // record
+  innerType?: z.ZodTypeAny; // optional/nullable/default (v3)
+  schema?: z.ZodTypeAny; // effects/optional/nullable (v3/v4)
+  in?: z.ZodTypeAny; // pipe input (v4)
+  getter?: () => z.ZodTypeAny; // lazy
+  defaultValue?: (() => unknown) | unknown;
+}
+
 const LITERAL_TYPE_MAP: Record<string, "string" | "number" | "boolean"> = {
   string: "string",
   number: "number",
@@ -12,10 +31,13 @@ function getLiteralType(value: unknown): "string" | "number" | "boolean" | undef
   return LITERAL_TYPE_MAP[typeof value];
 }
 
+function getDef(schema: z.ZodTypeAny): ZodDef {
+  return schema._def as ZodDef;
+}
+
 /** Get the internal type tag from a zod schema (_def.typeName in v3, _def.type in v4). */
 function getTypeTag(schema: z.ZodTypeAny): string | undefined {
-  // deno-lint-ignore no-explicit-any
-  const def = schema._def as any;
+  const def = getDef(schema);
   return def.typeName ?? def.type;
 }
 
@@ -37,8 +59,7 @@ export function isOptionalSchema(schema: z.ZodTypeAny): boolean {
 
 function convert(schema: z.ZodTypeAny): JsonSchema {
   const tag = getTypeTag(schema);
-  // deno-lint-ignore no-explicit-any
-  const def = schema._def as any;
+  const def = getDef(schema);
 
   switch (tag) {
     case "ZodString":
@@ -99,13 +120,14 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
     case "ZodArray":
     case "array": {
       // v3: _def.type (item schema), v4: _def.element (item schema)
-      const itemType = def.element ?? def.type;
+      const itemType = def.element ?? (def.type as unknown as z.ZodTypeAny | undefined);
+      if (!itemType || typeof itemType === "string") return { type: "array" };
       return { type: "array", items: zodToJsonSchema(itemType) };
     }
 
     case "ZodTuple":
     case "tuple": {
-      const items = def.items;
+      const items = def.items ?? [];
       return {
         type: "array",
         prefixItems: items.map((item: z.ZodTypeAny) => zodToJsonSchema(item)),
@@ -124,14 +146,16 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
 
     case "ZodRecord":
     case "record":
-      return {
-        type: "object",
-        additionalProperties: zodToJsonSchema(def.valueType ?? def.element),
-      };
+      {
+        const valueSchema = def.valueType ?? def.element;
+        if (!valueSchema) return { type: "object" };
+        return { type: "object", additionalProperties: zodToJsonSchema(valueSchema) };
+      }
 
     case "ZodDefault":
     case "default": {
       const innerType = def.innerType ?? def.schema;
+      if (!innerType) return { type: "object" };
       const inner = zodToJsonSchema(innerType);
       const defaultValue = typeof def.defaultValue === "function"
         ? def.defaultValue()
@@ -146,7 +170,7 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
 
     case "ZodLazy":
     case "lazy":
-      return convert(def.getter());
+      return def.getter ? convert(def.getter()) : { type: "object" };
 
     case "ZodEffects":
     case "pipe": {
@@ -170,20 +194,19 @@ function unwrapSchema(
 
   while (true) {
     const tag = getTypeTag(current);
-    // deno-lint-ignore no-explicit-any
-    const def = current._def as any;
+    const def = getDef(current);
 
     switch (tag) {
       case "ZodNullable":
       case "nullable":
         nullable = true;
-        current = def.innerType ?? def.schema;
+        current = (def.innerType ?? def.schema)!;
         break;
 
       case "ZodOptional":
       case "optional":
         optional = true;
-        current = def.innerType ?? def.schema;
+        current = (def.innerType ?? def.schema)!;
         break;
 
       case "ZodEffects":
