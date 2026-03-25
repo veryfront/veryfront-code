@@ -145,12 +145,11 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
     }
 
     case "ZodRecord":
-    case "record":
-      {
-        const valueSchema = def.valueType ?? def.element;
-        if (!valueSchema) return { type: "object" };
-        return { type: "object", additionalProperties: zodToJsonSchema(valueSchema) };
-      }
+    case "record": {
+      const valueSchema = def.valueType ?? def.element;
+      if (!valueSchema) return { type: "object" };
+      return { type: "object", additionalProperties: zodToJsonSchema(valueSchema) };
+    }
 
     case "ZodDefault":
     case "default": {
