@@ -102,12 +102,22 @@ function selectNetworkIpv4Address(
   return null;
 }
 
+function getDenoNetworkInterfacesSafe(
+  deps: RuntimeOwnerResolverDeps,
+): ReadonlyArray<DenoNetworkInterface> {
+  try {
+    return deps.getDenoNetworkInterfaces?.() ??
+      ((globalThis as RuntimeOwnerGlobal).Deno?.networkInterfaces?.() ?? []);
+  } catch {
+    return [];
+  }
+}
+
 async function detectRuntimeOwnerHost(
   deps: RuntimeOwnerResolverDeps,
 ): Promise<string | null> {
   const readHostEnv = deps.getHostEnv ?? getHostEnv;
-  const explicitHost =
-    readHostEnv("VERYFRONT_RUNTIME_OWNER_HOST") ??
+  const explicitHost = readHostEnv("VERYFRONT_RUNTIME_OWNER_HOST") ??
     readHostEnv("POD_IP") ??
     null;
 
@@ -115,8 +125,7 @@ async function detectRuntimeOwnerHost(
     return explicitHost.trim();
   }
 
-  const denoInterfaces = deps.getDenoNetworkInterfaces?.() ??
-    ((globalThis as RuntimeOwnerGlobal).Deno?.networkInterfaces?.() ?? []);
+  const denoInterfaces = getDenoNetworkInterfacesSafe(deps);
   const denoHost = selectNetworkIpv4Address(denoInterfaces);
   if (denoHost) {
     return denoHost;
@@ -146,10 +155,10 @@ function resolveRuntimeOwnerPort(
 
   return (
     parsePort(readHostEnv("VERYFRONT_RUNTIME_OWNER_PORT")) ??
-    parsePort(readHostEnv("PORT")) ??
-    parsePort(readHostEnv("VERYFRONT_SERVER_PORT")) ??
-    parsePort(new URL(req.url).port) ??
-    (isTruthyEnv(readHostEnv("PROXY_MODE")) ? DEFAULT_PROXY_RUNTIME_PORT : null)
+      parsePort(readHostEnv("VERYFRONT_SERVER_PORT")) ??
+      parsePort(new URL(req.url).port) ??
+      parsePort(readHostEnv("PORT")) ??
+      (isTruthyEnv(readHostEnv("PROXY_MODE")) ? DEFAULT_PROXY_RUNTIME_PORT : null)
   );
 }
 
