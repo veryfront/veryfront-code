@@ -112,6 +112,16 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.projectSlug, "my-project");
     });
 
+    it("takes the first entry from a comma-separated x-forwarded-host", () => {
+      const req = new Request("http://127.0.0.1:3001/", {
+        headers: {
+          "x-forwarded-host": "my-project.preview.lvh.me, proxy2.internal",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.projectSlug, "my-project");
+    });
+
     it("extracts content-source-id from header", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-content-source-id": "cs-1" },
@@ -229,6 +239,28 @@ describe("server/runtime-handler/project-resolution", () => {
 
       assertEquals(result.projectSlug, "request-slug");
       assertEquals(result.projectId, undefined);
+    });
+
+    it("preserves defaultProjectId when resolved slug matches defaultProjectSlug", async () => {
+      __injectDepsForTests({
+        parseProjectDomain: () => defaultParsedDomain,
+        lookupProjectByDomain: () => Promise.resolve(null),
+        getEnvironmentType: () => undefined,
+      });
+
+      const req = new Request("http://localhost/");
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url);
+      const result = await resolveProject(req, url, headers, {
+        config: undefined,
+        reqCtx: { slug: "default-slug", mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: "default-slug",
+        defaultProjectId: "default-id",
+        wsSlugOverride: undefined,
+      });
+
+      assertEquals(result.projectSlug, "default-slug");
+      assertEquals(result.projectId, "default-id");
     });
 
     it("uses configured slug from config", async () => {

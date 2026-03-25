@@ -153,6 +153,14 @@ describe("createRequestContext", () => {
       assertEquals(ctx.slug, "my-app");
     });
 
+    it("takes the first entry from a comma-separated x-forwarded-host", () => {
+      const req = makeRequest("https://127.0.0.1/page", {
+        "x-forwarded-host": "my-app.preview.lvh.me, proxy2.internal",
+      });
+      const ctx = createRequestContext(req);
+      assertEquals(ctx.slug, "my-app");
+    });
+
     it("defaults token to empty string when no header and no env", () => {
       const req = makeRequest("https://example.com/page", {
         host: "example.com",

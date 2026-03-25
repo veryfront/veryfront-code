@@ -10,7 +10,11 @@ export interface RequestContext {
 
 export function createRequestContext(req: Request): RequestContext {
   const { hostname } = new URL(req.url);
-  const forwardedHost = req.headers.get("x-forwarded-host");
+  const rawForwardedHost = req.headers.get("x-forwarded-host");
+  // x-forwarded-host can be comma-separated (multiple proxies); take the first entry.
+  const forwardedHost = rawForwardedHost
+    ? (rawForwardedHost.split(",")[0]?.trim() || undefined)
+    : undefined;
   const hostHeader = req.headers.get("host");
 
   // In proxy mode, req.url hostname may be 127.0.0.1 while the real domain

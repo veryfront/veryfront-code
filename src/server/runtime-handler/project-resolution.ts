@@ -71,8 +71,16 @@ interface RequestHeaders {
   projectPath: string | undefined;
 }
 
+function parseForwardedHost(raw: string | null): string | undefined {
+  if (!raw) return undefined;
+  // x-forwarded-host can be a comma-separated list when multiple proxies
+  // are chained. Take the first (client-facing) entry and trim whitespace.
+  const first = raw.split(",")[0]?.trim();
+  return first || undefined;
+}
+
 function getEffectiveHost(req: Request, url: URL): string {
-  const forwardedHost = req.headers.get("x-forwarded-host") ?? undefined;
+  const forwardedHost = parseForwardedHost(req.headers.get("x-forwarded-host"));
   return forwardedHost ?? req.headers.get("host") ?? url.host;
 }
 
@@ -163,8 +171,13 @@ export async function resolveProject(
   // Initial resolution from headers/config/context
   // Use || for slug (empty string should fall through to defaults)
   let projectSlug = resolvedSlugBeforeDefault || opts.defaultProjectSlug;
+  // Only apply defaultProjectId when the resolved slug matches the default
+  // or no slug was resolved at all. Suppressing the ID when a *different*
+  // slug was resolved prevents cache/invalidation state splits.
+  const slugMatchesDefault = !resolvedSlugBeforeDefault ||
+    resolvedSlugBeforeDefault === opts.defaultProjectSlug;
   let projectId: string | undefined = headers.projectId ??
-    (!resolvedSlugBeforeDefault ? opts.defaultProjectId : undefined);
+    (slugMatchesDefault ? opts.defaultProjectId : undefined);
   let releaseId: string | undefined = headers.releaseId;
   let environmentName: string | undefined;
   let proxyEnv = parseProxyEnvironment(headers.environment ?? null);
