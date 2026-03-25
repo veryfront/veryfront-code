@@ -1,4 +1,6 @@
 import { z } from "zod";
+
+type SafeParseResult<T> = { success: true; data: T } | { success: false; error: z.ZodError };
 import { createFileSystem, cwd, lookupMimeType } from "veryfront/platform";
 import { dirname, join, normalize, resolve } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -136,7 +138,7 @@ function normalizeUploadPath(uploadPath: string): string {
 
 export function parseUploadsListArgs(
   args: ParsedArgs,
-): z.SafeParseReturnType<unknown, UploadListOptions> {
+): SafeParseResult<UploadListOptions> {
   return UploadListArgsSchema.safeParse({
     projectSlug: getStringArg(args, "project", "p", "project-slug"),
     projectDir: getStringArg(args, "project-dir", "dir", "d"),
@@ -150,7 +152,7 @@ export function parseUploadsListArgs(
 
 export function parseUploadsPullArgs(
   args: ParsedArgs,
-): z.SafeParseReturnType<unknown, UploadPullOptions> {
+): SafeParseResult<UploadPullOptions> {
   return UploadPullArgsSchema.safeParse({
     projectSlug: getStringArg(args, "project", "p", "project-slug"),
     projectDir: getStringArg(args, "project-dir", "dir", "d"),
@@ -165,7 +167,7 @@ export function parseUploadsPullArgs(
 
 export function parseUploadsPutArgs(
   args: ParsedArgs,
-): z.SafeParseReturnType<unknown, UploadPutOptions> {
+): SafeParseResult<UploadPutOptions> {
   return UploadPutArgsSchema.safeParse({
     projectSlug: getStringArg(args, "project", "p", "project-slug"),
     projectDir: getStringArg(args, "project-dir", "dir", "d"),
@@ -179,7 +181,7 @@ export function parseUploadsPutArgs(
 
 export function parseUploadsDeleteArgs(
   args: ParsedArgs,
-): z.SafeParseReturnType<unknown, UploadDeleteOptions> {
+): SafeParseResult<UploadDeleteOptions> {
   return UploadDeleteArgsSchema.safeParse({
     projectSlug: getStringArg(args, "project", "p", "project-slug"),
     projectDir: getStringArg(args, "project-dir", "dir", "d"),

@@ -17,7 +17,9 @@ export function prompt(config: PromptConfig): Prompt {
       }
 
       if (config.generate) {
-        return config.generate(vars);
+        // z.function() in v4 doesn't carry arg/return types — cast to expected signature
+        type GenerateFn = (vars: Record<string, unknown>) => string | Promise<string>;
+        return (config.generate as GenerateFn)(vars);
       }
 
       throw toError(

@@ -1,4 +1,5 @@
 import { z } from "zod";
+type SafeParseResult<T> = { success: true; data: T } | { success: false; error: z.ZodError };
 import { createFileSystem } from "veryfront/platform";
 import { dirname, normalize } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -94,7 +95,7 @@ function normalizeProjectFilePath(remotePath: string): string {
 
 export function parseFilesListArgs(
   args: ParsedArgs,
-): z.SafeParseReturnType<unknown, FilesListOptions> {
+): SafeParseResult<FilesListOptions> {
   return FilesListArgsSchema.safeParse({
     projectSlug: getStringArg(args, "project", "p", "project-slug"),
     projectDir: getStringArg(args, "project-dir", "dir", "d"),
@@ -106,7 +107,7 @@ export function parseFilesListArgs(
 
 export function parseFilesGetArgs(
   args: ParsedArgs,
-): z.SafeParseReturnType<unknown, FilesGetOptions> {
+): SafeParseResult<FilesGetOptions> {
   return FilesGetArgsSchema.safeParse({
     projectSlug: getStringArg(args, "project", "p", "project-slug"),
     projectDir: getStringArg(args, "project-dir", "dir", "d"),
@@ -119,7 +120,7 @@ export function parseFilesGetArgs(
 
 export function parseFilesPutArgs(
   args: ParsedArgs,
-): z.SafeParseReturnType<unknown, FilesPutOptions> {
+): SafeParseResult<FilesPutOptions> {
   return FilesPutArgsSchema.safeParse({
     projectSlug: getStringArg(args, "project", "p", "project-slug"),
     projectDir: getStringArg(args, "project-dir", "dir", "d"),
@@ -132,7 +133,7 @@ export function parseFilesPutArgs(
 
 export function parseFilesDeleteArgs(
   args: ParsedArgs,
-): z.SafeParseReturnType<unknown, FilesDeleteOptions> {
+): SafeParseResult<FilesDeleteOptions> {
   return FilesDeleteArgsSchema.safeParse({
     projectSlug: getStringArg(args, "project", "p", "project-slug"),
     projectDir: getStringArg(args, "project-dir", "dir", "d"),

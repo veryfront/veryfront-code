@@ -9,6 +9,11 @@
 import { z } from "zod";
 import type { ParsedArgs } from "./types.ts";
 
+/** Compat type for safeParse result (SafeParseReturnType removed in zod v4). */
+export type SafeParseResult<T> =
+  | { success: true; data: T; error?: never }
+  | { success: false; data?: never; error: z.ZodError };
+
 /**
  * Argument specification for a single option
  */
@@ -70,16 +75,16 @@ export function extractArg(
 /**
  * Extract all arguments according to an arg map
  */
-export function extractArgs<T extends z.ZodRawShape>(
+export function extractArgs<T>(
   args: ParsedArgs,
-  argMap: ArgMap<z.infer<z.ZodObject<T>>>,
+  argMap: ArgMap<T>,
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
   for (const [field, spec] of Object.entries(argMap)) {
     if (!spec) continue;
 
-    const value = extractArg(args, spec);
+    const value = extractArg(args, spec as ArgSpec);
     if (value !== undefined) result[field] = value;
   }
 
@@ -109,14 +114,16 @@ export function extractArgs<T extends z.ZodRawShape>(
  * }
  * ```
  */
-export function createArgParser<T extends z.ZodRawShape>(
-  schema: z.ZodObject<T>,
-  argMap: ArgMap<z.infer<z.ZodObject<T>>>,
-): (args: ParsedArgs) => z.SafeParseReturnType<unknown, z.infer<z.ZodObject<T>>> {
-  return function parseArgs(
-    args: ParsedArgs,
-  ): z.SafeParseReturnType<unknown, z.infer<z.ZodObject<T>>> {
-    return schema.safeParse(extractArgs(args, argMap));
+export function createArgParser<T>(
+  schema: z.ZodType<T>,
+  argMap: ArgMap<T>,
+): (args: ParsedArgs) => SafeParseResult<T> {
+  return function parseArgs(args: ParsedArgs): SafeParseResult<T> {
+    const result = schema.safeParse(extractArgs(args, argMap));
+    if (result.success) {
+      return { success: true, data: result.data };
+    }
+    return { success: false, error: result.error };
   };
 }
 
@@ -125,7 +132,7 @@ export function createArgParser<T extends z.ZodRawShape>(
  * Eliminates the repeated parse-validate-throw boilerplate in handlers.
  */
 export function parseArgsOrThrow<T>(
-  parser: (args: ParsedArgs) => z.SafeParseReturnType<unknown, T>,
+  parser: (args: ParsedArgs) => SafeParseResult<T>,
   commandName: string,
   args: ParsedArgs,
 ): T {

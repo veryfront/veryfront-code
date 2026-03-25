@@ -7,7 +7,8 @@ import { createError, getErrorMessage, toError } from "#veryfront/errors/veryfro
 
 interface ZodLikeSchema {
   _def?: {
-    typeName?: string;
+    typeName?: string; // v3
+    type?: string; // v4
     shape?: (() => Record<string, unknown>) | Record<string, unknown>;
   };
   parse?: (input: unknown) => void;
@@ -16,7 +17,8 @@ interface ZodLikeSchema {
 function hasValidZodTypeName(schema: unknown): schema is ZodLikeSchema {
   if (schema === null || typeof schema !== "object") return false;
   if (!("_def" in schema)) return false;
-  return !!(schema as ZodLikeSchema)._def?.typeName;
+  const def = (schema as ZodLikeSchema)._def;
+  return !!(def?.typeName ?? def?.type);
 }
 
 function getSchemaShape(schema: ZodLikeSchema): Record<string, unknown> | null {

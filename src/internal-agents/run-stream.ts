@@ -17,7 +17,7 @@ import {
 import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-manager.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 
-const anyObjectSchema = z.record(z.unknown());
+const anyObjectSchema = z.record(z.string(), z.unknown());
 
 export interface RuntimeAgentStreamExecutionDeps {
   sessionManager: AgentRunSessionManager;

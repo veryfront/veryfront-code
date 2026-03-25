@@ -352,7 +352,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
           await assertRejects(
             () => getConfig(projectDir, adapter),
             Error,
-            "Expected object, received null",
+            "expected object, received null",
           );
         },
       );

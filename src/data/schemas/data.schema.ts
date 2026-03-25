@@ -2,7 +2,7 @@ import { z } from "zod";
 
 /** Context passed to data fetching functions */
 export const DataContextSchema = z.object({
-  params: z.record(z.union([z.string(), z.array(z.string())])),
+  params: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
   query: z.instanceof(URLSearchParams),
   request: z.instanceof(Request),
   url: z.instanceof(URL),
@@ -22,7 +22,7 @@ export const DataResultSchema = z.object({
 });
 
 export const StaticPathEntrySchema = z.object({
-  params: z.record(z.union([z.string(), z.array(z.string())])),
+  params: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
 });
 
 export const StaticPathsResultSchema = z.object({

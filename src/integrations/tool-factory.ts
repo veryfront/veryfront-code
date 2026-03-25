@@ -42,7 +42,7 @@ function paramTypeToZod(
       schema = z.array(z.string()).describe(description);
       break;
     case "object":
-      schema = z.record(z.unknown()).describe(description);
+      schema = z.record(z.string(), z.unknown()).describe(description);
       break;
     case "array":
       schema = z.array(z.unknown()).describe(description);

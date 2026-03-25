@@ -100,7 +100,7 @@ export const CheckpointSchema = z.object({
   nodeId: z.string(),
   timestamp: z.date(),
   context: WorkflowContextSchema,
-  nodeStates: z.record(NodeStateSchema),
+  nodeStates: z.record(z.string(), NodeStateSchema),
 });
 
 /**

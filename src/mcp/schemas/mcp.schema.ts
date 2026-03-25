@@ -6,7 +6,7 @@ export const MCPServerConfigSchema = z.object({
   auth: z
     .object({
       type: z.enum(["bearer", "api-key", "none"]),
-      validate: z.function(z.tuple([z.string()]), z.union([z.promise(z.boolean()), z.boolean()]))
+      validate: z.function()
         .optional(),
     })
     .optional(),

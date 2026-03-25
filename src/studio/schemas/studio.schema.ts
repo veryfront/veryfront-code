@@ -87,7 +87,7 @@ export const MessageFromRendererSchema = z.discriminatedUnion("action", [
     id: z.string().optional(),
     isInitialLoad: z.boolean().optional(),
     hasError: z.boolean().optional(),
-    nodesStore: z.record(z.unknown()).optional(),
+    nodesStore: z.record(z.string(), z.unknown()).optional(),
     errors: z.array(ErrorMessageSchema).optional(),
     warnings: z.array(ErrorMessageSchema).optional(),
   }),
@@ -124,7 +124,7 @@ export const MessageFromRendererSchema = z.discriminatedUnion("action", [
     url: z.string(),
     projectId: z.string(),
     id: z.string(),
-    params: z.record(z.string()),
+    params: z.record(z.string(), z.string()),
   }),
   z.object({
     action: z.literal("colorMode"),

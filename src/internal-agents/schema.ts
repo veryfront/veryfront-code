@@ -34,7 +34,7 @@ export const ClientToolNameSchema = z
 export const RuntimeInjectedToolSchema = z.object({
   name: ClientToolNameSchema,
   description: z.string().max(1024).optional(),
-  parameters: z.record(z.unknown()).optional().refine(
+  parameters: z.record(z.string(), z.unknown()).optional().refine(
     (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
     { message: "Tool parameters must be less than 16 KB" },
   ),
@@ -49,7 +49,7 @@ export const RuntimeContextItemSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("json"),
     title: z.string().max(256).optional(),
-    data: z.record(z.unknown()).refine(
+    data: z.record(z.string(), z.unknown()).refine(
       (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_ITEM_BYTES),
       { message: "JSON context item must be less than 16 KB" },
     ),
@@ -88,7 +88,7 @@ export const RuntimeRunAgentInputSchema = z.object({
       id: z.string().min(1),
       role: z.enum(["user", "assistant", "system", "tool"]),
       parts: z.array(z.object({ type: z.string().min(1) }).passthrough()).default([]),
-      metadata: z.record(z.unknown()).optional(),
+      metadata: z.record(z.string(), z.unknown()).optional(),
       createdAt: z.string().optional(),
     }),
   ).max(MAX_RUNTIME_MESSAGES),
@@ -98,7 +98,7 @@ export const RuntimeRunAgentInputSchema = z.object({
     { message: "context must be less than 64 KB total" },
   ),
   agentSource: RuntimeAgentSourceContextSchema.optional(),
-  forwardedProps: z.record(z.unknown()).optional().refine(
+  forwardedProps: z.record(z.string(), z.unknown()).optional().refine(
     (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
     { message: "forwardedProps must be less than 64 KB" },
   ),

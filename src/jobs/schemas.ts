@@ -20,7 +20,7 @@ export const PageInfoSchema = z.object({
   prev: z.string().nullable(),
 });
 
-const JsonObjectSchema = z.record(z.unknown());
+const JsonObjectSchema = z.record(z.string(), z.unknown());
 const KnowledgeIngestSkipReasonSchema = z.enum([
   "hidden_path",
   "ignored_directory",
@@ -159,7 +159,7 @@ export const JobEventSchema = z.object({
   service: z.string(),
   trace_id: z.string().optional(),
   request_id: z.string().optional(),
-  metadata: z.record(z.string()).optional(),
+  metadata: z.record(z.string(), z.string()).optional(),
 });
 
 export const JobEventsResponseSchema = z.object({

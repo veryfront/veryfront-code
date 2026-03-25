@@ -9,7 +9,7 @@ export const pageTypeSchema = z.enum(["mdx", "md", "tsx", "jsx", "ts", "js"]);
 export const HTMLGenerationOptionsSchema = z.object({
   mode: z.enum(["development", "production"]),
   config: z.any(), // VeryfrontConfig is complex, use any
-  importMap: z.record(z.string()).optional(),
+  importMap: z.record(z.string(), z.string()).optional(),
   nestedLayouts: z
     .array(
       z.object({
@@ -25,8 +25,8 @@ export const HTMLGenerationOptionsSchema = z.object({
   nonce: z.string().optional(),
   projectDir: z.string().optional(),
   globalCSS: z.string().optional(),
-  frontmatter: z.record(z.unknown()).optional(),
-  layoutProps: z.record(z.record(z.unknown())).optional(),
+  frontmatter: z.record(z.string(), z.unknown()).optional(),
+  layoutProps: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
   studioEmbed: z.boolean().optional(),
   projectId: z.string().optional(),
   pageId: z.string().optional(),
@@ -51,8 +51,8 @@ export const HTMLGenerationOptionsSchema = z.object({
 
 export const HydrationDataSchema = z.object({
   slug: z.string(),
-  props: z.record(z.unknown()),
-  params: z.record(z.union([z.string(), z.array(z.string())])),
+  props: z.record(z.string(), z.unknown()),
+  params: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
   layouts: z.array(
     z.object({
       kind: z.string(),

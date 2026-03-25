@@ -98,7 +98,7 @@ function buildInputSchema(operation: OpenAPIOperation): z.ZodTypeAny {
   addParamGroup(shape, params, "header", "headers", "Request headers");
 
   if (operation.requestBody) {
-    shape.body = z.record(z.unknown()).optional().describe("Request body (JSON)");
+    shape.body = z.record(z.string(), z.unknown()).optional().describe("Request body (JSON)");
   }
 
   return z.object(shape);

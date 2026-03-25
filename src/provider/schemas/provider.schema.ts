@@ -4,7 +4,7 @@ export const ProviderConfigSchema = z.object({
   apiKey: z.string().optional(),
   baseURL: z.string().url().optional(),
   organizationId: z.string().optional(),
-  options: z.record(z.unknown()).optional(),
+  options: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const OpenAIConfigSchema = ProviderConfigSchema.extend({
@@ -62,7 +62,7 @@ export const CompletionRequestSchema = z.object({
 const completionToolCallSchema = z.object({
   id: z.string(),
   name: z.string(),
-  arguments: z.record(z.unknown()),
+  arguments: z.record(z.string(), z.unknown()),
 });
 
 export const CompletionResponseSchema = z.object({

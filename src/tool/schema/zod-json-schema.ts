@@ -1,7 +1,25 @@
 import type { z } from "zod";
-import { ZodFirstPartyTypeKind } from "zod";
 import type { JsonSchema } from "./json-schema.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+
+/** Zod internal _def shape — covers fields from both v3 and v4. */
+interface ZodDef {
+  typeName?: string; // v3
+  type?: string; // v4
+  value?: unknown; // v3 literal
+  values?: unknown; // v3 enum / v4 literal
+  entries?: Record<string, unknown>; // v4 enum
+  shape?: (() => Record<string, z.ZodTypeAny>) | Record<string, z.ZodTypeAny>;
+  element?: z.ZodTypeAny; // v4 array/record
+  items?: z.ZodTypeAny[]; // tuple
+  options?: z.ZodTypeAny[] | Map<string, z.ZodTypeAny>; // union
+  valueType?: z.ZodTypeAny; // record
+  innerType?: z.ZodTypeAny; // optional/nullable/default (v3)
+  schema?: z.ZodTypeAny; // effects/optional/nullable (v3/v4)
+  in?: z.ZodTypeAny; // pipe input (v4)
+  getter?: () => z.ZodTypeAny; // lazy
+  defaultValue?: (() => unknown) | unknown;
+}
 
 const LITERAL_TYPE_MAP: Record<string, "string" | "number" | "boolean"> = {
   string: "string",
@@ -11,6 +29,16 @@ const LITERAL_TYPE_MAP: Record<string, "string" | "number" | "boolean"> = {
 
 function getLiteralType(value: unknown): "string" | "number" | "boolean" | undefined {
   return LITERAL_TYPE_MAP[typeof value];
+}
+
+function getDef(schema: z.ZodTypeAny): ZodDef {
+  return schema._def as ZodDef;
+}
+
+/** Get the internal type tag from a zod schema (_def.typeName in v3, _def.type in v4). */
+function getTypeTag(schema: z.ZodTypeAny): string | undefined {
+  const def = getDef(schema);
+  return def.typeName ?? def.type;
 }
 
 export function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema {
@@ -30,43 +58,52 @@ export function isOptionalSchema(schema: z.ZodTypeAny): boolean {
 }
 
 function convert(schema: z.ZodTypeAny): JsonSchema {
-  switch (schema._def.typeName) {
-    case ZodFirstPartyTypeKind.ZodString:
+  const tag = getTypeTag(schema);
+  const def = getDef(schema);
+
+  switch (tag) {
+    case "ZodString":
+    case "string":
       return { type: "string" };
 
-    case ZodFirstPartyTypeKind.ZodNumber:
+    case "ZodNumber":
+    case "number":
       return { type: "number" };
 
-    case ZodFirstPartyTypeKind.ZodBoolean:
+    case "ZodBoolean":
+    case "boolean":
       return { type: "boolean" };
 
-    case ZodFirstPartyTypeKind.ZodBigInt:
+    case "ZodBigInt":
+    case "bigint":
       return { type: "integer" };
 
-    case ZodFirstPartyTypeKind.ZodLiteral: {
-      const literal = (schema as z.ZodLiteral<unknown>)._def.value;
+    case "ZodLiteral":
+    case "literal": {
+      // v3: _def.value, v4: _def.values (array of accepted values)
+      const literal = def.value ?? (Array.isArray(def.values) ? def.values[0] : def.values);
       return { const: literal, type: getLiteralType(literal) };
     }
 
-    case ZodFirstPartyTypeKind.ZodEnum:
+    case "ZodEnum":
+    case "ZodNativeEnum":
+    case "enum": {
+      // v3: _def.values (array), v4: _def.entries (object {key: value})
+      const values = def.values ?? (def.entries ? Object.values(def.entries) : []);
+      if (Array.isArray(values)) {
+        return { type: "string", enum: values };
+      }
+      // Native enum: filter out reverse-mapped numeric keys
       return {
-        type: "string",
-        enum: (schema as z.ZodEnum<[string, ...string[]]>)._def.values,
+        enum: Object.values(values).filter((value) => typeof value !== "number"),
       };
+    }
 
-    case ZodFirstPartyTypeKind.ZodNativeEnum:
-      return {
-        enum: Object.values((schema as z.ZodNativeEnum<z.EnumLike>)._def.values).filter(
-          (value) => typeof value !== "number",
-        ),
-      };
-
-    case ZodFirstPartyTypeKind.ZodObject: {
-      const obj = schema as z.ZodObject<z.ZodRawShape>;
+    case "ZodObject":
+    case "object": {
+      const shape = typeof def.shape === "function" ? def.shape() : def.shape;
       const properties: Record<string, JsonSchema> = {};
       const required: string[] = [];
-
-      const shape = typeof obj._def.shape === "function" ? obj._def.shape() : obj._def.shape;
 
       for (const [key, value] of Object.entries(shape ?? {})) {
         const zodSchema = value as z.ZodTypeAny;
@@ -80,63 +117,67 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
       return json;
     }
 
-    case ZodFirstPartyTypeKind.ZodArray: {
-      const array = schema as z.ZodArray<z.ZodTypeAny>;
-      return { type: "array", items: zodToJsonSchema(array._def.type) };
+    case "ZodArray":
+    case "array": {
+      // v3: _def.type (item schema), v4: _def.element (item schema)
+      const itemType = def.element ?? (def.type as unknown as z.ZodTypeAny | undefined);
+      if (!itemType || typeof itemType === "string") return { type: "array" };
+      return { type: "array", items: zodToJsonSchema(itemType) };
     }
 
-    case ZodFirstPartyTypeKind.ZodTuple: {
-      const tuple = schema as z.ZodTuple;
-      const items = tuple._def.items;
-
+    case "ZodTuple":
+    case "tuple": {
+      const items = def.items ?? [];
       return {
         type: "array",
-        prefixItems: items.map((item) => zodToJsonSchema(item)),
+        prefixItems: items.map((item: z.ZodTypeAny) => zodToJsonSchema(item)),
         minItems: items.length,
         maxItems: items.length,
       };
     }
 
-    case ZodFirstPartyTypeKind.ZodUnion: {
-      const union = schema as z.ZodUnion<[z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]>;
-      return { anyOf: union._def.options.map((option) => zodToJsonSchema(option)) };
+    case "ZodUnion":
+    case "ZodDiscriminatedUnion":
+    case "union": {
+      const options = def.options ?? [];
+      const optionArray = options instanceof Map ? Array.from(options.values()) : options;
+      return { anyOf: optionArray.map((option: z.ZodTypeAny) => zodToJsonSchema(option)) };
     }
 
-    case ZodFirstPartyTypeKind.ZodDiscriminatedUnion: {
-      const union = schema as z.ZodDiscriminatedUnion<
-        string,
-        z.ZodDiscriminatedUnionOption<string>[]
-      >;
-      return {
-        anyOf: Array.from(union._def.options.values()).map((option) => zodToJsonSchema(option)),
-      };
+    case "ZodRecord":
+    case "record": {
+      const valueSchema = def.valueType ?? def.element;
+      if (!valueSchema) return { type: "object" };
+      return { type: "object", additionalProperties: zodToJsonSchema(valueSchema) };
     }
 
-    case ZodFirstPartyTypeKind.ZodRecord:
-      return {
-        type: "object",
-        additionalProperties: zodToJsonSchema(
-          (schema as z.ZodRecord<z.ZodString, z.ZodTypeAny>)._def.valueType,
-        ),
-      };
+    case "ZodDefault":
+    case "default": {
+      const innerType = def.innerType ?? def.schema;
+      if (!innerType) return { type: "object" };
+      const inner = zodToJsonSchema(innerType);
+      const defaultValue = typeof def.defaultValue === "function"
+        ? def.defaultValue()
+        : def.defaultValue;
 
-    case ZodFirstPartyTypeKind.ZodDefault: {
-      const def = schema as z.ZodDefault<z.ZodTypeAny>;
-      const inner = zodToJsonSchema(def._def.innerType);
-      const defaultValue = def._def.defaultValue();
-
-      if (typeof inner === "object" && !("anyOf" in inner)) {
+      if (typeof inner === "object" && !("anyOf" in inner) && defaultValue !== undefined) {
         inner.default = defaultValue;
       }
 
       return inner;
     }
 
-    case ZodFirstPartyTypeKind.ZodLazy:
-      return convert((schema as z.ZodLazy<z.ZodTypeAny>)._def.getter());
+    case "ZodLazy":
+    case "lazy":
+      return def.getter ? convert(def.getter()) : { type: "object" };
 
-    case ZodFirstPartyTypeKind.ZodEffects:
-      return convert((schema as z.ZodEffects<z.ZodTypeAny>)._def.schema);
+    case "ZodEffects":
+    case "pipe": {
+      // v3: ZodEffects wraps schema in _def.schema
+      // v4: pipe wraps in _def.in (input schema)
+      const innerSchema = def.schema ?? def.in;
+      return innerSchema ? convert(innerSchema) : { type: "object" };
+    }
 
     default:
       return { type: "object" };
@@ -151,19 +192,26 @@ function unwrapSchema(
   let optional = false;
 
   while (true) {
-    switch (current._def.typeName) {
-      case ZodFirstPartyTypeKind.ZodNullable:
+    const tag = getTypeTag(current);
+    const def = getDef(current);
+
+    switch (tag) {
+      case "ZodNullable":
+      case "nullable":
         nullable = true;
-        current = (current as z.ZodNullable<z.ZodTypeAny>)._def.innerType;
+        current = (def.innerType ?? def.schema)!;
         break;
 
-      case ZodFirstPartyTypeKind.ZodOptional:
+      case "ZodOptional":
+      case "optional":
         optional = true;
-        current = (current as z.ZodOptional<z.ZodTypeAny>)._def.innerType;
+        current = (def.innerType ?? def.schema)!;
         break;
 
-      case ZodFirstPartyTypeKind.ZodEffects:
-        current = (current as z.ZodEffects<z.ZodTypeAny>)._def.schema;
+      case "ZodEffects":
+      case "pipe":
+        current = def.schema ?? def.in ?? current;
+        if (current === schema) return { schema: current, nullable, optional };
         break;
 
       default:

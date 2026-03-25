@@ -1,10 +1,9 @@
 import { cwd } from "veryfront/platform";
-import type { z } from "zod";
-import { parseArgsOrThrow } from "./args.ts";
+import { parseArgsOrThrow, type SafeParseResult } from "./args.ts";
 import type { ParsedArgs } from "./types.ts";
 import { showLogo } from "#cli/utils";
 
-type ArgParser<T> = (args: ParsedArgs) => z.SafeParseReturnType<unknown, T>;
+type ArgParser<T> = (args: ParsedArgs) => SafeParseResult<T>;
 
 export async function handleProjectDirCommand<T extends { projectDir: string }>(
   args: ParsedArgs,

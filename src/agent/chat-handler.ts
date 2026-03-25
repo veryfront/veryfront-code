@@ -402,7 +402,7 @@ export function createChatHandler(
         return Response.json(
           {
             error: "Invalid request",
-            details: error.errors.map((e) => ({ path: e.path, message: e.message })),
+            details: error.issues.map((e) => ({ path: e.path, message: e.message })),
           },
           { status: 400 },
         );

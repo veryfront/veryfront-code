@@ -155,7 +155,7 @@ describe("VeryfrontApiClient", () => {
               new Response(
                 JSON.stringify({
                   data: [{
-                    id: "00000000-0000-0000-0000-000000000001",
+                    id: "00000000-0000-4000-a000-000000000001",
                     name: "Test",
                     slug: "test-project",
                     created_at: "2024-01-01",
@@ -229,7 +229,7 @@ describe("VeryfrontApiClient", () => {
           return Promise.resolve(
             new Response(
               JSON.stringify({
-                id: "00000000-0000-0000-0000-000000000001",
+                id: "00000000-0000-4000-a000-000000000001",
                 name: "Test",
                 slug: "test-project",
                 created_at: "2024-01-01",
@@ -261,7 +261,7 @@ describe("VeryfrontApiClient", () => {
               new Response(
                 JSON.stringify({
                   data: [{
-                    id: "00000000-0000-0000-0000-000000000001",
+                    id: "00000000-0000-4000-a000-000000000001",
                     name: "Test",
                     slug: "test-project",
                     created_at: "2024-01-01",
@@ -311,7 +311,7 @@ describe("VeryfrontApiClient", () => {
           return Promise.resolve(
             new Response(
               JSON.stringify({
-                id: "00000000-0000-0000-0000-000000000001",
+                id: "00000000-0000-4000-a000-000000000001",
                 name: "Test",
                 slug: "test-project",
                 created_at: "2024-01-01",
@@ -356,7 +356,7 @@ describe("VeryfrontApiClient", () => {
           return Promise.resolve(
             new Response(
               JSON.stringify({
-                id: "00000000-0000-0000-0000-000000000001",
+                id: "00000000-0000-4000-a000-000000000001",
                 name: "Test",
                 slug: "test-project",
                 created_at: "2024-01-01",

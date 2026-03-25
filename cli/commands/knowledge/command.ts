@@ -1,4 +1,5 @@
 import { z } from "zod";
+type SafeParseResult<T> = { success: true; data: T } | { success: false; error: z.ZodError };
 import { createFileSystem, getEnv } from "veryfront/platform";
 import { basename, extname, join, normalize, relative } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -160,7 +161,7 @@ Subcommands:
 
 export function parseKnowledgeIngestArgs(
   args: ParsedArgs,
-): z.SafeParseReturnType<unknown, KnowledgeIngestOptions> {
+): SafeParseResult<KnowledgeIngestOptions> {
   return KnowledgeIngestArgsSchema.safeParse({
     projectSlug: getStringArg(args, "project", "p", "project-slug"),
     projectDir: getStringArg(args, "project-dir", "dir", "d"),

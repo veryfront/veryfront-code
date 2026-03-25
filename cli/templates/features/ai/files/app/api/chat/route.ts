@@ -45,7 +45,7 @@ export async function POST(request: Request): Promise<Response> {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return Response.json(
-        { error: "Invalid request", details: error.errors },
+        { error: "Invalid request", details: error.issues },
         { status: 400 },
       );
     }
