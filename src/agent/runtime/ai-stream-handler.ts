@@ -38,6 +38,23 @@ export interface AIStreamCallbacks {
   }) => void;
 }
 
+function createAbortError(reason?: unknown): Error {
+  if (reason instanceof Error) {
+    return reason;
+  }
+
+  return new DOMException(
+    typeof reason === "string" && reason.length > 0 ? reason : "The operation was aborted",
+    "AbortError",
+  );
+}
+
+function throwIfAborted(abortSignal?: AbortSignal): void {
+  if (abortSignal?.aborted) {
+    throw createAbortError(abortSignal.reason);
+  }
+}
+
 export function createStreamState(): AIStreamState {
   return {
     accumulatedText: "",
@@ -64,11 +81,15 @@ export function processStream(
   encoder: TextEncoder,
   textPartId: string | undefined,
   callbacks?: AIStreamCallbacks,
+  abortSignal?: AbortSignal,
 ): Promise<void> {
   return withSpan("agent.runtime.processStream", async () => {
     let eventCount = 0;
 
+    throwIfAborted(abortSignal);
+
     for await (const part of result.fullStream) {
+      throwIfAborted(abortSignal);
       eventCount++;
 
       switch (part.type) {
@@ -169,7 +190,11 @@ export function processStream(
           // Ignore other stream parts (source, file, reasoning-*, etc.)
           break;
       }
+
+      throwIfAborted(abortSignal);
     }
+
+    throwIfAborted(abortSignal);
 
     setActiveSpanAttributes({
       "stream.event_count": eventCount,

@@ -76,6 +76,31 @@ import { resolveConfiguredAgentModel } from "./model-resolution.ts";
 const logger = serverLogger.component("agent");
 const LOAD_SKILL_TOOL_ID = "load-skill";
 
+function createAbortError(reason?: unknown): Error {
+  if (reason instanceof Error) {
+    return reason;
+  }
+
+  return new DOMException(
+    typeof reason === "string" && reason.length > 0 ? reason : "The operation was aborted",
+    "AbortError",
+  );
+}
+
+function throwIfAborted(abortSignal?: AbortSignal): void {
+  if (abortSignal?.aborted) {
+    throw createAbortError(abortSignal.reason);
+  }
+}
+
+function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
+  if (abortSignal?.aborted && error === abortSignal.reason) {
+    return true;
+  }
+
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
 function getSkillActivationRequiredError(toolName: string): string {
   return `Tool "${toolName}" cannot run before load-skill succeeds in the same step. ` +
     `Call "${LOAD_SKILL_TOOL_ID}" first to establish the active skill context.`;
@@ -256,6 +281,7 @@ export class AgentRuntime {
     },
     modelOverride?: string,
     maxOutputTokensOverride?: number,
+    abortSignal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>> {
     const requestedModel = resolveConfiguredAgentModel(modelOverride || this.config.model);
     // Auto-upgrade local/* to a cloud provider when API keys are available.
@@ -267,7 +293,19 @@ export class AgentRuntime {
     const systemPrompt = await this.resolveSystemPrompt();
 
     const encoder = new TextEncoder();
-    const toolContext = { agentId: this.id, ...context };
+    const streamAbortController = new AbortController();
+    const forwardAbort = () => {
+      streamAbortController.abort(abortSignal?.reason);
+    };
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        streamAbortController.abort(abortSignal.reason);
+      } else {
+        abortSignal.addEventListener("abort", forwardAbort, { once: true });
+      }
+    }
+    const streamAbortSignal = streamAbortController.signal;
+    const toolContext = { agentId: this.id, abortSignal: streamAbortSignal, ...context };
     const textPartId = generateId("text");
 
     // Resolve model BEFORE creating the ReadableStream — if this throws
@@ -289,6 +327,7 @@ export class AgentRuntime {
     return new ReadableStream<Uint8Array>({
       start: async (controller) => {
         try {
+          throwIfAborted(streamAbortSignal);
           this.status = "streaming";
 
           const messageId = generateMessageId();
@@ -319,13 +358,21 @@ export class AgentRuntime {
             resolvedModelString,
             languageModel,
             maxOutputTokensOverride,
+            streamAbortSignal,
           );
+          throwIfAborted(streamAbortSignal);
           callbacks?.onFinish?.(response);
+          throwIfAborted(streamAbortSignal);
 
           sendSSE(controller, encoder, { type: "text-end", id: textPartId });
           sendSSE(controller, encoder, { type: "message-finish" });
           closeSSEStream(controller);
         } catch (error) {
+          if (isAbortError(error, streamAbortSignal)) {
+            closeSSEStream(controller);
+            return;
+          }
+
           this.status = "error";
           logger.error("Agent stream error", { error });
           sendSSE(controller, encoder, {
@@ -333,7 +380,12 @@ export class AgentRuntime {
             error: "An internal error occurred",
           });
           closeSSEStream(controller);
+        } finally {
+          abortSignal?.removeEventListener("abort", forwardAbort);
         }
+      },
+      cancel(reason) {
+        streamAbortController.abort(reason);
       },
     });
   }
@@ -587,6 +639,7 @@ export class AgentRuntime {
     modelString?: string,
     resolvedModel?: LanguageModel,
     maxOutputTokensOverride?: number,
+    abortSignal?: AbortSignal,
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
     const maxSteps = this.computeMaxSteps(maxAgentSteps);
@@ -613,6 +666,7 @@ export class AgentRuntime {
     let finalFinishReason: string | undefined;
 
     for (let step = 0; step < maxSteps; step++) {
+      throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-start" });
 
       let tools = isLocalStreaming ? [] : getAvailableTools(this.config.tools, {
@@ -631,13 +685,15 @@ export class AgentRuntime {
         tools: convertToolsToAISDK(tools),
         maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
         temperature: DEFAULT_TEMPERATURE,
+        abortSignal,
       });
 
       const state = createStreamState();
       await processStream(result, state, controller, encoder, textPartId, {
         onChunk: callbacks?.onChunk,
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
-      });
+      }, abortSignal);
+      throwIfAborted(abortSignal);
       finalFinishReason = state.finishReason ?? finalFinishReason;
 
       const streamParts: MessagePart[] = [];
@@ -680,6 +736,7 @@ export class AgentRuntime {
         streamedToolCalls.some((tc) => tc.name === LOAD_SKILL_TOOL_ID);
 
       for (const tc of streamedToolCalls) {
+        throwIfAborted(abortSignal);
         const { args, error: argError } = parseToolArgs(tc.arguments);
         const toolCall: ToolCall = { id: tc.id, name: tc.name, args, status: "pending" };
 
@@ -737,6 +794,7 @@ export class AgentRuntime {
               ...toolContext,
             },
           );
+          throwIfAborted(abortSignal);
 
           toolCall.status = "completed";
           toolCall.result = result;
@@ -785,6 +843,7 @@ export class AgentRuntime {
         }
       }
 
+      throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-end" });
       this.status = "thinking";
     }

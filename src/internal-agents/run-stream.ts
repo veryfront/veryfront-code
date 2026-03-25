@@ -31,6 +31,9 @@ export interface RuntimeAgentStreamExecutionDeps {
       callbacks?: {
         onFinish?: (response: AgentResponse) => void;
       },
+      modelOverride?: string,
+      maxOutputTokensOverride?: number,
+      abortSignal?: AbortSignal,
     ) => Promise<ReadableStream<Uint8Array>>;
   };
 }
@@ -233,6 +236,9 @@ export async function createRuntimeAgentStreamResponse(
           completedResponse = response;
         },
       },
+      undefined,
+      undefined,
+      abortSignal,
     );
   } catch (error) {
     deps.sessionManager.failRun(input.runId);

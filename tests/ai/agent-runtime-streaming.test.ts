@@ -1,9 +1,6 @@
 import { describe, it } from "#veryfront/testing/bdd";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat";
-import {
-  type AgentConfig,
-  type Message,
-} from "../../src/agent/types.ts";
+import { type AgentConfig, type Message } from "../../src/agent/types.ts";
 
 function assert(condition: unknown, message?: string): void {
   if (!condition) throw new Error(message || "Assertion failed");
@@ -19,9 +16,11 @@ describe("AgentRuntime streaming with AI SDK", () => {
   it("should stream text content via AI SDK model registry", async () => {
     const originalLogLevel = getEnv("LOG_LEVEL");
     const originalNodeEnv = getEnv("NODE_ENV");
+    const originalDisableLruInterval = getEnv("VF_DISABLE_LRU_INTERVAL");
 
     setEnv("LOG_LEVEL", "silent");
     setEnv("NODE_ENV", "test");
+    setEnv("VF_DISABLE_LRU_INTERVAL", "1");
 
     try {
       const { AgentRuntime } = await import("../../src/agent/runtime/index.ts");
@@ -46,7 +45,12 @@ describe("AgentRuntime streaming with AI SDK", () => {
                 type: "finish" as const,
                 finishReason: { unified: "stop" as const, raw: "stop" },
                 usage: {
-                  inputTokens: { total: 5, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+                  inputTokens: {
+                    total: 5,
+                    noCache: undefined,
+                    cacheRead: undefined,
+                    cacheWrite: undefined,
+                  },
                   outputTokens: { total: 3, text: undefined, reasoning: undefined },
                 },
               },
@@ -97,6 +101,122 @@ describe("AgentRuntime streaming with AI SDK", () => {
     } finally {
       restoreEnv("LOG_LEVEL", originalLogLevel);
       restoreEnv("NODE_ENV", originalNodeEnv);
+      restoreEnv("VF_DISABLE_LRU_INTERVAL", originalDisableLruInterval);
+    }
+  });
+
+  it("should propagate abort signals into the streaming model call and close cleanly", async () => {
+    const originalLogLevel = getEnv("LOG_LEVEL");
+    const originalNodeEnv = getEnv("NODE_ENV");
+    const originalDisableLruInterval = getEnv("VF_DISABLE_LRU_INTERVAL");
+
+    setEnv("LOG_LEVEL", "silent");
+    setEnv("NODE_ENV", "test");
+    setEnv("VF_DISABLE_LRU_INTERVAL", "1");
+
+    try {
+      const { AgentRuntime } = await import("../../src/agent/runtime/index.ts");
+      const { registerModelProvider, clearModelProviders } = await import(
+        "../../src/provider/model-registry.ts"
+      );
+      const { MockLanguageModelV3 } = await import("ai/test");
+
+      clearModelProviders();
+
+      let providerAbortSignal: AbortSignal | undefined;
+
+      const mockModel = new MockLanguageModelV3({
+        provider: "mock",
+        modelId: "mock-model",
+        doStream: async (options) => {
+          providerAbortSignal = options.abortSignal;
+
+          return {
+            stream: new ReadableStream({
+              start(controller) {
+                options.abortSignal?.addEventListener("abort", () => {
+                  controller.error(
+                    options.abortSignal?.reason ??
+                      new DOMException("The operation was aborted", "AbortError"),
+                  );
+                }, { once: true });
+              },
+            }),
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          };
+        },
+      });
+
+      registerModelProvider("mock", () => mockModel);
+
+      const runtime = new AgentRuntime("test", {
+        id: "test-agent",
+        model: "mock/mock-model",
+        system: "You are a tester",
+        memory: { type: "conversation", maxTokens: 4000 },
+      });
+      const messages: Message[] = [{
+        id: "m1",
+        role: "user",
+        parts: [{ type: "text", text: "hi" }],
+      }];
+
+      const abortController = new AbortController();
+      const stream = await runtime.stream(
+        messages,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        abortController.signal,
+      );
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      let output = "";
+
+      const readAll = (async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          output += decoder.decode(value, { stream: true });
+        }
+      })();
+
+      for (let attempt = 0; attempt < 10 && !providerAbortSignal; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      abortController.abort(new DOMException("The operation was aborted", "AbortError"));
+
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        readAll,
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error("Timed out waiting for aborted stream")),
+            1_000,
+          );
+        }),
+      ]);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      assert(providerAbortSignal, "provider abort signal should be passed to streamText");
+      assert(providerAbortSignal.aborted, "provider abort signal should be aborted");
+      assert(
+        !output.includes('"type":"error"'),
+        "aborted streams should close without emitting a generic error",
+      );
+
+      clearModelProviders();
+    } finally {
+      restoreEnv("LOG_LEVEL", originalLogLevel);
+      restoreEnv("NODE_ENV", originalNodeEnv);
+      restoreEnv("VF_DISABLE_LRU_INTERVAL", originalDisableLruInterval);
     }
   });
 });
