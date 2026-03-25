@@ -1,5 +1,6 @@
 import { serverLogger } from "#veryfront/utils";
 import { clearTrackedAgents } from "#veryfront/discovery";
+import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { HandlerContext } from "../../types.ts";
 
 const logger = serverLogger.component("api-wrapper");
@@ -17,6 +18,11 @@ const discoveredProjects = new Map<string, Promise<void>>();
 
 /** Build a discovery cache key that incorporates the release/version. */
 function discoveryKey(ctx: HandlerContext): string {
+  const cacheContext = tryGetCacheKeyContext();
+  if (cacheContext) {
+    return `${cacheContext.projectId}:${cacheContext.mode}:${cacheContext.versionId}`;
+  }
+
   const slug = ctx.projectSlug ?? ctx.projectDir;
   const environment = ctx.enriched?.environment ?? ctx.resolvedEnvironment ??
     (ctx.releaseId ? "production" : "preview");
@@ -31,6 +37,11 @@ function discoveryKey(ctx: HandlerContext): string {
 }
 
 function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
+  const cacheContext = tryGetCacheKeyContext();
+  if (cacheContext) {
+    return cacheContext.mode === "production";
+  }
+
   const environment = ctx.enriched?.environment ?? ctx.resolvedEnvironment ??
     (ctx.releaseId ? "production" : "preview");
   return environment === "production";

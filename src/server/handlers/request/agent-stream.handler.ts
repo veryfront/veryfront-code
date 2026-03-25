@@ -18,10 +18,14 @@ import {
   AgentRunAlreadyExistsError,
   agentRunSessionManager,
 } from "#veryfront/internal-agents/session-manager.ts";
-import { RuntimeRunAgentInputSchema } from "#veryfront/internal-agents/schema.ts";
+import {
+  type RuntimeAgentSourceContext,
+  RuntimeRunAgentInputSchema,
+} from "#veryfront/internal-agents/schema.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 export interface AgentStreamHandlerDeps
   extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {}
@@ -30,6 +34,48 @@ const defaultDeps: AgentStreamHandlerDeps = {
   ...defaultChannelInvokeDeps,
   sessionManager: agentRunSessionManager,
 };
+
+type SourceContextFsWrapper = {
+  isMultiProjectMode?: () => boolean;
+  runWithContext?: <R>(
+    slug: string,
+    token: string,
+    fn: () => Promise<R>,
+    projectId?: string,
+    options?: {
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    },
+  ) => Promise<R>;
+};
+
+function buildAgentSourceRunOptions(sourceContext: RuntimeAgentSourceContext): {
+  productionMode: boolean;
+  releaseId?: string | null;
+  branch?: string | null;
+  environmentName?: string | null;
+} {
+  switch (sourceContext.type) {
+    case "branch":
+      return {
+        productionMode: false,
+        branch: sourceContext.branch,
+      };
+    case "environment":
+      return {
+        productionMode: true,
+        environmentName: sourceContext.environmentName,
+        releaseId: sourceContext.releaseId ?? null,
+      };
+    case "release":
+      return {
+        productionMode: true,
+        releaseId: sourceContext.releaseId,
+      };
+  }
+}
 
 function applyBuilderHeaders(target: Response, source: Headers): Response {
   const headers = new Headers(target.headers);
@@ -57,6 +103,30 @@ export class AgentStreamHandler extends BaseHandler {
     super();
   }
 
+  private withAgentSourceContext<T>(
+    ctx: HandlerContext,
+    sourceContext: RuntimeAgentSourceContext | undefined,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    if (!sourceContext) {
+      return fn();
+    }
+
+    const fsWrapper = ctx.adapter.fs as SourceContextFsWrapper;
+    if (!ctx.projectSlug || !fsWrapper.isMultiProjectMode?.() || !fsWrapper.runWithContext) {
+      throw new Error("Alternate agent source requires a multi-project runtime context");
+    }
+
+    const token = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
+    return fsWrapper.runWithContext(
+      ctx.projectSlug,
+      token,
+      fn,
+      ctx.projectId,
+      buildAgentSourceRunOptions(sourceContext),
+    );
+  }
+
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) {
       return this.continue();
@@ -78,15 +148,25 @@ export class AgentStreamHandler extends BaseHandler {
           expectedSurface: "studio",
         });
 
-        await this.deps.ensureProjectDiscovery(ctx);
+        return await this.withAgentSourceContext(
+          ctx,
+          payload.agentSource,
+          async () => {
+            await this.deps.ensureProjectDiscovery(ctx);
 
-        const agent = this.deps.getAgent(payload.agentId);
-        if (!agent) {
-          return this.respond(builder.json({ error: "Agent not found" }, 404));
-        }
+            const agent = this.deps.getAgent(payload.agentId);
+            if (!agent) {
+              return this.respond(builder.json({ error: "Agent not found" }, 404));
+            }
 
-        const response = await createRuntimeAgentStreamResponse(payload, agent as Agent, this.deps);
-        return this.respond(applyBuilderHeaders(response, builder.headers));
+            const response = await createRuntimeAgentStreamResponse(
+              payload,
+              agent as Agent,
+              this.deps,
+            );
+            return this.respond(applyBuilderHeaders(response, builder.headers));
+          },
+        );
       } catch (error) {
         if (error instanceof InternalAgentRequestBodyTooLargeError) {
           return this.respond(builder.json({ error: error.message }, error.status));

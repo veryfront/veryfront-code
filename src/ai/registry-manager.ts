@@ -25,7 +25,16 @@
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
-const DEFAULT_PROJECT_ID = "__default__";
+const DEFAULT_SCOPE_ID = "__default__";
+
+function buildRegistryScopeId(): string {
+  const cacheContext = tryGetCacheKeyContext();
+  if (!cacheContext) {
+    return DEFAULT_SCOPE_ID;
+  }
+
+  return `${cacheContext.projectId}:${cacheContext.mode}:${cacheContext.versionId}`;
+}
 
 /**
  * Base class for project-scoped registries.
@@ -33,7 +42,7 @@ const DEFAULT_PROJECT_ID = "__default__";
  * cross-project sharing of explicitly shared items.
  */
 export class ProjectScopedRegistryManager<T> {
-  private registriesByProject = new Map<string, Map<string, T>>();
+  private registriesByScope = new Map<string, Map<string, T>>();
   private sharedRegistry = new Map<string, T>();
 
   constructor(private registryName: string) {}
@@ -42,19 +51,19 @@ export class ProjectScopedRegistryManager<T> {
    * Get the current project ID from AsyncLocalStorage context.
    * Falls back to default for CLI/test scenarios.
    */
-  private getCurrentProjectId(): string {
-    return tryGetCacheKeyContext()?.projectId ?? DEFAULT_PROJECT_ID;
+  private getCurrentScopeId(): string {
+    return buildRegistryScopeId();
   }
 
   /**
    * Get or create registry for a specific project.
    */
-  private getProjectRegistry(projectId: string): Map<string, T> {
-    const existing = this.registriesByProject.get(projectId);
+  private getScopeRegistry(scopeId: string): Map<string, T> {
+    const existing = this.registriesByScope.get(scopeId);
     if (existing) return existing;
 
     const registry = new Map<string, T>();
-    this.registriesByProject.set(projectId, registry);
+    this.registriesByScope.set(scopeId, registry);
     return registry;
   }
 
@@ -62,17 +71,17 @@ export class ProjectScopedRegistryManager<T> {
    * Register an item for the current project.
    */
   register(id: string, item: T): void {
-    const projectId = this.getCurrentProjectId();
-    const registry = this.getProjectRegistry(projectId);
+    const scopeId = this.getCurrentScopeId();
+    const registry = this.getScopeRegistry(scopeId);
 
     if (registry.has(id)) {
       agentLogger.debug(
-        `[${this.registryName}] "${id}" already registered for project ${projectId}. Overwriting.`,
+        `[${this.registryName}] "${id}" already registered for scope ${scopeId}. Overwriting.`,
       );
     }
 
     registry.set(id, item);
-    agentLogger.debug(`[${this.registryName}] Registered "${id}" for project ${projectId}`);
+    agentLogger.debug(`[${this.registryName}] Registered "${id}" for scope ${scopeId}`);
   }
 
   /**
@@ -93,16 +102,16 @@ export class ProjectScopedRegistryManager<T> {
    * Falls back to shared registry for items not found in project registry.
    */
   get(id: string): T | undefined {
-    const projectId = this.getCurrentProjectId();
-    return this.registriesByProject.get(projectId)?.get(id) ?? this.sharedRegistry.get(id);
+    const scopeId = this.getCurrentScopeId();
+    return this.registriesByScope.get(scopeId)?.get(id) ?? this.sharedRegistry.get(id);
   }
 
   /**
    * Check if item exists for the current project.
    */
   has(id: string): boolean {
-    const projectId = this.getCurrentProjectId();
-    return (this.registriesByProject.get(projectId)?.has(id) ?? false) ||
+    const scopeId = this.getCurrentScopeId();
+    return (this.registriesByScope.get(scopeId)?.has(id) ?? false) ||
       this.sharedRegistry.has(id);
   }
 
@@ -110,8 +119,8 @@ export class ProjectScopedRegistryManager<T> {
    * Get all IDs for the current project (includes shared items).
    */
   getAllIds(): string[] {
-    const projectId = this.getCurrentProjectId();
-    const projectIds = this.registriesByProject.get(projectId)?.keys() ?? [];
+    const scopeId = this.getCurrentScopeId();
+    const projectIds = this.registriesByScope.get(scopeId)?.keys() ?? [];
     const sharedIds = this.sharedRegistry.keys();
     return Array.from(new Set([...projectIds, ...sharedIds]));
   }
@@ -120,8 +129,8 @@ export class ProjectScopedRegistryManager<T> {
    * Get all items for the current project (includes shared items).
    */
   getAll(): Map<string, T> {
-    const projectId = this.getCurrentProjectId();
-    const projectRegistry = this.registriesByProject.get(projectId);
+    const scopeId = this.getCurrentScopeId();
+    const projectRegistry = this.registriesByScope.get(scopeId);
     if (!projectRegistry) return new Map(this.sharedRegistry);
 
     const result = new Map<string, T>(this.sharedRegistry);
@@ -133,12 +142,12 @@ export class ProjectScopedRegistryManager<T> {
    * Delete an item from the current project's registry.
    */
   delete(id: string): boolean {
-    const projectId = this.getCurrentProjectId();
-    const registry = this.registriesByProject.get(projectId);
+    const scopeId = this.getCurrentScopeId();
+    const registry = this.registriesByScope.get(scopeId);
     if (!registry?.has(id)) return false;
 
     registry.delete(id);
-    agentLogger.debug(`[${this.registryName}] Deleted "${id}" from project ${projectId}`);
+    agentLogger.debug(`[${this.registryName}] Deleted "${id}" from scope ${scopeId}`);
     return true;
   }
 
@@ -146,22 +155,31 @@ export class ProjectScopedRegistryManager<T> {
    * Clear all items for the current project.
    */
   clear(): void {
-    this.clearProject(this.getCurrentProjectId());
+    this.clearProject(this.getCurrentScopeId());
   }
 
   /**
    * Clear a specific project's registry.
    */
   clearProject(projectId: string): void {
-    this.registriesByProject.delete(projectId);
-    agentLogger.debug(`[${this.registryName}] Cleared registry for project ${projectId}`);
+    let cleared = false;
+    for (const scopeId of Array.from(this.registriesByScope.keys())) {
+      if (scopeId === projectId || scopeId.startsWith(`${projectId}:`)) {
+        this.registriesByScope.delete(scopeId);
+        cleared = true;
+      }
+    }
+
+    if (cleared) {
+      agentLogger.debug(`[${this.registryName}] Cleared registry for project ${projectId}`);
+    }
   }
 
   /**
    * Clear everything (for testing).
    */
   clearAll(): void {
-    this.registriesByProject.clear();
+    this.registriesByScope.clear();
     this.sharedRegistry.clear();
     agentLogger.debug(`[${this.registryName}] Cleared all registries`);
   }
@@ -175,18 +193,18 @@ export class ProjectScopedRegistryManager<T> {
     totalItems: number;
     currentProjectItems: number;
   } {
-    const projectId = this.getCurrentProjectId();
+    const scopeId = this.getCurrentScopeId();
     const totalItems = this.sharedRegistry.size +
-      Array.from(this.registriesByProject.values()).reduce(
+      Array.from(this.registriesByScope.values()).reduce(
         (sum, registry) => sum + registry.size,
         0,
       );
 
     return {
-      projectCount: this.registriesByProject.size,
+      projectCount: this.registriesByScope.size,
       sharedCount: this.sharedRegistry.size,
       totalItems,
-      currentProjectItems: this.registriesByProject.get(projectId)?.size ?? 0,
+      currentProjectItems: this.registriesByScope.get(scopeId)?.size ?? 0,
     };
   }
 }
