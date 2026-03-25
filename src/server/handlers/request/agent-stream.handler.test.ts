@@ -140,6 +140,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
+      resolveRuntimeOwnerInvokeUrl: async () => "http://10.0.0.7:20000/channels/invoke",
       createRuntime: () => ({
         stream: async (_messages, _context, callbacks) => {
           callbacks?.onFinish?.({
@@ -199,6 +200,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(discoveryCalls, 1);
     assertEquals(result.response.headers.get("content-type"), "text/event-stream");
+    assertEquals(
+      result.response.headers.get("x-veryfront-runtime-owner-invoke-url"),
+      "http://10.0.0.7:20000/channels/invoke",
+    );
 
     const text = await result.response.text();
     assertStringIncludes(text, "event: RunStarted");
