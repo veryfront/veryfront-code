@@ -2,7 +2,6 @@ import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/tes
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import type {
   EnvironmentAdapter,
-  FileChangeEvent,
   FileInfo,
   FileSystemAdapter,
 } from "#veryfront/platform/adapters/base.ts";
