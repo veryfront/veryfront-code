@@ -6,6 +6,10 @@ import {
   type RuntimeAgentStreamExecutionDeps,
 } from "#veryfront/internal-agents/run-stream.ts";
 import {
+  resolveRuntimeOwnerInvokeUrl,
+  RUNTIME_OWNER_INVOKE_URL_HEADER,
+} from "#veryfront/internal-agents/runtime-owner.ts";
+import {
   ControlPlaneRequestError,
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
@@ -28,11 +32,14 @@ import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 export interface AgentStreamHandlerDeps
-  extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {}
+  extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {
+  resolveRuntimeOwnerInvokeUrl?: typeof resolveRuntimeOwnerInvokeUrl;
+}
 
 const defaultDeps: AgentStreamHandlerDeps = {
   ...defaultChannelInvokeDeps,
   sessionManager: agentRunSessionManager,
+  resolveRuntimeOwnerInvokeUrl,
 };
 
 type SourceContextFsWrapper = {
@@ -85,6 +92,16 @@ function applyBuilderHeaders(target: Response, source: Headers): Response {
     }
   }
 
+  return new Response(target.body, {
+    status: target.status,
+    statusText: target.statusText,
+    headers,
+  });
+}
+
+function setResponseHeader(target: Response, key: string, value: string): Response {
+  const headers = new Headers(target.headers);
+  headers.set(key, value);
   return new Response(target.body, {
     status: target.status,
     statusText: target.statusText,
@@ -164,7 +181,16 @@ export class AgentStreamHandler extends BaseHandler {
               agent as Agent,
               this.deps,
             );
-            return this.respond(applyBuilderHeaders(response, builder.headers));
+            const runtimeOwnerInvokeUrl = await this.deps.resolveRuntimeOwnerInvokeUrl?.(req) ??
+              null;
+            const responseWithOwner = runtimeOwnerInvokeUrl
+              ? setResponseHeader(
+                response,
+                RUNTIME_OWNER_INVOKE_URL_HEADER,
+                runtimeOwnerInvokeUrl,
+              )
+              : response;
+            return this.respond(applyBuilderHeaders(responseWithOwner, builder.headers));
           },
         );
       } catch (error) {
