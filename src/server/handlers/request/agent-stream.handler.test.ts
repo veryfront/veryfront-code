@@ -252,6 +252,76 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(await result.response.json(), { error: "Invalid internal agent stream request" });
   });
 
+  it("accepts generic control-plane tool names like invoke_agent", async () => {
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => ({
+        stream: async (_messages, _context, callbacks) => {
+          callbacks?.onFinish?.({
+            text: "delegated",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: {
+              promptTokens: 5,
+              completionTokens: 2,
+              totalTokens: 7,
+            },
+            metadata: {
+              finishReason: "stop",
+            },
+          });
+
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+              );
+              controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+              controller.enqueue(
+                encodeDataStreamEvent({
+                  type: "text-delta",
+                  id: "text-1",
+                  delta: "delegated",
+                }),
+              );
+              controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    const body = createAgentStreamRequestBody({
+      tools: [{ name: "invoke_agent" }],
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+
+    const text = await result.response.text();
+    assertStringIncludes(text, "event: RunStarted");
+    assertStringIncludes(text, "event: TextMessageContent");
+    assertStringIncludes(text, "event: RunFinished");
+  });
+
   it("returns 409 when the same run is started twice", async () => {
     const sessionManager = new AgentRunSessionManager();
     const handler = new AgentStreamHandler({
