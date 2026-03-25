@@ -17,7 +17,9 @@ export function prompt(config: PromptConfig): Prompt {
       }
 
       if (config.generate) {
-        return (config.generate as (vars: Record<string, unknown>) => string | Promise<string>)(vars);
+        return (config.generate as (vars: Record<string, unknown>) => string | Promise<string>)(
+          vars,
+        );
       }
 
       throw toError(

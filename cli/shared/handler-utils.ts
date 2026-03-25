@@ -1,5 +1,4 @@
 import { cwd } from "veryfront/platform";
-import type { z } from "zod";
 import { parseArgsOrThrow, type SafeParseResult } from "./args.ts";
 import type { ParsedArgs } from "./types.ts";
 import { showLogo } from "#cli/utils";
