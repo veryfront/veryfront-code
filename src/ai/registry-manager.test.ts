@@ -1,5 +1,6 @@
 import { describe, it } from "#veryfront/testing/bdd";
 import { assert, assertEquals } from "#veryfront/testing/assert";
+import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { ProjectScopedRegistryManager } from "./registry-manager.ts";
 
 describe("ProjectScopedRegistryManager", () => {
@@ -38,6 +39,33 @@ describe("ProjectScopedRegistryManager", () => {
       const agent = { name: "test-agent", version: 2 };
       manager.register("agent-1", agent);
       assertEquals(manager.get("agent-1"), agent);
+    });
+
+    it("isolates registries by cache scope for the same project", () => {
+      const manager = createManager<string>("tool");
+
+      runWithCacheKeyContext(
+        { projectId: "proj-1", mode: "preview", versionId: "main" },
+        () => manager.register("shared-tool", "main-value"),
+      );
+
+      runWithCacheKeyContext(
+        { projectId: "proj-1", mode: "preview", versionId: "feature-a" },
+        () => {
+          assertEquals(manager.get("shared-tool"), undefined);
+          manager.register("shared-tool", "feature-value");
+        },
+      );
+
+      runWithCacheKeyContext(
+        { projectId: "proj-1", mode: "preview", versionId: "main" },
+        () => assertEquals(manager.get("shared-tool"), "main-value"),
+      );
+
+      runWithCacheKeyContext(
+        { projectId: "proj-1", mode: "preview", versionId: "feature-a" },
+        () => assertEquals(manager.get("shared-tool"), "feature-value"),
+      );
     });
   });
 
@@ -232,6 +260,30 @@ describe("ProjectScopedRegistryManager", () => {
 
       assertEquals(manager.get("shared-a"), "sv");
       assertEquals(manager.get("proj-a"), "pv");
+    });
+
+    it("clears all cache scopes for the same project", () => {
+      const manager = createManager<string>("tool");
+
+      runWithCacheKeyContext(
+        { projectId: "proj-1", mode: "preview", versionId: "main" },
+        () => manager.register("tool-a", "main-value"),
+      );
+      runWithCacheKeyContext(
+        { projectId: "proj-1", mode: "preview", versionId: "feature-a" },
+        () => manager.register("tool-a", "feature-value"),
+      );
+
+      manager.clearProject("proj-1");
+
+      runWithCacheKeyContext(
+        { projectId: "proj-1", mode: "preview", versionId: "main" },
+        () => assertEquals(manager.get("tool-a"), undefined),
+      );
+      runWithCacheKeyContext(
+        { projectId: "proj-1", mode: "preview", versionId: "feature-a" },
+        () => assertEquals(manager.get("tool-a"), undefined),
+      );
     });
   });
 

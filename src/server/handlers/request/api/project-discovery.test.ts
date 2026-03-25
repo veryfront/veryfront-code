@@ -3,6 +3,7 @@ import { toolRegistry } from "#veryfront/tool";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { HandlerContext } from "../../types.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
 import { agentRegistry } from "#veryfront/agent/composition/composition.ts";
@@ -106,6 +107,52 @@ describe(
       const cachedAgent = getAgent(agentId);
       assertExists(cachedAgent);
       assertEquals(cachedAgent.config.system, "FIRST");
+    });
+
+    it("uses cache-key context to isolate production discovery by release", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/production-scope-project",
+        "production-scope-project",
+        "production",
+        "release-stale",
+      );
+      const agentId = "production-scope-agent";
+
+      await writeAgentFile(ctx, agentId, "FIRST");
+      await runWithCacheKeyContext(
+        { projectId: "proj-1", mode: "production", versionId: "release-1" },
+        () => ensureProjectDiscovery(ctx),
+      );
+
+      const firstAgent = await runWithCacheKeyContext(
+        { projectId: "proj-1", mode: "production", versionId: "release-1" },
+        async () => getAgent(agentId),
+      );
+      assertExists(firstAgent);
+      assertEquals(firstAgent.config.system, "FIRST");
+
+      await writeAgentFile(ctx, agentId, "SECOND");
+      await runWithCacheKeyContext(
+        { projectId: "proj-1", mode: "production", versionId: "release-2" },
+        () => ensureProjectDiscovery(ctx),
+      );
+
+      const updatedAgent = await runWithCacheKeyContext(
+        { projectId: "proj-1", mode: "production", versionId: "release-2" },
+        async () => getAgent(agentId),
+      );
+      assertExists(updatedAgent);
+      assertEquals(updatedAgent.config.system, "SECOND");
+
+      const originalReleaseAgent = await runWithCacheKeyContext(
+        { projectId: "proj-1", mode: "production", versionId: "release-1" },
+        async () => getAgent(agentId),
+      );
+      assertExists(originalReleaseAgent);
+      assertEquals(originalReleaseAgent.config.system, "FIRST");
     });
   },
 );

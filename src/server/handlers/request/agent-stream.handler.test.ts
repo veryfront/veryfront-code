@@ -1,5 +1,10 @@
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
+import type {
+  EnvironmentAdapter,
+  FileInfo,
+  FileSystemAdapter,
+} from "#veryfront/platform/adapters/base.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
@@ -53,6 +58,76 @@ class TrackingSessionManager extends AgentRunSessionManager {
     this.stats.failCalls += 1;
     super.failRun(runId);
   }
+}
+
+function createNoopEnvAdapter(publicKeyPem: string): EnvironmentAdapter {
+  const values = new Map<string, string>();
+  values.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+
+  return {
+    get: (key) => values.get(key),
+    set: (key, value) => {
+      values.set(key, value);
+    },
+    toObject: () => Object.fromEntries(values),
+  };
+}
+
+type SourceContextTestFsAdapter = FileSystemAdapter & {
+  isMultiProjectMode(): boolean;
+  runWithContext<R>(
+    slug: string,
+    token: string,
+    fn: () => Promise<R>,
+    projectId?: string,
+    options?: {
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    },
+  ): Promise<R>;
+};
+
+function createNoopFsAdapter(
+  runWithContextCalls: Array<{
+    productionMode?: boolean;
+    releaseId?: string | null;
+    branch?: string | null;
+    environmentName?: string | null;
+  }>,
+): SourceContextTestFsAdapter {
+  return {
+    readFile: async () => "",
+    writeFile: async () => {},
+    exists: async () => false,
+    async *readDir() {},
+    stat: async (): Promise<FileInfo> => ({
+      size: 0,
+      isFile: false,
+      isDirectory: false,
+      isSymlink: false,
+      mtime: null,
+    }),
+    mkdir: async () => {},
+    remove: async () => {},
+    makeTempDir: async () => "/tmp/agent-stream-handler-test",
+    watch: () => ({
+      close: () => {},
+      async *[Symbol.asyncIterator]() {},
+    }),
+    isMultiProjectMode: () => true,
+    runWithContext: async (
+      _projectSlug,
+      _token,
+      fn,
+      _projectId,
+      options,
+    ) => {
+      runWithContextCalls.push(options ?? {});
+      return await fn();
+    },
+  };
 }
 
 describe("server/handlers/request/agent-stream.handler", () => {
@@ -320,6 +395,103 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(text, "event: RunStarted");
     assertStringIncludes(text, "event: TextMessageContent");
     assertStringIncludes(text, "event: RunFinished");
+  });
+
+  it("uses explicit agent source context when the control plane requests a different source", async () => {
+    const runWithContextCalls: Array<{
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    }> = [];
+
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => ({
+        stream: async (_messages, _context, callbacks) => {
+          callbacks?.onFinish?.({
+            text: "resolved from main",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: {
+              promptTokens: 5,
+              completionTokens: 3,
+              totalTokens: 8,
+            },
+            metadata: {
+              finishReason: "stop",
+            },
+          });
+
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+              );
+              controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+              controller.enqueue(
+                encodeDataStreamEvent({
+                  type: "text-delta",
+                  id: "text-1",
+                  delta: "resolved from main",
+                }),
+              );
+              controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    const body = createAgentStreamRequestBody({
+      agentSource: { type: "branch", branch: "main" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.parsedDomain = {
+      slug: "demo-project",
+      branch: "feature-a",
+      environment: "preview",
+      isVeryfrontDomain: true,
+      isDraft: true,
+      allowIframeEmbed: true,
+    };
+    ctx.resolvedEnvironment = "preview";
+    ctx.requestContext = {
+      slug: "demo-project",
+      branch: "feature-a",
+      mode: "preview",
+      token: "",
+    };
+    ctx.adapter = {
+      ...ctx.adapter,
+      env: createNoopEnvAdapter(publicKeyPem),
+      fs: createNoopFsAdapter(runWithContextCalls),
+    };
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(runWithContextCalls.length, 2);
+    assertEquals(runWithContextCalls[0]?.branch, "feature-a");
+    assertEquals(runWithContextCalls[1]?.branch, "main");
+    assertEquals(runWithContextCalls[1]?.productionMode, false);
   });
 
   it("returns 409 when the same run is started twice", async () => {

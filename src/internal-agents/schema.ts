@@ -63,6 +63,22 @@ export const RuntimeContextItemSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
+export const RuntimeAgentSourceContextSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("branch"),
+    branch: z.string().min(1).max(255),
+  }),
+  z.object({
+    type: z.literal("environment"),
+    environmentName: z.string().min(1).max(255),
+    releaseId: z.string().min(1).max(255).optional(),
+  }),
+  z.object({
+    type: z.literal("release"),
+    releaseId: z.string().min(1).max(255),
+  }),
+]);
+
 export const RuntimeRunAgentInputSchema = z.object({
   agentId: AgentIdSchema,
   threadId: z.string().uuid(),
@@ -81,6 +97,7 @@ export const RuntimeRunAgentInputSchema = z.object({
     (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_TOTAL_BYTES),
     { message: "context must be less than 64 KB total" },
   ),
+  agentSource: RuntimeAgentSourceContextSchema.optional(),
   forwardedProps: z.record(z.unknown()).optional().refine(
     (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
     { message: "forwardedProps must be less than 64 KB" },
@@ -101,5 +118,6 @@ export const ResumeSignalSchema = z.discriminatedUnion("type", [
 
 export type RuntimeInjectedTool = z.infer<typeof RuntimeInjectedToolSchema>;
 export type RuntimeContextItem = z.infer<typeof RuntimeContextItemSchema>;
+export type RuntimeAgentSourceContext = z.infer<typeof RuntimeAgentSourceContextSchema>;
 export type RuntimeRunAgentInput = z.infer<typeof RuntimeRunAgentInputSchema>;
 export type ResumeSignal = z.infer<typeof ResumeSignalSchema>;
