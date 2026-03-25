@@ -92,7 +92,7 @@ export const OAuthConfigSchema = z.object({
   additionalAuthParams: z.record(z.string(), z.string()).optional(),
   fields: z.array(OAuthFieldSchema).optional(),
   envVars: z
-    .record(z.object({ description: z.string(), required: z.boolean() }))
+    .record(z.string(), z.object({ description: z.string(), required: z.boolean() }))
     .optional(),
   keyName: z.string().optional(),
   headerName: z.string().optional(),

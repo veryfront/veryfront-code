@@ -142,7 +142,7 @@ export const veryfrontConfigSchema = z
         importMap: z
           .object({
             imports: z.record(z.string(), z.string()).optional(),
-            scopes: z.record(z.string(), z.record(z.string())).optional(),
+            scopes: z.record(z.string(), z.record(z.string(), z.string())).optional(),
           })
           .partial()
           .optional(),
@@ -366,6 +366,7 @@ export const veryfrontConfigSchema = z
       .object({
         enabled: z.boolean().optional(),
         providers: z.record(
+          z.string(),
           z.object({
             apiKey: z.string().optional(),
             baseURL: z.string().optional(),

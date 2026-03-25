@@ -24,7 +24,7 @@ export const jsonValue: z.ZodType<
     z.boolean(),
     z.null(),
     z.array(jsonValue),
-    z.record(jsonValue),
+    z.record(z.string(), jsonValue),
   ])
 );
 export type JsonValue = z.infer<typeof jsonValue>;

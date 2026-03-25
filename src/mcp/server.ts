@@ -424,7 +424,7 @@ export class MCPServer {
       return false;
     }
 
-    return await auth.validate(token);
+    return await (auth.validate as (token: string) => Promise<boolean>)(token);
   }
 
   private handleCORS(requestOrigin?: string | null): Response {

@@ -4,12 +4,7 @@ export const PromptConfigSchema = z.object({
   id: z.string().optional(),
   description: z.string(),
   content: z.string().optional(),
-  generate: z
-    .function(
-      z.tuple([z.record(z.string(), z.unknown())]),
-      z.union([z.string(), z.promise(z.string())]),
-    )
-    .optional(),
+  generate: z.function().optional(),
   /** Example message text to use as a chat suggestion */
   suggestion: z.string().optional(),
 });
