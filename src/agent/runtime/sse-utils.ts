@@ -10,12 +10,37 @@
  * Encode and enqueue a Server-Sent Event (SSE) to the stream controller.
  * Formats event as: data: {json}\n\n
  */
+function isClosedStreamControllerError(error: unknown): error is TypeError {
+  return error instanceof TypeError &&
+    error.message.includes("The stream controller cannot close or enqueue");
+}
+
 export function sendSSE(
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder,
   event: Record<string, unknown>,
 ): void {
-  controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+  try {
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+  } catch (error) {
+    if (isClosedStreamControllerError(error)) {
+      return;
+    }
+
+    throw error;
+  }
+}
+
+export function closeSSEStream(controller: ReadableStreamDefaultController): void {
+  try {
+    controller.close();
+  } catch (error) {
+    if (isClosedStreamControllerError(error)) {
+      return;
+    }
+
+    throw error;
+  }
 }
 
 /**

@@ -39,7 +39,7 @@ import { generateText, type LanguageModel, streamText } from "ai";
 import { AGENT_DEFAULTS } from "../ai-defaults.ts";
 
 // Re-export from submodules
-export { generateMessageId, sendSSE } from "./sse-utils.ts";
+export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
 export {
   executeConfiguredTool,
   getAvailableTools,
@@ -58,7 +58,7 @@ export {
 } from "./constants.ts";
 
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE } from "./constants.ts";
-import { generateMessageId, sendSSE } from "./sse-utils.ts";
+import { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
 import {
   executeConfiguredTool,
   getAvailableTools,
@@ -324,7 +324,7 @@ export class AgentRuntime {
 
           sendSSE(controller, encoder, { type: "text-end", id: textPartId });
           sendSSE(controller, encoder, { type: "message-finish" });
-          controller.close();
+          closeSSEStream(controller);
         } catch (error) {
           this.status = "error";
           logger.error("Agent stream error", { error });
@@ -332,7 +332,7 @@ export class AgentRuntime {
             type: "error",
             error: "An internal error occurred",
           });
-          controller.close();
+          closeSSEStream(controller);
         }
       },
     });
