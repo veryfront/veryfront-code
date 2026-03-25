@@ -102,7 +102,10 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
     });
   } finally {
     if (!cacheCompletedDiscovery) {
-      discoveredProjects.delete(key);
+      const current = discoveredProjects.get(key);
+      if (current === promise) {
+        discoveredProjects.delete(key);
+      }
     }
   }
 }
