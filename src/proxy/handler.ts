@@ -371,7 +371,16 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const url = new URL(req.url);
     // Collapse leading slashes to prevent protocol-relative open redirects (e.g. "//evil.com/path")
     const safePath = url.pathname.replace(/^\/\/+/, "/");
-    const returnPath = safePath + url.search;
+    let returnPath = safePath + url.search;
+
+    // Ensure the return path stays within the application and is not an absolute URL.
+    // - It must start with "/".
+    // - It must not contain a scheme delimiter ("://").
+    // If it fails validation, fall back to the root path.
+    if (!returnPath.startsWith("/") || returnPath.includes("://")) {
+      returnPath = "/";
+    }
+
     return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnPath)}`;
   }
 
