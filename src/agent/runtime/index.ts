@@ -21,7 +21,7 @@ import {
   type MessagePart,
   type ToolCall,
 } from "../types.ts";
-import { ensureModelReady, findAvailableCloudModel, resolveModel } from "#veryfront/provider";
+import { ensureModelReady, resolveModel } from "#veryfront/provider";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
 import { createMemory, type Memory } from "../memory/index.ts";
@@ -71,7 +71,7 @@ import {
   isToolAllowedBySkill,
   validateAllowedToolPatterns,
 } from "#veryfront/skill/allowed-tools.ts";
-import { resolveConfiguredAgentModel } from "./model-resolution.ts";
+import { resolveConfiguredAgentModel, resolveRuntimeModel } from "./model-resolution.ts";
 
 const logger = serverLogger.component("agent");
 const LOAD_SKILL_TOOL_ID = "load-skill";
@@ -175,26 +175,6 @@ export function enforceSkillPolicy(
 }
 
 /**
- * Auto-upgrade a local model string to a cloud provider when API keys are available.
- *
- * Returns the upgraded "provider/model" string, or the original string unchanged
- * if no cloud provider is available. This keeps resolveModel as a pure resolver
- * while the runtime owns the upgrade policy.
- */
-function maybeUpgradeLocalModel(modelString: string): string {
-  if (!modelString.startsWith("local/")) return modelString;
-
-  const cloud = findAvailableCloudModel();
-  if (cloud) {
-    logger.info(
-      `⚡ Cloud AI API key found — using "${cloud}" instead of local model.`,
-    );
-    return cloud;
-  }
-  return modelString;
-}
-
-/**
  * Check whether a resolved LanguageModel is a local inference model.
  * Checks the model object properties rather than the requested string,
  * because resolveModel may internally fall back from cloud to local.
@@ -231,7 +211,12 @@ export class AgentRuntime {
     maxOutputTokensOverride?: number,
   ): Promise<AgentResponse> {
     const requestedModel = resolveConfiguredAgentModel(modelOverride || this.config.model);
-    const resolvedModelString = maybeUpgradeLocalModel(requestedModel);
+    const resolvedModelString = resolveRuntimeModel(modelOverride || this.config.model);
+    if (resolvedModelString !== requestedModel) {
+      logger.info(
+        `⚡ Using runtime model "${resolvedModelString}" instead of "${requestedModel}".`,
+      );
+    }
 
     return withSpan("agent.generate", async (span) => {
       setSpanAttributes(span, {
@@ -284,8 +269,12 @@ export class AgentRuntime {
     abortSignal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>> {
     const requestedModel = resolveConfiguredAgentModel(modelOverride || this.config.model);
-    // Auto-upgrade local/* to a cloud provider when API keys are available.
-    const resolvedModelString = maybeUpgradeLocalModel(requestedModel);
+    const resolvedModelString = resolveRuntimeModel(modelOverride || this.config.model);
+    if (resolvedModelString !== requestedModel) {
+      logger.info(
+        `⚡ Using runtime model "${resolvedModelString}" instead of "${requestedModel}".`,
+      );
+    }
 
     for (const msg of messages) await this.memory.add(msg);
 
@@ -402,7 +391,7 @@ export class AgentRuntime {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
       const maxSteps = this.computeMaxSteps(maxAgentSteps);
-      const effectiveModel = resolveConfiguredAgentModel(modelString || this.config.model);
+      const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
       const languageModel = resolveModel(effectiveModel);
 
       const toolCalls: ToolCall[] = [];
@@ -643,7 +632,7 @@ export class AgentRuntime {
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
     const maxSteps = this.computeMaxSteps(maxAgentSteps);
-    const effectiveModel = resolveConfiguredAgentModel(modelString || this.config.model);
+    const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
     const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
     const toolCalls: ToolCall[] = [];
