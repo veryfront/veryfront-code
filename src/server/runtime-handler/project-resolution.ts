@@ -71,12 +71,21 @@ interface RequestHeaders {
   projectPath: string | undefined;
 }
 
+function getEffectiveHost(req: Request, url: URL): string {
+  const forwardedHost = req.headers.get("x-forwarded-host") ?? undefined;
+  return forwardedHost ?? req.headers.get("host") ?? url.host;
+}
+
 /**
  * Extract project-related headers from a request.
+ *
+ * When `x-project-slug` is absent or blank, the slug is derived from
+ * the effective host (x-forwarded-host > host header > url.host) via
+ * domain parsing. This allows proxy-forwarded requests to resolve
+ * project context from the hostname alone.
  */
 export function extractRequestHeaders(req: Request, url: URL): RequestHeaders {
-  const forwardedHost = req.headers.get("x-forwarded-host") ?? undefined;
-  const host = forwardedHost ?? req.headers.get("host") ?? url.host;
+  const host = getEffectiveHost(req, url);
   const parsedDomain = parseProjectDomain(host);
   const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
 
@@ -144,9 +153,7 @@ export async function resolveProject(
   headers: RequestHeaders,
   opts: ProjectResolutionOptions,
 ): Promise<ProjectResolutionResult> {
-  const hostHeader = req.headers.get("host") ?? url.host;
-  const forwardedHost = req.headers.get("x-forwarded-host") ?? undefined;
-  const host = forwardedHost ?? hostHeader;
+  const host = getEffectiveHost(req, url);
 
   const deps = getDeps();
   const parsedDomain = deps.parseProjectDomain(host);
@@ -177,7 +184,6 @@ export async function resolveProject(
     if (effectiveToken) {
       logger.debug("Custom domain detected, looking up project", {
         host,
-        forwardedHost,
       });
 
       const lookupResult = await withSpan(

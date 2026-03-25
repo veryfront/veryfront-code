@@ -101,6 +101,17 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.projectSlug, "my-project");
     });
 
+    it("derives project slug from x-forwarded-host when x-project-slug is empty string", () => {
+      const req = new Request("http://127.0.0.1:3001/", {
+        headers: {
+          "x-forwarded-host": "my-project.preview.lvh.me",
+          "x-project-slug": "",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.projectSlug, "my-project");
+    });
+
     it("extracts content-source-id from header", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-content-source-id": "cs-1" },
