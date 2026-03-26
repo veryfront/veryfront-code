@@ -72,6 +72,20 @@ export async function importKreuzberg(): Promise<{
       // in-process module cache so the subsequent import() inside initWasm()
       // resolves from cache instead of hitting the missing file.
       await import("#kreuzberg-wasm-glue");
+      // pdfium.js is not in @kreuzberg/wasm package exports, so we can't use
+      // an import map entry. Resolve its URL relative to the kreuzberg package
+      // and pre-import it so initWasm()'s `import("./pdfium.js")` resolves
+      // from the in-process module cache instead of hanging.
+      // Wrapped in try/catch because pdfium is only needed for PDF extraction;
+      // a failure here should not break extraction of other formats (DOCX, etc.).
+      try {
+        const kreuzbergUrl = import.meta.resolve("@kreuzberg/wasm");
+        await import(new URL("./pdfium.js", kreuzbergUrl).href);
+      } catch {
+        // expected: pdfium pre-import may fail if the file is missing or
+        // the package structure changed — PDF extraction will be degraded
+        // but other formats will still work.
+      }
     }
     await mod.initWasm?.();
     return mod;
