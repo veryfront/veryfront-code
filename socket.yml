@@ -1,0 +1,79 @@
+version: 2
+
+# Socket.dev security policy configuration
+# Docs: https://docs.socket.dev/docs/socket-yml
+
+# ──────────────────────────────────────────────
+# Issue Rules — suppress verified false positives
+# ──────────────────────────────────────────────
+issueRules:
+  # entities: generated HTML entity lookup tables (Uint16Array data)
+  # trigger obfuscatedCode due to unicode escape sequences.
+  # Source: https://github.com/fb55/entities/blob/main/scripts/write-decode-map.ts
+  obfuscatedCode:
+    - action: ignore
+      package: "entities@*"
+      reason: "Generated HTML entity decode/encode lookup tables — not obfuscated code"
+
+  # Expected network access — these packages are designed to make network calls
+  networkAccess:
+    - action: ignore
+      package: "ai@*"
+      reason: "AI SDK makes API calls to LLM providers by design"
+    - action: ignore
+      package: "@ai-sdk/*"
+      reason: "AI SDK provider packages make API calls by design"
+    - action: ignore
+      package: "redis@*"
+      reason: "Redis client connects to Redis server by design"
+    - action: ignore
+      package: "@opentelemetry/*"
+      reason: "OpenTelemetry exports traces/metrics over network by design"
+    - action: ignore
+      package: "@anthropic-ai/*"
+      reason: "Anthropic SDK makes API calls by design"
+
+  # Expected environment variable access — configuration packages
+  envVariable:
+    - action: ignore
+      package: "@opentelemetry/*"
+      reason: "OTel reads OTEL_* env vars for configuration per spec"
+    - action: ignore
+      package: "ai@*"
+      reason: "AI SDK reads API key env vars for provider configuration"
+    - action: ignore
+      package: "@ai-sdk/*"
+      reason: "AI SDK providers read API key env vars"
+
+  # Expected install scripts — native binary packages
+  installScripts:
+    - action: ignore
+      package: "sharp@*"
+      reason: "Image processing library — needs native binary for performance"
+    - action: ignore
+      package: "onnxruntime-node@*"
+      reason: "ML runtime — requires native binary for inference"
+    - action: warn
+      package: "esbuild@*"
+      reason: "Bundler — install scripts denied in deno.json allowScripts"
+    - action: warn
+      package: "protobufjs@*"
+      reason: "Protocol buffers — install scripts denied in deno.json allowScripts"
+
+  # Expected telemetry — observability packages
+  telemetry:
+    - action: ignore
+      package: "@opentelemetry/*"
+      reason: "OpenTelemetry collects telemetry by design — it IS the telemetry system"
+
+# ──────────────────────────────────────────────
+# Project-level settings
+# ──────────────────────────────────────────────
+projectIgnorePaths:
+  # Don't scan generated/vendored files
+  - "dist/**"
+  - "coverage/**"
+  - "coverage_data/**"
+  - "npm/node_modules/**"
+  - "tests/e2e/node_modules/**"
+  - "cli/templates/manifest.json"
