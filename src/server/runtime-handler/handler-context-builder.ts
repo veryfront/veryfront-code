@@ -56,13 +56,15 @@ interface HandlerContextOptions {
   moduleServerUrl: string | undefined;
   /** Environment ID for env var resolution (from proxy x-environment-id header) */
   environmentId: string | undefined;
+  /** Skip render-specific enriched context requirements for non-render control-plane routes */
+  skipEnrichedContext?: boolean;
 }
 
 /**
  * Build the HandlerContext for route handlers.
  */
 export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext {
-  const contentSourceId = computeContentSourceId(
+  const contentSourceId = opts.skipEnrichedContext ? undefined : computeContentSourceId(
     opts.isLocalProject,
     opts.resolvedEnvironment,
     opts.requestContext.branch,
@@ -70,7 +72,8 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
   );
 
   // Build enriched context if we have config and project slug
-  const enrichedContext = opts.config && opts.projectSlug
+  const enrichedContext = !opts.skipEnrichedContext && opts.config && opts.projectSlug &&
+      contentSourceId
     ? buildEnrichedContext({
       projectId: opts.projectId ?? opts.projectSlug,
       projectSlug: opts.projectSlug,

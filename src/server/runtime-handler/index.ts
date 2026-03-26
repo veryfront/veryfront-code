@@ -549,6 +549,8 @@ export function createVeryfrontHandler(
             return envRes.errorResponse;
           }
 
+          const isInternalAgentControlPlanePath = url.pathname.startsWith("/internal/agents/");
+
           // Build handler context
           const ctx = buildHandlerContext({
             projectDir: adapterRes.projectDir,
@@ -569,6 +571,7 @@ export function createVeryfrontHandler(
             isLocalProject: adapterRes.isLocalProject,
             moduleServerUrl: opts.moduleServerUrl,
             environmentId: headers.environmentId,
+            skipEnrichedContext: isInternalAgentControlPlanePath,
           });
 
           // Fetch per-project env vars for remote projects
