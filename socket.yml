@@ -12,8 +12,8 @@ issueRules:
   # Source: https://github.com/fb55/entities/blob/main/scripts/write-decode-map.ts
   obfuscatedCode:
     - action: ignore
-      package: "entities@*"
-      reason: "Generated HTML entity decode/encode lookup tables — not obfuscated code"
+      package: "entities@6.*"
+      reason: "Generated HTML entity decode/encode lookup tables — not obfuscated code. Scoped to 6.x (current range from parse5)"
 
   # Expected network access — these packages are designed to make network calls
   networkAccess:
