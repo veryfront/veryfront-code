@@ -45,7 +45,9 @@ function extractInWorker(buffer: ArrayBuffer, mimeType: string): Promise<string>
       worker.terminate();
       reject(
         new Error(
-          `Text extraction timed out after ${EXTRACTION_TIMEOUT_MS / 1000}s — the file may be corrupted or unsupported`,
+          `Text extraction timed out after ${
+            EXTRACTION_TIMEOUT_MS / 1000
+          }s — the file may be corrupted or unsupported`,
         ),
       );
     }, EXTRACTION_TIMEOUT_MS);
