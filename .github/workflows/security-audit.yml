@@ -1,0 +1,25 @@
+name: Security Audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "deno.json"
+  schedule:
+    # Run weekly on Monday at 06:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  npm-audit:
+    runs-on: ubuntu-latest
+    name: NPM Dependency Audit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-deno
+
+      - name: Run npm dependency audit
+        run: deno task audit
+
+      - name: Run dependency lint
+        run: deno task lint:deps
