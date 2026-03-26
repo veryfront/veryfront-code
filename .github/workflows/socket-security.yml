@@ -17,6 +17,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Socket Security Review
-        uses: SocketDev/socket-sdk-js@v1
+        uses: SocketDev/action@v1
         with:
-          api_key: ${{ secrets.SOCKET_API_KEY }}
+          socket-token: ${{ secrets.SOCKET_API_KEY }}
