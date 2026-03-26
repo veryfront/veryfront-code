@@ -125,6 +125,20 @@ describe("buildHandlerContext", () => {
 
     assertEquals(ctx.enriched!.token, "");
   });
+
+  it("skips enriched render context for internal control-plane requests without a release id", () => {
+    const opts = makeOpts({
+      releaseId: undefined,
+      resolvedEnvironment: "production",
+      skipEnrichedContext: true,
+    });
+
+    const ctx = buildHandlerContext(opts);
+
+    assertEquals(ctx.releaseId, undefined);
+    assertEquals(ctx.projectSlug, "my-project");
+    assertEquals(ctx.enriched, undefined);
+  });
 });
 
 describe("buildMinimalContext", () => {
