@@ -60,12 +60,9 @@ const installCmd = new Deno.Command("npm", {
 const installResult = await installCmd.output();
 if (!installResult.success) {
   const stderr = new TextDecoder().decode(installResult.stderr);
-  // npm install warnings are normal, only fail on actual errors
-  if (installResult.code > 1) {
-    console.error("Failed to generate package-lock.json:", stderr);
-    await Deno.remove(tmpDir, { recursive: true });
-    Deno.exit(1);
-  }
+  console.error("Failed to generate package-lock.json:", stderr);
+  await Deno.remove(tmpDir, { recursive: true });
+  Deno.exit(1);
 }
 
 const result = await cmd.output();
@@ -89,9 +86,10 @@ let audit: {
 try {
   audit = JSON.parse(stdout);
 } catch {
-  // npm audit may return non-JSON on error
-  console.log("npm audit completed (no JSON output — likely no vulnerabilities).");
-  Deno.exit(0);
+  // Fail closed: non-JSON output means npm audit errored (network, auth, registry)
+  console.error("❌ npm audit failed — non-JSON output (possible network/registry error).");
+  console.error("stdout:", stdout.slice(0, 500));
+  Deno.exit(1);
 }
 
 const meta = audit.metadata?.vulnerabilities;
