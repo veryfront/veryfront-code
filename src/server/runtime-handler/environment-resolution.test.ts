@@ -46,6 +46,46 @@ describe("environment-resolution", () => {
     assertEquals(result.releaseId, undefined);
   });
 
+  it("allows signed internal agent control-plane paths without releaseId in proxy production", () => {
+    const result = resolveEnvironment({
+      proxyEnv: "production",
+      reqCtxMode: "production",
+      releaseId: undefined,
+      projectSlug: "my-project",
+      projectId: "proj_123",
+      environmentName: undefined,
+      host: "10.192.2.245:20000",
+      isLocalProject: false,
+      isProxyMode: true,
+      pathname: "/internal/agents/runs/run_1",
+      defaultEnvironment: undefined,
+    });
+
+    assertEquals(result.errorResponse, undefined);
+    assertEquals(result.resolvedEnvironment, "production");
+    assertEquals(result.releaseId, undefined);
+  });
+
+  it("still requires releaseId for non-control-plane proxy production paths", () => {
+    const result = resolveEnvironment({
+      proxyEnv: "production",
+      reqCtxMode: "production",
+      releaseId: undefined,
+      projectSlug: "my-project",
+      projectId: "proj_123",
+      environmentName: undefined,
+      host: "10.192.2.245:20000",
+      isLocalProject: false,
+      isProxyMode: true,
+      pathname: "/api/health",
+      defaultEnvironment: undefined,
+    });
+
+    assertEquals(result.errorResponse?.status, 404);
+    assertEquals(result.resolvedEnvironment, "production");
+    assertEquals(result.releaseId, undefined);
+  });
+
   it("falls back to preview in standalone production without releaseId", () => {
     const result = resolveEnvironment({
       proxyEnv: undefined,
