@@ -15,6 +15,7 @@ const DEFAULT_INCLUDES = [
   "src/platform/polyfills",
   "src/proxy/main.ts",
   "src/security/sandbox/worker-script.ts",
+  "src/embedding/upload-extraction-worker.ts",
   "src/rendering/rsc",
   "dist/framework-src",
 ];
@@ -42,6 +43,7 @@ export function resolveKreuzbergCompileIncludes(): string[] {
   const glueUrl = new URL(resolved);
   return [
     fromFileUrl(new URL("kreuzberg_wasm_bg.wasm", glueUrl)),
+    fromFileUrl(new URL("../pdfium.js", glueUrl)),
     fromFileUrl(new URL("../pdfium.esm.wasm", glueUrl)),
   ];
 }
