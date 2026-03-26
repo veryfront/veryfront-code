@@ -1,3 +1,5 @@
+import { importKreuzberg } from "#veryfront/platform/compat/opaque-deps.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { serverLogger } from "#veryfront/utils";
 
 /** Maximum time to wait for document text extraction before aborting. */
@@ -32,8 +34,22 @@ export async function loadUpload(buffer: ArrayBuffer, mimeType: string): Promise
   }
 
   // Everything else (PDF, DOCX, XLSX, PPTX, HTML, XML, etc.) → kreuzberg
-  // Run in a Worker thread to prevent hung WASM from blocking the server.
-  return extractInWorker(buffer, mimeType);
+  // Deno: run in a Worker thread to prevent hung WASM from blocking the server.
+  // Node/Bun: call kreuzberg directly (no global Worker; @kreuzberg/node uses
+  // native bindings that don't have the WASM hang issue).
+  if (isDeno) {
+    return extractInWorker(buffer, mimeType);
+  }
+  return extractDirect(buffer, mimeType);
+}
+
+async function extractDirect(
+  buffer: ArrayBuffer,
+  mimeType: string,
+): Promise<string> {
+  const { extractBytes } = await importKreuzberg();
+  const result = await extractBytes(new Uint8Array(buffer), mimeType);
+  return result.content;
 }
 
 function extractInWorker(buffer: ArrayBuffer, mimeType: string): Promise<string> {
