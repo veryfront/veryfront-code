@@ -60,6 +60,7 @@ export class ToolResultConflictError extends Error {
 const DEFAULT_WAITING_FOR_TOOL_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_CONCURRENT_SESSIONS = 100;
+const AGENT_RUN_SESSION_MANAGER_GLOBAL_KEY = "__veryfrontAgentRunSessionManager" as const;
 
 type SessionStatus = "running" | "waiting" | "completed" | "cancelled" | "failed";
 
@@ -352,6 +353,27 @@ export class AgentRunSessionManager {
   }
 }
 
-export const agentRunSessionManager = new AgentRunSessionManager({
-  sessionTtlMs: DEFAULT_SESSION_TTL_MS,
-});
+type AgentRunSessionManagerGlobal = typeof globalThis & {
+  [AGENT_RUN_SESSION_MANAGER_GLOBAL_KEY]?: AgentRunSessionManager;
+};
+
+function getGlobalAgentRunSessionManager(): AgentRunSessionManager {
+  const runtimeGlobal = globalThis as AgentRunSessionManagerGlobal;
+  const existing = runtimeGlobal[AGENT_RUN_SESSION_MANAGER_GLOBAL_KEY];
+  if (existing) {
+    return existing;
+  }
+
+  const sessionManager = new AgentRunSessionManager({
+    sessionTtlMs: DEFAULT_SESSION_TTL_MS,
+  });
+  runtimeGlobal[AGENT_RUN_SESSION_MANAGER_GLOBAL_KEY] = sessionManager;
+  return sessionManager;
+}
+
+export function _resetGlobalAgentRunSessionManagerForTesting(): void {
+  const runtimeGlobal = globalThis as AgentRunSessionManagerGlobal;
+  delete runtimeGlobal[AGENT_RUN_SESSION_MANAGER_GLOBAL_KEY];
+}
+
+export const agentRunSessionManager = getGlobalAgentRunSessionManager();
