@@ -1,6 +1,7 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  _resetGlobalAgentRunSessionManagerForTesting,
   AgentRunCancelledError,
   AgentRunSessionManager,
   ToolResultConflictError,
@@ -112,5 +113,33 @@ describe("internal-agents/session-manager", () => {
     timerCallbacks[0]?.();
 
     assertEquals(sessionManager.getRunStatus("run_1"), null);
+  });
+
+  it("reuses the global session manager across duplicate module evaluations", async () => {
+    _resetGlobalAgentRunSessionManagerForTesting();
+
+    try {
+      const firstModule = await import(
+        new URL(`./session-manager.ts?instance=${crypto.randomUUID()}`, import.meta.url).href
+      ) as typeof import("./session-manager.ts");
+      const duplicateModule = await import(
+        new URL(`./session-manager.ts?instance=${crypto.randomUUID()}`, import.meta.url).href
+      ) as typeof import("./session-manager.ts");
+
+      assertEquals(
+        duplicateModule.agentRunSessionManager === firstModule.agentRunSessionManager,
+        true,
+      );
+
+      firstModule.agentRunSessionManager.startRun({
+        runId: "run_global",
+        threadId: crypto.randomUUID(),
+      });
+      assertEquals(duplicateModule.agentRunSessionManager.getRunStatus("run_global"), "running");
+      assertEquals(duplicateModule.agentRunSessionManager.cancelRun("run_global"), true);
+      assertEquals(firstModule.agentRunSessionManager.getRunStatus("run_global"), null);
+    } finally {
+      _resetGlobalAgentRunSessionManagerForTesting();
+    }
   });
 });
