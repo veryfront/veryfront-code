@@ -45,7 +45,9 @@ export const vfHotReload: MCPTool<HotReloadInput, HotReloadResult> = {
 // ============================================================================
 
 const getDebugContextInput = z.object({
-  port: z.number().int().min(1).max(65535).optional().default(8080).describe("Dev server port (defaults to 8080)"),
+  port: z.number().int().min(1).max(65535).optional().default(8080).describe(
+    "Dev server port (defaults to 8080)",
+  ),
   project: z
     .string()
     .regex(/^[a-z0-9-]+$/, "Project slug must contain only lowercase letters, numbers, and hyphens")
@@ -149,8 +151,12 @@ export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
 // ============================================================================
 
 const previewRouteInput = z.object({
-  route: z.string().startsWith("/", "Route must start with /").describe("Route path to preview (e.g., '/', '/dashboard', '/api/users')"),
-  port: z.number().int().min(1).max(65535).optional().default(8080).describe("Dev server port (defaults to 8080)"),
+  route: z.string().startsWith("/", "Route must start with /").describe(
+    "Route path to preview (e.g., '/', '/dashboard', '/api/users')",
+  ),
+  port: z.number().int().min(1).max(65535).optional().default(8080).describe(
+    "Dev server port (defaults to 8080)",
+  ),
   format: z
     .enum(["html", "json", "status"])
     .optional()
