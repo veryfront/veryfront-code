@@ -48,7 +48,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
-      - uses: nick-fields/retry@v3
+      - uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3.0.2
         with:
           timeout_minutes: ${{ matrix.suite == 'integration' && 10 || 5 }}
           max_attempts: 3
@@ -285,7 +285,7 @@ jobs:
             scripts/install.sh
 
       - name: Trigger server deploy
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3.0.0
         with:
           token: ${{ secrets.GH_PAT_VERYFRONT }}
           repository: veryfront/veryfront-server
