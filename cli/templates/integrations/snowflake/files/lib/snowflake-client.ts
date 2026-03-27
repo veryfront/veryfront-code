@@ -99,6 +99,16 @@ interface SnowflakeError extends Error {
   sqlState?: string;
 }
 
+/** Validate a Snowflake identifier (database, schema, or table name). */
+function validateIdentifier(value: string, label: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    throw new Error(
+      `Invalid ${label}: must start with a letter or underscore and contain only letters, numbers, and underscores`,
+    );
+  }
+  return value;
+}
+
 async function snowflakeFetch<T>(
   endpoint: string,
   options: RequestInit = {},
@@ -241,6 +251,7 @@ export async function listDatabases(): Promise<DatabaseInfo[]> {
 }
 
 export async function listSchemas(database: string): Promise<SchemaInfo[]> {
+  validateIdentifier(database, "database name");
   const result = await runQuery(`SHOW SCHEMAS IN DATABASE ${database}`);
   return result.rows as SchemaInfo[];
 }
@@ -249,6 +260,8 @@ export async function listTables(
   database: string,
   schema: string,
 ): Promise<TableInfo[]> {
+  validateIdentifier(database, "database name");
+  validateIdentifier(schema, "schema name");
   const result = await runQuery(`SHOW TABLES IN ${database}.${schema}`);
   return result.rows as TableInfo[];
 }
@@ -261,6 +274,9 @@ export async function describeTable(
   columns: ColumnInfo[];
   primaryKeys: string[];
 }> {
+  validateIdentifier(database, "database name");
+  validateIdentifier(schema, "schema name");
+  validateIdentifier(table, "table name");
   const result = await runQuery(`DESCRIBE TABLE ${database}.${schema}.${table}`);
 
   const columns = result.rows as ColumnInfo[];
@@ -276,6 +292,9 @@ export async function getTableRowCount(
   schema: string,
   table: string,
 ): Promise<number> {
+  validateIdentifier(database, "database name");
+  validateIdentifier(schema, "schema name");
+  validateIdentifier(table, "table name");
   const result = await runQuery(
     `SELECT COUNT(*) as count FROM ${database}.${schema}.${table}`,
   );

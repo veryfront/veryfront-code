@@ -95,6 +95,27 @@ interface SalesforceLead {
   [key: string]: any;
 }
 
+/** Validate a Salesforce record ID (15 or 18 character alphanumeric). */
+function validateSalesforceId(id: string, label: string): string {
+  if (!/^[a-zA-Z0-9]{15,18}$/.test(id)) {
+    throw new Error(`Invalid ${label}: must be a 15 or 18 character Salesforce ID`);
+  }
+  return id;
+}
+
+/** Escape a string value for use in SOQL single-quoted literals. */
+function escapeSoql(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+/** Validate a SOQL field name. */
+function validateFieldName(field: string): string {
+  if (!/^[a-zA-Z][a-zA-Z0-9_.]*$/.test(field)) {
+    throw new Error(`Invalid SOQL field name: ${field}`);
+  }
+  return field;
+}
+
 async function salesforceFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
@@ -141,6 +162,7 @@ function buildListSoql(params: {
 }): string {
   const { object, fields, where, limit, offset } = params;
 
+  fields.forEach((f) => validateFieldName(f));
   let soql = `SELECT ${fields.join(", ")} FROM ${object}`;
   if (where) soql += ` WHERE ${where}`;
   soql += ` ORDER BY LastModifiedDate DESC LIMIT ${limit} OFFSET ${offset}`;
@@ -155,6 +177,8 @@ async function getSingleRecord<T>(params: {
   notFoundMessage: string;
 }): Promise<T> {
   const { object, id, fields, notFoundMessage } = params;
+  fields.forEach((f) => validateFieldName(f));
+  validateSalesforceId(id, `${object} ID`);
   const soql = `SELECT ${fields.join(", ")} FROM ${object} WHERE Id = '${id}'`;
   const result = await query<T>(soql);
 
@@ -270,7 +294,9 @@ export function listContacts(options?: {
     "LastModifiedDate",
   ];
 
-  const where = options?.accountId ? `AccountId = '${options.accountId}'` : undefined;
+  const where = options?.accountId
+    ? (validateSalesforceId(options.accountId, "accountId"), `AccountId = '${options.accountId}'`)
+    : undefined;
 
   return query<SalesforceContact>(buildListSoql({ object: "Contact", fields, where, limit, offset }));
 }
@@ -356,7 +382,9 @@ export function listOpportunities(options?: {
     "LastModifiedDate",
   ];
 
-  const where = options?.accountId ? `AccountId = '${options.accountId}'` : undefined;
+  const where = options?.accountId
+    ? (validateSalesforceId(options.accountId, "accountId"), `AccountId = '${options.accountId}'`)
+    : undefined;
 
   return query<SalesforceOpportunity>(
     buildListSoql({ object: "Opportunity", fields, where, limit, offset }),
@@ -441,7 +469,7 @@ export function listLeads(options?: {
     "LastModifiedDate",
   ];
 
-  const where = options?.status ? `Status = '${options.status}'` : undefined;
+  const where = options?.status ? `Status = '${escapeSoql(options.status)}'` : undefined;
 
   return query<SalesforceLead>(buildListSoql({ object: "Lead", fields, where, limit, offset }));
 }
