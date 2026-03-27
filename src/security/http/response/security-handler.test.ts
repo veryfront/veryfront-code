@@ -36,8 +36,17 @@ describe("security/http/response/security-handler", () => {
   });
 
   describe("buildCSP", () => {
-    it("should return empty string when no CSP is configured", () => {
+    it("should return default CSP in production when no CSP is configured", () => {
       const result = buildCSP(false, "test-nonce", null);
+      assert(result.includes("default-src 'self'"), "should have default-src");
+      assert(result.includes("'nonce-test-nonce'"), "should include nonce in script-src");
+      assert(result.includes("object-src 'none'"), "should block objects");
+      assert(result.includes("frame-src 'self'"), "should allow same-origin frames");
+      assert(result.includes("base-uri 'self'"), "should restrict base-uri");
+    });
+
+    it("should return empty string in dev mode when no CSP is configured", () => {
+      const result = buildCSP(true, "test-nonce", null);
       assertEquals(result, "");
     });
 
@@ -103,6 +112,90 @@ describe("security/http/response/security-handler", () => {
       const adapter = createMockAdapter({ VERYFRONT_CSP: "env-csp" });
       const result = buildCSP(false, "n5", "user-csp", null, adapter);
       assertEquals(result, "env-csp");
+    });
+
+    it("should prioritize env CSP over config and default", () => {
+      const adapter = createMockAdapter({ VERYFRONT_CSP: "env-only" });
+      const config: SecurityConfig = { csp: { "default-src": "'none'" } };
+      const result = buildCSP(false, "n", "user-header", config, adapter);
+      assertEquals(result, "env-only", "env CSP has highest priority");
+    });
+
+    it("should prioritize cspUserHeader over config and default", () => {
+      const config: SecurityConfig = { csp: { "default-src": "'none'" } };
+      const result = buildCSP(false, "n", "user-header", config);
+      assertEquals(result, "user-header", "user header takes priority over config");
+    });
+
+    it("should use config CSP over default", () => {
+      const config: SecurityConfig = { csp: { "default-src": "'none'" } };
+      const result = buildCSP(false, "n", null, config);
+      assertEquals(result, "default-src 'none'", "config takes priority over default");
+      assert(!result.includes("object-src"), "default directives should not leak into config CSP");
+    });
+
+    it("should fall through to default when config csp has only undefined values", () => {
+      const config: SecurityConfig = {
+        csp: { "default-src": undefined, "script-src": undefined },
+      };
+      const result = buildCSP(false, "n", null, config);
+      assert(result.includes("default-src 'self'"), "should fall through to default CSP");
+    });
+
+    it("should ignore whitespace-only env CSP", () => {
+      const adapter = createMockAdapter({ VERYFRONT_CSP: "   " });
+      const result = buildCSP(false, "n", null, null, adapter);
+      assert(
+        result.includes("default-src 'self'"),
+        "whitespace env should fall through to default",
+      );
+    });
+
+    it("should ignore whitespace-only cspUserHeader", () => {
+      const result = buildCSP(false, "n", "   ");
+      assert(
+        result.includes("default-src 'self'"),
+        "whitespace header should fall through to default",
+      );
+    });
+
+    it("should produce different CSPs for different nonces", () => {
+      const a = buildCSP(false, "nonce-aaa", null);
+      const b = buildCSP(false, "nonce-bbb", null);
+      assert(a !== b, "different nonces should produce different CSPs");
+      assert(a.includes("'nonce-nonce-aaa'"), "first nonce embedded");
+      assert(b.includes("'nonce-nonce-bbb'"), "second nonce embedded");
+    });
+
+    it("default CSP should contain all 11 directives", () => {
+      const result = buildCSP(false, "n", null);
+      const directives = [
+        "default-src",
+        "script-src",
+        "style-src",
+        "img-src",
+        "font-src",
+        "connect-src",
+        "media-src",
+        "object-src",
+        "frame-src",
+        "base-uri",
+        "form-action",
+      ];
+      for (const d of directives) {
+        assert(result.includes(d), `default CSP must include ${d}`);
+      }
+    });
+
+    it("default CSP should not include unsafe-eval", () => {
+      const result = buildCSP(false, "n", null);
+      assert(!result.includes("unsafe-eval"), "default CSP must not allow eval");
+    });
+
+    it("dev mode should return empty even with config present but empty", () => {
+      const config: SecurityConfig = { csp: {} };
+      const result = buildCSP(true, "n", null, config);
+      assertEquals(result, "", "dev mode should return empty CSP");
     });
   });
 
@@ -203,9 +296,18 @@ describe("security/http/response/security-handler", () => {
       assertEquals(headers.get("Content-Security-Policy"), "default-src 'self'");
     });
 
-    it("should not set CSP when no CSP config", () => {
+    it("should set default CSP in production when no CSP config", () => {
       const headers = new Headers();
       applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy");
+      assert(csp !== null, "CSP header must be present in production");
+      assert(csp!.includes("default-src 'self'"), "default CSP must include default-src");
+      assert(csp!.includes("'nonce-nonce'"), "default CSP must include nonce");
+    });
+
+    it("should not set CSP in dev mode when no CSP config", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, true, "nonce", null);
       assertEquals(headers.has("Content-Security-Policy"), false);
     });
 
@@ -252,6 +354,189 @@ describe("security/http/response/security-handler", () => {
       };
       applySecurityHeaders(headers, false, "nonce", null, config);
       assertEquals(headers.get("Referrer-Policy"), "no-referrer");
+    });
+
+    it("should use explicit CSP config instead of default", () => {
+      const headers = new Headers();
+      const config: SecurityConfig = {
+        csp: { "default-src": "'none'" },
+      };
+      applySecurityHeaders(headers, false, "nonce", null, config);
+      assertEquals(headers.get("Content-Security-Policy"), "default-src 'none'");
+    });
+
+    it("should use env CSP over default", () => {
+      const headers = new Headers();
+      const adapter = createMockAdapter({ VERYFRONT_CSP: "default-src 'self'" });
+      applySecurityHeaders(headers, false, "nonce", null, null, adapter);
+      assertEquals(headers.get("Content-Security-Policy"), "default-src 'self'");
+    });
+
+    it("default CSP should allow WebSocket connections for HMR", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(csp.includes("connect-src 'self' wss: https:"), "should allow wss for WebSocket");
+    });
+
+    it("default CSP should allow Google Fonts", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(csp.includes("fonts.googleapis.com"), "should allow Google Fonts styles");
+      assert(csp.includes("fonts.gstatic.com"), "should allow Google Fonts files");
+    });
+
+    it("default CSP should allow jsdelivr CDN scripts", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("https://cdn.jsdelivr.net"),
+        "should allow jsdelivr for Scalar API docs, html2canvas, React UMD",
+      );
+    });
+
+    it("default CSP should allow veryfront CDN styles and fonts", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("https://cdn.veryfront.com"),
+        "should allow veryfront CDN for markdown styles",
+      );
+    });
+
+    it("default CSP should allow same-origin frames", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("frame-src 'self'"),
+        "should allow same-origin iframes by default",
+      );
+    });
+
+    it("default CSP should include nonce in style-src for migration path", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "my-nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("style-src 'self' 'unsafe-inline' 'nonce-my-nonce'"),
+        "style-src should include both unsafe-inline and nonce for migration",
+      );
+    });
+
+    it("default CSP should block object embeds", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(csp.includes("object-src 'none'"), "should block plugins/Flash");
+    });
+
+    it("default CSP should restrict form-action to self", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("form-action 'self'"),
+        "should prevent form submission to external URLs",
+      );
+    });
+
+    it("custom config with frame-src overrides default frame-src", () => {
+      const headers = new Headers();
+      const config: SecurityConfig = {
+        csp: {
+          "default-src": "'self'",
+          "frame-src": "'self' https://www.youtube.com https://accounts.google.com",
+        },
+      };
+      applySecurityHeaders(headers, false, "nonce", null, config);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(csp.includes("https://www.youtube.com"), "should allow YouTube embeds");
+      assert(csp.includes("https://accounts.google.com"), "should allow Google OAuth");
+      assert(!csp.includes("object-src"), "custom config replaces entire default");
+    });
+
+    it("empty csp config object should fall through to default", () => {
+      const headers = new Headers();
+      const config: SecurityConfig = { csp: {} };
+      applySecurityHeaders(headers, false, "nonce", null, config);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("default-src 'self'"),
+        "empty csp object should use default CSP",
+      );
+    });
+
+    it("default CSP should place jsdelivr in script-src not style-src", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      const scriptSrc = csp.split(";").find((d) => d.trim().startsWith("script-src"))!;
+      const styleSrc = csp.split(";").find((d) => d.trim().startsWith("style-src"))!;
+      assert(
+        scriptSrc.includes("cdn.jsdelivr.net"),
+        "jsdelivr should be in script-src",
+      );
+      assert(
+        !styleSrc.includes("cdn.jsdelivr.net"),
+        "jsdelivr should NOT be in style-src",
+      );
+    });
+
+    it("default CSP should place veryfront CDN in style-src and font-src", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      const styleSrc = csp.split(";").find((d) => d.trim().startsWith("style-src"))!;
+      const fontSrc = csp.split(";").find((d) => d.trim().startsWith("font-src"))!;
+      assert(styleSrc.includes("cdn.veryfront.com"), "veryfront CDN in style-src");
+      assert(fontSrc.includes("cdn.veryfront.com"), "veryfront CDN in font-src");
+    });
+
+    it("default CSP nonce should match across script-src and style-src", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "unique-nonce-123", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      const scriptSrc = csp.split(";").find((d) => d.trim().startsWith("script-src"))!;
+      const styleSrc = csp.split(";").find((d) => d.trim().startsWith("style-src"))!;
+      assert(
+        scriptSrc.includes("'nonce-unique-nonce-123'"),
+        "script-src should have the nonce",
+      );
+      assert(
+        styleSrc.includes("'nonce-unique-nonce-123'"),
+        "style-src should have the same nonce",
+      );
+    });
+
+    it("default CSP should block http: in connect-src", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      const connectSrc = csp.split(";").find((d) => d.trim().startsWith("connect-src"))!;
+      assert(!connectSrc.includes("http:"), "connect-src must not allow plain http");
+    });
+
+    it("config CSP should completely replace default (no directive merging)", () => {
+      const headers = new Headers();
+      const config: SecurityConfig = {
+        csp: { "script-src": "'self'" },
+      };
+      applySecurityHeaders(headers, false, "nonce", null, config);
+      const csp = headers.get("Content-Security-Policy")!;
+      assertEquals(csp, "script-src 'self'");
+      assert(!csp.includes("default-src"), "default directives must not leak");
+      assert(!csp.includes("object-src"), "default directives must not leak");
+      assert(!csp.includes("cdn.jsdelivr.net"), "default CDN origins must not leak");
+    });
+
+    it("cspUserHeader should completely replace default", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", "img-src 'none'");
+      assertEquals(headers.get("Content-Security-Policy"), "img-src 'none'");
     });
   });
 });
