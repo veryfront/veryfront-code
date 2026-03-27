@@ -67,11 +67,11 @@ describe("BaseHandler.withProxyContext", () => {
     assertEquals(called, true, "fn should run in local dev mode");
   });
 
-  it("rejects with 401 when requireToken is true and no token in proxy mode", async () => {
+  it("runs fn() without proxy context when requireToken is true but no token", async () => {
     const handler = new TestHandler();
     let called = false;
 
-    const result = await handler.testWithProxyContext(
+    await handler.testWithProxyContext(
       createMinimalCtx({ projectSlug: "my-project" }),
       async () => {
         called = true;
@@ -80,11 +80,13 @@ describe("BaseHandler.withProxyContext", () => {
       { requireToken: true },
     );
 
-    assertEquals(called, false, "fn must NOT run without a token");
-    const handlerResult = result as HandlerResult;
-    assertEquals(handlerResult.response?.status, 401, "should return 401");
-    const body = await handlerResult.response?.json();
-    assertEquals(body.error, "Authentication required");
+    // fn() should still run so embedded framework modules can be served,
+    // but without project-scoped credentials (no setRequestToken call)
+    assertEquals(
+      called,
+      true,
+      "fn should run without proxy context so embedded modules work",
+    );
   });
 
   it("runs fn() when requireToken is true and token is present", async () => {

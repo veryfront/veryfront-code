@@ -137,18 +137,17 @@ export abstract class BaseHandler implements Handler {
     // No project slug → local dev mode, no proxy context needed.
     if (!ctx.projectSlug) return fn();
 
-    // Token required but missing in proxy mode → reject. Without a valid
-    // token the request would execute without project-scoped credentials,
-    // exposing content (modules, pages, data) to unauthenticated callers.
+    // Token required but missing in proxy mode → run fn() without
+    // project-scoped credentials. This allows embedded framework modules
+    // (e.g. /_vf_modules/_veryfront/...) to be served from the binary
+    // while project-specific content will fail at the filesystem level
+    // (no token = no access to remote project files).
     if (requireToken && !effectiveToken) {
       serverLogger.warn(
-        `[${this.metadata.name}] Rejected request: token required but missing`,
+        `[${this.metadata.name}] No API token for proxy context — project content will be unavailable`,
         { projectSlug: ctx.projectSlug },
       );
-      return Promise.resolve({
-        response: Response.json({ error: "Authentication required" }, { status: 401 }),
-        continue: false,
-      }) as Promise<T>;
+      return fn();
     }
 
     if (fsWrapper.isMultiProjectMode?.()) {
