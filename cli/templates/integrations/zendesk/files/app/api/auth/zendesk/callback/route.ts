@@ -16,7 +16,14 @@ export async function GET(request: Request): Promise<Response> {
   const error = url.searchParams.get("error");
   const errorDescription = url.searchParams.get("error_description");
 
-  const baseUrl = getEnv("NEXT_PUBLIC_APP_URL") ?? `${url.protocol}//${url.host}`;
+  const configuredUrl = getEnv("NEXT_PUBLIC_APP_URL");
+  if (!configuredUrl) {
+    return Response.json(
+      { error: "NEXT_PUBLIC_APP_URL environment variable is required" },
+      { status: 500 },
+    );
+  }
+  const baseUrl = configuredUrl;
 
   if (error) {
     console.error("Zendesk OAuth error:", error, errorDescription);
