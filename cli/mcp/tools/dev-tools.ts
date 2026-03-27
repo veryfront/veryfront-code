@@ -45,8 +45,14 @@ export const vfHotReload: MCPTool<HotReloadInput, HotReloadResult> = {
 // ============================================================================
 
 const getDebugContextInput = z.object({
-  port: z.number().optional().default(8080).describe("Dev server port (defaults to 8080)"),
-  project: z.string().optional().describe("Project slug to check (for multi-project mode)"),
+  port: z.number().int().min(1).max(65535).optional().default(8080).describe(
+    "Dev server port (defaults to 8080)",
+  ),
+  project: z
+    .string()
+    .regex(/^[a-z0-9-]+$/, "Project slug must contain only lowercase letters, numbers, and hyphens")
+    .optional()
+    .describe("Project slug to check (for multi-project mode)"),
 });
 
 type GetDebugContextInput = z.infer<typeof getDebugContextInput>;
@@ -107,7 +113,9 @@ export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult
 
 const triggerHmrInput = z.object({
   path: z.string().describe("File path that changed (e.g., 'app/page.tsx')"),
-  port: z.number().optional().default(8080).describe("Dev server port (defaults to 8080)"),
+  port: z.number().int().min(1).max(65535).optional().default(8080).describe(
+    "Dev server port (defaults to 8080)",
+  ),
 });
 
 type TriggerHmrInput = z.infer<typeof triggerHmrInput>;
@@ -145,8 +153,12 @@ export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
 // ============================================================================
 
 const previewRouteInput = z.object({
-  route: z.string().describe("Route path to preview (e.g., '/', '/dashboard', '/api/users')"),
-  port: z.number().optional().default(8080).describe("Dev server port (defaults to 8080)"),
+  route: z.string().startsWith("/", "Route must start with /").describe(
+    "Route path to preview (e.g., '/', '/dashboard', '/api/users')",
+  ),
+  port: z.number().int().min(1).max(65535).optional().default(8080).describe(
+    "Dev server port (defaults to 8080)",
+  ),
   format: z
     .enum(["html", "json", "status"])
     .optional()
@@ -224,7 +236,9 @@ export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
 // ============================================================================
 
 const waitForReadyInput = z.object({
-  port: z.number().optional().default(8080).describe("Server port to check (defaults to 8080)"),
+  port: z.number().int().min(1).max(65535).optional().default(8080).describe(
+    "Server port to check (defaults to 8080)",
+  ),
   timeout: z
     .number()
     .optional()
@@ -291,7 +305,9 @@ export const vfWaitForReady: MCPTool<WaitForReadyInput, WaitForReadyResult> = {
 // ============================================================================
 
 const getFlywheelStatusInput = z.object({
-  port: z.number().optional().default(8080).describe("Server port (defaults to 8080)"),
+  port: z.number().int().min(1).max(65535).optional().default(8080).describe(
+    "Server port (defaults to 8080)",
+  ),
 });
 
 type GetFlywheelStatusInput = z.infer<typeof getFlywheelStatusInput>;
