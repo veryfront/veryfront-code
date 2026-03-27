@@ -145,10 +145,10 @@ export abstract class BaseHandler implements Handler {
         `[${this.metadata.name}] Rejected request: token required but missing`,
         { projectSlug: ctx.projectSlug },
       );
-      return {
+      return Promise.resolve({
         response: Response.json({ error: "Authentication required" }, { status: 401 }),
         continue: false,
-      } as T;
+      }) as Promise<T>;
     }
 
     if (fsWrapper.isMultiProjectMode?.()) {
