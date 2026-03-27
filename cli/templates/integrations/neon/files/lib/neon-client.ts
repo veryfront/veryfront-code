@@ -251,6 +251,12 @@ export async function getTableRowCount(
   tableName: string,
   schema: string = "public",
 ): Promise<number> {
+  if (!/^[a-zA-Z0-9_]+$/.test(schema)) {
+    throw new Error('Invalid input');
+  }
+  if (!/^[a-zA-Z0-9_]+$/.test(tableName)) {
+    throw new Error('Invalid input');
+  }
   const result = await query<{ count: string }>(
     `SELECT COUNT(*) as count FROM "${schema}"."${tableName}"`,
   );
