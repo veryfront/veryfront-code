@@ -4,6 +4,7 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-context.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { serverLogger } from "#veryfront/utils";
 
 export function handlePageModule(
   req: Request,
@@ -54,10 +55,17 @@ export function handlePageModule(
           builder.withCache(cacheMode).withETag(etag).javascript(code, 200),
         );
       } catch (error) {
+        // Log the full error server-side but return a generic message
+        // to avoid leaking internal details (Babel/TS errors, file paths, etc.)
+        serverLogger.error("[page-module] Failed to generate module", {
+          pathname,
+          error: getErrorMessage(error),
+        });
+
         return respond(
           ResponseBuilder.error(
             500,
-            `Failed to generate module: ${getErrorMessage(error)}`,
+            "Failed to generate module",
             req,
             {
               securityConfig: ctx.securityConfig,
