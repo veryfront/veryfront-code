@@ -36,8 +36,17 @@ describe("security/http/response/security-handler", () => {
   });
 
   describe("buildCSP", () => {
-    it("should return empty string when no CSP is configured", () => {
+    it("should return default CSP in production when no CSP is configured", () => {
       const result = buildCSP(false, "test-nonce", null);
+      assert(result.includes("default-src 'self'"), "should have default-src");
+      assert(result.includes("'nonce-test-nonce'"), "should include nonce");
+      assert(result.includes("object-src 'none'"), "should block objects");
+      assert(result.includes("frame-src 'none'"), "should block frames");
+      assert(result.includes("base-uri 'self'"), "should restrict base-uri");
+    });
+
+    it("should return empty string in dev mode when no CSP is configured", () => {
+      const result = buildCSP(true, "test-nonce", null);
       assertEquals(result, "");
     });
 
@@ -203,9 +212,18 @@ describe("security/http/response/security-handler", () => {
       assertEquals(headers.get("Content-Security-Policy"), "default-src 'self'");
     });
 
-    it("should not set CSP when no CSP config", () => {
+    it("should set default CSP in production when no CSP config", () => {
       const headers = new Headers();
       applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy");
+      assert(csp !== null, "CSP header must be present in production");
+      assert(csp!.includes("default-src 'self'"), "default CSP must include default-src");
+      assert(csp!.includes("'nonce-nonce'"), "default CSP must include nonce");
+    });
+
+    it("should not set CSP in dev mode when no CSP config", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, true, "nonce", null);
       assertEquals(headers.has("Content-Security-Policy"), false);
     });
 
@@ -252,6 +270,37 @@ describe("security/http/response/security-handler", () => {
       };
       applySecurityHeaders(headers, false, "nonce", null, config);
       assertEquals(headers.get("Referrer-Policy"), "no-referrer");
+    });
+
+    it("should use explicit CSP config instead of default", () => {
+      const headers = new Headers();
+      const config: SecurityConfig = {
+        csp: { "default-src": "'none'" },
+      };
+      applySecurityHeaders(headers, false, "nonce", null, config);
+      assertEquals(headers.get("Content-Security-Policy"), "default-src 'none'");
+    });
+
+    it("should use env CSP over default", () => {
+      const headers = new Headers();
+      const adapter = createMockAdapter({ VERYFRONT_CSP: "default-src 'self'" });
+      applySecurityHeaders(headers, false, "nonce", null, null, adapter);
+      assertEquals(headers.get("Content-Security-Policy"), "default-src 'self'");
+    });
+
+    it("default CSP should allow WebSocket connections for HMR", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(csp.includes("connect-src 'self' wss: https:"), "should allow wss for WebSocket");
+    });
+
+    it("default CSP should allow Google Fonts", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(csp.includes("fonts.googleapis.com"), "should allow Google Fonts styles");
+      assert(csp.includes("fonts.gstatic.com"), "should allow Google Fonts files");
     });
   });
 });

@@ -14,8 +14,34 @@ export function generateNonce(): string {
   return btoa(String.fromCharCode(...array));
 }
 
+/**
+ * Build a default CSP that works for typical veryfront apps.
+ *
+ * - Scripts: nonce-based (covers SSR-injected and hydration scripts)
+ * - Styles: 'self' + 'unsafe-inline' (CSS-in-JS, Tailwind JIT, Google Fonts)
+ * - Images/media/fonts: 'self' + data: + https:
+ * - Connections: 'self' + wss: (WebSocket for HMR/live reload)
+ * - Objects/frames: none (block Flash, iframes, embeds)
+ * - Base-uri/form-action: 'self' (prevent base tag hijack and form redirect)
+ */
+function buildDefaultCSP(nonce: string): string {
+  return [
+    `default-src 'self'`,
+    `script-src 'self' 'nonce-${nonce}'`,
+    `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
+    `img-src 'self' data: https:`,
+    `font-src 'self' data: https://fonts.gstatic.com`,
+    `connect-src 'self' wss: https:`,
+    `media-src 'self'`,
+    `object-src 'none'`,
+    `frame-src 'none'`,
+    `base-uri 'self'`,
+    `form-action 'self'`,
+  ].join("; ");
+}
+
 export function buildCSP(
-  _isDev: boolean,
+  isDev: boolean,
   nonce: string,
   cspUserHeader: string | null,
   config?: SecurityConfig | null,
@@ -27,19 +53,27 @@ export function buildCSP(
   if (cspUserHeader?.trim()) return cspUserHeader.replace(/{NONCE}/g, nonce);
 
   const cfgCsp = config?.csp;
-  if (!cfgCsp || typeof cfgCsp !== "object") return "";
+  if (cfgCsp && typeof cfgCsp === "object") {
+    const pieces: string[] = [];
 
-  const pieces: string[] = [];
+    for (const [k, v] of Object.entries(cfgCsp)) {
+      if (v === undefined) continue;
 
-  for (const [k, v] of Object.entries(cfgCsp)) {
-    if (v === undefined) continue;
+      const key = k.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+      const val = Array.isArray(v) ? v.join(" ") : String(v);
+      pieces.push(`${key} ${val}`.replace(/{NONCE}/g, nonce));
+    }
 
-    const key = k.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
-    const val = Array.isArray(v) ? v.join(" ") : String(v);
-    pieces.push(`${key} ${val}`.replace(/{NONCE}/g, nonce));
+    if (pieces.length) return pieces.join("; ");
   }
 
-  return pieces.length ? pieces.join("; ") : "";
+  // No explicit CSP configured — apply a secure default in production.
+  // Dev mode skips the default to avoid blocking HMR and dev tooling.
+  if (!isDev) {
+    return buildDefaultCSP(nonce);
+  }
+
+  return "";
 }
 
 export function getSecurityHeader(
