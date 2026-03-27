@@ -117,11 +117,8 @@ export async function listInvoices(options?: {
 }): Promise<QuickBooksInvoice[]> {
   const maxResults = options?.maxResults ?? 100;
 
-  if (!/^[a-zA-Z0-9_]+$/.test(String(maxResults))) {
-    throw new Error('Invalid input');
-  }
-  if (options?.customerId && !/^[a-zA-Z0-9_]+$/.test(options.customerId)) {
-    throw new Error('Invalid input');
+  if (options?.customerId && !/^[a-zA-Z0-9_\-:.]+$/.test(options.customerId)) {
+    throw new Error('Invalid customerId: must contain only alphanumeric characters, underscores, hyphens, colons, or periods');
   }
 
   let query = `SELECT * FROM Invoice MAXRESULTS ${maxResults}`;
@@ -211,13 +208,6 @@ export async function listCustomers(options?: {
   active?: boolean;
 }): Promise<QuickBooksCustomer[]> {
   const maxResults = options?.maxResults ?? 100;
-
-  if (!/^[a-zA-Z0-9_]+$/.test(String(maxResults))) {
-    throw new Error('Invalid input');
-  }
-  if (options?.active !== undefined && !/^(true|false)$/.test(String(options.active))) {
-    throw new Error('Invalid input');
-  }
 
   let query = `SELECT * FROM Customer MAXRESULTS ${maxResults}`;
   if (options?.active !== undefined) {
