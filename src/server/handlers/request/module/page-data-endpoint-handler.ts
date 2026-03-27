@@ -5,6 +5,7 @@ import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
+import { serverLogger } from "#veryfront/utils";
 
 const PAGE_DATA_TIMEOUT_MS = 25_000;
 
@@ -54,9 +55,13 @@ export function handlePageDataEndpoint(
         );
       } catch (e) {
         if (e instanceof TimeoutError) {
+          serverLogger.warn("[page-data] Request timed out", {
+            pathname,
+            detail: e.message,
+          });
           return respond(
             ResponseBuilder.json(
-              { error: `Page data request timed out: ${e.message}`, status: HTTP_GATEWAY_TIMEOUT },
+              { error: "Page data request timed out", status: HTTP_GATEWAY_TIMEOUT },
               req,
               {
                 securityConfig: ctx.securityConfig,
@@ -74,9 +79,17 @@ export function handlePageDataEndpoint(
           (e instanceof Error && e.message.toLowerCase().includes("no page"));
         const status = isNotFound ? 404 : 500;
 
+        // Log the full error server-side but return a generic message
+        // to avoid leaking internal details (file paths, DB schema, etc.)
+        serverLogger.error("[page-data] Failed to resolve page data", {
+          pathname,
+          error: errorMessage,
+          status,
+        });
+
         return respond(
           ResponseBuilder.json(
-            { error: errorMessage, status },
+            { error: isNotFound ? "Page not found" : "Internal server error", status },
             req,
             {
               securityConfig: ctx.securityConfig,

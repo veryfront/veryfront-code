@@ -2,6 +2,7 @@ import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { serverLogger } from "#veryfront/utils";
 
 export function handleVirtualModule(
   req: Request,
@@ -36,8 +37,13 @@ export function handleVirtualModule(
 
         return respond(response);
       } catch (error) {
+        serverLogger.error("[virtual-module] Failed to handle module", {
+          pathname: url.pathname,
+          error: getErrorMessage(error),
+        });
+
         return respond(
-          ResponseBuilder.error(500, `Virtual Module Error: ${getErrorMessage(error)}`, req, {
+          ResponseBuilder.error(500, "Failed to load virtual module", req, {
             securityConfig: ctx.securityConfig,
             corsConfig: ctx.securityConfig?.cors,
           }),

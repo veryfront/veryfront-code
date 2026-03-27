@@ -3,6 +3,7 @@ import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { serverLogger } from "#veryfront/utils";
 
 export function handleDataEndpoint(
   req: Request,
@@ -51,9 +52,15 @@ export function handleDataEndpoint(
           (e instanceof Error && e.message.toLowerCase().includes("no page"));
         const status = isNotFound ? 404 : 500;
 
+        serverLogger.error("[data-endpoint] Failed to resolve data", {
+          pathname,
+          error: errorMessage,
+          status,
+        });
+
         return respond(
           ResponseBuilder.json(
-            { error: errorMessage, status },
+            { error: isNotFound ? "Page not found" : "Internal server error", status },
             req,
             {
               securityConfig: ctx.securityConfig,
