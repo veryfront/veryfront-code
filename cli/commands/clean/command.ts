@@ -52,7 +52,13 @@ export async function cleanCommand(options: CleanOptions): Promise<void> {
   try {
     if (build || all) {
       spinner.update("Cleaning dist directory...");
-      await cleanDirectory(join(projectDir, "dist"));
+      const base = path.resolve(projectDir);
+      const target = path.resolve(base, "dist");
+      const relative = path.relative(base, target);
+      if (relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw new Error("Invalid path");
+      }
+      await cleanDirectory(target);
     }
 
     if (cache || all) {
@@ -62,7 +68,15 @@ export async function cleanCommand(options: CleanOptions): Promise<void> {
 
     if (all) {
       spinner.update("Cleaning node_modules and temp directories...");
-      const tempDirs = [".veryfront", "node_modules", ".deno"].map((dir) => join(projectDir, dir));
+      const base = path.resolve(projectDir);
+      const tempDirs = [".veryfront", "node_modules", ".deno"].map((dir) => {
+        const target = path.resolve(base, dir);
+        const relative = path.relative(base, target);
+        if (relative.startsWith("..") || path.isAbsolute(relative)) {
+          throw new Error("Invalid path");
+        }
+        return target;
+      });
       await Promise.all(tempDirs.map(cleanDirectory));
     }
 
@@ -105,7 +119,13 @@ async function cleanCacheStore(projectDir: string): Promise<void> {
       await coordinator.destroy();
     }
 
-    await cleanDirectory(join(projectDir, cacheDir));
+    const base = path.resolve(projectDir);
+    const target = path.resolve(base, cacheDir);
+    const relative = path.relative(base, target);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw new Error('Invalid cache directory path');
+    }
+    await cleanDirectory(target);
   } catch (error) {
     cliLogger.error("Failed to clean cache store:", error);
     throw error;
@@ -124,8 +144,14 @@ function createRenderCacheStore(
   const { projectDir, cacheDir, renderConfig } = context;
 
   if (type === "filesystem") {
+    const base = path.resolve(projectDir);
+    const target = path.resolve(base, cacheDir, "render");
+    const relative = path.relative(base, target);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw new Error('Invalid cache directory');
+    }
     return new FilesystemCacheStore({
-      baseDir: join(projectDir, cacheDir, "render"),
+      baseDir: target,
     });
   }
 
