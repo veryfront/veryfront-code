@@ -332,4 +332,93 @@ describe("createUploadHandler", () => {
       assertEquals(response.status, 200);
     });
   });
+
+  it("strips angle brackets from uploaded filenames to prevent stored XSS", async () => {
+    let ingestedTitle = "";
+    const store = createStubStore({
+      async ingest(title: string): Promise<string> {
+        ingestedTitle = title;
+        return "doc-xss";
+      },
+    });
+    const { POST } = createUploadHandler(store);
+
+    // Use a filename with angle brackets (the key XSS vector).
+    // Deno's FormData mangles filenames with = and control chars,
+    // so we use a simpler payload that survives the round-trip.
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File(
+        ["test content"],
+        "<b>bold</b>.txt",
+        { type: "text/plain" },
+      ),
+    );
+
+    const response = await POST(
+      new Request("http://test/uploads", { method: "POST", body: formData }),
+    );
+
+    assertEquals(response.status, 200);
+    const body = await response.json();
+    assertEquals(
+      body.upload.title,
+      "bbold_b.txt",
+      "angle brackets must be stripped, / becomes _",
+    );
+    assertEquals(ingestedTitle, body.upload.title);
+  });
+
+  it("strips path separators from filenames", async () => {
+    let ingestedTitle = "";
+    const store = createStubStore({
+      async ingest(title: string): Promise<string> {
+        ingestedTitle = title;
+        return "doc-path";
+      },
+    });
+    const { POST } = createUploadHandler(store);
+
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File(["content"], ".._.._etc_passwd.txt", { type: "text/plain" }),
+    );
+
+    const response = await POST(
+      new Request("http://test/uploads", { method: "POST", body: formData }),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(ingestedTitle, ".._.._etc_passwd.txt");
+  });
+
+  it("preserves normal filenames with dots, spaces, and parentheses", async () => {
+    let ingestedTitle = "";
+    const store = createStubStore({
+      async ingest(title: string): Promise<string> {
+        ingestedTitle = title;
+        return "doc-normal";
+      },
+    });
+    const { POST } = createUploadHandler(store);
+
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File(["data"], "My Report (2026).txt", { type: "text/plain" }),
+    );
+
+    const response = await POST(
+      new Request("http://test/uploads", { method: "POST", body: formData }),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(
+      ingestedTitle,
+      "My Report (2026).txt",
+      "normal filenames should be preserved",
+    );
+  });
 });

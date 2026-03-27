@@ -63,6 +63,23 @@ function typeToMime(type: string): string {
   return TYPE_TO_MIME[type] ?? "text/plain";
 }
 
+/**
+ * Sanitize an uploaded file name to prevent stored XSS.
+ *
+ * Strips path traversal components, HTML/script characters, and control
+ * characters. The result is safe to store, render in UI, and interpolate
+ * into LLM prompts without HTML-encoding.
+ */
+function sanitizeFileName(raw: string): string {
+  return raw
+    .replace(/[/\\]/g, "_") // strip path separators
+    .replace(/[<>"'`]/g, "") // strip HTML-significant characters
+    // deno-lint-ignore no-control-regex
+    .replace(/[\x00-\x1f\x7f]/g, "") // strip control characters
+    .trim()
+    .slice(0, MAX_FILE_NAME_LENGTH);
+}
+
 interface UploadHandlerConfig {
   maxFileSize?: number;
 }
@@ -164,7 +181,7 @@ export function createUploadHandler(
       const fileType = inferType(file);
       if (!fileType) {
         return Response.json(
-          { error: `Unsupported file type: ${file.type || file.name}` },
+          { error: `Unsupported file type: ${file.type || sanitizeFileName(file.name)}` },
           { status: 400 },
         );
       }
@@ -178,8 +195,9 @@ export function createUploadHandler(
         );
       }
 
-      // Sanitize file name: strip path components, limit length
-      const safeName = file.name.replace(/[/\\]/g, "_").slice(0, MAX_FILE_NAME_LENGTH);
+      // Sanitize file name: strip path components, HTML characters, and
+      // control characters to prevent stored XSS via filenames rendered in UI.
+      const safeName = sanitizeFileName(file.name);
 
       const id = await store.ingest(safeName, text, {
         source: `upload:${safeName}`,
@@ -214,7 +232,7 @@ export function createUploadHandler(
 
       return Response.json({
         success: true,
-        upload: { id, title: file.name, type: fileType },
+        upload: { id, title: safeName, type: fileType },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Upload failed";
