@@ -303,6 +303,26 @@ describe("security/http/response/security-handler", () => {
       assert(csp.includes("fonts.gstatic.com"), "should allow Google Fonts files");
     });
 
+    it("default CSP should allow jsdelivr CDN scripts", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("https://cdn.jsdelivr.net"),
+        "should allow jsdelivr for Scalar API docs, html2canvas, React UMD",
+      );
+    });
+
+    it("default CSP should allow veryfront CDN styles and fonts", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("https://cdn.veryfront.com"),
+        "should allow veryfront CDN for markdown styles",
+      );
+    });
+
     it("default CSP should allow same-origin frames", () => {
       const headers = new Headers();
       applySecurityHeaders(headers, false, "nonce", null);

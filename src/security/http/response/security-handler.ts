@@ -17,11 +17,12 @@ export function generateNonce(): string {
 /**
  * Build a default CSP that works for typical veryfront apps.
  *
- * - Scripts: nonce-based (covers SSR-injected and hydration scripts)
- * - Styles: 'self' + 'unsafe-inline' + nonce (CSS-in-JS needs unsafe-inline;
- *   nonce is included so apps that support nonce-based styles can migrate away
- *   from unsafe-inline by removing it in their custom config)
- * - Images/media/fonts: 'self' + data: + https:
+ * - Scripts: nonce-based + cdn.jsdelivr.net (Scalar API docs, html2canvas,
+ *   React UMD, browser inference)
+ * - Styles: 'self' + 'unsafe-inline' + nonce + Google Fonts + cdn.veryfront.com
+ *   (CSS-in-JS needs unsafe-inline; nonce as migration path; veryfront CDN for
+ *   markdown rendering styles)
+ * - Images/media/fonts: 'self' + data: + https: + cdn.veryfront.com
  * - Connections: 'self' + wss: + https: (WebSocket for HMR/live reload, API calls)
  * - Objects: 'none' (block Flash/plugins)
  * - Frames: 'self' (allows same-origin iframes; apps embedding external
@@ -32,10 +33,10 @@ export function generateNonce(): string {
 function buildDefaultCSP(nonce: string): string {
   return [
     `default-src 'self'`,
-    `script-src 'self' 'nonce-${nonce}'`,
-    `style-src 'self' 'unsafe-inline' 'nonce-${nonce}' https://fonts.googleapis.com`,
+    `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net`,
+    `style-src 'self' 'unsafe-inline' 'nonce-${nonce}' https://fonts.googleapis.com https://cdn.veryfront.com`,
     `img-src 'self' data: https:`,
-    `font-src 'self' data: https://fonts.gstatic.com`,
+    `font-src 'self' data: https://fonts.gstatic.com https://cdn.veryfront.com`,
     `connect-src 'self' wss: https:`,
     `media-src 'self' https:`,
     `object-src 'none'`,
