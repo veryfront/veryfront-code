@@ -187,11 +187,6 @@ await build({
 			"dnt polyfill process.argv[1] fix",
 		);
 
-		// Copy postinstall script
-		await Deno.mkdir("./npm/scripts", { recursive: true });
-		await Deno.copyFile("./scripts/postinstall.js", "./npm/scripts/postinstall.js");
-		await Deno.copyFile("./scripts/postinstall-lib.js", "./npm/scripts/postinstall-lib.js");
-
 		// Note: Templates are now embedded in manifest.json which is bundled by dnt
 		// No need to copy template files separately
 
@@ -218,13 +213,12 @@ await build({
 			},
 		}, null, 2));
 
-		// Update package.json with bin entry, postinstall, and type
+		// Update package.json with bin entry and type
 		const pkgPath = "./npm/package.json";
 		const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
 		pkg.type = "module"; // Required for ESM imports without warnings
 		pkg.bin = { veryfront: "bin/veryfront.js" };
-		pkg.files = ["esm", "script", "src", "bin", "scripts", "tsconfig.json", "LICENSE", "README.md"];
-		pkg.scripts = { postinstall: "node scripts/postinstall.js" };
+		pkg.files = ["esm", "script", "src", "bin", "tsconfig.json", "LICENSE", "README.md"];
 		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
 	},
