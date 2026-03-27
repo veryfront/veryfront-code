@@ -71,13 +71,15 @@ function typeToMime(type: string): string {
  * into LLM prompts without HTML-encoding.
  */
 function sanitizeFileName(raw: string): string {
-  return raw
+  const sanitized = raw
     .replace(/[/\\]/g, "_") // strip path separators
-    .replace(/[<>"'`]/g, "") // strip HTML-significant characters
+    .replace(/[<>"'`&]/g, "") // strip HTML-significant characters (incl. & for entity injection)
     // deno-lint-ignore no-control-regex
     .replace(/[\x00-\x1f\x7f]/g, "") // strip control characters
     .trim()
     .slice(0, MAX_FILE_NAME_LENGTH);
+
+  return sanitized || "untitled";
 }
 
 interface UploadHandlerConfig {
