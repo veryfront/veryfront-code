@@ -202,7 +202,7 @@ describe(
       "Production Server - Security",
       { sanitizeResources: false, sanitizeOps: false },
       () => {
-        it("does not set CSP by default (allows user content)", async () => {
+        it("sets default CSP in production", async () => {
           await withTestContext("prod-csp-nonce", async (context) => {
             await writeTextFile(
               join(context.projectDir, "pages", "index.tsx"),
@@ -213,10 +213,15 @@ describe(
 
             const res = await fetch(`http://127.0.0.1:${server.port}/`);
             assertEquals(res.status, 200, "Should serve the page");
-            assertEquals(
-              res.headers.get("content-security-policy"),
-              null,
-              "CSP should not be set by default",
+            const csp = res.headers.get("content-security-policy");
+            assert(csp !== null, "CSP should be set by default in production");
+            assert(
+              csp!.includes("default-src 'self'"),
+              "Default CSP should include default-src 'self'",
+            );
+            assert(
+              csp!.includes("script-src 'self' 'nonce-"),
+              "Default CSP should include nonce-based script-src",
             );
             await res.text();
           });
@@ -253,10 +258,11 @@ describe(
               "DENY",
               "Should prevent framing by default",
             );
-            assertEquals(
-              response.headers.get("content-security-policy"),
-              null,
-              "CSP not set by default to allow user content",
+            const csp = response.headers.get("content-security-policy");
+            assert(csp !== null, "Default CSP should be set in production");
+            assert(
+              csp!.includes("default-src 'self'"),
+              "Default CSP should restrict default-src",
             );
 
             await response.text();
