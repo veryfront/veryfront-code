@@ -10,7 +10,8 @@ const users: User[] = [
   {
     id: "user_1",
     email: "demo@example.com",
-    passwordHash: "deadbeefcafebabe0123456789abcdef:0f09709d32356f0ca33abf7ddb6ffc7c23a373c2d21661a71170de868df74eee",
+    passwordHash:
+      "deadbeefcafebabe0123456789abcdef:0f09709d32356f0ca33abf7ddb6ffc7c23a373c2d21661a71170de868df74eee",
     name: "Demo User",
     createdAt: Date.now(),
   },
