@@ -133,7 +133,23 @@ export abstract class BaseHandler implements Handler {
     }
 
     const requireToken = options.requireToken ?? false;
-    if (!ctx.projectSlug || (requireToken && !effectiveToken)) return fn();
+
+    // No project slug → local dev mode, no proxy context needed.
+    if (!ctx.projectSlug) return fn();
+
+    // Token required but missing in proxy mode → reject. Without a valid
+    // token the request would execute without project-scoped credentials,
+    // exposing content (modules, pages, data) to unauthenticated callers.
+    if (requireToken && !effectiveToken) {
+      serverLogger.warn(
+        `[${this.metadata.name}] Rejected request: token required but missing`,
+        { projectSlug: ctx.projectSlug },
+      );
+      return {
+        response: Response.json({ error: "Authentication required" }, { status: 401 }),
+        continue: false,
+      } as T;
+    }
 
     if (fsWrapper.isMultiProjectMode?.()) {
       const isProduction = (ctx.resolvedEnvironment ?? ctx.requestContext?.mode) === "production";
