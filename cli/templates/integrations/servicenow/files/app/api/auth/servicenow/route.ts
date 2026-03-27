@@ -21,8 +21,13 @@ export function GET(request: Request): Response {
 
   const instanceUrl = instance.includes("://") ? instance : `https://${instance}`;
 
-  const { protocol, host } = new URL(request.url);
-  const baseUrl = getEnv("NEXT_PUBLIC_APP_URL") ?? `${protocol}//${host}`;
+  const baseUrl = getEnv("NEXT_PUBLIC_APP_URL");
+  if (!baseUrl) {
+    return Response.json(
+      { error: "NEXT_PUBLIC_APP_URL environment variable is required" },
+      { status: 500 },
+    );
+  }
   const redirectUri = `${baseUrl}/api/auth/servicenow/callback`;
 
   const authUrl = new URL(`${instanceUrl}/oauth_auth.do`);
