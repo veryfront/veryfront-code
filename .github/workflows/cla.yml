@@ -14,7 +14,8 @@ jobs:
     if: >-
       github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.user.login != 'github-actions[bot]' &&
-      github.event.pull_request.user.login != 'renovate[bot]'
+      github.event.pull_request.user.login != 'renovate[bot]' &&
+      github.event.pull_request.user.login != 'aikido-autofix[bot]'
     steps:
       - name: Checkout base branch
         uses: actions/checkout@v4
@@ -44,7 +45,7 @@ jobs:
           missing=()
           for login in "${contributors[@]}"; do
             case "${login}" in
-              dependabot\[bot\]|github-actions\[bot\]|renovate\[bot\])
+              dependabot\[bot\]|github-actions\[bot\]|renovate\[bot\]|aikido-autofix\[bot\])
                 continue
                 ;;
             esac
