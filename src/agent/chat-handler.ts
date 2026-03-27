@@ -174,7 +174,22 @@ function isResponseLike(value: unknown): value is Response {
 // Public API
 // ---------------------------------------------------------------------------
 
-export type ChatHandlerMessageInput = Omit<Message, "id"> & { id?: string };
+export type ChatHandlerMessageInput = Omit<Message, "id"> & {
+  id?: string;
+  /**
+   * Mark a system message as trusted server-generated content.
+   *
+   * By default, system-role messages from `beforeStream` hooks are
+   * downgraded to user-role with boundary markers to prevent prompt
+   * injection via RAG content. Set `trusted: true` to preserve
+   * system-role for messages that contain only server-generated
+   * instructions (e.g. tenant guardrails, policy prompts).
+   *
+   * **Never set `trusted: true` on messages that interpolate
+   * user-uploaded content** — this bypasses injection protection.
+   */
+  trusted?: boolean;
+};
 
 export interface ChatHandlerBeforeStreamContext {
   request: Request;
@@ -225,12 +240,14 @@ function normalizeHookMessages(
   return messages.map((message) => {
     const id = message.id ?? `${prefix}_${idCounter.value++}`;
 
-    // Security: downgrade system-role messages from hooks to user-role.
-    // beforeStream hooks often inject RAG results as system messages,
-    // which lets prompt-injection payloads in uploaded documents hijack
-    // the LLM's system instructions. Wrapping the content in boundary
-    // markers and sending it as a user message prevents this.
-    if (message.role === "system") {
+    // Security: downgrade untrusted system-role messages from hooks to
+    // user-role. beforeStream hooks often inject RAG results as system
+    // messages, which lets prompt-injection payloads in uploaded documents
+    // hijack the LLM's system instructions. Wrapping the content in
+    // boundary markers and sending it as a user message prevents this.
+    // Messages marked `trusted: true` are preserved as system-role —
+    // use this for server-generated guardrails that must not be downgraded.
+    if (message.role === "system" && !message.trusted) {
       return {
         ...message,
         id,

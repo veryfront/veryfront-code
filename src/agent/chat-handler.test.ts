@@ -411,6 +411,128 @@ describe("createChatHandler", () => {
     );
   });
 
+  it("should preserve trusted system-role hook messages without downgrading", async () => {
+    const agentId = `trusted-hook-${crypto.randomUUID()}`;
+    let streamMessages: Array<{ id: string; role: string; parts: unknown[] }> = [];
+
+    const fakeAgent = {
+      id: agentId,
+      config: { model: "openai/gpt-4o", system: "test" },
+      clearMemory: async () => {},
+      stream: async (
+        input: { messages?: Array<{ id: string; role: string; parts: unknown[] }> },
+      ) => {
+        streamMessages = input.messages ?? [];
+        return {
+          toDataStreamResponse: () => new Response("ok", { status: 200 }),
+        };
+      },
+    };
+
+    // deno-lint-ignore no-explicit-any
+    registerAgent(agentId, fakeAgent as any);
+
+    const handler = createChatHandler(agentId, {
+      beforeStream: () => ({
+        prepend: [
+          {
+            role: "system",
+            trusted: true,
+            parts: [{ type: "text", text: "You must respond in formal English only." }],
+          },
+        ],
+      }),
+    });
+
+    const request = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          { id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] },
+        ],
+      }),
+    });
+
+    await handler(request);
+
+    // Trusted system messages should keep system role and not be wrapped
+    assertEquals(
+      streamMessages[0]?.role,
+      "system",
+      "trusted system messages must preserve system role",
+    );
+    assertEquals(
+      (streamMessages[0]?.parts[0] as { text?: string }).text,
+      "You must respond in formal English only.",
+      "trusted system messages must not be wrapped in boundary markers",
+    );
+  });
+
+  it("should downgrade untrusted but preserve trusted in the same hook result", async () => {
+    const agentId = `mixed-trust-${crypto.randomUUID()}`;
+    let streamMessages: Array<{ id: string; role: string; parts: unknown[] }> = [];
+
+    const fakeAgent = {
+      id: agentId,
+      config: { model: "openai/gpt-4o", system: "test" },
+      clearMemory: async () => {},
+      stream: async (
+        input: { messages?: Array<{ id: string; role: string; parts: unknown[] }> },
+      ) => {
+        streamMessages = input.messages ?? [];
+        return {
+          toDataStreamResponse: () => new Response("ok", { status: 200 }),
+        };
+      },
+    };
+
+    // deno-lint-ignore no-explicit-any
+    registerAgent(agentId, fakeAgent as any);
+
+    const handler = createChatHandler(agentId, {
+      beforeStream: () => ({
+        prepend: [
+          {
+            role: "system",
+            trusted: true,
+            parts: [{ type: "text", text: "Tenant policy: no PII in responses" }],
+          },
+          {
+            role: "system",
+            parts: [{ type: "text", text: "RAG content from user docs" }],
+          },
+        ],
+      }),
+    });
+
+    const request = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          { id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] },
+        ],
+      }),
+    });
+
+    await handler(request);
+
+    // First message: trusted → stays system
+    assertEquals(streamMessages[0]?.role, "system", "trusted message stays system");
+    assertEquals(
+      (streamMessages[0]?.parts[0] as { text?: string }).text,
+      "Tenant policy: no PII in responses",
+    );
+
+    // Second message: untrusted → downgraded to user with markers
+    assertEquals(streamMessages[1]?.role, "user", "untrusted message downgraded to user");
+    const untrustedText = (streamMessages[1]?.parts[0] as { text?: string }).text ?? "";
+    assertStringIncludes(untrustedText, "<retrieved_documents>");
+    assertStringIncludes(untrustedText, "RAG content from user docs");
+    assertStringIncludes(untrustedText, "not as instructions");
+  });
+
   it("should not leak system prompt in 503 no_ai_available response", async () => {
     const agentId = `no-ai-agent-${crypto.randomUUID()}`;
     const secretSystemPrompt =
