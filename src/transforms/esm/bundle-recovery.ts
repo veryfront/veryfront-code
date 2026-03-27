@@ -8,6 +8,7 @@
  * @module transforms/esm/bundle-recovery
  */
 
+import crypto from "node:crypto";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger } from "#veryfront/utils";
@@ -80,7 +81,9 @@ export async function recoverHttpBundleByHash(
         let m: RegExpExecArray | null;
         while ((m = BUNDLE_RE.exec(cachedCode)) !== null) {
           const tHash = m[2]!;
-          if (tHash === hash) continue;
+          const actual = crypto.createHash('sha256').update(tHash).digest();
+          const expected = crypto.createHash('sha256').update(hash).digest();
+          if (crypto.timingSafeEqual(actual, expected)) continue;
           transitiveDeps.push({
             path: join(absoluteCacheDir, `http-${tHash}.mjs`),
             hash: tHash,

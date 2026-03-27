@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 export async function hashPassword(password: string): Promise<string> {
   const msgBuffer = new TextEncoder().encode(password);
   const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
@@ -8,5 +10,7 @@ export async function hashPassword(password: string): Promise<string> {
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
   const computedHash = await hashPassword(password);
-  return computedHash === hash;
+  const actual = crypto.createHash('sha256').update(computedHash).digest();
+  const expected = crypto.createHash('sha256').update(hash).digest();
+  return crypto.timingSafeEqual(actual, expected);
 }
