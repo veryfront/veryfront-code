@@ -117,6 +117,10 @@ export async function listInvoices(options?: {
 }): Promise<QuickBooksInvoice[]> {
   const maxResults = options?.maxResults ?? 100;
 
+  if (options?.customerId && !/^[a-zA-Z0-9_\-:.]+$/.test(options.customerId)) {
+    throw new Error('Invalid customerId: must contain only alphanumeric characters, underscores, hyphens, colons, or periods');
+  }
+
   let query = `SELECT * FROM Invoice MAXRESULTS ${maxResults}`;
   if (options?.customerId) {
     query = `SELECT * FROM Invoice WHERE CustomerRef = '${options.customerId}' MAXRESULTS ${maxResults}`;
