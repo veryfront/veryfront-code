@@ -183,7 +183,7 @@ export function createUploadHandler(
       const fileType = inferType(file);
       if (!fileType) {
         return Response.json(
-          { error: `Unsupported file type: ${file.type || sanitizeFileName(file.name)}` },
+          { error: `Unsupported file type: ${sanitizeFileName(file.type || file.name)}` },
           { status: 400 },
         );
       }
