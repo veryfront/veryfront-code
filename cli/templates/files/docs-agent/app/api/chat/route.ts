@@ -23,12 +23,12 @@ export const POST = createChatHandler("rag", {
       return {
         prepend: [
           {
-            role: "system",
+            role: "user",
             parts: [
               {
                 type: "text",
                 text:
-                  `Here are relevant documents retrieved for the user's question:\n\n${contextBlock}\n\n` +
+                  `Here are relevant documents retrieved for your question:\n\n${contextBlock}\n\n` +
                   "Use these documents to answer. Cite the document title when referencing information.",
               },
             ],
