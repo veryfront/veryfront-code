@@ -18,23 +18,28 @@ export function generateNonce(): string {
  * Build a default CSP that works for typical veryfront apps.
  *
  * - Scripts: nonce-based (covers SSR-injected and hydration scripts)
- * - Styles: 'self' + 'unsafe-inline' (CSS-in-JS, Tailwind JIT, Google Fonts)
+ * - Styles: 'self' + 'unsafe-inline' + nonce (CSS-in-JS needs unsafe-inline;
+ *   nonce is included so apps that support nonce-based styles can migrate away
+ *   from unsafe-inline by removing it in their custom config)
  * - Images/media/fonts: 'self' + data: + https:
- * - Connections: 'self' + wss: (WebSocket for HMR/live reload)
- * - Objects/frames: none (block Flash, iframes, embeds)
+ * - Connections: 'self' + wss: + https: (WebSocket for HMR/live reload, API calls)
+ * - Objects: 'none' (block Flash/plugins)
+ * - Frames: 'self' (allows same-origin iframes; apps embedding external
+ *   content like YouTube or OAuth popups should add those origins via
+ *   security.csp.frameSrc in veryfront.config.ts)
  * - Base-uri/form-action: 'self' (prevent base tag hijack and form redirect)
  */
 function buildDefaultCSP(nonce: string): string {
   return [
     `default-src 'self'`,
     `script-src 'self' 'nonce-${nonce}'`,
-    `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
+    `style-src 'self' 'unsafe-inline' 'nonce-${nonce}' https://fonts.googleapis.com`,
     `img-src 'self' data: https:`,
     `font-src 'self' data: https://fonts.gstatic.com`,
     `connect-src 'self' wss: https:`,
-    `media-src 'self'`,
+    `media-src 'self' https:`,
     `object-src 'none'`,
-    `frame-src 'none'`,
+    `frame-src 'self'`,
     `base-uri 'self'`,
     `form-action 'self'`,
   ].join("; ");

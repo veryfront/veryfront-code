@@ -39,9 +39,9 @@ describe("security/http/response/security-handler", () => {
     it("should return default CSP in production when no CSP is configured", () => {
       const result = buildCSP(false, "test-nonce", null);
       assert(result.includes("default-src 'self'"), "should have default-src");
-      assert(result.includes("'nonce-test-nonce'"), "should include nonce");
+      assert(result.includes("'nonce-test-nonce'"), "should include nonce in script-src");
       assert(result.includes("object-src 'none'"), "should block objects");
-      assert(result.includes("frame-src 'none'"), "should block frames");
+      assert(result.includes("frame-src 'self'"), "should allow same-origin frames");
       assert(result.includes("base-uri 'self'"), "should restrict base-uri");
     });
 
@@ -301,6 +301,69 @@ describe("security/http/response/security-handler", () => {
       const csp = headers.get("Content-Security-Policy")!;
       assert(csp.includes("fonts.googleapis.com"), "should allow Google Fonts styles");
       assert(csp.includes("fonts.gstatic.com"), "should allow Google Fonts files");
+    });
+
+    it("default CSP should allow same-origin frames", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("frame-src 'self'"),
+        "should allow same-origin iframes by default",
+      );
+    });
+
+    it("default CSP should include nonce in style-src for migration path", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "my-nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("style-src 'self' 'unsafe-inline' 'nonce-my-nonce'"),
+        "style-src should include both unsafe-inline and nonce for migration",
+      );
+    });
+
+    it("default CSP should block object embeds", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(csp.includes("object-src 'none'"), "should block plugins/Flash");
+    });
+
+    it("default CSP should restrict form-action to self", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("form-action 'self'"),
+        "should prevent form submission to external URLs",
+      );
+    });
+
+    it("custom config with frame-src overrides default frame-src", () => {
+      const headers = new Headers();
+      const config: SecurityConfig = {
+        csp: {
+          "default-src": "'self'",
+          "frame-src": "'self' https://www.youtube.com https://accounts.google.com",
+        },
+      };
+      applySecurityHeaders(headers, false, "nonce", null, config);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(csp.includes("https://www.youtube.com"), "should allow YouTube embeds");
+      assert(csp.includes("https://accounts.google.com"), "should allow Google OAuth");
+      assert(!csp.includes("object-src"), "custom config replaces entire default");
+    });
+
+    it("empty csp config object should fall through to default", () => {
+      const headers = new Headers();
+      const config: SecurityConfig = { csp: {} };
+      applySecurityHeaders(headers, false, "nonce", null, config);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("default-src 'self'"),
+        "empty csp object should use default CSP",
+      );
     });
   });
 });
