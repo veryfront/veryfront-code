@@ -196,6 +196,10 @@ export interface ProxyHandlerOptions {
   logger?: ProxyLogger;
 }
 
+function getRequestHost(req: Request): string {
+  return req.headers.get("host") ?? new URL(req.url).host;
+}
+
 function getScope(environment: string | null): TokenScope {
   return environment === "preview" ? "preview" : "production";
 }
@@ -477,7 +481,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   }
 
   async function processRequest(req: Request): Promise<ProxyContext> {
-    const rawHost = req.headers.get("host") ?? "";
+    const rawHost = getRequestHost(req);
     const host = rawHost.replace(/:\d+$/, "");
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
@@ -744,7 +748,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   }
 
   async function getTokenForApi(req: Request): Promise<string | undefined> {
-    const rawHost = req.headers.get("host") ?? "";
+    const rawHost = getRequestHost(req);
     const host = rawHost.replace(/:\d+$/, "");
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);

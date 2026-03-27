@@ -71,12 +71,34 @@ interface RequestHeaders {
   projectPath: string | undefined;
 }
 
+function parseForwardedHost(raw: string | null): string | undefined {
+  if (!raw) return undefined;
+  // x-forwarded-host can be a comma-separated list when multiple proxies
+  // are chained. Take the first (client-facing) entry and trim whitespace.
+  const first = raw.split(",")[0]?.trim();
+  return first || undefined;
+}
+
+function getEffectiveHost(req: Request, url: URL): string {
+  const forwardedHost = parseForwardedHost(req.headers.get("x-forwarded-host"));
+  return forwardedHost ?? req.headers.get("host") ?? url.host;
+}
+
 /**
  * Extract project-related headers from a request.
+ *
+ * When `x-project-slug` is absent or blank, the slug is derived from
+ * the effective host (x-forwarded-host > host header > url.host) via
+ * domain parsing. This allows proxy-forwarded requests to resolve
+ * project context from the hostname alone.
  */
 export function extractRequestHeaders(req: Request, url: URL): RequestHeaders {
+  const host = getEffectiveHost(req, url);
+  const parsedDomain = parseProjectDomain(host);
+  const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
+
   return {
-    projectSlug: req.headers.get("x-project-slug") ?? undefined,
+    projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,
     projectId: req.headers.get("x-project-id") ?? undefined,
     releaseId: req.headers.get("x-release-id") ?? undefined,
     branchId: req.headers.get("x-branch-id") ?? undefined,
@@ -139,19 +161,23 @@ export async function resolveProject(
   headers: RequestHeaders,
   opts: ProjectResolutionOptions,
 ): Promise<ProjectResolutionResult> {
-  const hostHeader = req.headers.get("host") ?? url.host;
-  const forwardedHost = req.headers.get("x-forwarded-host") ?? undefined;
-  const host = forwardedHost ?? hostHeader;
+  const host = getEffectiveHost(req, url);
 
   const deps = getDeps();
   const parsedDomain = deps.parseProjectDomain(host);
   const configuredSlug = opts.config?.fs?.veryfront?.projectSlug;
+  const resolvedSlugBeforeDefault = opts.reqCtx.slug || opts.wsSlugOverride || configuredSlug;
 
   // Initial resolution from headers/config/context
   // Use || for slug (empty string should fall through to defaults)
-  let projectSlug = opts.reqCtx.slug || opts.wsSlugOverride || configuredSlug ||
-    opts.defaultProjectSlug;
-  let projectId: string | undefined = headers.projectId ?? opts.defaultProjectId;
+  let projectSlug = resolvedSlugBeforeDefault || opts.defaultProjectSlug;
+  // Only apply defaultProjectId when the resolved slug matches the default
+  // or no slug was resolved at all. Suppressing the ID when a *different*
+  // slug was resolved prevents cache/invalidation state splits.
+  const slugMatchesDefault = !resolvedSlugBeforeDefault ||
+    resolvedSlugBeforeDefault === opts.defaultProjectSlug;
+  let projectId: string | undefined = headers.projectId ??
+    (slugMatchesDefault ? opts.defaultProjectId : undefined);
   let releaseId: string | undefined = headers.releaseId;
   let environmentName: string | undefined;
   let proxyEnv = parseProxyEnvironment(headers.environment ?? null);
@@ -171,7 +197,6 @@ export async function resolveProject(
     if (effectiveToken) {
       logger.debug("Custom domain detected, looking up project", {
         host,
-        forwardedHost,
       });
 
       const lookupResult = await withSpan(
