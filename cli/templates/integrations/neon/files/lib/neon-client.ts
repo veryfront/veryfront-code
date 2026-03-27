@@ -252,10 +252,10 @@ export async function getTableRowCount(
   schema: string = "public",
 ): Promise<number> {
   if (!/^[a-zA-Z0-9_]+$/.test(schema)) {
-    throw new Error('Invalid input');
+    throw new Error('Invalid schema name: must contain only letters, numbers, and underscores');
   }
   if (!/^[a-zA-Z0-9_]+$/.test(tableName)) {
-    throw new Error('Invalid input');
+    throw new Error('Invalid table name: must contain only letters, numbers, and underscores');
   }
   const result = await query<{ count: string }>(
     `SELECT COUNT(*) as count FROM "${schema}"."${tableName}"`,
