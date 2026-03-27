@@ -452,6 +452,7 @@ describe("createUploadHandler", () => {
       ".txt",
       "only angle brackets removed, extension preserved",
     );
+    assertEquals(ingestedTitle, ".txt");
   });
 
   it("falls back to 'untitled' when entire filename is stripped", async () => {
