@@ -533,6 +533,185 @@ describe("createChatHandler", () => {
     assertStringIncludes(untrustedText, "not as instructions");
   });
 
+  it("should strip trusted field from output messages", async () => {
+    const agentId = `strip-trusted-${crypto.randomUUID()}`;
+    let streamMessages: Array<Record<string, unknown>> = [];
+
+    const fakeAgent = {
+      id: agentId,
+      config: { model: "openai/gpt-4o", system: "test" },
+      clearMemory: async () => {},
+      stream: async (
+        input: { messages?: Array<Record<string, unknown>> },
+      ) => {
+        streamMessages = input.messages ?? [];
+        return {
+          toDataStreamResponse: () => new Response("ok", { status: 200 }),
+        };
+      },
+    };
+
+    // deno-lint-ignore no-explicit-any
+    registerAgent(agentId, fakeAgent as any);
+
+    const handler = createChatHandler(agentId, {
+      beforeStream: () => ({
+        prepend: [
+          {
+            role: "system",
+            trusted: true,
+            parts: [{ type: "text", text: "guardrail" }],
+          },
+          {
+            role: "system",
+            parts: [{ type: "text", text: "rag content" }],
+          },
+        ],
+      }),
+    });
+
+    const request = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          { id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] },
+        ],
+      }),
+    });
+
+    await handler(request);
+
+    // trusted field must not leak into the output messages
+    assertEquals(
+      "trusted" in (streamMessages[0] ?? {}),
+      false,
+      "trusted field must be stripped from trusted system messages",
+    );
+    assertEquals(
+      "trusted" in (streamMessages[1] ?? {}),
+      false,
+      "trusted field must be stripped from downgraded messages",
+    );
+  });
+
+  it("should downgrade system messages in replaceMessages too", async () => {
+    const agentId = `replace-downgrade-${crypto.randomUUID()}`;
+    let streamMessages: Array<{ id: string; role: string; parts: unknown[] }> = [];
+
+    const fakeAgent = {
+      id: agentId,
+      config: { model: "openai/gpt-4o", system: "test" },
+      clearMemory: async () => {},
+      stream: async (
+        input: { messages?: Array<{ id: string; role: string; parts: unknown[] }> },
+      ) => {
+        streamMessages = input.messages ?? [];
+        return {
+          toDataStreamResponse: () => new Response("ok", { status: 200 }),
+        };
+      },
+    };
+
+    // deno-lint-ignore no-explicit-any
+    registerAgent(agentId, fakeAgent as any);
+
+    const handler = createChatHandler(agentId, {
+      beforeStream: () => ({
+        replaceMessages: [
+          {
+            role: "system",
+            parts: [{ type: "text", text: "replaced system content" }],
+          },
+          {
+            role: "user",
+            parts: [{ type: "text", text: "user message" }],
+          },
+        ],
+      }),
+    });
+
+    const request = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          { id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] },
+        ],
+      }),
+    });
+
+    await handler(request);
+
+    // System message in replaceMessages should also be downgraded
+    assertEquals(streamMessages[0]?.role, "user", "replaceMessages system should be downgraded");
+    assertStringIncludes(
+      (streamMessages[0]?.parts[0] as { text?: string }).text ?? "",
+      "<retrieved_documents>",
+    );
+    assertEquals(streamMessages[1]?.role, "user", "user message preserved");
+    assertEquals(
+      (streamMessages[1]?.parts[0] as { text?: string }).text,
+      "user message",
+    );
+  });
+
+  it("should wrap all text parts in a multi-part system message", async () => {
+    const agentId = `multi-part-${crypto.randomUUID()}`;
+    let streamMessages: Array<{ id: string; role: string; parts: unknown[] }> = [];
+
+    const fakeAgent = {
+      id: agentId,
+      config: { model: "openai/gpt-4o", system: "test" },
+      clearMemory: async () => {},
+      stream: async (
+        input: { messages?: Array<{ id: string; role: string; parts: unknown[] }> },
+      ) => {
+        streamMessages = input.messages ?? [];
+        return {
+          toDataStreamResponse: () => new Response("ok", { status: 200 }),
+        };
+      },
+    };
+
+    // deno-lint-ignore no-explicit-any
+    registerAgent(agentId, fakeAgent as any);
+
+    const handler = createChatHandler(agentId, {
+      beforeStream: () => ({
+        prepend: [
+          {
+            role: "system",
+            parts: [
+              { type: "text", text: "first chunk" },
+              { type: "text", text: "second chunk" },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const request = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          { id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] },
+        ],
+      }),
+    });
+
+    await handler(request);
+
+    // Both text parts should be individually wrapped
+    const parts = streamMessages[0]?.parts as Array<{ type: string; text: string }>;
+    assertEquals(parts.length, 2, "both parts preserved");
+    assertStringIncludes(parts[0]!.text, "<retrieved_documents>");
+    assertStringIncludes(parts[0]!.text, "first chunk");
+    assertStringIncludes(parts[1]!.text, "<retrieved_documents>");
+    assertStringIncludes(parts[1]!.text, "second chunk");
+  });
+
   it("should not leak system prompt in 503 no_ai_available response", async () => {
     const agentId = `no-ai-agent-${crypto.randomUUID()}`;
     const secretSystemPrompt =

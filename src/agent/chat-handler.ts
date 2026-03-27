@@ -247,12 +247,15 @@ function normalizeHookMessages(
     // boundary markers and sending it as a user message prevents this.
     // Messages marked `trusted: true` are preserved as system-role —
     // use this for server-generated guardrails that must not be downgraded.
+    // Strip the `trusted` field — it's a hook-only hint, not part of Message.
+    const { trusted: _, ...msg } = message;
+
     if (message.role === "system" && !message.trusted) {
       return {
-        ...message,
+        ...msg,
         id,
         role: "user" as const,
-        parts: message.parts.map((part) => {
+        parts: msg.parts.map((part) => {
           if (part.type === "text" && "text" in part) {
             return {
               ...part,
@@ -264,7 +267,7 @@ function normalizeHookMessages(
       } as Message;
     }
 
-    return { ...message, id } as Message;
+    return { ...msg, id } as Message;
   }) as Message[];
 }
 
