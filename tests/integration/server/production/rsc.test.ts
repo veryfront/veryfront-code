@@ -188,7 +188,11 @@ describe(
         assertEquals(clientRes.status, 200);
 
         const clientJs = await clientRes.text();
-        if (!/tryStream\(/.test(clientJs)) throw new Error("client.js missing tryStream");
+        // Verify the RSC client is a substantial boot script.
+        // Check for stable string literals that survive minification, not minified
+        // function names which bundlers may rename across versions.
+        if (clientJs.length < 1000) throw new Error("client.js too small — likely empty or broken");
+        if (!clientJs.includes("rsc-root")) throw new Error("client.js missing RSC root marker");
 
         const allow = clientRes.headers.get("access-control-allow-origin");
         if (allow) assertEquals(allow, origin);

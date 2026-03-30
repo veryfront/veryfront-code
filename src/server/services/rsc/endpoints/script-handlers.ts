@@ -1,5 +1,6 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { serverLogger } from "#veryfront/utils";
+import { CLIENT_BOOT_BUNDLE, CLIENT_DOM_BUNDLE } from "./rsc-bundles.generated.ts";
 
 const logger = serverLogger.component("script-handlers");
 
@@ -63,11 +64,7 @@ async function buildOrServeScript(
   }
 }
 
-// Placeholder for build-time injection
-const CLIENT_BOOT_BUNDLE = "";
-
-// Placeholder for build-time injection
-const CLIENT_DOM_BUNDLE = "";
+// CLIENT_BOOT_BUNDLE and CLIENT_DOM_BUNDLE imported from rsc-bundles.generated.ts
 
 export async function handleClientScript(
   adapter: RuntimeAdapter,

@@ -8,6 +8,30 @@ import {
   getReactDOMClientCDNUrl,
   REACT_DEFAULT_VERSION,
 } from "#veryfront/utils/constants/cdn.ts";
+
+/**
+ * Import React using the page's import map when available, falling back to CDN URLs.
+ * This ensures the hydration React version matches the page component's React version.
+ */
+async function importReact(): Promise<
+  { React: typeof import("react"); ReactDOM: typeof import("react-dom/client") }
+> {
+  try {
+    // Bare specifiers resolve via the <script type="importmap"> injected in <head>
+    const [React, ReactDOM] = await Promise.all([
+      import("react"),
+      import("react-dom/client"),
+    ]);
+    return { React, ReactDOM };
+  } catch {
+    // Fallback to explicit CDN URLs (e.g. when no import map is present)
+    const [React, ReactDOM] = await Promise.all([
+      import(getReactCDNUrl(REACT_DEFAULT_VERSION)),
+      import(getReactDOMClientCDNUrl(REACT_DEFAULT_VERSION)),
+    ]);
+    return { React, ReactDOM };
+  }
+}
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { consumeNdjsonStream, getContainer } from "./client-dom.ts";
 import { FS_PATH_PREFIX, HYDRATION_DATA_ID, RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
@@ -60,8 +84,7 @@ async function hydrateMarkers(): Promise<void> {
 
 async function hydratePageComponent(pagePath: string): Promise<boolean> {
   try {
-    const React = await import(getReactCDNUrl(REACT_DEFAULT_VERSION));
-    const ReactDOM = await import(getReactDOMClientCDNUrl(REACT_DEFAULT_VERSION));
+    const { React, ReactDOM } = await importReact();
 
     const base64Path = toBase64Url(pagePath);
     if (!base64Path) {
@@ -80,8 +103,9 @@ async function hydratePageComponent(pagePath: string): Promise<boolean> {
       return false;
     }
 
+    // Find the main content element, skipping hidden placeholders like data-veryfront-head
     const root = document.body.querySelector("div[class]") ??
-      document.body.firstElementChild ??
+      document.body.querySelector("div:not([data-veryfront-head]):not([style*='display:none'])") ??
       document.body;
 
     ReactDOM.hydrateRoot(root, React.createElement(Component, {}), {

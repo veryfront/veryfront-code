@@ -27,6 +27,8 @@ export interface InjectHTMLContentOptions {
   wsUrl?: string;
   /** Yjs document GUID for the bridge to join the same room */
   yjsGuid?: string;
+  /** Pre-built import map JSON for ESM module resolution (injected into <head>) */
+  importMapJson?: string;
 }
 
 export function injectHTMLContent(
@@ -55,6 +57,14 @@ export function injectHTMLContent(
 
   if (/{{\s*styles\s*}}/i.test(html)) {
     html = html.replace(/{{\s*styles\s*}}/gi, generateStyleTags(metadata));
+  }
+
+  // Inject import map into <head> for ESM module resolution (must be before any module scripts)
+  if (options.importMapJson && /<\/head>/i.test(html)) {
+    const nonceAttr = options.nonce ? ` nonce="${options.nonce}"` : "";
+    const importMapTag =
+      `<script type="importmap"${nonceAttr}>\n${options.importMapJson}\n</script>`;
+    html = html.replace(/<\/head>/i, `${importMapTag}\n</head>`);
   }
 
   const hasBodyClose = /<\/body>/i.test(html);
