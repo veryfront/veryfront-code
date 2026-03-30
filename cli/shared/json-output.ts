@@ -80,8 +80,10 @@ export async function outputJson(envelope: JsonEnvelope): Promise<void> {
 
   if (_outputPath) {
     const { dirname } = await import("veryfront/platform/path");
-    await Deno.mkdir(dirname(_outputPath), { recursive: true });
-    await Deno.writeTextFile(_outputPath, json);
+    const { createFileSystem } = await import("veryfront/platform");
+    const fs = createFileSystem();
+    await fs.mkdir(dirname(_outputPath), { recursive: true });
+    await fs.writeTextFile(_outputPath, json);
   }
 }
 

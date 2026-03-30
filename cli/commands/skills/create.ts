@@ -7,6 +7,9 @@
 import type { ParsedArgs } from "#cli/shared/types";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { logSuccess } from "#cli/utils";
+import { createFileSystem } from "veryfront/platform";
+
+const VALID_SKILL_NAME = /^[a-z0-9][a-z0-9-]*$/;
 
 const SKILL_JSON_TEMPLATE = (name: string) =>
   JSON.stringify(
@@ -53,11 +56,19 @@ export async function createSkill(args: ParsedArgs): Promise<void> {
     Deno.exit(1);
   }
 
+  if (!VALID_SKILL_NAME.test(name)) {
+    console.error(
+      `Invalid skill name "${name}". Use lowercase letters, numbers, and hyphens (e.g. "my-skill").`,
+    );
+    Deno.exit(1);
+  }
+
+  const fs = createFileSystem();
   const dir = name;
 
-  await Deno.mkdir(dir, { recursive: true });
-  await Deno.writeTextFile(`${dir}/skill.json`, SKILL_JSON_TEMPLATE(name));
-  await Deno.writeTextFile(`${dir}/SKILL.md`, SKILL_MD_TEMPLATE(name));
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeTextFile(`${dir}/skill.json`, SKILL_JSON_TEMPLATE(name));
+  await fs.writeTextFile(`${dir}/SKILL.md`, SKILL_MD_TEMPLATE(name));
 
   if (isJsonMode()) {
     await outputJson(

@@ -9,10 +9,22 @@ describe("interactive", () => {
       assertEquals(isInteractive(), true);
     });
 
-    it("returns false after setNonInteractive", () => {
+    it("returns false after setNonInteractive(true)", () => {
       setNonInteractive(true);
       assertEquals(isInteractive(), false);
-      resetInteractiveMode(); // cleanup
+      resetInteractiveMode();
+    });
+
+    it("returns true after setNonInteractive(false)", () => {
+      setNonInteractive(true);
+      setNonInteractive(false);
+      assertEquals(isInteractive(), true);
+    });
+
+    it("resetInteractiveMode restores default", () => {
+      setNonInteractive(true);
+      resetInteractiveMode();
+      assertEquals(isInteractive(), true);
     });
   });
 

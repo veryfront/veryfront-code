@@ -79,6 +79,8 @@ export function buildCommand(options: BuildOptions): Promise<void> {
             success: false,
             error: error instanceof Error ? error.message : String(error),
           });
+          const { exit } = await import("veryfront/platform");
+          exit(1);
           return;
         }
         handleBuildError(error);

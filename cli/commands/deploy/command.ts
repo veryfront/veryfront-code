@@ -13,12 +13,7 @@ import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/sha
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
-import {
-  createSuccessEnvelope,
-  isJsonMode,
-  outputJson,
-  streamJsonLine,
-} from "../../shared/json-output.ts";
+import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 
 /**
  * Zod schema for deploy command arguments
@@ -220,11 +215,16 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   spinner.stop();
 
   if (isJsonMode()) {
-    await outputJson(createSuccessEnvelope("deploy", {
-      release: { id: release.id, name: release.name, version: release.version },
-      environment: env,
-      branch,
-    }));
+    streamJsonLine({ type: "step", name: "deploy", status: "completed" });
+    streamJsonLine({
+      type: "result",
+      success: true,
+      data: {
+        release: { id: release.id, name: release.name, version: release.version },
+        environment: env,
+        branch,
+      },
+    });
     return;
   }
 

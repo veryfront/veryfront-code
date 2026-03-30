@@ -9,6 +9,7 @@ import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json
 import { parseSkillJson } from "../../skills/types.ts";
 import { COMMANDS } from "../../help/command-definitions.ts";
 import { logError, logSuccess } from "#cli/utils";
+import { createFileSystem } from "veryfront/platform";
 
 interface ValidationIssue {
   severity: "error" | "warning";
@@ -18,22 +19,26 @@ interface ValidationIssue {
 export async function validateSkill(args: ParsedArgs): Promise<void> {
   const dir = (args._[2] as string | undefined) ?? ".";
   const issues: ValidationIssue[] = [];
+  const fs = createFileSystem();
 
   // Check skill.json exists and parses
   let manifestRaw: string;
   try {
-    manifestRaw = await Deno.readTextFile(`${dir}/skill.json`);
+    manifestRaw = await fs.readTextFile(`${dir}/skill.json`);
   } catch {
     issues.push({ severity: "error", message: "skill.json not found" });
-    return outputResults("skills", dir, issues, args);
+    return outputResults(dir, issues);
   }
 
   let parsed: ReturnType<typeof parseSkillJson>;
   try {
     parsed = parseSkillJson(JSON.parse(manifestRaw));
   } catch {
-    issues.push({ severity: "error", message: "skill.json is not valid JSON" });
-    return outputResults("skills", dir, issues, args);
+    issues.push({
+      severity: "error",
+      message: "skill.json is not valid JSON",
+    });
+    return outputResults(dir, issues);
   }
 
   if (!parsed.success) {
@@ -41,12 +46,12 @@ export async function validateSkill(args: ParsedArgs): Promise<void> {
       severity: "error",
       message: `skill.json schema error: ${parsed.error}`,
     });
-    return outputResults("skills", dir, issues, args);
+    return outputResults(dir, issues);
   }
 
   // Check SKILL.md exists
   try {
-    const content = await Deno.readTextFile(`${dir}/SKILL.md`);
+    const content = await fs.readTextFile(`${dir}/SKILL.md`);
     if (!content.trim()) {
       issues.push({ severity: "warning", message: "SKILL.md is empty" });
     }
@@ -65,20 +70,18 @@ export async function validateSkill(args: ParsedArgs): Promise<void> {
     }
   }
 
-  return outputResults("skills", dir, issues, args);
+  return outputResults(dir, issues);
 }
 
 async function outputResults(
-  command: string,
   dir: string,
   issues: ValidationIssue[],
-  _args: ParsedArgs,
 ): Promise<void> {
   const hasErrors = issues.some((i) => i.severity === "error");
 
   if (isJsonMode()) {
     await outputJson(
-      createSuccessEnvelope(command, {
+      createSuccessEnvelope("skills", {
         directory: dir,
         valid: !hasErrors,
         issues,

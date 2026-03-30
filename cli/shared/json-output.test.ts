@@ -4,8 +4,11 @@ import {
   createErrorEnvelope,
   createSuccessEnvelope,
   formatJsonOutput,
+  getOutputPath,
   isJsonMode,
   setJsonMode,
+  setOutputPath,
+  streamJsonLine,
 } from "./json-output.ts";
 
 describe("json-output", () => {
@@ -18,26 +21,71 @@ describe("json-output", () => {
     it("can be set to true", () => {
       setJsonMode(true);
       assertEquals(isJsonMode(), true);
-      setJsonMode(false); // cleanup
+      setJsonMode(false);
+    });
+
+    it("can toggle back to false", () => {
+      setJsonMode(true);
+      setJsonMode(false);
+      assertEquals(isJsonMode(), false);
+    });
+  });
+
+  describe("setOutputPath / getOutputPath", () => {
+    it("defaults to null", () => {
+      setOutputPath(null);
+      assertEquals(getOutputPath(), null);
+    });
+
+    it("stores a path", () => {
+      setOutputPath("/tmp/output.json");
+      assertEquals(getOutputPath(), "/tmp/output.json");
+      setOutputPath(null);
+    });
+
+    it("can be reset to null", () => {
+      setOutputPath("/tmp/test.json");
+      setOutputPath(null);
+      assertEquals(getOutputPath(), null);
     });
   });
 
   describe("createSuccessEnvelope", () => {
     it("creates envelope with command and data", () => {
-      const envelope = createSuccessEnvelope("deploy", { url: "https://example.com" });
+      const envelope = createSuccessEnvelope("deploy", {
+        url: "https://example.com",
+      });
       assertEquals(envelope.success, true);
       assertEquals(envelope.command, "deploy");
       assertEquals(envelope.data, { url: "https://example.com" });
     });
 
     it("includes timing when provided", () => {
-      const envelope = createSuccessEnvelope("build", { chunks: 5 }, { duration_ms: 3200 });
+      const envelope = createSuccessEnvelope("build", { chunks: 5 }, {
+        duration_ms: 3200,
+      });
       assertEquals(envelope.timing, { duration_ms: 3200 });
     });
 
     it("omits timing when not provided", () => {
       const envelope = createSuccessEnvelope("whoami", { user: "test" });
       assertEquals(envelope.timing, undefined);
+    });
+
+    it("handles empty data object", () => {
+      const envelope = createSuccessEnvelope("clean", {});
+      assertEquals(envelope.success, true);
+      assertEquals(envelope.data, {});
+    });
+
+    it("handles null data", () => {
+      const envelope = createSuccessEnvelope("test", null);
+      assertEquals(envelope.data, null);
+    });
+
+    it("handles array data", () => {
+      const envelope = createSuccessEnvelope("list", [1, 2, 3]);
+      assertEquals(envelope.data, [1, 2, 3]);
     });
   });
 
@@ -64,12 +112,55 @@ describe("json-output", () => {
       });
       assertEquals(envelope.error.context, { file: "index.tsx" });
     });
+
+    it("omits context when not provided", () => {
+      const envelope = createErrorEnvelope("test", {
+        code: "TEST_ERROR",
+        slug: "test-failed",
+        message: "Tests failed",
+      });
+      assertEquals(envelope.error.context, undefined);
+    });
   });
 
   describe("formatJsonOutput", () => {
     it("returns pretty-printed JSON string", () => {
-      const output = formatJsonOutput({ success: true, command: "test", data: {} });
-      assertEquals(output, JSON.stringify({ success: true, command: "test", data: {} }, null, 2));
+      const output = formatJsonOutput({
+        success: true,
+        command: "test",
+        data: {},
+      });
+      assertEquals(
+        output,
+        JSON.stringify({ success: true, command: "test", data: {} }, null, 2),
+      );
+    });
+
+    it("preserves nested structure", () => {
+      const envelope = createSuccessEnvelope("deploy", {
+        release: { id: "123", version: "1.0" },
+      });
+      const output = formatJsonOutput(envelope);
+      const parsed = JSON.parse(output);
+      assertEquals(parsed.data.release.id, "123");
+    });
+
+    it("error envelope is valid JSON", () => {
+      const envelope = createErrorEnvelope("cmd", {
+        code: "ERR",
+        slug: "s",
+        message: "m",
+      });
+      const output = formatJsonOutput(envelope);
+      const parsed = JSON.parse(output);
+      assertEquals(parsed.success, false);
+      assertEquals(parsed.error.code, "ERR");
+    });
+  });
+
+  describe("streamJsonLine", () => {
+    it("is a function", () => {
+      assertEquals(typeof streamJsonLine, "function");
     });
   });
 });
