@@ -62,8 +62,11 @@ export class MCPServer {
   }
 
   /**
-   * Configure integration tools to be lazily loaded on first tools/list call.
-   * Integration tools are fetched from the API and registered in the global tool registry.
+   * Configure integration tools to be loaded from the API.
+   *
+   * When API-side integration tools are available (apiBaseUrl + apiToken),
+   * tools are loaded remotely via the API's /integrations/tools/list endpoint.
+   * Otherwise falls back to the legacy local loading path.
    */
   setIntegrationLoader(config: IntegrationLoaderConfig): void {
     this.integrationLoader = config;
@@ -137,12 +140,24 @@ export class MCPServer {
   private async listTools(): Promise<{ tools: Array<Record<string, unknown>> }> {
     // Lazily load integration tools on first call
     if (this.integrationLoader && !this.integrationsLoaded) {
+      // Try remote loading (API-side integration tools) first, then legacy fallback
+      let loaded = false;
       try {
-        this.integrationsLoaded = await this.loadIntegrationTools(this.integrationLoader);
+        loaded = await this.loadRemoteIntegrationTools(this.integrationLoader);
       } catch (_) {
-        // expected: non-fatal integration loading failure; tools won't be available
-        // Keep integrationsLoaded=false so a later tools/list can retry.
+        // Remote loading failed — will try legacy below
       }
+
+      if (!loaded) {
+        try {
+          loaded = await this.loadIntegrationTools(this.integrationLoader);
+        } catch (_) {
+          // expected: non-fatal integration loading failure; tools won't be available
+          // Keep integrationsLoaded=false so a later tools/list can retry.
+        }
+      }
+
+      this.integrationsLoaded = loaded;
     }
 
     const registry = getMCPRegistry();
@@ -454,6 +469,30 @@ export class MCPServer {
     };
   }
 
+  private async loadRemoteIntegrationTools(config: IntegrationLoaderConfig): Promise<boolean> {
+    const { apiBaseUrl, apiToken } = config;
+    if (!apiToken) return false; // No token means we can't call the API
+
+    const { loadRemoteIntegrationTools: loadRemote, syncIntegrationConfig } = await import(
+      "../integrations/remote-tools.ts"
+    );
+
+    // Sync config to API first
+    const integrationConfigs: Record<string, { scope?: string; tools?: string[] }> = {};
+    for (const [name, cfg] of Object.entries(config.integrations)) {
+      integrationConfigs[name] = {
+        scope: cfg?.scope ?? (cfg?.perUser ? "endUser" : "project"),
+        tools: cfg?.tools,
+      };
+    }
+    await syncIntegrationConfig(apiBaseUrl, apiToken, integrationConfigs);
+
+    // Load remote tools
+    const count = await loadRemote(apiBaseUrl, apiToken);
+    return count > 0;
+  }
+
+  /** @deprecated Legacy local loading — fallback when API-side tools are unavailable */
   private async loadIntegrationTools(config: IntegrationLoaderConfig): Promise<boolean> {
     const { fetchConnector } = await import("../integrations/connector-fetcher.ts");
     const { createIntegrationTools } = await import("../integrations/tool-factory.ts");

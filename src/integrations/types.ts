@@ -50,7 +50,12 @@ export interface IntegrationConnector {
   tools: IntegrationTool[];
 }
 
+export type IntegrationScope = "project" | "endUser";
+
 export interface IntegrationRuntimeConfig {
+  /** Token scope. "project" = shared project token, "endUser" = per-end-user token. */
+  scope?: IntegrationScope;
+  /** @deprecated Use `scope: "endUser"` instead. */
   perUser?: boolean;
   /** Allowlist of tool IDs to expose. When set, only these tools are registered. */
   tools?: string[];

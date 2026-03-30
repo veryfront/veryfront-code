@@ -37,6 +37,7 @@ import { createStreamState, processStream } from "./ai-stream-handler.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { generateText, type LanguageModel, streamText } from "ai";
 import { AGENT_DEFAULTS } from "../ai-defaults.ts";
+import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -294,7 +295,13 @@ export class AgentRuntime {
       }
     }
     const streamAbortSignal = streamAbortController.signal;
-    const toolContext = { agentId: this.id, abortSignal: streamAbortSignal, ...context };
+    const streamCacheCtx = tryGetCacheKeyContext();
+    const toolContext = {
+      agentId: this.id,
+      abortSignal: streamAbortSignal,
+      projectId: streamCacheCtx?.projectId,
+      ...context,
+    };
     const textPartId = generateId("text");
 
     // Resolve model BEFORE creating the ReadableStream — if this throws
@@ -531,6 +538,7 @@ export class AgentRuntime {
               toolCall.status = "executing";
               const startTime = Date.now();
 
+              const cacheCtx = tryGetCacheKeyContext();
               const result = await executeConfiguredTool(
                 tc.toolName,
                 toolCall.args,
@@ -538,6 +546,7 @@ export class AgentRuntime {
                 {
                   agentId: this.id,
                   toolCallId: tc.toolCallId,
+                  projectId: cacheCtx?.projectId,
                 },
               );
 
