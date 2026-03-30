@@ -473,11 +473,13 @@ export class MCPServer {
     const { apiBaseUrl, apiToken } = config;
     if (!apiToken) return false; // No token means we can't call the API
 
-    const { loadRemoteIntegrationTools: loadRemote, syncIntegrationConfig } = await import(
+    const { syncIntegrationConfig } = await import(
       "../integrations/remote-tools.ts"
     );
 
-    // Sync config to API first
+    // Sync config to API — this is the only responsibility of the MCP server path.
+    // Actual tool discovery happens per-request in the agent runtime (getAvailableTools)
+    // and the API's MCP tools/list handler.
     const integrationConfigs: Record<string, { scope?: string; tools?: string[] }> = {};
     for (const [name, cfg] of Object.entries(config.integrations)) {
       integrationConfigs[name] = {
@@ -486,10 +488,7 @@ export class MCPServer {
       };
     }
     await syncIntegrationConfig(apiBaseUrl, apiToken, integrationConfigs);
-
-    // Load remote tools
-    const count = await loadRemote(apiBaseUrl, apiToken);
-    return count > 0;
+    return true;
   }
 
   /** @deprecated Legacy local loading — fallback when API-side tools are unavailable */

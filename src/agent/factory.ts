@@ -27,7 +27,6 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { COMMON_BLOCKED_PATTERNS, securityMiddleware } from "./middleware/security/validator.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";
-import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -41,37 +40,6 @@ const SKILL_TOOL_REGISTRATIONS = [
   { id: "load-skill-reference", create: createLoadSkillReferenceTool },
   { id: "execute-skill-script", create: createExecuteSkillScriptTool },
 ] as const;
-
-let _remoteIntegrationToolsLoading = false;
-let _remoteIntegrationToolsLoaded = false;
-function loadRemoteIntegrationToolsOnce(): void {
-  if (_remoteIntegrationToolsLoaded || _remoteIntegrationToolsLoading) return;
-
-  const apiBaseUrl = getApiBaseUrlEnv();
-  const apiToken = getApiTokenEnv();
-  if (!apiBaseUrl || !apiToken) return;
-
-  _remoteIntegrationToolsLoading = true;
-
-  // Fire-and-forget — tools become available asynchronously.
-  // Only mark as loaded when tools are actually registered (count > 0).
-  // Transient failures and empty results allow retry on next agent creation.
-  // Only load tools here — config sync happens in the MCP server path
-  // which has access to veryfront.config.ts integrations. The agent factory
-  // does not have the config, so it must not call syncIntegrationConfig.
-  import("../integrations/remote-tools.ts").then(
-    async ({ loadRemoteIntegrationTools }) => {
-      const count = await loadRemoteIntegrationTools(apiBaseUrl, apiToken);
-      if (count > 0) {
-        _remoteIntegrationToolsLoaded = true;
-      }
-      _remoteIntegrationToolsLoading = false;
-    },
-  ).catch((err) => {
-    agentLogger.warn(`Failed to load remote integration tools: ${err}`);
-    _remoteIntegrationToolsLoading = false;
-  });
-}
 
 function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStreamResult {
   return {
@@ -135,12 +103,6 @@ export function agent(config: AgentConfig): Agent {
         "execute-skill-script": true,
       };
     }
-  }
-
-  // Integration tool loading — lazy, runs once when an agent with tools is created.
-  // Loads remote integration tools from the API into the shared tool registry.
-  if (mergedToolsConfig) {
-    loadRemoteIntegrationToolsOnce();
   }
 
   // System prompt augmentation with skill manifest.

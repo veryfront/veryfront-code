@@ -11,6 +11,10 @@ import { executeTool, toolRegistry } from "#veryfront/tool";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
+import {
+  executeRemoteIntegrationTool,
+  isRemoteIntegrationTool,
+} from "#veryfront/integrations/remote-tools.ts";
 
 const logger = serverLogger.component("agent");
 
@@ -102,6 +106,21 @@ export async function executeConfiguredTool(
     return await configuredTool.execute(input, context);
   }
 
+  // Try local registry first
+  const registryTool = toolRegistry.get(toolName);
+  if (registryTool) {
+    return await registryTool.execute(input, context);
+  }
+
+  // Fall back to remote execution for integration tools (e.g., github:list-repos)
+  if (isRemoteIntegrationTool(toolName)) {
+    return await executeRemoteIntegrationTool(
+      toolName,
+      input,
+      context?.endUserId as string | undefined,
+    );
+  }
+
   return await executeTool(toolName, input, context);
 }
 
@@ -131,17 +150,17 @@ function addToolDefinition(
  * @param toolsConfig - Agent tools configuration
  * @param options.includeSkillTools - When true, include skill tools for `tools: true` agents
  */
-export function getAvailableTools(
+export async function getAvailableTools(
   toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
-  options?: { includeSkillTools?: boolean },
-): ToolDefinition[] {
+  options?: { includeSkillTools?: boolean; includeIntegrationTools?: boolean },
+): Promise<ToolDefinition[]> {
   if (!toolsConfig) return [];
 
   if (toolsConfig === true) {
     const allTools = toolRegistry.getAll();
     logger.debug(`Loading all ${allTools.size} tools from registry`);
 
-    return Array.from(allTools, ([name, tool]) => {
+    const tools = Array.from(allTools, ([name, tool]) => {
       const def = toolToProviderDefinition(tool);
       logToolDefinition(name, def);
       return def;
@@ -150,6 +169,24 @@ export function getAvailableTools(
       if (SKILL_TOOL_IDS.has(def.name) && !options?.includeSkillTools) return false;
       return true;
     });
+
+    // Append remote integration tools (per-request, project-scoped)
+    if (options?.includeIntegrationTools !== false) {
+      try {
+        const { getRemoteIntegrationToolDefinitions } = await import(
+          "#veryfront/integrations/remote-tools.ts"
+        );
+        const remoteDefs = await getRemoteIntegrationToolDefinitions();
+        for (const def of remoteDefs) {
+          logToolDefinition(def.name, def);
+        }
+        tools.push(...remoteDefs);
+      } catch {
+        // Integration tools unavailable — non-fatal
+      }
+    }
+
+    return tools;
   }
 
   const tools: ToolDefinition[] = [];

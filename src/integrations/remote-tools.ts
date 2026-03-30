@@ -1,23 +1,22 @@
 /**
  * Remote Integration Tools
  *
- * Loads integration tools from the API and registers them as local proxy tools.
- * Tools are forwarded to the API's POST /integrations/tools/call endpoint.
+ * Fetches integration tool definitions from the API and executes tool calls
+ * via the API's /integrations/tools/call endpoint.
  *
- * Two loading strategies:
- * - Eager: Load all tools at startup for projects with few integrations (<=5)
- * - On-demand: Register a `use_integration` meta-tool that loads tools when called
+ * Design: NO global registration. Tools are fetched per-request because
+ * different projects have different enabled integrations. The agent runtime
+ * calls these functions at tool-enumeration and tool-execution time.
  */
 
-import { dynamicTool, type Tool } from "#veryfront/tool";
-import { tool } from "#veryfront/tool";
-import { toolRegistry } from "#veryfront/tool/registry.ts";
-import { z } from "zod";
 import { logger } from "#veryfront/utils";
-import { getApiTokenEnv } from "#veryfront/config/env.ts";
+import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 
-/** Maximum number of integrations before switching to on-demand loading */
-const EAGER_LOAD_THRESHOLD = 5;
+import type { ToolDefinition } from "#veryfront/tool";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface RemoteToolDefinition {
   name: string;
@@ -25,43 +24,8 @@ interface RemoteToolDefinition {
   inputSchema: Record<string, unknown>;
 }
 
-interface ApiConfig {
-  baseUrl: string;
-  token: string;
-}
-
 // ---------------------------------------------------------------------------
-// Tool loading from API
-// ---------------------------------------------------------------------------
-
-async function fetchToolList(api: ApiConfig): Promise<RemoteToolDefinition[]> {
-  const res = await fetch(`${api.baseUrl}/integrations/tools/list`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${api.token}`,
-      "Content-Type": "application/json",
-    },
-  });
-
-  if (!res.ok) {
-    logger.warn("Failed to fetch integration tools from API", { status: res.status });
-    return [];
-  }
-
-  const data = (await res.json()) as { tools: RemoteToolDefinition[] };
-  return data.tools ?? [];
-}
-
-async function fetchToolListForIntegration(
-  api: ApiConfig,
-  integration: string,
-): Promise<RemoteToolDefinition[]> {
-  const allTools = await fetchToolList(api);
-  return allTools.filter((t) => t.name.startsWith(`${integration}:`));
-}
-
-// ---------------------------------------------------------------------------
-// Proxy tool creation
+// Per-request token resolution
 // ---------------------------------------------------------------------------
 
 /**
@@ -70,202 +34,173 @@ async function fetchToolListForIntegration(
  * Falls back to the environment token for single-project mode.
  */
 function resolveRequestToken(): string | undefined {
-  // Per-request token from the multi-project adapter (production multi-tenant)
   try {
     const mod = (globalThis as Record<string, unknown>).__vf_multi_project_adapter as
-      | { getCurrentRequestContext?: () => { token?: string } | null }
+      | {
+        getCurrentRequestContext?: () => { token?: string } | null;
+      }
       | undefined;
     const reqToken = mod?.getCurrentRequestContext?.()?.token;
     if (reqToken) return reqToken;
   } catch {
     // Not in multi-project mode
   }
-  // Fallback: environment token (single-project / CLI mode)
   return getApiTokenEnv();
 }
 
-function createProxyTool(
-  def: RemoteToolDefinition,
-  apiBaseUrl: string,
-): Tool {
-  // Use the API-provided JSON Schema directly — preserves parameter descriptions,
-  // required fields, and types so the model generates accurate tool calls.
-  const inputSchema = def.inputSchema && Object.keys(def.inputSchema).length > 0
-    ? def.inputSchema
-    : { type: "object", properties: {}, additionalProperties: true };
-
-  return dynamicTool({
-    id: def.name,
-    description: def.description,
-    inputSchema,
-    execute: async (input: unknown, context) => {
-      // Resolve token per-request, not from captured closure.
-      // This prevents cross-project token leakage in multi-tenant mode.
-      const token = resolveRequestToken();
-      if (!token) {
-        return { error: "no_api_token", message: "No API token available for this request" };
-      }
-
-      const args = input as Record<string, unknown>;
-      const res = await fetch(`${apiBaseUrl}/integrations/tools/call`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: def.name,
-          arguments: args,
-          end_user_id: context?.endUserId,
-        }),
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        return { error: "api_error", status: res.status, message: text };
-      }
-
-      const result = await res.json();
-
-      // If MCP CallToolResult format, extract content
-      if (result?.content && Array.isArray(result.content)) {
-        if (result.isError) {
-          const errorText = result.content
-            .map((c: { text?: string }) => c.text)
-            .join("\n");
-          // Try to preserve structured error data (e.g., authentication_required with connectUrl)
-          try {
-            const parsed = JSON.parse(errorText);
-            if (parsed && typeof parsed === "object") return parsed;
-          } catch {
-            // Not JSON — return as plain error
-          }
-          return { error: "tool_error", message: errorText };
-        }
-        // Return structured content or text
-        if (result.structuredContent) return result.structuredContent;
-        const text = result.content.map((c: { text?: string }) => c.text).join("\n");
-        try {
-          return JSON.parse(text);
-        } catch {
-          return text;
-        }
-      }
-
-      return result;
-    },
-    mcp: { enabled: true },
-  });
+function resolveApiBaseUrl(): string | undefined {
+  return getApiBaseUrlEnv();
 }
 
 // ---------------------------------------------------------------------------
-// use_integration meta-tool
+// API communication
 // ---------------------------------------------------------------------------
 
-function createUseIntegrationTool(apiBaseUrl: string): Tool {
-  return tool({
-    id: "use_integration",
-    description: "Load tools for a connected integration. Call with the integration name " +
-      "(e.g., github, slack, linear) to make its tools available for use.",
-    inputSchema: z.object({
-      integration: z.string().describe(
-        "Integration name (e.g., github, slack, linear, jira, notion)",
-      ),
+async function fetchToolList(
+  baseUrl: string,
+  token: string,
+): Promise<RemoteToolDefinition[]> {
+  const res = await fetch(`${baseUrl}/integrations/tools/list`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    logger.warn("Failed to fetch integration tools from API", {
+      status: res.status,
+    });
+    return [];
+  }
+
+  const data = (await res.json()) as { tools: RemoteToolDefinition[] };
+  return data.tools ?? [];
+}
+
+async function callRemoteTool(
+  baseUrl: string,
+  token: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  endUserId?: string,
+): Promise<unknown> {
+  const res = await fetch(`${baseUrl}/integrations/tools/call`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: toolName,
+      arguments: args,
+      end_user_id: endUserId,
     }),
-    execute: async ({ integration }) => {
-      const token = resolveRequestToken();
-      if (!token) {
-        return { error: "no_api_token", message: "No API token available" };
-      }
-      const api: ApiConfig = { baseUrl: apiBaseUrl, token };
-      const tools = await fetchToolListForIntegration(api, integration);
-
-      if (tools.length === 0) {
-        return {
-          message:
-            `No tools available for "${integration}". The integration may not be connected or has no endpoint specs yet.`,
-          available: false,
-        };
-      }
-
-      // Register proxy tools in the registry
-      for (const def of tools) {
-        const proxyTool = createProxyTool(def, api.baseUrl);
-        toolRegistry.registerShared(def.name, proxyTool);
-      }
-
-      return {
-        message: `Loaded ${tools.length} tools for ${integration}.`,
-        available: true,
-        tools: tools.map((t) => ({ name: t.name, description: t.description })),
-      };
-    },
   });
+
+  if (!res.ok) {
+    const text = await res.text();
+    return { error: "api_error", status: res.status, message: text };
+  }
+
+  const result = await res.json();
+
+  // If MCP CallToolResult format, extract content
+  if (result?.content && Array.isArray(result.content)) {
+    if (result.isError) {
+      const errorText = result.content
+        .map((c: { text?: string }) => c.text)
+        .join("\n");
+      // Try to preserve structured error data (e.g., authentication_required with connectUrl)
+      try {
+        const parsed = JSON.parse(errorText);
+        if (parsed && typeof parsed === "object") return parsed;
+      } catch {
+        // Not JSON
+      }
+      return { error: "tool_error", message: errorText };
+    }
+    if (result.structuredContent) return result.structuredContent;
+    const text = result.content
+      .map((c: { text?: string }) => c.text)
+      .join("\n");
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
-// Public API
+// Public API — called by agent runtime per-request
 // ---------------------------------------------------------------------------
 
 /**
- * Load integration tools from the API.
+ * Fetch integration tool definitions for the current request context.
+ * Returns ToolDefinition[] that the agent runtime merges into the model's
+ * available tools. Returns empty array if no API config or no tools.
  *
- * Smart loading strategy:
- * - <=5 integrations: eagerly load all tools into the registry
- * - >5 integrations: register the `use_integration` meta-tool for on-demand loading
- *
- * @returns Number of tools loaded (or 1 for the meta-tool)
+ * Called per agent loop iteration — results are scoped to the current
+ * project's enabled integrations via the per-request API token.
  */
-export async function loadRemoteIntegrationTools(
-  apiBaseUrl: string,
-  apiToken: string,
-): Promise<number> {
-  const api: ApiConfig = { baseUrl: apiBaseUrl, token: apiToken };
+export async function getRemoteIntegrationToolDefinitions(): Promise<
+  ToolDefinition[]
+> {
+  const baseUrl = resolveApiBaseUrl();
+  const token = resolveRequestToken();
+  if (!baseUrl || !token) return [];
 
-  let allTools: RemoteToolDefinition[];
   try {
-    allTools = await fetchToolList(api);
+    const remoteDefs = await fetchToolList(baseUrl, token);
+    return remoteDefs.map((def) => ({
+      name: def.name,
+      description: def.description,
+      parameters: def.inputSchema && Object.keys(def.inputSchema).length > 0
+        ? def.inputSchema
+        : { type: "object", properties: {} },
+    }));
   } catch (err) {
-    logger.warn("Failed to load remote integration tools", {
+    logger.warn("Failed to fetch remote integration tool definitions", {
       error: err instanceof Error ? err.message : String(err),
     });
-    return 0;
+    return [];
+  }
+}
+
+/**
+ * Check if a tool name looks like a remote integration tool.
+ * Integration tools use "integration:tool-id" format.
+ */
+export function isRemoteIntegrationTool(toolName: string): boolean {
+  return toolName.includes(":");
+}
+
+/**
+ * Execute a remote integration tool via the API.
+ * Called by the agent runtime when a tool isn't found in the local registry.
+ */
+export async function executeRemoteIntegrationTool(
+  toolName: string,
+  args: Record<string, unknown>,
+  endUserId?: string,
+): Promise<unknown> {
+  const baseUrl = resolveApiBaseUrl();
+  const token = resolveRequestToken();
+  if (!baseUrl || !token) {
+    return { error: "no_api_token", message: "No API token available" };
   }
 
-  if (allTools.length === 0) {
-    logger.debug("No remote integration tools available");
-    return 0;
-  }
-
-  // Count distinct integrations
-  const integrations = new Set(allTools.map((t) => t.name.split(":")[0]));
-
-  if (integrations.size <= EAGER_LOAD_THRESHOLD) {
-    // Eager: register all tools as proxies
-    for (const def of allTools) {
-      const proxyTool = createProxyTool(def, api.baseUrl);
-      toolRegistry.registerShared(def.name, proxyTool);
-    }
-    logger.info("Eagerly loaded remote integration tools", {
-      tools: allTools.length,
-      integrations: integrations.size,
-    });
-    return allTools.length;
-  }
-
-  // On-demand: register the meta-tool
-  const metaTool = createUseIntegrationTool(api.baseUrl);
-  toolRegistry.registerShared("use_integration", metaTool);
-  logger.info("Registered use_integration meta-tool", {
-    availableIntegrations: integrations.size,
-    totalTools: allTools.length,
-  });
-  return 1;
+  return callRemoteTool(baseUrl, token, toolName, args, endUserId);
 }
 
 /**
  * Sync integration config from veryfront.config.ts to the API.
- * This is a full-replace operation.
+ * This is a full-replace operation. Called by the MCP server path
+ * which has access to the config.
  */
 export async function syncIntegrationConfig(
   apiBaseUrl: string,
@@ -283,7 +218,9 @@ export async function syncIntegrationConfig(
     });
 
     if (!res.ok) {
-      logger.warn("Failed to sync integration config to API", { status: res.status });
+      logger.warn("Failed to sync integration config to API", {
+        status: res.status,
+      });
     } else {
       const data = (await res.json()) as { synced: number };
       logger.info("Synced integration config to API", { synced: data.synced });

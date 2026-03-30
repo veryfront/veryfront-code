@@ -423,7 +423,7 @@ export class AgentRuntime {
         this.status = "thinking";
         addSpanEvent(loopSpan, "step_start", { step });
 
-        let tools = isLocal ? [] : getAvailableTools(this.config.tools, {
+        let tools = isLocal ? [] : await getAvailableTools(this.config.tools, {
           includeSkillTools: Boolean(this.config.skills),
         });
 
@@ -667,7 +667,7 @@ export class AgentRuntime {
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-start" });
 
-      let tools = isLocalStreaming ? [] : getAvailableTools(this.config.tools, {
+      let tools = isLocalStreaming ? [] : await getAvailableTools(this.config.tools, {
         includeSkillTools: Boolean(this.config.skills),
       });
 
