@@ -102,7 +102,16 @@ function createProxyTool(
       // If MCP CallToolResult format, extract content
       if (result?.content && Array.isArray(result.content)) {
         if (result.isError) {
-          const errorText = result.content.map((c: { text?: string }) => c.text).join("\n");
+          const errorText = result.content
+            .map((c: { text?: string }) => c.text)
+            .join("\n");
+          // Try to preserve structured error data (e.g., authentication_required with connectUrl)
+          try {
+            const parsed = JSON.parse(errorText);
+            if (parsed && typeof parsed === "object") return parsed;
+          } catch {
+            // Not JSON — return as plain error
+          }
           return { error: "tool_error", message: errorText };
         }
         // Return structured content or text
