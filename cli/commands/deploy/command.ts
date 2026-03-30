@@ -14,7 +14,6 @@ import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
 import {
-  createErrorEnvelope,
   createSuccessEnvelope,
   isJsonMode,
   outputJson,
