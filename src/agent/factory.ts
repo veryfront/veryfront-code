@@ -56,10 +56,11 @@ function loadRemoteIntegrationToolsOnce(): void {
   // Fire-and-forget — tools become available asynchronously.
   // Only mark as loaded when tools are actually registered (count > 0).
   // Transient failures and empty results allow retry on next agent creation.
+  // Only load tools here — config sync happens in the MCP server path
+  // which has access to veryfront.config.ts integrations. The agent factory
+  // does not have the config, so it must not call syncIntegrationConfig.
   import("../integrations/remote-tools.ts").then(
-    async ({ loadRemoteIntegrationTools, syncIntegrationConfig }) => {
-      // Sync config to API first (same as MCP server path)
-      await syncIntegrationConfig(apiBaseUrl, apiToken, {});
+    async ({ loadRemoteIntegrationTools }) => {
       const count = await loadRemoteIntegrationTools(apiBaseUrl, apiToken);
       if (count > 0) {
         _remoteIntegrationToolsLoaded = true;
