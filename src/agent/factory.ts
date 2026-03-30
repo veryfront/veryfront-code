@@ -42,23 +42,33 @@ const SKILL_TOOL_REGISTRATIONS = [
   { id: "execute-skill-script", create: createExecuteSkillScriptTool },
 ] as const;
 
+let _remoteIntegrationToolsLoading = false;
 let _remoteIntegrationToolsLoaded = false;
 function loadRemoteIntegrationToolsOnce(): void {
-  if (_remoteIntegrationToolsLoaded) return;
-  _remoteIntegrationToolsLoaded = true;
+  if (_remoteIntegrationToolsLoaded || _remoteIntegrationToolsLoading) return;
 
   const apiBaseUrl = getApiBaseUrlEnv();
   const apiToken = getApiTokenEnv();
   if (!apiBaseUrl || !apiToken) return;
 
+  _remoteIntegrationToolsLoading = true;
+
   // Fire-and-forget — tools become available asynchronously.
-  // Agents created before loading completes will work without integration tools;
-  // subsequent tool calls will find them in the registry.
-  import("../integrations/remote-tools.ts").then(({ loadRemoteIntegrationTools }) =>
-    loadRemoteIntegrationTools(apiBaseUrl, apiToken)
+  // Only mark as loaded when tools are actually registered (count > 0).
+  // Transient failures and empty results allow retry on next agent creation.
+  import("../integrations/remote-tools.ts").then(
+    async ({ loadRemoteIntegrationTools, syncIntegrationConfig }) => {
+      // Sync config to API first (same as MCP server path)
+      await syncIntegrationConfig(apiBaseUrl, apiToken, {});
+      const count = await loadRemoteIntegrationTools(apiBaseUrl, apiToken);
+      if (count > 0) {
+        _remoteIntegrationToolsLoaded = true;
+      }
+      _remoteIntegrationToolsLoading = false;
+    },
   ).catch((err) => {
     agentLogger.warn(`Failed to load remote integration tools: ${err}`);
-    _remoteIntegrationToolsLoaded = false; // Allow retry on next agent creation
+    _remoteIntegrationToolsLoading = false;
   });
 }
 
