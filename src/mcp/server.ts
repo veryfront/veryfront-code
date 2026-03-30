@@ -1,4 +1,4 @@
-import { getMCPRegistry, registerTool } from "./registry.ts";
+import { getMCPRegistry } from "./registry.ts";
 import { executeTool } from "#veryfront/tool";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
@@ -138,26 +138,13 @@ export class MCPServer {
   }
 
   private async listTools(): Promise<{ tools: Array<Record<string, unknown>> }> {
-    // Lazily load integration tools on first call
+    // Sync integration config to API on first tools/list call
     if (this.integrationLoader && !this.integrationsLoaded) {
-      // Try remote loading (API-side integration tools) first, then legacy fallback
-      let loaded = false;
       try {
-        loaded = await this.loadRemoteIntegrationTools(this.integrationLoader);
+        this.integrationsLoaded = await this.loadRemoteIntegrationTools(this.integrationLoader);
       } catch (_) {
-        // Remote loading failed — will try legacy below
+        // Config sync failed — non-fatal, integration tools from API won't reflect config
       }
-
-      if (!loaded) {
-        try {
-          loaded = await this.loadIntegrationTools(this.integrationLoader);
-        } catch (_) {
-          // expected: non-fatal integration loading failure; tools won't be available
-          // Keep integrationsLoaded=false so a later tools/list can retry.
-        }
-      }
-
-      this.integrationsLoaded = loaded;
     }
 
     const registry = getMCPRegistry();
@@ -489,34 +476,6 @@ export class MCPServer {
     }
     await syncIntegrationConfig(apiBaseUrl, apiToken, integrationConfigs);
     return true;
-  }
-
-  /** @deprecated Legacy local loading — fallback when API-side tools are unavailable */
-  private async loadIntegrationTools(config: IntegrationLoaderConfig): Promise<boolean> {
-    const { fetchConnector } = await import("../integrations/connector-fetcher.ts");
-    const { createIntegrationTools } = await import("../integrations/tool-factory.ts");
-    const { integrations, apiBaseUrl, apiToken } = config;
-    let allConnectorsLoaded = true;
-
-    for (const [name, integrationConfig] of Object.entries(integrations)) {
-      const connector = await fetchConnector(name, apiBaseUrl, apiToken);
-      if (!connector) {
-        allConnectorsLoaded = false;
-        continue;
-      }
-
-      const tools = createIntegrationTools(
-        connector,
-        integrationConfig ?? {},
-        apiBaseUrl,
-        apiToken,
-      );
-      for (const tool of tools) {
-        registerTool(tool.id, tool);
-      }
-    }
-
-    return allConnectorsLoaded;
   }
 }
 

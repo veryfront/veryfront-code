@@ -55,9 +55,16 @@ export function getIcon(name: IntegrationName | string): string | undefined {
   return iconMap.get(name);
 }
 
-// Runtime integration tools (connector fetching, tool generation, MCP registration)
-export { clearConnectorCache, fetchConnector } from "./connector-fetcher.ts";
-export { createIntegrationTools } from "./tool-factory.ts";
-export { executeEndpoint } from "./endpoint-executor.ts";
-export { type IntegrationMCPConfig, registerIntegrationMCP } from "./mcp-registration.ts";
-export type { IntegrationConnector, IntegrationRuntimeConfig, IntegrationTool } from "./types.ts";
+// Remote integration tool helpers (per-request, no global registration)
+export {
+  executeRemoteIntegrationTool,
+  getRemoteIntegrationToolDefinitions,
+  isRemoteIntegrationTool,
+  syncIntegrationConfig,
+} from "./remote-tools.ts";
+export type {
+  IntegrationConnector,
+  IntegrationRuntimeConfig,
+  IntegrationScope,
+  IntegrationTool,
+} from "./types.ts";
