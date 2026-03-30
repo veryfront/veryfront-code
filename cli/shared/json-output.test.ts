@@ -163,4 +163,43 @@ describe("json-output", () => {
       assertEquals(typeof streamJsonLine, "function");
     });
   });
+
+  describe("outputJson with --output path", () => {
+    it("writes JSON to file when outputPath is set", async () => {
+      const { outputJson } = await import("./json-output.ts");
+      const tmpDir = await Deno.makeTempDir();
+      const outPath = `${tmpDir}/test-output.json`;
+
+      setOutputPath(outPath);
+      try {
+        const envelope = createSuccessEnvelope("test", { key: "value" });
+        await outputJson(envelope);
+
+        const written = await Deno.readTextFile(outPath);
+        const parsed = JSON.parse(written);
+        assertEquals(parsed.success, true);
+        assertEquals(parsed.data.key, "value");
+      } finally {
+        setOutputPath(null);
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("creates parent directories for output path", async () => {
+      const { outputJson } = await import("./json-output.ts");
+      const tmpDir = await Deno.makeTempDir();
+      const outPath = `${tmpDir}/nested/dir/output.json`;
+
+      setOutputPath(outPath);
+      try {
+        await outputJson(createSuccessEnvelope("test", {}));
+
+        const written = await Deno.readTextFile(outPath);
+        assertEquals(JSON.parse(written).success, true);
+      } finally {
+        setOutputPath(null);
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+  });
 });

@@ -31,19 +31,37 @@ describe("Skills Create", () => {
   });
 
   describe("skill name validation", () => {
-    it("valid names: lowercase, numbers, hyphens", () => {
-      const valid = /^[a-z0-9][a-z0-9-]*$/;
+    const valid = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+    it("accepts valid names: lowercase, numbers, hyphens", () => {
       assertEquals(valid.test("my-skill"), true);
       assertEquals(valid.test("deploy-safely"), true);
       assertEquals(valid.test("a1"), true);
+      assertEquals(valid.test("a"), true);
+      assertEquals(valid.test("abc"), true);
     });
 
-    it("rejects invalid names", () => {
-      const valid = /^[a-z0-9][a-z0-9-]*$/;
+    it("rejects uppercase", () => {
       assertEquals(valid.test("My-Skill"), false);
+    });
+
+    it("rejects leading dash", () => {
       assertEquals(valid.test("-starts-with-dash"), false);
+    });
+
+    it("rejects trailing dash", () => {
+      assertEquals(valid.test("ends-with-"), false);
+    });
+
+    it("rejects spaces", () => {
       assertEquals(valid.test("has spaces"), false);
+    });
+
+    it("rejects path traversal", () => {
       assertEquals(valid.test("../../path-traversal"), false);
+    });
+
+    it("rejects empty string", () => {
       assertEquals(valid.test(""), false);
     });
   });

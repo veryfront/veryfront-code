@@ -9,7 +9,7 @@ import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json
 import { logSuccess } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
 
-const VALID_SKILL_NAME = /^[a-z0-9][a-z0-9-]*$/;
+const VALID_SKILL_NAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
 const SKILL_JSON_TEMPLATE = (name: string) =>
   JSON.stringify(

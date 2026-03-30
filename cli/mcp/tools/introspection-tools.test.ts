@@ -36,6 +36,18 @@ describe("Introspection MCP Tools", () => {
     assertEquals(typeof result.error, "string");
   });
 
+  it("vf_get_schema filters by category", async () => {
+    const tool = introspectionTools.find((t) => t.name === "vf_get_schema")!;
+    const result = await tool.execute({ category: "auth" }) as {
+      commands: { name: string; category: string }[];
+    };
+    assertEquals(Array.isArray(result.commands), true);
+    for (const cmd of result.commands) {
+      assertEquals(cmd.category, "auth");
+    }
+    assertEquals(result.commands.length > 0, true);
+  });
+
   it("all tools have inputSchema", () => {
     for (const tool of introspectionTools) {
       assertEquals(tool.inputSchema !== undefined, true);

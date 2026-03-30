@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { MCPTool } from "veryfront/mcp";
 import { generateCommandSchema, generateSchema } from "../../commands/schema/command.ts";
+import type { CommandCategory } from "../../help/types.ts";
 import { VERSION } from "#cli/utils";
 
 const getSchemaInput = z.object({
@@ -17,7 +18,7 @@ const vfGetSchema: MCPTool = {
     if (input.command) {
       return generateCommandSchema(input.command) ?? { error: `Unknown command: ${input.command}` };
     }
-    return generateSchema(input.category as undefined);
+    return generateSchema(input.category as CommandCategory | undefined);
   },
 };
 
@@ -25,7 +26,7 @@ const getProjectInfoInput = z.object({});
 
 const vfGetProjectInfo: MCPTool = {
   name: "vf_get_project_info",
-  description: "Get project metadata including slug, environment, version, and config file path.",
+  description: "Get project metadata including project slug, version, and environment.",
   inputSchema: getProjectInfoInput,
   execute: async () => {
     const { getEnvironmentConfig } = await import("veryfront/config");

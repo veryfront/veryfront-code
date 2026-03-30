@@ -150,19 +150,13 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   const { branch, env, releaseName, dryRun, force, quiet } = options;
 
   if (isJsonMode()) {
-    streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
+    return deployCommandJson(options);
   }
 
   let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
 
-  // Use interactive auth - prompts for login if not authenticated
   const config = await resolveConfigWithAuth(cwd());
   const client = createApiClient(config);
-
-  if (isJsonMode()) {
-    streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });
-    streamJsonLine({ type: "step", name: "resolve-environment", status: "started" });
-  }
 
   spinner.update(`Looking up environment "${env}"...`);
 
@@ -190,23 +184,9 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     }
   }
 
-  if (isJsonMode()) {
-    streamJsonLine({
-      type: "step",
-      name: "resolve-environment",
-      status: "completed",
-    });
-    streamJsonLine({ type: "step", name: "create-release", status: "started" });
-  }
-
   spinner = quiet ? createNoopSpinner() : createSpinner(`Creating release from "${branch}"...`);
 
   const release = await createRelease(client, config.projectSlug, { name: releaseName, branch });
-
-  if (isJsonMode()) {
-    streamJsonLine({ type: "step", name: "create-release", status: "completed" });
-    streamJsonLine({ type: "step", name: "deploy", status: "started" });
-  }
 
   spinner.update(`Deploying ${release.version} to ${env}...`);
 
@@ -214,8 +194,56 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 
   spinner.stop();
 
-  if (isJsonMode()) {
+  if (quiet) return;
+
+  logSuccess(`Deployed ${release.version} to ${env}`);
+  logInfo(`  Release: ${release.name} (${release.version})`);
+  logInfo(`  Environment: ${env}`);
+}
+
+async function deployCommandJson(options: DeployOptions): Promise<void> {
+  const { branch, env, releaseName, dryRun } = options;
+
+  try {
+    streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
+    const config = await resolveConfigWithAuth(cwd());
+    const client = createApiClient(config);
+    streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });
+
+    streamJsonLine({ type: "step", name: "resolve-environment", status: "started" });
+    const environment = await getEnvironmentByName(client, config.projectSlug, env);
+    if (!environment) {
+      streamJsonLine({
+        type: "result",
+        success: false,
+        error: `Environment "${env}" not found`,
+      });
+      const { exit } = await import("veryfront/platform");
+      exit(1);
+      return;
+    }
+    streamJsonLine({ type: "step", name: "resolve-environment", status: "completed" });
+
+    if (dryRun) {
+      streamJsonLine({
+        type: "result",
+        success: true,
+        data: { dryRun: true, branch, environment: env },
+      });
+      return;
+    }
+
+    streamJsonLine({ type: "step", name: "create-release", status: "started" });
+    const release = await createRelease(client, config.projectSlug, {
+      name: releaseName,
+      branch,
+    });
+    streamJsonLine({ type: "step", name: "create-release", status: "completed" });
+
+    streamJsonLine({ type: "step", name: "deploy", status: "started" });
+    await createDeployment(client, config.projectSlug, release.id, environment.id);
     streamJsonLine({ type: "step", name: "deploy", status: "completed" });
+
     streamJsonLine({
       type: "result",
       success: true,
@@ -225,12 +253,13 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
         branch,
       },
     });
-    return;
+  } catch (error) {
+    streamJsonLine({
+      type: "result",
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    const { exit } = await import("veryfront/platform");
+    exit(1);
   }
-
-  if (quiet) return;
-
-  logSuccess(`Deployed ${release.version} to ${env}`);
-  logInfo(`  Release: ${release.name} (${release.version})`);
-  logInfo(`  Environment: ${env}`);
 }
