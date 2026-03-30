@@ -13,11 +13,7 @@ import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/sha
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
-import {
-  createSuccessEnvelope,
-  isJsonMode,
-  outputJson,
-} from "../../shared/json-output.ts";
+import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 
 /**
  * Zod schema for deploy command arguments
