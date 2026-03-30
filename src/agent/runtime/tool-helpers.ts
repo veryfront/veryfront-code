@@ -203,5 +203,26 @@ export async function getAvailableTools(
     }
   }
 
+  // Also append remote integration tools for explicit-object configs.
+  // The internal streaming path converts `tools: true` to an explicit object
+  // from the local registry, so remote tools would be missed without this.
+  if (options?.includeIntegrationTools !== false) {
+    try {
+      const { getRemoteIntegrationToolDefinitions } = await import(
+        "#veryfront/integrations/remote-tools.ts"
+      );
+      const remoteDefs = await getRemoteIntegrationToolDefinitions();
+      for (const def of remoteDefs) {
+        // Skip if already present (e.g., explicitly configured by name)
+        if (!tools.some((t) => t.name === def.name)) {
+          logToolDefinition(def.name, def);
+          tools.push(def);
+        }
+      }
+    } catch {
+      // Integration tools unavailable — non-fatal
+    }
+  }
+
   return tools;
 }
