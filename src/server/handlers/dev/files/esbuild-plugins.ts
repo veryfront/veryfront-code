@@ -3,14 +3,7 @@ import { NETWORK_ERROR } from "#veryfront/errors";
 // Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getDirectory, joinPath } from "#veryfront/utils/path-utils.ts";
-import {
-  getReactCDNUrl,
-  getReactDOMCDNUrl,
-  getReactDOMClientCDNUrl,
-  getReactJSXDevRuntimeCDNUrl,
-  getReactJSXRuntimeCDNUrl,
-  REACT_DEFAULT_VERSION,
-} from "#veryfront/utils/constants/cdn.ts";
+
 import {
   computeIntegrity,
   createLockfileManager,
@@ -77,14 +70,21 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
   };
 }
 
+/**
+ * Bare specifiers that should be kept as-is (not rewritten to esm.sh URLs).
+ * These are resolved by the browser's import map injected in the HTML <head>.
+ */
+const IMPORT_MAP_RESOLVED = new Set([
+  "react",
+  "react-dom",
+  "react-dom/client",
+  "react-dom/server",
+  "react/jsx-runtime",
+  "react/jsx-dev-runtime",
+]);
+
 /** Map of common packages to their esm.sh URLs for browser imports */
-const ESM_PACKAGE_MAP: Record<string, string> = {
-  react: getReactCDNUrl(REACT_DEFAULT_VERSION),
-  "react-dom": getReactDOMCDNUrl(REACT_DEFAULT_VERSION),
-  "react-dom/client": getReactDOMClientCDNUrl(REACT_DEFAULT_VERSION),
-  "react/jsx-runtime": getReactJSXRuntimeCDNUrl(REACT_DEFAULT_VERSION),
-  "react/jsx-dev-runtime": getReactJSXDevRuntimeCDNUrl(REACT_DEFAULT_VERSION),
-};
+const ESM_PACKAGE_MAP: Record<string, string> = {};
 
 interface BareExternalPluginOptions {
   bundle?: boolean;
@@ -171,6 +171,12 @@ export function createBareExternalPlugin(
       build.onResolve({ filter: /.*/ }, (args: OnResolveArgs) => {
         if (!isBareImport(args.path)) return undefined;
         if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
+
+        // Keep import-map-resolved specifiers as bare externals — the browser's
+        // <script type="importmap"> resolves them to the correct CDN URL.
+        if (IMPORT_MAP_RESOLVED.has(args.path)) {
+          return { path: args.path, external: true };
+        }
 
         return resolveAsExternalOrHttps(toEsmUrl(args.path), bundle);
       });

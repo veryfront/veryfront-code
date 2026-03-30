@@ -3,6 +3,7 @@ import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { HTMLGenerationOptions } from "#veryfront/html";
 import {
+  buildImportMapJson,
   extractHTMLMetadata,
   generateHTMLShellParts,
   injectHTMLContent,
@@ -120,7 +121,13 @@ export class HTMLGenerator {
     );
 
     const pagePath = context.pageInfo.entity.path;
-    const isClientPage = await this.detectUseClientDirective(pagePath);
+    const [isClientPage, importMapJson] = await Promise.all([
+      this.detectUseClientDirective(pagePath),
+      buildImportMapJson({
+        projectDir: this.config.projectDir,
+        config: this.config.config,
+      }),
+    ]);
 
     const injectedHtml = injectHTMLContent(context.html, "", metadata, {
       mode: this.config.mode,
@@ -128,6 +135,7 @@ export class HTMLGenerator {
       devPort: this.config.config?.dev?.port || DEFAULT_DASHBOARD_PORT,
       pagePath,
       isClientPage,
+      importMapJson,
     });
 
     if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) return injectedHtml;

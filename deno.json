@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.108",
+  "version": "0.1.109",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "exclude": [
@@ -298,7 +298,7 @@
   },
   "tasks": {
     "setup": "deno run --allow-all scripts/setup.ts",
-    "generate": "deno run -A scripts/build/generate-templates-manifest.ts && deno run -A scripts/build/generate-dev-ui-manifest.ts && deno run -A scripts/build/prebundle-client-scripts.ts && deno run -A scripts/build/prebundle-bridge.ts",
+    "generate": "deno run -A scripts/build/generate-templates-manifest.ts && deno run -A scripts/build/generate-dev-ui-manifest.ts && deno run -A scripts/build/prebundle-client-scripts.ts && deno run -A scripts/build/prebundle-bridge.ts && deno run -A scripts/build/prebundle-rsc-scripts.ts",
     "start": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts",
     "start:headless": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts --headless",
     "proxy": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts serve --mode=proxy",
