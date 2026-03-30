@@ -14,6 +14,7 @@ import { tool } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { z } from "zod";
 import { logger } from "#veryfront/utils";
+import { getApiTokenEnv } from "#veryfront/config/env.ts";
 
 /** Maximum number of integrations before switching to on-demand loading */
 const EAGER_LOAD_THRESHOLD = 5;
@@ -63,9 +64,29 @@ async function fetchToolListForIntegration(
 // Proxy tool creation
 // ---------------------------------------------------------------------------
 
+/**
+ * Resolve the API token for the current request context.
+ * In multi-tenant mode, different projects have different tokens.
+ * Falls back to the environment token for single-project mode.
+ */
+function resolveRequestToken(): string | undefined {
+  // Per-request token from the multi-project adapter (production multi-tenant)
+  try {
+    const mod = (globalThis as Record<string, unknown>).__vf_multi_project_adapter as
+      | { getCurrentRequestContext?: () => { token?: string } | null }
+      | undefined;
+    const reqToken = mod?.getCurrentRequestContext?.()?.token;
+    if (reqToken) return reqToken;
+  } catch {
+    // Not in multi-project mode
+  }
+  // Fallback: environment token (single-project / CLI mode)
+  return getApiTokenEnv();
+}
+
 function createProxyTool(
   def: RemoteToolDefinition,
-  api: ApiConfig,
+  apiBaseUrl: string,
 ): Tool {
   // Use the API-provided JSON Schema directly — preserves parameter descriptions,
   // required fields, and types so the model generates accurate tool calls.
@@ -78,11 +99,18 @@ function createProxyTool(
     description: def.description,
     inputSchema,
     execute: async (input: unknown, context) => {
+      // Resolve token per-request, not from captured closure.
+      // This prevents cross-project token leakage in multi-tenant mode.
+      const token = resolveRequestToken();
+      if (!token) {
+        return { error: "no_api_token", message: "No API token available for this request" };
+      }
+
       const args = input as Record<string, unknown>;
-      const res = await fetch(`${api.baseUrl}/integrations/tools/call`, {
+      const res = await fetch(`${apiBaseUrl}/integrations/tools/call`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${api.token}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -134,7 +162,7 @@ function createProxyTool(
 // use_integration meta-tool
 // ---------------------------------------------------------------------------
 
-function createUseIntegrationTool(api: ApiConfig): Tool {
+function createUseIntegrationTool(apiBaseUrl: string): Tool {
   return tool({
     id: "use_integration",
     description: "Load tools for a connected integration. Call with the integration name " +
@@ -145,6 +173,11 @@ function createUseIntegrationTool(api: ApiConfig): Tool {
       ),
     }),
     execute: async ({ integration }) => {
+      const token = resolveRequestToken();
+      if (!token) {
+        return { error: "no_api_token", message: "No API token available" };
+      }
+      const api: ApiConfig = { baseUrl: apiBaseUrl, token };
       const tools = await fetchToolListForIntegration(api, integration);
 
       if (tools.length === 0) {
@@ -157,7 +190,7 @@ function createUseIntegrationTool(api: ApiConfig): Tool {
 
       // Register proxy tools in the registry
       for (const def of tools) {
-        const proxyTool = createProxyTool(def, api);
+        const proxyTool = createProxyTool(def, api.baseUrl);
         toolRegistry.registerShared(def.name, proxyTool);
       }
 
@@ -210,7 +243,7 @@ export async function loadRemoteIntegrationTools(
   if (integrations.size <= EAGER_LOAD_THRESHOLD) {
     // Eager: register all tools as proxies
     for (const def of allTools) {
-      const proxyTool = createProxyTool(def, api);
+      const proxyTool = createProxyTool(def, api.baseUrl);
       toolRegistry.registerShared(def.name, proxyTool);
     }
     logger.info("Eagerly loaded remote integration tools", {
@@ -221,7 +254,7 @@ export async function loadRemoteIntegrationTools(
   }
 
   // On-demand: register the meta-tool
-  const metaTool = createUseIntegrationTool(api);
+  const metaTool = createUseIntegrationTool(api.baseUrl);
   toolRegistry.registerShared("use_integration", metaTool);
   logger.info("Registered use_integration meta-tool", {
     availableIntegrations: integrations.size,
