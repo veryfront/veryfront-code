@@ -1,0 +1,13 @@
+{
+  "name": "scaffold-ai-app",
+  "version": "1.0.0",
+  "description": "Scaffold a Veryfront app with AI tools, agent definitions, and knowledge base",
+  "requires": {
+    "cli": ["init", "dev", "doctor", "workflow"],
+    "mcp": ["vf_list_templates", "vf_create_project", "vf_scaffold"]
+  },
+  "inputs": {
+    "name": { "type": "string", "description": "Project name" },
+    "provider": { "type": "string", "default": "anthropic", "description": "AI provider to configure" }
+  }
+}

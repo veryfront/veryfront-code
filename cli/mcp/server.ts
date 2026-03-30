@@ -278,6 +278,12 @@ export class MCPDevServer {
           description: "Resolved project configuration",
           mimeType: "application/json",
         },
+        {
+          uri: "veryfront://skills",
+          name: "Available Skills",
+          description: "List of all available agent skills",
+          mimeType: "application/json",
+        },
       ],
     };
   }
@@ -358,6 +364,24 @@ export class MCPDevServer {
               uri,
               mimeType: "application/json",
               text: JSON.stringify(config, null, 2),
+            }],
+          };
+        }
+
+        if (uri === "veryfront://skills") {
+          const { listCoreSkills } = await import("../skills/loader.ts");
+          const skills = await listCoreSkills();
+          const data = skills.map((s) => ({
+            name: s.manifest.name,
+            version: s.manifest.version,
+            description: s.manifest.description,
+            requires: s.manifest.requires,
+          }));
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(data, null, 2),
             }],
           };
         }

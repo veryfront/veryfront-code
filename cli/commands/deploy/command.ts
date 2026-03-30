@@ -13,7 +13,12 @@ import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/sha
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
-import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
+import {
+  createSuccessEnvelope,
+  isJsonMode,
+  outputJson,
+  streamJsonLine,
+} from "../../shared/json-output.ts";
 
 /**
  * Zod schema for deploy command arguments
@@ -149,11 +154,20 @@ export function createDeployment(
 export async function deployCommand(options: DeployOptions): Promise<void> {
   const { branch, env, releaseName, dryRun, force, quiet } = options;
 
+  if (isJsonMode()) {
+    streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
+  }
+
   let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
 
   // Use interactive auth - prompts for login if not authenticated
   const config = await resolveConfigWithAuth(cwd());
   const client = createApiClient(config);
+
+  if (isJsonMode()) {
+    streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });
+    streamJsonLine({ type: "step", name: "resolve-environment", status: "started" });
+  }
 
   spinner.update(`Looking up environment "${env}"...`);
 
@@ -181,9 +195,23 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     }
   }
 
+  if (isJsonMode()) {
+    streamJsonLine({
+      type: "step",
+      name: "resolve-environment",
+      status: "completed",
+    });
+    streamJsonLine({ type: "step", name: "create-release", status: "started" });
+  }
+
   spinner = quiet ? createNoopSpinner() : createSpinner(`Creating release from "${branch}"...`);
 
   const release = await createRelease(client, config.projectSlug, { name: releaseName, branch });
+
+  if (isJsonMode()) {
+    streamJsonLine({ type: "step", name: "create-release", status: "completed" });
+    streamJsonLine({ type: "step", name: "deploy", status: "started" });
+  }
 
   spinner.update(`Deploying ${release.version} to ${env}...`);
 

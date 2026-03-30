@@ -1,0 +1,10 @@
+{
+  "name": "debug-build",
+  "version": "1.0.0",
+  "description": "Diagnose and fix build failures using structured error output",
+  "requires": {
+    "cli": ["build", "doctor"],
+    "mcp": ["vf_get_errors", "vf_get_debug_context"]
+  },
+  "inputs": {}
+}

@@ -41,6 +41,7 @@ import { workflowHelp } from "../commands/workflow/command-help.ts";
 import { schemaHelp } from "../commands/schema/command-help.ts";
 import { testHelp } from "../commands/test/command-help.ts";
 import { lintHelp } from "../commands/lint/command-help.ts";
+import { skillsHelp } from "../commands/skills/command-help.ts";
 
 /**
  * Central registry of all command help definitions.
@@ -81,4 +82,5 @@ export const COMMANDS: CommandRegistry = {
   schema: schemaHelp,
   test: testHelp,
   lint: lintHelp,
+  skills: skillsHelp,
 };

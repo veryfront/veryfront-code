@@ -37,6 +37,7 @@ import { handleWorkerCommand } from "./commands/worker/handler.ts";
 import { handleSchemaCommand } from "./commands/schema/handler.ts";
 import { handleTestCommand } from "./commands/test/handler.ts";
 import { handleLintCommand } from "./commands/lint/handler.ts";
+import { handleSkillsCommand } from "./commands/skills/handler.ts";
 import { login, logout, whoami } from "./auth/index.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
@@ -94,6 +95,7 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "schema": handleSchemaCommand,
   "test": handleTestCommand,
   "lint": handleLintCommand,
+  "skills": handleSkillsCommand,
 };
 
 /**

@@ -7,6 +7,7 @@ import { displayBuildConfig, displayBuildStart } from "./config-display.ts";
 import { handleBuildError } from "./error-handler.ts";
 import { displayBuildSuccess } from "./stats-display.ts";
 import type { BuildOptions } from "./types.ts";
+import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 
 export function buildCommand(options: BuildOptions): Promise<void> {
   return withSpan(
@@ -17,12 +18,21 @@ export function buildCommand(options: BuildOptions): Promise<void> {
       const dryRun = options.dryRun ?? false;
 
       try {
-        displayBuildConfig({ ...options, outputDir });
+        if (isJsonMode()) {
+          streamJsonLine({ type: "step", name: "config", status: "started" });
+        } else {
+          displayBuildConfig({ ...options, outputDir });
+        }
 
         const adapter = await runtime.get();
         await getConfig(options.projectDir, adapter);
 
-        displayBuildStart();
+        if (isJsonMode()) {
+          streamJsonLine({ type: "step", name: "config", status: "completed" });
+          streamJsonLine({ type: "step", name: "build", status: "started" });
+        } else {
+          displayBuildStart();
+        }
 
         const stats = await buildProduction({
           projectDir: options.projectDir,
@@ -36,8 +46,41 @@ export function buildCommand(options: BuildOptions): Promise<void> {
           dryRun,
         });
 
+        const elapsed = Date.now() - startTime;
+
+        if (isJsonMode()) {
+          streamJsonLine({
+            type: "step",
+            name: "build",
+            status: "completed",
+            duration_ms: elapsed,
+          });
+          streamJsonLine({
+            type: "result",
+            success: true,
+            data: {
+              pages: stats.pages,
+              chunks: stats.chunks,
+              assets: stats.assets,
+              totalSize: stats.totalSize,
+              duration_ms: elapsed,
+              outputDir,
+              dryRun,
+            },
+          });
+          return;
+        }
+
         displayBuildSuccess(stats, startTime, outputDir, dryRun);
       } catch (error) {
+        if (isJsonMode()) {
+          streamJsonLine({
+            type: "result",
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
         handleBuildError(error);
       }
     },
