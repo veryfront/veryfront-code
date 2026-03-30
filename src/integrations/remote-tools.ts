@@ -67,10 +67,16 @@ function createProxyTool(
   def: RemoteToolDefinition,
   api: ApiConfig,
 ): Tool {
+  // Use the API-provided JSON Schema directly — preserves parameter descriptions,
+  // required fields, and types so the model generates accurate tool calls.
+  const inputSchema = def.inputSchema && Object.keys(def.inputSchema).length > 0
+    ? def.inputSchema
+    : { type: "object", properties: {}, additionalProperties: true };
+
   return dynamicTool({
     id: def.name,
     description: def.description,
-    inputSchema: z.object({}).passthrough(), // Accept any args — API validates
+    inputSchema,
     execute: async (input: unknown, context) => {
       const args = input as Record<string, unknown>;
       const res = await fetch(`${api.baseUrl}/integrations/tools/call`, {
