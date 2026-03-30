@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const whoamiHelp: CommandHelp = {
   name: "whoami",
+  category: "auth",
   description: "Show current authenticated user",
   usage: "veryfront whoami",
   options: [],

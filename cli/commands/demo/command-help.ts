@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const demoHelp: CommandHelp = {
   name: "demo",
+  category: "project",
   description: "Interactive guided tour of Veryfront CLI",
   usage: "veryfront demo [project-name] [options]",
   options: [

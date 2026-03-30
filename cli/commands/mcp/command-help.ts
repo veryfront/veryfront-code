@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const mcpHelp: CommandHelp = {
   name: "mcp",
+  category: "ai",
   description: "Start MCP server for coding agents",
   usage: "veryfront mcp",
   options: [],

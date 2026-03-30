@@ -1,3 +1,11 @@
+export type CommandCategory =
+  | "development"
+  | "deploy"
+  | "project"
+  | "files"
+  | "ai"
+  | "auth";
+
 export interface CommandOption {
   flag: string;
   description: string;
@@ -6,6 +14,7 @@ export interface CommandOption {
 
 export interface CommandHelp {
   name: string;
+  category: CommandCategory;
   description: string;
   usage: string;
   options?: CommandOption[];

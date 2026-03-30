@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const stylesHelp: CommandHelp = {
   name: "styles",
+  category: "development",
   description: "Build project CSS artifacts",
   usage: "veryfront styles build-artifact --config <json>",
   options: [

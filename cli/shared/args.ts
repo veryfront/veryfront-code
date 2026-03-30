@@ -160,6 +160,7 @@ export const CommonArgs = {
   into: { keys: ["into"], type: "string" },
   release: { keys: ["release"], type: "string" },
   output: { keys: ["output", "o"], type: "string" },
+  json: { keys: ["json", "j"], type: "boolean" },
 } satisfies Record<string, ArgSpec>;
 
 // ── Raw CLI argument parsing ────────────────────────────────────────────
@@ -257,6 +258,7 @@ export function parseCliArgs(args: string[]): ParsedArgs {
       s: "strict",
       t: "template",
       j: "json",
+      y: "yes",
       w: "with",
       m: "mode",
     },

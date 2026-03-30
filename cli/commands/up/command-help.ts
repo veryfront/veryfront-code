@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const upHelp: CommandHelp = {
   name: "up",
+  category: "deploy",
   description: "Deploy your app with one command (login, create, push, deploy)",
   usage: "veryfront up [options]",
   options: [

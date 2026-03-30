@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const cleanHelp: CommandHelp = {
   name: "clean",
+  category: "development",
   description: "Clean build artifacts and caches",
   usage: "veryfront clean [options]",
   options: [

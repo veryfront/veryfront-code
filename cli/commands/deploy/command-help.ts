@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const deployHelp: CommandHelp = {
   name: "deploy",
+  category: "deploy",
   description: "Create a release and deploy to an environment",
   usage: "veryfront deploy [options]",
   options: [

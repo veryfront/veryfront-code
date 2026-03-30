@@ -112,6 +112,8 @@
     "#veryfront/build": "./src/build/index.ts",
     "#veryfront/cache": "./src/cache/index.ts",
     "#cli/shared/args": "./cli/shared/args.ts",
+    "#cli/shared/json-output": "./cli/shared/json-output.ts",
+    "#cli/shared/interactive": "./cli/shared/interactive.ts",
     "#cli/shared/types": "./cli/shared/types.ts",
     "#cli/shared/constants": "./cli/shared/constants.ts",
     "#cli/shared/config": "./cli/shared/config.ts",

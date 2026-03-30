@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const loginHelp: CommandHelp = {
   name: "login",
+  category: "auth",
   description: "Authenticate with Veryfront",
   usage: "veryfront login [options]",
   options: [

@@ -23,8 +23,12 @@ import {
 } from "./tools/project-tools.ts";
 import { vfGetConventions, vfScaffold } from "./tools/scaffold-tools.ts";
 import { vfGetSkillReference, vfGetSkills } from "./tools/skill-tools.ts";
+import { cicdTools } from "./tools/cicd-tools.ts";
+import { introspectionTools } from "./tools/introspection-tools.ts";
 
 export const advancedTools: MCPTool[] = [
+  ...cicdTools,
+  ...introspectionTools,
   vfGetSkills,
   vfGetSkillReference,
   vfListLocalProjects,

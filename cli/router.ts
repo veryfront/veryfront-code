@@ -34,11 +34,16 @@ import { handleUpCommand } from "./commands/up/index.ts";
 import { handleTaskCommand } from "./commands/task/handler.ts";
 import { handleWorkflowCommand } from "./commands/workflow/handler.ts";
 import { handleWorkerCommand } from "./commands/worker/handler.ts";
+import { handleSchemaCommand } from "./commands/schema/handler.ts";
+import { handleTestCommand } from "./commands/test/handler.ts";
+import { handleLintCommand } from "./commands/lint/handler.ts";
 import { login, logout, whoami } from "./auth/index.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
 import { setColorOverride } from "./ui/colors.ts";
 import { exitProcess, setQuietMode, setVerboseMode } from "./utils/index.ts";
+import { setJsonMode, setOutputPath } from "./shared/json-output.ts";
+import { detectCI, setNonInteractive } from "./shared/interactive.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
 /**
@@ -86,6 +91,9 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "task": handleTaskCommand,
   "workflow": handleWorkflowCommand,
   "worker": handleWorkerCommand,
+  "schema": handleSchemaCommand,
+  "test": handleTestCommand,
+  "lint": handleLintCommand,
 };
 
 /**
@@ -111,6 +119,12 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
   if (args.verbose) setVerboseMode(true);
   else if (args.quiet || args.q) setQuietMode(true);
+
+  if (args.json || args.j) setJsonMode(true);
+  if (typeof args.output === "string") setOutputPath(args.output);
+  else if (typeof args.o === "string") setOutputPath(args.o as string);
+
+  if (args.yes || args.y || detectCI()) setNonInteractive(true);
 
   if (args.version || args.v) {
     cliLogger.info(`Veryfront CLI v${VERSION}`);

@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const routesHelp: CommandHelp = {
   name: "routes",
+  category: "development",
   description: "List all discovered routes in your application",
   usage: "veryfront routes [options]",
   options: [

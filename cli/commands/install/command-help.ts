@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const installHelp: CommandHelp = {
   name: "install",
+  category: "project",
   description: "Install AI assistant integrations (Cursor, Claude Code, etc.)",
   usage: "veryfront install [options]",
   options: [
@@ -35,6 +36,7 @@ export const installHelp: CommandHelp = {
 
 export const uninstallHelp: CommandHelp = {
   name: "uninstall",
+  category: "project",
   description: "Remove AI assistant integrations",
   usage: "veryfront uninstall [options]",
   options: [

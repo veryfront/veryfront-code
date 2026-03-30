@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const uploadsHelp: CommandHelp = {
   name: "uploads",
+  category: "files",
   description: "List, pull, upload, and delete project uploads",
   usage: "veryfront uploads <command> [options]",
   options: [

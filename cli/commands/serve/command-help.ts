@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const serveHelp: CommandHelp = {
   name: "serve",
+  category: "development",
   description: "Start production server",
   usage: "veryfront serve [options]",
   options: [

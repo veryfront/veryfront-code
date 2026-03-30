@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const startHelp: CommandHelp = {
   name: "start",
+  category: "project",
   description: "Start development dashboard with proxy and MCP integration",
   usage: "veryfront start [options]",
   options: [

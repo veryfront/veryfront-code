@@ -7,6 +7,7 @@ import { canOpenBrowser, openBrowser } from "./browser.ts";
 import { isTTY, promptUser } from "../utils/index.ts";
 import { brand, dim, error, muted, success, warning } from "../ui/colors.ts";
 import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "../shared/constants.ts";
+import { isJsonMode, outputJson, createSuccessEnvelope } from "../shared/json-output.ts";
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
 
@@ -250,6 +251,10 @@ export async function whoami(
   if (env.apiToken) {
     const userInfo = await validateToken(env.apiToken);
     if (userInfo) {
+      if (isJsonMode()) {
+        await outputJson(createSuccessEnvelope("whoami", { ...userInfo, source: "env" }));
+        return userInfo;
+      }
       console.log();
       console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));
       console.log("  " + dim("(via VERYFRONT_API_TOKEN)"));
@@ -261,11 +266,20 @@ export async function whoami(
   if (storedToken) {
     const userInfo = await validateToken(storedToken);
     if (userInfo) {
+      if (isJsonMode()) {
+        await outputJson(createSuccessEnvelope("whoami", { ...userInfo, source: "token-store" }));
+        return userInfo;
+      }
       console.log();
       console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));
       console.log("  " + dim(`Token stored at: ${getTokenLocation()}`));
       return userInfo;
     }
+  }
+
+  if (isJsonMode()) {
+    await outputJson(createSuccessEnvelope("whoami", { authenticated: false }));
+    return null;
   }
 
   console.log();
