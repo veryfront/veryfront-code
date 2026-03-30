@@ -202,9 +202,23 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 }
 
 async function deployCommandJson(options: DeployOptions): Promise<void> {
-  const { branch, env, releaseName, dryRun } = options;
+  const { branch, env, releaseName, dryRun, force } = options;
 
   try {
+    // JSON mode requires --force or --yes to prevent accidental deploys
+    const { isInteractive } = await import("../../shared/interactive.ts");
+    if (!force && isInteractive()) {
+      streamJsonLine({
+        type: "result",
+        success: false,
+        error:
+          "Deploy in JSON mode requires --force or --yes to confirm. This prevents accidental production deploys.",
+      });
+      const { exit } = await import("veryfront/platform");
+      exit(1);
+      return;
+    }
+
     streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
     const config = await resolveConfigWithAuth(cwd());
     const client = createApiClient(config);

@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
-import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
+import {
+  createErrorEnvelope,
+  createSuccessEnvelope,
+  isJsonMode,
+  outputJson,
+} from "../../shared/json-output.ts";
 import { parseTestOutput } from "./command.ts";
 
 const TestArgsSchema = z.object({
@@ -45,7 +50,16 @@ export async function handleTestCommand(args: ParsedArgs): Promise<void> {
 
   if (isJsonMode()) {
     const parsed = parseTestOutput(fullOutput, result.code);
-    await outputJson(createSuccessEnvelope("test", parsed));
+    if (parsed.success) {
+      await outputJson(createSuccessEnvelope("test", parsed));
+    } else {
+      await outputJson(createErrorEnvelope("test", {
+        code: "TEST_FAILURE",
+        slug: "tests-failed",
+        message: `${parsed.summary.failed} test(s) failed`,
+        context: parsed as unknown as Record<string, unknown>,
+      }));
+    }
   } else {
     if (stdout) console.log(stdout);
     if (stderr) console.error(stderr);
