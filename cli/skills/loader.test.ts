@@ -2,7 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseSkillJson } from "./types.ts";
 import { CORE_SKILLS } from "./core-skills.ts";
-import { listCoreSkills } from "./loader.ts";
+import { listAllSkills, listCoreSkills, listLocalSkills } from "./loader.ts";
 
 describe("Skill Types", () => {
   describe("parseSkillJson", () => {
@@ -99,6 +99,32 @@ describe("Skill Loader", () => {
       assertEquals(typeof skill.manifest.description, "string");
       assertEquals(typeof skill.skillMd, "string");
       assertEquals(typeof skill.directory, "string");
+    }
+  });
+
+  it("listLocalSkills returns an array", async () => {
+    const skills = await listLocalSkills();
+    assertEquals(Array.isArray(skills), true);
+  });
+
+  it("listAllSkills includes core skills", async () => {
+    const all = await listAllSkills();
+    const names = all.map((s) => s.manifest.name);
+    assertEquals(names.includes("scaffold-app"), true);
+    assertEquals(names.includes("deploy-safely"), true);
+  });
+
+  it("listAllSkills deduplicates by name (local overrides core)", async () => {
+    const all = await listAllSkills();
+    const nameCount = new Map<string, number>();
+    for (const skill of all) {
+      nameCount.set(
+        skill.manifest.name,
+        (nameCount.get(skill.manifest.name) ?? 0) + 1,
+      );
+    }
+    for (const [name, count] of nameCount) {
+      assertEquals(count, 1, `Skill "${name}" appears ${count} times`);
     }
   });
 });
