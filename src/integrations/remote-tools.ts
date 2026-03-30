@@ -158,7 +158,7 @@ function createUseIntegrationTool(api: ApiConfig): Tool {
       // Register proxy tools in the registry
       for (const def of tools) {
         const proxyTool = createProxyTool(def, api);
-        toolRegistry.register(def.name, proxyTool);
+        toolRegistry.registerShared(def.name, proxyTool);
       }
 
       return {
@@ -211,7 +211,7 @@ export async function loadRemoteIntegrationTools(
     // Eager: register all tools as proxies
     for (const def of allTools) {
       const proxyTool = createProxyTool(def, api);
-      toolRegistry.register(def.name, proxyTool);
+      toolRegistry.registerShared(def.name, proxyTool);
     }
     logger.info("Eagerly loaded remote integration tools", {
       tools: allTools.length,
@@ -222,7 +222,7 @@ export async function loadRemoteIntegrationTools(
 
   // On-demand: register the meta-tool
   const metaTool = createUseIntegrationTool(api);
-  toolRegistry.register("use_integration", metaTool);
+  toolRegistry.registerShared("use_integration", metaTool);
   logger.info("Registered use_integration meta-tool", {
     availableIntegrations: integrations.size,
     totalTools: allTools.length,
