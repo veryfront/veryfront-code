@@ -34,38 +34,42 @@ export function parseTestOutput(output: string, exitCode: number): TestResult {
   for (const line of lines) {
     const summaryMatch = line.match(/(\d+)\s+passed\s*\|\s*(\d+)\s+failed/);
     if (summaryMatch) {
-      passed = parseInt(summaryMatch[1], 10);
-      failed = parseInt(summaryMatch[2], 10);
+      passed = parseInt(summaryMatch[1] ?? "0", 10);
+      failed = parseInt(summaryMatch[2] ?? "0", 10);
     }
 
     const durationMatch = line.match(/\((\d+\.?\d*)s\)/);
     if (durationMatch) {
-      durationMs = Math.round(parseFloat(durationMatch[1]) * 1000);
+      durationMs = Math.round(parseFloat(durationMatch[1] ?? "0") * 1000);
     }
 
     const skippedMatch = line.match(/(\d+)\s+ignored/);
     if (skippedMatch) {
-      skipped = parseInt(skippedMatch[1], 10);
+      skipped = parseInt(skippedMatch[1] ?? "0", 10);
     }
   }
 
   const failures: TestResult["failures"] = [];
   const failureRegex = /^(.*?)\s+\.\.\.\s+FAILED/;
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(failureRegex);
+    const currentLine = lines[i];
+    if (!currentLine) continue;
+    const match = currentLine.match(failureRegex);
     if (match) {
-      const testName = match[1].trim();
+      const testName = (match[1] ?? "").trim();
       let error = "";
       let file = "";
       let line: number | undefined;
       for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
-        const fileLine = lines[j].match(/at\s+(.*?):(\d+)/);
-        if (fileLine) {
+        const lineText = lines[j];
+        if (!lineText) continue;
+        const fileLine = lineText.match(/at\s+(.*?):(\d+)/);
+        if (fileLine?.[1] && fileLine[2]) {
           file = fileLine[1];
           line = parseInt(fileLine[2], 10);
         }
-        if (lines[j].includes("Error:") || lines[j].includes("assert")) {
-          error = lines[j].trim();
+        if (lineText.includes("Error:") || lineText.includes("assert")) {
+          error = lineText.trim();
         }
       }
       failures.push({ file, test: testName, error, line });

@@ -32,9 +32,9 @@ const vfGetProjectInfo: MCPTool = {
     const config = getEnvironmentConfig();
     return {
       version: VERSION,
-      slug: config.slug ?? null,
-      environment: config.environment ?? "development",
-      configFile: config.configFile ?? null,
+      projectSlug: config.projectSlug ?? null,
+      nodeEnv: config.nodeEnv,
+      veryfrontEnv: config.veryfrontEnv,
     };
   },
 };
