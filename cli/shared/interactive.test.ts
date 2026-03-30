@@ -33,4 +33,29 @@ describe("interactive", () => {
       assertEquals(typeof detectCI(), "boolean");
     });
   });
+
+  describe("confirmPrompt in non-interactive mode", () => {
+    it("returns true when --yes is set (auto-confirm)", async () => {
+      const { confirmPrompt } = await import("../utils/index.ts");
+      setNonInteractive(true);
+      try {
+        // Even with defaultValue=false, --yes should auto-confirm
+        const result = await confirmPrompt("Delete everything?", false);
+        assertEquals(result, true);
+      } finally {
+        resetInteractiveMode();
+      }
+    });
+
+    it("returns true regardless of defaultValue", async () => {
+      const { confirmPrompt } = await import("../utils/index.ts");
+      setNonInteractive(true);
+      try {
+        assertEquals(await confirmPrompt("Proceed?", true), true);
+        assertEquals(await confirmPrompt("Proceed?", false), true);
+      } finally {
+        resetInteractiveMode();
+      }
+    });
+  });
 });

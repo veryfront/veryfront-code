@@ -212,7 +212,7 @@ export async function confirmPrompt(
   defaultValue = false,
 ): Promise<boolean> {
   const { isInteractive } = await import("../shared/interactive.ts");
-  if (!isInteractive()) return defaultValue;
+  if (!isInteractive()) return true;
   if (!isTTY()) return defaultValue;
 
   const hint = defaultValue ? "[Y/n]" : "[y/N]";
