@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isInteractive, setNonInteractive, resetInteractiveMode, detectCI } from "./interactive.ts";
+import { detectCI, isInteractive, resetInteractiveMode, setNonInteractive } from "./interactive.ts";
 
 describe("interactive", () => {
   describe("isInteractive", () => {

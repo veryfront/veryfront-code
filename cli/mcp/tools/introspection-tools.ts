@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { MCPTool } from "veryfront/mcp";
-import { generateSchema, generateCommandSchema } from "../../commands/schema/command.ts";
+import { generateCommandSchema, generateSchema } from "../../commands/schema/command.ts";
 import { VERSION } from "#cli/utils";
 
 const getSchemaInput = z.object({
@@ -10,7 +10,8 @@ const getSchemaInput = z.object({
 
 const vfGetSchema: MCPTool = {
   name: "vf_get_schema",
-  description: "Get the CLI command schema for discovering available commands, arguments, and flags.",
+  description:
+    "Get the CLI command schema for discovering available commands, arguments, and flags.",
   inputSchema: getSchemaInput,
   execute: async (input: { command?: string; category?: string }) => {
     if (input.command) {

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
-import { isJsonMode, outputJson, createSuccessEnvelope } from "../../shared/json-output.ts";
+import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { parseTestOutput } from "./command.ts";
 
 const TestArgsSchema = z.object({

@@ -9,7 +9,7 @@
  */
 
 import { COMMANDS } from "../../help/command-definitions.ts";
-import type { CommandHelp, CommandCategory } from "../../help/types.ts";
+import type { CommandCategory, CommandHelp } from "../../help/types.ts";
 import { VERSION } from "#cli/utils";
 
 export interface CommandSchema {

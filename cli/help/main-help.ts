@@ -70,7 +70,9 @@ export function showMainHelp(): void {
     `    ${formatCommandName("--json", maxLength)} ${formatDescription("Output as JSON")}`,
   );
   console.log(
-    `    ${formatCommandName("--yes", maxLength)} ${formatDescription("Skip confirmation prompts")}`,
+    `    ${formatCommandName("--yes", maxLength)} ${
+      formatDescription("Skip confirmation prompts")
+    }`,
   );
 
   console.log();

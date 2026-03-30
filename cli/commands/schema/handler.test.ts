@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { generateSchema, generateCommandSchema } from "./command.ts";
+import { generateCommandSchema, generateSchema } from "./command.ts";
 
 describe("Schema Command", () => {
   describe("generateSchema", () => {

@@ -64,7 +64,8 @@ const triggerDeployInput = z.object({
 
 const vfTriggerDeploy: MCPTool = {
   name: "vf_trigger_deploy",
-  description: "Trigger a deployment to an environment. Returns a deployment ID for status tracking.",
+  description:
+    "Trigger a deployment to an environment. Returns a deployment ID for status tracking.",
   inputSchema: triggerDeployInput,
   execute: async (input: { projectSlug: string; environment: string; branch: string }) => {
     return {

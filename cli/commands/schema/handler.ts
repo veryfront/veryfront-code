@@ -2,7 +2,7 @@ import { z } from "zod";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import type { CommandCategory } from "../../help/types.ts";
-import { generateSchema, generateCommandSchema } from "./command.ts";
+import { generateCommandSchema, generateSchema } from "./command.ts";
 
 const SchemaArgsSchema = z.object({
   category: z.string().optional(),

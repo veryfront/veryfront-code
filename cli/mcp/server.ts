@@ -335,7 +335,11 @@ export class MCPDevServer {
         if (uri === "veryfront://schema") {
           const { generateSchema } = await import("../commands/schema/command.ts");
           return {
-            contents: [{ uri, mimeType: "application/json", text: JSON.stringify(generateSchema()) }],
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(generateSchema()),
+            }],
           };
         }
 
@@ -350,7 +354,11 @@ export class MCPDevServer {
           const { getEnvironmentConfig } = await import("veryfront/config");
           const config = getEnvironmentConfig();
           return {
-            contents: [{ uri, mimeType: "application/json", text: JSON.stringify(config, null, 2) }],
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(config, null, 2),
+            }],
           };
         }
 

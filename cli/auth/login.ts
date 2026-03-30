@@ -7,7 +7,7 @@ import { canOpenBrowser, openBrowser } from "./browser.ts";
 import { isTTY, promptUser } from "../utils/index.ts";
 import { brand, dim, error, muted, success, warning } from "../ui/colors.ts";
 import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "../shared/constants.ts";
-import { isJsonMode, outputJson, createSuccessEnvelope } from "../shared/json-output.ts";
+import { createSuccessEnvelope, isJsonMode, outputJson } from "../shared/json-output.ts";
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
 

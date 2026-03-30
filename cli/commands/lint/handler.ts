@@ -1,5 +1,5 @@
 import type { ParsedArgs } from "#cli/shared/types";
-import { isJsonMode, outputJson, createSuccessEnvelope } from "../../shared/json-output.ts";
+import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { parseLintJsonOutput } from "./command.ts";
 
 export async function handleLintCommand(_args: ParsedArgs): Promise<void> {
