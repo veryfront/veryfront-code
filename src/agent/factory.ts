@@ -27,6 +27,7 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { COMMON_BLOCKED_PATTERNS, securityMiddleware } from "./middleware/security/validator.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";
+import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -40,6 +41,26 @@ const SKILL_TOOL_REGISTRATIONS = [
   { id: "load-skill-reference", create: createLoadSkillReferenceTool },
   { id: "execute-skill-script", create: createExecuteSkillScriptTool },
 ] as const;
+
+let _remoteIntegrationToolsLoaded = false;
+function loadRemoteIntegrationToolsOnce(): void {
+  if (_remoteIntegrationToolsLoaded) return;
+  _remoteIntegrationToolsLoaded = true;
+
+  const apiBaseUrl = getApiBaseUrlEnv();
+  const apiToken = getApiTokenEnv();
+  if (!apiBaseUrl || !apiToken) return;
+
+  // Fire-and-forget — tools become available asynchronously.
+  // Agents created before loading completes will work without integration tools;
+  // subsequent tool calls will find them in the registry.
+  import("../integrations/remote-tools.ts").then(({ loadRemoteIntegrationTools }) =>
+    loadRemoteIntegrationTools(apiBaseUrl, apiToken)
+  ).catch((err) => {
+    agentLogger.warn(`Failed to load remote integration tools: ${err}`);
+    _remoteIntegrationToolsLoaded = false; // Allow retry on next agent creation
+  });
+}
 
 function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStreamResult {
   return {
@@ -103,6 +124,12 @@ export function agent(config: AgentConfig): Agent {
         "execute-skill-script": true,
       };
     }
+  }
+
+  // Integration tool loading — lazy, runs once when an agent with tools is created.
+  // Loads remote integration tools from the API into the shared tool registry.
+  if (mergedToolsConfig) {
+    loadRemoteIntegrationToolsOnce();
   }
 
   // System prompt augmentation with skill manifest.
