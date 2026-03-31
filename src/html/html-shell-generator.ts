@@ -206,7 +206,7 @@ async function generateHTMLShellPartsImpl(
     ? `<link rel="modulepreload" href="${jsxRuntimeUrl}">`
     : "";
 
-  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  const nonceAttr = nonce ? ` nonce="${escapeHTML(nonce)}"` : "";
 
   // Expose project slug for runtime error overlay "Fix in Veryfront" button
   const overlaySlug = options.projectId || meta.slug;

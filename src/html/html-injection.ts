@@ -5,6 +5,7 @@ import {
   generateScriptTags,
   generateStyleTags,
 } from "./tag-generators.ts";
+import { escapeHtml } from "./html-escape.ts";
 import { getDevScripts, getDevStyles, getProdScripts, getStudioScripts } from "./dev-scripts.ts";
 
 export interface InjectHTMLContentOptions {
@@ -61,7 +62,7 @@ export function injectHTMLContent(
 
   // Inject import map into <head> for ESM module resolution (must be before any module scripts)
   if (options.importMapJson && /<\/head>/i.test(html)) {
-    const nonceAttr = options.nonce ? ` nonce="${options.nonce}"` : "";
+    const nonceAttr = options.nonce ? ` nonce="${escapeHtml(options.nonce)}"` : "";
     const importMapTag =
       `<script type="importmap"${nonceAttr}>\n${options.importMapJson}\n</script>`;
     html = html.replace(/<\/head>/i, `${importMapTag}\n</head>`);

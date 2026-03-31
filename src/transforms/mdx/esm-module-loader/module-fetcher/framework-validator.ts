@@ -9,8 +9,10 @@
 
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import {
+  extractAllFilePaths,
   extractAllFilePathsRecursive,
   extractAllHttpBundlePathsRecursive,
+  visitImportedVfModules,
 } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import {
   getCacheBaseDir,
@@ -27,48 +29,38 @@ interface MdxRecoveryOptions {
   contentSourceId: string;
 }
 
-/**
- * Check if cached code has file:// paths that are incompatible with this environment.
- * Returns true if the cached code should be invalidated (has paths from a different environment).
- *
- * Checks for:
- * 1. Framework source paths (file:///app/src/...) that don't match FRAMEWORK_ROOT
- * 2. HTTP bundle cache paths (file:///app/.cache/veryfront-http-bundle/...) that don't match local cache dir
- * 3. MDX ESM cache paths (file:///app/.cache/veryfront-mdx-esm/...) that don't match local cache dir
- *
- * IMPORTANT: This function creates a new RegExp on each call to avoid race conditions
- * when multiple modules are processed concurrently. Using a shared global regex with
- * the 'g' flag would cause interleaved exec() calls to skip paths.
- */
-export async function hasIncompatibleFrameworkPaths(code: string, log: Logger): Promise<boolean> {
-  // Check for esm.sh URLs that reference /_vf_modules/ paths - these are invalid
-  // and indicate a cached transform from before the fix was deployed
-  if (/esm\.sh\/_?vf_modules\//.test(code)) {
-    log.debug(`${LOG_PREFIX_MDX_LOADER} Cached code has invalid esm.sh/_vf_modules URL`);
+const INVALID_VFMOD_ESM_URL_PATTERN = /esm\.sh\/_?vf_modules\//;
+
+async function hasIncompatibleFrameworkPathsInCode(
+  code: string,
+  log: Logger,
+  options: {
+    localHttpCacheDir: string;
+    localMdxCacheDir: string;
+    localCacheBaseDir: string;
+    sourcePath?: string;
+  },
+): Promise<boolean> {
+  const localFs = getLocalFs();
+  const sourceContext = options.sourcePath ? { vfModulePath: options.sourcePath } : {};
+
+  if (INVALID_VFMOD_ESM_URL_PATTERN.test(code)) {
+    log.debug(
+      `${LOG_PREFIX_MDX_LOADER} Cached code has invalid esm.sh/_vf_modules URL`,
+      sourceContext,
+    );
     return true;
   }
 
-  const localHttpCacheDir = getHttpBundleCacheDir();
-  const localMdxCacheDir = getMdxEsmCacheDir();
-  const localCacheBaseDir = getCacheBaseDir();
-  const localFs = getLocalFs();
-
-  // Create a NEW regex for each call to avoid race conditions with concurrent calls.
-  // Global regexes maintain lastIndex state that can interleave between concurrent calls.
-  const allFilePathsPattern = /file:\/\/([^"'\s]+)/gi;
-
-  const allPaths: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = allFilePathsPattern.exec(code)) !== null) {
-    if (match[1]) allPaths.push(match[1]);
-  }
+  const allPaths = extractAllFilePaths(code);
 
   for (const path of allPaths) {
     if (path.includes("veryfront-http-bundle")) {
-      if (!path.startsWith(localHttpCacheDir)) {
+      if (!path.startsWith(options.localHttpCacheDir)) {
         log.debug(`${LOG_PREFIX_MDX_LOADER} HTTP bundle path from different environment`, {
           path,
-          expectedDir: localHttpCacheDir,
+          expectedDir: options.localHttpCacheDir,
+          ...sourceContext,
         });
         return true;
       }
@@ -76,10 +68,11 @@ export async function hasIncompatibleFrameworkPaths(code: string, log: Logger): 
     }
 
     if (path.includes("veryfront-mdx-esm")) {
-      if (!path.startsWith(localMdxCacheDir)) {
+      if (!path.startsWith(options.localMdxCacheDir)) {
         log.debug(`${LOG_PREFIX_MDX_LOADER} MDX cache path from different environment`, {
           path,
-          expectedDir: localMdxCacheDir,
+          expectedDir: options.localMdxCacheDir,
+          ...sourceContext,
         });
         return true;
       }
@@ -90,10 +83,11 @@ export async function hasIncompatibleFrameworkPaths(code: string, log: Logger): 
     // like file:///app/.cache/markdown.tsx. These paths are not portable across pods.
     // Allow local cache-base paths so valid local file:// dependencies under .cache
     // are not evicted on every read.
-    if (path.includes(".cache/") && !path.startsWith(localCacheBaseDir)) {
+    if (path.includes(".cache/") && !path.startsWith(options.localCacheBaseDir)) {
       log.debug(`${LOG_PREFIX_MDX_LOADER} Legacy cache path is not portable`, {
         path,
-        expectedBaseDir: localCacheBaseDir,
+        expectedBaseDir: options.localCacheBaseDir,
+        ...sourceContext,
       });
       return true;
     }
@@ -104,6 +98,7 @@ export async function hasIncompatibleFrameworkPaths(code: string, log: Logger): 
       log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path from different environment`, {
         path,
         expectedRoot: FRAMEWORK_ROOT,
+        ...sourceContext,
       });
       return true;
     }
@@ -111,17 +106,59 @@ export async function hasIncompatibleFrameworkPaths(code: string, log: Logger): 
     try {
       const stat = await localFs.stat(path);
       if (!stat?.isFile) {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path does not exist`, { path });
+        log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path does not exist`, {
+          path,
+          ...sourceContext,
+        });
         return true;
       }
     } catch (_) {
       /* expected: framework file may not exist in this environment */
-      log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path not accessible`, { path });
+      log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path not accessible`, {
+        path,
+        ...sourceContext,
+      });
       return true;
     }
   }
 
   return false;
+}
+
+/**
+ * Check if cached code has file:// paths that are incompatible with this environment.
+ * Returns true if the cached code should be invalidated (has paths from a different environment).
+ *
+ * Checks for:
+ * 1. Framework source paths (file:///app/src/...) that don't match FRAMEWORK_ROOT
+ * 2. HTTP bundle cache paths (file:///app/.cache/veryfront-http-bundle/...) that don't match local cache dir
+ * 3. MDX ESM cache paths (file:///app/.cache/veryfront-mdx-esm/...) that don't match local cache dir
+ *
+ * This check also walks transitively imported VF modules so nested stale paths
+ * are rejected before import-time failures.
+ */
+export async function hasIncompatibleFrameworkPaths(code: string, log: Logger): Promise<boolean> {
+  const options = {
+    localHttpCacheDir: getHttpBundleCacheDir(),
+    localMdxCacheDir: getMdxEsmCacheDir(),
+    localCacheBaseDir: getCacheBaseDir(),
+  };
+
+  if (await hasIncompatibleFrameworkPathsInCode(code, log, options)) {
+    return true;
+  }
+
+  let incompatible = false;
+  await visitImportedVfModules(code, async (vfModuleCode, vfModulePath) => {
+    if (incompatible) return;
+
+    incompatible = await hasIncompatibleFrameworkPathsInCode(vfModuleCode, log, {
+      ...options,
+      sourcePath: vfModulePath,
+    });
+  });
+
+  return incompatible;
 }
 
 /**

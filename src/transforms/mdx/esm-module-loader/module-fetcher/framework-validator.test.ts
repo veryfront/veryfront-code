@@ -67,6 +67,48 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/framework-validator", 
       const result = await hasIncompatibleFrameworkPaths(code, noopLog);
       assertEquals(result, false);
     });
+
+    it("returns true for nested vf modules with esm.sh/_vf_modules URLs", async () => {
+      const tempDir = await makeTempDir({ prefix: "vf-framework-validator-" });
+      const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
+      const childPath = join(vfmodDir, "vfmod-child.mjs");
+
+      try {
+        await mkdir(vfmodDir, { recursive: true });
+        await writeTextFile(
+          childPath,
+          `import foo from "https://esm.sh/_vf_modules/lib.js"; export default foo;`,
+        );
+
+        const code = `import child from "file://${childPath}"; export default child;`;
+        const result = await hasIncompatibleFrameworkPaths(code, noopLog);
+
+        assertEquals(result, true);
+      } finally {
+        await remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("returns true for nested vf modules with non-portable legacy cache paths", async () => {
+      const tempDir = await makeTempDir({ prefix: "vf-framework-validator-" });
+      const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
+      const childPath = join(vfmodDir, "vfmod-child.mjs");
+
+      try {
+        await mkdir(vfmodDir, { recursive: true });
+        await writeTextFile(
+          childPath,
+          `import foo from "file:///app/.cache/markdown.tsx"; export default foo;`,
+        );
+
+        const code = `import child from "file://${childPath}"; export default child;`;
+        const result = await hasIncompatibleFrameworkPaths(code, noopLog);
+
+        assertEquals(result, true);
+      } finally {
+        await remove(tempDir, { recursive: true });
+      }
+    });
   });
 
   describe("findMissingFileDependenciesInCode", () => {

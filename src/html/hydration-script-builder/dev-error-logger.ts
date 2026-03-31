@@ -1,5 +1,7 @@
+import { escapeHtml } from "../html-escape.ts";
+
 function getOpenScriptTag(nonce?: string): string {
-  return nonce ? `<script nonce="${nonce}">` : "<script>";
+  return nonce ? `<script nonce="${escapeHtml(nonce)}">` : "<script>";
 }
 
 export function generateDevErrorLoggerScript(nonce?: string): string {

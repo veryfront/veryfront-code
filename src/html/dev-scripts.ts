@@ -1,5 +1,7 @@
+import { escapeHtml } from "./html-escape.ts";
+
 export function getDevStyles(nonce?: string): string {
-  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  const nonceAttr = nonce ? ` nonce="${escapeHtml(nonce)}"` : "";
 
   return `
   <style${nonceAttr}>
@@ -32,7 +34,7 @@ export function getDevStyles(nonce?: string): string {
 }
 
 function getNonceAttr(nonce?: string): string {
-  return nonce ? ` nonce="${nonce}"` : "";
+  return nonce ? ` nonce="${escapeHtml(nonce)}"` : "";
 }
 
 export function getDevScripts(_hmrPort?: number, nonce?: string): string {

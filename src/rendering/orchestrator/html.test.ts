@@ -393,6 +393,105 @@ describe("HTMLGenerator helpers", () => {
       assertEquals((html.match(/nonce="existing-nonce"/g) ?? []).length, 2);
       assertEquals(html.includes('nonce="nonce-123" nonce="existing-nonce"'), false);
     });
+
+    it("escapes nonce values before injecting rendered tags", async () => {
+      const mockAdapter = {
+        fs: {
+          readFile: async () => "",
+          exists: async () => false,
+          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
+          readDir: async function* () {},
+          mkdir: async () => {},
+          writeFile: async () => {},
+        },
+      };
+
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: mockAdapter as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      const html = await generator.generateFullHTML({
+        html: `<div><style>.chat{color:red}</style><script>window.__vf=1</script></div>`,
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {},
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        options: { nonce: `nonce-"<&'` },
+      });
+
+      assertEquals(
+        html.includes('<style nonce="nonce-&quot;&lt;&amp;&#39;">.chat{color:red}</style>'),
+        true,
+      );
+      assertEquals(
+        html.includes('<script nonce="nonce-&quot;&lt;&amp;&#39;">window.__vf=1</script>'),
+        true,
+      );
+      assertEquals(
+        html.includes('<script type="importmap" nonce="nonce-&quot;&lt;&amp;&#39;">'),
+        true,
+      );
+      assertEquals(html.includes('nonce="nonce-"<&\'"'), false);
+    });
+
+    it("does not inject nonce markup into script or style literals inside inline scripts", async () => {
+      const mockAdapter = {
+        fs: {
+          readFile: async () => "",
+          exists: async () => false,
+          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
+          readDir: async function* () {},
+          mkdir: async () => {},
+          writeFile: async () => {},
+        },
+      };
+
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: mockAdapter as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      const html = await generator.generateFullHTML({
+        html:
+          `<div><script>window.tpl="<script>alert(1)";window.css="<style>.x{color:red}";</script><style>.chat{color:red}</style></div>`,
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {},
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        options: { nonce: "nonce-123" },
+      });
+
+      assertEquals(
+        html.includes(
+          '<script nonce="nonce-123">window.tpl="<script>alert(1)";window.css="<style>.x{color:red}";</script>',
+        ),
+        true,
+      );
+      assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
+      assertEquals(html.includes('<script nonce="nonce-123">alert(1)'), false);
+      assertEquals(html.includes('<style nonce="nonce-123">.x{color:red}'), false);
+    });
   });
 
   describe("mergeImportedCSS", () => {

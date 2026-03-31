@@ -35,9 +35,13 @@ function extractVfModulePaths(code: string): string[] {
   return paths;
 }
 
-async function visitImportedVfModules(
+/**
+ * Visit VF module code blocks imported by the given module, including nested VF modules.
+ * The visitor receives both the module code and the absolute vfmod file path.
+ */
+export async function visitImportedVfModules(
   code: string,
-  visitor: (vfModuleCode: string) => void | Promise<void>,
+  visitor: (vfModuleCode: string, vfModulePath?: string) => void | Promise<void>,
 ): Promise<void> {
   const seenVfModules = new Set<string>();
   const pendingVfModules = extractVfModulePaths(code);
@@ -52,7 +56,7 @@ async function visitImportedVfModules(
 
     try {
       const vfModuleCode = await fs.readTextFile(vfModulePath);
-      await visitor(vfModuleCode);
+      await visitor(vfModuleCode, vfModulePath);
 
       const nestedVfModules = extractVfModulePaths(vfModuleCode);
       for (const nestedPath of nestedVfModules) {
