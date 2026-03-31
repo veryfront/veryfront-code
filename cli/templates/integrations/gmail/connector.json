@@ -41,7 +41,7 @@
     {
       "id": "list-emails",
       "name": "List Emails",
-      "description": "Get recent emails from inbox",
+      "description": "List email message IDs from inbox. Use get-email to fetch full content for each message.",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

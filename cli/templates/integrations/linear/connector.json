@@ -64,7 +64,8 @@
         "query": "query($id: String!) { issue(id: $id) { id identifier title description state { name } assignee { name email } priority priorityLabel team { name } project { name } labels { nodes { name } } comments { nodes { body user { name } createdAt } } createdAt updatedAt } }",
         "params": {
           "id": { "type": "string", "in": "body", "description": "Issue ID or identifier (e.g. ENG-123)", "required": true }
-        }
+        },
+        "response": { "transform": "issue" }
       }
     },
     {
@@ -82,7 +83,8 @@
           "title": { "type": "string", "in": "body", "description": "Issue title", "required": true },
           "description": { "type": "string", "in": "body", "description": "Issue description (markdown)" },
           "priority": { "type": "number", "in": "body", "description": "Priority (0=none, 1=urgent, 2=high, 3=medium, 4=low)" }
-        }
+        },
+        "response": { "transform": "issueCreate" }
       }
     },
     {
@@ -100,7 +102,8 @@
           "stateId": { "type": "string", "in": "body", "description": "New state ID" },
           "assigneeId": { "type": "string", "in": "body", "description": "New assignee user ID" },
           "priority": { "type": "number", "in": "body", "description": "New priority" }
-        }
+        },
+        "response": { "transform": "issueUpdate" }
       }
     },
     {
