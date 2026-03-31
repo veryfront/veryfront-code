@@ -6,7 +6,9 @@ import type { HandlerContext } from "../../types.ts";
 import { DevFileHandler } from "./dev-file.handler.ts";
 
 function getImportSpecifiers(source: string): string[] {
-  return [...source.matchAll(/\bfrom\s+["']([^"']+)["']/g)].map((match) => match[1]);
+  return [...source.matchAll(/\bfrom\s+["']([^"']+)["']/g)]
+    .map((match) => match[1])
+    .filter((specifier): specifier is string => specifier !== undefined);
 }
 
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
