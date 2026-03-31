@@ -19,10 +19,11 @@ import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
 function getTransformCacheKey(
   projectId: string,
   contentSourceId: string,
+  reactVersion: string,
   normalizedPath: string,
   contentHash: string,
 ): string {
-  return `${MDX_ESM_CACHE_NAMESPACE}:${projectId}:${contentSourceId}:${normalizedPath}:${contentHash}:ssr`;
+  return `${MDX_ESM_CACHE_NAMESPACE}:${projectId}:${contentSourceId}:${reactVersion}:${normalizedPath}:${contentHash}:ssr`;
 }
 
 function getVersionedPathCacheKey(normalizedPath: string): string {
@@ -109,31 +110,38 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       const key = getTransformCacheKey(
         "proj1",
         "preview-main",
+        "19.1.1",
         "_vf_modules/pages/index.js",
         "abc123",
       );
       assertEquals(
         key,
-        `${MDX_ESM_CACHE_NAMESPACE}:proj1:preview-main:_vf_modules/pages/index.js:abc123:ssr`,
+        `${MDX_ESM_CACHE_NAMESPACE}:proj1:preview-main:19.1.1:_vf_modules/pages/index.js:abc123:ssr`,
       );
     });
 
     it("produces different keys for different content hashes", () => {
-      const k1 = getTransformCacheKey("p", "preview-main", "path", "hash1");
-      const k2 = getTransformCacheKey("p", "preview-main", "path", "hash2");
+      const k1 = getTransformCacheKey("p", "preview-main", "19.1.1", "path", "hash1");
+      const k2 = getTransformCacheKey("p", "preview-main", "19.1.1", "path", "hash2");
       assertEquals(k1 !== k2, true);
     });
 
     it("produces different keys for different projects", () => {
-      const k1 = getTransformCacheKey("proj-a", "preview-main", "path", "hash");
-      const k2 = getTransformCacheKey("proj-b", "preview-main", "path", "hash");
+      const k1 = getTransformCacheKey("proj-a", "preview-main", "19.1.1", "path", "hash");
+      const k2 = getTransformCacheKey("proj-b", "preview-main", "19.1.1", "path", "hash");
       assertEquals(k1 !== k2, true);
     });
 
     it("produces different keys for different content sources", () => {
-      const k1 = getTransformCacheKey("proj-a", "preview-main", "path", "hash");
-      const k2 = getTransformCacheKey("proj-a", "release-42", "path", "hash");
+      const k1 = getTransformCacheKey("proj-a", "preview-main", "19.1.1", "path", "hash");
+      const k2 = getTransformCacheKey("proj-a", "release-42", "19.1.1", "path", "hash");
       assertEquals(k1 !== k2, true);
+    });
+
+    it("produces different keys for different react versions", () => {
+      const react18 = getTransformCacheKey("proj-a", "preview-main", "18.3.1", "path", "hash");
+      const react19 = getTransformCacheKey("proj-a", "preview-main", "19.1.1", "path", "hash");
+      assertEquals(react18 !== react19, true);
     });
   });
 

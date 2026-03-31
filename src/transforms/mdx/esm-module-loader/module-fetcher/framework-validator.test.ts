@@ -51,6 +51,12 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/framework-validator", 
       const result = await hasIncompatibleFrameworkPaths(code, noopLog);
       assertEquals(result, true);
     });
+
+    it("returns true for legacy generic .cache TSX paths", async () => {
+      const code = `import foo from "file:///app/.cache/markdown.tsx";`;
+      const result = await hasIncompatibleFrameworkPaths(code, noopLog);
+      assertEquals(result, true);
+    });
   });
 
   describe("findMissingFileDependenciesInCode", () => {
@@ -87,11 +93,17 @@ import bar from "file:///tmp/nonexistent-dup-test.mjs";
       assertEquals(result[0]!.includes("?"), false);
     });
 
-    it("only matches .mjs files", async () => {
+    it("matches .js files too", async () => {
       const code = `import foo from "file:///tmp/nonexistent.js";`;
       const result = await findMissingFileDependenciesInCode(code, noopLog);
-      // .js files are not matched by the pattern (only .mjs)
-      assertEquals(result.length, 0);
+      assertEquals(result.length, 1);
+    });
+
+    it("matches legacy .tsx cache paths", async () => {
+      const code = `import foo from "file:///app/.cache/markdown.tsx";`;
+      const result = await findMissingFileDependenciesInCode(code, noopLog);
+      assertEquals(result.length, 1);
+      assertEquals(result[0]!.includes("markdown.tsx"), true);
     });
   });
 });

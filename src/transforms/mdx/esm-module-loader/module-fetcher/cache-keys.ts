@@ -16,10 +16,17 @@ import { buildMdxEsmPathCacheKey, buildMdxEsmTransformCacheKey } from "../cache-
 export function getTransformCacheKey(
   projectId: string,
   contentSourceId: string,
+  reactVersion: string,
   normalizedPath: string,
   contentHash: string,
 ): string {
-  return buildMdxEsmTransformCacheKey(projectId, contentSourceId, normalizedPath, contentHash);
+  return buildMdxEsmTransformCacheKey(
+    projectId,
+    contentSourceId,
+    reactVersion,
+    normalizedPath,
+    contentHash,
+  );
 }
 
 export function getVersionedPathCacheKey(normalizedPath: string): string {

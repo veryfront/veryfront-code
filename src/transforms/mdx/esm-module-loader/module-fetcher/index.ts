@@ -19,6 +19,7 @@ import { transformToESM } from "../../../esm-transform.ts";
 import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { ModuleFetcherContext } from "../types.ts";
 import { getLocalFs, getModulePathCache } from "../cache/index.ts";
@@ -258,8 +259,15 @@ async function doFetchAndCacheModule(
     const { sourceCode, actualFilePath } = resolved;
 
     const contentHash = hashString(sourceCode);
+    const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
     const transformCacheKey = contentSourceId
-      ? getTransformCacheKey(projectId, contentSourceId, normalizedPath, contentHash)
+      ? getTransformCacheKey(
+        projectId,
+        contentSourceId,
+        effectiveReactVersion,
+        normalizedPath,
+        contentHash,
+      )
       : null;
 
     let moduleCode: string | null = null;

@@ -70,4 +70,32 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
       await remove(projectDir, { recursive: true });
     }
   });
+
+  it("rejects redis cache entries with missing legacy .cache TSX imports", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
+
+    try {
+      const cacheManager = new SSRCacheManager({
+        projectDir,
+        projectId: "project-a",
+        contentSourceId: "preview-main",
+        adapter: denoAdapter,
+        dev: true,
+      });
+
+      const isValid = await cacheManager.validateCachedCode(
+        `import child from "file:///app/.cache/markdown.tsx"; export default child;`,
+        join(projectDir, "pages", "index.tsx"),
+        "redis-cache",
+        {
+          checkLocalPaths: true,
+          checkInvalidEsmShPath: true,
+        },
+      );
+
+      assertEquals(isValid, false);
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
 });

@@ -8,12 +8,15 @@
  */
 
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
-import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import {
+  getCacheBaseDir,
+  getHttpBundleCacheDir,
+  getMdxEsmCacheDir,
+} from "#veryfront/utils/cache-dir.ts";
 import { FRAMEWORK_ROOT, LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
-import { MDX_ESM_MJS_FILE_URL_PATTERN_SOURCE } from "../cache-format.ts";
 import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
 
 interface MdxRecoveryOptions {
@@ -44,6 +47,7 @@ export async function hasIncompatibleFrameworkPaths(code: string, log: Logger): 
 
   const localHttpCacheDir = getHttpBundleCacheDir();
   const localMdxCacheDir = getMdxEsmCacheDir();
+  const localCacheBaseDir = getCacheBaseDir();
   const localFs = getLocalFs();
 
   // Create a NEW regex for each call to avoid race conditions with concurrent calls.
@@ -77,6 +81,17 @@ export async function hasIncompatibleFrameworkPaths(code: string, log: Logger): 
         return true;
       }
       continue;
+    }
+
+    // Legacy cache entries sometimes point directly at pod-local .cache source files
+    // like file:///app/.cache/markdown.tsx. These paths are not portable across pods
+    // and current transforms should not emit them, so invalidate aggressively.
+    if (path.includes(".cache")) {
+      log.debug(`${LOG_PREFIX_MDX_LOADER} Legacy cache path is not portable`, {
+        path,
+        expectedBaseDir: localCacheBaseDir,
+      });
+      return true;
     }
 
     if (!path.includes("/src/") || path.includes(".cache")) continue;
@@ -117,7 +132,7 @@ export async function findMissingFileDependenciesInCode(
   log: Logger,
 ): Promise<string[]> {
   const localFs = getLocalFs();
-  const pattern = new RegExp(MDX_ESM_MJS_FILE_URL_PATTERN_SOURCE, "gi");
+  const pattern = /file:\/\/([^"'\s]+\.(?:mjs|js|tsx|ts|jsx)(?:\?[^"'\s]*)?)/gi;
   const missing: string[] = [];
   const checked = new Set<string>();
 
