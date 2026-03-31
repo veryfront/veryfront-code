@@ -36,6 +36,35 @@ import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.t
 import { consumeNdjsonStream, getContainer } from "./client-dom.ts";
 import { FS_PATH_PREFIX, HYDRATION_DATA_ID, RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
 
+interface HydrationRootCandidate {
+  tagName: string;
+  hasAttribute(name: string): boolean;
+  getAttribute(name: string): string | null;
+}
+
+const NON_HYDRATABLE_ROOT_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
+
+function isHiddenHydrationPlaceholder(element: HydrationRootCandidate): boolean {
+  const style = element.getAttribute("style") ?? "";
+  return element.hasAttribute("data-veryfront-head") ||
+    element.hasAttribute("hidden") ||
+    /(?:^|;)\s*display\s*:\s*none(?:\s*;|$)/i.test(style) ||
+    NON_HYDRATABLE_ROOT_TAGS.has(element.tagName.toUpperCase());
+}
+
+export function selectHydrationRoot<T extends HydrationRootCandidate>(
+  children: readonly T[],
+  fallback: T,
+): T {
+  return children.find((element) =>
+    element.tagName.toUpperCase() === "DIV" &&
+    !!element.getAttribute("class")?.trim() &&
+    !isHiddenHydrationPlaceholder(element)
+  ) ??
+    children.find((element) => !isHiddenHydrationPlaceholder(element)) ??
+    fallback;
+}
+
 function toBase64Url(str: string): string | null {
   try {
     const base64 = btoa(unescape(encodeURIComponent(str)));
@@ -103,10 +132,7 @@ async function hydratePageComponent(pagePath: string): Promise<boolean> {
       return false;
     }
 
-    // Find the main content element, skipping hidden placeholders like data-veryfront-head
-    const root = document.body.querySelector("div[class]") ??
-      document.body.querySelector("div:not([data-veryfront-head]):not([style*='display:none'])") ??
-      document.body;
+    const root = selectHydrationRoot(Array.from(document.body.children), document.body);
 
     ReactDOM.hydrateRoot(root, React.createElement(Component, {}), {
       identifierPrefix: "vf",

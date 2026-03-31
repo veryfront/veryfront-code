@@ -135,6 +135,7 @@ export class HTMLGenerator {
       devPort: this.config.config?.dev?.port || DEFAULT_DASHBOARD_PORT,
       pagePath,
       isClientPage,
+      nonce: context.options?.nonce,
       importMapJson,
     });
 
