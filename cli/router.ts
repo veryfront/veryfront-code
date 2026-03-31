@@ -160,4 +160,9 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
     await (handler ?? handleStartCommand)(args);
   });
+
+  // Non-blocking update check (fire-and-forget)
+  import("./shared/update-check.ts")
+    .then(({ checkForUpdates }) => checkForUpdates(VERSION))
+    .catch(() => {});
 }
