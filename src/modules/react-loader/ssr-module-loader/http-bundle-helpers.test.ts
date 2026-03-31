@@ -122,6 +122,16 @@ describe("extractAllFilePaths", () => {
     assertEquals(result.includes("/tmp/b.mjs"), true);
   });
 
+  it("extracts legacy .tsx cache paths", () => {
+    const code = `import a from "file:///app/.cache/markdown.tsx";`;
+    assertEquals(extractAllFilePaths(code), ["/app/.cache/markdown.tsx"]);
+  });
+
+  it("strips query parameters from extracted paths", () => {
+    const code = `import a from "file:///tmp/project/Button.tsx?v=123";`;
+    assertEquals(extractAllFilePaths(code), ["/tmp/project/Button.tsx"]);
+  });
+
   it("deduplicates identical paths", () => {
     const code = [
       `import a from "file:///tmp/shared.js";`,

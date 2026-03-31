@@ -19,6 +19,7 @@ import { transformToESM } from "../../../esm-transform.ts";
 import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { ModuleFetcherContext } from "../types.ts";
 import { getLocalFs, getModulePathCache } from "../cache/index.ts";
@@ -191,9 +192,10 @@ async function doFetchAndCacheModule(
 ): Promise<string | null> {
   const log = getLog(context);
   const { esmCacheDir, adapter, projectDir, projectId, contentSourceId } = context;
+  const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
 
   const pathCache = await getModulePathCache(esmCacheDir);
-  const versionedKey = getVersionedPathCacheKey(normalizedPath);
+  const versionedKey = getVersionedPathCacheKey(normalizedPath, effectiveReactVersion);
   const cachedPath = pathCache.get(versionedKey);
 
   if (cachedPath) {
@@ -241,7 +243,14 @@ async function doFetchAndCacheModule(
       );
 
       if (moduleCode) {
-        return await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache, log);
+        return await cacheModule(
+          normalizedPath,
+          moduleCode,
+          esmCacheDir,
+          pathCache,
+          log,
+          effectiveReactVersion,
+        );
       }
 
       if (context.strictMissingModules ?? true) {
@@ -259,7 +268,13 @@ async function doFetchAndCacheModule(
 
     const contentHash = hashString(sourceCode);
     const transformCacheKey = contentSourceId
-      ? getTransformCacheKey(projectId, contentSourceId, normalizedPath, contentHash)
+      ? getTransformCacheKey(
+        projectId,
+        contentSourceId,
+        effectiveReactVersion,
+        normalizedPath,
+        contentHash,
+      )
       : null;
 
     let moduleCode: string | null = null;
@@ -276,7 +291,7 @@ async function doFetchAndCacheModule(
         normalizedPath,
         projectSlug,
         projectDir,
-        context.reactVersion,
+        effectiveReactVersion,
         log,
       )
       : null;
@@ -437,6 +452,7 @@ async function doFetchAndCacheModule(
       esmCacheDir,
       pathCache,
       log,
+      effectiveReactVersion,
     );
     log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
       projectSlug,
