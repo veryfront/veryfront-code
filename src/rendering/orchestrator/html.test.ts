@@ -220,6 +220,47 @@ describe("HTMLGenerator helpers", () => {
     });
   });
 
+  describe("generateFullHTML", () => {
+    it("forwards nonce when injecting import maps into full HTML documents", async () => {
+      const mockAdapter = {
+        fs: {
+          readFile: async () => `'use client';`,
+          exists: async () => false,
+          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
+          readDir: async function* () {},
+          mkdir: async () => {},
+          writeFile: async () => {},
+        },
+      };
+
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: mockAdapter as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      const html = await generator.generateFullHTML({
+        html: "<!DOCTYPE html><html><head></head><body><main>Hello</main></body></html>",
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {},
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        options: { nonce: "nonce-123" },
+      });
+
+      assertEquals(html.includes('<script type="importmap" nonce="nonce-123">'), true);
+    });
+  });
+
   describe("mergeImportedCSS", () => {
     it("deduplicates only exact configured stylesheet path", async () => {
       const readPaths: string[] = [];
