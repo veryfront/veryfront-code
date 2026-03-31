@@ -26,8 +26,8 @@ function getTransformCacheKey(
   return `${MDX_ESM_CACHE_NAMESPACE}:${projectId}:${contentSourceId}:${reactVersion}:${normalizedPath}:${contentHash}:ssr`;
 }
 
-function getVersionedPathCacheKey(normalizedPath: string): string {
-  return `${MDX_ESM_CACHE_NAMESPACE}:${normalizedPath}`;
+function getVersionedPathCacheKey(normalizedPath: string, reactVersion: string): string {
+  return `${MDX_ESM_CACHE_NAMESPACE}:${reactVersion}:${normalizedPath}`;
 }
 
 function rewriteVeryfrontImports(code: string): string {
@@ -147,8 +147,8 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
 
   describe("getVersionedPathCacheKey", () => {
     it("prefixes with cache namespace", () => {
-      const key = getVersionedPathCacheKey("_vf_modules/pages/index.js");
-      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:_vf_modules/pages/index.js`);
+      const key = getVersionedPathCacheKey("_vf_modules/pages/index.js", "19.1.1");
+      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:19.1.1:_vf_modules/pages/index.js`);
     });
   });
 

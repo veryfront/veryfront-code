@@ -72,19 +72,25 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
   });
 
   describe("getVersionedPathCacheKey", () => {
-    it("includes cache namespace and path", () => {
-      const key = getVersionedPathCacheKey("lib/utils.ts");
-      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:lib/utils.ts`);
+    it("includes cache namespace, react version, and path", () => {
+      const key = getVersionedPathCacheKey("lib/utils.ts", "19.1.1");
+      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:19.1.1:lib/utils.ts`);
     });
 
     it("handles empty path", () => {
-      const key = getVersionedPathCacheKey("");
-      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:`);
+      const key = getVersionedPathCacheKey("", "19.1.1");
+      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:19.1.1:`);
     });
 
     it("starts with cache namespace prefix", () => {
-      const key = getVersionedPathCacheKey("any/path");
+      const key = getVersionedPathCacheKey("any/path", "19.1.1");
       assertEquals(key.startsWith(`${MDX_ESM_CACHE_NAMESPACE}:`), true);
+    });
+
+    it("isolates by react version", () => {
+      const react18Key = getVersionedPathCacheKey("lib/utils.ts", "18.3.1");
+      const react19Key = getVersionedPathCacheKey("lib/utils.ts", "19.1.1");
+      assertEquals(react18Key === react19Key, false);
     });
   });
 });

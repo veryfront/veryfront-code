@@ -192,9 +192,10 @@ async function doFetchAndCacheModule(
 ): Promise<string | null> {
   const log = getLog(context);
   const { esmCacheDir, adapter, projectDir, projectId, contentSourceId } = context;
+  const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
 
   const pathCache = await getModulePathCache(esmCacheDir);
-  const versionedKey = getVersionedPathCacheKey(normalizedPath);
+  const versionedKey = getVersionedPathCacheKey(normalizedPath, effectiveReactVersion);
   const cachedPath = pathCache.get(versionedKey);
 
   if (cachedPath) {
@@ -242,7 +243,14 @@ async function doFetchAndCacheModule(
       );
 
       if (moduleCode) {
-        return await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache, log);
+        return await cacheModule(
+          normalizedPath,
+          moduleCode,
+          esmCacheDir,
+          pathCache,
+          log,
+          effectiveReactVersion,
+        );
       }
 
       if (context.strictMissingModules ?? true) {
@@ -259,7 +267,6 @@ async function doFetchAndCacheModule(
     const { sourceCode, actualFilePath } = resolved;
 
     const contentHash = hashString(sourceCode);
-    const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
     const transformCacheKey = contentSourceId
       ? getTransformCacheKey(
         projectId,
@@ -284,7 +291,7 @@ async function doFetchAndCacheModule(
         normalizedPath,
         projectSlug,
         projectDir,
-        context.reactVersion,
+        effectiveReactVersion,
         log,
       )
       : null;
@@ -445,6 +452,7 @@ async function doFetchAndCacheModule(
       esmCacheDir,
       pathCache,
       log,
+      effectiveReactVersion,
     );
     log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
       projectSlug,

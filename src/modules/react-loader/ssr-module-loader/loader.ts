@@ -460,6 +460,7 @@ export class SSRModuleLoader {
           projectId: this.options.projectId,
           contentSourceId: this.options.contentSourceId,
         },
+        this.options.reactVersion,
       );
 
       if (mdxCacheResult.status === "hit") {
