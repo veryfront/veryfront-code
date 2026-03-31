@@ -39,31 +39,88 @@
       "id": "search-issues",
       "name": "Search Issues",
       "description": "Search for Linear issues by title or description",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.linear.app/graphql",
+        "query": "query($query: String!, $first: Int) { issueSearch(query: $query, first: $first) { nodes { id identifier title description state { name } assignee { name } priority priorityLabel createdAt updatedAt } } }",
+        "params": {
+          "query": { "type": "string", "in": "body", "description": "Search query text", "required": true },
+          "first": { "type": "number", "in": "body", "description": "Max results", "default": 20 }
+        },
+        "response": { "transform": "issueSearch" }
+      }
     },
     {
       "id": "get-issue",
       "name": "Get Issue",
       "description": "Get detailed information about a specific Linear issue",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.linear.app/graphql",
+        "query": "query($id: String!) { issue(id: $id) { id identifier title description state { name } assignee { name email } priority priorityLabel team { name } project { name } labels { nodes { name } } comments { nodes { body user { name } createdAt } } createdAt updatedAt } }",
+        "params": {
+          "id": { "type": "string", "in": "body", "description": "Issue ID or identifier (e.g. ENG-123)", "required": true }
+        },
+        "response": { "transform": "issue" }
+      }
     },
     {
       "id": "create-issue",
       "name": "Create Issue",
       "description": "Create a new Linear issue in a team",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.linear.app/graphql",
+        "query": "mutation($teamId: String!, $title: String!, $description: String, $priority: Int) { issueCreate(input: { teamId: $teamId, title: $title, description: $description, priority: $priority }) { success issue { id identifier title url } } }",
+        "params": {
+          "teamId": { "type": "string", "in": "body", "description": "Team ID", "required": true },
+          "title": { "type": "string", "in": "body", "description": "Issue title", "required": true },
+          "description": { "type": "string", "in": "body", "description": "Issue description (markdown)" },
+          "priority": { "type": "number", "in": "body", "description": "Priority (0=none, 1=urgent, 2=high, 3=medium, 4=low)" }
+        },
+        "response": { "transform": "issueCreate" }
+      }
     },
     {
       "id": "update-issue",
       "name": "Update Issue",
       "description": "Update the status, assignee, or other properties of an issue",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.linear.app/graphql",
+        "query": "mutation($id: String!, $stateId: String, $assigneeId: String, $priority: Int) { issueUpdate(id: $id, input: { stateId: $stateId, assigneeId: $assigneeId, priority: $priority }) { success issue { id identifier title state { name } assignee { name } } } }",
+        "params": {
+          "id": { "type": "string", "in": "body", "description": "Issue ID", "required": true },
+          "stateId": { "type": "string", "in": "body", "description": "New state ID" },
+          "assigneeId": { "type": "string", "in": "body", "description": "New assignee user ID" },
+          "priority": { "type": "number", "in": "body", "description": "New priority" }
+        },
+        "response": { "transform": "issueUpdate" }
+      }
     },
     {
       "id": "list-projects",
       "name": "List Projects",
       "description": "List all projects in the workspace",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.linear.app/graphql",
+        "query": "query($first: Int) { projects(first: $first) { nodes { id name description state startDate targetDate lead { name } teams { nodes { name } } } } }",
+        "params": {
+          "first": { "type": "number", "in": "body", "description": "Max results", "default": 50 }
+        },
+        "response": { "transform": "projects" }
+      }
     }
   ],
   "prompts": [

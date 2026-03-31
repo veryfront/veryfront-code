@@ -39,19 +39,49 @@
       "id": "list-channels",
       "name": "List Channels",
       "description": "Get list of Slack channels",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://slack.com/api/conversations.list",
+        "body": {
+          "limit": { "type": "number", "description": "Max channels (1-1000)", "default": 100 },
+          "exclude_archived": { "type": "boolean", "description": "Exclude archived channels", "default": true },
+          "types": { "type": "string", "description": "Channel types: public_channel, private_channel, mpim, im", "default": "public_channel" }
+        },
+        "response": { "transform": "channels" }
+      }
     },
     {
       "id": "send-message",
       "name": "Send Message",
       "description": "Send a message to a Slack channel",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "body": {
+          "channel": { "type": "string", "description": "Channel ID to send to", "required": true },
+          "text": { "type": "string", "description": "Message text (supports mrkdwn)", "required": true },
+          "thread_ts": { "type": "string", "description": "Thread timestamp to reply to" },
+          "unfurl_links": { "type": "boolean", "description": "Unfurl URLs" }
+        }
+      }
     },
     {
       "id": "get-messages",
       "name": "Get Messages",
       "description": "Get recent messages from a channel",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://slack.com/api/conversations.history",
+        "body": {
+          "channel": { "type": "string", "description": "Channel ID", "required": true },
+          "limit": { "type": "number", "description": "Max messages (1-1000)", "default": 20 },
+          "oldest": { "type": "string", "description": "Only messages after this timestamp" }
+        },
+        "response": { "transform": "messages" }
+      }
     }
   ],
   "prompts": [

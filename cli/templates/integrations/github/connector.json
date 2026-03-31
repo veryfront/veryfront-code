@@ -36,25 +36,101 @@
       "id": "list-repos",
       "name": "List Repositories",
       "description": "Get list of user's repositories",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.github.com/user/repos",
+        "params": {
+          "type": { "type": "string", "in": "query", "description": "Type: all, owner, public, private, member" },
+          "sort": { "type": "string", "in": "query", "description": "Sort: created, updated, pushed, full_name", "default": "updated" },
+          "per_page": { "type": "number", "in": "query", "description": "Results per page (max 100)", "default": 30 }
+        }
+      }
+    },
+    {
+      "id": "get-repo",
+      "name": "Get Repository",
+      "description": "Get details of a specific repository",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/{owner}/{repo}",
+        "params": {
+          "owner": { "type": "string", "in": "path", "description": "Repository owner", "required": true },
+          "repo": { "type": "string", "in": "path", "description": "Repository name", "required": true }
+        }
+      }
     },
     {
       "id": "list-prs",
       "name": "List Pull Requests",
-      "description": "Get open pull requests",
-      "requiresWrite": false
+      "description": "Get pull requests for a repository",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/{owner}/{repo}/pulls",
+        "params": {
+          "owner": { "type": "string", "in": "path", "description": "Repository owner", "required": true },
+          "repo": { "type": "string", "in": "path", "description": "Repository name", "required": true },
+          "state": { "type": "string", "in": "query", "description": "State: open, closed, all", "default": "open" },
+          "per_page": { "type": "number", "in": "query", "description": "Results per page", "default": 30 }
+        }
+      }
     },
     {
       "id": "create-issue",
       "name": "Create Issue",
       "description": "Create a new issue in a repository",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/{owner}/{repo}/issues",
+        "params": {
+          "owner": { "type": "string", "in": "path", "description": "Repository owner", "required": true },
+          "repo": { "type": "string", "in": "path", "description": "Repository name", "required": true }
+        },
+        "body": {
+          "title": { "type": "string", "description": "Issue title", "required": true },
+          "body": { "type": "string", "description": "Issue body (markdown)" },
+          "labels": { "type": "array", "description": "Label names" },
+          "assignees": { "type": "array", "description": "Usernames to assign" }
+        }
+      }
     },
     {
       "id": "get-pr-diff",
       "name": "Get PR Diff",
       "description": "Get the diff for a pull request",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}",
+        "params": {
+          "owner": { "type": "string", "in": "path", "description": "Repository owner", "required": true },
+          "repo": { "type": "string", "in": "path", "description": "Repository name", "required": true },
+          "pull_number": { "type": "number", "in": "path", "description": "Pull request number", "required": true },
+          "Accept": { "type": "string", "in": "header", "description": "Response format", "default": "application/vnd.github.v3.diff" }
+        }
+      }
+    },
+    {
+      "id": "list-issues",
+      "name": "List Issues",
+      "description": "List issues for a repository",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.github.com/graphql",
+        "query": "query($owner: String!, $repo: String!, $first: Int, $states: [IssueState!]) { repository(owner: $owner, name: $repo) { issues(first: $first, states: $states, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { id number title body state url createdAt updatedAt author { login } labels(first: 10) { nodes { name } } assignees(first: 10) { nodes { login } } } } } }",
+        "params": {
+          "owner": { "type": "string", "in": "body", "description": "Repository owner", "required": true },
+          "repo": { "type": "string", "in": "body", "description": "Repository name", "required": true },
+          "states": { "type": "string[]", "in": "body", "description": "Issue states to include (e.g. OPEN, CLOSED)", "default": ["OPEN"] },
+          "first": { "type": "number", "in": "body", "description": "Results per page", "default": 30 }
+        },
+        "response": { "transform": "repository.issues.nodes" }
+      }
     }
   ],
   "prompts": [

@@ -41,20 +41,60 @@
     {
       "id": "list-emails",
       "name": "List Emails",
-      "description": "Get recent emails from inbox",
-      "requiresWrite": false
+      "description": "List email message IDs from inbox. Use get-email to fetch full content for each message.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "params": {
+          "maxResults": { "type": "number", "in": "query", "description": "Maximum number of messages to return (1-500)", "default": 20 },
+          "q": { "type": "string", "in": "query", "description": "Gmail search query (e.g. is:unread, from:user@example.com)" },
+          "labelIds": { "type": "string[]", "in": "query", "description": "Only return messages with these label IDs (e.g. INBOX, UNREAD)" }
+        },
+        "response": { "transform": "messages" }
+      }
     },
     {
       "id": "send-email",
       "name": "Send Email",
       "description": "Send an email to recipients",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        "body": {
+          "raw": { "type": "string", "description": "Base64url-encoded RFC 2822 email message", "required": true }
+        }
+      }
+    },
+    {
+      "id": "get-email",
+      "name": "Get Email",
+      "description": "Get a specific email by ID with full content",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{messageId}",
+        "params": {
+          "messageId": { "type": "string", "in": "path", "description": "Email message ID", "required": true },
+          "format": { "type": "string", "in": "query", "description": "Format: full, metadata, minimal, raw", "default": "full" }
+        }
+      }
     },
     {
       "id": "search-emails",
       "name": "Search Emails",
       "description": "Search emails by query",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "params": {
+          "q": { "type": "string", "in": "query", "description": "Gmail search query", "required": true },
+          "maxResults": { "type": "number", "in": "query", "description": "Maximum results", "default": 10 }
+        },
+        "response": { "transform": "messages" }
+      }
     }
   ],
   "prompts": [

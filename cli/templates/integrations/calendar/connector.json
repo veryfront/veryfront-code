@@ -41,19 +41,70 @@
       "id": "list-events",
       "name": "List Events",
       "description": "Get upcoming calendar events",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/calendar/v3/calendars/{calendarId}/events",
+        "params": {
+          "calendarId": { "type": "string", "in": "path", "description": "Calendar ID (use 'primary' for main calendar)", "required": true, "default": "primary" },
+          "timeMin": { "type": "string", "in": "query", "description": "Start time (RFC3339)" },
+          "timeMax": { "type": "string", "in": "query", "description": "End time (RFC3339)" },
+          "maxResults": { "type": "number", "in": "query", "description": "Maximum events", "default": 10 },
+          "orderBy": { "type": "string", "in": "query", "description": "Order by: startTime or updated", "default": "startTime" },
+          "singleEvents": { "type": "boolean", "in": "query", "description": "Expand recurring events", "default": true }
+        },
+        "response": { "transform": "items" }
+      }
     },
     {
       "id": "create-event",
       "name": "Create Event",
       "description": "Schedule a new calendar event",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/calendar/v3/calendars/{calendarId}/events",
+        "params": {
+          "calendarId": { "type": "string", "in": "path", "description": "Calendar ID", "required": true, "default": "primary" }
+        },
+        "body": {
+          "summary": { "type": "string", "description": "Event title", "required": true },
+          "description": { "type": "string", "description": "Event description" },
+          "start": { "type": "object", "description": "Start time: {dateTime: 'RFC3339', timeZone: 'TZ'}", "required": true },
+          "end": { "type": "object", "description": "End time: {dateTime: 'RFC3339', timeZone: 'TZ'}", "required": true },
+          "attendees": { "type": "array", "description": "Array of {email: string} objects" },
+          "location": { "type": "string", "description": "Event location" }
+        }
+      }
+    },
+    {
+      "id": "get-event",
+      "name": "Get Event",
+      "description": "Get details of a specific calendar event",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/calendar/v3/calendars/{calendarId}/events/{eventId}",
+        "params": {
+          "calendarId": { "type": "string", "in": "path", "description": "Calendar ID", "required": true, "default": "primary" },
+          "eventId": { "type": "string", "in": "path", "description": "Event ID", "required": true }
+        }
+      }
     },
     {
       "id": "find-free-time",
       "name": "Find Free Time",
       "description": "Find available time slots in calendar",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/calendar/v3/freeBusy",
+        "body": {
+          "timeMin": { "type": "string", "description": "Start of window (RFC3339)", "required": true },
+          "timeMax": { "type": "string", "description": "End of window (RFC3339)", "required": true },
+          "items": { "type": "array", "description": "Array of {id: calendarId} to check", "required": true }
+        }
+      }
     }
   ],
   "prompts": [
