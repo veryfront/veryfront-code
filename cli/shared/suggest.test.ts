@@ -80,5 +80,45 @@ describe("suggest", () => {
       const result = suggestCommand("deploy", []);
       assertEquals(result.length, 0);
     });
+
+    it("does not suggest aliases when using canonical names", () => {
+      // Router uses COMMANDS registry keys (canonical) not router keys (includes aliases)
+      const canonical = ["deploy", "build", "generate", "serve"];
+      const withAliases = ["deploy", "build", "generate", "g", "serve", "preview"];
+
+      // "g" should not appear in canonical suggestions
+      const resultCanonical = suggestCommand("ge", canonical);
+      assertEquals(resultCanonical.includes("g"), false);
+
+      // but would appear if aliases were included
+      const resultWithAliases = suggestCommand("g", withAliases, 1);
+      assertEquals(resultWithAliases.includes("g"), true);
+    });
+  });
+
+  describe("integration with COMMANDS registry", () => {
+    it("COMMANDS registry has no aliases", async () => {
+      const { COMMANDS } = await import("../help/command-definitions.ts");
+      const names = Object.keys(COMMANDS);
+      // Known aliases that should NOT be in the registry
+      assertEquals(names.includes("g"), false);
+      assertEquals(names.includes("preview"), false);
+    });
+
+    it("COMMANDS entries have descriptions", async () => {
+      const { COMMANDS } = await import("../help/command-definitions.ts");
+      for (const [name, help] of Object.entries(COMMANDS)) {
+        assertEquals(
+          typeof help.description,
+          "string",
+          `Command "${name}" missing description`,
+        );
+        assertEquals(
+          help.description.length > 0,
+          true,
+          `Command "${name}" has empty description`,
+        );
+      }
+    });
   });
 });
