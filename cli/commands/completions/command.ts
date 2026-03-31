@@ -8,6 +8,11 @@
 
 import { COMMANDS } from "../../help/command-definitions.ts";
 
+/** Escape a string for use in shell single-quoted contexts */
+function shellEscape(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
 const GLOBAL_FLAGS = [
   "--json",
   "--yes",
@@ -58,7 +63,7 @@ export function generateZshCompletions(): string {
   script += `  commands=(\n`;
 
   for (const cmd of commands) {
-    const desc = cmd.description.replace(/'/g, "\\'");
+    const desc = shellEscape(cmd.description);
     script += `    '${cmd.name}:${desc}'\n`;
   }
 
@@ -81,7 +86,7 @@ export function generateFishCompletions(): string {
   let script = `# Veryfront CLI fish completions\n`;
 
   for (const cmd of commands) {
-    const desc = cmd.description.replace(/'/g, "\\'");
+    const desc = shellEscape(cmd.description);
     script += `complete -c veryfront -n '__fish_use_subcommand' -a '${cmd.name}' -d '${desc}'\n`;
   }
 
@@ -93,7 +98,7 @@ export function generateFishCompletions(): string {
         " ",
       )[0];
       if (flag) {
-        const desc = opt.description.replace(/'/g, "\\'");
+        const desc = shellEscape(opt.description);
         script +=
           `complete -c veryfront -n '__fish_seen_subcommand_from ${cmd.name}' -l '${flag}' -d '${desc}'\n`;
       }
