@@ -58,8 +58,10 @@ describe("suggest", () => {
     });
 
     it("sorts by distance (closest first)", () => {
-      const result = suggestCommand("dev", ["deploy", "dev", "demo"]);
+      // "dex" → "dev" (dist 1) should come before "demo" (dist 2)
+      const result = suggestCommand("dex", ["deploy", "dev", "demo"]);
       assertEquals(result[0], "dev");
+      assertEquals(result.includes("demo"), true);
     });
 
     it("respects maxDistance parameter", () => {

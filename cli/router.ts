@@ -153,12 +153,16 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
     if (command && !handler) {
       const { suggestCommand } = await import("./shared/suggest.ts");
-      const suggestions = suggestCommand(command, Object.keys(commands));
+      const { COMMANDS } = await import("./help/command-definitions.ts");
+      // Use canonical command names from help registry (excludes aliases like "g", "preview")
+      const canonicalNames = Object.keys(COMMANDS);
+      const suggestions = suggestCommand(command, canonicalNames);
       cliLogger.error(`Unknown command: ${command}\n`);
       if (suggestions.length > 0) {
         cliLogger.info(`  Did you mean?`);
         for (const s of suggestions) {
-          cliLogger.info(`    ${s}`);
+          const desc = COMMANDS[s]?.description ?? "";
+          cliLogger.info(`    ${s}    ${desc}`);
         }
       } else {
         showHelp();
