@@ -128,6 +128,11 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
   if (args.yes || args.y || detectCI()) setNonInteractive(true);
 
+  if (args["no-animation"]) {
+    const { setAnimationDisabled } = await import("./shared/animation.ts");
+    setAnimationDisabled(true);
+  }
+
   if (args.version || args.v) {
     cliLogger.info(`Veryfront CLI v${VERSION}`);
     exitProcess(0);
