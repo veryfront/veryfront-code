@@ -84,9 +84,10 @@ export async function hasIncompatibleFrameworkPaths(code: string, log: Logger): 
     }
 
     // Legacy cache entries sometimes point directly at pod-local .cache source files
-    // like file:///app/.cache/markdown.tsx. These paths are not portable across pods
-    // and current transforms should not emit them, so invalidate aggressively.
-    if (path.includes(".cache")) {
+    // like file:///app/.cache/markdown.tsx. These paths are not portable across pods.
+    // Allow local cache-base paths so valid local file:// dependencies under .cache
+    // are not evicted on every read.
+    if (path.includes(".cache/") && !path.startsWith(localCacheBaseDir)) {
       log.debug(`${LOG_PREFIX_MDX_LOADER} Legacy cache path is not portable`, {
         path,
         expectedBaseDir: localCacheBaseDir,

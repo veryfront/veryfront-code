@@ -1,5 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
+import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import {
   findMissingFileDependenciesInCode,
   hasIncompatibleFrameworkPaths,
@@ -56,6 +58,13 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/framework-validator", 
       const code = `import foo from "file:///app/.cache/markdown.tsx";`;
       const result = await hasIncompatibleFrameworkPaths(code, noopLog);
       assertEquals(result, true);
+    });
+
+    it("returns false for local generic .cache paths under the cache base dir", async () => {
+      const localCachePath = join(getCacheBaseDir(), "project", "markdown.tsx");
+      const code = `import foo from "file://${localCachePath}";`;
+      const result = await hasIncompatibleFrameworkPaths(code, noopLog);
+      assertEquals(result, false);
     });
   });
 
