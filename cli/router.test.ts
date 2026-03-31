@@ -299,6 +299,47 @@ describe("cli/router helpers", () => {
     });
   });
 
+  describe("version output", () => {
+    it("VERSION is a non-empty string", async () => {
+      const { VERSION } = await import("./utils/index.ts");
+      assertEquals(typeof VERSION, "string");
+      assertEquals(VERSION.length > 0, true);
+    });
+
+    it("Deno.version contains deno, v8, typescript", () => {
+      assertEquals(typeof Deno.version.deno, "string");
+      assertEquals(typeof Deno.version.v8, "string");
+      assertEquals(typeof Deno.version.typescript, "string");
+    });
+
+    it("Deno.build contains os and arch", () => {
+      assertEquals(typeof Deno.build.os, "string");
+      assertEquals(typeof Deno.build.arch, "string");
+    });
+
+    it("createSuccessEnvelope produces valid version envelope", async () => {
+      const { createSuccessEnvelope } = await import(
+        "./shared/json-output.ts"
+      );
+      const { VERSION } = await import("./utils/index.ts");
+      const envelope = createSuccessEnvelope("version", {
+        version: VERSION,
+        deno: Deno.version.deno,
+        v8: Deno.version.v8,
+        typescript: Deno.version.typescript,
+        os: Deno.build.os,
+        arch: Deno.build.arch,
+        standalone: false,
+      });
+      assertEquals(envelope.success, true);
+      assertEquals(envelope.command, "version");
+      assertEquals(typeof envelope.data.version, "string");
+      assertEquals(typeof envelope.data.deno, "string");
+      assertEquals(typeof envelope.data.os, "string");
+      assertEquals(typeof envelope.data.standalone, "boolean");
+    });
+  });
+
   describe("command extraction from args", () => {
     it("should extract first positional as command", () => {
       assertEquals(({ _: ["dev"] } as const)._[0], "dev");

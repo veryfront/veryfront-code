@@ -43,7 +43,13 @@ import { parseLoginMethod } from "./auth/utils.ts";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
 import { setColorOverride } from "./ui/colors.ts";
 import { exitProcess, setQuietMode, setVerboseMode } from "./utils/index.ts";
-import { isJsonMode, setJsonMode, setOutputPath } from "./shared/json-output.ts";
+import {
+  createSuccessEnvelope,
+  isJsonMode,
+  outputJson,
+  setJsonMode,
+  setOutputPath,
+} from "./shared/json-output.ts";
 import { detectCI, setNonInteractive } from "./shared/interactive.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
@@ -130,9 +136,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
   if (args.version || args.v) {
     if (isJsonMode()) {
-      const { outputJson, createSuccessEnvelope } = await import(
-        "./shared/json-output.ts"
-      );
       await outputJson(createSuccessEnvelope("version", {
         version: VERSION,
         deno: Deno.version.deno,
@@ -140,6 +143,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         typescript: Deno.version.typescript,
         os: Deno.build.os,
         arch: Deno.build.arch,
+        standalone: Deno.build.standalone ?? false,
       }));
       exitProcess(0);
       return;
