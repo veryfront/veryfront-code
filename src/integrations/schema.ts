@@ -101,12 +101,39 @@ export const OAuthConfigSchema = z.object({
   docsUrl: z.string().optional(),
 });
 
+export const IntegrationEndpointParamSchema = z.object({
+  type: z.enum(["string", "number", "boolean", "string[]", "object", "array"]),
+  in: z.enum(["path", "query", "header", "body"]),
+  description: z.string(),
+  required: z.boolean().optional(),
+  default: z.unknown().optional(),
+});
+
+export const IntegrationEndpointBodyFieldSchema = z.object({
+  type: z.enum(["string", "number", "boolean", "object", "array"]),
+  description: z.string(),
+  required: z.boolean().optional(),
+  default: z.unknown().optional(),
+});
+
+export const IntegrationEndpointSchema = z.object({
+  type: z.enum(["rest", "graphql"]).optional(),
+  method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+  url: z.string(),
+  query: z.string().optional(),
+  params: z.record(z.string(), IntegrationEndpointParamSchema).optional(),
+  body: z.record(z.string(), IntegrationEndpointBodyFieldSchema).optional(),
+  contentType: z.string().optional(),
+  response: z.object({ transform: z.string().optional() }).optional(),
+});
+
 export const IntegrationToolSchema = z.object({
   id: z.string().optional(),
   name: z.string(),
   description: z.string(),
   requiresWrite: z.boolean().optional(),
   file: z.string().optional(),
+  endpoint: IntegrationEndpointSchema.optional(),
 });
 
 export const IntegrationPromptSchema = z.object({
