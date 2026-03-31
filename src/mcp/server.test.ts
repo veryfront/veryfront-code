@@ -2,42 +2,19 @@ import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/tes
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { dynamicTool } from "#veryfront/tool";
 import { z } from "zod";
-import { clearConnectorCache } from "../integrations/connector-fetcher.ts";
-import type { IntegrationConnector } from "../integrations/types.ts";
 import { clearMCPRegistry, registerTool } from "./registry.ts";
 import { createMCPServer } from "./server.ts";
 
 const originalFetch = globalThis.fetch;
 
-const mockConnector: IntegrationConnector = {
-  name: "github",
-  display_name: "GitHub",
-  description: "GitHub integration",
-  auth: { type: "oauth2", provider: "github" },
-  tools: [
-    {
-      id: "list-repos",
-      name: "List Repositories",
-      description: "List repos",
-      requires_write: false,
-      endpoint: {
-        method: "GET",
-        url: "https://api.github.com/user/repos",
-      },
-    },
-  ],
-};
-
 describe("mcp/server", () => {
   beforeEach(() => {
     clearMCPRegistry();
-    clearConnectorCache();
     globalThis.fetch = originalFetch;
   });
 
   afterEach(() => {
     clearMCPRegistry();
-    clearConnectorCache();
     globalThis.fetch = originalFetch;
   });
 
@@ -334,37 +311,27 @@ describe("mcp/server", () => {
     });
   });
 
-  it("retries loading integrations on subsequent tools/list after a failed fetch", async () => {
+  it("syncs integration config to API on first tools/list call", async () => {
     const server = createMCPServer({ enabled: true });
     server.setIntegrationLoader({
       integrations: { github: {} },
       apiBaseUrl: "https://api.example.com",
+      apiToken: "test-token",
     });
 
-    let connectorFetchCount = 0;
+    let configSyncCalled = false;
     globalThis.fetch = async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url !== "https://api.example.com/integrations/github") {
-        throw new Error(`Unexpected URL: ${url}`);
+      if (url === "https://api.example.com/integrations/config") {
+        configSyncCalled = true;
+        return new Response(JSON.stringify({ synced: 1 }), {
+          headers: { "content-type": "application/json" },
+        });
       }
-
-      connectorFetchCount++;
-      if (connectorFetchCount === 1) {
-        return new Response("Internal Server Error", { status: 500 });
-      }
-
-      return new Response(JSON.stringify(mockConnector), {
-        headers: { "content-type": "application/json" },
-      });
+      return new Response("Not Found", { status: 404 });
     };
 
-    const first = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-    const firstTools = (first.result as { tools: Array<{ name: string }> }).tools;
-    assertEquals(firstTools.some((tool) => tool.name === "github:list-repos"), false);
-
-    const second = await server.handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
-    const secondTools = (second.result as { tools: Array<{ name: string }> }).tools;
-    assertEquals(secondTools.some((tool) => tool.name === "github:list-repos"), true);
-    assertEquals(connectorFetchCount, 2);
+    await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    assertEquals(configSyncCalled, true);
   });
 });

@@ -1,4 +1,4 @@
-import { getMCPRegistry, registerTool } from "./registry.ts";
+import { getMCPRegistry } from "./registry.ts";
 import { executeTool } from "#veryfront/tool";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
@@ -62,8 +62,11 @@ export class MCPServer {
   }
 
   /**
-   * Configure integration tools to be lazily loaded on first tools/list call.
-   * Integration tools are fetched from the API and registered in the global tool registry.
+   * Configure integration tools to be loaded from the API.
+   *
+   * When API-side integration tools are available (apiBaseUrl + apiToken),
+   * tools are loaded remotely via the API's /integrations/tools/list endpoint.
+   * Otherwise falls back to the legacy local loading path.
    */
   setIntegrationLoader(config: IntegrationLoaderConfig): void {
     this.integrationLoader = config;
@@ -135,13 +138,12 @@ export class MCPServer {
   }
 
   private async listTools(): Promise<{ tools: Array<Record<string, unknown>> }> {
-    // Lazily load integration tools on first call
+    // Sync integration config to API on first tools/list call
     if (this.integrationLoader && !this.integrationsLoaded) {
       try {
-        this.integrationsLoaded = await this.loadIntegrationTools(this.integrationLoader);
+        this.integrationsLoaded = await this.loadRemoteIntegrationTools(this.integrationLoader);
       } catch (_) {
-        // expected: non-fatal integration loading failure; tools won't be available
-        // Keep integrationsLoaded=false so a later tools/list can retry.
+        // Config sync failed — non-fatal, integration tools from API won't reflect config
       }
     }
 
@@ -454,31 +456,26 @@ export class MCPServer {
     };
   }
 
-  private async loadIntegrationTools(config: IntegrationLoaderConfig): Promise<boolean> {
-    const { fetchConnector } = await import("../integrations/connector-fetcher.ts");
-    const { createIntegrationTools } = await import("../integrations/tool-factory.ts");
-    const { integrations, apiBaseUrl, apiToken } = config;
-    let allConnectorsLoaded = true;
+  private async loadRemoteIntegrationTools(config: IntegrationLoaderConfig): Promise<boolean> {
+    const { apiBaseUrl, apiToken } = config;
+    if (!apiToken) return false; // No token means we can't call the API
 
-    for (const [name, integrationConfig] of Object.entries(integrations)) {
-      const connector = await fetchConnector(name, apiBaseUrl, apiToken);
-      if (!connector) {
-        allConnectorsLoaded = false;
-        continue;
-      }
+    const { syncIntegrationConfig } = await import(
+      "../integrations/remote-tools.ts"
+    );
 
-      const tools = createIntegrationTools(
-        connector,
-        integrationConfig ?? {},
-        apiBaseUrl,
-        apiToken,
-      );
-      for (const tool of tools) {
-        registerTool(tool.id, tool);
-      }
+    // Sync config to API — this is the only responsibility of the MCP server path.
+    // Actual tool discovery happens per-request in the agent runtime (getAvailableTools)
+    // and the API's MCP tools/list handler.
+    const integrationConfigs: Record<string, { scope?: string; tools?: string[] }> = {};
+    for (const [name, cfg] of Object.entries(config.integrations)) {
+      integrationConfigs[name] = {
+        scope: cfg?.scope ?? (cfg?.perUser ? "endUser" : "project"),
+        tools: cfg?.tools,
+      };
     }
-
-    return allConnectorsLoaded;
+    await syncIntegrationConfig(apiBaseUrl, apiToken, integrationConfigs);
+    return true;
   }
 }
 

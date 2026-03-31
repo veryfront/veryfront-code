@@ -478,7 +478,9 @@ export const veryfrontConfigSchema = z
         z.string(),
         z
           .object({
-            /** Enable per-user tokens (pass endUserId). Default: project-level token. */
+            /** Token scope: "project" (shared) or "endUser" (per-end-user OAuth). */
+            scope: z.enum(["project", "endUser"]).optional(),
+            /** @deprecated Use `scope: "endUser"` instead. */
             perUser: z.boolean().optional(),
             /** Allowlist of tool IDs to expose. When set, only these tools are registered.
              * This keeps the MCP context narrow by excluding unused tools.
