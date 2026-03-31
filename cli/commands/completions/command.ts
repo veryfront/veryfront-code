@@ -7,10 +7,39 @@
  */
 
 import { COMMANDS } from "../../help/command-definitions.ts";
+import type { CommandOption } from "../../help/types.ts";
 
 /** Escape a string for use in shell single-quoted contexts */
-function shellEscape(s: string): string {
+export function shellEscape(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+/**
+ * Extract long flags (--name) from a CommandOption flag string.
+ * Handles formats like: "--port", "-p, --port", "-p, --port <number>"
+ */
+export function extractLongFlags(options: CommandOption[]): string[] {
+  return options.flatMap((o) =>
+    o.flag
+      .split(",")
+      .map((f) => f.trim().split(" ")[0]!)
+      .filter((f) => f.startsWith("--"))
+  );
+}
+
+/**
+ * Extract short and long flags for fish completions.
+ * Returns { short: "p", long: "port" } pairs.
+ */
+export function extractFishFlags(
+  options: CommandOption[],
+): Array<{ short?: string; long?: string; description: string }> {
+  return options.map((o) => {
+    const parts = o.flag.split(",").map((f) => f.trim().split(" ")[0]!);
+    const short = parts.find((p) => p.match(/^-[a-zA-Z]$/))?.slice(1);
+    const long = parts.find((p) => p.startsWith("--"))?.slice(2);
+    return { short, long, description: o.description };
+  });
 }
 
 const GLOBAL_FLAGS = [
@@ -40,9 +69,7 @@ export function generateBashCompletions(): string {
   script += `  case "\${COMP_WORDS[1]}" in\n`;
 
   for (const cmd of commands) {
-    const flags = (cmd.options ?? [])
-      .map((o) => o.flag.split(",")[0]!.trim().split(" ")[0])
-      .filter((f) => f?.startsWith("--"))
+    const flags = extractLongFlags(cmd.options ?? [])
       .concat(GLOBAL_FLAGS)
       .join(" ");
     script += `    ${cmd.name}) COMPREPLY=( $(compgen -W "${flags}" -- "\${cur}") ) ;;\n`;
@@ -75,6 +102,26 @@ export function generateZshCompletions(): string {
   script += `    command)\n`;
   script += `      _describe 'command' commands\n`;
   script += `      ;;\n`;
+  script += `    args)\n`;
+  script += `      case \${words[1]} in\n`;
+
+  for (const cmd of commands) {
+    const flags = extractLongFlags(cmd.options ?? []).concat(GLOBAL_FLAGS);
+    if (flags.length > 0) {
+      const zshFlags = flags.map((f) =>
+        `'${f}[${
+          shellEscape(
+            (cmd.options ?? []).find((o) => o.flag.includes(f))?.description ??
+              "",
+          )
+        }]'`
+      ).join(" ");
+      script += `        ${cmd.name}) _arguments ${zshFlags} ;;\n`;
+    }
+  }
+
+  script += `      esac\n`;
+  script += `      ;;\n`;
   script += `  esac\n`;
   script += `}\n\n`;
   script += `_veryfront\n`;
@@ -93,14 +140,21 @@ export function generateFishCompletions(): string {
   script += `\n`;
 
   for (const cmd of commands) {
-    for (const opt of cmd.options ?? []) {
-      const flag = opt.flag.split(",")[0]!.trim().replace(/^--/, "").split(
-        " ",
-      )[0];
-      if (flag) {
-        const desc = shellEscape(opt.description);
+    const flags = extractFishFlags(cmd.options ?? []);
+    for (const flag of flags) {
+      if (flag.long) {
+        const desc = shellEscape(flag.description);
+        let line =
+          `complete -c veryfront -n '__fish_seen_subcommand_from ${cmd.name}' -l '${flag.long}'`;
+        if (flag.short) {
+          line += ` -s '${flag.short}'`;
+        }
+        line += ` -d '${desc}'\n`;
+        script += line;
+      } else if (flag.short) {
+        const desc = shellEscape(flag.description);
         script +=
-          `complete -c veryfront -n '__fish_seen_subcommand_from ${cmd.name}' -l '${flag}' -d '${desc}'\n`;
+          `complete -c veryfront -n '__fish_seen_subcommand_from ${cmd.name}' -s '${flag.short}' -d '${desc}'\n`;
       }
     }
   }
