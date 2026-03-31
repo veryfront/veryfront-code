@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const analyzeChunksHelp: CommandHelp = {
   name: "analyze-chunks",
+  category: "development",
   description: "Analyze bundle chunks and sizes",
   usage: "veryfront analyze-chunks [options]",
   options: [

@@ -66,6 +66,14 @@ issueRules:
       package: "@opentelemetry/*"
       reason: "OpenTelemetry collects telemetry by design — it IS the telemetry system"
 
+  # Inline script content is server-generated (hydration scripts, dev scripts,
+  # Head component output) — never from user HTTP input. CSP nonces protect
+  # against injection. Socket's static analysis can't distinguish this.
+  unknownValueInScriptTag:
+    - action: ignore
+      package: "veryfront@*"
+      reason: "Script content is server-generated framework code with CSP nonce protection, not user input"
+
 # ──────────────────────────────────────────────
 # Project-level settings
 # ──────────────────────────────────────────────

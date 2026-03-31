@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const filesHelp: CommandHelp = {
   name: "files",
+  category: "files",
   description: "List, read, write, and delete project files",
   usage: "veryfront files <command> [options]",
   options: [

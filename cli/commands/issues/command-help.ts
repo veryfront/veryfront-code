@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const issuesHelp: CommandHelp = {
   name: "issues",
+  category: "ai",
   description: "File-based issue tracking (SDLC conventions)",
   usage: "veryfront issues <command> [options]",
   options: [

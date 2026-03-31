@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const logoutHelp: CommandHelp = {
   name: "logout",
+  category: "auth",
   description: "Clear stored authentication credentials",
   usage: "veryfront logout",
   options: [],

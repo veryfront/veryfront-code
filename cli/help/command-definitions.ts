@@ -38,6 +38,10 @@ import { issuesHelp } from "../commands/issues/command-help.ts";
 import { startHelp } from "../commands/start/command-help.ts";
 import { taskHelp } from "../commands/task/command-help.ts";
 import { workflowHelp } from "../commands/workflow/command-help.ts";
+import { schemaHelp } from "../commands/schema/command-help.ts";
+import { testHelp } from "../commands/test/command-help.ts";
+import { lintHelp } from "../commands/lint/command-help.ts";
+import { skillsHelp } from "../commands/skills/command-help.ts";
 
 /**
  * Central registry of all command help definitions.
@@ -75,4 +79,8 @@ export const COMMANDS: CommandRegistry = {
   start: startHelp,
   task: taskHelp,
   workflow: workflowHelp,
+  schema: schemaHelp,
+  test: testHelp,
+  lint: lintHelp,
+  skills: skillsHelp,
 };

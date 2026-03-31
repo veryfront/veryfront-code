@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const mergeHelp: CommandHelp = {
   name: "merge",
+  category: "deploy",
   description: "Merge a branch into main (or another branch)",
   usage: "veryfront merge <branch> [options]",
   options: [

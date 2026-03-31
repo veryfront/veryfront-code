@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const knowledgeHelp: CommandHelp = {
   name: "knowledge",
+  category: "files",
   description: "Ingest documents into the project knowledge base",
   usage: "veryfront knowledge ingest <source...> [options]",
   options: [

@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const taskHelp: CommandHelp = {
   name: "task",
+  category: "ai",
   description: "Run a task from the tasks/ directory",
   usage: "veryfront task <name> [options]",
   options: [

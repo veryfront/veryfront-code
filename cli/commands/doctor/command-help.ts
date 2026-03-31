@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const doctorHelp: CommandHelp = {
   name: "doctor",
+  category: "development",
   description: "Check system requirements and project health",
   usage: "veryfront doctor [options]",
   options: [

@@ -260,6 +260,30 @@ export class MCPDevServer {
           description: "File-based issues, tasks, and plans",
           mimeType: "application/json",
         },
+        {
+          uri: "veryfront://schema",
+          name: "CLI Schema",
+          description: "Full CLI command schema for agent discovery",
+          mimeType: "application/json",
+        },
+        {
+          uri: "veryfront://agents-md",
+          name: "Root AGENTS.md",
+          description: "Agent onboarding documentation",
+          mimeType: "text/markdown",
+        },
+        {
+          uri: "veryfront://config",
+          name: "Project Config",
+          description: "Resolved project configuration",
+          mimeType: "application/json",
+        },
+        {
+          uri: "veryfront://skills",
+          name: "Available Skills",
+          description: "List of all available agent skills",
+          mimeType: "application/json",
+        },
       ],
     };
   }
@@ -311,6 +335,54 @@ export class MCPDevServer {
                 text: JSON.stringify(logs, null, 2),
               },
             ],
+          };
+        }
+
+        if (uri === "veryfront://schema") {
+          const { generateSchema } = await import("../commands/schema/command.ts");
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(generateSchema()),
+            }],
+          };
+        }
+
+        if (uri === "veryfront://agents-md") {
+          const content = await readTextFile("AGENTS.md").catch(() => "AGENTS.md not found");
+          return {
+            contents: [{ uri, mimeType: "text/markdown", text: content }],
+          };
+        }
+
+        if (uri === "veryfront://config") {
+          const { getEnvironmentConfig } = await import("veryfront/config");
+          const config = getEnvironmentConfig();
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(config, null, 2),
+            }],
+          };
+        }
+
+        if (uri === "veryfront://skills") {
+          const { listCoreSkills } = await import("../skills/loader.ts");
+          const skills = await listCoreSkills();
+          const data = skills.map((s) => ({
+            name: s.manifest.name,
+            version: s.manifest.version,
+            description: s.manifest.description,
+            requires: s.manifest.requires,
+          }));
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(data, null, 2),
+            }],
           };
         }
 

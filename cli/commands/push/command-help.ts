@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const pushHelp: CommandHelp = {
   name: "push",
+  category: "deploy",
   description: "Create a branch and upload local files to Veryfront",
   usage: "veryfront push [options]",
   options: [

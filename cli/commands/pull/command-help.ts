@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const pullHelp: CommandHelp = {
   name: "pull",
+  category: "deploy",
   description: "Download project files from Veryfront remote",
   usage: "veryfront pull [options]",
   options: [

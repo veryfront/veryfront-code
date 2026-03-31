@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const workerHelp: CommandHelp = {
   name: "worker",
+  category: "ai",
   description: "Start workflow job worker",
   usage: "veryfront worker [options]",
   options: [

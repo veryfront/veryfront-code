@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const studioHelp: CommandHelp = {
   name: "studio",
+  category: "project",
   description: "Open Veryfront Studio in browser",
   usage: "veryfront studio [project] [options]",
   options: [

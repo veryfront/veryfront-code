@@ -17,6 +17,7 @@ import {
   type JSONRPCResponse,
   parseError,
   PromptsGetParamsSchema,
+  ResourcesReadParamsSchema,
   successResponse,
   ToolsCallParamsSchema,
 } from "./jsonrpc.ts";
@@ -80,7 +81,7 @@ export class StandaloneMCPServer {
       case "initialize":
         return Promise.resolve({
           protocolVersion: "2024-11-05",
-          capabilities: { tools: {}, prompts: {} },
+          capabilities: { tools: {}, resources: {}, prompts: {} },
           serverInfo: { name: "veryfront-mcp", version: "1.0.0" },
         });
       case "notifications/initialized":
@@ -95,6 +96,10 @@ export class StandaloneMCPServer {
         });
       case "tools/call":
         return this.handleToolsCall(params);
+      case "resources/list":
+        return Promise.resolve(this.handleResourcesList());
+      case "resources/read":
+        return this.handleResourcesRead(params);
       case "prompts/list":
         return Promise.resolve(this.handlePromptsList());
       case "prompts/get":
@@ -112,6 +117,76 @@ export class StandaloneMCPServer {
 
     const result = await tool.execute(args ?? {});
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+
+  private handleResourcesList(): unknown {
+    return {
+      resources: [
+        {
+          uri: "veryfront://schema",
+          name: "CLI Schema",
+          description: "Full CLI command schema for agent discovery",
+          mimeType: "application/json",
+        },
+        {
+          uri: "veryfront://agents-md",
+          name: "Root AGENTS.md",
+          description: "Agent onboarding documentation",
+          mimeType: "text/markdown",
+        },
+        {
+          uri: "veryfront://skills",
+          name: "Available Skills",
+          description: "List of all available agent skills",
+          mimeType: "application/json",
+        },
+      ],
+    };
+  }
+
+  private async handleResourcesRead(params: unknown): Promise<unknown> {
+    const { uri } = ResourcesReadParamsSchema.parse(params);
+
+    if (uri === "veryfront://schema") {
+      const { generateSchema } = await import("../commands/schema/command.ts");
+      return {
+        contents: [{
+          uri,
+          mimeType: "application/json",
+          text: JSON.stringify(generateSchema(), null, 2),
+        }],
+      };
+    }
+
+    if (uri === "veryfront://agents-md") {
+      try {
+        const agentsPath = new URL("../../AGENTS.md", import.meta.url).pathname;
+        const content = await readTextFile(agentsPath);
+        return { contents: [{ uri, mimeType: "text/markdown", text: content }] };
+      } catch {
+        return { contents: [{ uri, mimeType: "text/markdown", text: "AGENTS.md not found" }] };
+      }
+    }
+
+    if (uri === "veryfront://skills") {
+      const { listCoreSkills } = await import("../skills/loader.ts");
+      const skills = await listCoreSkills();
+      const data = skills.map((s) => ({
+        name: s.manifest.name,
+        version: s.manifest.version,
+        description: s.manifest.description,
+        requires: s.manifest.requires,
+      }));
+      return {
+        contents: [{
+          uri,
+          mimeType: "application/json",
+          text: JSON.stringify(data, null, 2),
+        }],
+      };
+    }
+
+    throw new Error(`Unknown resource: ${uri}`);
   }
 
   private handlePromptsList(): unknown {
@@ -160,6 +235,63 @@ export class StandaloneMCPServer {
     const client = this.client;
 
     return [
+      {
+        name: "vf_get_schema",
+        description:
+          "Get the CLI command schema for discovering available commands, arguments, and flags.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            command: {
+              type: "string",
+              description: "Get schema for a specific command",
+            },
+            category: {
+              type: "string",
+              description: "Filter by category",
+            },
+          },
+        },
+        async execute(args) {
+          const { generateCommandSchema, generateSchema } = await import(
+            "../commands/schema/command.ts"
+          );
+          if (args.command) {
+            return generateCommandSchema(args.command as string) ??
+              { error: `Unknown command: ${args.command}` };
+          }
+          return generateSchema(
+            args.category as
+              | "development"
+              | "deploy"
+              | "project"
+              | "files"
+              | "ai"
+              | "auth"
+              | undefined,
+          );
+        },
+      },
+      {
+        name: "vf_get_project_info",
+        description: "Get project metadata including project slug, version, and environment.",
+        inputSchema: { type: "object", properties: {} },
+        async execute() {
+          const { VERSION } = await import("#cli/utils");
+          try {
+            const { getEnvironmentConfig } = await import("veryfront/config");
+            const config = getEnvironmentConfig();
+            return {
+              version: VERSION,
+              projectSlug: config.projectSlug ?? null,
+              nodeEnv: config.nodeEnv,
+              veryfrontEnv: config.veryfrontEnv,
+            };
+          } catch {
+            return { version: VERSION };
+          }
+        },
+      },
       {
         name: "vf_get_errors",
         description:

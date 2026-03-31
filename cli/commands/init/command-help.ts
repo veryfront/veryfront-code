@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const initHelp: CommandHelp = {
   name: "init",
+  category: "project",
   description: "Initialize a new Veryfront project",
   usage: "veryfront init [project-name] [options]",
   options: [

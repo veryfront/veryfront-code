@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const buildHelp: CommandHelp = {
   name: "build",
+  category: "development",
   description: "Build your application for production",
   usage: "veryfront build [options]",
   options: [

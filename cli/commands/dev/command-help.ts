@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const devHelp: CommandHelp = {
   name: "dev",
+  category: "development",
   description: "Start development server with hot module replacement",
   usage: "veryfront dev [options]",
   options: [

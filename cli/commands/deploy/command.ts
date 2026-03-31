@@ -13,6 +13,7 @@ import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/sha
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
+import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 
 /**
  * Zod schema for deploy command arguments
@@ -148,9 +149,12 @@ export function createDeployment(
 export async function deployCommand(options: DeployOptions): Promise<void> {
   const { branch, env, releaseName, dryRun, force, quiet } = options;
 
+  if (isJsonMode()) {
+    return deployCommandJson(options);
+  }
+
   let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
 
-  // Use interactive auth - prompts for login if not authenticated
   const config = await resolveConfigWithAuth(cwd());
   const client = createApiClient(config);
 
@@ -195,4 +199,81 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   logSuccess(`Deployed ${release.version} to ${env}`);
   logInfo(`  Release: ${release.name} (${release.version})`);
   logInfo(`  Environment: ${env}`);
+}
+
+async function deployCommandJson(options: DeployOptions): Promise<void> {
+  const { branch, env, releaseName, dryRun, force } = options;
+
+  try {
+    // JSON mode requires --force or --yes to prevent accidental deploys
+    const { isInteractive } = await import("../../shared/interactive.ts");
+    if (!force && isInteractive()) {
+      streamJsonLine({
+        type: "result",
+        success: false,
+        error:
+          "Deploy in JSON mode requires --force or --yes to confirm. This prevents accidental production deploys.",
+      });
+      const { exit } = await import("veryfront/platform");
+      exit(1);
+      return;
+    }
+
+    streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
+    const config = await resolveConfigWithAuth(cwd());
+    const client = createApiClient(config);
+    streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });
+
+    streamJsonLine({ type: "step", name: "resolve-environment", status: "started" });
+    const environment = await getEnvironmentByName(client, config.projectSlug, env);
+    if (!environment) {
+      streamJsonLine({
+        type: "result",
+        success: false,
+        error: `Environment "${env}" not found`,
+      });
+      const { exit } = await import("veryfront/platform");
+      exit(1);
+      return;
+    }
+    streamJsonLine({ type: "step", name: "resolve-environment", status: "completed" });
+
+    if (dryRun) {
+      streamJsonLine({
+        type: "result",
+        success: true,
+        data: { dryRun: true, branch, environment: env },
+      });
+      return;
+    }
+
+    streamJsonLine({ type: "step", name: "create-release", status: "started" });
+    const release = await createRelease(client, config.projectSlug, {
+      name: releaseName,
+      branch,
+    });
+    streamJsonLine({ type: "step", name: "create-release", status: "completed" });
+
+    streamJsonLine({ type: "step", name: "deploy", status: "started" });
+    await createDeployment(client, config.projectSlug, release.id, environment.id);
+    streamJsonLine({ type: "step", name: "deploy", status: "completed" });
+
+    streamJsonLine({
+      type: "result",
+      success: true,
+      data: {
+        release: { id: release.id, name: release.name, version: release.version },
+        environment: env,
+        branch,
+      },
+    });
+  } catch (error) {
+    streamJsonLine({
+      type: "result",
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    const { exit } = await import("veryfront/platform");
+    exit(1);
+  }
 }
