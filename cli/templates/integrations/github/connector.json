@@ -119,14 +119,17 @@
       "description": "List issues for a repository",
       "requiresWrite": false,
       "endpoint": {
-        "method": "GET",
-        "url": "https://api.github.com/repos/{owner}/{repo}/issues",
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.github.com/graphql",
+        "query": "query($owner: String!, $repo: String!, $first: Int, $states: [IssueState!]) { repository(owner: $owner, name: $repo) { issues(first: $first, states: $states, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { id number title body state url createdAt updatedAt author { login } labels(first: 10) { nodes { name } } assignees(first: 10) { nodes { login } } } } } }",
         "params": {
-          "owner": { "type": "string", "in": "path", "description": "Repository owner", "required": true },
-          "repo": { "type": "string", "in": "path", "description": "Repository name", "required": true },
-          "state": { "type": "string", "in": "query", "description": "State: open, closed, all", "default": "open" },
-          "per_page": { "type": "number", "in": "query", "description": "Results per page", "default": 30 }
-        }
+          "owner": { "type": "string", "in": "body", "description": "Repository owner", "required": true },
+          "repo": { "type": "string", "in": "body", "description": "Repository name", "required": true },
+          "states": { "type": "string[]", "in": "body", "description": "Issue states to include (e.g. OPEN, CLOSED)", "default": ["OPEN"] },
+          "first": { "type": "number", "in": "body", "description": "Results per page", "default": 30 }
+        },
+        "response": { "transform": "repository.issues.nodes" }
       }
     }
   ],
