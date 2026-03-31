@@ -43,7 +43,7 @@ import { parseLoginMethod } from "./auth/utils.ts";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
 import { setColorOverride } from "./ui/colors.ts";
 import { exitProcess, setQuietMode, setVerboseMode } from "./utils/index.ts";
-import { setJsonMode, setOutputPath } from "./shared/json-output.ts";
+import { isJsonMode, setJsonMode, setOutputPath } from "./shared/json-output.ts";
 import { detectCI, setNonInteractive } from "./shared/interactive.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
@@ -129,7 +129,28 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   if (args.yes || args.y || detectCI()) setNonInteractive(true);
 
   if (args.version || args.v) {
+    if (isJsonMode()) {
+      const { outputJson, createSuccessEnvelope } = await import(
+        "./shared/json-output.ts"
+      );
+      await outputJson(createSuccessEnvelope("version", {
+        version: VERSION,
+        deno: Deno.version.deno,
+        v8: Deno.version.v8,
+        typescript: Deno.version.typescript,
+        os: Deno.build.os,
+        arch: Deno.build.arch,
+      }));
+      exitProcess(0);
+      return;
+    }
     cliLogger.info(`Veryfront CLI v${VERSION}`);
+    if (args.verbose) {
+      cliLogger.info(
+        `Deno ${Deno.version.deno} (V8 ${Deno.version.v8}, TypeScript ${Deno.version.typescript})`,
+      );
+      cliLogger.info(`OS: ${Deno.build.os} ${Deno.build.arch}`);
+    }
     exitProcess(0);
     return;
   }
