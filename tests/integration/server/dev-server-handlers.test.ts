@@ -342,6 +342,24 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         await stopServer(server);
       });
     });
+
+    it("serves framework markdown module without unsafe-eval helpers", async () => {
+      await withTestContext("dev-server-framework-markdown-csp", async (context) => {
+        const { server, port } = await createTestDevServer(context);
+        const response = await fetch(
+          `http://127.0.0.1:${port}/_vf_modules/_veryfront/react/components/ai/markdown.js`,
+        );
+
+        assertEquals(response.status, 200);
+        const body = await response.text();
+        assert(
+          !body.includes("new Function("),
+          "Framework markdown module should not use unsafe-eval",
+        );
+
+        await stopServer(server);
+      });
+    });
   });
 
   describe("DevServer - Error Handler", {}, () => {

@@ -116,9 +116,9 @@ export async function resolveFrameworkFile(
  * Resolve a #veryfront/ import to the actual framework source file path.
  * Returns the resolved path if found, null otherwise.
  *
- * IMPORTANT: This function checks embedded sources FIRST (for compiled binaries),
- * then falls back to regular src/. This matches resolveFrameworkFile's behavior
- * and ensures consistent path resolution for cycle detection.
+ * IMPORTANT: This function prefers regular src/ when present, then falls back
+ * to embedded sources for compiled binaries. This matches resolveFrameworkFile's
+ * behavior and ensures consistent path resolution for cycle detection.
  */
 export async function resolveVeryfrontSourcePath(
   specifier: string,
@@ -132,13 +132,13 @@ export async function resolveVeryfrontSourcePath(
   const relativePath = mappedTarget.slice("./src/".length);
   const hasExtension = /\.(tsx?|jsx?|mjs)$/.test(relativePath);
 
-  // Check embedded sources first (for compiled binaries), then regular src/
+  // Prefer regular src/ when present, then fall back to embedded sources.
   // This order matches FRAMEWORK_LOOKUPS and resolveFrameworkFile to ensure
   // consistent path resolution across the codebase, which is critical for
   // cycle detection in transformingFiles.
   const lookupDirs = [
-    EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
     join(FRAMEWORK_ROOT, "src"), // Regular sources for dev mode
+    EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
   ];
 
   for (const dir of lookupDirs) {

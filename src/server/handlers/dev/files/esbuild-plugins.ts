@@ -74,14 +74,14 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
  * Bare specifiers that should be kept as-is (not rewritten to esm.sh URLs).
  * These are resolved by the browser's import map injected in the HTML <head>.
  */
-const IMPORT_MAP_RESOLVED = new Set([
-  "react",
-  "react-dom",
-  "react-dom/client",
-  "react-dom/server",
-  "react/jsx-runtime",
-  "react/jsx-dev-runtime",
-]);
+const DEFAULT_IMPORT_MAP_IMPORTS: Record<string, string> = {
+  react: "",
+  "react-dom": "",
+  "react-dom/client": "",
+  "react-dom/server": "",
+  "react/jsx-runtime": "",
+  "react/jsx-dev-runtime": "",
+};
 
 /** Map of common packages to their esm.sh URLs for browser imports */
 const ESM_PACKAGE_MAP: Record<string, string> = {};
@@ -91,6 +91,7 @@ interface BareExternalPluginOptions {
   lockfile?: LockfileManager;
   projectDir?: string;
   strict?: boolean;
+  importMapImports?: Record<string, string>;
 }
 
 function isBareImport(path: string): boolean {
@@ -104,6 +105,19 @@ function isBareImport(path: string): boolean {
 
 function toEsmUrl(path: string): string {
   return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${path}`;
+}
+
+function isImportMapResolved(
+  path: string,
+  imports: Record<string, string>,
+): boolean {
+  if (imports[path]) return true;
+
+  for (const key of Object.keys(imports)) {
+    if (key.endsWith("/") && path.startsWith(key)) return true;
+  }
+
+  return false;
 }
 
 function resolveAsExternalOrHttps(
@@ -164,6 +178,10 @@ export function createBareExternalPlugin(
   const { bundle = false, strict = false } = opts;
   const lockfile = opts.lockfile ??
     (opts.projectDir && bundle ? createLockfileManager(opts.projectDir) : null);
+  const importMapImports = {
+    ...DEFAULT_IMPORT_MAP_IMPORTS,
+    ...(opts.importMapImports ?? {}),
+  };
 
   return {
     name: "veryfront-bare-ext",
@@ -174,7 +192,7 @@ export function createBareExternalPlugin(
 
         // Keep import-map-resolved specifiers as bare externals — the browser's
         // <script type="importmap"> resolves them to the correct CDN URL.
-        if (IMPORT_MAP_RESOLVED.has(args.path)) {
+        if (isImportMapResolved(args.path, importMapImports)) {
           return { path: args.path, external: true };
         }
 

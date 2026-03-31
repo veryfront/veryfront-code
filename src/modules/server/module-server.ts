@@ -478,9 +478,9 @@ async function findSourceFile(
   }
 
   const frameworkLookups: [string, string, string, boolean][] = [
-    // Embedded sources for compiled binaries (.src extensions)
-    ["_veryfront/", EMBEDDED_SRC_DIR, "_veryfront-embedded", true],
     ["_veryfront/", join(FRAMEWORK_ROOT, "src"), "_veryfront", true],
+    // Embedded sources are a fallback for compiled binaries when src/ is unavailable.
+    ["_veryfront/", EMBEDDED_SRC_DIR, "_veryfront-embedded", true],
     // Fallback to projectDir for local dev/proxy setups where FRAMEWORK_ROOT may differ.
     ["_veryfront/", join(projectDir, "src"), "_veryfront-project", true],
   ];

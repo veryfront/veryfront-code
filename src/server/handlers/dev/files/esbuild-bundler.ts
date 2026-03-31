@@ -1,4 +1,5 @@
 import type { HandlerContext } from "../../types.ts";
+import { buildImportMapJson } from "#veryfront/html";
 import { getDirectory, getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { createBareExternalPlugin, createRelativeFsPlugin } from "./esbuild-plugins.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -9,6 +10,11 @@ export function bundleDevFile(absPath: string, ctx: HandlerContext): Promise<str
     async () => {
       const { build } = await import("esbuild");
       const src = await ctx.adapter.fs.readFile(absPath);
+      const importMapJson = await buildImportMapJson({
+        projectDir: ctx.projectDir,
+        config: ctx.config,
+      });
+      const importMap = JSON.parse(importMapJson) as { imports?: Record<string, string> };
 
       const { outputFiles } = await build({
         bundle: true,
@@ -25,7 +31,12 @@ export function bundleDevFile(absPath: string, ctx: HandlerContext): Promise<str
           resolveDir: getDirectory(absPath),
           sourcefile: absPath,
         },
-        plugins: [createRelativeFsPlugin(ctx.projectDir, ctx.adapter), createBareExternalPlugin()],
+        plugins: [
+          createRelativeFsPlugin(ctx.projectDir, ctx.adapter),
+          createBareExternalPlugin({
+            importMapImports: importMap.imports,
+          }),
+        ],
       });
 
       return outputFiles?.[0]?.text ?? "export default null";

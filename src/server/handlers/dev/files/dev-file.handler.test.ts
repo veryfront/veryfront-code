@@ -141,6 +141,70 @@ describe(
       assertEquals(body.includes("preview-proxy"), true);
     });
 
+    it("keeps browser import-map exact specifiers in preview bundles", async () => {
+      const handler = new DevFileHandler();
+      const adapter = createMockAdapter();
+      const modulePath = "/project/app/page.tsx";
+      adapter.fs.files.set(
+        modulePath,
+        [
+          '"use client";',
+          'import { Chat } from "veryfront/chat";',
+          "export default function Page() {",
+          '  return Chat ? "preview-chat" : "missing";',
+          "}",
+        ].join("\n"),
+      );
+
+      const encodedPath = base64urlEncode("app/page.tsx");
+      const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+      const ctx = makeCtx({
+        adapter,
+        isLocalProject: false,
+        requestContext: { mode: "preview" } as HandlerContext["requestContext"],
+      });
+
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 200);
+      const body = await result.response!.text();
+      assertEquals(body.includes('from "veryfront/chat"'), true);
+      assertEquals(body.includes("https://esm.sh/veryfront/chat"), false);
+    });
+
+    it("keeps browser import-map prefix specifiers in preview bundles", async () => {
+      const handler = new DevFileHandler();
+      const adapter = createMockAdapter();
+      const modulePath = "/project/app/page.tsx";
+      adapter.fs.files.set(
+        modulePath,
+        [
+          '"use client";',
+          'import Button from "@/components/Button";',
+          "export default function Page() {",
+          "  return Button;",
+          "}",
+        ].join("\n"),
+      );
+
+      const encodedPath = base64urlEncode("app/page.tsx");
+      const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+      const ctx = makeCtx({
+        adapter,
+        isLocalProject: false,
+        requestContext: { mode: "preview" } as HandlerContext["requestContext"],
+      });
+
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 200);
+      const body = await result.response!.text();
+      assertEquals(body.includes('from "@/components/Button"'), true);
+      assertEquals(body.includes("https://esm.sh/@/components/Button"), false);
+    });
+
     it("continues for non-local production requests", async () => {
       const handler = new DevFileHandler();
       const encodedPath = base64urlEncode("app/page.tsx");
