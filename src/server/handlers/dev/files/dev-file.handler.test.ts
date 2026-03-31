@@ -22,48 +22,48 @@ describe(
     sanitizeOps: false,
   },
   () => {
-  afterEach(async () => {
-    const esbuild = await import("esbuild");
-    esbuild.stop();
-  });
-
-  it("serves preview file modules for remote preview mode", async () => {
-    const handler = new DevFileHandler();
-    const adapter = createMockAdapter();
-    const modulePath = "/project/app/page.tsx";
-    adapter.fs.files.set(
-      modulePath,
-      "export default function Page() { return 'preview'; }",
-    );
-
-    const encodedPath = base64urlEncode("app/page.tsx");
-    const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
-    const ctx = makeCtx({
-      adapter,
-      isLocalProject: false,
-      requestContext: { mode: "preview" } as HandlerContext["requestContext"],
+    afterEach(async () => {
+      const esbuild = await import("esbuild");
+      esbuild.stop();
     });
 
-    const result = await handler.handle(req, ctx);
+    it("serves preview file modules for remote preview mode", async () => {
+      const handler = new DevFileHandler();
+      const adapter = createMockAdapter();
+      const modulePath = "/project/app/page.tsx";
+      adapter.fs.files.set(
+        modulePath,
+        "export default function Page() { return 'preview'; }",
+      );
 
-    assertEquals(result.continue, false);
-    assertEquals(result.response?.status, 200);
-    const body = await result.response!.text();
-    assertEquals(body.includes("preview"), true);
-  });
+      const encodedPath = base64urlEncode("app/page.tsx");
+      const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+      const ctx = makeCtx({
+        adapter,
+        isLocalProject: false,
+        requestContext: { mode: "preview" } as HandlerContext["requestContext"],
+      });
 
-  it("continues for non-local production requests", async () => {
-    const handler = new DevFileHandler();
-    const encodedPath = base64urlEncode("app/page.tsx");
-    const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
-    const ctx = makeCtx({
-      isLocalProject: false,
-      requestContext: { mode: "production" } as HandlerContext["requestContext"],
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 200);
+      const body = await result.response!.text();
+      assertEquals(body.includes("preview"), true);
     });
 
-    const result = await handler.handle(req, ctx);
+    it("continues for non-local production requests", async () => {
+      const handler = new DevFileHandler();
+      const encodedPath = base64urlEncode("app/page.tsx");
+      const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+      const ctx = makeCtx({
+        isLocalProject: false,
+        requestContext: { mode: "production" } as HandlerContext["requestContext"],
+      });
 
-    assertEquals(result.continue, true);
-  });
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, true);
+    });
   },
 );
