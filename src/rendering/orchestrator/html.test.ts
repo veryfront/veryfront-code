@@ -259,6 +259,140 @@ describe("HTMLGenerator helpers", () => {
 
       assertEquals(html.includes('<script type="importmap" nonce="nonce-123">'), true);
     });
+
+    it("adds nonce to inline style and script tags in rendered HTML", async () => {
+      const mockAdapter = {
+        fs: {
+          readFile: async () => "",
+          exists: async () => false,
+          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
+          readDir: async function* () {},
+          mkdir: async () => {},
+          writeFile: async () => {},
+        },
+      };
+
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: mockAdapter as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      const html = await generator.generateFullHTML({
+        html:
+          `<div><style>.chat{color:red}</style><script>window.__vf=1</script><main>Hello</main></div>`,
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {},
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        options: { nonce: "nonce-123" },
+      });
+
+      assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
+      assertEquals(
+        html.includes('<script nonce="nonce-123">window.__vf=1</script>'),
+        true,
+      );
+    });
+
+    it("adds nonce to collected head style and script tags", async () => {
+      const mockAdapter = {
+        fs: {
+          readFile: async () => "",
+          exists: async () => false,
+          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
+          readDir: async function* () {},
+          mkdir: async () => {},
+          writeFile: async () => {},
+        },
+      };
+
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: mockAdapter as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      const html = await generator.generateFullHTML({
+        html: "<div>Hello</div>",
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {},
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        options: { nonce: "nonce-123" },
+        collectedHead: {
+          title: "",
+          description: "",
+          metas: [],
+          links: [],
+          styles: [".from-head{color:blue}"],
+          scripts: [{ content: "window.__HEAD_OK__=true" }],
+        },
+      });
+
+      assertEquals(html.includes('<style nonce="nonce-123">.from-head{color:blue}</style>'), true);
+      assertEquals(html.includes('<script data-vf-head="true"'), true);
+      assertEquals(html.includes('nonce="nonce-123">window.__HEAD_OK__=true</script>'), true);
+    });
+
+    it("does not duplicate an existing nonce attribute", async () => {
+      const mockAdapter = {
+        fs: {
+          readFile: async () => "",
+          exists: async () => false,
+          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
+          readDir: async function* () {},
+          mkdir: async () => {},
+          writeFile: async () => {},
+        },
+      };
+
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: mockAdapter as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      const html = await generator.generateFullHTML({
+        html:
+          `<div><style nonce="existing-nonce">.chat{color:red}</style><script nonce="existing-nonce">window.__vf=1</script></div>`,
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {},
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        options: { nonce: "nonce-123" },
+      });
+
+      assertEquals((html.match(/nonce="existing-nonce"/g) ?? []).length, 2);
+      assertEquals(html.includes('nonce="nonce-123" nonce="existing-nonce"'), false);
+    });
   });
 
   describe("mergeImportedCSS", () => {

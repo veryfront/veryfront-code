@@ -352,6 +352,7 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.status, 500);
         assertEquals(result.errorType, "runtime");
         assertEquals(result.showDevOverlay, true);
+        assertEquals(result.html?.includes('nonce="test-nonce"'), true);
       });
     });
   });

@@ -9,13 +9,16 @@
 
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import {
+  extractAllFilePathsRecursive,
+  extractAllHttpBundlePathsRecursive,
+} from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
+import {
   getCacheBaseDir,
   getHttpBundleCacheDir,
   getMdxEsmCacheDir,
 } from "#veryfront/utils/cache-dir.ts";
 import { FRAMEWORK_ROOT, LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
-import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
 import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
 
@@ -133,19 +136,10 @@ export async function findMissingFileDependenciesInCode(
   log: Logger,
 ): Promise<string[]> {
   const localFs = getLocalFs();
-  const pattern = /file:\/\/([^"'\s]+\.(?:mjs|js|tsx|ts|jsx)(?:\?[^"'\s]*)?)/gi;
   const missing: string[] = [];
-  const checked = new Set<string>();
+  const allPaths = await extractAllFilePathsRecursive(code);
 
-  let match;
-  while ((match = pattern.exec(code)) !== null) {
-    const path = match[1] as string;
-    // Skip query parameters in paths
-    const cleanPath = path.replace(/\?.*$/, "");
-
-    if (checked.has(cleanPath)) continue;
-    checked.add(cleanPath);
-
+  for (const cleanPath of allPaths) {
     try {
       const stat = await localFs.stat(cleanPath);
       if (!stat?.isFile) {
@@ -200,7 +194,7 @@ export async function validateCachedModule(
     return false;
   }
 
-  const bundlePaths = extractHttpBundlePaths(cachedCode);
+  const bundlePaths = await extractAllHttpBundlePathsRecursive(cachedCode);
   if (bundlePaths.length > 0) {
     const cacheDir = getHttpBundleCacheDir();
     const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);

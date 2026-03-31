@@ -204,7 +204,7 @@ export class SSRService implements SSRServiceLike {
       };
     } catch (error) {
       endRenderSession(renderSessionId);
-      return this.handleRenderError(error, ctx, slug, request);
+      return this.handleRenderError(error, ctx, slug, request, nonce);
     }
   }
 
@@ -213,6 +213,7 @@ export class SSRService implements SSRServiceLike {
     ctx: HandlerContext,
     slug: string,
     request: Request,
+    nonce?: string,
   ): SSRRenderResult {
     const errorObj = error instanceof Error ? error : new Error(String(error));
     const isDev = ctx.isLocalProject || ctx.requestContext?.mode === "preview";
@@ -274,12 +275,16 @@ export class SSRService implements SSRServiceLike {
       const location = sourceFile ? parseErrorLocation(errorObj, sourceFile) : {};
       return {
         status: HTTP_INTERNAL_SERVER_ERROR,
-        html: ErrorOverlay.createHTML({
-          error: errorObj,
-          type: "runtime",
-          ...(sourceFile ? { file: sourceFile } : {}),
-          ...location,
-        }, ctx.projectSlug),
+        html: ErrorOverlay.createHTML(
+          {
+            error: errorObj,
+            type: "runtime",
+            ...(sourceFile ? { file: sourceFile } : {}),
+            ...location,
+          },
+          ctx.projectSlug,
+          nonce,
+        ),
         isStreaming: false,
         cacheStrategy: "no-cache",
         error: errorObj,

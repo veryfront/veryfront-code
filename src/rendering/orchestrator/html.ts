@@ -36,6 +36,16 @@ import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/ver
 
 const logger = rendererLogger.component("html-generator");
 
+function addNonceToRenderedTags(html: string, nonce?: string): string {
+  if (!nonce) return html;
+
+  const nonceAttr = ` nonce="${nonce}"`;
+
+  return html
+    .replace(/<script(?![^>]*\bnonce\s*=)([^>]*)>/gi, `<script$1${nonceAttr}>`)
+    .replace(/<style(?![^>]*\bnonce\s*=)([^>]*)>/gi, `<style$1${nonceAttr}>`);
+}
+
 export interface HTMLGeneratorConfig {
   projectDir: string;
   adapter: RuntimeAdapter;
@@ -69,11 +79,13 @@ export class HTMLGenerator {
     const html = isFullHTMLDocument(context.html)
       ? await this.handleFullHTMLDocument(context)
       : await this.wrapHTMLFragment(context);
+    const finalHtml = context.options?.studioEmbed ? injectElementSelectors(html) : html;
 
-    if (!context.options?.studioEmbed) return html;
+    if (context.options?.studioEmbed) {
+      logger.debug("Injected element selectors for Studio");
+    }
 
-    logger.debug("Injected element selectors for Studio");
-    return injectElementSelectors(html);
+    return addNonceToRenderedTags(finalHtml, context.options?.nonce);
   }
 
   async generateHTMLStream(
@@ -104,7 +116,10 @@ export class HTMLGenerator {
     );
 
     const encoder = new TextEncoder();
-    const fullHtml = `${start}${reactContent}${end}`;
+    const fullHtml = addNonceToRenderedTags(
+      `${start}${reactContent}${end}`,
+      context.options?.nonce,
+    );
 
     return new ReadableStream({
       start(controller) {

@@ -2,7 +2,13 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
-import { makeTempDir, readTextFile, remove } from "#veryfront/testing/deno-compat.ts";
+import {
+  makeTempDir,
+  mkdir,
+  readTextFile,
+  remove,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
@@ -95,6 +101,43 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
 
       assertEquals(isValid, false);
     } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects redis cache entries with nested legacy .cache TSX imports inside vfmods", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
+    const vfmodDir = join(getMdxEsmCacheDir(), "project-a", "preview-main");
+    const childPath = join(vfmodDir, "vfmod-child.mjs");
+
+    try {
+      await mkdir(vfmodDir, { recursive: true });
+      await writeTextFile(
+        childPath,
+        `import child from "file:///app/.cache/markdown.tsx"; export default child;`,
+      );
+
+      const cacheManager = new SSRCacheManager({
+        projectDir,
+        projectId: "project-a",
+        contentSourceId: "preview-main",
+        adapter: denoAdapter,
+        dev: true,
+      });
+
+      const isValid = await cacheManager.validateCachedCode(
+        `import child from "file://${childPath}"; export default child;`,
+        join(projectDir, "pages", "index.tsx"),
+        "redis-cache",
+        {
+          checkLocalPaths: true,
+          checkInvalidEsmShPath: true,
+        },
+      );
+
+      assertEquals(isValid, false);
+    } finally {
+      await remove(vfmodDir, { recursive: true }).catch(() => {});
       await remove(projectDir, { recursive: true });
     }
   });
