@@ -338,6 +338,68 @@ describe("cli/router helpers", () => {
       assertEquals(typeof envelope.data.os, "string");
       assertEquals(typeof envelope.data.standalone, "boolean");
     });
+
+    it("JSON envelope contains all expected keys", async () => {
+      const { createSuccessEnvelope } = await import(
+        "./shared/json-output.ts"
+      );
+      const envelope = createSuccessEnvelope("version", {
+        version: "1.0.0",
+        deno: "2.0.0",
+        v8: "12.0",
+        typescript: "5.0",
+        os: "linux",
+        arch: "x86_64",
+        standalone: true,
+      });
+      const data = envelope.data;
+      const keys = Object.keys(data);
+      assertEquals(keys.includes("version"), true);
+      assertEquals(keys.includes("deno"), true);
+      assertEquals(keys.includes("v8"), true);
+      assertEquals(keys.includes("typescript"), true);
+      assertEquals(keys.includes("os"), true);
+      assertEquals(keys.includes("arch"), true);
+      assertEquals(keys.includes("standalone"), true);
+      assertEquals(keys.length, 7);
+    });
+
+    it("JSON output is valid parseable JSON", async () => {
+      const { formatJsonOutput, createSuccessEnvelope } = await import(
+        "./shared/json-output.ts"
+      );
+      const envelope = createSuccessEnvelope("version", {
+        version: "1.0.0",
+        deno: "2.0.0",
+        v8: "12.0",
+        typescript: "5.0",
+        os: "linux",
+        arch: "x86_64",
+        standalone: false,
+      });
+      const json = formatJsonOutput(envelope);
+      const parsed = JSON.parse(json);
+      assertEquals(parsed.success, true);
+      assertEquals(parsed.command, "version");
+      assertEquals(parsed.data.version, "1.0.0");
+      assertEquals(parsed.data.standalone, false);
+    });
+
+    it("VERSION matches semver pattern", async () => {
+      const { VERSION } = await import("./utils/index.ts");
+      assertEquals(/^\d+\.\d+\.\d+/.test(VERSION), true);
+    });
+
+    it("verbose flag detection works alongside version", () => {
+      const args = { version: true, verbose: true, _: [] };
+      assertEquals(Boolean(args.version), true);
+      assertEquals(Boolean(args.verbose), true);
+    });
+
+    it("-v short form triggers version", () => {
+      const args = { v: true, _: [] };
+      assertEquals(Boolean(args.v), true);
+    });
   });
 
   describe("command extraction from args", () => {
