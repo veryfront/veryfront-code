@@ -152,8 +152,17 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     const handler = command ? commands[command] : undefined;
 
     if (command && !handler) {
+      const { suggestCommand } = await import("./shared/suggest.ts");
+      const suggestions = suggestCommand(command, Object.keys(commands));
       cliLogger.error(`Unknown command: ${command}\n`);
-      showHelp();
+      if (suggestions.length > 0) {
+        cliLogger.info(`  Did you mean?`);
+        for (const s of suggestions) {
+          cliLogger.info(`    ${s}`);
+        }
+      } else {
+        showHelp();
+      }
       exitProcess(1);
       return;
     }
