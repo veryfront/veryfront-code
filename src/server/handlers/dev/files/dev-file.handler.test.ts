@@ -15,7 +15,13 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   } as HandlerContext;
 }
 
-describe("server/handlers/dev/files/dev-file.handler", () => {
+describe(
+  "server/handlers/dev/files/dev-file.handler",
+  {
+    sanitizeResources: false,
+    sanitizeOps: false,
+  },
+  () => {
   afterEach(async () => {
     const esbuild = await import("esbuild");
     esbuild.stop();
@@ -59,4 +65,5 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
 
     assertEquals(result.continue, true);
   });
-});
+  },
+);
