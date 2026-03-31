@@ -18,8 +18,8 @@ import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts"
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { globalModuleCache, globalTmpDirs } from "./cache/index.ts";
 import {
-  extractAllFilePaths,
-  extractHttpBundlePaths,
+  extractAllFilePathsRecursive,
+  extractAllHttpBundlePathsRecursive,
   verifiedHttpBundlePaths,
 } from "./http-bundle-helpers.ts";
 import { buildTempModulePath, buildTmpDirPath, getTmpDirCacheKey } from "./tmp-paths.ts";
@@ -217,7 +217,7 @@ export class SSRCacheManager {
     filePath: string,
     source: "memory-cache" | "redis-cache",
   ): Promise<boolean> {
-    const bundlePaths = extractHttpBundlePaths(code);
+    const bundlePaths = await extractAllHttpBundlePathsRecursive(code);
     if (bundlePaths.length === 0) return false;
 
     const cacheDir = getHttpBundleCacheDir();
@@ -235,7 +235,7 @@ export class SSRCacheManager {
   }
 
   private async hasMissingLocalPaths(code: string, filePath: string): Promise<boolean> {
-    const allPaths = extractAllFilePaths(code);
+    const allPaths = await extractAllFilePathsRecursive(code);
     let hasMissingPath = false;
 
     for (const path of allPaths) {

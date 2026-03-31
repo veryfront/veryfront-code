@@ -74,6 +74,19 @@ describe("server/dev-server/error-overlay/overlay-renderer", () => {
 
       assertEquals(html.includes("42"), true);
     });
+
+    it("should forward nonce to inline error HTML", () => {
+      const html = ErrorOverlay.createHTML(
+        {
+          type: "runtime",
+          error: new Error("nonce test"),
+        },
+        undefined,
+        "nonce-123",
+      );
+
+      assertEquals(html.includes('<script nonce="nonce-123">'), true);
+    });
   });
 
   describe("ErrorOverlay.getSuggestion", () => {

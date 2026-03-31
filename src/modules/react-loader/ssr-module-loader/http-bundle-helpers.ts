@@ -36,6 +36,41 @@ function extractVfModulePaths(code: string): string[] {
 }
 
 /**
+ * Visit VF module code blocks imported by the given module, including nested VF modules.
+ * The visitor receives both the module code and the absolute vfmod file path.
+ */
+export async function visitImportedVfModules(
+  code: string,
+  visitor: (vfModuleCode: string, vfModulePath?: string) => void | Promise<void>,
+): Promise<void> {
+  const seenVfModules = new Set<string>();
+  const pendingVfModules = extractVfModulePaths(code);
+  const fs = createFileSystem();
+
+  while (pendingVfModules.length > 0) {
+    const vfModulePath = pendingVfModules.pop()!;
+    if (seenVfModules.has(vfModulePath)) continue;
+    seenVfModules.add(vfModulePath);
+
+    if (!(await exists(vfModulePath))) continue;
+
+    try {
+      const vfModuleCode = await fs.readTextFile(vfModulePath);
+      await visitor(vfModuleCode, vfModulePath);
+
+      const nestedVfModules = extractVfModulePaths(vfModuleCode);
+      for (const nestedPath of nestedVfModules) {
+        if (!seenVfModules.has(nestedPath)) {
+          pendingVfModules.push(nestedPath);
+        }
+      }
+    } catch (_) {
+      /* expected: VF module file may fail to read */
+    }
+  }
+}
+
+/**
  * Recursively extract all HTTP bundle paths from code and any VF modules it imports.
  * This ensures transitive HTTP bundle dependencies through VF modules are discovered.
  */
@@ -44,8 +79,6 @@ export async function extractAllHttpBundlePathsRecursive(
 ): Promise<Array<{ path: string; hash: string }>> {
   const allBundles: Array<{ path: string; hash: string }> = [];
   const seenHashes = new Set<string>();
-  const seenVfModules = new Set<string>();
-  const fs = createFileSystem();
 
   // Helper to add bundles without duplicates
   const addBundles = (bundles: Array<{ path: string; hash: string }>) => {
@@ -61,35 +94,11 @@ export async function extractAllHttpBundlePathsRecursive(
   const directBundles = extractHttpBundlePaths(code);
   addBundles(directBundles);
 
-  // Process VF module imports recursively
-  const pendingVfModules = extractVfModulePaths(code);
-
-  while (pendingVfModules.length > 0) {
-    const vfModulePath = pendingVfModules.pop()!;
-    if (seenVfModules.has(vfModulePath)) continue;
-    seenVfModules.add(vfModulePath);
-
-    // Check if the VF module exists locally
-    if (!(await exists(vfModulePath))) continue;
-
-    try {
-      const vfModuleCode = await fs.readTextFile(vfModulePath);
-
-      // Extract HTTP bundles from this VF module
-      const vfBundles = extractHttpBundlePaths(vfModuleCode);
-      addBundles(vfBundles);
-
-      // Extract more VF modules for recursive processing
-      const nestedVfModules = extractVfModulePaths(vfModuleCode);
-      for (const nestedPath of nestedVfModules) {
-        if (!seenVfModules.has(nestedPath)) {
-          pendingVfModules.push(nestedPath);
-        }
-      }
-    } catch (_) {
-      /* expected: VF module file may fail to read */
-    }
-  }
+  await visitImportedVfModules(code, (vfModuleCode) => {
+    // Extract HTTP bundles from this VF module
+    const vfBundles = extractHttpBundlePaths(vfModuleCode);
+    addBundles(vfBundles);
+  });
 
   return allBundles;
 }
@@ -148,6 +157,31 @@ export function extractAllFilePaths(code: string): string[] {
     seen.add(path);
     paths.push(path);
   }
+
+  return paths;
+}
+
+/**
+ * Extract all file:// paths from cached code and any transitively imported VF modules.
+ * This catches stale pod-local paths that only appear in nested vfmod dependencies.
+ */
+export async function extractAllFilePathsRecursive(code: string): Promise<string[]> {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+
+  const addPaths = (entries: string[]) => {
+    for (const path of entries) {
+      if (seen.has(path)) continue;
+      seen.add(path);
+      paths.push(path);
+    }
+  };
+
+  addPaths(extractAllFilePaths(code));
+
+  await visitImportedVfModules(code, (vfModuleCode) => {
+    addPaths(extractAllFilePaths(vfModuleCode));
+  });
 
   return paths;
 }

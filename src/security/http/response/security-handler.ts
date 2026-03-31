@@ -20,8 +20,8 @@ export function generateNonce(): string {
  * - Scripts: nonce-based + cdn.jsdelivr.net (Scalar API docs, html2canvas,
  *   React UMD, browser inference)
  * - Styles: 'self' + 'unsafe-inline' + nonce + Google Fonts + cdn.veryfront.com
- *   (CSS-in-JS needs unsafe-inline; nonce as migration path; veryfront CDN for
- *   markdown rendering styles)
+ *   plus style-src-attr 'unsafe-inline' so React style="" attributes remain
+ *   compatible while inline <style> tags continue to use the nonce
  * - Images/media/fonts: 'self' + data: + https: + cdn.veryfront.com
  * - Connections: 'self' + wss: + https: (WebSocket for HMR/live reload, API calls)
  * - Objects: 'none' (block Flash/plugins)
@@ -35,6 +35,7 @@ function buildDefaultCSP(nonce: string): string {
     `default-src 'self'`,
     `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net`,
     `style-src 'self' 'unsafe-inline' 'nonce-${nonce}' https://fonts.googleapis.com https://cdn.veryfront.com`,
+    `style-src-attr 'unsafe-inline'`,
     `img-src 'self' data: https:`,
     `font-src 'self' data: https://fonts.gstatic.com https://cdn.veryfront.com`,
     `connect-src 'self' wss: https:`,

@@ -1,7 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   extractAllFilePaths,
+  extractAllFilePathsRecursive,
+  extractAllHttpBundlePathsRecursive,
   extractHttpBundlePaths,
   verifiedHttpBundlePaths,
 } from "./http-bundle-helpers.ts";
@@ -162,5 +166,58 @@ describe("verifiedHttpBundlePaths", () => {
 
   it("returns undefined for unknown keys", () => {
     assertEquals(verifiedHttpBundlePaths.get("nonexistent-key"), undefined);
+  });
+});
+
+describe("recursive cache path extraction", () => {
+  it("extracts HTTP bundles from nested vf modules", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-http-bundle-helper-" });
+    const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
+    const childPath = join(vfmodDir, "vfmod-child.mjs");
+    const grandChildPath = join(vfmodDir, "vfmod-grandchild.mjs");
+
+    try {
+      await mkdir(vfmodDir, { recursive: true });
+      await writeTextFile(
+        childPath,
+        [
+          `export * from "./http-11111111.mjs";`,
+          `import nested from "file://${grandChildPath}";`,
+          `export default nested;`,
+        ].join("\n"),
+      );
+      await writeTextFile(grandChildPath, `export * from "./http-22222222.mjs";`);
+
+      const bundles = await extractAllHttpBundlePathsRecursive(
+        `import child from "file://${childPath}"; export default child;`,
+      );
+
+      assertEquals(bundles.map((bundle) => bundle.hash).sort(), ["11111111", "22222222"]);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("extracts nested legacy file dependencies through vf modules", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-file-path-helper-" });
+    const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
+    const childPath = join(vfmodDir, "vfmod-child.mjs");
+
+    try {
+      await mkdir(vfmodDir, { recursive: true });
+      await writeTextFile(
+        childPath,
+        `import markdown from "file:///app/.cache/markdown.tsx"; export default markdown;`,
+      );
+
+      const paths = await extractAllFilePathsRecursive(
+        `import child from "file://${childPath}"; export default child;`,
+      );
+
+      assertEquals(paths.includes(childPath), true);
+      assertEquals(paths.includes("/app/.cache/markdown.tsx"), true);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
   });
 });

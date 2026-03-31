@@ -167,12 +167,13 @@ describe("security/http/response/security-handler", () => {
       assert(b.includes("'nonce-nonce-bbb'"), "second nonce embedded");
     });
 
-    it("default CSP should contain all 11 directives", () => {
+    it("default CSP should contain all 12 directives", () => {
       const result = buildCSP(false, "n", null);
       const directives = [
         "default-src",
         "script-src",
         "style-src",
+        "style-src-attr",
         "img-src",
         "font-src",
         "connect-src",
@@ -424,6 +425,16 @@ describe("security/http/response/security-handler", () => {
       assert(
         csp.includes("style-src 'self' 'unsafe-inline' 'nonce-my-nonce'"),
         "style-src should include both unsafe-inline and nonce for migration",
+      );
+    });
+
+    it("default CSP should allow inline style attributes via style-src-attr", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "my-nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("style-src-attr 'unsafe-inline'"),
+        "style-src-attr should explicitly allow React style attributes",
       );
     });
 
