@@ -522,6 +522,34 @@ jobs:
               PR_NUMBER="${CREATE_PR_OUTPUT}"
             fi
 
+            # GitHub can report mergeability as unknown immediately after PR creation or a force-push.
+            MERGEABLE=""
+            MERGEABLE_STATE=""
+            for attempt in {1..24}; do
+              PR_JSON=$(GH_TOKEN="${HOMEBREW_TAP_PAT}" gh api \
+                --method GET \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "/repos/veryfront/homebrew-tap/pulls/${PR_NUMBER}")
+              MERGEABLE=$(echo "${PR_JSON}" | jq -r '.mergeable')
+              MERGEABLE_STATE=$(echo "${PR_JSON}" | jq -r '.mergeable_state')
+
+              if [ "${MERGEABLE}" = "true" ] && [ "${MERGEABLE_STATE}" = "clean" ]; then
+                break
+              fi
+
+              if [ "${MERGEABLE}" = "false" ]; then
+                echo "::error::Homebrew tap PR #${PR_NUMBER} is not mergeable (state=${MERGEABLE_STATE})."
+                exit 1
+              fi
+
+              sleep 5
+            done
+
+            if [ "${MERGEABLE}" != "true" ] || [ "${MERGEABLE_STATE}" != "clean" ]; then
+              echo "::error::Timed out waiting for Homebrew tap PR #${PR_NUMBER} to become mergeable (mergeable=${MERGEABLE}, state=${MERGEABLE_STATE})."
+              exit 1
+            fi
+
             GH_TOKEN="${HOMEBREW_TAP_PAT}" gh api \
               --method PUT \
               -H "X-GitHub-Api-Version: 2022-11-28" \
