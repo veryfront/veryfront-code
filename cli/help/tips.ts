@@ -1,4 +1,4 @@
-import { cyan, green, yellow } from "#cli/ui";
+import { cyan, dim, green, yellow } from "#cli/ui";
 
 export function getDevTips(): string {
   return `${yellow("Tips:")}\n` +
@@ -23,6 +23,23 @@ export function getInitTemplates(): string {
     `  • ${green("coding-agent")}        - AI code assistant with file tools\n` +
     `  • ${green("saas-starter")}        - AI SaaS with auth + per-user memory\n` +
     `  • ${green("minimal")}       - Blank canvas\n`;
+}
+
+export function getPostBuildTips(): string {
+  return `\n  ${dim("Next steps:")}\n` +
+    `    ${dim("•")} ${cyan("veryfront serve")}     Preview locally\n` +
+    `    ${dim("•")} ${cyan("veryfront deploy")}    Deploy to production\n`;
+}
+
+export function getPostDeployTips(): string {
+  return `\n  ${dim("Next steps:")}\n` +
+    `    ${dim("•")} ${cyan("veryfront open")}      Open in browser\n`;
+}
+
+export function getPostInitTips(projectName: string): string {
+  return `\n  ${dim("Next steps:")}\n` +
+    `    ${dim("•")} cd ${projectName}\n` +
+    `    ${dim("•")} ${cyan("veryfront dev")}       Start development\n`;
 }
 
 const COMMAND_TIPS: Record<string, () => string> = {
