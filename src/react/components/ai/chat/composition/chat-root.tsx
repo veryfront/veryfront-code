@@ -11,7 +11,7 @@ import * as React from "react";
 import { ChatContainer } from "../../../../primitives/index.ts";
 import type { UIMessage } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
-import { getDocumentNonce } from "../../../csp-nonce.ts";
+import { getDocumentNonce } from "../../csp-nonce.ts";
 import { cn, defaultChatTheme, generateTokenCSS, mergeThemes } from "../../theme.ts";
 import type { ModelOption } from "../../model-selector.tsx";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";

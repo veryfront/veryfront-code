@@ -23,7 +23,7 @@
 import React, { useEffect, useRef } from "react";
 import { collectHead } from "#veryfront/react/head-collector.ts";
 import { isServerEnvironment } from "#veryfront/platform/compat/runtime.ts";
-import { getDocumentNonce } from "./csp-nonce.ts";
+import { getDocumentNonce } from "./ai/csp-nonce.ts";
 
 export function Head({ children }: { children: React.ReactNode }): React.ReactElement {
   const mountedRef = useRef(false);
