@@ -177,12 +177,13 @@ describe("security/http/response/security-handler", () => {
       assert(b.includes("'nonce-nonce-bbb'"), "second nonce embedded");
     });
 
-    it("default CSP should contain all 12 directives", () => {
+    it("default CSP should contain all 13 directives", () => {
       const result = buildCSP(false, "n", null);
       const directives = [
         "default-src",
         "script-src",
         "style-src",
+        "style-src-elem",
         "style-src-attr",
         "img-src",
         "font-src",
@@ -439,13 +440,18 @@ describe("security/http/response/security-handler", () => {
       );
     });
 
-    it("default CSP should include nonce in style-src for migration path", () => {
+    it("default CSP should allow inline styles without adding a style nonce", () => {
       const headers = new Headers();
       applySecurityHeaders(headers, false, "my-nonce", null);
       const csp = headers.get("Content-Security-Policy")!;
+      const styleSources = getDirectiveSources(csp, "style-src");
       assert(
-        csp.includes("style-src 'self' 'unsafe-inline' 'nonce-my-nonce'"),
-        "style-src should include both unsafe-inline and nonce for migration",
+        styleSources.includes("'unsafe-inline'"),
+        "style-src should keep unsafe-inline for framework and app inline styles",
+      );
+      assert(
+        !styleSources.some((source) => source.startsWith("'nonce-")),
+        "style-src should not include a nonce because that disables unsafe-inline in browsers",
       );
     });
 
@@ -453,9 +459,29 @@ describe("security/http/response/security-handler", () => {
       const headers = new Headers();
       applySecurityHeaders(headers, false, "my-nonce", null);
       const csp = headers.get("Content-Security-Policy")!;
+      const styleAttrSources = getDirectiveSources(csp, "style-src-attr");
       assert(
-        csp.includes("style-src-attr 'unsafe-inline'"),
+        styleAttrSources.includes("'unsafe-inline'"),
         "style-src-attr should explicitly allow React style attributes",
+      );
+    });
+
+    it("default CSP should scope style nonces to style-src-elem", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "my-nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      const styleElemSources = getDirectiveSources(csp, "style-src-elem");
+      assert(
+        styleElemSources.includes("'nonce-my-nonce'"),
+        "style-src-elem should carry the style nonce for inline style tags",
+      );
+      assert(
+        styleElemSources.includes("https://fonts.googleapis.com"),
+        "style-src-elem should keep Google Fonts",
+      );
+      assert(
+        styleElemSources.includes("https://cdn.veryfront.com"),
+        "style-src-elem should keep the Veryfront CDN",
       );
     });
 
@@ -544,19 +570,19 @@ describe("security/http/response/security-handler", () => {
       assert(fontSources.includes("https://cdn.veryfront.com"), "veryfront CDN in font-src");
     });
 
-    it("default CSP nonce should match across script-src and style-src", () => {
+    it("default CSP should keep the nonce on script-src but not on style-src", () => {
       const headers = new Headers();
       applySecurityHeaders(headers, false, "unique-nonce-123", null);
       const csp = headers.get("Content-Security-Policy")!;
-      const scriptSrc = csp.split(";").find((d) => d.trim().startsWith("script-src"))!;
-      const styleSrc = csp.split(";").find((d) => d.trim().startsWith("style-src"))!;
+      const scriptSources = getDirectiveSources(csp, "script-src");
+      const styleSources = getDirectiveSources(csp, "style-src");
       assert(
-        scriptSrc.includes("'nonce-unique-nonce-123'"),
+        scriptSources.includes("'nonce-unique-nonce-123'"),
         "script-src should have the nonce",
       );
       assert(
-        styleSrc.includes("'nonce-unique-nonce-123'"),
-        "style-src should have the same nonce",
+        !styleSources.includes("'nonce-unique-nonce-123'"),
+        "style-src should omit the nonce so unsafe-inline remains effective",
       );
     });
 
