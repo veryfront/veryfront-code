@@ -65,6 +65,22 @@ function assertJsNoCache(response: Response): void {
   );
 }
 
+function extractImportSpecifiers(code: string): string[] {
+  const specifiers = new Set<string>();
+  const patterns = [
+    /(?:import|export)\s+(?:[^"'`]*?\s+from\s+)?["']([^"'`]+)["']/g,
+    /import\(\s*["']([^"'`]+)["']\s*\)/g,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of code.matchAll(pattern)) {
+      if (match[1]) specifiers.add(match[1]);
+    }
+  }
+
+  return [...specifiers];
+}
+
 describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterAll(async () => {
     await cleanupBundler();
@@ -361,10 +377,11 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
       });
     });
 
-    it("serves browser chat modules without the heavyweight errors barrel", async () => {
+    it("serves browser framework modules with narrow CSP-safe imports", async () => {
       await withTestContext("dev-server-framework-chat-error-csp", async (context) => {
         const { server, port } = await createTestDevServer(context);
         const modulePaths = [
+          "/_vf_modules/_veryfront/react/components/ai/color-mode.js",
           "/_vf_modules/_veryfront/react/components/ai/chat/contexts/chat-context.js",
           "/_vf_modules/_veryfront/react/components/ai/chat/contexts/composer-context.js",
           "/_vf_modules/_veryfront/react/components/ai/chat/contexts/message-context.js",
@@ -379,17 +396,33 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           assertEquals(response.status, 200, `Expected ${modulePath} to be served`);
 
           const body = await response.text();
+          const specifiers = extractImportSpecifiers(body);
+          const errorSpecifiers = specifiers.filter((specifier) =>
+            specifier.startsWith("/_vf_modules/_veryfront/errors/")
+          );
+
           assert(
-            !body.includes("/_vf_modules/_veryfront/errors/index.js"),
+            !body.includes("new Function("),
+            `${modulePath} should not use unsafe-eval`,
+          );
+          assert(
+            !specifiers.includes("/_vf_modules/_veryfront/errors/index.js"),
             `${modulePath} should not import the heavyweight errors barrel`,
           );
           assert(
-            !body.includes("/_vf_modules/_veryfront/platform/compat/process.js"),
+            !specifiers.includes("/_vf_modules/_veryfront/platform/compat/process.js"),
             `${modulePath} should not import process compat`,
           );
           assert(
-            !body.includes("/_vf_modules/_veryfront/platform/compat/dynamic-import.js"),
+            !specifiers.includes("/_vf_modules/_veryfront/platform/compat/dynamic-import.js"),
             `${modulePath} should not import dynamic-import compat`,
+          );
+          assert(
+            errorSpecifiers.every((specifier) =>
+              specifier === "/_vf_modules/_veryfront/errors/error-registry.js" ||
+              specifier === "/_vf_modules/_veryfront/errors/http-error.js"
+            ),
+            `${modulePath} should only import narrow browser-safe error modules`,
           );
         }
 
