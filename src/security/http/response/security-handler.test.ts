@@ -20,6 +20,16 @@ function createMockAdapter(
   } as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
 }
 
+function getDirectiveSources(csp: string, directiveName: string): string[] {
+  const directive = csp
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${directiveName} `));
+
+  if (!directive) return [];
+  return directive.split(/\s+/).slice(1);
+}
+
 describe("security/http/response/security-handler", () => {
   describe("generateNonce", () => {
     it("should return a base64-encoded string", () => {
@@ -402,8 +412,9 @@ describe("security/http/response/security-handler", () => {
       const headers = new Headers();
       applySecurityHeaders(headers, false, "nonce", null);
       const csp = headers.get("Content-Security-Policy")!;
+      const scriptSources = getDirectiveSources(csp, "script-src");
       assert(
-        csp.includes("https://esm.sh"),
+        scriptSources.includes("https://esm.sh"),
         "should allow esm.sh for the pages-router/browser ESM hydration path",
       );
     });
@@ -495,14 +506,14 @@ describe("security/http/response/security-handler", () => {
       const headers = new Headers();
       applySecurityHeaders(headers, false, "nonce", null);
       const csp = headers.get("Content-Security-Policy")!;
-      const scriptSrc = csp.split(";").find((d) => d.trim().startsWith("script-src"))!;
-      const styleSrc = csp.split(";").find((d) => d.trim().startsWith("style-src"))!;
+      const scriptSources = getDirectiveSources(csp, "script-src");
+      const styleSources = getDirectiveSources(csp, "style-src");
       assert(
-        scriptSrc.includes("cdn.jsdelivr.net"),
+        scriptSources.includes("https://cdn.jsdelivr.net"),
         "jsdelivr should be in script-src",
       );
       assert(
-        !styleSrc.includes("cdn.jsdelivr.net"),
+        !styleSources.includes("https://cdn.jsdelivr.net"),
         "jsdelivr should NOT be in style-src",
       );
     });
@@ -511,14 +522,14 @@ describe("security/http/response/security-handler", () => {
       const headers = new Headers();
       applySecurityHeaders(headers, false, "nonce", null);
       const csp = headers.get("Content-Security-Policy")!;
-      const scriptSrc = csp.split(";").find((d) => d.trim().startsWith("script-src"))!;
-      const styleSrc = csp.split(";").find((d) => d.trim().startsWith("style-src"))!;
+      const scriptSources = getDirectiveSources(csp, "script-src");
+      const styleSources = getDirectiveSources(csp, "style-src");
       assert(
-        scriptSrc.includes("https://esm.sh"),
+        scriptSources.includes("https://esm.sh"),
         "esm.sh should be in script-src",
       );
       assert(
-        !styleSrc.includes("https://esm.sh"),
+        !styleSources.includes("https://esm.sh"),
         "esm.sh should NOT be in style-src",
       );
     });
@@ -527,10 +538,10 @@ describe("security/http/response/security-handler", () => {
       const headers = new Headers();
       applySecurityHeaders(headers, false, "nonce", null);
       const csp = headers.get("Content-Security-Policy")!;
-      const styleSrc = csp.split(";").find((d) => d.trim().startsWith("style-src"))!;
-      const fontSrc = csp.split(";").find((d) => d.trim().startsWith("font-src"))!;
-      assert(styleSrc.includes("cdn.veryfront.com"), "veryfront CDN in style-src");
-      assert(fontSrc.includes("cdn.veryfront.com"), "veryfront CDN in font-src");
+      const styleSources = getDirectiveSources(csp, "style-src");
+      const fontSources = getDirectiveSources(csp, "font-src");
+      assert(styleSources.includes("https://cdn.veryfront.com"), "veryfront CDN in style-src");
+      assert(fontSources.includes("https://cdn.veryfront.com"), "veryfront CDN in font-src");
     });
 
     it("default CSP nonce should match across script-src and style-src", () => {
