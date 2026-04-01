@@ -1,5 +1,6 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   applySecurityHeaders,
   buildCSP,
@@ -10,17 +11,17 @@ import type { SecurityConfig } from "./types.ts";
 
 function createMockAdapter(
   envMap: Record<string, string> = {},
-): import("#veryfront/platform/adapters/base.ts").RuntimeAdapter {
+): RuntimeAdapter {
   return {
     env: {
       get(key: string) {
         return envMap[key];
       },
     },
-  } as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
+  } as RuntimeAdapter;
 }
 
-function getDirectiveSources(csp: string, directiveName: string): string[] {
+function parseDirectiveSources(csp: string, directiveName: string): string[] {
   const directive = csp
     .split(";")
     .map((part) => part.trim())
@@ -28,6 +29,52 @@ function getDirectiveSources(csp: string, directiveName: string): string[] {
 
   if (!directive) return [];
   return directive.split(/\s+/).slice(1);
+}
+
+function parseDirectiveRemoteHosts(csp: string, directiveName: string): string[] {
+  return parseDirectiveSources(csp, directiveName)
+    .flatMap((source) => {
+      try {
+        const url = new URL(source);
+        if (url.protocol === "https:" && url.hostname) {
+          return [url.hostname];
+        }
+      } catch {
+        // Ignore non-URL CSP tokens such as keywords, schemes, and nonces.
+      }
+      return [];
+    })
+    .sort();
+}
+
+function applyHeaders(
+  {
+    isDev = false,
+    nonce = "nonce",
+    cspUserHeader = null,
+    config = null,
+    adapter,
+    isVeryfrontDomain,
+  }: {
+    isDev?: boolean;
+    nonce?: string;
+    cspUserHeader?: string | null;
+    config?: SecurityConfig | null;
+    adapter?: RuntimeAdapter;
+    isVeryfrontDomain?: boolean;
+  } = {},
+): Headers {
+  const headers = new Headers();
+  applySecurityHeaders(
+    headers,
+    isDev,
+    nonce,
+    cspUserHeader,
+    config,
+    adapter,
+    isVeryfrontDomain,
+  );
+  return headers;
 }
 
 describe("security/http/response/security-handler", () => {
@@ -104,7 +151,10 @@ describe("security/http/response/security-handler", () => {
         },
       };
       const result = buildCSP(false, "n3", null, config);
-      assert(result.includes("default-src 'self' https://cdn.example.com"));
+      const defaultSources = parseDirectiveSources(result, "default-src");
+      const defaultHosts = parseDirectiveRemoteHosts(result, "default-src");
+      assert(defaultSources.includes("'self'"));
+      assertEquals(defaultHosts, ["cdn.example.com"]);
     });
 
     it("should skip undefined CSP directive values", () => {
@@ -199,6 +249,177 @@ describe("security/http/response/security-handler", () => {
       }
     });
 
+    it("default CSP should allow WebSocket connections for HMR", () => {
+      const connectSources = parseDirectiveSources(buildCSP(false, "nonce", null), "connect-src");
+      assert(connectSources.includes("wss:"), "should allow wss for WebSocket");
+      assert(connectSources.includes("https:"), "should allow https for fetch/XHR");
+    });
+
+    it("default CSP should allow Google Fonts", () => {
+      const csp = buildCSP(false, "nonce", null);
+      const styleHosts = parseDirectiveRemoteHosts(csp, "style-src");
+      const fontHosts = parseDirectiveRemoteHosts(csp, "font-src");
+      assertEquals(
+        styleHosts.filter((host) => host === "fonts.googleapis.com"),
+        ["fonts.googleapis.com"],
+        "should allow Google Fonts styles",
+      );
+      assertEquals(
+        fontHosts.filter((host) => host === "fonts.gstatic.com"),
+        ["fonts.gstatic.com"],
+        "should allow Google Fonts files",
+      );
+    });
+
+    it("default CSP should allow jsdelivr CDN scripts", () => {
+      const scriptHosts = parseDirectiveRemoteHosts(buildCSP(false, "nonce", null), "script-src");
+      assertEquals(
+        scriptHosts.filter((host) => host === "cdn.jsdelivr.net"),
+        ["cdn.jsdelivr.net"],
+        "should allow jsdelivr for Scalar API docs, html2canvas, React UMD",
+      );
+    });
+
+    it("default CSP should allow esm.sh scripts for browser ESM hydration", () => {
+      const scriptHosts = parseDirectiveRemoteHosts(buildCSP(false, "nonce", null), "script-src");
+      assertEquals(
+        scriptHosts.filter((host) => host === "esm.sh"),
+        ["esm.sh"],
+        "should allow esm.sh for the pages-router/browser ESM hydration path",
+      );
+    });
+
+    it("default CSP should allow veryfront CDN styles and fonts", () => {
+      const csp = buildCSP(false, "nonce", null);
+      const styleHosts = parseDirectiveRemoteHosts(csp, "style-src");
+      const fontHosts = parseDirectiveRemoteHosts(csp, "font-src");
+      assertEquals(
+        styleHosts.filter((host) => host === "cdn.veryfront.com"),
+        ["cdn.veryfront.com"],
+        "veryfront CDN in style-src",
+      );
+      assertEquals(
+        fontHosts.filter((host) => host === "cdn.veryfront.com"),
+        ["cdn.veryfront.com"],
+        "veryfront CDN in font-src",
+      );
+    });
+
+    it("default CSP should allow same-origin frames", () => {
+      const frameSources = parseDirectiveSources(buildCSP(false, "nonce", null), "frame-src");
+      assert(frameSources.includes("'self'"), "should allow same-origin iframes by default");
+    });
+
+    it("default CSP should allow inline styles without adding a style nonce", () => {
+      const styleSources = parseDirectiveSources(buildCSP(false, "my-nonce", null), "style-src");
+      assert(
+        styleSources.includes("'unsafe-inline'"),
+        "style-src should keep unsafe-inline for framework and app inline styles",
+      );
+      assert(
+        !styleSources.some((source) => source.startsWith("'nonce-")),
+        "style-src should not include a nonce because that disables unsafe-inline in browsers",
+      );
+    });
+
+    it("default CSP should allow inline style attributes via style-src-attr", () => {
+      const styleAttrSources = parseDirectiveSources(
+        buildCSP(false, "my-nonce", null),
+        "style-src-attr",
+      );
+      assert(
+        styleAttrSources.includes("'unsafe-inline'"),
+        "style-src-attr should explicitly allow React style attributes",
+      );
+    });
+
+    it("default CSP should scope style nonces to style-src-elem", () => {
+      const styleElemSources = parseDirectiveSources(
+        buildCSP(false, "my-nonce", null),
+        "style-src-elem",
+      );
+      const remoteStyleElemHosts = parseDirectiveRemoteHosts(
+        buildCSP(false, "my-nonce", null),
+        "style-src-elem",
+      );
+      assert(
+        styleElemSources.includes("'nonce-my-nonce'"),
+        "style-src-elem should carry the style nonce for inline style tags",
+      );
+      assertEquals(
+        remoteStyleElemHosts,
+        ["cdn.veryfront.com", "fonts.googleapis.com"],
+        "style-src-elem should keep the exact Google Fonts and Veryfront CDN hosts",
+      );
+    });
+
+    it("default CSP should block object embeds", () => {
+      const objectSources = parseDirectiveSources(buildCSP(false, "nonce", null), "object-src");
+      assert(objectSources.includes("'none'"), "should block plugins/Flash");
+    });
+
+    it("default CSP should restrict form-action to self", () => {
+      const formActionSources = parseDirectiveSources(
+        buildCSP(false, "nonce", null),
+        "form-action",
+      );
+      assert(
+        formActionSources.includes("'self'"),
+        "should prevent form submission to external URLs",
+      );
+    });
+
+    it("default CSP should place jsdelivr in script-src not style-src", () => {
+      const csp = buildCSP(false, "nonce", null);
+      const scriptHosts = parseDirectiveRemoteHosts(csp, "script-src");
+      const styleHosts = parseDirectiveRemoteHosts(csp, "style-src");
+      assertEquals(
+        scriptHosts.filter((host) => host === "cdn.jsdelivr.net"),
+        ["cdn.jsdelivr.net"],
+        "jsdelivr should be in script-src",
+      );
+      assertEquals(
+        styleHosts.filter((host) => host === "cdn.jsdelivr.net"),
+        [],
+        "jsdelivr should NOT be in style-src",
+      );
+    });
+
+    it("default CSP should place esm.sh in script-src not style-src", () => {
+      const csp = buildCSP(false, "nonce", null);
+      const scriptHosts = parseDirectiveRemoteHosts(csp, "script-src");
+      const styleHosts = parseDirectiveRemoteHosts(csp, "style-src");
+      assertEquals(
+        scriptHosts.filter((host) => host === "esm.sh"),
+        ["esm.sh"],
+        "esm.sh should be in script-src",
+      );
+      assertEquals(
+        styleHosts.filter((host) => host === "esm.sh"),
+        [],
+        "esm.sh should NOT be in style-src",
+      );
+    });
+
+    it("default CSP should keep the nonce on script-src but not on style-src", () => {
+      const csp = buildCSP(false, "unique-nonce-123", null);
+      const scriptSources = parseDirectiveSources(csp, "script-src");
+      const styleSources = parseDirectiveSources(csp, "style-src");
+      assert(
+        scriptSources.includes("'nonce-unique-nonce-123'"),
+        "script-src should have the nonce",
+      );
+      assert(
+        !styleSources.includes("'nonce-unique-nonce-123'"),
+        "style-src should omit the nonce so unsafe-inline remains effective",
+      );
+    });
+
+    it("default CSP should block http: in connect-src", () => {
+      const connectSources = parseDirectiveSources(buildCSP(false, "nonce", null), "connect-src");
+      assert(!connectSources.includes("http:"), "connect-src must not allow plain http");
+    });
+
     it("default CSP should not include unsafe-eval", () => {
       const result = buildCSP(false, "n", null);
       assert(!result.includes("unsafe-eval"), "default CSP must not allow eval");
@@ -239,38 +460,32 @@ describe("security/http/response/security-handler", () => {
 
   describe("applySecurityHeaders", () => {
     it("should set X-Content-Type-Options", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
+      const headers = applyHeaders();
       assertEquals(headers.get("X-Content-Type-Options"), "nosniff");
     });
 
     it("should set X-XSS-Protection", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
+      const headers = applyHeaders();
       assertEquals(headers.get("X-XSS-Protection"), "1; mode=block");
     });
 
     it("should set X-Frame-Options to DENY in production", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
+      const headers = applyHeaders();
       assertEquals(headers.get("X-Frame-Options"), "DENY");
     });
 
     it("should not set X-Frame-Options in dev mode", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, true, "nonce", null);
+      const headers = applyHeaders({ isDev: true });
       assertEquals(headers.has("X-Frame-Options"), false);
     });
 
     it("should not set X-Frame-Options when isVeryfrontDomain is true", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null, null, undefined, true);
+      const headers = applyHeaders({ isVeryfrontDomain: true });
       assertEquals(headers.has("X-Frame-Options"), false);
     });
 
     it("should set HSTS in production", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
+      const headers = applyHeaders();
 
       const hsts = headers.get("Strict-Transport-Security");
       assert(hsts !== null);
@@ -279,338 +494,140 @@ describe("security/http/response/security-handler", () => {
     });
 
     it("should not set HSTS in dev mode", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, true, "nonce", null);
+      const headers = applyHeaders({ isDev: true });
       assertEquals(headers.has("Strict-Transport-Security"), false);
     });
 
     it("should set COOP in production", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
+      const headers = applyHeaders();
       assertEquals(headers.get("Cross-Origin-Opener-Policy"), "same-origin");
     });
 
     it("should not set COOP in dev mode", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, true, "nonce", null);
+      const headers = applyHeaders({ isDev: true });
       assertEquals(headers.has("Cross-Origin-Opener-Policy"), false);
     });
 
     it("should set CORP", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
+      const headers = applyHeaders();
       assertEquals(headers.get("Cross-Origin-Resource-Policy"), "same-origin");
     });
 
     it("should set CSP when cspUserHeader is provided", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", "default-src 'self'");
+      const headers = applyHeaders({ cspUserHeader: "default-src 'self'" });
       assertEquals(headers.get("Content-Security-Policy"), "default-src 'self'");
     });
 
     it("should set default CSP in production when no CSP config", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
-      const csp = headers.get("Content-Security-Policy");
-      assert(csp !== null, "CSP header must be present in production");
-      assert(csp!.includes("default-src 'self'"), "default CSP must include default-src");
-      assert(csp!.includes("'nonce-nonce'"), "default CSP must include nonce");
+      const headers = applyHeaders();
+      assertEquals(headers.get("Content-Security-Policy"), buildCSP(false, "nonce", null));
     });
 
     it("should not set CSP in dev mode when no CSP config", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, true, "nonce", null);
+      const headers = applyHeaders({ isDev: true });
       assertEquals(headers.has("Content-Security-Policy"), false);
     });
 
     it("should apply extra headers from config", () => {
-      const headers = new Headers();
       const config: SecurityConfig = {
         headers: {
           "X-Custom-Header": "custom-value",
         },
       };
-      applySecurityHeaders(headers, false, "nonce", null, config);
+      const headers = applyHeaders({ config });
       assertEquals(headers.get("X-Custom-Header"), "custom-value");
     });
 
     it("should allow overriding security headers via config.headers", () => {
-      const headers = new Headers();
       const config: SecurityConfig = {
         headers: {
           "X-Content-Type-Options": "custom-value",
         },
       };
-      applySecurityHeaders(headers, false, "nonce", null, config);
+      const headers = applyHeaders({ config });
       assertEquals(headers.get("X-Content-Type-Options"), "custom-value");
     });
 
     it("should set Referrer-Policy to strict-origin-when-cross-origin by default", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
+      const headers = applyHeaders();
       assertEquals(headers.get("Referrer-Policy"), "strict-origin-when-cross-origin");
     });
 
     it("should set Referrer-Policy in dev mode", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, true, "nonce", null);
+      const headers = applyHeaders({ isDev: true });
       assertEquals(headers.get("Referrer-Policy"), "strict-origin-when-cross-origin");
     });
 
     it("should allow overriding Referrer-Policy via config.headers", () => {
-      const headers = new Headers();
       const config: SecurityConfig = {
         headers: {
           "Referrer-Policy": "no-referrer",
         },
       };
-      applySecurityHeaders(headers, false, "nonce", null, config);
+      const headers = applyHeaders({ config });
       assertEquals(headers.get("Referrer-Policy"), "no-referrer");
     });
 
     it("should use explicit CSP config instead of default", () => {
-      const headers = new Headers();
       const config: SecurityConfig = {
         csp: { "default-src": "'none'" },
       };
-      applySecurityHeaders(headers, false, "nonce", null, config);
-      assertEquals(headers.get("Content-Security-Policy"), "default-src 'none'");
+      const headers = applyHeaders({ config });
+      assertEquals(
+        headers.get("Content-Security-Policy"),
+        buildCSP(false, "nonce", null, config),
+      );
     });
 
     it("should use env CSP over default", () => {
-      const headers = new Headers();
       const adapter = createMockAdapter({ VERYFRONT_CSP: "default-src 'self'" });
-      applySecurityHeaders(headers, false, "nonce", null, null, adapter);
-      assertEquals(headers.get("Content-Security-Policy"), "default-src 'self'");
-    });
-
-    it("default CSP should allow WebSocket connections for HMR", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      assert(csp.includes("connect-src 'self' wss: https:"), "should allow wss for WebSocket");
-    });
-
-    it("default CSP should allow Google Fonts", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      assert(csp.includes("fonts.googleapis.com"), "should allow Google Fonts styles");
-      assert(csp.includes("fonts.gstatic.com"), "should allow Google Fonts files");
-    });
-
-    it("default CSP should allow jsdelivr CDN scripts", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      assert(
-        csp.includes("https://cdn.jsdelivr.net"),
-        "should allow jsdelivr for Scalar API docs, html2canvas, React UMD",
-      );
-    });
-
-    it("default CSP should allow esm.sh scripts for browser ESM hydration", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      const scriptSources = getDirectiveSources(csp, "script-src");
-      assert(
-        scriptSources.includes("https://esm.sh"),
-        "should allow esm.sh for the pages-router/browser ESM hydration path",
-      );
-    });
-
-    it("default CSP should allow veryfront CDN styles and fonts", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      assert(
-        csp.includes("https://cdn.veryfront.com"),
-        "should allow veryfront CDN for markdown styles",
-      );
-    });
-
-    it("default CSP should allow same-origin frames", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      assert(
-        csp.includes("frame-src 'self'"),
-        "should allow same-origin iframes by default",
-      );
-    });
-
-    it("default CSP should allow inline styles without adding a style nonce", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "my-nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      const styleSources = getDirectiveSources(csp, "style-src");
-      assert(
-        styleSources.includes("'unsafe-inline'"),
-        "style-src should keep unsafe-inline for framework and app inline styles",
-      );
-      assert(
-        !styleSources.some((source) => source.startsWith("'nonce-")),
-        "style-src should not include a nonce because that disables unsafe-inline in browsers",
-      );
-    });
-
-    it("default CSP should allow inline style attributes via style-src-attr", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "my-nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      const styleAttrSources = getDirectiveSources(csp, "style-src-attr");
-      assert(
-        styleAttrSources.includes("'unsafe-inline'"),
-        "style-src-attr should explicitly allow React style attributes",
-      );
-    });
-
-    it("default CSP should scope style nonces to style-src-elem", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "my-nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      const styleElemSources = getDirectiveSources(csp, "style-src-elem");
-      const remoteStyleElemSources = styleElemSources
-        .filter((source) => source.startsWith("https://"))
-        .sort();
-      assert(
-        styleElemSources.includes("'nonce-my-nonce'"),
-        "style-src-elem should carry the style nonce for inline style tags",
-      );
+      const headers = applyHeaders({ adapter });
       assertEquals(
-        remoteStyleElemSources,
-        ["https://cdn.veryfront.com", "https://fonts.googleapis.com"],
-        "style-src-elem should keep the exact Google Fonts and Veryfront CDN hosts",
-      );
-    });
-
-    it("default CSP should block object embeds", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      assert(csp.includes("object-src 'none'"), "should block plugins/Flash");
-    });
-
-    it("default CSP should restrict form-action to self", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      assert(
-        csp.includes("form-action 'self'"),
-        "should prevent form submission to external URLs",
+        headers.get("Content-Security-Policy"),
+        buildCSP(false, "nonce", null, null, adapter),
       );
     });
 
     it("custom config with frame-src overrides default frame-src", () => {
-      const headers = new Headers();
       const config: SecurityConfig = {
         csp: {
           "default-src": "'self'",
           "frame-src": "'self' https://www.youtube.com https://accounts.google.com",
         },
       };
-      applySecurityHeaders(headers, false, "nonce", null, config);
-      const csp = headers.get("Content-Security-Policy")!;
-      assert(csp.includes("https://www.youtube.com"), "should allow YouTube embeds");
-      assert(csp.includes("https://accounts.google.com"), "should allow Google OAuth");
-      assert(!csp.includes("object-src"), "custom config replaces entire default");
+      const headers = applyHeaders({ config });
+      assertEquals(
+        headers.get("Content-Security-Policy"),
+        buildCSP(false, "nonce", null, config),
+      );
     });
 
     it("empty csp config object should fall through to default", () => {
-      const headers = new Headers();
       const config: SecurityConfig = { csp: {} };
-      applySecurityHeaders(headers, false, "nonce", null, config);
-      const csp = headers.get("Content-Security-Policy")!;
-      assert(
-        csp.includes("default-src 'self'"),
-        "empty csp object should use default CSP",
+      const headers = applyHeaders({ config });
+      assertEquals(
+        headers.get("Content-Security-Policy"),
+        buildCSP(false, "nonce", null, config),
       );
-    });
-
-    it("default CSP should place jsdelivr in script-src not style-src", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      const scriptSources = getDirectiveSources(csp, "script-src");
-      const styleSources = getDirectiveSources(csp, "style-src");
-      assert(
-        scriptSources.includes("https://cdn.jsdelivr.net"),
-        "jsdelivr should be in script-src",
-      );
-      assert(
-        !styleSources.includes("https://cdn.jsdelivr.net"),
-        "jsdelivr should NOT be in style-src",
-      );
-    });
-
-    it("default CSP should place esm.sh in script-src not style-src", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      const scriptSources = getDirectiveSources(csp, "script-src");
-      const styleSources = getDirectiveSources(csp, "style-src");
-      assert(
-        scriptSources.includes("https://esm.sh"),
-        "esm.sh should be in script-src",
-      );
-      assert(
-        !styleSources.includes("https://esm.sh"),
-        "esm.sh should NOT be in style-src",
-      );
-    });
-
-    it("default CSP should place veryfront CDN in style-src and font-src", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      const styleSources = getDirectiveSources(csp, "style-src");
-      const fontSources = getDirectiveSources(csp, "font-src");
-      assert(styleSources.includes("https://cdn.veryfront.com"), "veryfront CDN in style-src");
-      assert(fontSources.includes("https://cdn.veryfront.com"), "veryfront CDN in font-src");
-    });
-
-    it("default CSP should keep the nonce on script-src but not on style-src", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "unique-nonce-123", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      const scriptSources = getDirectiveSources(csp, "script-src");
-      const styleSources = getDirectiveSources(csp, "style-src");
-      assert(
-        scriptSources.includes("'nonce-unique-nonce-123'"),
-        "script-src should have the nonce",
-      );
-      assert(
-        !styleSources.includes("'nonce-unique-nonce-123'"),
-        "style-src should omit the nonce so unsafe-inline remains effective",
-      );
-    });
-
-    it("default CSP should block http: in connect-src", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", null);
-      const csp = headers.get("Content-Security-Policy")!;
-      const connectSrc = csp.split(";").find((d) => d.trim().startsWith("connect-src"))!;
-      assert(!connectSrc.includes("http:"), "connect-src must not allow plain http");
     });
 
     it("config CSP should completely replace default (no directive merging)", () => {
-      const headers = new Headers();
       const config: SecurityConfig = {
         csp: { "script-src": "'self'" },
       };
-      applySecurityHeaders(headers, false, "nonce", null, config);
-      const csp = headers.get("Content-Security-Policy")!;
-      assertEquals(csp, "script-src 'self'");
-      assert(!csp.includes("default-src"), "default directives must not leak");
-      assert(!csp.includes("object-src"), "default directives must not leak");
-      assert(!csp.includes("cdn.jsdelivr.net"), "default CDN origins must not leak");
+      const headers = applyHeaders({ config });
+      assertEquals(
+        headers.get("Content-Security-Policy"),
+        buildCSP(false, "nonce", null, config),
+      );
     });
 
     it("cspUserHeader should completely replace default", () => {
-      const headers = new Headers();
-      applySecurityHeaders(headers, false, "nonce", "img-src 'none'");
-      assertEquals(headers.get("Content-Security-Policy"), "img-src 'none'");
+      const headers = applyHeaders({ cspUserHeader: "img-src 'none'" });
+      assertEquals(
+        headers.get("Content-Security-Policy"),
+        buildCSP(false, "nonce", "img-src 'none'"),
+      );
     });
   });
 });
