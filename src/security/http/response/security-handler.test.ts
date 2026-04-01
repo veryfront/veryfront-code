@@ -151,7 +151,10 @@ describe("security/http/response/security-handler", () => {
         },
       };
       const result = buildCSP(false, "n3", null, config);
-      assert(result.includes("default-src 'self' https://cdn.example.com"));
+      const defaultSources = parseDirectiveSources(result, "default-src");
+      const defaultHosts = parseDirectiveRemoteHosts(result, "default-src");
+      assert(defaultSources.includes("'self'"));
+      assertEquals(defaultHosts, ["cdn.example.com"]);
     });
 
     it("should skip undefined CSP directive values", () => {
