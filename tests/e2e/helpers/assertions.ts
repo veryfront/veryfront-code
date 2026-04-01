@@ -5,6 +5,7 @@
  */
 
 import { ConsoleMessage, expect, Page } from "@playwright/test";
+import { findHydrationOrCspFailures } from "../../_helpers/playwright.ts";
 
 /**
  * Console error collection for a page.
@@ -26,6 +27,8 @@ export function setupErrorCollection(page: Page): string[] {
 
   return errors;
 }
+
+export { findHydrationOrCspFailures };
 
 /**
  * Check if an error is known and ignorable
@@ -77,12 +80,7 @@ export async function assertHydrationWorks(page: Page, errors: string[]): Promis
     }
   }
 
-  const hydrationErrors = errors.filter(
-    (e) =>
-      e.includes("hydrat") || e.includes("Minified React error") || e.includes("did not match"),
-  );
-
-  expect(hydrationErrors).toEqual([]);
+  expect(findHydrationOrCspFailures(errors)).toEqual([]);
 }
 
 /**

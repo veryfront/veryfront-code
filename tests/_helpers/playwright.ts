@@ -1,4 +1,20 @@
-import { type Browser, chromium, type Page } from "npm:playwright";
+import type { Browser, ConsoleMessage, Page } from "npm:playwright";
+
+export interface BrowserDiagnostics {
+  consoleMessages: string[];
+  pageErrors: string[];
+}
+
+const HYDRATION_OR_CSP_FAILURE_PATTERNS = [
+  "Page hydration failed",
+  "unsafe-eval",
+  "Failed to fetch dynamically imported module",
+  "WebAssembly.compile()",
+  "Content Security Policy",
+  "violates the following Content Security Policy directive",
+  "Refused to load the script",
+  "Hydration",
+] as const;
 
 export function isMissingBrowserExecutable(error: unknown): boolean {
   return String(error).includes("Executable doesn't exist");
@@ -6,6 +22,7 @@ export function isMissingBrowserExecutable(error: unknown): boolean {
 
 export async function launchChromium(): Promise<Browser | null> {
   try {
+    const { chromium } = await import("npm:playwright");
     return await chromium.launch({ headless: true });
   } catch (error) {
     if (isMissingBrowserExecutable(error)) {
@@ -19,33 +36,28 @@ export async function launchChromium(): Promise<Browser | null> {
   }
 }
 
-export function collectBrowserErrors(
-  page: Page,
-): { consoleErrors: string[]; pageErrors: string[] } {
-  const consoleErrors: string[] = [];
+export function captureBrowserDiagnostics(page: Page): BrowserDiagnostics {
+  const consoleMessages: string[] = [];
   const pageErrors: string[] = [];
 
-  page.on("console", (message) => {
+  page.on("console", (message: ConsoleMessage) => {
     if (message.type() === "error" || message.type() === "warning") {
-      consoleErrors.push(message.text());
+      consoleMessages.push(message.text());
     }
   });
   page.on("pageerror", (error) => {
     pageErrors.push(error.message);
   });
 
-  return { consoleErrors, pageErrors };
+  return { consoleMessages, pageErrors };
 }
 
-export function getHydrationErrors(messages: string[]): string[] {
+export function getBrowserDiagnosticMessages(diagnostics: BrowserDiagnostics): string[] {
+  return [...diagnostics.consoleMessages, ...diagnostics.pageErrors];
+}
+
+export function findHydrationOrCspFailures(messages: string[]): string[] {
   return messages.filter((message) =>
-    message.includes("Page hydration failed") ||
-    message.includes("unsafe-eval") ||
-    message.includes("Failed to fetch dynamically imported module") ||
-    message.includes("WebAssembly.compile()") ||
-    message.includes("Content Security Policy") ||
-    message.includes("violates the following Content Security Policy directive") ||
-    message.includes("Refused to load the script") ||
-    message.includes("Hydration")
+    HYDRATION_OR_CSP_FAILURE_PATTERNS.some((pattern) => message.includes(pattern))
   );
 }

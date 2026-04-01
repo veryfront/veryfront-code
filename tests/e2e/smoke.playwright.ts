@@ -9,7 +9,7 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { setupErrorCollection } from "./helpers/assertions.js";
+import { findHydrationOrCspFailures, setupErrorCollection } from "./helpers/assertions.js";
 
 /**
  * Projects to test.
@@ -48,13 +48,6 @@ async function expectPageRenders(page: import("@playwright/test").Page): Promise
   expect(body.length).toBeGreaterThan(0);
 }
 
-function getHydrationErrors(errors: string[]): string[] {
-  return errors.filter(
-    (e) =>
-      e.includes("hydrat") || e.includes("Minified React error") || e.includes("did not match"),
-  );
-}
-
 /**
  * Test each project in each mode
  */
@@ -90,7 +83,7 @@ for (const subdomain of PROJECTS) {
           }
         }
 
-        expect(getHydrationErrors(errors)).toEqual([]);
+        expect(findHydrationOrCspFailures(errors)).toEqual([]);
       });
 
       test("color_mode=dark works", async ({ page }) => {
