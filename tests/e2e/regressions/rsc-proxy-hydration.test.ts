@@ -12,6 +12,29 @@ import {
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { startProductionServer } from "../../../src/server/production-server.ts";
 
+const ROOT_LAYOUT_SOURCE =
+  `export default function RootLayout({ children }: { children: React.ReactNode }) {
+            return <html><body>{children}</body></html>;
+          }`;
+
+const LOCAL_RSC_CONFIG_SOURCE = `export default { experimental: { rsc: true } };`;
+
+const PROXY_MODE_CONFIG_SOURCE = `export default {
+            experimental: { rsc: true },
+            fs: {
+              veryfront: {
+                proxyMode: true,
+                apiBaseUrl: "https://api.veryfront.com"
+              }
+            }
+          };`;
+
+interface TestProjectContext {
+  projectDir: string;
+  projectId: string;
+  allocatePort: () => Promise<number>;
+}
+
 async function waitForReady(port: number, timeoutMs = 5000): Promise<void> {
   const start = Date.now();
 
@@ -33,9 +56,10 @@ async function waitForReady(port: number, timeoutMs = 5000): Promise<void> {
   throw new Error("Server reported not-ready via /readyz");
 }
 
-async function writeClientCounterApp(
+async function writeClientApp(
   projectDir: string,
   configSource: string,
+  pageSource: string,
 ): Promise<void> {
   await writeTextFile(join(projectDir, "veryfront.config.js"), configSource);
 
@@ -43,14 +67,17 @@ async function writeClientCounterApp(
   await remove(join(projectDir, "pages"), { recursive: true });
 
   await mkdir(join(projectDir, "app"), { recursive: true });
-  await writeTextFile(
-    join(projectDir, "app", "layout.tsx"),
-    `export default function RootLayout({ children }: { children: React.ReactNode }) {
-            return <html><body>{children}</body></html>;
-          }`,
-  );
-  await writeTextFile(
-    join(projectDir, "app", "page.tsx"),
+  await writeTextFile(join(projectDir, "app", "layout.tsx"), ROOT_LAYOUT_SOURCE);
+  await writeTextFile(join(projectDir, "app", "page.tsx"), pageSource);
+}
+
+async function writeClientCounterApp(
+  projectDir: string,
+  configSource: string,
+): Promise<void> {
+  await writeClientApp(
+    projectDir,
+    configSource,
     `"use client";
 import { useEffect, useState } from "react";
 
@@ -80,22 +107,10 @@ async function writePreviewChatApp(
   projectDir: string,
   configSource: string,
 ): Promise<void> {
-  await writeTextFile(join(projectDir, "veryfront.config.js"), configSource);
-
-  await remove(join(projectDir, "app"), { recursive: true });
-  await remove(join(projectDir, "pages"), { recursive: true });
-
-  await mkdir(join(projectDir, "app"), { recursive: true });
-  await writeTextFile(
-    join(projectDir, "app", "layout.tsx"),
-    `export default function RootLayout({ children }: { children: React.ReactNode }) {
-            return <html><body>{children}</body></html>;
-          }`,
-  );
-  await writeTextFile(
-    join(projectDir, "app", "page.tsx"),
+  await writeClientApp(
+    projectDir,
+    configSource,
     `"use client";
-import * as React from "react";
 import type { UIMessage } from "veryfront/agent/react";
 import { Chat } from "veryfront/chat";
 
@@ -116,12 +131,10 @@ const initialMessages: UIMessage[] = [
 ];
 
 export default function Page() {
-  const [messages] = React.useState(initialMessages);
-
   return (
     <main id="preview-chat-page">
       <Chat
-        messages={messages}
+        messages={initialMessages}
         input=""
         onChange={() => {}}
       />
@@ -130,6 +143,56 @@ export default function Page() {
 }
 `,
   );
+}
+
+function getProxyHeaders(
+  environment: "preview" | "production",
+): Record<string, string> {
+  return {
+    "x-environment": environment,
+    "x-project-slug": environment === "preview"
+      ? "browser-preview-project"
+      : "browser-proxy-project",
+    "x-release-id": environment === "preview" ? "rel-browser-preview-test" : "rel-browser-test",
+    "x-token": "test-token",
+  };
+}
+
+async function withProxyBrowserPage(
+  browser: import("npm:playwright").Browser,
+  context: TestProjectContext,
+  headers: Record<string, string>,
+  run: (
+    page: import("npm:playwright").Page,
+    errors: { consoleErrors: string[]; pageErrors: string[] },
+  ) => Promise<void>,
+): Promise<void> {
+  const port = await context.allocatePort();
+  const controller = new AbortController();
+  const server = await startProductionServer({
+    projectDir: context.projectDir,
+    port,
+    bindAddress: "127.0.0.1",
+    signal: controller.signal,
+    defaultProjectSlug: context.projectId,
+    defaultProjectId: context.projectId,
+  });
+  await server.ready;
+  await waitForReady(port);
+
+  const browserContext = await browser.newContext({ extraHTTPHeaders: headers });
+  const page = await browserContext.newPage();
+  const errors = collectBrowserErrors(page);
+
+  try {
+    const response = await page.goto(`http://127.0.0.1:${port}/`);
+    assertEquals(response?.status(), 200);
+    await run(page, errors);
+  } finally {
+    await browserContext.close();
+    controller.abort();
+    await server.stop();
+  }
 }
 
 async function assertCounterHydration(
@@ -210,7 +273,7 @@ describe(
         await withTestContext("rsc-local-browser-hydration", async (context) => {
           await writeClientCounterApp(
             context.projectDir,
-            `export default { experimental: { rsc: true } };`,
+            LOCAL_RSC_CONFIG_SOURCE,
           );
 
           const server = await context.createProductionServer({ hostname: "127.0.0.1" });
@@ -246,56 +309,23 @@ describe(
         await withTestContext("rsc-proxy-browser-hydration", async (context) => {
           await writeClientCounterApp(
             context.projectDir,
-            `export default {
-            experimental: { rsc: true },
-            fs: {
-              veryfront: {
-                proxyMode: true,
-                apiBaseUrl: "https://api.veryfront.com"
-              }
-            }
-          };`,
+            PROXY_MODE_CONFIG_SOURCE,
           );
 
-          const port = await context.allocatePort();
-          const controller = new AbortController();
-          const server = await startProductionServer({
-            projectDir: context.projectDir,
-            port,
-            bindAddress: "127.0.0.1",
-            signal: controller.signal,
-            defaultProjectSlug: context.projectId,
-            defaultProjectId: context.projectId,
-          });
-          await server.ready;
-          await waitForReady(port);
-          const browserContext = await browser.newContext({
-            extraHTTPHeaders: {
-              "x-environment": "production",
-              "x-project-slug": "browser-proxy-project",
-              "x-release-id": "rel-browser-test",
-              "x-token": "test-token",
+          await withProxyBrowserPage(
+            browser,
+            context,
+            getProxyHeaders("production"),
+            async (page, { consoleErrors, pageErrors }) => {
+              await assertCounterHydration(page, {
+                expectedStrategy: "rsc-module",
+                expectedModulePath: "/_veryfront/rsc/module?",
+              });
+
+              const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
+              assertEquals(hydrationErrors.length, 0);
             },
-          });
-          const page = await browserContext.newPage();
-          const { consoleErrors, pageErrors } = collectBrowserErrors(page);
-
-          try {
-            const response = await page.goto(`http://127.0.0.1:${port}/`);
-            assertEquals(response?.status(), 200);
-
-            await assertCounterHydration(page, {
-              expectedStrategy: "rsc-module",
-              expectedModulePath: "/_veryfront/rsc/module?",
-            });
-
-            const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
-            assertEquals(hydrationErrors.length, 0);
-          } finally {
-            await browserContext.close();
-            controller.abort();
-            await server.stop();
-          }
+          );
         });
       } finally {
         await browser.close();
@@ -310,56 +340,23 @@ describe(
         await withTestContext("rsc-preview-browser-hydration", async (context) => {
           await writeClientCounterApp(
             context.projectDir,
-            `export default {
-            experimental: { rsc: true },
-            fs: {
-              veryfront: {
-                proxyMode: true,
-                apiBaseUrl: "https://api.veryfront.com"
-              }
-            }
-          };`,
+            PROXY_MODE_CONFIG_SOURCE,
           );
 
-          const port = await context.allocatePort();
-          const controller = new AbortController();
-          const server = await startProductionServer({
-            projectDir: context.projectDir,
-            port,
-            bindAddress: "127.0.0.1",
-            signal: controller.signal,
-            defaultProjectSlug: context.projectId,
-            defaultProjectId: context.projectId,
-          });
-          await server.ready;
-          await waitForReady(port);
-          const browserContext = await browser.newContext({
-            extraHTTPHeaders: {
-              "x-environment": "preview",
-              "x-project-slug": "browser-preview-project",
-              "x-release-id": "rel-browser-preview-test",
-              "x-token": "test-token",
+          await withProxyBrowserPage(
+            browser,
+            context,
+            getProxyHeaders("preview"),
+            async (page, { consoleErrors, pageErrors }) => {
+              await assertCounterHydration(page, {
+                expectedStrategy: "fs",
+                expectedModulePath: "/_veryfront/fs/",
+              });
+
+              const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
+              assertEquals(hydrationErrors.length, 0);
             },
-          });
-          const page = await browserContext.newPage();
-          const { consoleErrors, pageErrors } = collectBrowserErrors(page);
-
-          try {
-            const response = await page.goto(`http://127.0.0.1:${port}/`);
-            assertEquals(response?.status(), 200);
-
-            await assertCounterHydration(page, {
-              expectedStrategy: "fs",
-              expectedModulePath: "/_veryfront/fs/",
-            });
-
-            const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
-            assertEquals(hydrationErrors.length, 0);
-          } finally {
-            await browserContext.close();
-            controller.abort();
-            await server.stop();
-          }
+          );
         });
       } finally {
         await browser.close();
@@ -374,53 +371,20 @@ describe(
         await withTestContext("rsc-preview-chat-browser-styling", async (context) => {
           await writePreviewChatApp(
             context.projectDir,
-            `export default {
-            experimental: { rsc: true },
-            fs: {
-              veryfront: {
-                proxyMode: true,
-                apiBaseUrl: "https://api.veryfront.com"
-              }
-            }
-          };`,
+            PROXY_MODE_CONFIG_SOURCE,
           );
 
-          const port = await context.allocatePort();
-          const controller = new AbortController();
-          const server = await startProductionServer({
-            projectDir: context.projectDir,
-            port,
-            bindAddress: "127.0.0.1",
-            signal: controller.signal,
-            defaultProjectSlug: context.projectId,
-            defaultProjectId: context.projectId,
-          });
-          await server.ready;
-          await waitForReady(port);
-          const browserContext = await browser.newContext({
-            extraHTTPHeaders: {
-              "x-environment": "preview",
-              "x-project-slug": "browser-preview-project",
-              "x-release-id": "rel-browser-preview-test",
-              "x-token": "test-token",
+          await withProxyBrowserPage(
+            browser,
+            context,
+            getProxyHeaders("preview"),
+            async (page, { consoleErrors, pageErrors }) => {
+              await assertPreviewChatStyling(page);
+
+              const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
+              assertEquals(hydrationErrors.length, 0);
             },
-          });
-          const page = await browserContext.newPage();
-          const { consoleErrors, pageErrors } = collectBrowserErrors(page);
-
-          try {
-            const response = await page.goto(`http://127.0.0.1:${port}/`);
-            assertEquals(response?.status(), 200);
-
-            await assertPreviewChatStyling(page);
-
-            const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
-            assertEquals(hydrationErrors.length, 0);
-          } finally {
-            await browserContext.close();
-            controller.abort();
-            await server.stop();
-          }
+          );
         });
       } finally {
         await browser.close();
