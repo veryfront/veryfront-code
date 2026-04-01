@@ -260,6 +260,46 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes('<script type="importmap" nonce="nonce-123">'), true);
     });
 
+    it("injects preview utility CSS into full HTML documents for preview rendering", async () => {
+      const mockAdapter = {
+        fs: {
+          readFile: async () => `'use client';`,
+          exists: async () => false,
+          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
+          readDir: async function* () {},
+          mkdir: async () => {},
+          writeFile: async () => {},
+        },
+      };
+
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: mockAdapter as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      const html = await generator.generateFullHTML({
+        html: "<!DOCTYPE html><html><head></head><body><main>Hello</main></body></html>",
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {},
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        options: { environment: "preview" },
+      });
+
+      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
+    });
+
     it("adds nonce to inline style and script tags in rendered HTML", async () => {
       const mockAdapter = {
         fs: {

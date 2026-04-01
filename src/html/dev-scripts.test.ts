@@ -1,8 +1,22 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getDevScripts, getDevStyles, getProdScripts, getStudioScripts } from "./dev-scripts.ts";
+import {
+  getDevScripts,
+  getDevStyles,
+  getPreviewStylesheetLink,
+  getProdScripts,
+  getStudioScripts,
+} from "./dev-scripts.ts";
 
 describe("html/dev-scripts", () => {
+  describe("getPreviewStylesheetLink", () => {
+    it("returns the preview utility stylesheet link", () => {
+      const link = getPreviewStylesheetLink();
+      assertEquals(link.includes('id="vf-tailwind-css"'), true);
+      assertEquals(link.includes("/_vf_styles/styles.css?t="), true);
+    });
+  });
+
   describe("getDevStyles", () => {
     it("should return style tag", () => {
       const styles = getDevStyles();
