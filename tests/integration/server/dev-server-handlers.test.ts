@@ -381,11 +381,17 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
       await withTestContext("dev-server-framework-chat-error-csp", async (context) => {
         const { server, port } = await createTestDevServer(context);
         const modulePaths = [
+          "/_vf_modules/_veryfront/chat/index.js",
           "/_vf_modules/_veryfront/react/components/ai/color-mode.js",
+          "/_vf_modules/_veryfront/react/components/ai/chat.js",
           "/_vf_modules/_veryfront/react/components/ai/chat/contexts/chat-context.js",
           "/_vf_modules/_veryfront/react/components/ai/chat/contexts/composer-context.js",
           "/_vf_modules/_veryfront/react/components/ai/chat/contexts/message-context.js",
           "/_vf_modules/_veryfront/react/components/ai/chat/contexts/thread-list-context.js",
+          "/_vf_modules/_veryfront/react/components/ai/markdown.js",
+          "/_vf_modules/_veryfront/security/client/html-sanitizer.js",
+          "/_vf_modules/_veryfront/rendering/rsc/client-boot.js",
+          "/_vf_modules/_veryfront/rendering/rsc/client-dom.js",
           "/_vf_modules/_veryfront/routing/client/page-loader.js",
           "/_vf_modules/_veryfront/rendering/rsc/client-hydrator.js",
           "/_vf_modules/_veryfront/client/spa/ClientApp.js",
