@@ -91,6 +91,8 @@ jobs:
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
+      - name: Install Chromium
+        run: deno run -A npm:playwright install --with-deps chromium
       - uses: nick-fields/retry@v3
         with:
           timeout_minutes: 15

@@ -24,6 +24,11 @@ import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
+import {
+  collectBrowserErrors,
+  getHydrationErrors,
+  launchChromium,
+} from "../_helpers/playwright.ts";
 import { withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
 
 // Load .env file for test configuration (VERYFRONT_BINARY_FRESH, etc.)
@@ -1709,6 +1714,128 @@ export default function ClientPage() {
       );
       assertEquals(errors.length, 0, "Should have no React errors");
     });
+  });
+
+  it("should hydrate app-router client pages interactively in the compiled binary", async () => {
+    const browser = await launchChromium();
+    if (!browser) return;
+
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-binary-browser-hydration-" });
+
+    await Deno.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify(
+        {
+          name: "test-binary-browser-hydration",
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2,
+      ),
+    );
+
+    await Deno.writeTextFile(
+      join(projectDir, "veryfront.config.ts"),
+      `export default {
+  fs: { type: "local" },
+  experimental: { rsc: true }
+};`,
+    );
+
+    await Deno.mkdir(join(projectDir, "app"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "app", "layout.tsx"),
+      `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <html><body>{children}</body></html>;
+}
+`,
+    );
+    await Deno.writeTextFile(
+      join(projectDir, "app", "page.tsx"),
+      `
+"use client";
+import { useEffect, useState } from "react";
+
+export default function ClientPage() {
+  const [count, setCount] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
+  return (
+    <button
+      id="counter"
+      data-hydrated={hydrated ? "yes" : "no"}
+      onClick={() => setCount((value) => value + 1)}
+    >
+      Count: {count}
+    </button>
+  );
+}
+`,
+    );
+
+    try {
+      await withServer(projectDir, async (server) => {
+        const browserContext = await browser.newContext();
+        const page = await browserContext.newPage();
+        const { consoleErrors, pageErrors } = collectBrowserErrors(page);
+
+        try {
+          const response = await page.goto(`http://127.0.0.1:${server.port}/`);
+          assertEquals(response?.status(), 200, "Should return 200");
+
+          await page.waitForSelector('#counter[data-hydrated="yes"]');
+
+          const initialText = await page.textContent("#counter");
+          assertEquals(initialText?.trim(), "Count: 0");
+
+          const hydrationData = JSON.parse(
+            (await page.textContent("#veryfront-hydration-data")) ?? "{}",
+          ) as { clientModuleStrategy?: string; pagePath?: string };
+          assertEquals(hydrationData.clientModuleStrategy, "fs");
+          assertEquals(hydrationData.pagePath, "app/page.tsx");
+
+          await page.click("#counter");
+          await page.waitForFunction(
+            () => document.querySelector("#counter")?.textContent?.trim() === "Count: 1",
+          );
+
+          const hydratedText = await page.textContent("#counter");
+          assertEquals(hydratedText?.trim(), "Count: 1");
+
+          const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
+          assertEquals(
+            hydrationErrors.length,
+            0,
+            `Unexpected hydration errors: ${hydrationErrors.join("\n")}`,
+          );
+
+          const resources = await page.evaluate(() =>
+            performance.getEntriesByType("resource").map((entry) => entry.name)
+          );
+          assertEquals(resources.some((name) => name.includes("/_veryfront/fs/")), true);
+
+          const serverErrors = server.logs.filter((line) =>
+            line.includes("Invalid hook call") ||
+            line.includes("more than one copy of React") ||
+            line.includes("Page hydration failed")
+          );
+          assertEquals(
+            serverErrors.length,
+            0,
+            `Unexpected server errors: ${serverErrors.join("\n")}`,
+          );
+        } finally {
+          await browserContext.close();
+        }
+      });
+    } finally {
+      await browser.close();
+    }
   });
 
   // Test: Multiple pages accessing same framework import
