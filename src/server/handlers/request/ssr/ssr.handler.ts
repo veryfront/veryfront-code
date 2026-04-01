@@ -207,6 +207,10 @@ export class SSRHandler extends BaseHandler {
 
         endRequest(requestId);
 
+        if (result.errorType === "redirect" && result.redirectLocation) {
+          return this.handleRedirect(req, ctx, result, nonce);
+        }
+
         if (result.errorType === "not-found") {
           return this.handleNotFound(req, ctx, slug, nonce);
         }
@@ -220,6 +224,22 @@ export class SSRHandler extends BaseHandler {
       },
       { "ssr.slug": slug, "ssr.projectSlug": ctx.projectSlug || "unknown" },
     );
+  }
+
+  private handleRedirect(
+    req: Request,
+    ctx: HandlerContext,
+    result: SSRRenderResult,
+    nonce: string,
+  ): HandlerResult {
+    const response = this.createResponseBuilder(ctx, nonce)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
+      .withCache(result.cacheStrategy)
+      .withHeaders({ Location: result.redirectLocation ?? "/" })
+      .build(null, result.status);
+
+    return this.respond(response);
   }
 
   private async handleNotFound(
