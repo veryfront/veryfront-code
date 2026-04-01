@@ -260,6 +260,45 @@ describe(
       });
     });
 
+    it("returns HTTP redirects from getServerData in the adapter-backed server path", async () => {
+      await withTestContext("production-server-adapter-redirects", async (context: TestContext) => {
+        const pagesDir = join(context.projectDir, "pages");
+        await mkdir(pagesDir, { recursive: true });
+        await writeTextFile(
+          join(pagesDir, "redirect.tsx"),
+          `export function getServerData(){ return { redirect: { destination: '/login', permanent: false } }; }
+           export default function Page(){ return <div>Redirect source</div>; }`,
+        );
+        await writeTextFile(
+          join(pagesDir, "permanent.tsx"),
+          `export function getServerData(){ return { redirect: { destination: '/moved', permanent: true } }; }
+           export default function Page(){ return <div>Permanent redirect</div>; }`,
+        );
+
+        const port = await context.allocatePort();
+        const controller = new AbortController();
+        const server = await startServer(context, port, controller.signal);
+
+        const res = await fetch(`http://127.0.0.1:${port}/redirect`, {
+          redirect: "manual",
+        });
+        assertEquals(res.status, 302);
+        assertEquals(res.headers.get("location"), "/login");
+        assertEquals(await res.text(), "");
+
+        const head = await fetch(`http://127.0.0.1:${port}/permanent`, {
+          method: "HEAD",
+          redirect: "manual",
+        });
+        assertEquals(head.status, 301);
+        assertEquals(head.headers.get("location"), "/moved");
+        assertEquals(head.body, null);
+
+        controller.abort();
+        await server.stop();
+      });
+    });
+
     it("renders App Router loading fallback HTML when a suspended page later errors", async () => {
       await withTestContext("production-server-app-loading-error", async (context: TestContext) => {
         try {
