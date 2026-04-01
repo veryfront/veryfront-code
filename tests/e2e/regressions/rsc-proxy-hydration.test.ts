@@ -4,28 +4,13 @@ import "../../_helpers/log-guard.ts";
 import { join } from "#veryfront/compat/path";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
+import {
+  collectBrowserErrors,
+  getHydrationErrors,
+  launchChromium,
+} from "../../_helpers/playwright.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { startProductionServer } from "../../../src/server/production-server.ts";
-import { type Browser, chromium } from "npm:playwright";
-
-function isMissingBrowserExecutable(error: unknown): boolean {
-  return String(error).includes("Executable doesn't exist");
-}
-
-async function launchChromium(): Promise<Browser | null> {
-  try {
-    return await chromium.launch({ headless: true });
-  } catch (error) {
-    if (isMissingBrowserExecutable(error)) {
-      console.warn(
-        "SKIP: Playwright Chromium is not installed. Run `deno run -A npm:playwright install chromium`.",
-      );
-      return null;
-    }
-
-    throw error;
-  }
-}
 
 async function waitForReady(port: number, timeoutMs = 5000): Promise<void> {
   const start = Date.now();
@@ -48,56 +33,25 @@ async function waitForReady(port: number, timeoutMs = 5000): Promise<void> {
   throw new Error("Server reported not-ready via /readyz");
 }
 
-function getHydrationErrors(messages: string[]): string[] {
-  return messages.filter((message) =>
-    message.includes("Page hydration failed") ||
-    message.includes("unsafe-eval") ||
-    message.includes("Failed to fetch dynamically imported module") ||
-    message.includes("WebAssembly.compile()") ||
-    message.includes("Hydration")
-  );
-}
+async function writeClientCounterApp(
+  projectDir: string,
+  configSource: string,
+): Promise<void> {
+  await writeTextFile(join(projectDir, "veryfront.config.js"), configSource);
 
-describe(
-  "RSC Proxy Hydration Browser Tests",
-  { sanitizeOps: false, sanitizeResources: false },
-  () => {
-    afterAll(async () => {
-      await cleanupBundler();
-    });
+  await remove(join(projectDir, "app"), { recursive: true });
+  await remove(join(projectDir, "pages"), { recursive: true });
 
-    it("hydrates a remote-production client page and becomes interactive", async () => {
-      const browser = await launchChromium();
-      if (!browser) return;
-
-      try {
-        await withTestContext("rsc-proxy-browser-hydration", async (context) => {
-          await writeTextFile(
-            join(context.projectDir, "veryfront.config.js"),
-            `export default {
-            experimental: { rsc: true },
-            fs: {
-              veryfront: {
-                proxyMode: true,
-                apiBaseUrl: "https://api.veryfront.com"
-              }
-            }
-          };`,
-          );
-
-          await remove(join(context.projectDir, "app"), { recursive: true });
-          await remove(join(context.projectDir, "pages"), { recursive: true });
-
-          await mkdir(join(context.projectDir, "app"), { recursive: true });
-          await writeTextFile(
-            join(context.projectDir, "app", "layout.tsx"),
-            `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  await mkdir(join(projectDir, "app"), { recursive: true });
+  await writeTextFile(
+    join(projectDir, "app", "layout.tsx"),
+    `export default function RootLayout({ children }: { children: React.ReactNode }) {
             return <html><body>{children}</body></html>;
           }`,
-          );
-          await writeTextFile(
-            join(context.projectDir, "app", "page.tsx"),
-            `"use client";
+  );
+  await writeTextFile(
+    join(projectDir, "app", "page.tsx"),
+    `"use client";
 import { useEffect, useState } from "react";
 
 export default function Page() {
@@ -119,6 +73,102 @@ export default function Page() {
   );
 }
 `,
+  );
+}
+
+async function assertCounterHydration(
+  page: import("npm:playwright").Page,
+  options: { expectedStrategy: string; expectedModulePath: string },
+): Promise<void> {
+  await page.waitForSelector('#counter[data-hydrated="yes"]');
+
+  const initialText = await page.textContent("#counter");
+  assertEquals(initialText?.trim(), "Count: 0");
+
+  const hydrationData = JSON.parse(
+    (await page.textContent("#veryfront-hydration-data")) ?? "{}",
+  ) as { clientModuleStrategy?: string; pagePath?: string };
+  assertEquals(hydrationData.clientModuleStrategy, options.expectedStrategy);
+  assertEquals(hydrationData.pagePath, "app/page.tsx");
+
+  await page.click("#counter");
+  await page.waitForFunction(
+    () => document.querySelector("#counter")?.textContent?.trim() === "Count: 1",
+  );
+
+  const hydratedText = await page.textContent("#counter");
+  assertEquals(hydratedText?.trim(), "Count: 1");
+
+  const resources = await page.evaluate(() =>
+    performance.getEntriesByType("resource").map((entry) => entry.name)
+  );
+  assertEquals(
+    resources.some((name) => name.includes(options.expectedModulePath)),
+    true,
+  );
+}
+
+describe(
+  "RSC Hydration Browser Tests",
+  { sanitizeOps: false, sanitizeResources: false },
+  () => {
+    afterAll(async () => {
+      await cleanupBundler();
+    });
+
+    it("hydrates a local-production client page and becomes interactive", async () => {
+      const browser = await launchChromium();
+      if (!browser) return;
+
+      try {
+        await withTestContext("rsc-local-browser-hydration", async (context) => {
+          await writeClientCounterApp(
+            context.projectDir,
+            `export default { experimental: { rsc: true } };`,
+          );
+
+          const server = await context.createProductionServer({ hostname: "127.0.0.1" });
+          const browserContext = await browser.newContext();
+          const page = await browserContext.newPage();
+          const { consoleErrors, pageErrors } = collectBrowserErrors(page);
+
+          try {
+            const response = await page.goto(`http://127.0.0.1:${server.port}/`);
+            assertEquals(response?.status(), 200);
+
+            await assertCounterHydration(page, {
+              expectedStrategy: "fs",
+              expectedModulePath: "/_veryfront/fs/",
+            });
+
+            const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
+            assertEquals(hydrationErrors.length, 0);
+          } finally {
+            await browserContext.close();
+          }
+        });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    it("hydrates a remote-production client page and becomes interactive", async () => {
+      const browser = await launchChromium();
+      if (!browser) return;
+
+      try {
+        await withTestContext("rsc-proxy-browser-hydration", async (context) => {
+          await writeClientCounterApp(
+            context.projectDir,
+            `export default {
+            experimental: { rsc: true },
+            fs: {
+              veryfront: {
+                proxyMode: true,
+                apiBaseUrl: "https://api.veryfront.com"
+              }
+            }
+          };`,
           );
 
           const port = await context.allocatePort();
@@ -142,38 +192,16 @@ export default function Page() {
             },
           });
           const page = await browserContext.newPage();
-          const consoleErrors: string[] = [];
-          const pageErrors: string[] = [];
-
-          page.on("console", (message) => {
-            if (message.type() === "error") consoleErrors.push(message.text());
-          });
-          page.on("pageerror", (error) => {
-            pageErrors.push(error.message);
-          });
+          const { consoleErrors, pageErrors } = collectBrowserErrors(page);
 
           try {
             const response = await page.goto(`http://127.0.0.1:${port}/`);
             assertEquals(response?.status(), 200);
 
-            await page.waitForSelector('#counter[data-hydrated="yes"]');
-
-            const initialText = await page.textContent("#counter");
-            assertEquals(initialText?.trim(), "Count: 0");
-
-            const hydrationData = JSON.parse(
-              (await page.textContent("#veryfront-hydration-data")) ?? "{}",
-            ) as { clientModuleStrategy?: string; pagePath?: string };
-            assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
-            assertEquals(hydrationData.pagePath, "app/page.tsx");
-
-            await page.click("#counter");
-            await page.waitForFunction(
-              () => document.querySelector("#counter")?.textContent?.trim() === "Count: 1",
-            );
-
-            const hydratedText = await page.textContent("#counter");
-            assertEquals(hydratedText?.trim(), "Count: 1");
+            await assertCounterHydration(page, {
+              expectedStrategy: "rsc-module",
+              expectedModulePath: "/_veryfront/rsc/module?",
+            });
 
             const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
             assertEquals(hydrationErrors.length, 0);
