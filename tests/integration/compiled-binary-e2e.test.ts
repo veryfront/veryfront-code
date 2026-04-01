@@ -112,6 +112,14 @@ interface TestServer {
   kill: () => Promise<void>;
 }
 
+type BrowserDiagnostics = ReturnType<typeof collectBrowserErrors>;
+
+interface BrowserPageSession {
+  page: import("npm:playwright").Page;
+  response: import("npm:playwright").Response | null;
+  diagnostics: BrowserDiagnostics;
+}
+
 async function ensureBinaryCompiled(): Promise<void> {
   const forceFresh = Deno.env.get("VERYFRONT_BINARY_FRESH") === "1";
   const binaryExists = await exists(BINARY_PATH);
@@ -327,6 +335,101 @@ async function withServer(
   } finally {
     await server.kill();
     await Deno.remove(projectDir, { recursive: true });
+  }
+}
+
+async function withBrowserPageAgainstServer(
+  server: TestServer,
+  run: (session: BrowserPageSession) => Promise<void>,
+): Promise<void> {
+  const browser = await launchChromium();
+  if (!browser) return;
+
+  try {
+    const browserContext = await browser.newContext();
+    const page = await browserContext.newPage();
+    const diagnostics = collectBrowserErrors(page);
+
+    try {
+      const response = await page.goto(`http://127.0.0.1:${server.port}/`);
+      assertEquals(response?.status(), 200, "Should return 200");
+      await run({ page, response, diagnostics });
+    } finally {
+      await browserContext.close();
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
+function assertNoBrowserHydrationErrors(
+  diagnostics: BrowserDiagnostics,
+  label = "Unexpected hydration/CSP errors",
+): void {
+  const hydrationErrors = getHydrationErrors([
+    ...diagnostics.consoleErrors,
+    ...diagnostics.pageErrors,
+  ]);
+  assertEquals(hydrationErrors.length, 0, `${label}: ${hydrationErrors.join("\n")}`);
+}
+
+function assertNoServerLogErrors(
+  server: TestServer,
+  patterns: string[],
+  label: string,
+): void {
+  const serverErrors = server.logs.filter((line) =>
+    patterns.some((pattern) => line.includes(pattern))
+  );
+  assertEquals(serverErrors.length, 0, `${label}: ${serverErrors.join("\n")}`);
+}
+
+async function assertCounterHydration(
+  page: import("npm:playwright").Page,
+  options: {
+    expectedStrategy?: string;
+    expectedPagePath?: string;
+    expectedModulePath?: string;
+    assertBeforeClick?: () => Promise<void>;
+    assertAfterClick?: () => Promise<void>;
+  } = {},
+): Promise<void> {
+  await page.waitForSelector('#counter[data-hydrated="yes"]');
+
+  const initialText = await page.textContent("#counter");
+  assertEquals(initialText?.trim(), "Count: 0");
+
+  if (options.expectedStrategy || options.expectedPagePath) {
+    const hydrationData = JSON.parse(
+      (await page.textContent("#veryfront-hydration-data")) ?? "{}",
+    ) as { clientModuleStrategy?: string; pagePath?: string };
+
+    if (options.expectedStrategy) {
+      assertEquals(hydrationData.clientModuleStrategy, options.expectedStrategy);
+    }
+
+    if (options.expectedPagePath) {
+      assertEquals(hydrationData.pagePath, options.expectedPagePath);
+    }
+  }
+
+  await options.assertBeforeClick?.();
+
+  await page.click("#counter");
+  await page.waitForFunction(
+    () => document.querySelector("#counter")?.textContent?.trim() === "Count: 1",
+  );
+
+  const hydratedText = await page.textContent("#counter");
+  assertEquals(hydratedText?.trim(), "Count: 1");
+
+  await options.assertAfterClick?.();
+
+  if (options.expectedModulePath) {
+    const resources = await page.evaluate(() =>
+      performance.getEntriesByType("resource").map((entry) => entry.name)
+    );
+    assertEquals(resources.some((name) => name.includes(options.expectedModulePath!)), true);
   }
 }
 
@@ -1727,9 +1830,6 @@ export default function ClientPage() {
   });
 
   it("should hydrate app-router client pages interactively in the compiled binary", async () => {
-    const browser = await launchChromium();
-    if (!browser) return;
-
     const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-binary-browser-hydration-" });
 
     await Deno.writeTextFile(
@@ -1788,70 +1888,25 @@ export default function ClientPage() {
 `,
     );
 
-    try {
-      await withServer(projectDir, async (server) => {
-        const browserContext = await browser.newContext();
-        const page = await browserContext.newPage();
-        const { consoleErrors, pageErrors } = collectBrowserErrors(page);
+    await withServer(projectDir, async (server) => {
+      await withBrowserPageAgainstServer(server, async ({ page, diagnostics }) => {
+        await assertCounterHydration(page, {
+          expectedStrategy: "fs",
+          expectedPagePath: "app/page.tsx",
+          expectedModulePath: "/_veryfront/fs/",
+        });
 
-        try {
-          const response = await page.goto(`http://127.0.0.1:${server.port}/`);
-          assertEquals(response?.status(), 200, "Should return 200");
-
-          await page.waitForSelector('#counter[data-hydrated="yes"]');
-
-          const initialText = await page.textContent("#counter");
-          assertEquals(initialText?.trim(), "Count: 0");
-
-          const hydrationData = JSON.parse(
-            (await page.textContent("#veryfront-hydration-data")) ?? "{}",
-          ) as { clientModuleStrategy?: string; pagePath?: string };
-          assertEquals(hydrationData.clientModuleStrategy, "fs");
-          assertEquals(hydrationData.pagePath, "app/page.tsx");
-
-          await page.click("#counter");
-          await page.waitForFunction(
-            () => document.querySelector("#counter")?.textContent?.trim() === "Count: 1",
-          );
-
-          const hydratedText = await page.textContent("#counter");
-          assertEquals(hydratedText?.trim(), "Count: 1");
-
-          const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
-          assertEquals(
-            hydrationErrors.length,
-            0,
-            `Unexpected hydration errors: ${hydrationErrors.join("\n")}`,
-          );
-
-          const resources = await page.evaluate(() =>
-            performance.getEntriesByType("resource").map((entry) => entry.name)
-          );
-          assertEquals(resources.some((name) => name.includes("/_veryfront/fs/")), true);
-
-          const serverErrors = server.logs.filter((line) =>
-            line.includes("Invalid hook call") ||
-            line.includes("more than one copy of React") ||
-            line.includes("Page hydration failed")
-          );
-          assertEquals(
-            serverErrors.length,
-            0,
-            `Unexpected server errors: ${serverErrors.join("\n")}`,
-          );
-        } finally {
-          await browserContext.close();
-        }
+        assertNoBrowserHydrationErrors(diagnostics, "Unexpected hydration errors");
+        assertNoServerLogErrors(
+          server,
+          ["Invalid hook call", "more than one copy of React", "Page hydration failed"],
+          "Unexpected server errors",
+        );
       });
-    } finally {
-      await browser.close();
-    }
+    });
   });
 
   it("should hydrate pages-router client pages under strict CSP in the compiled binary", async () => {
-    const browser = await launchChromium();
-    if (!browser) return;
-
     const projectDir = await createTestProject(
       "pages-browser-csp-hydration",
       `
@@ -1887,93 +1942,64 @@ export default function HomePage() {
 `,
     );
 
-    try {
-      await withServer(projectDir, async (server) => {
-        const browserContext = await browser.newContext();
-        const page = await browserContext.newPage();
-        const { consoleErrors, pageErrors } = collectBrowserErrors(page);
+    await withServer(projectDir, async (server) => {
+      await withBrowserPageAgainstServer(server, async ({ page, response, diagnostics }) => {
+        const csp = response?.headers()["content-security-policy"] ?? "";
+        assert(
+          csp.includes("https://esm.sh"),
+          `Expected CSP to allow esm.sh scripts, got: ${csp}`,
+        );
+        assert(
+          csp.includes("style-src-elem"),
+          `Expected CSP to include style-src-elem, got: ${csp}`,
+        );
+        assert(
+          !csp.includes("style-src 'self' 'unsafe-inline' 'nonce-"),
+          `style-src should not mix unsafe-inline with a nonce, got: ${csp}`,
+        );
 
-        try {
-          const response = await page.goto(`http://127.0.0.1:${server.port}/`);
-          assertEquals(response?.status(), 200, "Should return 200");
+        await assertCounterHydration(page, {
+          assertBeforeClick: async () => {
+            const initialBackground = await page.$eval(
+              "#counter",
+              (element) => globalThis.getComputedStyle(element).backgroundColor,
+            );
+            const initialPadding = await page.$eval(
+              "#counter",
+              (element) => globalThis.getComputedStyle(element).paddingTop,
+            );
+            assertEquals(initialBackground, "rgb(37, 99, 235)");
+            assertEquals(initialPadding, "12px");
+          },
+          assertAfterClick: async () => {
+            const clickedBackground = await page.$eval(
+              "#counter",
+              (element) => globalThis.getComputedStyle(element).backgroundColor,
+            );
+            const clickedPadding = await page.$eval(
+              "#counter",
+              (element) => globalThis.getComputedStyle(element).paddingTop,
+            );
+            assertEquals(clickedBackground, "rgb(22, 101, 52)");
+            assertEquals(clickedPadding, "13px");
+          },
+        });
 
-          const csp = response?.headers()["content-security-policy"] ?? "";
-          assert(
-            csp.includes("https://esm.sh"),
-            `Expected CSP to allow esm.sh scripts, got: ${csp}`,
-          );
-          assert(
-            csp.includes("style-src-elem"),
-            `Expected CSP to include style-src-elem, got: ${csp}`,
-          );
-          assert(
-            !csp.includes("style-src 'self' 'unsafe-inline' 'nonce-"),
-            `style-src should not mix unsafe-inline with a nonce, got: ${csp}`,
-          );
-
-          await page.waitForSelector('#counter[data-hydrated="yes"]');
-
-          const initialText = await page.textContent("#counter");
-          assertEquals(initialText?.trim(), "Count: 0");
-          const initialBackground = await page.$eval(
-            "#counter",
-            (element) => globalThis.getComputedStyle(element).backgroundColor,
-          );
-          const initialPadding = await page.$eval(
-            "#counter",
-            (element) => globalThis.getComputedStyle(element).paddingTop,
-          );
-          assertEquals(initialBackground, "rgb(37, 99, 235)");
-          assertEquals(initialPadding, "12px");
-
-          await page.click("#counter");
-          await page.waitForFunction(
-            () => document.querySelector("#counter")?.textContent?.trim() === "Count: 1",
-          );
-
-          const hydratedText = await page.textContent("#counter");
-          assertEquals(hydratedText?.trim(), "Count: 1");
-          const clickedBackground = await page.$eval(
-            "#counter",
-            (element) => globalThis.getComputedStyle(element).backgroundColor,
-          );
-          const clickedPadding = await page.$eval(
-            "#counter",
-            (element) => globalThis.getComputedStyle(element).paddingTop,
-          );
-          assertEquals(clickedBackground, "rgb(22, 101, 52)");
-          assertEquals(clickedPadding, "13px");
-
-          const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
-          assertEquals(
-            hydrationErrors.length,
-            0,
-            `Unexpected hydration/CSP errors: ${hydrationErrors.join("\n")}`,
-          );
-
-          const serverErrors = server.logs.filter((line) =>
-            line.includes("Page hydration failed") ||
-            line.includes("Refused to load the script") ||
-            line.includes("violates the following Content Security Policy directive")
-          );
-          assertEquals(
-            serverErrors.length,
-            0,
-            `Unexpected server/browser CSP errors: ${serverErrors.join("\n")}`,
-          );
-        } finally {
-          await browserContext.close();
-        }
+        assertNoBrowserHydrationErrors(diagnostics);
+        assertNoServerLogErrors(
+          server,
+          [
+            "Page hydration failed",
+            "Refused to load the script",
+            "violates the following Content Security Policy directive",
+          ],
+          "Unexpected server/browser CSP errors",
+        );
       });
-    } finally {
-      await browser.close();
-    }
+    });
   });
 
   it("should allow hydrated client inline styles under the default CSP in the compiled binary", async () => {
-    const browser = await launchChromium();
-    if (!browser) return;
-
     const projectDir = await createTestProject(
       "pages-browser-csp-inline-style",
       `
@@ -2001,67 +2027,47 @@ export default function HomePage() {
 `,
     );
 
-    try {
-      await withServer(projectDir, async (server) => {
-        const browserContext = await browser.newContext();
-        const page = await browserContext.newPage();
-        const { consoleErrors, pageErrors } = collectBrowserErrors(page);
+    await withServer(projectDir, async (server) => {
+      await withBrowserPageAgainstServer(server, async ({ page, response, diagnostics }) => {
+        await page.waitForSelector('#styled-box[data-hydrated="yes"]');
 
-        try {
-          const response = await page.goto(`http://127.0.0.1:${server.port}/`);
-          assertEquals(response?.status(), 200, "Should return 200");
+        const csp = response?.headers()["content-security-policy"] ?? "";
+        const styleSources = getDirectiveSources(csp, "style-src");
+        assert(
+          csp.includes("style-src 'self' 'unsafe-inline'"),
+          `Expected CSP to allow inline styles, got: ${csp}`,
+        );
+        assert(
+          !styleSources.some((source) => source.startsWith("'nonce-")),
+          `style-src should not include a nonce when unsafe-inline is enabled, got: ${csp}`,
+        );
 
-          await page.waitForSelector('#styled-box[data-hydrated="yes"]');
+        const styles = await page.evaluate(() => {
+          const el = document.querySelector("#styled-box");
+          if (!(el instanceof HTMLElement)) return null;
+          const computed = getComputedStyle(el);
+          return {
+            backgroundColor: computed.backgroundColor,
+            paddingTop: computed.paddingTop,
+          };
+        });
 
-          const csp = response?.headers()["content-security-policy"] ?? "";
-          const styleSources = getDirectiveSources(csp, "style-src");
-          assert(
-            csp.includes("style-src 'self' 'unsafe-inline'"),
-            `Expected CSP to allow inline styles, got: ${csp}`,
-          );
-          assert(
-            !styleSources.some((source) => source.startsWith("'nonce-")),
-            `style-src should not include a nonce when unsafe-inline is enabled, got: ${csp}`,
-          );
+        assert(styles !== null, "Expected styled element to exist");
+        assertEquals(styles.backgroundColor, "rgb(0, 128, 0)");
+        assertEquals(styles.paddingTop, "12px");
 
-          const styles = await page.evaluate(() => {
-            const el = document.querySelector("#styled-box");
-            if (!(el instanceof HTMLElement)) return null;
-            const computed = getComputedStyle(el);
-            return {
-              backgroundColor: computed.backgroundColor,
-              paddingTop: computed.paddingTop,
-            };
-          });
-
-          assert(styles !== null, "Expected styled element to exist");
-          assertEquals(styles.backgroundColor, "rgb(0, 128, 0)");
-          assertEquals(styles.paddingTop, "12px");
-
-          const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
-          assertEquals(
-            hydrationErrors.length,
-            0,
-            `Unexpected hydration/CSP errors: ${hydrationErrors.join("\n")}`,
-          );
-
-          const serverErrors = server.logs.filter((line) =>
-            line.includes("Page hydration failed") ||
-            line.includes("Content Security Policy") ||
-            line.includes("violates the following Content Security Policy directive")
-          );
-          assertEquals(
-            serverErrors.length,
-            0,
-            `Unexpected server/browser CSP errors: ${serverErrors.join("\n")}`,
-          );
-        } finally {
-          await browserContext.close();
-        }
+        assertNoBrowserHydrationErrors(diagnostics);
+        assertNoServerLogErrors(
+          server,
+          [
+            "Page hydration failed",
+            "Content Security Policy",
+            "violates the following Content Security Policy directive",
+          ],
+          "Unexpected server/browser CSP errors",
+        );
       });
-    } finally {
-      await browser.close();
-    }
+    });
   });
 
   // Test: Multiple pages accessing same framework import
