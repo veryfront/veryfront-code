@@ -26,6 +26,10 @@ export function resetReactCache(): void {
   reactDOMServerCache = null;
 }
 
+export function __injectReactDOMServerForTests(server: ReactDOMServer | null): void {
+  reactDOMServerCache = server;
+}
+
 async function loadFromCachedHttpModule<T>(url: string, label: string): Promise<T> {
   const cacheDir = getHttpBundleCacheDir();
   const cachedPath = await cacheModuleToLocal(url, cacheDir);
