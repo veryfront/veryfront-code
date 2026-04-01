@@ -1,5 +1,5 @@
 import type { Message } from "../types.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
 
 export function normalizeInput(input: string | Message[]): Message[] {
   const now = Date.now();

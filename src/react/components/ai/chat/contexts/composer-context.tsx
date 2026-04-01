@@ -8,7 +8,7 @@
  */
 
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors";
+import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import type { ModelOption } from "../../model-selector.tsx";
 

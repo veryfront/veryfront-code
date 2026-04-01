@@ -360,6 +360,42 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         await stopServer(server);
       });
     });
+
+    it("serves browser chat modules without the heavyweight errors barrel", async () => {
+      await withTestContext("dev-server-framework-chat-error-csp", async (context) => {
+        const { server, port } = await createTestDevServer(context);
+        const modulePaths = [
+          "/_vf_modules/_veryfront/react/components/ai/chat/contexts/chat-context.js",
+          "/_vf_modules/_veryfront/react/components/ai/chat/contexts/composer-context.js",
+          "/_vf_modules/_veryfront/react/components/ai/chat/contexts/message-context.js",
+          "/_vf_modules/_veryfront/react/components/ai/chat/contexts/thread-list-context.js",
+          "/_vf_modules/_veryfront/routing/client/page-loader.js",
+          "/_vf_modules/_veryfront/rendering/rsc/client-hydrator.js",
+          "/_vf_modules/_veryfront/client/spa/ClientApp.js",
+        ];
+
+        for (const modulePath of modulePaths) {
+          const response = await fetch(`http://127.0.0.1:${port}${modulePath}`);
+          assertEquals(response.status, 200, `Expected ${modulePath} to be served`);
+
+          const body = await response.text();
+          assert(
+            !body.includes("/_vf_modules/_veryfront/errors/index.js"),
+            `${modulePath} should not import the heavyweight errors barrel`,
+          );
+          assert(
+            !body.includes("/_vf_modules/_veryfront/platform/compat/process.js"),
+            `${modulePath} should not import process compat`,
+          );
+          assert(
+            !body.includes("/_vf_modules/_veryfront/platform/compat/dynamic-import.js"),
+            `${modulePath} should not import dynamic-import compat`,
+          );
+        }
+
+        await stopServer(server);
+      });
+    });
   });
 
   describe("DevServer - Error Handler", {}, () => {
