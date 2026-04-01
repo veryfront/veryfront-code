@@ -11,19 +11,19 @@ import { SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import { extractComponent } from "./extract-component.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-export function loadComponentFromSource(
+export async function loadModuleFromSource(
   source: string,
   filePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
   options?: LoadComponentOptions,
-): Promise<React.ComponentType<Record<string, unknown>>> {
+): Promise<Record<string, unknown>> {
   const fileName = filePath.split("/").pop() ?? filePath;
   const projectId = options?.projectId ?? projectDir;
   const dev = options?.dev ?? true;
   const ssr = options?.ssr ?? true;
 
-  return withSpan(
+  return await withSpan(
     "modules.react.loadComponentFromSource",
     async () => {
       if (ssr) {
@@ -38,7 +38,7 @@ export function loadComponentFromSource(
           mode: options?.mode,
         });
 
-        return loader.loadModule(filePath, source);
+        return await loader.loadRawModule(filePath, source);
       }
 
       const transformOpts: TransformOptions = {
@@ -67,8 +67,7 @@ export function loadComponentFromSource(
       await fs.mkdir(componentDir, { recursive: true });
       await fs.writeTextFile(componentFile, transformedCode);
 
-      const mod = await import(`file://${componentFile}?t=${Date.now()}`);
-      return extractComponent(mod, filePath);
+      return await import(`file://${componentFile}?t=${Date.now()}`);
     },
     {
       "react.file": fileName,
@@ -77,4 +76,15 @@ export function loadComponentFromSource(
       "react.sourceLength": source.length,
     },
   );
+}
+
+export async function loadComponentFromSource(
+  source: string,
+  filePath: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  options?: LoadComponentOptions,
+): Promise<React.ComponentType<Record<string, unknown>>> {
+  const mod = await loadModuleFromSource(source, filePath, projectDir, adapter, options);
+  return extractComponent(mod, filePath);
 }

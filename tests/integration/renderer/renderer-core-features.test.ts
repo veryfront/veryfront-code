@@ -192,6 +192,41 @@ export const metadata = {
           assertStringIncludes(result.html, "<title>Meta Test</title>");
         });
       });
+
+      it("should pass query params into MDX generateMetadata context", async () => {
+        await withTestContext("renderer-core-metadata-query", async (context) => {
+          await remove(join(context.projectDir, "app"), { recursive: true });
+
+          await writeTextFile(
+            join(context.projectDir, "pages", "query-meta.mdx"),
+            `---
+title: Base Title
+---
+
+export async function generateMetadata(ctx) {
+  return {
+    title: \`Query title: \${ctx.query.tab || "none"}\`,
+    description: \`Search: \${ctx.query.q || "none"}\`,
+  };
+}
+
+# Query Metadata
+`,
+          );
+
+          const renderer = await createRenderer({
+            projectDir: context.projectDir,
+            mode: "development",
+          });
+
+          const result = await renderer.renderPage("query-meta", {
+            url: new URL("https://example.com/query-meta?tab=details&q=search-term"),
+          });
+
+          assertStringIncludes(result.html, "<title>Query title: details</title>");
+          assertStringIncludes(result.html, 'content="Search: search-term"');
+        });
+      });
     });
 
     describe("getAllPages", () => {

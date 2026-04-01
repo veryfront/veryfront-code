@@ -86,6 +86,7 @@ export function handleMDXPage(
   adapter: RuntimeAdapter,
   options?: {
     params?: Record<string, string | string[]>;
+    url?: URL;
     precompiledModule?: string;
     /** Project ID for cache isolation */
     projectId?: string;
@@ -137,9 +138,11 @@ export function handleMDXPage(
                   .filter((entry): entry is [string, string] => entry[1] !== undefined),
               ) as Record<string, string>)
               : {};
+            const query = options?.url ? Object.fromEntries(options.url.searchParams) : {};
 
             const gen = await mod.generateMetadata({
               params,
+              query,
               slug,
               path,
               frontmatter: frontmatter || {},

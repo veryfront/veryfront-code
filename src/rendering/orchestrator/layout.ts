@@ -263,6 +263,7 @@ export class LayoutOrchestrator {
     nestedLayouts: LayoutItem[],
     layoutDataMap?: Map<string, Record<string, unknown>>,
     requestUrl?: URL,
+    params?: Record<string, string | string[]>,
     frontmatter?: Record<string, unknown>,
     headings?: Array<{ id: string; text: string; level: number }>,
     projectSlug?: string,
@@ -288,6 +289,7 @@ export class LayoutOrchestrator {
           mode: this.config.mode,
           moduleServerUrl: this.config.moduleServerUrl,
           requestUrl,
+          params,
           frontmatter,
           headings,
         });

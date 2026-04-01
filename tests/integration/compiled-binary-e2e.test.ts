@@ -37,6 +37,11 @@ try {
 // test suites run concurrently (e.g., deno task test picking up this file)
 const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? `/tmp/veryfront-e2e-bin-${Deno.pid}`;
 const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
+
+function stripReactSSRMarkers(html: string): string {
+  return html.replaceAll("<!-- -->", "");
+}
+
 /** Get an available port using OS-assigned port 0. */
 async function getAvailablePort(): Promise<number> {
   const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
@@ -714,6 +719,62 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       assertEquals(response.status, 200, "Should return 200");
       assertStringIncludes(html, "layout-wrapper", "Should have layout wrapper");
       assertStringIncludes(html, "page-content", "Should have page content");
+
+      const errors = server.logs.filter((l) =>
+        l.includes("Invalid hook call") || l.includes("Module not found")
+      );
+      assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
+    });
+  });
+
+  it("should expose params and query through usePageContext in the compiled runtime", async () => {
+    const projectDir = await createTestProject(
+      "page-context-request-values-test",
+      `
+export default function Home() {
+  return <div>Unused home page</div>;
+}
+`,
+      {
+        "pages/blog/[slug].tsx": `
+import { usePageContext } from "veryfront/context";
+
+export default function BlogPost() {
+  const ctx = usePageContext();
+  return (
+    <div id="page-context">
+      Page params: {ctx?.params?.slug || "none"} | Page query: {ctx?.query?.tab || "none"}
+    </div>
+  );
+}
+`,
+        "pages/layout.tsx": `
+import { usePageContext } from "veryfront/context";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const ctx = usePageContext();
+  return (
+    <div id="layout-wrapper">
+      <header id="layout-context">
+        Layout params: {ctx?.params?.slug || "none"} | Layout query: {ctx?.query?.lang || "none"}
+      </header>
+      <main>{children}</main>
+    </div>
+  );
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/blog/hello?tab=files&lang=en`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, "Should return 200");
+      assertStringIncludes(html, "layout-wrapper", "Should render layout wrapper");
+      const normalizedHtml = stripReactSSRMarkers(html);
+      assertStringIncludes(normalizedHtml, "Layout params: hello | Layout query: en");
+      assertStringIncludes(normalizedHtml, "Page params: hello | Page query: files");
 
       const errors = server.logs.filter((l) =>
         l.includes("Invalid hook call") || l.includes("Module not found")

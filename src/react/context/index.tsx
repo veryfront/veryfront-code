@@ -51,7 +51,13 @@ const defaultPageContext: PageContextValue = {
   mdxHeadings: [],
 };
 
-const PageContextContext = React.createContext(defaultPageContext);
+const PAGE_CONTEXT_SYMBOL = Symbol.for("veryfront.react.page-context");
+const globalPageContext = globalThis as typeof globalThis & {
+  [PAGE_CONTEXT_SYMBOL]?: React.Context<PageContextValue>;
+};
+
+const PageContextContext = globalPageContext[PAGE_CONTEXT_SYMBOL] ??
+  (globalPageContext[PAGE_CONTEXT_SYMBOL] = React.createContext(defaultPageContext));
 
 export interface PageContextProviderProps {
   children: React.ReactNode;
