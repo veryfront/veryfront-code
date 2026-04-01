@@ -27,8 +27,21 @@ const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4.0.1?target=es2022&pin=v135";
 const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7.0.2?target=es2022&pin=v135";
 const ESM_MERMAID = "https://esm.sh/mermaid@11.4.1?pin=v135";
 
-async function importFromUrl(url: string): Promise<unknown> {
-  return await import(url);
+type DefaultModule<T> = { default: T };
+
+type MermaidModule = {
+  default: {
+    initialize(config: {
+      startOnLoad: boolean;
+      theme: string;
+      securityLevel: string;
+    }): void;
+    render(id: string, code: string): Promise<{ svg: string }>;
+  };
+};
+
+async function importFromUrl<T>(url: string): Promise<T> {
+  return await import(url) as T;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -39,7 +52,7 @@ let remarkGfm: any = null;
 let rehypeHighlight: any = null;
 
 // deno-lint-ignore no-explicit-any
-let mermaidPromise: Promise<any> | null = null;
+let mermaidPromise: Promise<MermaidModule> | null = null;
 // deno-lint-ignore no-explicit-any
 let mermaidModule: any = null;
 
@@ -47,7 +60,7 @@ async function loadMermaid(): Promise<any | null> {
   if (!isBrowserEnvironment()) return null;
   if (mermaidModule) return mermaidModule;
 
-  mermaidPromise ??= importFromUrl(ESM_MERMAID);
+  mermaidPromise ??= importFromUrl<MermaidModule>(ESM_MERMAID);
   mermaidModule = await mermaidPromise;
 
   mermaidModule.default.initialize({
@@ -182,9 +195,9 @@ export function Markdown({
     async function load(): Promise<void> {
       if (!ReactMarkdown) {
         const [rmModule, gfmModule, highlightModule] = await Promise.all([
-          importFromUrl(ESM_REACT_MARKDOWN),
-          importFromUrl(ESM_REMARK_GFM),
-          importFromUrl(ESM_REHYPE_HIGHLIGHT),
+          importFromUrl<DefaultModule<unknown>>(ESM_REACT_MARKDOWN),
+          importFromUrl<DefaultModule<unknown>>(ESM_REMARK_GFM),
+          importFromUrl<DefaultModule<unknown>>(ESM_REHYPE_HIGHLIGHT),
         ]);
 
         ReactMarkdown = rmModule.default;
