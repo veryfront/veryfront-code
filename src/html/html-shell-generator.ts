@@ -14,7 +14,7 @@ import {
   getDevScripts,
   getProdScripts,
 } from "./hydration-script-builder/index.ts";
-import { getStudioScripts } from "./dev-scripts.ts";
+import { getPreviewStylesheetLink, getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import { extractCandidates, getDevStyles, getProjectCSS } from "./styles-builder/index.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
@@ -270,8 +270,7 @@ async function generateHTMLShellPartsImpl(
     }
   } else {
     // Dev/preview: use link tag for HMR cache-busting
-    tailwindCSSBlock =
-      `<link id="vf-tailwind-css" rel="stylesheet" href="/_vf_styles/styles.css?t=${Date.now()}">`;
+    tailwindCSSBlock = getPreviewStylesheetLink();
   }
 
   // Markdown styles: .md files with prose !== false get GitHub markdown CSS

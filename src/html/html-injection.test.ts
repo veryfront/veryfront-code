@@ -139,5 +139,21 @@ describe("html/html-injection", () => {
 
       assertEquals(html.includes("studio-bridge.js"), true);
     });
+
+    it("injects preview utility CSS for remote preview full HTML documents", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          environment: "preview",
+          slug: "test",
+        },
+      );
+
+      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
+    });
   });
 });

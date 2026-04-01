@@ -8,7 +8,13 @@ import {
   generateStyleTags,
 } from "./tag-generators.ts";
 import { escapeHtml } from "./html-escape.ts";
-import { getDevScripts, getDevStyles, getProdScripts, getStudioScripts } from "./dev-scripts.ts";
+import {
+  getDevScripts,
+  getDevStyles,
+  getPreviewStylesheetLink,
+  getProdScripts,
+  getStudioScripts,
+} from "./dev-scripts.ts";
 
 export interface InjectHTMLContentOptions {
   mode: string;
@@ -48,6 +54,12 @@ function toProjectRelativePath(absolutePath: string, projectDir?: string): strin
   return resolveRelativePath(normalizedPath, projectDir);
 }
 
+function hasProjectStylesheet(html: string): boolean {
+  return /id=["']vf-tailwind-css["']/i.test(html) ||
+    /href=["'][^"']*\/_vf_styles\/styles\.css(?:\?[^"']*)?["']/i.test(html) ||
+    /href=["'][^"']*\/_vf\/css\/[^"']+\.css["']/i.test(html);
+}
+
 export function injectHTMLContent(
   template: string,
   content: string,
@@ -82,6 +94,13 @@ export function injectHTMLContent(
     const importMapTag =
       `<script type="importmap"${nonceAttr}>\n${options.importMapJson}\n</script>`;
     html = html.replace(/<\/head>/i, `${importMapTag}\n</head>`);
+  }
+
+  const shouldUsePreviewStylesheet = options.mode === "development" ||
+    options.environment === "preview";
+
+  if (shouldUsePreviewStylesheet && /<\/head>/i.test(html) && !hasProjectStylesheet(html)) {
+    html = html.replace(/<\/head>/i, `${getPreviewStylesheetLink()}\n</head>`);
   }
 
   const hasBodyClose = /<\/body>/i.test(html);
