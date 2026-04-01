@@ -28,7 +28,7 @@ async function bundleWithPlugin(
 describe("server/handlers/dev/files/esbuild-plugins", () => {
   afterEach(async () => {
     const esbuild = await import("esbuild");
-    esbuild.stop();
+    await esbuild.stop();
   });
 
   it("keeps exact import-map specifiers when values are empty sentinels", async () => {
