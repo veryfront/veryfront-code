@@ -398,6 +398,16 @@ describe("security/http/response/security-handler", () => {
       );
     });
 
+    it("default CSP should allow esm.sh scripts for browser ESM hydration", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      assert(
+        csp.includes("https://esm.sh"),
+        "should allow esm.sh for the pages-router/browser ESM hydration path",
+      );
+    });
+
     it("default CSP should allow veryfront CDN styles and fonts", () => {
       const headers = new Headers();
       applySecurityHeaders(headers, false, "nonce", null);
@@ -494,6 +504,22 @@ describe("security/http/response/security-handler", () => {
       assert(
         !styleSrc.includes("cdn.jsdelivr.net"),
         "jsdelivr should NOT be in style-src",
+      );
+    });
+
+    it("default CSP should place esm.sh in script-src not style-src", () => {
+      const headers = new Headers();
+      applySecurityHeaders(headers, false, "nonce", null);
+      const csp = headers.get("Content-Security-Policy")!;
+      const scriptSrc = csp.split(";").find((d) => d.trim().startsWith("script-src"))!;
+      const styleSrc = csp.split(";").find((d) => d.trim().startsWith("style-src"))!;
+      assert(
+        scriptSrc.includes("https://esm.sh"),
+        "esm.sh should be in script-src",
+      );
+      assert(
+        !styleSrc.includes("https://esm.sh"),
+        "esm.sh should NOT be in style-src",
       );
     });
 

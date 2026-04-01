@@ -41,6 +41,9 @@ export function getHydrationErrors(messages: string[]): string[] {
     message.includes("unsafe-eval") ||
     message.includes("Failed to fetch dynamically imported module") ||
     message.includes("WebAssembly.compile()") ||
+    message.includes("Content Security Policy") ||
+    message.includes("violates the following Content Security Policy directive") ||
+    message.includes("Refused to load the script") ||
     message.includes("Hydration")
   );
 }

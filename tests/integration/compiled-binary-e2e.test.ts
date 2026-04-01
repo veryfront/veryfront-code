@@ -1838,6 +1838,91 @@ export default function ClientPage() {
     }
   });
 
+  it("should hydrate pages-router client pages under strict CSP in the compiled binary", async () => {
+    const browser = await launchChromium();
+    if (!browser) return;
+
+    const projectDir = await createTestProject(
+      "pages-browser-csp-hydration",
+      `
+import { useEffect, useState } from "react";
+
+export default function HomePage() {
+  const [count, setCount] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
+  return (
+    <button
+      id="counter"
+      data-hydrated={hydrated ? "yes" : "no"}
+      onClick={() => setCount((value) => value + 1)}
+    >
+      Count: {count}
+    </button>
+  );
+}
+`,
+    );
+
+    try {
+      await withServer(projectDir, async (server) => {
+        const browserContext = await browser.newContext();
+        const page = await browserContext.newPage();
+        const { consoleErrors, pageErrors } = collectBrowserErrors(page);
+
+        try {
+          const response = await page.goto(`http://127.0.0.1:${server.port}/`);
+          assertEquals(response?.status(), 200, "Should return 200");
+
+          const csp = response?.headers()["content-security-policy"] ?? "";
+          assert(
+            csp.includes("https://esm.sh"),
+            `Expected CSP to allow esm.sh scripts, got: ${csp}`,
+          );
+
+          await page.waitForSelector('#counter[data-hydrated="yes"]');
+
+          const initialText = await page.textContent("#counter");
+          assertEquals(initialText?.trim(), "Count: 0");
+
+          await page.click("#counter");
+          await page.waitForFunction(
+            () => document.querySelector("#counter")?.textContent?.trim() === "Count: 1",
+          );
+
+          const hydratedText = await page.textContent("#counter");
+          assertEquals(hydratedText?.trim(), "Count: 1");
+
+          const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
+          assertEquals(
+            hydrationErrors.length,
+            0,
+            `Unexpected hydration/CSP errors: ${hydrationErrors.join("\n")}`,
+          );
+
+          const serverErrors = server.logs.filter((line) =>
+            line.includes("Page hydration failed") ||
+            line.includes("Refused to load the script") ||
+            line.includes("violates the following Content Security Policy directive")
+          );
+          assertEquals(
+            serverErrors.length,
+            0,
+            `Unexpected server/browser CSP errors: ${serverErrors.join("\n")}`,
+          );
+        } finally {
+          await browserContext.close();
+        }
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+
   // Test: Multiple pages accessing same framework import
   it("should handle multiple pages with same framework imports", async () => {
     const projectDir = await createTestProject(

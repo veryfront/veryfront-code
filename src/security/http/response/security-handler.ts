@@ -17,8 +17,8 @@ export function generateNonce(): string {
 /**
  * Build a default CSP that works for typical veryfront apps.
  *
- * - Scripts: nonce-based + cdn.jsdelivr.net (Scalar API docs, html2canvas,
- *   React UMD, browser inference)
+ * - Scripts: nonce-based + cdn.jsdelivr.net + esm.sh (Scalar API docs,
+ *   html2canvas, legacy/browser ESM hydration)
  * - Styles: 'self' + 'unsafe-inline' + nonce + Google Fonts + cdn.veryfront.com
  *   plus style-src-attr 'unsafe-inline' so React style="" attributes remain
  *   compatible while inline <style> tags continue to use the nonce
@@ -33,7 +33,7 @@ export function generateNonce(): string {
 function buildDefaultCSP(nonce: string): string {
   return [
     `default-src 'self'`,
-    `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net`,
+    `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net https://esm.sh`,
     `style-src 'self' 'unsafe-inline' 'nonce-${nonce}' https://fonts.googleapis.com https://cdn.veryfront.com`,
     `style-src-attr 'unsafe-inline'`,
     `img-src 'self' data: https:`,
