@@ -111,7 +111,7 @@ function isImportMapResolved(
   path: string,
   imports: Record<string, string>,
 ): boolean {
-  if (imports[path]) return true;
+  if (Object.prototype.hasOwnProperty.call(imports, path)) return true;
 
   for (const key of Object.keys(imports)) {
     if (key.endsWith("/") && path.startsWith(key)) return true;

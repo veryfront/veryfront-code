@@ -5,6 +5,10 @@ import { base64urlEncode } from "#veryfront/utils/base64url.ts";
 import type { HandlerContext } from "../../types.ts";
 import { DevFileHandler } from "./dev-file.handler.ts";
 
+function getImportSpecifiers(source: string): string[] {
+  return [...source.matchAll(/\bfrom\s+["']([^"']+)["']/g)].map((match) => match[1]);
+}
+
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
     projectDir: "/project",
@@ -169,8 +173,9 @@ describe(
       assertEquals(result.continue, false);
       assertEquals(result.response?.status, 200);
       const body = await result.response!.text();
-      assertEquals(body.includes('from "veryfront/chat"'), true);
-      assertEquals(body.includes("https://esm.sh/veryfront/chat"), false);
+      const specifiers = getImportSpecifiers(body);
+      assertEquals(specifiers.includes("veryfront/chat"), true);
+      assertEquals(specifiers.some((specifier) => specifier.includes("esm.sh")), false);
     });
 
     it("keeps browser import-map prefix specifiers in preview bundles", async () => {
@@ -201,8 +206,9 @@ describe(
       assertEquals(result.continue, false);
       assertEquals(result.response?.status, 200);
       const body = await result.response!.text();
-      assertEquals(body.includes('from "@/components/Button"'), true);
-      assertEquals(body.includes("https://esm.sh/@/components/Button"), false);
+      const specifiers = getImportSpecifiers(body);
+      assertEquals(specifiers.includes("@/components/Button"), true);
+      assertEquals(specifiers.some((specifier) => specifier.includes("esm.sh")), false);
     });
 
     it("continues for non-local production requests", async () => {
