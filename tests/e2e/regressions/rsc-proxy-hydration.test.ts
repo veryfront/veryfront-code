@@ -48,6 +48,16 @@ async function waitForReady(port: number, timeoutMs = 5000): Promise<void> {
   throw new Error("Server reported not-ready via /readyz");
 }
 
+function getHydrationErrors(messages: string[]): string[] {
+  return messages.filter((message) =>
+    message.includes("Page hydration failed") ||
+    message.includes("unsafe-eval") ||
+    message.includes("Failed to fetch dynamically imported module") ||
+    message.includes("WebAssembly.compile()") ||
+    message.includes("Hydration")
+  );
+}
+
 describe(
   "RSC Proxy Hydration Browser Tests",
   { sanitizeOps: false, sanitizeResources: false },
@@ -165,12 +175,7 @@ export default function Page() {
             const hydratedText = await page.textContent("#counter");
             assertEquals(hydratedText?.trim(), "Count: 1");
 
-            const hydrationErrors = [...consoleErrors, ...pageErrors].filter((message) =>
-              message.includes("Page hydration failed") ||
-              message.includes("unsafe-eval") ||
-              message.includes("Failed to fetch dynamically imported module") ||
-              message.includes("Hydration")
-            );
+            const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
             assertEquals(hydrationErrors.length, 0);
           } finally {
             await browserContext.close();

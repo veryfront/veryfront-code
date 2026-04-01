@@ -3,7 +3,7 @@ import { type Router, RouterProvider } from "veryfront/router";
 import { type PageContext, PageContextProvider } from "veryfront/context";
 import { type LayoutInfo, LayoutShell } from "./LayoutShell.tsx";
 import { getCachedComponent, loadComponent, preloadComponent } from "./component-loader.ts";
-import { PAGE_NOT_FOUND } from "#veryfront/errors";
+import { PAGE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
 
 export interface PageDataResponse {
   slug: string;
