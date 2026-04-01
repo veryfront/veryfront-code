@@ -1,5 +1,6 @@
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
+import { getEffectiveRequestHost } from "../utils/request-host.ts";
 
 export interface RequestContext {
   token: string;
@@ -9,17 +10,7 @@ export interface RequestContext {
 }
 
 export function createRequestContext(req: Request): RequestContext {
-  const { hostname } = new URL(req.url);
-  const rawForwardedHost = req.headers.get("x-forwarded-host");
-  // x-forwarded-host can be comma-separated (multiple proxies); take the first entry.
-  const forwardedHost = rawForwardedHost
-    ? (rawForwardedHost.split(",")[0]?.trim() || undefined)
-    : undefined;
-  const hostHeader = req.headers.get("host");
-
-  // In proxy mode, req.url hostname may be 127.0.0.1 while the real domain
-  // is in the Host header (e.g., "flow-ops.lvh.me:3010"). Prefer Host header.
-  const effectiveHost = forwardedHost ?? hostHeader ?? hostname;
+  const effectiveHost = getEffectiveRequestHost(req);
   const parsed = parseProjectDomain(effectiveHost);
   const headerProjectSlug = req.headers.get("x-project-slug")?.trim() || undefined;
 

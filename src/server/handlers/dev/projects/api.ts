@@ -1,4 +1,5 @@
 import type { HandlerContext } from "../../types.ts";
+import { getEffectiveRequestHost } from "../../../utils/request-host.ts";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -20,11 +21,7 @@ export function handleProjectsAPI(req: Request, ctx: HandlerContext): Response |
 
 function handleGetConfig(req: Request, ctx: HandlerContext): Response {
   const url = new URL(req.url);
-
-  const host = req.headers.get("x-forwarded-host") ??
-    req.headers.get("host") ??
-    url.host ??
-    "lvh.me";
+  const host = getEffectiveRequestHost(req, url) || "lvh.me";
 
   const hostWithoutPort = host.replace(/:\d+$/, "") || "lvh.me";
   const port = host.includes(":") ? host.split(":")[1] ?? "" : "";
