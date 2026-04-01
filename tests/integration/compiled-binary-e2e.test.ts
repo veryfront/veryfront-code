@@ -47,6 +47,16 @@ function stripReactSSRMarkers(html: string): string {
   return html.replaceAll("<!-- -->", "");
 }
 
+function getDirectiveSources(csp: string, directiveName: string): string[] {
+  const directive = csp
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${directiveName} `));
+
+  if (!directive) return [];
+  return directive.split(/\s+/).slice(1);
+}
+
 /** Get an available port using OS-assigned port 0. */
 async function getAvailablePort(): Promise<number> {
   const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
@@ -2004,12 +2014,13 @@ export default function HomePage() {
           await page.waitForSelector('#styled-box[data-hydrated="yes"]');
 
           const csp = response?.headers()["content-security-policy"] ?? "";
+          const styleSources = getDirectiveSources(csp, "style-src");
           assert(
             csp.includes("style-src 'self' 'unsafe-inline'"),
             `Expected CSP to allow inline styles, got: ${csp}`,
           );
           assert(
-            !/style-src[^;]*'nonce-/.test(csp),
+            !styleSources.some((source) => source.startsWith("'nonce-")),
             `style-src should not include a nonce when unsafe-inline is enabled, got: ${csp}`,
           );
 
