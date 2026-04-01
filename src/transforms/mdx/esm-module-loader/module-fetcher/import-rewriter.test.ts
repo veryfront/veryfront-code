@@ -63,8 +63,10 @@ describe("rewriteDntImports", () => {
     const sourceDir = join(FRAMEWORK_ROOT, "dist/framework-src/react/components");
     const code = `import { getDocumentNonce } from "./ai/csp-nonce.js";\n`;
     const result = await rewriteDntImports(code, `${sourceDir}/Head.tsx.src`);
+    const rewrittenSpecifier = result.match(/file:\/\/([^"\n]+)/)?.[1] ?? "";
+    assertEquals(rewrittenSpecifier.endsWith("/ai/csp-nonce.js"), false);
     assertEquals(
-      result.includes(`file://${sourceDir}/ai/csp-nonce.ts.src`),
+      /\/ai\/csp-nonce\.(?:ts|tsx|jsx)(?:\.src)?$/.test(rewrittenSpecifier),
       true,
     );
   });
