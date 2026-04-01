@@ -31,10 +31,6 @@ function parseDirectiveSources(csp: string, directiveName: string): string[] {
   return directive.split(/\s+/).slice(1);
 }
 
-function hasExactDirectiveSource(sources: string[], expectedSource: string): boolean {
-  return sources.some((source) => source === expectedSource);
-}
-
 function applyHeaders(
   {
     isDev = false,
@@ -244,28 +240,32 @@ describe("security/http/response/security-handler", () => {
       const csp = buildCSP(false, "nonce", null);
       const styleSources = parseDirectiveSources(csp, "style-src");
       const fontSources = parseDirectiveSources(csp, "font-src");
-      assert(
-        hasExactDirectiveSource(styleSources, "https://fonts.googleapis.com"),
+      assertEquals(
+        styleSources.filter((source) => source === "https://fonts.googleapis.com"),
+        ["https://fonts.googleapis.com"],
         "should allow Google Fonts styles",
       );
-      assert(
-        hasExactDirectiveSource(fontSources, "https://fonts.gstatic.com"),
+      assertEquals(
+        fontSources.filter((source) => source === "https://fonts.gstatic.com"),
+        ["https://fonts.gstatic.com"],
         "should allow Google Fonts files",
       );
     });
 
     it("default CSP should allow jsdelivr CDN scripts", () => {
       const scriptSources = parseDirectiveSources(buildCSP(false, "nonce", null), "script-src");
-      assert(
-        hasExactDirectiveSource(scriptSources, "https://cdn.jsdelivr.net"),
+      assertEquals(
+        scriptSources.filter((source) => source === "https://cdn.jsdelivr.net"),
+        ["https://cdn.jsdelivr.net"],
         "should allow jsdelivr for Scalar API docs, html2canvas, React UMD",
       );
     });
 
     it("default CSP should allow esm.sh scripts for browser ESM hydration", () => {
       const scriptSources = parseDirectiveSources(buildCSP(false, "nonce", null), "script-src");
-      assert(
-        hasExactDirectiveSource(scriptSources, "https://esm.sh"),
+      assertEquals(
+        scriptSources.filter((source) => source === "https://esm.sh"),
+        ["https://esm.sh"],
         "should allow esm.sh for the pages-router/browser ESM hydration path",
       );
     });
@@ -274,12 +274,14 @@ describe("security/http/response/security-handler", () => {
       const csp = buildCSP(false, "nonce", null);
       const styleSources = parseDirectiveSources(csp, "style-src");
       const fontSources = parseDirectiveSources(csp, "font-src");
-      assert(
-        hasExactDirectiveSource(styleSources, "https://cdn.veryfront.com"),
+      assertEquals(
+        styleSources.filter((source) => source === "https://cdn.veryfront.com"),
+        ["https://cdn.veryfront.com"],
         "veryfront CDN in style-src",
       );
-      assert(
-        hasExactDirectiveSource(fontSources, "https://cdn.veryfront.com"),
+      assertEquals(
+        fontSources.filter((source) => source === "https://cdn.veryfront.com"),
+        ["https://cdn.veryfront.com"],
         "veryfront CDN in font-src",
       );
     });
@@ -351,12 +353,14 @@ describe("security/http/response/security-handler", () => {
       const csp = buildCSP(false, "nonce", null);
       const scriptSources = parseDirectiveSources(csp, "script-src");
       const styleSources = parseDirectiveSources(csp, "style-src");
-      assert(
-        hasExactDirectiveSource(scriptSources, "https://cdn.jsdelivr.net"),
+      assertEquals(
+        scriptSources.filter((source) => source === "https://cdn.jsdelivr.net"),
+        ["https://cdn.jsdelivr.net"],
         "jsdelivr should be in script-src",
       );
-      assert(
-        !hasExactDirectiveSource(styleSources, "https://cdn.jsdelivr.net"),
+      assertEquals(
+        styleSources.filter((source) => source === "https://cdn.jsdelivr.net"),
+        [],
         "jsdelivr should NOT be in style-src",
       );
     });
@@ -365,12 +369,14 @@ describe("security/http/response/security-handler", () => {
       const csp = buildCSP(false, "nonce", null);
       const scriptSources = parseDirectiveSources(csp, "script-src");
       const styleSources = parseDirectiveSources(csp, "style-src");
-      assert(
-        hasExactDirectiveSource(scriptSources, "https://esm.sh"),
+      assertEquals(
+        scriptSources.filter((source) => source === "https://esm.sh"),
+        ["https://esm.sh"],
         "esm.sh should be in script-src",
       );
-      assert(
-        !hasExactDirectiveSource(styleSources, "https://esm.sh"),
+      assertEquals(
+        styleSources.filter((source) => source === "https://esm.sh"),
+        [],
         "esm.sh should NOT be in style-src",
       );
     });
