@@ -47,6 +47,16 @@ function stripReactSSRMarkers(html: string): string {
   return html.replaceAll("<!-- -->", "");
 }
 
+function getDirectiveSources(csp: string, directiveName: string): string[] {
+  const directive = csp
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${directiveName} `));
+
+  if (!directive) return [];
+  return directive.split(/\s+/).slice(1);
+}
+
 /** Get an available port using OS-assigned port 0. */
 async function getAvailablePort(): Promise<number> {
   const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
@@ -1860,6 +1870,15 @@ export default function HomePage() {
       id="counter"
       data-hydrated={hydrated ? "yes" : "no"}
       onClick={() => setCount((value) => value + 1)}
+      style={{
+        backgroundColor: hydrated
+          ? (count > 0 ? "rgb(22, 101, 52)" : "rgb(37, 99, 235)")
+          : "rgb(156, 163, 175)",
+        color: "rgb(255, 255, 255)",
+        padding: String(12 + count) + "px",
+        border: "none",
+        borderRadius: "8px",
+      }}
     >
       Count: {count}
     </button>
@@ -1883,11 +1902,29 @@ export default function HomePage() {
             csp.includes("https://esm.sh"),
             `Expected CSP to allow esm.sh scripts, got: ${csp}`,
           );
+          assert(
+            csp.includes("style-src-elem"),
+            `Expected CSP to include style-src-elem, got: ${csp}`,
+          );
+          assert(
+            !csp.includes("style-src 'self' 'unsafe-inline' 'nonce-"),
+            `style-src should not mix unsafe-inline with a nonce, got: ${csp}`,
+          );
 
           await page.waitForSelector('#counter[data-hydrated="yes"]');
 
           const initialText = await page.textContent("#counter");
           assertEquals(initialText?.trim(), "Count: 0");
+          const initialBackground = await page.$eval(
+            "#counter",
+            (element) => globalThis.getComputedStyle(element).backgroundColor,
+          );
+          const initialPadding = await page.$eval(
+            "#counter",
+            (element) => globalThis.getComputedStyle(element).paddingTop,
+          );
+          assertEquals(initialBackground, "rgb(37, 99, 235)");
+          assertEquals(initialPadding, "12px");
 
           await page.click("#counter");
           await page.waitForFunction(
@@ -1896,6 +1933,16 @@ export default function HomePage() {
 
           const hydratedText = await page.textContent("#counter");
           assertEquals(hydratedText?.trim(), "Count: 1");
+          const clickedBackground = await page.$eval(
+            "#counter",
+            (element) => globalThis.getComputedStyle(element).backgroundColor,
+          );
+          const clickedPadding = await page.$eval(
+            "#counter",
+            (element) => globalThis.getComputedStyle(element).paddingTop,
+          );
+          assertEquals(clickedBackground, "rgb(22, 101, 52)");
+          assertEquals(clickedPadding, "13px");
 
           const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
           assertEquals(
@@ -1907,6 +1954,100 @@ export default function HomePage() {
           const serverErrors = server.logs.filter((line) =>
             line.includes("Page hydration failed") ||
             line.includes("Refused to load the script") ||
+            line.includes("violates the following Content Security Policy directive")
+          );
+          assertEquals(
+            serverErrors.length,
+            0,
+            `Unexpected server/browser CSP errors: ${serverErrors.join("\n")}`,
+          );
+        } finally {
+          await browserContext.close();
+        }
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it("should allow hydrated client inline styles under the default CSP in the compiled binary", async () => {
+    const browser = await launchChromium();
+    if (!browser) return;
+
+    const projectDir = await createTestProject(
+      "pages-browser-csp-inline-style",
+      `
+import { useEffect, useState } from "react";
+
+export default function HomePage() {
+  const [hydrated, setHydrated] = useState(false);
+  const [backgroundColor, setBackgroundColor] = useState("rgb(255, 0, 0)");
+
+  useEffect(() => {
+    setHydrated(true);
+    setBackgroundColor("rgb(0, 128, 0)");
+  }, []);
+
+  return (
+    <div
+      id="styled-box"
+      data-hydrated={hydrated ? "yes" : "no"}
+      style={{ backgroundColor, padding: "12px" }}
+    >
+      Styled Box
+    </div>
+  );
+}
+`,
+    );
+
+    try {
+      await withServer(projectDir, async (server) => {
+        const browserContext = await browser.newContext();
+        const page = await browserContext.newPage();
+        const { consoleErrors, pageErrors } = collectBrowserErrors(page);
+
+        try {
+          const response = await page.goto(`http://127.0.0.1:${server.port}/`);
+          assertEquals(response?.status(), 200, "Should return 200");
+
+          await page.waitForSelector('#styled-box[data-hydrated="yes"]');
+
+          const csp = response?.headers()["content-security-policy"] ?? "";
+          const styleSources = getDirectiveSources(csp, "style-src");
+          assert(
+            csp.includes("style-src 'self' 'unsafe-inline'"),
+            `Expected CSP to allow inline styles, got: ${csp}`,
+          );
+          assert(
+            !styleSources.some((source) => source.startsWith("'nonce-")),
+            `style-src should not include a nonce when unsafe-inline is enabled, got: ${csp}`,
+          );
+
+          const styles = await page.evaluate(() => {
+            const el = document.querySelector("#styled-box");
+            if (!(el instanceof HTMLElement)) return null;
+            const computed = getComputedStyle(el);
+            return {
+              backgroundColor: computed.backgroundColor,
+              paddingTop: computed.paddingTop,
+            };
+          });
+
+          assert(styles !== null, "Expected styled element to exist");
+          assertEquals(styles.backgroundColor, "rgb(0, 128, 0)");
+          assertEquals(styles.paddingTop, "12px");
+
+          const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
+          assertEquals(
+            hydrationErrors.length,
+            0,
+            `Unexpected hydration/CSP errors: ${hydrationErrors.join("\n")}`,
+          );
+
+          const serverErrors = server.logs.filter((line) =>
+            line.includes("Page hydration failed") ||
+            line.includes("Content Security Policy") ||
             line.includes("violates the following Content Security Policy directive")
           );
           assertEquals(

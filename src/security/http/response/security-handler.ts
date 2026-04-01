@@ -19,9 +19,16 @@ export function generateNonce(): string {
  *
  * - Scripts: nonce-based + cdn.jsdelivr.net + esm.sh (Scalar API docs,
  *   html2canvas, legacy/browser ESM hydration)
- * - Styles: 'self' + 'unsafe-inline' + nonce + Google Fonts + cdn.veryfront.com
- *   plus style-src-attr 'unsafe-inline' so React style="" attributes remain
- *   compatible while inline <style> tags continue to use the nonce
+ * - Styles:
+ *   - style-src: 'self' + 'unsafe-inline' + Google Fonts + cdn.veryfront.com
+ *     so React style="" attributes and framework inline styles remain
+ *     compatible. Do not include a nonce in style-src here: browsers ignore
+ *     'unsafe-inline' when a nonce/hash is present on the directive, which
+ *     breaks React style attributes.
+ *   - style-src-elem: nonce-based + Google Fonts + cdn.veryfront.com for
+ *     inline <style> tags and stylesheet elements
+ *   - style-src-attr: 'unsafe-inline' for modern browsers with directive-level
+ *     style attribute support
  * - Images/media/fonts: 'self' + data: + https: + cdn.veryfront.com
  * - Connections: 'self' + wss: + https: (WebSocket for HMR/live reload, API calls)
  * - Objects: 'none' (block Flash/plugins)
@@ -34,7 +41,8 @@ function buildDefaultCSP(nonce: string): string {
   return [
     `default-src 'self'`,
     `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net https://esm.sh`,
-    `style-src 'self' 'unsafe-inline' 'nonce-${nonce}' https://fonts.googleapis.com https://cdn.veryfront.com`,
+    `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.veryfront.com`,
+    `style-src-elem 'self' 'nonce-${nonce}' https://fonts.googleapis.com https://cdn.veryfront.com`,
     `style-src-attr 'unsafe-inline'`,
     `img-src 'self' data: https:`,
     `font-src 'self' data: https://fonts.gstatic.com https://cdn.veryfront.com`,
