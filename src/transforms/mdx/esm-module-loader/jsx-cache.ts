@@ -23,7 +23,7 @@ export async function ensureCachedJsxModulePatched(
 
   try {
     const cachedCode = await fs.readTextFile(transformedPath);
-    const rewritten = rewriteDntImports(cachedCode, sourceFilePath);
+    const rewritten = await rewriteDntImports(cachedCode, sourceFilePath);
 
     if (rewritten === cachedCode) return true;
 

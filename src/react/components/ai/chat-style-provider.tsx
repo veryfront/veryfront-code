@@ -8,6 +8,7 @@
  */
 
 import * as React from "react";
+import { getDocumentNonce } from "./csp-nonce.ts";
 import { getChatTokensCSS } from "./chat-tokens.ts";
 
 export interface ChatStyleProviderProps {
@@ -19,9 +20,11 @@ const tokenCSS = getChatTokensCSS();
 export function ChatStyleProvider({
   children,
 }: ChatStyleProviderProps): React.ReactElement {
+  const nonce = getDocumentNonce();
+
   return (
     <>
-      <style dangerouslySetInnerHTML={{ __html: tokenCSS }} />
+      <style nonce={nonce} dangerouslySetInnerHTML={{ __html: tokenCSS }} />
       {children}
     </>
   );

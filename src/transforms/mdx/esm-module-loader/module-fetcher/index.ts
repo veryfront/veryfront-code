@@ -339,7 +339,7 @@ async function doFetchAndCacheModule(
       });
 
       // Rewrite _dnt.polyfills.js / _dnt.shims.js relative imports to absolute file:// paths
-      moduleCode = rewriteDntImports(moduleCode, actualFilePath);
+      moduleCode = await rewriteDntImports(moduleCode, actualFilePath);
 
       // Cache HTTP imports (esm.sh URLs) to local file:// paths.
       // This ensures the same cache works for both compiled and non-compiled Deno.

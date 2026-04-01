@@ -221,24 +221,28 @@ export async function resolveRelativeFrameworkImport(
   // If specifier already has extension (e.g., ./Head.tsx), we need to try:
   // 1. The exact path (basePath)
   // 2. The path with .src suffix (basePath.src) for embedded sources
-  // 3. Fall back to extension probing
+  // 3. For transpiled .js/.mjs imports, fall back to sibling TS/TSX/JSX sources
   if (/\.(tsx?|jsx?|mjs)$/.test(specifier)) {
-    // Try exact path first
-    try {
-      if (await existsFn(basePath)) return basePath;
-    } catch (_) {
-      /* expected: file may not exist at this path */
+    const explicitCandidates = [basePath, `${basePath}.src`];
+
+    // esbuild rewrites TS/TSX relative imports to .js in transformed output.
+    // When the original source only exists as .ts/.tsx (or embedded .src),
+    // probe those sibling source extensions before giving up.
+    if (basePath.endsWith(".js") || basePath.endsWith(".mjs")) {
+      const stem = basePath.replace(/\.(?:m?js)$/, "");
+      for (const ext of [".ts", ".tsx", ".jsx", ".js", ".mjs"]) {
+        explicitCandidates.push(`${stem}${ext}.src`, `${stem}${ext}`);
+      }
     }
 
-    // Try with .src suffix for embedded sources
-    try {
-      const srcPath = basePath + ".src";
-      if (await existsFn(srcPath)) return srcPath;
-    } catch (_) {
-      /* expected: file may not exist at this path */
+    for (const candidate of explicitCandidates) {
+      try {
+        if (await existsFn(candidate)) return candidate;
+      } catch (_) {
+        /* expected: file may not exist at this path */
+      }
     }
 
-    // Not found with explicit extension
     return null;
   }
 
