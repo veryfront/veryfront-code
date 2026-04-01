@@ -1,7 +1,7 @@
 import * as React from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { JSDOM } from "npm:jsdom";
+import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { ChatStyleProvider } from "./chat-style-provider.tsx";
