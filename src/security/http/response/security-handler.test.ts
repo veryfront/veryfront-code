@@ -31,6 +31,22 @@ function parseDirectiveSources(csp: string, directiveName: string): string[] {
   return directive.split(/\s+/).slice(1);
 }
 
+function parseDirectiveRemoteHosts(csp: string, directiveName: string): string[] {
+  return parseDirectiveSources(csp, directiveName)
+    .flatMap((source) => {
+      try {
+        const url = new URL(source);
+        if (url.protocol === "https:" && url.hostname) {
+          return [url.hostname];
+        }
+      } catch {
+        // Ignore non-URL CSP tokens such as keywords, schemes, and nonces.
+      }
+      return [];
+    })
+    .sort();
+}
+
 function applyHeaders(
   {
     isDev = false,
@@ -238,50 +254,50 @@ describe("security/http/response/security-handler", () => {
 
     it("default CSP should allow Google Fonts", () => {
       const csp = buildCSP(false, "nonce", null);
-      const styleSources = parseDirectiveSources(csp, "style-src");
-      const fontSources = parseDirectiveSources(csp, "font-src");
+      const styleHosts = parseDirectiveRemoteHosts(csp, "style-src");
+      const fontHosts = parseDirectiveRemoteHosts(csp, "font-src");
       assertEquals(
-        styleSources.filter((source) => source === "https://fonts.googleapis.com"),
-        ["https://fonts.googleapis.com"],
+        styleHosts.filter((host) => host === "fonts.googleapis.com"),
+        ["fonts.googleapis.com"],
         "should allow Google Fonts styles",
       );
       assertEquals(
-        fontSources.filter((source) => source === "https://fonts.gstatic.com"),
-        ["https://fonts.gstatic.com"],
+        fontHosts.filter((host) => host === "fonts.gstatic.com"),
+        ["fonts.gstatic.com"],
         "should allow Google Fonts files",
       );
     });
 
     it("default CSP should allow jsdelivr CDN scripts", () => {
-      const scriptSources = parseDirectiveSources(buildCSP(false, "nonce", null), "script-src");
+      const scriptHosts = parseDirectiveRemoteHosts(buildCSP(false, "nonce", null), "script-src");
       assertEquals(
-        scriptSources.filter((source) => source === "https://cdn.jsdelivr.net"),
-        ["https://cdn.jsdelivr.net"],
+        scriptHosts.filter((host) => host === "cdn.jsdelivr.net"),
+        ["cdn.jsdelivr.net"],
         "should allow jsdelivr for Scalar API docs, html2canvas, React UMD",
       );
     });
 
     it("default CSP should allow esm.sh scripts for browser ESM hydration", () => {
-      const scriptSources = parseDirectiveSources(buildCSP(false, "nonce", null), "script-src");
+      const scriptHosts = parseDirectiveRemoteHosts(buildCSP(false, "nonce", null), "script-src");
       assertEquals(
-        scriptSources.filter((source) => source === "https://esm.sh"),
-        ["https://esm.sh"],
+        scriptHosts.filter((host) => host === "esm.sh"),
+        ["esm.sh"],
         "should allow esm.sh for the pages-router/browser ESM hydration path",
       );
     });
 
     it("default CSP should allow veryfront CDN styles and fonts", () => {
       const csp = buildCSP(false, "nonce", null);
-      const styleSources = parseDirectiveSources(csp, "style-src");
-      const fontSources = parseDirectiveSources(csp, "font-src");
+      const styleHosts = parseDirectiveRemoteHosts(csp, "style-src");
+      const fontHosts = parseDirectiveRemoteHosts(csp, "font-src");
       assertEquals(
-        styleSources.filter((source) => source === "https://cdn.veryfront.com"),
-        ["https://cdn.veryfront.com"],
+        styleHosts.filter((host) => host === "cdn.veryfront.com"),
+        ["cdn.veryfront.com"],
         "veryfront CDN in style-src",
       );
       assertEquals(
-        fontSources.filter((source) => source === "https://cdn.veryfront.com"),
-        ["https://cdn.veryfront.com"],
+        fontHosts.filter((host) => host === "cdn.veryfront.com"),
+        ["cdn.veryfront.com"],
         "veryfront CDN in font-src",
       );
     });
@@ -319,16 +335,17 @@ describe("security/http/response/security-handler", () => {
         buildCSP(false, "my-nonce", null),
         "style-src-elem",
       );
-      const remoteStyleElemSources = styleElemSources
-        .filter((source) => source.startsWith("https://"))
-        .sort();
+      const remoteStyleElemHosts = parseDirectiveRemoteHosts(
+        buildCSP(false, "my-nonce", null),
+        "style-src-elem",
+      );
       assert(
         styleElemSources.includes("'nonce-my-nonce'"),
         "style-src-elem should carry the style nonce for inline style tags",
       );
       assertEquals(
-        remoteStyleElemSources,
-        ["https://cdn.veryfront.com", "https://fonts.googleapis.com"],
+        remoteStyleElemHosts,
+        ["cdn.veryfront.com", "fonts.googleapis.com"],
         "style-src-elem should keep the exact Google Fonts and Veryfront CDN hosts",
       );
     });
@@ -351,15 +368,15 @@ describe("security/http/response/security-handler", () => {
 
     it("default CSP should place jsdelivr in script-src not style-src", () => {
       const csp = buildCSP(false, "nonce", null);
-      const scriptSources = parseDirectiveSources(csp, "script-src");
-      const styleSources = parseDirectiveSources(csp, "style-src");
+      const scriptHosts = parseDirectiveRemoteHosts(csp, "script-src");
+      const styleHosts = parseDirectiveRemoteHosts(csp, "style-src");
       assertEquals(
-        scriptSources.filter((source) => source === "https://cdn.jsdelivr.net"),
-        ["https://cdn.jsdelivr.net"],
+        scriptHosts.filter((host) => host === "cdn.jsdelivr.net"),
+        ["cdn.jsdelivr.net"],
         "jsdelivr should be in script-src",
       );
       assertEquals(
-        styleSources.filter((source) => source === "https://cdn.jsdelivr.net"),
+        styleHosts.filter((host) => host === "cdn.jsdelivr.net"),
         [],
         "jsdelivr should NOT be in style-src",
       );
@@ -367,15 +384,15 @@ describe("security/http/response/security-handler", () => {
 
     it("default CSP should place esm.sh in script-src not style-src", () => {
       const csp = buildCSP(false, "nonce", null);
-      const scriptSources = parseDirectiveSources(csp, "script-src");
-      const styleSources = parseDirectiveSources(csp, "style-src");
+      const scriptHosts = parseDirectiveRemoteHosts(csp, "script-src");
+      const styleHosts = parseDirectiveRemoteHosts(csp, "style-src");
       assertEquals(
-        scriptSources.filter((source) => source === "https://esm.sh"),
-        ["https://esm.sh"],
+        scriptHosts.filter((host) => host === "esm.sh"),
+        ["esm.sh"],
         "esm.sh should be in script-src",
       );
       assertEquals(
-        styleSources.filter((source) => source === "https://esm.sh"),
+        styleHosts.filter((host) => host === "esm.sh"),
         [],
         "esm.sh should NOT be in style-src",
       );
