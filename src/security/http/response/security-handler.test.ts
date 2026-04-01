@@ -471,17 +471,17 @@ describe("security/http/response/security-handler", () => {
       applySecurityHeaders(headers, false, "my-nonce", null);
       const csp = headers.get("Content-Security-Policy")!;
       const styleElemSources = getDirectiveSources(csp, "style-src-elem");
+      const remoteStyleElemSources = styleElemSources
+        .filter((source) => source.startsWith("https://"))
+        .sort();
       assert(
         styleElemSources.includes("'nonce-my-nonce'"),
         "style-src-elem should carry the style nonce for inline style tags",
       );
-      assert(
-        styleElemSources.includes("https://fonts.googleapis.com"),
-        "style-src-elem should keep Google Fonts",
-      );
-      assert(
-        styleElemSources.includes("https://cdn.veryfront.com"),
-        "style-src-elem should keep the Veryfront CDN",
+      assertEquals(
+        remoteStyleElemSources,
+        ["https://cdn.veryfront.com", "https://fonts.googleapis.com"],
+        "style-src-elem should keep the exact Google Fonts and Veryfront CDN hosts",
       );
     });
 
