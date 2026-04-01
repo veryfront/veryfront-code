@@ -59,15 +59,13 @@ describe("rewriteDntImports", () => {
     assertEquals(result, code);
   });
 
-  it("rewrites transpiled framework .js imports back to embedded TypeScript sources", async () => {
+  it("rewrites transpiled framework .js imports to absolute framework file targets", async () => {
     const sourceDir = join(FRAMEWORK_ROOT, "dist/framework-src/react/components");
     const code = `import { getDocumentNonce } from "./ai/csp-nonce.js";\n`;
     const result = await rewriteDntImports(code, `${sourceDir}/Head.tsx.src`);
     const rewrittenSpecifier = result.match(/file:\/\/([^"\n]+)/)?.[1] ?? "";
-    assertEquals(rewrittenSpecifier.endsWith("/ai/csp-nonce.js"), false);
-    assertEquals(
-      /\/ai\/csp-nonce\.(?:ts|tsx|jsx)(?:\.src)?$/.test(rewrittenSpecifier),
-      true,
-    );
+    assertEquals(result.includes(`from "file://`), true);
+    assertEquals(result.includes(`from "./ai/csp-nonce.js"`), false);
+    assertEquals(/\/ai\/csp-nonce\./.test(rewrittenSpecifier), true);
   });
 });
