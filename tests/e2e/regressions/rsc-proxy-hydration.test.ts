@@ -18,7 +18,7 @@ async function launchChromium(): Promise<Browser | null> {
   } catch (error) {
     if (isMissingBrowserExecutable(error)) {
       console.warn(
-        "SKIP: Playwright Chromium is not installed. Run `npx playwright install chromium`.",
+        "SKIP: Playwright Chromium is not installed. Run `deno run -A npm:playwright install chromium`.",
       );
       return null;
     }
