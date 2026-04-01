@@ -1,7 +1,7 @@
 import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
-import { assert } from "#veryfront/testing/assert";
+import { assert, assertEquals } from "#veryfront/testing/assert";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";
@@ -65,6 +65,8 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
 
           assert(res.status === 200);
           assert(code.includes("export"));
+          assertEquals(code.includes("<div"), false);
+          assert(code.includes('from "https://esm.sh/react@19.1.1"'));
         } finally {
           await h?.stop?.();
 

@@ -15,7 +15,10 @@ import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-po
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
 import { addHMRTimestamps } from "#veryfront/transforms/esm/import-rewriter.ts";
-import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
+import {
+  FRAMEWORK_ROOT,
+  resolveFrameworkSourcePath,
+} from "#veryfront/platform/compat/framework-source-resolver.ts";
 
 const logger = serverLogger.component("module-server");
 
@@ -432,11 +435,6 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
   );
 }
 
-const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
-
-// Embedded source directory for compiled binaries (created by prepare-framework-sources.ts)
-const EMBEDDED_SRC_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
-
 interface FindSourceFileResult {
   path: string;
   isFrameworkFile: boolean;
@@ -477,13 +475,6 @@ async function findSourceFile(
     basePathWithoutExt = basePathWithoutExt.slice("_vf_modules/".length);
   }
 
-  const frameworkLookups: [string, string, string, boolean][] = [
-    ["_veryfront/", join(FRAMEWORK_ROOT, "src"), "_veryfront", true],
-    // Embedded sources are a fallback for compiled binaries when src/ is unavailable.
-    ["_veryfront/", EMBEDDED_SRC_DIR, "_veryfront-embedded", true],
-    // Fallback to projectDir for local dev/proxy setups where FRAMEWORK_ROOT may differ.
-    ["_veryfront/", join(projectDir, "src"), "_veryfront-project", true],
-  ];
   const isFrameworkPath = basePathWithoutExt.startsWith("_veryfront/");
 
   // Check embedded polyfills first (no filesystem access needed).
@@ -505,46 +496,21 @@ async function findSourceFile(
     };
   }
 
-  async function resolveFrameworkFile(
-    lookups: [string, string, string, boolean][],
-  ): Promise<FindSourceFileResult | null> {
-    // Look for framework files using native filesystem (not secureFs which goes to API)
-    const platformFs = createFileSystem();
-    for (const [prefix, frameworkDir, label, stripPrefix] of lookups) {
-      if (!basePathWithoutExt.startsWith(prefix)) continue;
-
-      const pathWithinFramework = stripPrefix
-        ? basePathWithoutExt.slice(prefix.length)
-        : basePathWithoutExt;
-
-      // Try direct file match first, then index file fallback
-      const candidates = [pathWithinFramework, `${pathWithinFramework}/index`];
-      for (const candidate of candidates) {
-        for (const ext of extensions) {
-          const frameworkPath = join(frameworkDir, candidate + ext);
-          try {
-            const stat = await platformFs.stat(frameworkPath);
-            if (stat.isFile) {
-              logger.debug(`Found framework ${label} file`, {
-                basePath: basePathWithoutExt,
-                resolvedPath: frameworkPath,
-              });
-              return { path: frameworkPath, isFrameworkFile: true };
-            }
-          } catch (_) {
-            /* expected: file may not exist at this extension */
-          }
-        }
-      }
-    }
-
-    return null;
-  }
-
   if (isFrameworkPath) {
-    const frameworkResult = await resolveFrameworkFile(frameworkLookups);
+    const frameworkResult = await resolveFrameworkSourcePath(
+      basePathWithoutExt.slice("_veryfront/".length),
+      {
+        extraLookupDirs: [join(projectDir, "src")],
+        extensions,
+      },
+    );
     if (frameworkResult) {
-      return frameworkResult;
+      logger.debug("Found framework source file", {
+        basePath: basePathWithoutExt,
+        resolvedPath: frameworkResult.path,
+        lookupDir: frameworkResult.lookupDir,
+      });
+      return { path: frameworkResult.path, isFrameworkFile: true };
     }
 
     // Framework path not found locally - log warning and fall back to project lookups

@@ -128,6 +128,30 @@ describe("hydration-data-generator", () => {
       assertEquals(parsed.pageType, "tsx");
     });
 
+    it("should choose fs client modules for preview pages", () => {
+      const options: HTMLGenerationOptions = {
+        ...baseOptions,
+        environment: "preview",
+      };
+      const parsed = parseHydrationData("page", {}, {}, options) as {
+        clientModuleStrategy?: unknown;
+      };
+      assertEquals(parsed.clientModuleStrategy, "fs");
+    });
+
+    it("should choose rsc module client loading for remote production pages", () => {
+      const options: HTMLGenerationOptions = {
+        ...baseOptions,
+        mode: "production",
+        environment: "production",
+        isLocalProject: false,
+      };
+      const parsed = parseHydrationData("page", {}, {}, options) as {
+        clientModuleStrategy?: unknown;
+      };
+      assertEquals(parsed.clientModuleStrategy, "rsc-module");
+    });
+
     it("should include frontmatter when provided", () => {
       const options: HTMLGenerationOptions = {
         ...baseOptions,

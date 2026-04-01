@@ -9,6 +9,10 @@ import {
   createLockfileManager,
   type LockfileManager,
 } from "#veryfront/utils/import-lockfile.ts";
+import {
+  importMapOwnsSpecifier,
+  mergeBrowserImportMapImports,
+} from "#veryfront/utils/import-map.ts";
 import { serverLogger } from "#veryfront/utils/logger/index.ts";
 
 const logger = serverLogger.component("bare-ext");
@@ -70,19 +74,6 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
   };
 }
 
-/**
- * Bare specifiers that should be kept as-is (not rewritten to esm.sh URLs).
- * These are resolved by the browser's import map injected in the HTML <head>.
- */
-const DEFAULT_IMPORT_MAP_IMPORTS: Record<string, string> = {
-  react: "",
-  "react-dom": "",
-  "react-dom/client": "",
-  "react-dom/server": "",
-  "react/jsx-runtime": "",
-  "react/jsx-dev-runtime": "",
-};
-
 /** Map of common packages to their esm.sh URLs for browser imports */
 const ESM_PACKAGE_MAP: Record<string, string> = {};
 
@@ -105,19 +96,6 @@ function isBareImport(path: string): boolean {
 
 function toEsmUrl(path: string): string {
   return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${path}`;
-}
-
-function isImportMapResolved(
-  path: string,
-  imports: Record<string, string>,
-): boolean {
-  if (Object.prototype.hasOwnProperty.call(imports, path)) return true;
-
-  for (const key of Object.keys(imports)) {
-    if (key.endsWith("/") && path.startsWith(key)) return true;
-  }
-
-  return false;
 }
 
 function resolveAsExternalOrHttps(
@@ -178,10 +156,7 @@ export function createBareExternalPlugin(
   const { bundle = false, strict = false } = opts;
   const lockfile = opts.lockfile ??
     (opts.projectDir && bundle ? createLockfileManager(opts.projectDir) : null);
-  const importMapImports = {
-    ...DEFAULT_IMPORT_MAP_IMPORTS,
-    ...(opts.importMapImports ?? {}),
-  };
+  const importMapImports = mergeBrowserImportMapImports(opts.importMapImports);
 
   return {
     name: "veryfront-bare-ext",
@@ -192,7 +167,7 @@ export function createBareExternalPlugin(
 
         // Keep import-map-resolved specifiers as bare externals — the browser's
         // <script type="importmap"> resolves them to the correct CDN URL.
-        if (isImportMapResolved(args.path, importMapImports)) {
+        if (importMapOwnsSpecifier(args.path, importMapImports)) {
           return { path: args.path, external: true };
         }
 
@@ -240,6 +215,18 @@ export function createBareExternalPlugin(
             ],
           };
         }
+      });
+    },
+  };
+}
+
+export function createHttpExternalPlugin(): Plugin {
+  return {
+    name: "veryfront-http-ext",
+    setup(build: PluginBuild) {
+      build.onResolve({ filter: /^https?:\/\// }, (args: OnResolveArgs) => {
+        if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
+        return { path: args.path, external: true };
       });
     },
   };

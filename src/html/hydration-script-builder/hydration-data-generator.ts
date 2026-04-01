@@ -1,6 +1,7 @@
 import type { ComponentProps } from "#veryfront/types";
 import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
+import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
 
@@ -60,6 +61,10 @@ export function generateHydrationData(
       ? toProjectRelativePath(options.pagePath, options.projectDir)
       : undefined,
     pageType: options.pageType || inferPageType(options.pagePath),
+    clientModuleStrategy: determineClientModuleStrategy({
+      isLocalProject: options.isLocalProject,
+      environment: options.environment,
+    }),
     frontmatter: options.frontmatter,
     layoutProps: options.layoutProps,
     // In dev mode, client uses createRoot instead of hydrateRoot to avoid
