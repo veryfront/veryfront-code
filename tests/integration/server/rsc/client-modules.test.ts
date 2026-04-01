@@ -1,12 +1,26 @@
 import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+} from "#veryfront/testing/assert";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { delay } from "#std/async";
+import { buildClientModuleUrl } from "../../../../src/rendering/rsc/client-module-strategy.ts";
+
+function extractHydrationData(html: string): Record<string, unknown> {
+  const match = html.match(
+    /<script id="veryfront-hydration-data" type="application\/json"[^>]*>([\s\S]*?)<\/script>/i,
+  );
+  assertExists(match?.[1], "expected hydration data script in HTML");
+  return JSON.parse(match[1]);
+}
 
 describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterAll(async () => {
@@ -79,6 +93,62 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
             allowOpsDelta: 2,
           });
         }
+      });
+    });
+
+    it("renders production HTML with explicit fs hydration strategy for local projects", async () => {
+      await withTestContext("rsc-client-page-render", async (context) => {
+        await writeTextFile(
+          join(context.projectDir, "veryfront.config.js"),
+          `export default { experimental: { rsc: true } };`,
+        );
+
+        await remove(join(context.projectDir, "app"), { recursive: true });
+        await remove(join(context.projectDir, "pages"), { recursive: true });
+
+        await mkdir(join(context.projectDir, "app"), { recursive: true });
+        await writeTextFile(
+          join(context.projectDir, "app", "layout.tsx"),
+          `export default function RootLayout({ children }: { children: React.ReactNode }) {
+            return <html><body>{children}</body></html>;
+          }`,
+        );
+        await writeTextFile(
+          join(context.projectDir, "app", "page.tsx"),
+          [
+            '"use client";',
+            "export default function Page() {",
+            '  return <main data-rendered="client-page">Client Page</main>;',
+            "}",
+            "",
+          ].join("\n"),
+        );
+
+        const server = await context.createProductionServer({ hostname: "127.0.0.1" });
+        const baseUrl = `http://127.0.0.1:${server.port}`;
+
+        const pageRes = await fetch(`${baseUrl}/`);
+        assertEquals(pageRes.status, 200);
+        const html = await pageRes.text();
+
+        assertStringIncludes(html, "Client Page");
+        assertEquals(html.includes("/_veryfront/fs/"), false);
+
+        const hydrationData = extractHydrationData(html);
+        assertEquals(hydrationData.clientModuleStrategy, "fs");
+        assertEquals(hydrationData.pagePath, "app/page.tsx");
+
+        const moduleUrl = buildClientModuleUrl({
+          strategy: "fs",
+          rel: String(hydrationData.pagePath),
+        });
+        assertExists(moduleUrl);
+
+        const moduleRes = await fetch(`${baseUrl}${moduleUrl}`);
+        assertEquals(moduleRes.status, 200);
+        const moduleCode = await moduleRes.text();
+
+        assertStringIncludes(moduleCode, "Client Page");
       });
     });
   });

@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { injectHTMLContent } from "./html-injection.ts";
 import type { HTMLMetadata } from "#veryfront/transforms/mdx/types.ts";
@@ -8,6 +8,14 @@ const baseTemplate = `<!DOCTYPE html>
 <body>{{ content }}</body></html>`;
 
 const minMeta: HTMLMetadata = { title: "Test", description: "Desc" };
+
+function extractHydrationData(html: string): Record<string, unknown> {
+  const match = html.match(
+    /<script id="veryfront-hydration-data" type="application\/json"[^>]*>([\s\S]*?)<\/script>/i,
+  );
+  assertExists(match?.[1], "expected hydration data script in HTML");
+  return JSON.parse(match[1]);
+}
 
 describe("html/html-injection", () => {
   describe("injectHTMLContent", () => {
@@ -93,8 +101,26 @@ describe("html/html-injection", () => {
         },
       );
 
-      assertEquals(html.includes("veryfront-hydration-data"), true);
-      assertEquals(html.includes("/app/page.tsx"), true);
+      const hydrationData = extractHydrationData(html);
+      assertEquals(hydrationData.pagePath, "app/page.tsx");
+      assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
+    });
+
+    it("should use fs hydration strategy for local development client pages", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "development",
+          slug: "test",
+          pagePath: "/app/page.tsx",
+          isClientPage: true,
+        },
+      );
+
+      const hydrationData = extractHydrationData(html);
+      assertEquals(hydrationData.clientModuleStrategy, "fs");
     });
 
     it("should inject studio scripts when studioEmbed is true", () => {
