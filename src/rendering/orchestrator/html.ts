@@ -242,7 +242,10 @@ export class HTMLGenerator {
       slug: context.slug,
       devPort: this.config.config?.dev?.port || DEFAULT_DASHBOARD_PORT,
       pagePath,
+      projectDir: this.config.projectDir,
       isClientPage,
+      environment: context.options?.environment,
+      isLocalProject: this.config.mode === "development",
       nonce: context.options?.nonce,
       importMapJson,
     });

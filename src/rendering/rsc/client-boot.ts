@@ -3,38 +3,31 @@
  * This file is bundled by esbuild at runtime and served as client.js
  */
 
+import type { ClientModuleStrategy } from "./client-module-strategy.ts";
 import {
-  getReactCDNUrl,
-  getReactDOMClientCDNUrl,
-  REACT_DEFAULT_VERSION,
-} from "#veryfront/utils/constants/cdn.ts";
+  buildClientModuleUrl,
+  getHydrationReactImportSpecifiers,
+  readHydrationData,
+  resolveClientModuleStrategy,
+} from "./client-module-strategy.ts";
+import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
+import { consumeNdjsonStream, getContainer } from "./client-dom.ts";
+import { RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
 
 /**
- * Import React using the page's import map when available, falling back to CDN URLs.
- * This ensures the hydration React version matches the page component's React version.
+ * Import React using the page's import map when available.
+ * When the document does not own the React specifiers, use explicit CDN URLs.
  */
 async function importReact(): Promise<
   { React: typeof import("react"); ReactDOM: typeof import("react-dom/client") }
 > {
-  try {
-    // Bare specifiers resolve via the <script type="importmap"> injected in <head>
-    const [React, ReactDOM] = await Promise.all([
-      import("react"),
-      import("react-dom/client"),
-    ]);
-    return { React, ReactDOM };
-  } catch {
-    // Fallback to explicit CDN URLs (e.g. when no import map is present)
-    const [React, ReactDOM] = await Promise.all([
-      import(getReactCDNUrl(REACT_DEFAULT_VERSION)),
-      import(getReactDOMClientCDNUrl(REACT_DEFAULT_VERSION)),
-    ]);
-    return { React, ReactDOM };
-  }
+  const specifiers = getHydrationReactImportSpecifiers(document);
+  const [React, ReactDOM] = await Promise.all([
+    import(specifiers.react),
+    import(specifiers.reactDomClient),
+  ]);
+  return { React, ReactDOM };
 }
-import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
-import { consumeNdjsonStream, getContainer } from "./client-dom.ts";
-import { FS_PATH_PREFIX, HYDRATION_DATA_ID, RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
 
 interface HydrationRootCandidate {
   tagName: string;
@@ -65,27 +58,6 @@ export function selectHydrationRoot<T extends HydrationRootCandidate>(
     fallback;
 }
 
-function toBase64Url(str: string): string | null {
-  try {
-    const base64 = btoa(unescape(encodeURIComponent(str)));
-    return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  } catch (e) {
-    console.debug?.("[RSC] toBase64Url failed", e);
-    return null;
-  }
-}
-
-function getHydrationData(): { pagePath?: string } | null {
-  try {
-    const el = document.getElementById(HYDRATION_DATA_ID);
-    if (!el) return null;
-    return JSON.parse(el.textContent || "{}");
-  } catch (e) {
-    console.debug?.("[RSC] hydration data parse failed", e);
-    return null;
-  }
-}
-
 async function tryStream(q: string): Promise<boolean> {
   try {
     const res = await fetch(RSC_PATH_PREFIX + "stream" + q);
@@ -111,17 +83,17 @@ async function hydrateMarkers(): Promise<void> {
   }
 }
 
-async function hydratePageComponent(pagePath: string): Promise<boolean> {
+async function hydratePageComponent(
+  pagePath: string,
+  strategy: ClientModuleStrategy,
+): Promise<boolean> {
   try {
     const { React, ReactDOM } = await importReact();
-
-    const base64Path = toBase64Url(pagePath);
-    if (!base64Path) {
-      console.debug?.("[RSC] Failed to encode page path");
-      return false;
-    }
-
-    const moduleUrl = FS_PATH_PREFIX + base64Path + ".js";
+    const moduleUrl = buildClientModuleUrl({
+      strategy,
+      rel: pagePath,
+    });
+    if (!moduleUrl) return false;
     console.debug?.("[RSC] Loading component from:", moduleUrl);
 
     const mod = await import(moduleUrl);
@@ -172,11 +144,12 @@ async function applyPayload(q: string): Promise<boolean> {
 export async function boot(): Promise<void> {
   try {
     const q = globalThis.window?.location.search ?? "";
-
-    const pagePath = getHydrationData()?.pagePath;
+    const hydrationData = readHydrationData(document);
+    const pagePath = hydrationData?.pagePath;
+    const clientModuleStrategy = resolveClientModuleStrategy(hydrationData);
     if (pagePath) {
       console.debug?.("[RSC] Found page component in hydration data:", pagePath);
-      if (await hydratePageComponent(pagePath)) {
+      if (await hydratePageComponent(pagePath, clientModuleStrategy)) {
         console.debug?.("[RSC] Client component hydrated successfully");
         return;
       }

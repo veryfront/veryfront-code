@@ -5,6 +5,7 @@ export const colorSchemeSchema = z.enum(["light", "dark"]);
 export const environmentSchema = z.enum(["preview", "production"]);
 
 export const pageTypeSchema = z.enum(["mdx", "md", "tsx", "jsx", "ts", "js"]);
+export const clientModuleStrategySchema = z.enum(["fs", "rsc-module"]);
 
 export const HTMLGenerationOptionsSchema = z.object({
   mode: z.enum(["development", "production"]),
@@ -61,6 +62,7 @@ export const HydrationDataSchema = z.object({
   ),
   appPath: z.string().optional(),
   pagePath: z.string().optional(),
+  clientModuleStrategy: clientModuleStrategySchema.optional(),
 });
 
 // Inferred types

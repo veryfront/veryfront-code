@@ -1,60 +1,75 @@
 # E2E Tests
 
-End-to-end tests for the Veryfront renderer using the compiled binary.
+This directory currently contains multiple end-to-end harnesses:
+
+- `deno task test:e2e:playwright`: Playwright smoke tests in `*.playwright.ts`
+- `deno task test:e2e:rsc-browser`: browser-backed Deno regression for proxy-mode RSC hydration
+- `deno task test:e2e:binary`: compiled-binary end-to-end coverage
+
+`deno task test:e2e` remains as a compatibility alias for `deno task test:e2e:playwright`, but the explicit task names above are the preferred interface.
 
 ## Directory Structure
 
 ```
 tests/e2e/
+├── smoke.playwright.ts # Playwright smoke coverage against the dev/proxy stack
 ├── setup/              # Test infrastructure
 │   ├── binary.ts       # Binary compilation management
 │   ├── binary-server.ts # Server lifecycle management
 │   ├── fixtures.ts     # Project fixture factories
 │   ├── assertions.ts   # BDD-style assertion helpers
 │   └── index.ts        # Main export (import from here)
-├── features/           # Feature-focused tests
+├── features/           # Deno-driven end-to-end feature tests
 │   ├── framework-imports.test.ts  # veryfront/* imports
 │   ├── layouts.test.ts            # Layout and app providers
 │   ├── routing.test.ts            # File-based routing
 │   ├── api-routes.test.ts         # API route handlers
 │   └── mdx.test.ts                # MDX page rendering
-├── regressions/        # Regression tests for fixed bugs
+├── regressions/        # Regression tests for fixed bugs across harnesses
 │   ├── README.md       # Template and guidelines
-│   └── YYYY-MM-DD-*.test.ts
+│   ├── YYYY-MM-DD-*.test.ts
+│   └── rsc-proxy-hydration.test.ts
 └── README.md           # This file
 ```
 
 ## Running Tests
 
-### All E2E Tests (uses cached binary)
+### Playwright Smoke Tests
 
 ```bash
-deno task test:e2e
+deno task test:e2e:playwright
 ```
 
-### Specific Feature Tests
+### RSC Browser Regression
 
 ```bash
-deno test --allow-all tests/e2e/features/layouts.test.ts
-deno test --allow-all tests/e2e/features/routing.test.ts
+deno task test:e2e:rsc-browser
 ```
 
-### Regression Tests Only
+### Compiled Binary E2E
 
 ```bash
-deno test --allow-all tests/e2e/regressions/
+deno task test:e2e:binary
 ```
 
 ### Force Fresh Binary Compilation
 
 ```bash
-VERYFRONT_BINARY_FRESH=1 deno task test:e2e
+VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary
 ```
 
 ### Use Custom Binary Path
 
 ```bash
-VERYFRONT_BINARY=/path/to/binary deno task test:e2e
+VERYFRONT_BINARY=/path/to/binary deno task test:e2e:binary
+```
+
+### Run a Specific E2E Test File
+
+```bash
+npx playwright test tests/e2e/smoke.playwright.ts
+deno test --allow-all tests/e2e/features/layouts.test.ts
+deno test --allow-all tests/e2e/regressions/rsc-proxy-hydration.test.ts
 ```
 
 ## Writing Tests

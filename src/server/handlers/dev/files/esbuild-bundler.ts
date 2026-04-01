@@ -1,46 +1,11 @@
 import type { HandlerContext } from "../../types.ts";
-import { buildImportMapJson } from "#veryfront/html";
-import { getDirectory, getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
-import { createBareExternalPlugin, createRelativeFsPlugin } from "./esbuild-plugins.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { bundleBrowserModule } from "#veryfront/server/shared/browser-module-bundler.ts";
 
 export function bundleDevFile(absPath: string, ctx: HandlerContext): Promise<string> {
-  return withSpan(
-    "server.dev.esbuild.bundleFile",
-    async () => {
-      const { build } = await import("esbuild");
-      const src = await ctx.adapter.fs.readFile(absPath);
-      const importMapJson = await buildImportMapJson({
-        projectDir: ctx.projectDir,
-        config: ctx.config,
-      });
-      const importMap = JSON.parse(importMapJson) as { imports?: Record<string, string> };
-
-      const { outputFiles } = await build({
-        bundle: true,
-        write: false,
-        format: "esm",
-        platform: "browser",
-        target: "es2020",
-        jsx: "automatic",
-        jsxImportSource: "react",
-        external: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
-        stdin: {
-          contents: src,
-          loader: getEsbuildLoader(absPath),
-          resolveDir: getDirectory(absPath),
-          sourcefile: absPath,
-        },
-        plugins: [
-          createRelativeFsPlugin(ctx.projectDir, ctx.adapter),
-          createBareExternalPlugin({
-            importMapImports: importMap.imports,
-          }),
-        ],
-      });
-
-      return outputFiles?.[0]?.text ?? "export default null";
-    },
-    { "bundle.filePath": absPath, "bundle.projectSlug": ctx.projectSlug ?? "unknown" },
-  );
+  return bundleBrowserModule(absPath, {
+    adapter: ctx.adapter,
+    projectDir: ctx.projectDir,
+    config: ctx.config,
+    projectSlug: ctx.projectSlug,
+  });
 }
