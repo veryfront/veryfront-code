@@ -5,6 +5,10 @@ import { base64urlEncode } from "#veryfront/utils/base64url.ts";
 import type { HandlerContext } from "../../types.ts";
 import { DevFileHandler } from "./dev-file.handler.ts";
 
+function getImportSpecifiers(source: string): string[] {
+  return [...source.matchAll(/\bfrom\s+["']([^"']+)["']/g)].map((match) => match[1]);
+}
+
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
     projectDir: "/project",
@@ -139,6 +143,72 @@ describe(
       assertEquals(calls.includes("runWithContext"), true);
       const body = await result.response!.text();
       assertEquals(body.includes("preview-proxy"), true);
+    });
+
+    it("keeps browser import-map exact specifiers in preview bundles", async () => {
+      const handler = new DevFileHandler();
+      const adapter = createMockAdapter();
+      const modulePath = "/project/app/page.tsx";
+      adapter.fs.files.set(
+        modulePath,
+        [
+          '"use client";',
+          'import { Chat } from "veryfront/chat";',
+          "export default function Page() {",
+          '  return Chat ? "preview-chat" : "missing";',
+          "}",
+        ].join("\n"),
+      );
+
+      const encodedPath = base64urlEncode("app/page.tsx");
+      const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+      const ctx = makeCtx({
+        adapter,
+        isLocalProject: false,
+        requestContext: { mode: "preview" } as HandlerContext["requestContext"],
+      });
+
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 200);
+      const body = await result.response!.text();
+      const specifiers = getImportSpecifiers(body);
+      assertEquals(specifiers.includes("veryfront/chat"), true);
+      assertEquals(specifiers.some((specifier) => specifier.includes("esm.sh")), false);
+    });
+
+    it("keeps browser import-map prefix specifiers in preview bundles", async () => {
+      const handler = new DevFileHandler();
+      const adapter = createMockAdapter();
+      const modulePath = "/project/app/page.tsx";
+      adapter.fs.files.set(
+        modulePath,
+        [
+          '"use client";',
+          'import Button from "@/components/Button";',
+          "export default function Page() {",
+          "  return Button;",
+          "}",
+        ].join("\n"),
+      );
+
+      const encodedPath = base64urlEncode("app/page.tsx");
+      const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+      const ctx = makeCtx({
+        adapter,
+        isLocalProject: false,
+        requestContext: { mode: "preview" } as HandlerContext["requestContext"],
+      });
+
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 200);
+      const body = await result.response!.text();
+      const specifiers = getImportSpecifiers(body);
+      assertEquals(specifiers.includes("@/components/Button"), true);
+      assertEquals(specifiers.some((specifier) => specifier.includes("esm.sh")), false);
     });
 
     it("continues for non-local production requests", async () => {

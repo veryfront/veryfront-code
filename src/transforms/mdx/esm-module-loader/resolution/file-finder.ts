@@ -32,10 +32,11 @@ const FRAMEWORK_EXTENSIONS = [
   ".js", // Regular sources for dev mode
 ];
 
-// Framework lookup directories in priority order
+// Framework lookup directories in priority order.
+// Prefer source files when they exist; embedded .src files are a fallback.
 const FRAMEWORK_LOOKUP_DIRS = [
-  EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
   join(FRAMEWORK_ROOT, "src"), // Regular sources for dev mode
+  EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
 ];
 
 export interface FileResolutionResult {
@@ -145,8 +146,8 @@ export async function resolveModuleFile(
   if (!isFramework) return null;
 
   // Try to resolve framework files from multiple locations:
-  // 1. EMBEDDED_SRC_DIR (dist/framework-src) - for compiled binaries with .src extensions
-  // 2. FRAMEWORK_ROOT/src - for development mode with regular extensions
+  // 1. FRAMEWORK_ROOT/src - source checkouts should prefer current source files
+  // 2. EMBEDDED_SRC_DIR (dist/framework-src) - fallback for compiled binaries
   const localFs = getLocalFs();
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Resolving framework file`, {
