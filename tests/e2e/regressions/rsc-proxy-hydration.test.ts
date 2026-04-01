@@ -76,6 +76,62 @@ export default function Page() {
   );
 }
 
+async function writePreviewChatApp(
+  projectDir: string,
+  configSource: string,
+): Promise<void> {
+  await writeTextFile(join(projectDir, "veryfront.config.js"), configSource);
+
+  await remove(join(projectDir, "app"), { recursive: true });
+  await remove(join(projectDir, "pages"), { recursive: true });
+
+  await mkdir(join(projectDir, "app"), { recursive: true });
+  await writeTextFile(
+    join(projectDir, "app", "layout.tsx"),
+    `export default function RootLayout({ children }: { children: React.ReactNode }) {
+            return <html><body>{children}</body></html>;
+          }`,
+  );
+  await writeTextFile(
+    join(projectDir, "app", "page.tsx"),
+    `"use client";
+import * as React from "react";
+import type { UIMessage } from "veryfront/agent/react";
+import { Chat } from "veryfront/chat";
+
+const initialMessages: UIMessage[] = [
+  {
+    id: "assistant-1",
+    role: "assistant",
+    metadata: {
+      model: "anthropic/claude-sonnet-4-20250514",
+    },
+    parts: [
+      {
+        type: "text",
+        text: "Styled preview assistant response",
+      },
+    ],
+  },
+];
+
+export default function Page() {
+  const [messages] = React.useState(initialMessages);
+
+  return (
+    <main id="preview-chat-page">
+      <Chat
+        messages={messages}
+        input=""
+        onChange={() => {}}
+      />
+    </main>
+  );
+}
+`,
+  );
+}
+
 async function assertCounterHydration(
   page: import("npm:playwright").Page,
   options: { expectedStrategy: string; expectedModulePath: string },
@@ -106,6 +162,36 @@ async function assertCounterHydration(
     resources.some((name) => name.includes(options.expectedModulePath)),
     true,
   );
+}
+
+async function assertPreviewChatStyling(
+  page: import("npm:playwright").Page,
+): Promise<void> {
+  await page.waitForSelector("#preview-chat-page [data-vf-chat]");
+  await page.locator('link#vf-tailwind-css[href*="/_vf_styles/styles.css"]').waitFor({
+    state: "attached",
+  });
+  await page.waitForSelector('svg path[d^="M17.3041"]');
+
+  const previewState = await page.evaluate(() => {
+    const stylesheet = document.querySelector("link#vf-tailwind-css") as HTMLLinkElement | null;
+    const avatarPath = document.querySelector('svg path[d^="M17.3041"]');
+    const avatarSvg = avatarPath?.closest("svg");
+    const avatarBox = avatarSvg?.getBoundingClientRect();
+
+    return {
+      stylesheetHref: stylesheet?.getAttribute("href") ?? "",
+      avatarWidth: avatarBox?.width ?? 0,
+      avatarHeight: avatarBox?.height ?? 0,
+    };
+  });
+
+  assertEquals(
+    previewState.stylesheetHref.includes("/_vf_styles/styles.css"),
+    true,
+  );
+  assertEquals(previewState.avatarWidth > 0 && previewState.avatarWidth <= 24, true);
+  assertEquals(previewState.avatarHeight > 0 && previewState.avatarHeight <= 24, true);
 }
 
 describe(
@@ -202,6 +288,131 @@ describe(
               expectedStrategy: "rsc-module",
               expectedModulePath: "/_veryfront/rsc/module?",
             });
+
+            const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
+            assertEquals(hydrationErrors.length, 0);
+          } finally {
+            await browserContext.close();
+            controller.abort();
+            await server.stop();
+          }
+        });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    it("hydrates a preview client page and becomes interactive", async () => {
+      const browser = await launchChromium();
+      if (!browser) return;
+
+      try {
+        await withTestContext("rsc-preview-browser-hydration", async (context) => {
+          await writeClientCounterApp(
+            context.projectDir,
+            `export default {
+            experimental: { rsc: true },
+            fs: {
+              veryfront: {
+                proxyMode: true,
+                apiBaseUrl: "https://api.veryfront.com"
+              }
+            }
+          };`,
+          );
+
+          const port = await context.allocatePort();
+          const controller = new AbortController();
+          const server = await startProductionServer({
+            projectDir: context.projectDir,
+            port,
+            bindAddress: "127.0.0.1",
+            signal: controller.signal,
+            defaultProjectSlug: context.projectId,
+            defaultProjectId: context.projectId,
+          });
+          await server.ready;
+          await waitForReady(port);
+          const browserContext = await browser.newContext({
+            extraHTTPHeaders: {
+              "x-environment": "preview",
+              "x-project-slug": "browser-preview-project",
+              "x-release-id": "rel-browser-preview-test",
+              "x-token": "test-token",
+            },
+          });
+          const page = await browserContext.newPage();
+          const { consoleErrors, pageErrors } = collectBrowserErrors(page);
+
+          try {
+            const response = await page.goto(`http://127.0.0.1:${port}/`);
+            assertEquals(response?.status(), 200);
+
+            await assertCounterHydration(page, {
+              expectedStrategy: "fs",
+              expectedModulePath: "/_veryfront/fs/",
+            });
+
+            const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
+            assertEquals(hydrationErrors.length, 0);
+          } finally {
+            await browserContext.close();
+            controller.abort();
+            await server.stop();
+          }
+        });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    it("keeps preview chat pages styled after hydration", async () => {
+      const browser = await launchChromium();
+      if (!browser) return;
+
+      try {
+        await withTestContext("rsc-preview-chat-browser-styling", async (context) => {
+          await writePreviewChatApp(
+            context.projectDir,
+            `export default {
+            experimental: { rsc: true },
+            fs: {
+              veryfront: {
+                proxyMode: true,
+                apiBaseUrl: "https://api.veryfront.com"
+              }
+            }
+          };`,
+          );
+
+          const port = await context.allocatePort();
+          const controller = new AbortController();
+          const server = await startProductionServer({
+            projectDir: context.projectDir,
+            port,
+            bindAddress: "127.0.0.1",
+            signal: controller.signal,
+            defaultProjectSlug: context.projectId,
+            defaultProjectId: context.projectId,
+          });
+          await server.ready;
+          await waitForReady(port);
+          const browserContext = await browser.newContext({
+            extraHTTPHeaders: {
+              "x-environment": "preview",
+              "x-project-slug": "browser-preview-project",
+              "x-release-id": "rel-browser-preview-test",
+              "x-token": "test-token",
+            },
+          });
+          const page = await browserContext.newPage();
+          const { consoleErrors, pageErrors } = collectBrowserErrors(page);
+
+          try {
+            const response = await page.goto(`http://127.0.0.1:${port}/`);
+            assertEquals(response?.status(), 200);
+
+            await assertPreviewChatStyling(page);
 
             const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
             assertEquals(hydrationErrors.length, 0);
