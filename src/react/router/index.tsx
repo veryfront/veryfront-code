@@ -48,7 +48,13 @@ const defaultRouter: RouterValue = {
   reload: async () => {},
 };
 
-const RouterContext = React.createContext<RouterValue>(defaultRouter);
+const ROUTER_CONTEXT_SYMBOL = Symbol.for("veryfront.react.router-context");
+const globalRouterContext = globalThis as typeof globalThis & {
+  [ROUTER_CONTEXT_SYMBOL]?: React.Context<RouterValue>;
+};
+
+const RouterContext = globalRouterContext[ROUTER_CONTEXT_SYMBOL] ??
+  (globalRouterContext[ROUTER_CONTEXT_SYMBOL] = React.createContext<RouterValue>(defaultRouter));
 
 export interface RouterProviderProps {
   children: React.ReactNode;

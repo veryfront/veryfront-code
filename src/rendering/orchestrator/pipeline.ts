@@ -510,6 +510,7 @@ export class RenderPipeline {
                   layoutResult.nestedLayouts,
                   layoutDataMap,
                   options?.url,
+                  resolvedParams,
                   mergedFrontmatter,
                   headings,
                   options?.projectSlug,
@@ -651,7 +652,10 @@ export class RenderPipeline {
           pageInfo,
           slug,
           undefined,
-          options,
+          {
+            ...options,
+            ...(Object.keys(params).length > 0 ? { params } : {}),
+          },
         );
 
         if (bundleResult.pageBundle && "frontmatter" in bundleResult.pageBundle) {
