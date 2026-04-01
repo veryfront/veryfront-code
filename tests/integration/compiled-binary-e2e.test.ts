@@ -25,8 +25,9 @@ import { exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
 import {
-  collectBrowserErrors,
-  getHydrationErrors,
+  captureBrowserDiagnostics,
+  findHydrationOrCspFailures,
+  getBrowserDiagnosticMessages,
   launchChromium,
 } from "../_helpers/playwright.ts";
 import { withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
@@ -112,7 +113,7 @@ interface TestServer {
   kill: () => Promise<void>;
 }
 
-type BrowserDiagnostics = ReturnType<typeof collectBrowserErrors>;
+type BrowserDiagnostics = ReturnType<typeof captureBrowserDiagnostics>;
 
 interface BrowserPageSession {
   page: import("npm:playwright").Page;
@@ -348,7 +349,7 @@ async function withBrowserPageAgainstServer(
   try {
     const browserContext = await browser.newContext();
     const page = await browserContext.newPage();
-    const diagnostics = collectBrowserErrors(page);
+    const diagnostics = captureBrowserDiagnostics(page);
 
     try {
       const response = await page.goto(`http://127.0.0.1:${server.port}/`);
@@ -366,10 +367,9 @@ function assertNoBrowserHydrationErrors(
   diagnostics: BrowserDiagnostics,
   label = "Unexpected hydration/CSP errors",
 ): void {
-  const hydrationErrors = getHydrationErrors([
-    ...diagnostics.consoleErrors,
-    ...diagnostics.pageErrors,
-  ]);
+  const hydrationErrors = findHydrationOrCspFailures(
+    getBrowserDiagnosticMessages(diagnostics),
+  );
   assertEquals(hydrationErrors.length, 0, `${label}: ${hydrationErrors.join("\n")}`);
 }
 

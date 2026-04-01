@@ -5,8 +5,9 @@ import { join } from "#veryfront/compat/path";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import {
-  collectBrowserErrors,
-  getHydrationErrors,
+  captureBrowserDiagnostics,
+  findHydrationOrCspFailures,
+  getBrowserDiagnosticMessages,
   launchChromium,
 } from "../../_helpers/playwright.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
@@ -164,7 +165,7 @@ async function withProxyBrowserPage(
   headers: Record<string, string>,
   run: (
     page: import("npm:playwright").Page,
-    errors: { consoleErrors: string[]; pageErrors: string[] },
+    diagnostics: import("../../_helpers/playwright.ts").BrowserDiagnostics,
   ) => Promise<void>,
 ): Promise<void> {
   const port = await context.allocatePort();
@@ -182,12 +183,12 @@ async function withProxyBrowserPage(
 
   const browserContext = await browser.newContext({ extraHTTPHeaders: headers });
   const page = await browserContext.newPage();
-  const errors = collectBrowserErrors(page);
+  const diagnostics = captureBrowserDiagnostics(page);
 
   try {
     const response = await page.goto(`http://127.0.0.1:${port}/`);
     assertEquals(response?.status(), 200);
-    await run(page, errors);
+    await run(page, diagnostics);
   } finally {
     await browserContext.close();
     controller.abort();
@@ -279,7 +280,7 @@ describe(
           const server = await context.createProductionServer({ hostname: "127.0.0.1" });
           const browserContext = await browser.newContext();
           const page = await browserContext.newPage();
-          const { consoleErrors, pageErrors } = collectBrowserErrors(page);
+          const diagnostics = captureBrowserDiagnostics(page);
 
           try {
             const response = await page.goto(`http://127.0.0.1:${server.port}/`);
@@ -290,7 +291,9 @@ describe(
               expectedModulePath: "/_veryfront/fs/",
             });
 
-            const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
+            const hydrationErrors = findHydrationOrCspFailures(
+              getBrowserDiagnosticMessages(diagnostics),
+            );
             assertEquals(hydrationErrors.length, 0);
           } finally {
             await browserContext.close();
@@ -316,13 +319,15 @@ describe(
             browser,
             context,
             getProxyHeaders("production"),
-            async (page, { consoleErrors, pageErrors }) => {
+            async (page, diagnostics) => {
               await assertCounterHydration(page, {
                 expectedStrategy: "rsc-module",
                 expectedModulePath: "/_veryfront/rsc/module?",
               });
 
-              const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
+              const hydrationErrors = findHydrationOrCspFailures(
+                getBrowserDiagnosticMessages(diagnostics),
+              );
               assertEquals(hydrationErrors.length, 0);
             },
           );
@@ -347,13 +352,15 @@ describe(
             browser,
             context,
             getProxyHeaders("preview"),
-            async (page, { consoleErrors, pageErrors }) => {
+            async (page, diagnostics) => {
               await assertCounterHydration(page, {
                 expectedStrategy: "fs",
                 expectedModulePath: "/_veryfront/fs/",
               });
 
-              const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
+              const hydrationErrors = findHydrationOrCspFailures(
+                getBrowserDiagnosticMessages(diagnostics),
+              );
               assertEquals(hydrationErrors.length, 0);
             },
           );
@@ -378,10 +385,12 @@ describe(
             browser,
             context,
             getProxyHeaders("preview"),
-            async (page, { consoleErrors, pageErrors }) => {
+            async (page, diagnostics) => {
               await assertPreviewChatStyling(page);
 
-              const hydrationErrors = getHydrationErrors([...consoleErrors, ...pageErrors]);
+              const hydrationErrors = findHydrationOrCspFailures(
+                getBrowserDiagnosticMessages(diagnostics),
+              );
               assertEquals(hydrationErrors.length, 0);
             },
           );
