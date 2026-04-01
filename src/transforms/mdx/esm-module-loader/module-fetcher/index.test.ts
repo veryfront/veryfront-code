@@ -484,76 +484,76 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     const frameworkPath = "/usr/local/lib/node_modules/veryfront/src/react/router/index.tsx";
     const projectPath = "/app/project/components/Button.tsx";
 
-    it("rewrites relative _dnt.polyfills.js import for framework files", () => {
+    it("rewrites relative _dnt.polyfills.js import for framework files", async () => {
       const code = `import "../../../_dnt.polyfills.js";\nexport const foo = 1;`;
-      const result = rewriteDntImports(code, frameworkPath);
+      const result = await rewriteDntImports(code, frameworkPath);
       assertEquals(result.includes("file://"), true);
       assertEquals(result.includes("_dnt.polyfills.js"), true);
       assertEquals(result.includes("../../../_dnt.polyfills.js"), false);
     });
 
-    it("rewrites relative _dnt.shims.js import for framework files", () => {
+    it("rewrites relative _dnt.shims.js import for framework files", async () => {
       const code = `import * as dntShim from "../../_dnt.shims.js";\nexport const foo = 1;`;
-      const result = rewriteDntImports(code, frameworkPath);
+      const result = await rewriteDntImports(code, frameworkPath);
       assertEquals(result.includes("file://"), true);
       assertEquals(result.includes("_dnt.shims.js"), true);
       assertEquals(result.includes("../../_dnt.shims.js"), false);
     });
 
-    it("rewrites side-effect _dnt.polyfills.js import (no from)", () => {
+    it("rewrites side-effect _dnt.polyfills.js import (no from)", async () => {
       const code = `import "../../../_dnt.polyfills.js";\nimport "../../../_dnt.polyfills.js";`;
-      const result = rewriteDntImports(code, frameworkPath);
+      const result = await rewriteDntImports(code, frameworkPath);
       const matches = result.match(/file:\/\//g);
       assertEquals(matches?.length, 2);
     });
 
-    it("does not rewrite dnt imports for project files", () => {
+    it("does not rewrite dnt imports for project files", async () => {
       const code = `import "../../../_dnt.polyfills.js";\nexport const foo = 1;`;
-      const result = rewriteDntImports(code, projectPath);
+      const result = await rewriteDntImports(code, projectPath);
       assertEquals(result, code);
     });
 
-    it("does not modify code without dnt imports", () => {
+    it("does not modify code without dnt imports", async () => {
       const code = `import React from "react";\nexport const foo = 1;`;
-      const result = rewriteDntImports(code, frameworkPath);
+      const result = await rewriteDntImports(code, frameworkPath);
       assertEquals(result, code);
     });
 
-    it("handles mixed dnt and non-dnt imports", () => {
+    it("handles mixed dnt and non-dnt imports", async () => {
       const code = [
         `import "../../../_dnt.polyfills.js";`,
         `import React from "react";`,
         `import * as dntShim from "../../_dnt.shims.js";`,
         `export default function App() {}`,
       ].join("\n");
-      const result = rewriteDntImports(code, frameworkPath);
+      const result = await rewriteDntImports(code, frameworkPath);
       assertEquals(result.includes(`from "react"`), true);
       assertEquals(result.includes("../../../_dnt.polyfills.js"), false);
       assertEquals(result.includes("../../_dnt.shims.js"), false);
       assertEquals((result.match(/file:\/\//g) ?? []).length, 2);
     });
 
-    it("rewrites node_modules paths even if not under FRAMEWORK_ROOT", () => {
+    it("rewrites node_modules paths even if not under FRAMEWORK_ROOT", async () => {
       const nodeModulesPath = "/app/node_modules/veryfront/esm/src/react/router/index.js";
       const code = `import "../../_dnt.polyfills.js";`;
-      const result = rewriteDntImports(code, nodeModulesPath);
+      const result = await rewriteDntImports(code, nodeModulesPath);
       assertEquals(result.includes("file://"), true);
     });
 
-    it("does not rewrite project files under FRAMEWORK_ROOT in local dev", () => {
+    it("does not rewrite project files under FRAMEWORK_ROOT in local dev", async () => {
       const localProjectPath = join(
         FRAMEWORK_ROOT,
         "projects/example-project/components/Header.tsx",
       );
       const code = `import { Logo } from "../elements/Logo.js";\nexport const foo = 1;`;
-      const result = rewriteDntImports(code, localProjectPath);
+      const result = await rewriteDntImports(code, localProjectPath);
       assertEquals(result, code, "Project files under FRAMEWORK_ROOT should not be rewritten");
     });
 
-    it("rewrites framework src files under FRAMEWORK_ROOT", () => {
+    it("rewrites framework src files under FRAMEWORK_ROOT", async () => {
       const frameworkSrcPath = join(FRAMEWORK_ROOT, "src/react/components/Head.tsx");
       const code = `import "../../../_dnt.polyfills.js";\nexport const foo = 1;`;
-      const result = rewriteDntImports(code, frameworkSrcPath);
+      const result = await rewriteDntImports(code, frameworkSrcPath);
       assertEquals(result.includes("file://"), true);
       assertEquals(result.includes("../../../_dnt.polyfills.js"), false);
     });
