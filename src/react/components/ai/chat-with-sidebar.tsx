@@ -1,5 +1,5 @@
 import * as React from "react";
-import { getDocumentNonce } from "./csp-nonce.ts";
+import { getDocumentNonce } from "../csp-nonce.ts";
 import { cn, generateTokenCSS } from "./theme.ts";
 import { Chat, type ChatProps } from "./chat/index.tsx";
 import { ChatSidebar } from "./chat/components/sidebar.tsx";

@@ -23,6 +23,7 @@
 import React, { useEffect, useRef } from "react";
 import { collectHead } from "#veryfront/react/head-collector.ts";
 import { isServerEnvironment } from "#veryfront/platform/compat/runtime.ts";
+import { getDocumentNonce } from "./csp-nonce.ts";
 
 export function Head({ children }: { children: React.ReactNode }): React.ReactElement {
   const mountedRef = useRef(false);
@@ -92,6 +93,7 @@ export function Head({ children }: { children: React.ReactNode }): React.ReactEl
     if (!children) return;
 
     const addedElements: Element[] = [];
+    const nonce = getDocumentNonce();
 
     React.Children.forEach(children, (child) => {
       if (!React.isValidElement(child)) return;
@@ -107,6 +109,9 @@ export function Head({ children }: { children: React.ReactNode }): React.ReactEl
       }
 
       const element = document.createElement(type);
+      if ((type === "style" || type === "script") && !props.nonce && nonce) {
+        element.setAttribute("nonce", nonce);
+      }
 
       // For scripts, check if already SSR'd via <Head> to avoid double execution
       if (type === "script") {

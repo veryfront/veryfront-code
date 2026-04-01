@@ -8,7 +8,7 @@
  */
 
 import * as React from "react";
-import { getDocumentNonce } from "./csp-nonce.ts";
+import { getDocumentNonce } from "../csp-nonce.ts";
 import { getChatTokensCSS } from "./chat-tokens.ts";
 
 export interface ChatStyleProviderProps {
