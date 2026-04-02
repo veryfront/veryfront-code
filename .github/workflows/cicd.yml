@@ -22,7 +22,7 @@ jobs:
       matrix:
         check: [format, lint, typecheck]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-deno
       - name: Run ${{ matrix.check }}
         run: |
@@ -44,11 +44,11 @@ jobs:
       matrix:
         suite: [unit, integration]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
-      - uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3.0.2
+      - uses: nick-fields/retry@v4.0.0
         with:
           timeout_minutes: ${{ matrix.suite == 'integration' && 10 || 5 }}
           max_attempts: 3
@@ -65,13 +65,13 @@ jobs:
     timeout-minutes: 15
     name: tests (rsc browser e2e)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
       - name: Install Chromium
         run: deno run -A npm:playwright install --with-deps chromium
-      - uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3.0.2
+      - uses: nick-fields/retry@v4.0.0
         with:
           timeout_minutes: 10
           max_attempts: 2
@@ -87,13 +87,13 @@ jobs:
     timeout-minutes: 20
     name: tests (binary e2e)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
       - name: Install Chromium
         run: deno run -A npm:playwright install --with-deps chromium
-      - uses: nick-fields/retry@v3
+      - uses: nick-fields/retry@v4.0.0
         with:
           timeout_minutes: 15
           max_attempts: 2
@@ -112,7 +112,7 @@ jobs:
     name: tests (split mode)
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-deno
 
       - name: Compile binary
@@ -169,7 +169,7 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       is_stable: ${{ steps.check.outputs.is_stable }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Detect release type
         id: check
         run: |
@@ -211,7 +211,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             name: veryfront-windows-x64.exe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-deno
 
       - run: deno task build:prepare
@@ -223,7 +223,7 @@ jobs:
             --target ${{ matrix.target }} \
             --output ${{ matrix.name }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}
@@ -243,11 +243,11 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: ./.github/actions/setup-deno
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
@@ -274,7 +274,7 @@ jobs:
             npm publish --access public --tag rc
           fi
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: binaries
 
@@ -305,7 +305,7 @@ jobs:
             scripts/install.sh
 
       - name: Trigger server deploy
-        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3.0.0
+        uses: peter-evans/repository-dispatch@v4.0.1
         with:
           token: ${{ secrets.GH_PAT_VERYFRONT }}
           repository: veryfront/veryfront-server
@@ -313,7 +313,7 @@ jobs:
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
       - name: Trigger job-runner deploy
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4.0.1
         with:
           token: ${{ secrets.GH_PAT_VERYFRONT }}
           repository: veryfront/veryfront-job-runner
@@ -321,7 +321,7 @@ jobs:
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
       - name: Trigger sandbox deploy
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4.0.1
         with:
           token: ${{ secrets.GH_PAT_VERYFRONT }}
           repository: veryfront/veryfront-sandbox
@@ -343,7 +343,7 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Read version
         id: version
@@ -353,7 +353,7 @@ jobs:
 
       - uses: ./.github/actions/setup-deno
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
@@ -372,7 +372,7 @@ jobs:
             cd npm && npm publish --access public
           fi
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: binaries
 
@@ -442,7 +442,7 @@ jobs:
           fi
 
       - name: Trigger server deploy
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4.0.1
         with:
           token: ${{ secrets.GH_PAT_VERYFRONT }}
           repository: veryfront/veryfront-server
@@ -450,7 +450,7 @@ jobs:
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
       - name: Trigger job-runner deploy
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4.0.1
         with:
           token: ${{ secrets.GH_PAT_VERYFRONT }}
           repository: veryfront/veryfront-job-runner
@@ -458,7 +458,7 @@ jobs:
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
       - name: Trigger sandbox deploy
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4.0.1
         with:
           token: ${{ secrets.GH_PAT_VERYFRONT }}
           repository: veryfront/veryfront-sandbox
@@ -473,10 +473,10 @@ jobs:
     needs: [release, version-check]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Update Homebrew tap
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4.0.0
         env:
           HOMEBREW_TAP_PAT: ${{ secrets.GH_PAT_HOMEBREW_TAP || secrets.GH_PAT_VERYFRONT }}
         with:

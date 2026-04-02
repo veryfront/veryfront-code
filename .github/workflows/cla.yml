@@ -18,7 +18,7 @@ jobs:
       github.event.pull_request.user.login != 'aikido-autofix[bot]'
     steps:
       - name: Checkout base branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.base.ref }}
 
