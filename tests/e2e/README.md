@@ -12,7 +12,7 @@ This directory currently contains multiple end-to-end harnesses:
 
 ```
 tests/e2e/
-├── smoke.playwright.ts # Playwright smoke coverage against the dev/proxy stack
+├── smoke.playwright.ts # Playwright smoke coverage against temp multi-project fixtures on the dev/proxy stack
 ├── setup/              # Test infrastructure
 │   ├── binary.ts       # Binary compilation management
 │   ├── binary-server.ts # Server lifecycle management
@@ -39,6 +39,9 @@ tests/e2e/
 ```bash
 deno task test:e2e:playwright
 ```
+
+The Playwright harness provisions temporary `projects/<slug>` fixtures automatically from
+`E2E_PROJECT` / `E2E_PROJECTS`, so it no longer depends on checked-in local projects.
 
 ### RSC Browser Regression
 

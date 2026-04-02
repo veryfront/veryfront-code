@@ -8,8 +8,9 @@
  * Zero tolerance: ANY failure blocks push
  */
 
-import { expect, test } from "@playwright/test";
+import { expect, test } from "playwright/test";
 import { findHydrationOrCspFailures, setupErrorCollection } from "./helpers/assertions.js";
+import { getProjectsToTest } from "./helpers/projects.js";
 
 /**
  * Projects to test.
@@ -20,19 +21,6 @@ import { findHydrationOrCspFailures, setupErrorCollection } from "./helpers/asse
  *
  * If neither is set, uses example projects for demonstration.
  */
-const getProjectsToTest = (): string[] => {
-  // Single project override
-  const singleProject = process.env.E2E_PROJECT;
-  if (singleProject) return [singleProject];
-
-  // Multiple projects from env
-  const projectList = process.env.E2E_PROJECTS;
-  if (projectList) return projectList.split(",").map((p) => p.trim()).filter(Boolean);
-
-  // Default: blank project for basic smoke test
-  return ["blank"];
-};
-
 const PROJECTS = getProjectsToTest();
 
 /**
@@ -43,9 +31,20 @@ const MODES = [
   { name: "preview", getUrl: (subdomain: string) => `http://${subdomain}.preview.lvh.me:8080` },
 ];
 
-async function expectPageRenders(page: import("@playwright/test").Page): Promise<void> {
+async function expectPageRenders(page: import("playwright/test").Page): Promise<void> {
   const body = await page.locator("body").innerHTML();
   expect(body.length).toBeGreaterThan(0);
+}
+
+async function visit(page: import("playwright/test").Page, url: string) {
+  const response = await page.goto(url);
+  await page.waitForLoadState("networkidle");
+  return response;
+}
+
+async function expectNoErrors(errors: string[]): Promise<void> {
+  expect(findHydrationOrCspFailures(errors)).toEqual([]);
+  expect(errors).toEqual([]);
 }
 
 /**
@@ -59,31 +58,50 @@ for (const subdomain of PROJECTS) {
       test("page loads without errors", async ({ page }) => {
         const errors = setupErrorCollection(page);
 
-        const response = await page.goto(`${baseUrl}/`);
-        await page.waitForLoadState("networkidle");
+        const response = await visit(page, `${baseUrl}/`);
 
         expect(response?.status()).toBeLessThan(500);
+        await expect(page.locator("#project-name")).toHaveText(subdomain);
         await expectPageRenders(page);
-        expect(errors).toEqual([]);
+        await expectNoErrors(errors);
       });
 
       test("hydration works", async ({ page }) => {
         const errors = setupErrorCollection(page);
 
-        await page.goto(`${baseUrl}/`);
-        await page.waitForLoadState("networkidle");
+        await visit(page, `${baseUrl}/`);
 
-        const interactive = page.locator("button, a[href], [onclick]").first();
-        if ((await interactive.count()) > 0) {
-          try {
-            await interactive.click({ force: true, timeout: 2000 });
-            await page.waitForTimeout(100);
-          } catch {
-            // Element might not be clickable, that's okay
-          }
-        }
+        await page.locator("#counter").click();
+        await expect(page.locator("#counter")).toHaveText("Count: 1");
+        await expectNoErrors(errors);
+      });
 
-        expect(findHydrationOrCspFailures(errors)).toEqual([]);
+      test("secondary routes render", async ({ page }) => {
+        const errors = setupErrorCollection(page);
+
+        const response = await visit(page, `${baseUrl}/about`);
+
+        expect(response?.ok()).toBeTruthy();
+        await expect(page.locator("#about-page")).toHaveText(`About ${subdomain}`);
+        await expectNoErrors(errors);
+      });
+
+      test("API routes respond with JSON", async ({ request }) => {
+        const response = await request.get(`${baseUrl}/api/status`);
+
+        expect(response.ok()).toBeTruthy();
+        expect(response.headers()["content-type"]).toContain("application/json");
+        expect(await response.json()).toEqual({ ok: true, project: subdomain });
+      });
+
+      test("missing routes render the 404 page", async ({ page }) => {
+        const errors = setupErrorCollection(page);
+
+        const response = await visit(page, `${baseUrl}/missing-page`);
+
+        expect(response?.status()).toBe(404);
+        await expect(page.locator("#not-found-page")).toHaveText(`Custom Not Found for ${subdomain}`);
+        await expectNoErrors(errors);
       });
 
       test("color_mode=dark works", async ({ page }) => {
@@ -99,7 +117,7 @@ for (const subdomain of PROJECTS) {
         await expect(page.locator("html").first()).toHaveAttribute("data-theme", "dark");
 
         await expectPageRenders(page);
-        expect(errors).toEqual([]);
+        await expectNoErrors(errors);
       });
 
       test("color_mode=light works", async ({ page }) => {
@@ -115,7 +133,7 @@ for (const subdomain of PROJECTS) {
         await expect(page.locator("html").first()).toHaveAttribute("data-theme", "light");
 
         await expectPageRenders(page);
-        expect(errors).toEqual([]);
+        await expectNoErrors(errors);
       });
 
       if (mode.name === "production") {
@@ -133,7 +151,7 @@ for (const subdomain of PROJECTS) {
             pageContent.includes("parent.postMessage");
           expect(hasStudioBridge).toBeTruthy();
 
-          expect(errors).toEqual([]);
+          await expectNoErrors(errors);
         });
       }
 
@@ -149,7 +167,19 @@ for (const subdomain of PROJECTS) {
           const hmrScript = page.locator('script[src*="preview-hmr.js"]');
           await expect(hmrScript).toBeAttached();
 
-          expect(errors).toEqual([]);
+          await expectNoErrors(errors);
+        });
+
+        test("branch preview subdomains resolve", async ({ page }) => {
+          const errors = setupErrorCollection(page);
+          const branchPreviewUrl = `http://${subdomain}--feature.preview.lvh.me:8080`;
+
+          const response = await visit(page, `${branchPreviewUrl}/`);
+
+          expect(response?.ok()).toBeTruthy();
+          await expect(page.locator("#project-name")).toHaveText(subdomain);
+          await expect(page.locator('script[src*="preview-hmr.js"]')).toBeAttached();
+          await expectNoErrors(errors);
         });
       }
     });
