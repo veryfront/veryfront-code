@@ -2,7 +2,7 @@
 
 This directory currently contains multiple end-to-end harnesses:
 
-- `deno task test:e2e:playwright`: Playwright smoke tests in `*.playwright.ts`
+- `deno task test:e2e:playwright`: Playwright browser E2E tests in `*.playwright.ts`
 - `deno task test:e2e:rsc-browser`: browser-backed Deno regression for proxy-mode RSC hydration
 - `deno task test:e2e:binary`: compiled-binary end-to-end coverage
 
@@ -12,7 +12,9 @@ This directory currently contains multiple end-to-end harnesses:
 
 ```
 tests/e2e/
-├── smoke.playwright.ts # Playwright smoke coverage against temp multi-project fixtures on the dev/proxy stack
+├── smoke.playwright.ts # Broad browser smoke coverage against temp multi-project fixtures on the dev/proxy stack
+├── ssr.playwright.ts   # No-JavaScript SSR proof for core routes
+├── navigation.playwright.ts # Client navigation/history browser semantics
 ├── setup/              # Test infrastructure
 │   ├── binary.ts       # Binary compilation management
 │   ├── binary-server.ts # Server lifecycle management
@@ -34,7 +36,7 @@ tests/e2e/
 
 ## Running Tests
 
-### Playwright Smoke Tests
+### Playwright Browser Tests
 
 ```bash
 deno task test:e2e:playwright
@@ -71,6 +73,8 @@ VERYFRONT_BINARY=/path/to/binary deno task test:e2e:binary
 
 ```bash
 PW_DISABLE_TS_ESM=1 npx playwright test tests/e2e/smoke.playwright.ts --config=tests/e2e/playwright.config.cjs
+PW_DISABLE_TS_ESM=1 npx playwright test tests/e2e/ssr.playwright.ts --config=tests/e2e/playwright.config.cjs
+PW_DISABLE_TS_ESM=1 npx playwright test tests/e2e/navigation.playwright.ts --config=tests/e2e/playwright.config.cjs
 deno test --allow-all tests/e2e/features/layouts.test.ts
 deno test --allow-all tests/e2e/regressions/rsc-proxy-hydration.test.ts
 ```
