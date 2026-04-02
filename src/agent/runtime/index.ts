@@ -77,6 +77,10 @@ import { resolveConfiguredAgentModel, resolveRuntimeModel } from "./model-resolu
 const logger = serverLogger.component("agent");
 const LOAD_SKILL_TOOL_ID = "load-skill";
 
+type RuntimeToolFilterConfig = AgentConfig & {
+  __vfAllowedRemoteTools?: string[];
+};
+
 function createAbortError(reason?: unknown): Error {
   if (reason instanceof Error) {
     return reason;
@@ -185,6 +189,14 @@ function isLocalModel(model: LanguageModel): boolean {
   return !!m._isVfLocalModel ||
     m.provider === "local" ||
     (typeof m.modelId === "string" && m.modelId.startsWith("local/"));
+}
+
+function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {
+  const raw = (config as RuntimeToolFilterConfig).__vfAllowedRemoteTools;
+  if (!Array.isArray(raw) || !raw.every((toolName) => typeof toolName === "string")) {
+    return undefined;
+  }
+  return raw;
 }
 
 export class AgentRuntime {
@@ -418,6 +430,7 @@ export class AgentRuntime {
 
       // Request-scoped skill policy (not class-level mutable state)
       let activeSkillPolicy: string[] | undefined;
+      const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
 
       for (let step = 0; step < maxSteps; step++) {
         this.status = "thinking";
@@ -425,6 +438,7 @@ export class AgentRuntime {
 
         let tools = isLocal ? [] : await getAvailableTools(this.config.tools, {
           includeSkillTools: Boolean(this.config.skills),
+          allowedRemoteToolNames,
         });
 
         // Layer 1: Filter tools based on active skill policy (planning-time)
@@ -548,6 +562,7 @@ export class AgentRuntime {
                   toolCallId: tc.toolCallId,
                   projectId: cacheCtx?.projectId,
                 },
+                allowedRemoteToolNames,
               );
 
               toolCall.status = "completed";
@@ -662,6 +677,7 @@ export class AgentRuntime {
     // Request-scoped skill policy (not class-level mutable state)
     let activeSkillPolicy: string[] | undefined;
     let finalFinishReason: string | undefined;
+    const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
 
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
@@ -669,6 +685,7 @@ export class AgentRuntime {
 
       let tools = isLocalStreaming ? [] : await getAvailableTools(this.config.tools, {
         includeSkillTools: Boolean(this.config.skills),
+        allowedRemoteToolNames,
       });
 
       // Layer 1: Filter tools based on active skill policy (planning-time)
@@ -791,6 +808,7 @@ export class AgentRuntime {
               toolCallId: tc.id,
               ...toolContext,
             },
+            allowedRemoteToolNames,
           );
           throwIfAborted(abortSignal);
 

@@ -19,6 +19,12 @@ import type { RuntimeRunAgentInput } from "./schema.ts";
 
 const anyObjectSchema = z.record(z.string(), z.unknown());
 
+type RuntimeFilteredAgent = Agent & {
+  config: Agent["config"] & {
+    __vfAllowedRemoteTools?: string[];
+  };
+};
+
 export interface RuntimeAgentStreamExecutionDeps {
   sessionManager: AgentRunSessionManager;
   createRuntime?: (
@@ -202,6 +208,21 @@ function normalizeRuntimeMessages(messages: RuntimeRunAgentInput["messages"]): M
   }));
 }
 
+function getAllowedRemoteToolNames(
+  forwardedProps: RuntimeRunAgentInput["forwardedProps"],
+): string[] | undefined {
+  const runtimeOverrides = isRecord(forwardedProps?.runtimeOverrides)
+    ? forwardedProps.runtimeOverrides
+    : null;
+  const allowedTools = runtimeOverrides && Array.isArray(runtimeOverrides.allowedTools)
+    ? runtimeOverrides.allowedTools
+    : null;
+  if (!allowedTools || !allowedTools.every((toolName) => typeof toolName === "string")) {
+    return undefined;
+  }
+  return allowedTools;
+}
+
 export async function createRuntimeAgentStreamResponse(
   input: RuntimeRunAgentInput,
   agent: Agent,
@@ -213,10 +234,16 @@ export async function createRuntimeAgentStreamResponse(
   });
 
   const mergedTools = buildMergedTools(agent, input, deps.sessionManager);
-  const runtime = deps.createRuntime?.(agent, mergedTools) ?? new AgentRuntime(agent.id, {
-    ...agent.config,
-    tools: mergedTools,
-  });
+  const allowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
+  const runtimeAgent: RuntimeFilteredAgent = {
+    ...agent,
+    config: {
+      ...agent.config,
+      tools: mergedTools,
+      ...(allowedRemoteToolNames ? { __vfAllowedRemoteTools: allowedRemoteToolNames } : {}),
+    },
+  };
+  const runtime = deps.createRuntime?.(runtimeAgent, mergedTools) ?? new AgentRuntime(runtimeAgent.id, runtimeAgent.config);
 
   let completedResponse: AgentResponse | null = null;
   const runtimeMessages = normalizeRuntimeMessages(input.messages);
