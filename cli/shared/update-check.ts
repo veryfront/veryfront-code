@@ -11,18 +11,23 @@ import { getEnv } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { getEnvironmentConfig } from "veryfront/config";
+import { isJsonMode } from "./json-output.ts";
+import { isQuiet } from "../utils/index.ts";
+import { detectCI } from "./interactive.ts";
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const REGISTRY_URL = "https://jsr.io/@nicolo-ribaudo/veryfront/meta.json";
+const INSTALL_CMD = "deno install -gArf jsr:@nicolo-ribaudo/veryfront";
 
 interface UpdateCache {
   lastCheck: number;
   latestVersion: string | null;
 }
 
-function getCacheFile(): string {
+function getCacheFile(): string | null {
   const env = getEnvironmentConfig();
-  const cacheDir = join(env.homeDir!, ".cache", "veryfront");
+  if (!env.homeDir) return null;
+  const cacheDir = join(env.homeDir, ".cache", "veryfront");
   return join(cacheDir, "update-check.json");
 }
 
@@ -38,9 +43,15 @@ export function compareVersions(current: string, latest: string): boolean {
 
 export function shouldSkip(): boolean {
   if (getEnv("VERYFRONT_NO_UPDATE_CHECK") === "1") return true;
-  if (getEnv("CI") === "true") return true;
-  if (getEnv("GITHUB_ACTIONS") !== undefined) return true;
+  if (detectCI()) return true;
+  if (isJsonMode()) return true;
+  if (isQuiet()) return true;
   return false;
+}
+
+function printUpdateNotice(current: string, latest: string): void {
+  console.error(`\n  Update available: ${current} → ${latest}`);
+  console.error(`  Run: ${INSTALL_CMD}\n`);
 }
 
 export async function checkForUpdates(
@@ -48,8 +59,10 @@ export async function checkForUpdates(
 ): Promise<void> {
   if (shouldSkip()) return;
 
-  const fs = createFileSystem();
   const cacheFile = getCacheFile();
+  if (!cacheFile) return;
+
+  const fs = createFileSystem();
 
   try {
     const raw = await fs.readTextFile(cacheFile);
@@ -59,12 +72,7 @@ export async function checkForUpdates(
         cache.latestVersion &&
         compareVersions(currentVersion, cache.latestVersion)
       ) {
-        console.error(
-          `\n  Update available: ${currentVersion} → ${cache.latestVersion}`,
-        );
-        console.error(
-          `  Run: deno install -gArf jsr:@nicolo-ribaudo/veryfront\n`,
-        );
+        printUpdateNotice(currentVersion, cache.latestVersion);
       }
       return;
     }
@@ -79,7 +87,9 @@ export async function checkForUpdates(
     const latestVersion = data.latest as string | undefined;
     if (!latestVersion) return;
 
-    const cacheDir = join(getEnvironmentConfig().homeDir!, ".cache", "veryfront");
+    const env = getEnvironmentConfig();
+    if (!env.homeDir) return;
+    const cacheDir = join(env.homeDir, ".cache", "veryfront");
     await fs.mkdir(cacheDir, { recursive: true });
     await fs.writeTextFile(
       cacheFile,
@@ -87,12 +97,7 @@ export async function checkForUpdates(
     );
 
     if (compareVersions(currentVersion, latestVersion)) {
-      console.error(
-        `\n  Update available: ${currentVersion} → ${latestVersion}`,
-      );
-      console.error(
-        `  Run: deno install -gArf jsr:@nicolo-ribaudo/veryfront\n`,
-      );
+      printUpdateNotice(currentVersion, latestVersion);
     }
   } catch {
     // Network error — silently ignore
