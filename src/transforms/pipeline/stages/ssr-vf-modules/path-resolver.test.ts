@@ -137,4 +137,38 @@ describe("resolveRelativeFrameworkImport", () => {
     );
     assertEquals(result, "/foo/bar/csp-nonce.ts.src");
   });
+
+  it("falls back from extracted framework src paths to embedded framework sources in compiled binaries", async () => {
+    const files: Record<string, string> = {
+      "/tmp/deno-compile-veryfront/dist/framework-src/react/runtime/core.ts.src": "embedded",
+    };
+    const fs = createMockFs(files);
+    const result = await resolveRelativeFrameworkImport(
+      "../runtime/core.ts",
+      "/tmp/deno-compile-veryfront/src/react/context/index.tsx",
+      fs,
+      createExistsFn(files),
+    );
+    assertEquals(
+      result,
+      "/tmp/deno-compile-veryfront/dist/framework-src/react/runtime/core.ts.src",
+    );
+  });
+
+  it("resolves sibling framework component imports from compiled-binary extracted paths", async () => {
+    const files: Record<string, string> = {
+      "/tmp/deno-compile-veryfront/dist/framework-src/react/components/Head.tsx.src": "embedded",
+    };
+    const fs = createMockFs(files);
+    const result = await resolveRelativeFrameworkImport(
+      "../components/Head.tsx",
+      "/tmp/deno-compile-veryfront/src/react/fonts/index.ts",
+      fs,
+      createExistsFn(files),
+    );
+    assertEquals(
+      result,
+      "/tmp/deno-compile-veryfront/dist/framework-src/react/components/Head.tsx.src",
+    );
+  });
 });

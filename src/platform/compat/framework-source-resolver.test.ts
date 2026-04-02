@@ -20,6 +20,7 @@ describe("platform/compat/framework-source-resolver", () => {
             return {
               isFile: true,
               isDirectory: false,
+              isSymlink: false,
               isSymbolicLink: false,
               size: 0,
               mtime: null,
@@ -43,6 +44,7 @@ describe("platform/compat/framework-source-resolver", () => {
             return {
               isFile: true,
               isDirectory: false,
+              isSymlink: false,
               isSymbolicLink: false,
               size: 0,
               mtime: null,
