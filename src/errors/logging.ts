@@ -22,6 +22,24 @@ export interface ErrorLogEntry {
   context?: Record<string, unknown>;
 }
 
+function toContextRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function mergeContext(
+  errorContext: unknown,
+  extraContext?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const baseContext = toContextRecord(errorContext);
+
+  if (!baseContext) return extraContext;
+  if (!extraContext) return baseContext;
+
+  return { ...baseContext, ...extraContext };
+}
+
 /**
  * Log a VeryfrontError with structured formatting
  *
@@ -35,6 +53,7 @@ export function logError(
   error: VeryfrontError,
   context?: Record<string, unknown>,
 ): void {
+  const mergedContext = mergeContext(error.context, context);
   const entry: ErrorLogEntry = {
     level: "error",
     slug: error.slug,
@@ -43,11 +62,9 @@ export function logError(
     detail: error.detail,
     suggestion: error.suggestion,
     status: error.status,
-    docs: `https://veryfront.com/docs/errors/${error.slug}`,
+    docs: error.getDocsUrl(),
     timestamp: new Date().toISOString(),
-    context: context
-      ? { ...(error.context as Record<string, unknown> ?? {}), ...context }
-      : error.context as Record<string, unknown> | undefined,
+    context: mergedContext,
   };
 
   if (isProduction()) {
@@ -64,9 +81,6 @@ export function logError(
       serverLogger.error(`  💡 Suggestion: ${error.suggestion}`);
     }
     serverLogger.error(`  📚 Docs: ${entry.docs}`);
-    const mergedContext = context
-      ? { ...(error.context as Record<string, unknown> ?? {}), ...context }
-      : error.context;
     if (mergedContext) {
       serverLogger.error(`  Context: ${JSON.stringify(mergedContext, null, 2)}`);
     }

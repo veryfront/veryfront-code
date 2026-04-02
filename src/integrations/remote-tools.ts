@@ -24,6 +24,10 @@ interface RemoteToolDefinition {
   inputSchema: Record<string, unknown>;
 }
 
+interface CallToolTextContent {
+  text?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Per-request token resolution
 // ---------------------------------------------------------------------------
@@ -48,19 +52,27 @@ function resolveRequestToken(): string | undefined {
   return getApiTokenEnv();
 }
 
-function resolveApiBaseUrl(): string | undefined {
-  return getApiBaseUrlEnv();
-}
-
 // ---------------------------------------------------------------------------
 // API communication
 // ---------------------------------------------------------------------------
+
+function joinCallToolText(content: CallToolTextContent[]): string {
+  return content.map((item) => item.text).join("\n");
+}
+
+function parseJsonText(text: string): unknown | undefined {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
 
 async function fetchToolList(
   baseUrl: string,
   token: string,
 ): Promise<RemoteToolDefinition[]> {
-  const res = await fetch(`${baseUrl}/integrations/tools/list`, {
+  const response = await fetch(`${baseUrl}/integrations/tools/list`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -68,14 +80,14 @@ async function fetchToolList(
     },
   });
 
-  if (!res.ok) {
+  if (!response.ok) {
     logger.warn("Failed to fetch integration tools from API", {
-      status: res.status,
+      status: response.status,
     });
     return [];
   }
 
-  const data = (await res.json()) as { tools: RemoteToolDefinition[] };
+  const data = (await response.json()) as { tools: RemoteToolDefinition[] };
   return data.tools ?? [];
 }
 
@@ -86,7 +98,7 @@ async function callRemoteTool(
   args: Record<string, unknown>,
   endUserId?: string,
 ): Promise<unknown> {
-  const res = await fetch(`${baseUrl}/integrations/tools/call`, {
+  const response = await fetch(`${baseUrl}/integrations/tools/call`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -99,37 +111,27 @@ async function callRemoteTool(
     }),
   });
 
-  if (!res.ok) {
-    const text = await res.text();
-    return { error: "api_error", status: res.status, message: text };
+  if (!response.ok) {
+    const text = await response.text();
+    return { error: "api_error", status: response.status, message: text };
   }
 
-  const result = await res.json();
+  const result = await response.json();
 
   // If MCP CallToolResult format, extract content
   if (result?.content && Array.isArray(result.content)) {
+    const text = joinCallToolText(result.content as CallToolTextContent[]);
+
     if (result.isError) {
-      const errorText = result.content
-        .map((c: { text?: string }) => c.text)
-        .join("\n");
       // Try to preserve structured error data (e.g., authentication_required with connectUrl)
-      try {
-        const parsed = JSON.parse(errorText);
-        if (parsed && typeof parsed === "object") return parsed;
-      } catch {
-        // Not JSON
-      }
-      return { error: "tool_error", message: errorText };
+      const parsed = parseJsonText(text);
+      if (parsed && typeof parsed === "object") return parsed;
+      return { error: "tool_error", message: text };
     }
+
     if (result.structuredContent) return result.structuredContent;
-    const text = result.content
-      .map((c: { text?: string }) => c.text)
-      .join("\n");
-    try {
-      return JSON.parse(text);
-    } catch {
-      return text;
-    }
+
+    return parseJsonText(text) ?? text;
   }
 
   return result;
@@ -150,7 +152,7 @@ async function callRemoteTool(
 export async function getRemoteIntegrationToolDefinitions(): Promise<
   ToolDefinition[]
 > {
-  const baseUrl = resolveApiBaseUrl();
+  const baseUrl = getApiBaseUrlEnv();
   const token = resolveRequestToken();
   if (!baseUrl || !token) return [];
 
@@ -188,7 +190,7 @@ export async function executeRemoteIntegrationTool(
   args: Record<string, unknown>,
   endUserId?: string,
 ): Promise<unknown> {
-  const baseUrl = resolveApiBaseUrl();
+  const baseUrl = getApiBaseUrlEnv();
   const token = resolveRequestToken();
   if (!baseUrl || !token) {
     return { error: "no_api_token", message: "No API token available" };
@@ -208,7 +210,7 @@ export async function syncIntegrationConfig(
   integrations: Record<string, { scope?: string; tools?: string[] }>,
 ): Promise<void> {
   try {
-    const res = await fetch(`${apiBaseUrl}/integrations/config`, {
+    const response = await fetch(`${apiBaseUrl}/integrations/config`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiToken}`,
@@ -217,12 +219,12 @@ export async function syncIntegrationConfig(
       body: JSON.stringify({ integrations }),
     });
 
-    if (!res.ok) {
+    if (!response.ok) {
       logger.warn("Failed to sync integration config to API", {
-        status: res.status,
+        status: response.status,
       });
     } else {
-      const data = (await res.json()) as { synced: number };
+      const data = (await response.json()) as { synced: number };
       logger.info("Synced integration config to API", { synced: data.synced });
     }
   } catch (err) {

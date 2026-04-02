@@ -27,16 +27,19 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { env as getProcessEnv } from "#veryfront/compat/process.ts";
-import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
-import { mergeInjectedWorkflowEnv } from "../../jobs/runtime-env.ts";
 import { discoverWorkflows } from "../discovery/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { WorkflowBackend } from "../backends/types.ts";
 import { WorkflowExecutor } from "../executor/workflow-executor.ts";
-import type { CapturedTenantContext } from "../types.ts";
+import {
+  failRunExecution,
+  getFinalRunExitCode,
+  getTenantFromEnv,
+  hydrateRunContextEnv,
+  runWithTenantContext,
+} from "./shared.ts";
 
 const logger = baseLogger.component("dynamic-job");
 
@@ -60,26 +63,6 @@ export interface DynamicJobEntrypointConfig {
 
   /** Enable debug logging */
   debug?: boolean;
-}
-
-/**
- * Get tenant context from environment variables
- */
-function getTenantFromEnv(): CapturedTenantContext | undefined {
-  const projectSlug = getEnv("TENANT_PROJECT_SLUG");
-  const token = getEnv("TENANT_TOKEN");
-
-  if (!projectSlug || !token) {
-    return undefined;
-  }
-
-  return {
-    projectSlug,
-    token,
-    projectId: getEnv("TENANT_PROJECT_ID"),
-    productionMode: getEnv("TENANT_PRODUCTION_MODE") === "1",
-    releaseId: getEnv("TENANT_RELEASE_ID") || undefined,
-  };
 }
 
 /**
@@ -117,21 +100,7 @@ export async function runDynamicWorkflowJob(
       return DYNAMIC_EXIT_CODES.NOT_FOUND;
     }
 
-    const injectedEnv = mergeInjectedWorkflowEnv(run.context.env, getProcessEnv());
-    if (injectedEnv) {
-      const currentEnv = run.context.env;
-      const currentSerialized = currentEnv ? JSON.stringify(currentEnv) : "";
-      const nextSerialized = JSON.stringify(injectedEnv);
-      if (currentSerialized !== nextSerialized) {
-        await backend.updateRun(runId, {
-          context: {
-            ...run.context,
-            env: injectedEnv,
-          },
-        });
-        run = (await backend.getRun(runId)) ?? run;
-      }
-    }
+    run = await hydrateRunContextEnv(backend, runId, run);
 
     // Get tenant context (from env or from stored run)
     const tenant = getTenantFromEnv() ?? run._tenant;
@@ -147,14 +116,8 @@ export async function runDynamicWorkflowJob(
     }
 
     // Execute with tenant context
-    return await runWithRequestContext(
-      {
-        projectSlug: tenant.projectSlug,
-        token: tenant.token,
-        projectId: tenant.projectId,
-        productionMode: tenant.productionMode,
-        releaseId: tenant.releaseId,
-      },
+    return await runWithTenantContext(
+      tenant,
       async () => {
         // Set up FS adapter with Veryfront API backend
         const apiUrl = getEnv("VERYFRONT_API_URL") || "https://api.veryfront.com";
@@ -227,44 +190,15 @@ export async function runDynamicWorkflowJob(
         // Execute the workflow
         try {
           await executor.resume(runId);
-
-          const finalRun = await backend.getRun(runId);
-          const status = finalRun?.status;
-
-          switch (status) {
-            case "completed":
-              if (debug) {
-                logger.info(`Workflow completed successfully: ${runId}`);
-              }
-              return DYNAMIC_EXIT_CODES.SUCCESS;
-
-            case "failed":
-              logger.error(`Workflow failed: ${runId}`, finalRun?.error);
-              return DYNAMIC_EXIT_CODES.WORKFLOW_FAILED;
-
-            case "waiting":
-              if (debug) {
-                logger.info(`Workflow paused (waiting): ${runId}`);
-              }
-              return DYNAMIC_EXIT_CODES.SUCCESS;
-
-            default:
-              logger.warn(`Unexpected final status: ${status}`);
-              return DYNAMIC_EXIT_CODES.SUCCESS;
-          }
+          return getFinalRunExitCode(
+            logger,
+            DYNAMIC_EXIT_CODES,
+            runId,
+            await backend.getRun(runId),
+            debug,
+          );
         } catch (error) {
-          logger.error("Execution error:", error);
-
-          await backend.updateRun(runId, {
-            status: "failed",
-            error: {
-              message: `EXECUTION_ERROR: ${error instanceof Error ? error.message : String(error)}`,
-              stack: error instanceof Error ? error.stack : undefined,
-            },
-            completedAt: new Date(),
-          });
-
-          return DYNAMIC_EXIT_CODES.WORKFLOW_FAILED;
+          return await failRunExecution(backend, logger, DYNAMIC_EXIT_CODES, runId, error);
         }
       },
     );

@@ -20,6 +20,7 @@ import {
   HTTP_INTERNAL_SERVER_ERROR,
   HTTP_NOT_FOUND,
   HTTP_OK,
+  HTTP_REDIRECT_FOUND,
   HTTP_UNAVAILABLE,
 } from "#veryfront/utils/constants/index.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
@@ -60,8 +61,9 @@ export interface SSRRenderResult {
   etag?: string;
   cacheStrategy: "no-cache" | "short";
   error?: Error;
-  errorType?: "not-found" | "undeployed" | "server-error" | "runtime";
+  errorType?: "not-found" | "undeployed" | "redirect" | "server-error" | "runtime";
   showDevOverlay?: boolean;
+  redirectLocation?: string;
   slug: string;
 }
 
@@ -82,6 +84,25 @@ export interface MemoryStatus {
   heapUsedMB: number;
   heapLimitMB: number;
   heapUsedPercent: number;
+}
+
+interface RedirectResultContext {
+  redirect?: {
+    destination?: unknown;
+    permanent?: unknown;
+  };
+}
+
+function extractRedirectLocation(
+  error: VeryfrontError,
+): { destination: string; permanent: boolean } | null {
+  const redirect = (error.context as RedirectResultContext | undefined)?.redirect;
+  if (!redirect || typeof redirect.destination !== "string") return null;
+
+  return {
+    destination: redirect.destination,
+    permanent: redirect.permanent === true,
+  };
 }
 
 export class SSRService implements SSRServiceLike {
@@ -204,7 +225,7 @@ export class SSRService implements SSRServiceLike {
       };
     } catch (error) {
       endRenderSession(renderSessionId);
-      return this.handleRenderError(error, ctx, slug, request);
+      return this.handleRenderError(error, ctx, slug, request, nonce);
     }
   }
 
@@ -213,6 +234,7 @@ export class SSRService implements SSRServiceLike {
     ctx: HandlerContext,
     slug: string,
     request: Request,
+    nonce?: string,
   ): SSRRenderResult {
     const errorObj = error instanceof Error ? error : new Error(String(error));
     const isDev = ctx.isLocalProject || ctx.requestContext?.mode === "preview";
@@ -256,6 +278,27 @@ export class SSRService implements SSRServiceLike {
       }
     }
 
+    if (error instanceof VeryfrontError && error.slug === "render-error") {
+      const redirect = extractRedirectLocation(error);
+      if (redirect) {
+        logger.debug("SSR redirect", {
+          slug,
+          destination: redirect.destination,
+          permanent: redirect.permanent,
+          projectSlug: ctx.projectSlug,
+        });
+        return {
+          status: redirect.permanent ? 301 : HTTP_REDIRECT_FOUND,
+          isStreaming: false,
+          cacheStrategy: "no-cache",
+          error: errorObj,
+          errorType: "redirect",
+          redirectLocation: redirect.destination,
+          slug,
+        };
+      }
+    }
+
     logger.error("Render failed", {
       slug,
       error: errorObj.message,
@@ -274,12 +317,16 @@ export class SSRService implements SSRServiceLike {
       const location = sourceFile ? parseErrorLocation(errorObj, sourceFile) : {};
       return {
         status: HTTP_INTERNAL_SERVER_ERROR,
-        html: ErrorOverlay.createHTML({
-          error: errorObj,
-          type: "runtime",
-          ...(sourceFile ? { file: sourceFile } : {}),
-          ...location,
-        }, ctx.projectSlug),
+        html: ErrorOverlay.createHTML(
+          {
+            error: errorObj,
+            type: "runtime",
+            ...(sourceFile ? { file: sourceFile } : {}),
+            ...location,
+          },
+          ctx.projectSlug,
+          nonce,
+        ),
         isStreaming: false,
         cacheStrategy: "no-cache",
         error: errorObj,

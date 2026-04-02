@@ -16,6 +16,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 interface PageRenderOptions {
   params?: Record<string, string | string[]>;
+  url?: URL;
   props?: ComponentProps;
   nonce?: string;
   /** Project ID for multi-project SSR module isolation */
@@ -124,6 +125,7 @@ export class PageRenderer {
                 projectDir: this.projectDir,
                 adapter: this.adapter,
                 params: options?.params,
+                url: options?.url,
                 props: options?.props,
                 nonce: options?.nonce,
               }),
@@ -190,6 +192,7 @@ export class PageRenderer {
               this.adapter,
               {
                 params: options?.params,
+                url: options?.url,
                 precompiledModule: cachedModule?.type === "mdx" ? cachedModule.code : undefined,
                 projectId: options?.projectId,
                 studioEmbed: options?.studioEmbed,

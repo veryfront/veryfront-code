@@ -97,6 +97,39 @@ describe("Metrics Module", () => {
     }
   });
 
+  describe("Error and Security Metrics Functions", () => {
+    const exportedFunctions = [
+      "recordCorsRejection",
+      "recordSecurityHeaders",
+      "recordErrorCount",
+    ] as const;
+
+    for (const name of exportedFunctions) {
+      it(`should export ${name} function`, () => assertExportedFunction(name));
+    }
+
+    it("should forward recordErrorCount to the recorder", async () => {
+      const { metricsManager, recordErrorCount } = await import("./index.ts");
+      const recorder = metricsManager.getRecorder();
+      assertExists(recorder, "Recorder should be available");
+
+      const originalRecordError = recorder.recordError;
+      const calls: Array<Record<string, string> | undefined> = [];
+
+      recorder.recordError = (attributes?: Record<string, string>) => {
+        calls.push(attributes);
+      };
+
+      try {
+        const attributes = { category: "RUNTIME", source: "http" };
+        recordErrorCount(attributes);
+        assertEquals(calls, [attributes]);
+      } finally {
+        recorder.recordError = originalRecordError;
+      }
+    });
+  });
+
   describe("MetricsManager - Initialization", () => {
     let manager: MetricsManager;
 

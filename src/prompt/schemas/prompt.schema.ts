@@ -9,8 +9,4 @@ export const PromptConfigSchema = z.object({
   suggestion: z.string().optional(),
 });
 
-// Inferred type
 export type PromptConfig = z.infer<typeof PromptConfigSchema>;
-
-// Note: Prompt interface with getContent method stays as TypeScript interface
-// since it includes a method that returns a Promise

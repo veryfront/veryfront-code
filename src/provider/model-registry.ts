@@ -27,7 +27,7 @@ import { ProjectScopedRegistryManager } from "../ai/registry-manager.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEFAULT_LOCAL_MODEL } from "./local/model-catalog.ts";
 import { createLocalModel } from "./local/ai-sdk-adapter.ts";
-import { isLocalAIDisabled } from "./local/env.ts";
+import { throwIfLocalAIDisabled } from "./local/env.ts";
 import { verifyLocalRuntime } from "./local/local-engine.ts";
 import {
   getDefaultVeryfrontCloudModel,
@@ -270,14 +270,7 @@ export function resolveModel(modelString: string): LanguageModel {
       manager.has("local")
     ) {
       // Check if local AI is explicitly disabled (e.g., for testing)
-      if (isLocalAIDisabled()) {
-        throw toError(
-          createError({
-            type: "no_ai_available",
-            message: "Local AI disabled via VERYFRONT_DISABLE_LOCAL_AI environment variable.",
-          }),
-        );
-      }
+      throwIfLocalAIDisabled();
 
       localLogger.info(
         `⚡ "${providerName}" unavailable (missing credentials or configuration). ` +

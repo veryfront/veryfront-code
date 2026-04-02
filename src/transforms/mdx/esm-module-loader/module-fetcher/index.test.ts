@@ -19,14 +19,15 @@ import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
 function getTransformCacheKey(
   projectId: string,
   contentSourceId: string,
+  reactVersion: string,
   normalizedPath: string,
   contentHash: string,
 ): string {
-  return `${MDX_ESM_CACHE_NAMESPACE}:${projectId}:${contentSourceId}:${normalizedPath}:${contentHash}:ssr`;
+  return `${MDX_ESM_CACHE_NAMESPACE}:${projectId}:${contentSourceId}:${reactVersion}:${normalizedPath}:${contentHash}:ssr`;
 }
 
-function getVersionedPathCacheKey(normalizedPath: string): string {
-  return `${MDX_ESM_CACHE_NAMESPACE}:${normalizedPath}`;
+function getVersionedPathCacheKey(normalizedPath: string, reactVersion: string): string {
+  return `${MDX_ESM_CACHE_NAMESPACE}:${reactVersion}:${normalizedPath}`;
 }
 
 function rewriteVeryfrontImports(code: string): string {
@@ -109,38 +110,45 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       const key = getTransformCacheKey(
         "proj1",
         "preview-main",
+        "19.1.1",
         "_vf_modules/pages/index.js",
         "abc123",
       );
       assertEquals(
         key,
-        `${MDX_ESM_CACHE_NAMESPACE}:proj1:preview-main:_vf_modules/pages/index.js:abc123:ssr`,
+        `${MDX_ESM_CACHE_NAMESPACE}:proj1:preview-main:19.1.1:_vf_modules/pages/index.js:abc123:ssr`,
       );
     });
 
     it("produces different keys for different content hashes", () => {
-      const k1 = getTransformCacheKey("p", "preview-main", "path", "hash1");
-      const k2 = getTransformCacheKey("p", "preview-main", "path", "hash2");
+      const k1 = getTransformCacheKey("p", "preview-main", "19.1.1", "path", "hash1");
+      const k2 = getTransformCacheKey("p", "preview-main", "19.1.1", "path", "hash2");
       assertEquals(k1 !== k2, true);
     });
 
     it("produces different keys for different projects", () => {
-      const k1 = getTransformCacheKey("proj-a", "preview-main", "path", "hash");
-      const k2 = getTransformCacheKey("proj-b", "preview-main", "path", "hash");
+      const k1 = getTransformCacheKey("proj-a", "preview-main", "19.1.1", "path", "hash");
+      const k2 = getTransformCacheKey("proj-b", "preview-main", "19.1.1", "path", "hash");
       assertEquals(k1 !== k2, true);
     });
 
     it("produces different keys for different content sources", () => {
-      const k1 = getTransformCacheKey("proj-a", "preview-main", "path", "hash");
-      const k2 = getTransformCacheKey("proj-a", "release-42", "path", "hash");
+      const k1 = getTransformCacheKey("proj-a", "preview-main", "19.1.1", "path", "hash");
+      const k2 = getTransformCacheKey("proj-a", "release-42", "19.1.1", "path", "hash");
       assertEquals(k1 !== k2, true);
+    });
+
+    it("produces different keys for different react versions", () => {
+      const react18 = getTransformCacheKey("proj-a", "preview-main", "18.3.1", "path", "hash");
+      const react19 = getTransformCacheKey("proj-a", "preview-main", "19.1.1", "path", "hash");
+      assertEquals(react18 !== react19, true);
     });
   });
 
   describe("getVersionedPathCacheKey", () => {
     it("prefixes with cache namespace", () => {
-      const key = getVersionedPathCacheKey("_vf_modules/pages/index.js");
-      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:_vf_modules/pages/index.js`);
+      const key = getVersionedPathCacheKey("_vf_modules/pages/index.js", "19.1.1");
+      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:19.1.1:_vf_modules/pages/index.js`);
     });
   });
 
@@ -476,76 +484,76 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     const frameworkPath = "/usr/local/lib/node_modules/veryfront/src/react/router/index.tsx";
     const projectPath = "/app/project/components/Button.tsx";
 
-    it("rewrites relative _dnt.polyfills.js import for framework files", () => {
+    it("rewrites relative _dnt.polyfills.js import for framework files", async () => {
       const code = `import "../../../_dnt.polyfills.js";\nexport const foo = 1;`;
-      const result = rewriteDntImports(code, frameworkPath);
+      const result = await rewriteDntImports(code, frameworkPath);
       assertEquals(result.includes("file://"), true);
       assertEquals(result.includes("_dnt.polyfills.js"), true);
       assertEquals(result.includes("../../../_dnt.polyfills.js"), false);
     });
 
-    it("rewrites relative _dnt.shims.js import for framework files", () => {
+    it("rewrites relative _dnt.shims.js import for framework files", async () => {
       const code = `import * as dntShim from "../../_dnt.shims.js";\nexport const foo = 1;`;
-      const result = rewriteDntImports(code, frameworkPath);
+      const result = await rewriteDntImports(code, frameworkPath);
       assertEquals(result.includes("file://"), true);
       assertEquals(result.includes("_dnt.shims.js"), true);
       assertEquals(result.includes("../../_dnt.shims.js"), false);
     });
 
-    it("rewrites side-effect _dnt.polyfills.js import (no from)", () => {
+    it("rewrites side-effect _dnt.polyfills.js import (no from)", async () => {
       const code = `import "../../../_dnt.polyfills.js";\nimport "../../../_dnt.polyfills.js";`;
-      const result = rewriteDntImports(code, frameworkPath);
+      const result = await rewriteDntImports(code, frameworkPath);
       const matches = result.match(/file:\/\//g);
       assertEquals(matches?.length, 2);
     });
 
-    it("does not rewrite dnt imports for project files", () => {
+    it("does not rewrite dnt imports for project files", async () => {
       const code = `import "../../../_dnt.polyfills.js";\nexport const foo = 1;`;
-      const result = rewriteDntImports(code, projectPath);
+      const result = await rewriteDntImports(code, projectPath);
       assertEquals(result, code);
     });
 
-    it("does not modify code without dnt imports", () => {
+    it("does not modify code without dnt imports", async () => {
       const code = `import React from "react";\nexport const foo = 1;`;
-      const result = rewriteDntImports(code, frameworkPath);
+      const result = await rewriteDntImports(code, frameworkPath);
       assertEquals(result, code);
     });
 
-    it("handles mixed dnt and non-dnt imports", () => {
+    it("handles mixed dnt and non-dnt imports", async () => {
       const code = [
         `import "../../../_dnt.polyfills.js";`,
         `import React from "react";`,
         `import * as dntShim from "../../_dnt.shims.js";`,
         `export default function App() {}`,
       ].join("\n");
-      const result = rewriteDntImports(code, frameworkPath);
+      const result = await rewriteDntImports(code, frameworkPath);
       assertEquals(result.includes(`from "react"`), true);
       assertEquals(result.includes("../../../_dnt.polyfills.js"), false);
       assertEquals(result.includes("../../_dnt.shims.js"), false);
       assertEquals((result.match(/file:\/\//g) ?? []).length, 2);
     });
 
-    it("rewrites node_modules paths even if not under FRAMEWORK_ROOT", () => {
+    it("rewrites node_modules paths even if not under FRAMEWORK_ROOT", async () => {
       const nodeModulesPath = "/app/node_modules/veryfront/esm/src/react/router/index.js";
       const code = `import "../../_dnt.polyfills.js";`;
-      const result = rewriteDntImports(code, nodeModulesPath);
+      const result = await rewriteDntImports(code, nodeModulesPath);
       assertEquals(result.includes("file://"), true);
     });
 
-    it("does not rewrite project files under FRAMEWORK_ROOT in local dev", () => {
+    it("does not rewrite project files under FRAMEWORK_ROOT in local dev", async () => {
       const localProjectPath = join(
         FRAMEWORK_ROOT,
         "projects/example-project/components/Header.tsx",
       );
       const code = `import { Logo } from "../elements/Logo.js";\nexport const foo = 1;`;
-      const result = rewriteDntImports(code, localProjectPath);
+      const result = await rewriteDntImports(code, localProjectPath);
       assertEquals(result, code, "Project files under FRAMEWORK_ROOT should not be rewritten");
     });
 
-    it("rewrites framework src files under FRAMEWORK_ROOT", () => {
+    it("rewrites framework src files under FRAMEWORK_ROOT", async () => {
       const frameworkSrcPath = join(FRAMEWORK_ROOT, "src/react/components/Head.tsx");
       const code = `import "../../../_dnt.polyfills.js";\nexport const foo = 1;`;
-      const result = rewriteDntImports(code, frameworkSrcPath);
+      const result = await rewriteDntImports(code, frameworkSrcPath);
       assertEquals(result.includes("file://"), true);
       assertEquals(result.includes("../../../_dnt.polyfills.js"), false);
     });

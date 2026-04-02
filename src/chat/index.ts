@@ -48,52 +48,36 @@
  * ```
  */
 
-// veryfront/chat — Chat UI components + hooks
-//
-// Merges components/ai (UI) and agent/react (hooks) into a single
-// product-oriented import path.
-
-// ---------------------------------------------------------------------------
-// Core preset + compound
-// ---------------------------------------------------------------------------
-
-export { Chat, ChatComponents } from "#veryfront/react/components/ai/chat.tsx";
-export type { ChatProps } from "#veryfront/react/components/ai/chat.tsx";
-
-// ---------------------------------------------------------------------------
-// Composition building blocks
-// ---------------------------------------------------------------------------
+export { Chat, ChatComponents, type ChatProps } from "#veryfront/react/components/ai/chat.tsx";
 
 export {
   ChatComposer,
+  type ChatComposerProps,
   ChatEmpty,
+  type ChatEmptyProps,
   ChatIf,
+  type ChatIfProps,
   ChatMessageList,
+  type ChatMessageListProps,
   ChatRoot,
+  type ChatRootProps,
   ErrorBanner,
+  type ErrorBannerProps,
   Message,
+  type MessageRootProps,
   ModelAvatar,
+  type ModelAvatarProps,
 } from "#veryfront/react/components/ai/chat.tsx";
-export type {
-  ChatComposerProps,
-  ChatEmptyProps,
-  ChatIfProps,
-  ChatMessageListProps,
-  ChatRootProps,
-  ErrorBannerProps,
-  MessageRootProps,
-  ModelAvatarProps,
-} from "#veryfront/react/components/ai/chat.tsx";
-
-// ---------------------------------------------------------------------------
-// Contexts
-// ---------------------------------------------------------------------------
 
 export {
   ChatContextProvider,
+  type ChatContextValue,
   ComposerContextProvider,
+  type ComposerContextValue,
   MessageContextProvider,
+  type MessageContextValue,
   ThreadListContextProvider,
+  type ThreadListContextValue,
   useChatContext,
   useChatContextOptional,
   useComposerContext,
@@ -103,167 +87,147 @@ export {
   useThreadListContext,
   useThreadListContextOptional,
 } from "#veryfront/react/components/ai/chat.tsx";
-export type {
-  ChatContextValue,
-  ComposerContextValue,
-  MessageContextValue,
-  ThreadListContextValue,
-} from "#veryfront/react/components/ai/chat.tsx";
-
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
 
 export {
+  type AttachmentInfo,
   AttachmentPill,
+  type AttachmentPillProps,
   BranchPicker,
+  type BranchPickerProps,
   ChatSidebar,
+  type ChatSidebarProps,
+  type ChatTab,
   ChatWithSidebar,
+  type ChatWithSidebarAttachmentConfig,
+  type ChatWithSidebarChatController,
+  type ChatWithSidebarFeatureConfig,
+  type ChatWithSidebarGroupedProps,
+  type ChatWithSidebarMessageConfig,
+  type ChatWithSidebarModelConfig,
+  type ChatWithSidebarProps,
+  type ChatWithSidebarQuickActionsConfig,
+  type ChatWithSidebarSidebarConfig,
+  type ChatWithSidebarTabsConfig,
+  type ChatWithSidebarVoiceConfig,
+  type CodeBlockProps,
   ConversationEmptyState,
+  type ConversationEmptyStateProps,
   ConversationScrollButton,
+  type ConversationScrollButtonProps,
   downloadMarkdown,
   DropZoneOverlay,
+  type DropZoneOverlayProps,
   exportAsMarkdown,
   extractSourcesFromParts,
   FadeIn,
+  type FeedbackValue,
   getTextContent,
   groupPartsInOrder,
   InferenceBadge,
+  type InferenceBadgeProps,
   InlineCitation,
+  type InlineCitationProps,
   isReasoningPart,
   isSkillToolPart,
   isToolPart,
   Loader,
   MessageActions,
+  type MessageActionsProps,
   MessageEditForm,
+  type MessageEditFormProps,
   MessageFeedback,
+  type MessageFeedbackProps,
+  type ModelOption,
   ModelSelector,
+  type ModelSelectorProps,
+  type PartGroup,
+  type QuickAction,
   QuickActions,
+  type QuickActionsProps,
   ReasoningCard,
   RichCodeBlock,
   Shimmer,
   SkillBadge,
+  type SkillBadgeProps,
+  type Source,
   Sources,
+  type SourcesProps,
   StepIndicator,
+  type StepIndicatorProps,
   Suggestion,
+  type SuggestionProps,
   Suggestions,
+  type SuggestionsProps,
   TabSwitcher,
+  type TabSwitcherProps,
+  type Thread,
   ToolCallCard,
   ToolStatusBadge,
   UpgradeCTA,
+  type UpgradeCTAProps,
+  type UploadedFile,
   UploadsPanel,
+  type UploadsPanelProps,
   useThreads,
-} from "#veryfront/react/components/ai/chat.tsx";
-export type {
-  AttachmentInfo,
-  AttachmentPillProps,
-  BranchPickerProps,
-  ChatSidebarProps,
-  ChatTab,
-  ChatWithSidebarAttachmentConfig,
-  ChatWithSidebarChatController,
-  ChatWithSidebarFeatureConfig,
-  ChatWithSidebarGroupedProps,
-  ChatWithSidebarMessageConfig,
-  ChatWithSidebarModelConfig,
-  ChatWithSidebarProps,
-  ChatWithSidebarQuickActionsConfig,
-  ChatWithSidebarSidebarConfig,
-  ChatWithSidebarTabsConfig,
-  ChatWithSidebarVoiceConfig,
-  CodeBlockProps,
-  ConversationEmptyStateProps,
-  ConversationScrollButtonProps,
-  DropZoneOverlayProps,
-  FeedbackValue,
-  InferenceBadgeProps,
-  InlineCitationProps,
-  MessageActionsProps,
-  MessageEditFormProps,
-  MessageFeedbackProps,
-  ModelOption,
-  ModelSelectorProps,
-  PartGroup,
-  QuickAction,
-  QuickActionsProps,
-  SkillBadgeProps,
-  Source,
-  SourcesProps,
-  StepIndicatorProps,
-  SuggestionProps,
-  SuggestionsProps,
-  TabSwitcherProps,
-  Thread,
-  UpgradeCTAProps,
-  UploadedFile,
-  UploadsPanelProps,
-  UseThreadsOptions,
-  UseThreadsResult,
+  type UseThreadsOptions,
+  type UseThreadsResult,
 } from "#veryfront/react/components/ai/chat.tsx";
 
-// Message (standalone bubble, not the chat compound)
 export {
   Message as StandaloneMessage,
+  type MessageProps,
   StreamingMessage,
-} from "#veryfront/react/components/ai/message.tsx";
-export type {
-  MessageProps,
-  StreamingMessageProps,
+  type StreamingMessageProps,
 } from "#veryfront/react/components/ai/message.tsx";
 
-export { AgentCard } from "#veryfront/react/components/ai/agent-card.tsx";
-export type { AgentCardProps } from "#veryfront/react/components/ai/agent-card.tsx";
-
+export { AgentCard, type AgentCardProps } from "#veryfront/react/components/ai/agent-card.tsx";
 export {
   AIErrorBoundary,
+  type AIErrorBoundaryProps,
   useAIErrorHandler,
 } from "#veryfront/react/components/ai/error-boundary.tsx";
-export type { AIErrorBoundaryProps } from "#veryfront/react/components/ai/error-boundary.tsx";
-
-// Types only from theme
 export type { AgentTheme, ChatTheme } from "#veryfront/react/components/ai/theme.ts";
 
-// ---------------------------------------------------------------------------
-// Hooks (from agent/react)
-// ---------------------------------------------------------------------------
-
-export { useChat } from "#veryfront/agent/react/use-chat/index.ts";
-export type {
-  BranchInfo,
-  BrowserInferenceStatus,
-  DynamicToolUIPart,
-  InferenceMode,
-  OnToolCallArg,
-  ReasoningUIPart,
-  StepUIPart,
-  TextUIPart,
-  ToolOutput,
-  ToolResultUIPart,
-  ToolState,
-  ToolUIPart,
-  UIMessage,
-  UIMessagePart,
-  UseChatOptions,
-  UseChatResult,
+export {
+  type BranchInfo,
+  type BrowserInferenceStatus,
+  type DynamicToolUIPart,
+  type InferenceMode,
+  type OnToolCallArg,
+  type ReasoningUIPart,
+  type StepUIPart,
+  type TextUIPart,
+  type ToolOutput,
+  type ToolResultUIPart,
+  type ToolState,
+  type ToolUIPart,
+  type UIMessage,
+  type UIMessagePart,
+  useChat,
+  type UseChatOptions,
+  type UseChatResult,
 } from "#veryfront/agent/react/use-chat/index.ts";
 
-export { useAgent } from "#veryfront/agent/react/use-agent.ts";
-export type { UseAgentOptions, UseAgentResult } from "#veryfront/agent/react/use-agent.ts";
+export {
+  useAgent,
+  type UseAgentOptions,
+  type UseAgentResult,
+} from "#veryfront/agent/react/use-agent.ts";
 
-export { useCompletion } from "#veryfront/agent/react/use-completion.ts";
-export type {
-  UseCompletionOptions,
-  UseCompletionResult,
+export {
+  useCompletion,
+  type UseCompletionOptions,
+  type UseCompletionResult,
 } from "#veryfront/agent/react/use-completion.ts";
 
-export { useStreaming } from "#veryfront/agent/react/use-streaming.ts";
-export type {
-  UseStreamingOptions,
-  UseStreamingResult,
+export {
+  useStreaming,
+  type UseStreamingOptions,
+  type UseStreamingResult,
 } from "#veryfront/agent/react/use-streaming.ts";
 
-export { useVoiceInput } from "#veryfront/agent/react/use-voice-input.ts";
-export type {
-  UseVoiceInputOptions,
-  UseVoiceInputResult,
+export {
+  useVoiceInput,
+  type UseVoiceInputOptions,
+  type UseVoiceInputResult,
 } from "#veryfront/agent/react/use-voice-input.ts";

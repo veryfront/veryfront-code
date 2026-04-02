@@ -82,7 +82,10 @@ export async function checkForUpdates(
 
   try {
     const resp = await fetch(REGISTRY_URL);
-    if (!resp.ok) return;
+    if (!resp.ok) {
+      await resp.body?.cancel();
+      return;
+    }
     const data = await resp.json();
     const latestVersion = data.latest as string | undefined;
     if (!latestVersion) return;

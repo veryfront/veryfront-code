@@ -10,6 +10,7 @@
 import { join } from "#veryfront/compat/path";
 import * as posix from "#std/path/posix";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getLocalFs, saveModulePathCache } from "../cache/index.ts";
 import { hashString } from "../utils/hash.ts";
@@ -48,6 +49,7 @@ export async function cacheModule(
   esmCacheDir: string,
   pathCache: Map<string, string>,
   log: Logger,
+  reactVersion = REACT_DEFAULT_VERSION,
 ): Promise<string | null> {
   const unresolved = hasUnresolvedImports(moduleCode);
   if (unresolved.count > 0) {
@@ -60,7 +62,7 @@ export async function cacheModule(
 
   const contentHash = hashString(normalizedPath + moduleCode);
   const cachePath = join(esmCacheDir, buildMdxEsmModuleFileName(contentHash));
-  const pathCacheKey = buildMdxEsmPathCacheKey(normalizedPath);
+  const pathCacheKey = buildMdxEsmPathCacheKey(normalizedPath, reactVersion);
 
   const localFs = getLocalFs();
   try {

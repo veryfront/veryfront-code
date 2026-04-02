@@ -1,5 +1,10 @@
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert";
 import { z } from "zod";
 import { dynamicTool, tool } from "./factory.ts";
 
@@ -41,6 +46,44 @@ describe("tool factory", () => {
       assertEquals(t.inputSchemaJson?.properties?.age, { type: "number" });
       assertEquals(t.inputSchemaJson?.required?.includes("name"), true);
       assertEquals(t.inputSchemaJson?.required?.includes("age"), true);
+    });
+
+    it("should introspect schema-like objects by shape", () => {
+      const t = tool({
+        id: "shape-test",
+        description: "desc",
+        inputSchema: {
+          _def: {
+            shape: {
+              name: {},
+              age: {},
+            },
+          },
+        } as unknown as z.ZodSchema<unknown>,
+        execute: async () => null,
+      });
+      assertEquals(t.inputSchemaJson, {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          age: { type: "string" },
+        },
+        required: ["name", "age"],
+      });
+    });
+
+    it("should reject invalid unknown schemas when permissive fallback is disabled", () => {
+      assertThrows(
+        () =>
+          tool({
+            id: "invalid-schema",
+            description: "desc",
+            inputSchema: {} as z.ZodSchema<unknown>,
+            execute: async () => null,
+          }),
+        Error,
+        "input schema is not a valid Zod schema",
+      );
     });
 
     it("should fall back to permissive schema with allowUnknownSchema", () => {

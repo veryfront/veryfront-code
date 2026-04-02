@@ -9,12 +9,8 @@
  */
 
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import {
-  SKILL_ALLOWED_TOOL_PATTERN_REGEX,
-  SKILL_DESCRIPTION_MAX_LENGTH,
-  SKILL_NAME_REGEX,
-  type SkillMetadata,
-} from "./types.ts";
+import { validateAllowedToolPatterns } from "./allowed-tools.ts";
+import { SKILL_DESCRIPTION_MAX_LENGTH, SKILL_NAME_REGEX, type SkillMetadata } from "./types.ts";
 
 /** Result of parsing a SKILL.md file */
 interface ParsedSkillContent {
@@ -34,7 +30,7 @@ export async function parseSkillFrontmatter(content: string): Promise<ParsedSkil
     const { extract } = await import("#std/front-matter/yaml.ts");
     const result = extract<Record<string, unknown>>(content);
     return { frontmatter: result.attrs, body: result.body };
-  } catch (_) {
+  } catch {
     // expected: front-matter parser unavailable, fall through to regex fallback
   }
 
@@ -181,20 +177,17 @@ function parseAllowedTools(
 
   if (patterns.length === 0) return undefined;
 
-  // Validate each pattern (fail closed)
-  for (const pattern of patterns) {
-    if (!SKILL_ALLOWED_TOOL_PATTERN_REGEX.test(pattern)) {
-      throw toError(
-        createError({
-          type: "agent",
-          message: `Skill "${skillName}" has invalid allowed-tools pattern "${pattern}". ` +
-            `Only exact tool IDs (e.g. "Read") and prefix wildcards (e.g. "api:*") are supported.`,
-        }),
-      );
-    }
+  try {
+    return validateAllowedToolPatterns(patterns);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Skill "${skillName}" has ${message.charAt(0).toLowerCase()}${message.slice(1)}`,
+      }),
+    );
   }
-
-  return patterns;
 }
 
 /** Convert metadata object values to strings */

@@ -19,6 +19,10 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
+function stripReactSSRMarkers(html: string): string {
+  return html.replaceAll("<!-- -->", "");
+}
+
 // Skip tests on non-Deno runtimes (SSR uses URL-based imports)
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
@@ -614,6 +618,95 @@ title: Stream Test
 
           const result = await renderer.renderPage("data");
           assertExists(result);
+        });
+      });
+
+      it("should pass params and query to script page context", async () => {
+        await withTestContext("renderer-core-script-page-request-context", async (context) => {
+          await remove(join(context.projectDir, "app"), { recursive: true });
+          await mkdir(join(context.projectDir, "pages", "reports"), { recursive: true });
+
+          await writeTextFile(
+            join(context.projectDir, "pages", "reports", "[id].ts"),
+            `export function generateMetadata(ctx) {
+              return { title: \`Report \${ctx.params.id} (\${ctx.query.view || "none"})\` };
+            }
+
+export default function ReportPage(ctx) {
+  return {
+    html: \`<div id="request-context">report=\${ctx.params.id};view=\${ctx.query.view || "none"};tab=\${ctx.query.tab || "none"}</div>\`,
+  };
+}
+`,
+          );
+
+          const renderer = await createRenderer({
+            projectDir: context.projectDir,
+            mode: "development",
+          });
+
+          const result = await renderer.renderPage("reports/42", {
+            params: { id: "42" },
+            url: new URL("https://example.com/reports/42?view=full&tab=summary"),
+          });
+
+          assertStringIncludes(result.html, 'id="request-context"');
+          assertStringIncludes(result.html, "report=42;view=full;tab=summary");
+          assertEquals(result.frontmatter.title, "Report 42 (full)");
+        });
+      });
+
+      it("should expose params and query through usePageContext during SSR", async () => {
+        await withTestContext("renderer-core-page-context-request-values", async (context) => {
+          await remove(join(context.projectDir, "app"), { recursive: true });
+          await mkdir(join(context.projectDir, "pages", "blog"), { recursive: true });
+
+          await writeTextFile(
+            join(context.projectDir, "pages", "blog", "[slug].tsx"),
+            `import { usePageContext } from "veryfront/context";
+
+export default function BlogPost() {
+  const ctx = usePageContext();
+  return (
+    <div id="page-context">
+      Page params: {ctx?.params?.slug || "none"} | Page query: {ctx?.query?.tab || "none"}
+    </div>
+  );
+}
+`,
+          );
+
+          await writeTextFile(
+            join(context.projectDir, "pages", "layout.tsx"),
+            `import { usePageContext } from "veryfront/context";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const ctx = usePageContext();
+  return (
+    <div id="layout-wrapper">
+      <header id="layout-context">
+        Layout params: {ctx?.params?.slug || "none"} | Layout query: {ctx?.query?.lang || "none"}
+      </header>
+      <main>{children}</main>
+    </div>
+  );
+}
+`,
+          );
+
+          const renderer = await createRenderer({
+            projectDir: context.projectDir,
+            mode: "development",
+          });
+
+          const result = await renderer.renderPage("blog/hello", {
+            params: { slug: "hello" },
+            url: new URL("https://example.com/blog/hello?tab=files&lang=en"),
+          });
+
+          const normalizedHtml = stripReactSSRMarkers(result.html);
+          assertStringIncludes(normalizedHtml, "Layout params: hello | Layout query: en");
+          assertStringIncludes(normalizedHtml, "Page params: hello | Page query: files");
         });
       });
     });

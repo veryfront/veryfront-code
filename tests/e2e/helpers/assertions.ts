@@ -4,7 +4,8 @@
  * Common utilities for checking page state, errors, and hydration.
  */
 
-import { ConsoleMessage, expect, Page } from "@playwright/test";
+import { ConsoleMessage, expect, Page } from "npm:playwright@1.59.0/test";
+import { findHydrationOrCspFailures } from "../../_helpers/playwright.ts";
 
 /**
  * Console error collection for a page.
@@ -26,6 +27,8 @@ export function setupErrorCollection(page: Page): string[] {
 
   return errors;
 }
+
+export { findHydrationOrCspFailures };
 
 /**
  * Check if an error is known and ignorable
@@ -54,8 +57,8 @@ function isIgnorableError(message: string): boolean {
  */
 export async function assertPageLoaded(
   page: Page,
-  expectedMinStatusCode: number = 200,
-  expectedMaxStatusCode: number = 499,
+  _expectedMinStatusCode: number = 200,
+  _expectedMaxStatusCode: number = 499,
 ): Promise<void> {
   const body = await page.locator("body").innerHTML();
   expect(body.length).toBeGreaterThan(0);
@@ -77,12 +80,7 @@ export async function assertHydrationWorks(page: Page, errors: string[]): Promis
     }
   }
 
-  const hydrationErrors = errors.filter(
-    (e) =>
-      e.includes("hydrat") || e.includes("Minified React error") || e.includes("did not match"),
-  );
-
-  expect(hydrationErrors).toEqual([]);
+  expect(findHydrationOrCspFailures(errors)).toEqual([]);
 }
 
 /**

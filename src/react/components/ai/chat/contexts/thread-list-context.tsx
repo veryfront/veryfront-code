@@ -8,7 +8,7 @@
  */
 
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors";
+import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { Thread } from "../hooks/use-threads.ts";
 
 export interface ThreadListContextValue {

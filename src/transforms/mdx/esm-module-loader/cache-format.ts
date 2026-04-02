@@ -1,5 +1,7 @@
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { createCacheNamespace } from "#veryfront/utils/cache-namespace.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import { UNRESOLVED_VF_MODULES_PATTERN } from "./constants.ts";
 import { hashString } from "./utils/hash.ts";
 
@@ -11,14 +13,19 @@ function formatMdxEsmTransformCacheKey(
   namespace: string,
   projectId: string,
   contentSourceId: string,
+  reactVersion: string,
   normalizedPath: string,
   contentHash: string,
 ): string {
-  return `${namespace}:${projectId}:${contentSourceId}:${normalizedPath}:${contentHash}:ssr`;
+  return `${namespace}:${projectId}:${contentSourceId}:${reactVersion}:${normalizedPath}:${contentHash}:ssr`;
 }
 
-function formatMdxEsmPathCacheKey(namespace: string, normalizedPath: string): string {
-  return `${namespace}:${normalizedPath}`;
+function formatMdxEsmPathCacheKey(
+  namespace: string,
+  reactVersion: string,
+  normalizedPath: string,
+): string {
+  return `${namespace}:${reactVersion}:${normalizedPath}`;
 }
 
 function formatMdxEsmModuleFileName(namespace: string, contentHash: string): string {
@@ -53,10 +60,15 @@ function buildMdxEsmCacheSchemaSample() {
       CACHE_NAMESPACE_SENTINEL,
       "__vf_project__",
       "preview-main",
+      "19.1.1",
       "_vf_modules/pages/index.js",
       "deadbeef",
     ),
-    pathKey: formatMdxEsmPathCacheKey(CACHE_NAMESPACE_SENTINEL, "_vf_modules/pages/index.js"),
+    pathKey: formatMdxEsmPathCacheKey(
+      CACHE_NAMESPACE_SENTINEL,
+      REACT_DEFAULT_VERSION,
+      "_vf_modules/pages/index.js",
+    ),
     moduleFile: formatMdxEsmModuleFileName(CACHE_NAMESPACE_SENTINEL, "deadbeef"),
     moduleRecoveryKey: formatMdxEsmModuleRecoveryCacheKey(
       CACHE_NAMESPACE_SENTINEL,
@@ -72,6 +84,7 @@ function buildMdxEsmCacheSchemaSample() {
       hashString("_vf_modules/pages/index.jsexport default 1;"),
       hashString("/tmp/project/Button.tsx"),
     ],
+    frameworkVersion: VERSION,
   };
 }
 
@@ -102,6 +115,7 @@ export const FRAMEWORK_VF_MODULE_CACHE_NAMESPACE = createCacheNamespace(
 export function buildMdxEsmTransformCacheKey(
   projectId: string,
   contentSourceId: string,
+  reactVersion: string,
   normalizedPath: string,
   contentHash: string,
 ): string {
@@ -109,13 +123,17 @@ export function buildMdxEsmTransformCacheKey(
     MDX_ESM_CACHE_NAMESPACE,
     projectId,
     contentSourceId,
+    reactVersion,
     normalizedPath,
     contentHash,
   );
 }
 
-export function buildMdxEsmPathCacheKey(normalizedPath: string): string {
-  return formatMdxEsmPathCacheKey(MDX_ESM_CACHE_NAMESPACE, normalizedPath);
+export function buildMdxEsmPathCacheKey(
+  normalizedPath: string,
+  reactVersion = REACT_DEFAULT_VERSION,
+): string {
+  return formatMdxEsmPathCacheKey(MDX_ESM_CACHE_NAMESPACE, reactVersion, normalizedPath);
 }
 
 export function buildMdxEsmModuleFileName(contentHash: string): string {

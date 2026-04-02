@@ -26,6 +26,15 @@ describe("formatErrorBox", () => {
     const result = formatErrorBox(new Error("some random unknown error xyz_unique"));
     assert(result.includes("veryfront doctor"));
   });
+
+  it("should include solution details for known client boundary errors", () => {
+    const result = formatErrorBox(new Error("Client boundary violation in component"));
+
+    assert(result.includes("Server-only code used in Client Component"));
+    assert(result.includes("How to fix:"));
+    assert(result.includes("Learn more:"));
+    assert(result.includes("rsc-boundaries"));
+  });
 });
 
 describe("formatUserError", () => {
@@ -48,5 +57,13 @@ describe("formatUserError", () => {
   it("should include doctor hint for unknown errors", () => {
     const result = formatUserError(new Error("completely unknown error abcdef"));
     assert(result.includes("veryfront doctor"));
+  });
+
+  it("should include numbered solution steps for known config errors", () => {
+    const result = formatUserError(new Error("veryfront.config.ts not found"));
+
+    assert(result.includes("How to fix:"));
+    assert(result.includes("1."));
+    assert(result.includes("Create a veryfront.config.js file in your project root"));
   });
 });

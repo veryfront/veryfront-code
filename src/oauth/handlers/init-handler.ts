@@ -9,6 +9,42 @@ import type { AuthorizationUrlOptions, OAuthServiceConfig, TokenStore } from "..
 import { memoryTokenStore } from "../token-store/memory.ts";
 
 const logger = baseLogger.component("o-auth");
+const DEFAULT_APP_URL = "http://localhost:3000";
+
+function createUnauthorizedResponse(): Response {
+  return Response.json({ error: "Unauthorized" }, { status: 401 });
+}
+
+async function isRequestUnauthorized(
+  req: Request,
+  isAuthenticated?: (req: Request) => boolean | Promise<boolean>,
+): Promise<boolean> {
+  return isAuthenticated ? !(await isAuthenticated(req)) : false;
+}
+
+function resolveAppUrl(baseUrl: string | undefined, env: EnvironmentConfig): string {
+  return baseUrl ?? env.appUrl ?? DEFAULT_APP_URL;
+}
+
+function createNotConfiguredResponse(config: OAuthServiceConfig): Response {
+  return Response.json(
+    {
+      error: `${config.displayName} OAuth not configured`,
+      details: `Missing ${config.clientIdEnvVar} or ${config.clientSecretEnvVar}`,
+    },
+    { status: 500 },
+  );
+}
+
+function createInitErrorResponse(error: unknown): Response {
+  return Response.json(
+    {
+      error: "Failed to initiate OAuth flow",
+      details: error instanceof Error ? error.message : "Unknown error",
+    },
+    { status: 500 },
+  );
+}
 
 export interface OAuthInitHandlerOptions {
   /** Token store to use (defaults to memory store) */
@@ -31,25 +67,22 @@ export function createOAuthInitHandler(
   config: OAuthServiceConfig,
   options: OAuthInitHandlerOptions = {},
 ): () => Promise<Response> {
-  const tokenStore = options.tokenStore ?? memoryTokenStore;
-  const authOptions = options.authOptions ?? {};
-  const env = options.env ?? getEnvironmentConfig();
-  const envReader = options.envReader ?? getEnv;
+  const {
+    tokenStore = memoryTokenStore,
+    baseUrl,
+    authOptions = {},
+    env = getEnvironmentConfig(),
+    envReader = getEnv,
+  } = options;
 
   return async function handler(): Promise<Response> {
     const service = new OAuthService(config, tokenStore, envReader);
 
     if (!service.isConfigured()) {
-      return Response.json(
-        {
-          error: `${config.displayName} OAuth not configured`,
-          details: `Missing ${config.clientIdEnvVar} or ${config.clientSecretEnvVar}`,
-        },
-        { status: 500 },
-      );
+      return createNotConfiguredResponse(config);
     }
 
-    const appUrl = options.baseUrl ?? env.appUrl ?? "http://localhost:3000";
+    const appUrl = resolveAppUrl(baseUrl, env);
     const redirectUri = `${appUrl}/api/auth/${config.serviceId}/callback`;
 
     try {
@@ -58,14 +91,7 @@ export function createOAuthInitHandler(
       return Response.redirect(url);
     } catch (error) {
       logger.error("Init error", { serviceId: config.serviceId }, error);
-
-      return Response.json(
-        {
-          error: "Failed to initiate OAuth flow",
-          details: error instanceof Error ? error.message : "Unknown error",
-        },
-        { status: 500 },
-      );
+      return createInitErrorResponse(error);
     }
   };
 }
@@ -85,12 +111,15 @@ export function createOAuthStatusHandler(
   config: OAuthServiceConfig,
   options: OAuthStatusHandlerOptions = {},
 ): (req: Request) => Promise<Response> {
-  const tokenStore = options.tokenStore ?? memoryTokenStore;
-  const envReader = options.envReader ?? getEnv;
+  const {
+    tokenStore = memoryTokenStore,
+    envReader = getEnv,
+    isAuthenticated,
+  } = options;
 
   return async function handler(req: Request): Promise<Response> {
-    if (options.isAuthenticated && !(await options.isAuthenticated(req))) {
-      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    if (await isRequestUnauthorized(req, isAuthenticated)) {
+      return createUnauthorizedResponse();
     }
 
     const tokens = await tokenStore.getTokens(config.serviceId);
@@ -118,11 +147,11 @@ export function createOAuthDisconnectHandler(
     isAuthenticated?: (req: Request) => boolean | Promise<boolean>;
   } = {},
 ): (req: Request) => Promise<Response> {
-  const tokenStore = options.tokenStore ?? memoryTokenStore;
+  const { tokenStore = memoryTokenStore, isAuthenticated } = options;
 
   return async function handler(req: Request): Promise<Response> {
-    if (options.isAuthenticated && !(await options.isAuthenticated(req))) {
-      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    if (await isRequestUnauthorized(req, isAuthenticated)) {
+      return createUnauthorizedResponse();
     }
 
     await tokenStore.clearTokens(config.serviceId);

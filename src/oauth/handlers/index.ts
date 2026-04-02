@@ -1,5 +1,5 @@
 /**
- * Oauth Handlers
+ * OAuth Handlers
  *
  * @module oauth/handlers
  */

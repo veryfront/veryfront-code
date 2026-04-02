@@ -1,5 +1,5 @@
 import { getReactVersionInfo } from "../version-detector/index.ts";
-import { INITIALIZATION_ERROR } from "#veryfront/errors";
+import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { cacheModuleToLocal } from "#veryfront/transforms/esm/http-cache.ts";
 import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
@@ -24,6 +24,10 @@ const reactDOMServerLoadFlight = new Singleflight<ReactDOMServer>();
 export function resetReactCache(): void {
   projectReactCache = null;
   reactDOMServerCache = null;
+}
+
+export function __injectReactDOMServerForTests(server: ReactDOMServer | null): void {
+  reactDOMServerCache = server;
 }
 
 async function loadFromCachedHttpModule<T>(url: string, label: string): Promise<T> {

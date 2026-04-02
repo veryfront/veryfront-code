@@ -1,8 +1,46 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { pathToModuleUrl } from "./path-utils.ts";
+import { getModuleServerUrl, pathToModuleUrl } from "./path-utils.ts";
+
+function withWindow<T>(fn: () => T): T {
+  const globalRecord = globalThis as typeof globalThis & {
+    MODULE_SERVER_URL?: string;
+    window?: typeof globalThis;
+  };
+  const previousWindow = globalRecord.window;
+
+  globalRecord.window = globalThis;
+
+  try {
+    return fn();
+  } finally {
+    if (previousWindow === undefined) {
+      delete globalRecord.window;
+    } else {
+      globalRecord.window = previousWindow;
+    }
+  }
+}
 
 describe("client/spa/path-utils", () => {
+  describe("getModuleServerUrl", () => {
+    it("uses the browser-configured module server url when available", () => {
+      const previousModuleServerUrl = globalThis.MODULE_SERVER_URL;
+      globalThis.MODULE_SERVER_URL = "https://cdn.example.com/modules";
+
+      try {
+        const moduleServerUrl = withWindow(() => getModuleServerUrl());
+        assertEquals(moduleServerUrl, "https://cdn.example.com/modules");
+      } finally {
+        if (previousModuleServerUrl === undefined) {
+          delete globalThis.MODULE_SERVER_URL;
+        } else {
+          globalThis.MODULE_SERVER_URL = previousModuleServerUrl;
+        }
+      }
+    });
+  });
+
   describe("pathToModuleUrl", () => {
     const cases: Array<[string, string, string]> = [
       ["pages/index.tsx", "/_vf_modules", "/_vf_modules/pages/index.js"],
