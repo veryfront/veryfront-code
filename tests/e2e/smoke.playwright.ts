@@ -8,8 +8,7 @@
  * Zero tolerance: ANY failure blocks push
  */
 
-import { expect, test } from "npm:playwright@1.59.0/test";
-import { findHydrationOrCspFailures, setupErrorCollection } from "./helpers/assertions.ts";
+import { expect, test } from "./fixtures/playwright.ts";
 import { getProjectsToTest } from "./helpers/projects.ts";
 
 /**
@@ -42,11 +41,6 @@ async function visit(page: import("npm:playwright@1.59.0/test").Page, url: strin
   return response;
 }
 
-async function expectNoErrors(errors: string[]): Promise<void> {
-  expect(findHydrationOrCspFailures(errors)).toEqual([]);
-  expect(errors).toEqual([]);
-}
-
 /**
  * Test each project in each mode
  */
@@ -56,34 +50,25 @@ for (const subdomain of PROJECTS) {
       const baseUrl = mode.getUrl(subdomain);
 
       test("page loads without errors", async ({ page }) => {
-        const errors = setupErrorCollection(page);
-
         const response = await visit(page, `${baseUrl}/`);
 
         expect(response?.status()).toBeLessThan(500);
         await expect(page.locator("#project-name")).toHaveText(subdomain);
         await expectPageRenders(page);
-        await expectNoErrors(errors);
       });
 
       test("hydration works", async ({ page }) => {
-        const errors = setupErrorCollection(page);
-
         await visit(page, `${baseUrl}/`);
 
         await page.locator("#counter").click();
         await expect(page.locator("#counter")).toHaveText("Count: 1");
-        await expectNoErrors(errors);
       });
 
       test("secondary routes render", async ({ page }) => {
-        const errors = setupErrorCollection(page);
-
         const response = await visit(page, `${baseUrl}/about`);
 
         expect(response?.ok()).toBeTruthy();
         await expect(page.locator("#about-page")).toHaveText(`About ${subdomain}`);
-        await expectNoErrors(errors);
       });
 
       test("API routes respond with JSON", async ({ request }) => {
@@ -95,18 +80,13 @@ for (const subdomain of PROJECTS) {
       });
 
       test("missing routes render the 404 page", async ({ page }) => {
-        const errors = setupErrorCollection(page);
-
         const response = await visit(page, `${baseUrl}/missing-page`);
 
         expect(response?.status()).toBe(404);
         await expect(page.locator("#not-found-page")).toHaveText(`Custom Not Found for ${subdomain}`);
-        await expectNoErrors(errors);
       });
 
       test("color_mode=dark works", async ({ page }) => {
-        const errors = setupErrorCollection(page);
-
         const response = await page.goto(`${baseUrl}/?color_mode=dark`);
         const html = await response?.text();
         expect(html).toContain('data-theme="dark"');
@@ -117,12 +97,9 @@ for (const subdomain of PROJECTS) {
         await expect(page.locator("html").first()).toHaveAttribute("data-theme", "dark");
 
         await expectPageRenders(page);
-        await expectNoErrors(errors);
       });
 
       test("color_mode=light works", async ({ page }) => {
-        const errors = setupErrorCollection(page);
-
         const response = await page.goto(`${baseUrl}/?color_mode=light`);
         const html = await response?.text();
         expect(html).toContain('data-theme="light"');
@@ -133,13 +110,10 @@ for (const subdomain of PROJECTS) {
         await expect(page.locator("html").first()).toHaveAttribute("data-theme", "light");
 
         await expectPageRenders(page);
-        await expectNoErrors(errors);
       });
 
       if (mode.name === "production") {
         test("studio_embed=true works", async ({ page }) => {
-          const errors = setupErrorCollection(page);
-
           await page.goto(`${baseUrl}/?studio_embed=true`);
           await page.waitForLoadState("networkidle");
 
@@ -150,15 +124,11 @@ for (const subdomain of PROJECTS) {
             pageContent.includes("studio-bridge") ||
             pageContent.includes("parent.postMessage");
           expect(hasStudioBridge).toBeTruthy();
-
-          await expectNoErrors(errors);
         });
       }
 
       if (mode.name === "preview") {
         test("HMR script present", async ({ page }) => {
-          const errors = setupErrorCollection(page);
-
           await page.goto(`${baseUrl}/`);
           await page.waitForLoadState("networkidle");
 
@@ -166,12 +136,9 @@ for (const subdomain of PROJECTS) {
 
           const hmrScript = page.locator('script[src*="preview-hmr.js"]');
           await expect(hmrScript).toBeAttached();
-
-          await expectNoErrors(errors);
         });
 
         test("branch preview subdomains resolve", async ({ page }) => {
-          const errors = setupErrorCollection(page);
           const branchPreviewUrl = `http://${subdomain}--feature.preview.lvh.me:8080`;
 
           const response = await visit(page, `${branchPreviewUrl}/`);
@@ -179,7 +146,6 @@ for (const subdomain of PROJECTS) {
           expect(response?.ok()).toBeTruthy();
           await expect(page.locator("#project-name")).toHaveText(subdomain);
           await expect(page.locator('script[src*="preview-hmr.js"]')).toBeAttached();
-          await expectNoErrors(errors);
         });
       }
     });
