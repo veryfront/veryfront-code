@@ -4,6 +4,7 @@ import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import {
   DEFAULT_REACT_VERSION,
   esmShReact,
+  readProjectDependencyVersions,
   resolveProjectReactVersion,
   stripSemverRange,
 } from "#veryfront/transforms/esm/package-registry.ts";
@@ -32,10 +33,17 @@ interface DetectedVersions {
   veryfront: string;
 }
 
+interface CachedImportMapEntry {
+  cacheKey: string;
+  json: string;
+}
+
 const DEFAULT_VERSIONS: DetectedVersions = {
   react: DEFAULT_REACT_VERSION,
   veryfront: VERYFRONT_VERSION,
 };
+
+const importMapJsonCache = new Map<string, CachedImportMapEntry>();
 
 type CdnProvider = "esm.sh" | "unpkg" | "jsdelivr";
 
@@ -43,10 +51,12 @@ type CdnProvider = "esm.sh" | "unpkg" | "jsdelivr";
 // This ensures hydration matches (same code on server and client).
 // CRITICAL: veryfront/context must use local module to share React context with SSR.
 // Using esm.sh creates a separate context instance causing usePageContext to return undefined.
+const CORE_REACT_RUNTIME_PATH = "/_vf_modules/_veryfront/react/runtime/core.js";
+
 const PLATFORM_UTILITY_PATHS = {
-  head: "/_vf_modules/_veryfront/react/components/Head.js",
-  router: "/_vf_modules/_veryfront/react/router/index.js",
-  context: "/_vf_modules/_veryfront/react/context/index.js",
+  head: CORE_REACT_RUNTIME_PATH,
+  router: CORE_REACT_RUNTIME_PATH,
+  context: CORE_REACT_RUNTIME_PATH,
   fonts: "/_vf_modules/_veryfront/react/fonts/index.js",
   // Client-side AI/chat modules - use local module server in dev for faster iteration
   // NOTE: These are NOT available in compiled binaries, so we use CDN URLs there instead
@@ -201,58 +211,64 @@ async function resolveVersions(
   config?: VeryfrontConfig,
 ): Promise<DetectedVersions> {
   // Use shared resolver for React (handles config override + package.json + fallback)
-  const reactVersion = await resolveProjectReactVersion({ projectDir, config });
+  const versionsConfig = config?.client?.cdn?.versions;
+  const configuredReactVersion = versionsConfig && versionsConfig !== "auto"
+    ? versionsConfig.react
+    : undefined;
+  const configuredVeryfrontVersion = versionsConfig && versionsConfig !== "auto"
+    ? versionsConfig.veryfront
+    : undefined;
+  const detected = await readProjectDependencyVersions(projectDir);
+  const reactVersion = configuredReactVersion
+    ? resolveProjectReactVersion({ config })
+    : Promise.resolve(detected.react ?? DEFAULT_VERSIONS.react);
 
   // Resolve veryfront version separately (config override or detection)
-  const versionsConfig = config?.client?.cdn?.versions;
   let veryfrontVersion = DEFAULT_VERSIONS.veryfront;
 
-  if (versionsConfig && versionsConfig !== "auto" && versionsConfig.veryfront) {
-    veryfrontVersion = versionsConfig.veryfront;
-  } else {
-    try {
-      const { createFileSystem } = await import("../platform/compat/fs.ts");
-      const fs = createFileSystem();
-      const content = await fs.readTextFile(`${projectDir}/package.json`);
-      const pkg = JSON.parse(content) as {
-        dependencies?: Record<string, string>;
-        devDependencies?: Record<string, string>;
-      };
-      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-      if (deps.veryfront) {
-        veryfrontVersion = stripSemverRange(deps.veryfront);
-      }
-    } catch (_) {
-      /* expected: package.json may not exist or be unreadable */
-    }
+  if (configuredVeryfrontVersion) {
+    veryfrontVersion = stripSemverRange(configuredVeryfrontVersion);
+  } else if (detected.veryfront) {
+    veryfrontVersion = detected.veryfront;
   }
 
-  return { react: reactVersion, veryfront: veryfrontVersion };
+  return { react: await reactVersion, veryfront: veryfrontVersion };
 }
 
 interface BuildImportMapOptions {
   projectDir?: string;
   config?: VeryfrontConfig;
   customImports?: Record<string, string>;
+  pretty?: boolean;
 }
 
 function isImportMapOnlyOptions(
   options: BuildImportMapOptions | Record<string, string>,
 ): options is Record<string, string> {
-  return !("projectDir" in options) && !("config" in options) && !("customImports" in options);
+  return !("projectDir" in options) &&
+    !("config" in options) &&
+    !("customImports" in options) &&
+    !("pretty" in options);
 }
 
 export async function buildImportMapJson(
   options?: BuildImportMapOptions | Record<string, string>,
 ): Promise<string> {
+  const stringifyImportMap = (imports: Record<string, string>, pretty = true) =>
+    JSON.stringify({ imports }, null, pretty ? 2 : undefined);
+  const stableMapKey = (imports?: Record<string, string>) =>
+    imports
+      ? JSON.stringify(Object.entries(imports).sort(([a], [b]) => a.localeCompare(b)))
+      : "";
+
   if (options && isImportMapOnlyOptions(options)) {
     const imports = options;
     if (Object.keys(imports).length > 0) {
-      return JSON.stringify({ imports }, null, 2);
+      return stringifyImportMap(imports);
     }
   }
 
-  const { projectDir, config, customImports } = (options ?? {}) as BuildImportMapOptions;
+  const { projectDir, config, customImports, pretty = true } = (options ?? {}) as BuildImportMapOptions;
   const mode = config?.client?.moduleResolution ?? "cdn";
   const versions = projectDir ? await resolveVersions(projectDir, config) : DEFAULT_VERSIONS;
 
@@ -267,7 +283,7 @@ export async function buildImportMapJson(
       ...customImports,
     };
 
-    return JSON.stringify({ imports }, null, 2);
+    return stringifyImportMap(imports, pretty);
   }
 
   let imports: Record<string, string>;
@@ -283,7 +299,25 @@ export async function buildImportMapJson(
     imports = { ...imports, ...customImports };
   }
 
-  return JSON.stringify({ imports }, null, 2);
+  const cacheKey = JSON.stringify({
+    projectDir: projectDir ?? "",
+    mode,
+    provider: config?.client?.cdn?.provider ?? "esm.sh",
+    react: versions.react,
+    veryfront: versions.veryfront,
+    pretty,
+    customImports: stableMapKey(customImports),
+  });
+  const cached = importMapJsonCache.get(cacheKey);
+  if (cached) return cached.json;
+
+  const json = stringifyImportMap(imports, pretty);
+  importMapJsonCache.set(cacheKey, { cacheKey, json });
+  return json;
+}
+
+export function clearImportMapCache(): void {
+  importMapJsonCache.clear();
 }
 
 export function shouldDisableLayout(frontmatter?: Record<string, unknown>): boolean {

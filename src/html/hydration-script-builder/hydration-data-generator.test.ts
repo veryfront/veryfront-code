@@ -198,5 +198,10 @@ describe("hydration-data-generator", () => {
       const result = generateHydrationData("page", {}, {}, baseOptions);
       assertStringIncludes(result, "\n");
     });
+
+    it("should support compact JSON output", () => {
+      const result = generateHydrationData("page", {}, {}, baseOptions, { pretty: false });
+      assertEquals(result.includes("\n"), false);
+    });
   });
 });

@@ -2,12 +2,28 @@ import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { createCacheNamespace } from "#veryfront/utils/cache-namespace.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
+import { resolveVeryfrontModuleTarget, resolveVeryfrontModuleUrl } from "../../veryfront-module-urls.ts";
 import { UNRESOLVED_VF_MODULES_PATTERN } from "./constants.ts";
 import { hashString } from "./utils/hash.ts";
 
 const ALL_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+)/.source;
 const MJS_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+\.mjs)/.source;
 const CACHE_NAMESPACE_SENTINEL = "__vf_cache_namespace__";
+const PUBLIC_RUNTIME_SPECIFIERS = ["veryfront/head", "veryfront/router", "veryfront/context"] as const;
+
+function buildPublicRuntimeAliasSchema(
+  overrides?: Partial<Record<(typeof PUBLIC_RUNTIME_SPECIFIERS)[number], string>>,
+) {
+  return Object.fromEntries(
+    PUBLIC_RUNTIME_SPECIFIERS.map((specifier) => [
+      specifier,
+      {
+        target: overrides?.[specifier] ?? resolveVeryfrontModuleTarget(specifier),
+        url: resolveVeryfrontModuleUrl(specifier),
+      },
+    ]),
+  );
+}
 
 function formatMdxEsmTransformCacheKey(
   namespace: string,
@@ -84,6 +100,11 @@ function buildMdxEsmCacheSchemaSample() {
       hashString("_vf_modules/pages/index.jsexport default 1;"),
       hashString("/tmp/project/Button.tsx"),
     ],
+    publicRuntimeAliases: buildPublicRuntimeAliasSchema({
+      "veryfront/head": "./src/react/runtime/core.ts",
+      "veryfront/router": "./src/react/runtime/core.ts",
+      "veryfront/context": "./src/react/runtime/core.ts",
+    }),
     frameworkVersion: VERSION,
   };
 }
@@ -92,10 +113,15 @@ function buildFrameworkVfModuleCacheSchemaSample() {
   return {
     moduleFile: formatFrameworkVfModuleCacheFileName(
       CACHE_NAMESPACE_SENTINEL,
-      hashCodeHex("_vf_modules/_veryfront/react/components/Head.js"),
+      hashCodeHex("/_vf_modules/_veryfront/react/runtime/core.js"),
       hashCodeHex("/app/.cache/veryfront-mdx-esm").slice(0, 8),
       hashCodeHex("export default function Head() {}"),
     ),
+    publicRuntimeAliases: buildPublicRuntimeAliasSchema({
+      "veryfront/head": "./src/react/runtime/core.ts",
+      "veryfront/router": "./src/react/runtime/core.ts",
+      "veryfront/context": "./src/react/runtime/core.ts",
+    }),
   };
 }
 

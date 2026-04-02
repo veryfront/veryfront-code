@@ -2,6 +2,7 @@ import type { ComponentProps, RenderMetadata } from "#veryfront/types";
 import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { profilePhase } from "#veryfront/observability/request-profiler.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { isMarkdownPreview as checkMarkdownPreview } from "#veryfront/transforms/md/utils.ts";
 import {
@@ -13,6 +14,7 @@ import {
   generateHydrationData,
   getDevScripts,
   getProdScripts,
+  PROD_HYDRATION_MODULE_PATH,
 } from "./hydration-script-builder/index.ts";
 import { getPreviewStylesheetLink, getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
@@ -47,6 +49,15 @@ function getRelativePagePath(
   return resolveRelativePath(normalized, projectDir);
 }
 
+type ProjectCSSResult = Awaited<ReturnType<typeof getProjectCSS>> | null;
+
+function resolveProjectCSSScope(
+  options: HTMLGenerationOptions,
+  metaSlug?: string,
+): string {
+  return options.projectSlug || options.projectId || metaSlug || "default";
+}
+
 function generateModulePreloadHints(options: HTMLGenerationOptions): string {
   const hints: string[] = [];
   const addedUrls = new Set<string>();
@@ -79,7 +90,7 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
     return hints.join("\n  ");
   }
 
-  const projectSlug = options.projectId;
+  const projectSlug = options.projectSlug ?? options.projectId;
   const route = options.pagePath
     ? getRelativePagePath(options.pagePath, projectDir)
       .replace(/\.(tsx|ts|jsx|mdx)$/, "")
@@ -106,10 +117,19 @@ export function generateHTMLShellParts(
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
   contentForTailwind?: string,
+  projectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<{ start: string; end: string }> {
   return withSpan(
     SpanNames.HTML_GENERATE_SHELL_PARTS,
-    () => generateHTMLShellPartsImpl(meta, options, params, props, contentForTailwind),
+    () =>
+      generateHTMLShellPartsImpl(
+        meta,
+        options,
+        params,
+        props,
+        contentForTailwind,
+        projectCSSPromise,
+      ),
     {
       "html.slug": meta.slug || "",
       "html.has_content": !!contentForTailwind,
@@ -125,6 +145,7 @@ async function generateHTMLShellPartsImpl(
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
   contentForTailwind?: string,
+  prefetchedProjectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<{ start: string; end: string }> {
   const stylesheetContent = options.globalCSS;
 
@@ -138,18 +159,15 @@ async function generateHTMLShellPartsImpl(
     for (const cls of extractCandidates(contentForTailwind)) candidates.add(cls);
   }
 
-  const projectSlug = options.projectId || meta.slug || "default";
-  let cssHash = "";
-
-  // Only generate CSS for production mode (dev/preview uses link tag to StylesCSSHandler)
-  if (useProductionCSS && projectSlug !== "default") {
-    const projectCSS = await getProjectCSS(projectSlug, stylesheetContent, candidates, {
-      minify: true,
-      environment: options.environment,
-      buildMode: options.mode,
-    });
-    cssHash = projectCSS.hash;
-  }
+  const projectSlug = resolveProjectCSSScope(options, meta.slug);
+  const projectCSSPromise = prefetchedProjectCSSPromise ??
+    (useProductionCSS && projectSlug !== "default"
+      ? getProjectCSS(projectSlug, stylesheetContent, candidates, {
+        minify: true,
+        environment: options.environment,
+        buildMode: options.mode,
+      })
+      : Promise.resolve(null));
 
   const {
     effectiveTitle,
@@ -170,10 +188,18 @@ async function generateHTMLShellPartsImpl(
     meta.ssrHash,
   );
 
-  const importMapJson = await buildImportMapJson({
+  const skipDevHMR = isPreviewMode || options.noHmr;
+  // Error logger endpoint only enabled in local dev (returns 404 in preview/prod)
+  const skipErrorLogger = isPreviewMode;
+  // Enable dev scripts for local dev OR preview mode (for HMR support in Studio),
+  // unless a caller explicitly forces production client scripts for fair benchmarking.
+  const useDevScripts = !options.forceProductionScripts && (isLocalProject || isPreviewMode);
+
+  const importMapJsonPromise = buildImportMapJson({
     projectDir: options.projectDir,
     config: options.config,
     customImports: options.importMap,
+    pretty: useDevScripts,
   });
 
   const hydrationDataJson = generateHydrationData(
@@ -181,15 +207,10 @@ async function generateHTMLShellPartsImpl(
     params ?? {},
     props ?? {},
     options,
+    { pretty: useDevScripts },
   );
 
   const nonce = options.nonce ?? "";
-
-  const skipDevHMR = isPreviewMode || options.noHmr;
-  // Error logger endpoint only enabled in local dev (returns 404 in preview/prod)
-  const skipErrorLogger = isPreviewMode;
-  // Enable dev scripts for local dev OR preview mode (for HMR support in Studio)
-  const useDevScripts = isLocalProject || isPreviewMode;
 
   const modeScripts = useDevScripts
     ? getDevScripts(meta.slug || "", options.config, params, props, nonce, {
@@ -201,6 +222,7 @@ async function generateHTMLShellPartsImpl(
   const modeStyles = useDevScripts ? getErrorOverlayStyles(nonce) : "";
 
   const modulePreloadHints = generateModulePreloadHints(options);
+  const importMapJson = await profilePhase("html.import_map", () => importMapJsonPromise);
 
   // Preload critical React dependencies to avoid waterfall delays.
   // jsx-runtime is discovered late (only when modules execute), adding ~500ms latency.
@@ -209,6 +231,9 @@ async function generateHTMLShellPartsImpl(
   const criticalDepsPreload = jsxRuntimeUrl
     ? `<link rel="modulepreload" href="${jsxRuntimeUrl}">`
     : "";
+  const prodHydrationModulePreload = useDevScripts
+    ? ""
+    : `<link rel="modulepreload" href="${PROD_HYDRATION_MODULE_PATH}">`;
 
   const nonceAttr = buildNonceAttribute(nonce);
 
@@ -260,6 +285,8 @@ async function generateHTMLShellPartsImpl(
 
   let tailwindCSSBlock = "";
   if (useProductionCSS) {
+    const projectCSS = await profilePhase("html.project_css", () => projectCSSPromise);
+    const cssHash = projectCSS?.hash ?? "";
     if (cssHash) {
       tailwindCSSBlock = `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
     } else {
@@ -304,6 +331,7 @@ async function generateHTMLShellPartsImpl(
   <!-- Modulepreload hints for faster cold start -->
   ${modulePreloadHints}
   ${criticalDepsPreload}
+  ${prodHydrationModulePreload}
 
   <!-- Tailwind CSS: Server-side JIT compiled -->
   ${tailwindCSSBlock}
@@ -328,7 +356,7 @@ async function generateHTMLShellPartsImpl(
     })
     : "";
 
-  const previewHMRScript = isPreviewMode
+  const previewHMRScript = isPreviewMode && !options.forceProductionScripts
     ? `<script src="/_veryfront/preview-hmr.js"${nonceAttr}></script>`
     : "";
 
@@ -375,6 +403,7 @@ export function wrapInHTMLShell(
   options: HTMLGenerationOptions,
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
+  projectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<string> {
   return withSpan(
     SpanNames.HTML_WRAP_IN_SHELL,
@@ -386,6 +415,7 @@ export function wrapInHTMLShell(
         params,
         props,
         cleanedContent,
+        projectCSSPromise,
       );
       return `${start}${cleanedContent}${end}`;
     },
