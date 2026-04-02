@@ -285,6 +285,18 @@ export async function whoami(
   console.log();
   console.log("  " + warning("✗") + " Not logged in");
   console.log("  " + dim("Run 'veryfront login' to authenticate"));
+
+  // Show provider tokens
+  try {
+    const { listProviderTokens } = await import("./provider-store.ts");
+    const providers = await listProviderTokens();
+    for (const p of providers) {
+      console.log("  " + success("✓") + ` ${p} API key configured`);
+    }
+  } catch {
+    // Provider store not available
+  }
+
   return null;
 }
 

@@ -84,9 +84,32 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "deploy": handleDeployCommand,
   "up": handleUpCommand,
   "login": async (args) => {
+    const { parseProvider } = await import("./auth/utils.ts");
+    const provider = parseProvider(args);
+    if (provider === "anthropic") {
+      const { loginAnthropic } = await import("./auth/providers/anthropic.ts");
+      await loginAnthropic();
+      return;
+    }
+    if (provider === "openai") {
+      const { loginOpenAI } = await import("./auth/providers/openai.ts");
+      await loginOpenAI(args["base-url"] as string | undefined);
+      return;
+    }
     await login(parseLoginMethod(args));
   },
-  "logout": async () => {
+  "logout": async (args) => {
+    const { parseProvider } = await import("./auth/utils.ts");
+    const provider = parseProvider(args);
+    if (provider) {
+      const { deleteProviderToken } = await import(
+        "./auth/provider-store.ts"
+      );
+      await deleteProviderToken(provider);
+      const { logSuccess } = await import("./utils/index.ts");
+      logSuccess(`${provider} API key removed`);
+      return;
+    }
     await logout();
   },
   "whoami": async () => {
