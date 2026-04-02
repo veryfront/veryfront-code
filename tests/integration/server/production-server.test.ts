@@ -171,6 +171,47 @@ describe(
             assert(html.includes("<html"), "Should include layout wrapper");
           });
         });
+
+        it("keeps static App Router inline bootstrap tags aligned with the response CSP nonce", async () => {
+          await withTestContext("prod-app-router-csp-static-html", async (context) => {
+            context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
+
+            await mkdir(join(context.projectDir, "app"), { recursive: true });
+            await writeTextFile(
+              join(context.projectDir, "app", "page.tsx"),
+              `export default function HomePage() {
+                return <h1>Nonce-safe App Router</h1>;
+              }`,
+            );
+
+            await buildProduction({
+              projectDir: context.projectDir,
+              outputDir: join(context.projectDir, "dist"),
+              enableSplitting: false,
+              enableCompression: false,
+              enablePrefetch: false,
+            });
+
+            const server = await context.createProductionServer();
+            const response = await fetch(`http://127.0.0.1:${server.port}/`);
+            const html = await response.text();
+
+            assertEquals(response.status, 200, "Should serve built App Router HTML");
+            const csp = response.headers.get("content-security-policy") ?? "";
+            const nonceMatch = csp.match(/nonce-([^' ;]+)/);
+            assertExists(nonceMatch, "CSP should include a nonce");
+            const nonce = nonceMatch[1]!;
+
+            assert(
+              html.includes(`<script type="importmap" nonce="${nonce}">`),
+              "Static App Router importmap should use the response nonce",
+            );
+            assert(
+              html.includes(`<script type="module" nonce="${nonce}">`),
+              "Static App Router bootstrap module should use the response nonce",
+            );
+          });
+        });
       },
     );
 
@@ -319,6 +360,48 @@ describe(
 
             assertEquals(response.status, 200, "Should render MDX page");
             assert(html.includes("Test Page") || html.includes("<h1>"), "Should render page title");
+          });
+        });
+
+        it("keeps built Pages Router hydration tags aligned with the response CSP nonce", async () => {
+          await withTestContext("prod-pages-router-csp-static-html", async (context) => {
+            context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
+
+            await writeTextFile(
+              join(context.projectDir, "pages", "index.tsx"),
+              `export default function Home() {
+                return <h1>Nonce-safe Pages Router</h1>;
+              }`,
+            );
+
+            await buildProduction({
+              projectDir: context.projectDir,
+              outputDir: join(context.projectDir, "dist"),
+              enableSplitting: false,
+              enableCompression: false,
+              enablePrefetch: false,
+            });
+
+            const server = await context.createProductionServer();
+            const response = await fetch(`http://127.0.0.1:${server.port}/`);
+            const html = await response.text();
+
+            assertEquals(response.status, 200, "Should serve built Pages Router HTML");
+            const csp = response.headers.get("content-security-policy") ?? "";
+            const nonceMatch = csp.match(/nonce-([^' ;]+)/);
+            assertExists(nonceMatch, "CSP should include a nonce");
+            const nonce = nonceMatch[1]!;
+
+            assert(
+              html.includes(`<script type="importmap" nonce="${nonce}">`),
+              "Pages Router importmap should use the response nonce",
+            );
+            assert(
+              html.includes(
+                `id="veryfront-hydration-data" type="application/json" nonce="${nonce}"`,
+              ),
+              "Pages Router hydration payload should use the response nonce",
+            );
           });
         });
       },

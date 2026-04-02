@@ -116,8 +116,9 @@ export function injectHTMLContent(
         environment: options.environment,
       }),
     });
+    const nonceAttr = buildNonceAttribute(options.nonce);
     const hydrationScript =
-      `<script id="veryfront-hydration-data" type="application/json">${hydrationData}</script>`;
+      `<script id="veryfront-hydration-data" type="application/json"${nonceAttr}>${hydrationData}</script>`;
     html = html.replace(/<\/body>/i, `${hydrationScript}</body>`);
   }
 
@@ -125,19 +126,22 @@ export function injectHTMLContent(
     const hasDevScriptsPlaceholder = /{{\s*devScripts\s*}}/i.test(html);
 
     if (hasDevScriptsPlaceholder) {
-      html = html.replace(/{{\s*devScripts\s*}}/gi, getDevScripts());
+      html = html.replace(/{{\s*devScripts\s*}}/gi, getDevScripts(options.devPort, options.nonce));
     }
 
-    html = html.replace(/{{\s*devStyles\s*}}/gi, getDevStyles());
+    html = html.replace(/{{\s*devStyles\s*}}/gi, getDevStyles(options.nonce));
 
     if (!hasDevScriptsPlaceholder && hasBodyClose) {
-      html = html.replace(/<\/body>/i, `${getDevStyles()}${getDevScripts()}</body>`);
+      html = html.replace(
+        /<\/body>/i,
+        `${getDevStyles(options.nonce)}${getDevScripts(options.devPort, options.nonce)}</body>`,
+      );
     }
   } else {
     html = html.replace(/{{\s*devScripts\s*}}/gi, "");
     html = html.replace(/{{\s*devStyles\s*}}/gi, "");
 
-    const prodScripts = getProdScripts(options.slug);
+    const prodScripts = getProdScripts(options.slug, options.nonce);
     const hasProdScriptsPlaceholder = /{{\s*prodScripts\s*}}/i.test(html);
 
     if (hasProdScriptsPlaceholder) {

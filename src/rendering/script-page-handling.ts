@@ -237,6 +237,7 @@ async function generateFullHtml(
       mode: options.mode,
       slug,
       devPort: options.config?.dev?.port ?? DEFAULT_DASHBOARD_PORT,
+      nonce: options.nonce,
     });
   }
 
