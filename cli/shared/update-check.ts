@@ -16,8 +16,8 @@ import { isQuiet } from "../utils/index.ts";
 import { detectCI } from "./interactive.ts";
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const REGISTRY_URL = "https://jsr.io/@nicolo-ribaudo/veryfront/meta.json";
-const INSTALL_CMD = "deno install -gArf jsr:@nicolo-ribaudo/veryfront";
+const REGISTRY_URL = "https://jsr.io/@veryfront/veryfront/meta.json";
+const INSTALL_CMD = "deno install -gArf jsr:@veryfront/veryfront";
 
 interface UpdateCache {
   lastCheck: number;
