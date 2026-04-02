@@ -156,6 +156,7 @@ describe(
 
         assertEquals(result.agents.has("researcher"), true);
         assertExists(agentRegistry.get("researcher"));
+        assertEquals(agentRegistry.getAllIds(), ["researcher"]);
       } finally {
         await Deno.remove(tempDir, { recursive: true });
       }

@@ -4,6 +4,7 @@
 
 import type { Agent } from "#veryfront/agent";
 import { registerAgent } from "#veryfront/agent";
+import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import type { DiscoveryHandler } from "../types.ts";
 import { filenameToId, trackAgentPath } from "../discovery-utils.ts";
 
@@ -18,6 +19,9 @@ export const agentHandler: DiscoveryHandler<Agent> = {
       : filenameToId(file);
   },
   register: (id, agent, file) => {
+    if (agent.id !== id) {
+      agentRegistry.delete(agent.id);
+    }
     registerAgent(id, agent);
     trackAgentPath(id, file);
     return agent;

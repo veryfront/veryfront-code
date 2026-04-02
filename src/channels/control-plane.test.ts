@@ -269,6 +269,37 @@ describe("channels/control-plane", () => {
       );
     });
 
+    it("uses the registry id for discovered agents whose factory id was auto-generated", async () => {
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) =>
+          id === "researcher"
+            ? {
+              ...createAgent({ id: "agent_123" }),
+              config: {
+                system: "You are helpful.",
+                name: "",
+              } as unknown as Agent["config"],
+            }
+            : undefined,
+        getAllAgentIds: () => ["researcher"],
+      });
+
+      assertEquals(
+        response,
+        RuntimeAgentListResponseSchema.parse({
+          agents: [{
+            id: "researcher",
+            name: "researcher",
+            description: null,
+            model: null,
+            version: null,
+            skills: [],
+          }],
+        }),
+      );
+    });
+
     it("includes resolved skill metadata for agents that enable discovered skills", async () => {
       skillRegistry.clearAll();
       registerSkill("writer-helper", {
