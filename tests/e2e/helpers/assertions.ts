@@ -4,7 +4,7 @@
  * Common utilities for checking page state, errors, and hydration.
  */
 
-import { ConsoleMessage, expect, Page } from "@playwright/test";
+import { ConsoleMessage, expect, Page } from "npm:playwright@1.59.0/test";
 import { findHydrationOrCspFailures } from "../../_helpers/playwright.ts";
 
 /**
@@ -57,8 +57,8 @@ function isIgnorableError(message: string): boolean {
  */
 export async function assertPageLoaded(
   page: Page,
-  expectedMinStatusCode: number = 200,
-  expectedMaxStatusCode: number = 499,
+  _expectedMinStatusCode: number = 200,
+  _expectedMaxStatusCode: number = 499,
 ): Promise<void> {
   const body = await page.locator("body").innerHTML();
   expect(body.length).toBeGreaterThan(0);
