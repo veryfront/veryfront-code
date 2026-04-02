@@ -121,6 +121,25 @@ describe("logging", () => {
         assertEquals(parsed.context.componentPath, "/app/page.tsx");
       });
 
+      it("should merge error context with extra context and prefer extra values", () => {
+        const error = CONFIG_NOT_FOUND.create({
+          context: {
+            source: "error",
+            shared: "original",
+          },
+        });
+
+        logError(error, {
+          shared: "override",
+          requestId: "req-123",
+        });
+
+        const parsed = JSON.parse(consoleErrorOutput[0]);
+        assertEquals(parsed.context.source, "error");
+        assertEquals(parsed.context.shared, "override");
+        assertEquals(parsed.context.requestId, "req-123");
+      });
+
       it("should use error.context in JSON when no context provided", () => {
         const error = CONFIG_NOT_FOUND.create({
           context: { path: "/config" },
@@ -166,6 +185,26 @@ describe("logging", () => {
 
       const parsed = JSON.parse(consoleErrorOutput[0]);
       assertEquals(parsed.context.operation, "Component rendering failed");
+    });
+
+    it("should preserve merged context when adding operation", () => {
+      const error = CONFIG_NOT_FOUND.create({
+        context: {
+          source: "error",
+          shared: "original",
+        },
+      });
+
+      logErrorWithMessage("Failed to load config", error, {
+        shared: "override",
+        requestId: "req-456",
+      });
+
+      const parsed = JSON.parse(consoleErrorOutput[0]);
+      assertEquals(parsed.context.operation, "Failed to load config");
+      assertEquals(parsed.context.source, "error");
+      assertEquals(parsed.context.shared, "override");
+      assertEquals(parsed.context.requestId, "req-456");
     });
   });
 });

@@ -2,6 +2,14 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SSROrchestrator, type SSROrchestratorConfig } from "./ssr-orchestrator.ts";
 import * as React from "react";
+import {
+  clearAllManifests,
+  getRouteManifest,
+} from "#veryfront/modules/manifest/route-module-manifest.ts";
+import {
+  recordModuleToSession,
+  startRenderSession,
+} from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/render-sessions.ts";
 
 function createMockConfig(overrides: Partial<SSROrchestratorConfig> = {}): SSROrchestratorConfig {
   return {
@@ -10,7 +18,7 @@ function createMockConfig(overrides: Partial<SSROrchestratorConfig> = {}): SSROr
     elementValidator: {
       ensureValidReactElement: (el: React.ReactElement) => el,
       validateReactTree: () => ({ valid: true, issues: [] }),
-    } as SSROrchestratorConfig["elementValidator"],
+    } as unknown as SSROrchestratorConfig["elementValidator"],
     ssrRenderer: {
       renderToHTML: async () => ({
         html: "<div>rendered</div>",
@@ -92,7 +100,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
             return el;
           },
           validateReactTree: () => ({ valid: true, issues: [] }),
-        } as SSROrchestratorConfig["elementValidator"],
+        } as unknown as SSROrchestratorConfig["elementValidator"],
       });
 
       const orchestrator = new SSROrchestrator(config);
@@ -156,6 +164,49 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
 
       assertEquals(result.finalStream instanceof ReadableStream, true);
       assertEquals(typeof result.ssrHash, "string");
+    });
+
+    it("finalizes the render session before HTML shell generation", async () => {
+      clearAllManifests();
+      startRenderSession("render-session-1", "project-slug", "test-page");
+
+      const config = createMockConfig({
+        ssrRenderer: {
+          renderToHTML: async () => {
+            recordModuleToSession("_vf_modules/components/TestWidget.tsx");
+            return { html: "<div>rendered</div>", stream: null };
+          },
+        } as unknown as SSROrchestratorConfig["ssrRenderer"],
+        htmlGenerator: {
+          generateFullHTML: async () => {
+            const manifest = getRouteManifest("project-slug", "test-page");
+            assertEquals(manifest?.moduleCount, 1);
+            assertEquals(manifest?.modules[0]?.path, "components/TestWidget.js");
+            return "<!DOCTYPE html><html><body><div>rendered</div></body></html>";
+          },
+          generateHTMLStream: async () => new ReadableStream(),
+        } as unknown as SSROrchestratorConfig["htmlGenerator"],
+      });
+
+      const orchestrator = new SSROrchestrator(config);
+      const element = React.createElement("div") as React.ReactElement;
+
+      await orchestrator.performSSRRendering(
+        element,
+        {
+          meta: { title: "Test", slug: "test-page" },
+          pageBundle: {
+            compiledCode: "",
+            frontmatter: {},
+            globals: {},
+            headings: [],
+            nodeMap: new Map(),
+          },
+        } as any,
+        { projectSlug: "project-slug", renderSessionId: "render-session-1" },
+      );
+
+      clearAllManifests();
     });
   });
 });

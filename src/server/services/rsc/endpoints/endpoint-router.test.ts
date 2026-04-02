@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { handleRSCEndpoint } from "./endpoint-router.ts";
 import type { RSCEndpointParams } from "./types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -71,6 +71,11 @@ function makeParams(
 }
 
 describe("server/services/rsc/endpoints/endpoint-router", () => {
+  afterEach(async () => {
+    const esbuild = await import("esbuild");
+    await esbuild.stop();
+  });
+
   describe("non-RSC paths", () => {
     it("returns null for paths not starting with /_veryfront/rsc/", async () => {
       const result = await handleRSCEndpoint(makeParams({ pathname: "/some/other/path" }));
@@ -256,7 +261,38 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         "application/javascript; charset=utf-8",
       );
       const body = await result!.text();
-      assertEquals(body, "console.log('hello');");
+      assertStringIncludes(body, 'console.log("hello")');
+    });
+
+    it("bundles tsx modules into browser-ready javascript", async () => {
+      const adapter = createMockAdapter({
+        exists: (path: string) => Promise.resolve(path.includes("/app/widget.tsx")),
+        readFile: () =>
+          Promise.resolve(
+            [
+              'import React from "react";',
+              "export default function Widget(){",
+              '  return <div data-kind="widget">Hello</div>;',
+              "}",
+            ].join("\n"),
+          ),
+      });
+
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/module?rel=widget.tsx"),
+          adapter,
+          projectDir: "/tmp/test-project",
+        }),
+      );
+
+      assertEquals(result instanceof Response, true);
+      assertEquals(result!.status, 200);
+      const body = await result!.text();
+      assertStringIncludes(body, 'from "react/jsx-runtime"');
+      assertStringIncludes(body, '"data-kind": "widget"');
     });
 
     it("returns 404 when file not found in any candidate root", async () => {
@@ -653,7 +689,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       assertEquals(result instanceof Response, true);
       assertEquals(result!.status, 200);
       const body = await result!.text();
-      assertEquals(body, "export default {}");
+      assertStringIncludes(body, "as default");
     });
   });
 

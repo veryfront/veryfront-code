@@ -32,6 +32,7 @@ import type {
   VeryfrontApiClient,
 } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
+import { profilePhase } from "#veryfront/observability/request-profiler.ts";
 
 const logger = serverLogger.component("styles-css-handler");
 
@@ -57,7 +58,7 @@ export class StylesCSSHandler extends BaseHandler {
         const contentContext = this.getContentContext(ctx);
         let rawCss: string;
         try {
-          rawCss = await this.loadStylesheet(ctx);
+          rawCss = await profilePhase("css.load_stylesheet", () => this.loadStylesheet(ctx));
         } catch (error) {
           logger.error("Failed to load stylesheet", {
             error: error instanceof Error ? error.message : String(error),
@@ -73,7 +74,10 @@ export class StylesCSSHandler extends BaseHandler {
         );
 
         if (preparedContext) {
-          const prepared = await tryGetPreparedProjectCSS(preparedContext);
+          const prepared = await profilePhase(
+            "css.prepared_cache_lookup",
+            () => tryGetPreparedProjectCSS(preparedContext),
+          );
           if (prepared) {
             logger.debug("Prepared CSS cache hit", {
               projectScope,
@@ -88,12 +92,16 @@ export class StylesCSSHandler extends BaseHandler {
           }
         }
 
-        const remotePrepared = await this.tryResolveRemotePreparedCSS(
-          ctx,
-          projectScope,
-          styleProfile.hash,
-          contentContext,
-          preparedContext,
+        const remotePrepared = await profilePhase(
+          "css.remote_artifact_lookup",
+          () =>
+            this.tryResolveRemotePreparedCSS(
+              ctx,
+              projectScope,
+              styleProfile.hash,
+              contentContext,
+              preparedContext,
+            ),
         );
         if (remotePrepared) {
           logger.debug("Prepared CSS resolved via style artifact metadata", {
@@ -109,7 +117,10 @@ export class StylesCSSHandler extends BaseHandler {
 
         let candidates: Set<string>;
         try {
-          candidates = await extractProjectCandidates(ctx);
+          candidates = await profilePhase(
+            "css.extract_candidates",
+            () => extractProjectCandidates(ctx),
+          );
         } catch (error) {
           logger.error("Failed to extract candidates", {
             error: error instanceof Error ? error.message : String(error),
@@ -118,7 +129,10 @@ export class StylesCSSHandler extends BaseHandler {
         }
         let result: GeneratedStylesResult;
         try {
-          result = await this.generateStylesheet(ctx, rawCss, candidates);
+          result = await profilePhase(
+            "css.generate_stylesheet",
+            () => this.generateStylesheet(ctx, rawCss, candidates),
+          );
         } catch (error) {
           const formatted = formatCSSError(error instanceof Error ? error : String(error));
           logger.error("Tailwind error", {
@@ -171,10 +185,14 @@ body::before {
         });
 
         if (preparedContext && "hash" in result) {
-          await storePreparedProjectCSS(preparedContext, {
-            css: result.css,
-            hash: result.hash,
-          });
+          await profilePhase(
+            "css.store_prepared",
+            () =>
+              storePreparedProjectCSS(preparedContext, {
+                css: result.css,
+                hash: result.hash,
+              }),
+          );
         }
 
         if ("hash" in result) {

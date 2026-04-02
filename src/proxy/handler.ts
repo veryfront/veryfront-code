@@ -209,7 +209,7 @@ function extractUserToken(cookieHeader: string): string | undefined {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
-function getStatusFromError(error: unknown): number | null {
+function parseStatusFromError(error: unknown): number | null {
   const message = error instanceof Error ? error.message : String(error);
   const match = message.match(/failed: (\d+)/);
   return match ? Number(match[1]) : null;
@@ -391,6 +391,75 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnPath)}`;
   }
 
+  function makePreviewProjectNotFoundContext(
+    base: {
+      scope: TokenScope;
+      host: string;
+      parsedDomain: ParsedDomain;
+    },
+    token?: string,
+  ): ProxyContext {
+    return makeErrorContext(
+      base,
+      404,
+      "Preview project not found",
+      token,
+      undefined,
+      "project-not-found",
+    );
+  }
+
+  async function resolveRequestToken(
+    req: Request,
+    scope: TokenScope,
+    host: string,
+    projectSlug: string | undefined,
+    options: {
+      allowSignedInternalControlPlaneToken?: boolean;
+      tokenFetchErrorMessage: string;
+    },
+  ): Promise<{ token?: string; userToken?: string; tokenFetchError?: unknown }> {
+    const userToken = extractUserToken(req.headers.get("cookie") ?? "");
+    const useSignedInternalControlPlaneToken = options.allowSignedInternalControlPlaneToken &&
+      isSignedInternalControlPlaneRequest(req);
+
+    let token: string | undefined;
+    let tokenFetchError: unknown;
+
+    if (useSignedInternalControlPlaneToken) {
+      token = req.headers.get("x-token") ?? undefined;
+      logger?.debug("Using signed control-plane token for internal request", {
+        pathname: new URL(req.url).pathname,
+        scope,
+      });
+    } else if (scope === "preview" && userToken) {
+      token = userToken;
+      logger?.debug("Using user auth token for preview");
+    }
+
+    if (!token && config.apiClientId && config.apiClientSecret) {
+      const customDomain = projectSlug ? undefined : host;
+      if (projectSlug || customDomain) {
+        try {
+          token = await tokenManager.getToken(scope, projectSlug, customDomain);
+        } catch (error) {
+          tokenFetchError = error;
+          logger?.error(options.tokenFetchErrorMessage, error as Error, {
+            projectSlug,
+            customDomain,
+          });
+        }
+      }
+    }
+
+    if (!token && config.apiToken) {
+      token = config.apiToken;
+      logger?.debug("Using static API token fallback");
+    }
+
+    return { token, userToken, tokenFetchError };
+  }
+
   async function checkProtectedAccess(
     req: Request,
     matchingEnv: NonNullable<DomainLookupResult["environments"]>[number] | undefined,
@@ -485,6 +554,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const host = rawHost.replace(/:\d+$/, "");
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
+    const base = { scope, host, parsedDomain };
 
     let projectSlug = parsedDomain.slug ?? undefined;
     let projectId: string | undefined;
@@ -493,7 +563,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     const isCustomDomain = !projectSlug && !parsedDomain.isVeryfrontDomain;
 
-    if (!projectSlug && parsedDomain.isVeryfrontDomain && !isCustomDomain) {
+    if (!projectSlug && parsedDomain.isVeryfrontDomain) {
       return {
         token: undefined,
         projectSlug: undefined,
@@ -518,58 +588,29 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       isCustomDomain,
     });
 
-    const cookieHeader = req.headers.get("cookie") ?? "";
-    const userToken = extractUserToken(cookieHeader);
-    const signedInternalControlPlaneRequest = isSignedInternalControlPlaneRequest(req);
-
+    let userToken: string | undefined;
     let token: string | undefined;
     let tokenFetchError: unknown;
 
     if (isLocalProject) {
       logger?.debug("Local project, skipping token fetch", { localPath });
     } else {
-      if (signedInternalControlPlaneRequest) {
-        token = req.headers.get("x-token") ?? undefined;
-        logger?.debug("Using signed control-plane token for internal request", {
-          pathname: new URL(req.url).pathname,
-          scope,
-        });
-      } else if (scope === "preview" && userToken) {
-        token = userToken;
-        logger?.debug("Using user auth token for preview");
-      }
-
-      if (!token && config.apiClientId && config.apiClientSecret) {
-        const customDomain = projectSlug ? undefined : host;
-        if (projectSlug || customDomain) {
-          try {
-            token = await tokenManager.getToken(scope, projectSlug, customDomain);
-          } catch (error) {
-            tokenFetchError = error;
-            logger?.error("Token fetch failed", error as Error, { projectSlug, customDomain });
-          }
-        }
-      }
-
-      if (!token && config.apiToken) {
-        token = config.apiToken;
-        logger?.debug("Using static API token fallback");
-      }
-
-      const base = { scope, host, parsedDomain };
+      ({ token, userToken, tokenFetchError } = await resolveRequestToken(
+        req,
+        scope,
+        host,
+        projectSlug,
+        {
+          allowSignedInternalControlPlaneToken: true,
+          tokenFetchErrorMessage: "Token fetch failed",
+        },
+      ));
 
       if (projectSlug && scope === "preview" && !token) {
-        const status = getStatusFromError(tokenFetchError);
+        const status = parseStatusFromError(tokenFetchError);
         if (status === 404) {
           logger?.info("Preview project not found", { projectSlug, host });
-          return makeErrorContext(
-            base,
-            404,
-            "Preview project not found",
-            undefined,
-            undefined,
-            "project-not-found",
-          );
+          return makePreviewProjectNotFoundContext(base);
         }
 
         logger?.warn("Preview request has no usable token", {
@@ -685,14 +726,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         if (!resolved.projectId) {
           logger?.info("Preview project not found after lookup", { projectSlug, host });
-          return makeErrorContext(
-            base,
-            404,
-            "Preview project not found",
-            token,
-            undefined,
-            "project-not-found",
-          );
+          return makePreviewProjectNotFoundContext(base, token);
         }
 
         projectId = resolved.projectId;
@@ -753,28 +787,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
     const projectSlug = parsedDomain.slug ?? undefined;
-
-    if (scope === "preview") {
-      const cookieHeader = req.headers.get("cookie") ?? "";
-      const userToken = extractUserToken(cookieHeader);
-      if (userToken) return userToken;
-    }
-
-    if (config.apiClientId && config.apiClientSecret) {
-      const customDomain = projectSlug ? undefined : host;
-      if (projectSlug || customDomain) {
-        try {
-          return await tokenManager.getToken(scope, projectSlug, customDomain);
-        } catch (error) {
-          logger?.error("Token fetch failed for API", error as Error, {
-            projectSlug,
-            customDomain,
-          });
-        }
-      }
-    }
-
-    return config.apiToken;
+    const { token } = await resolveRequestToken(req, scope, host, projectSlug, {
+      tokenFetchErrorMessage: "Token fetch failed for API",
+    });
+    return token;
   }
 
   async function getStats() {

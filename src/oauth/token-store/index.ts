@@ -1,5 +1,5 @@
 /**
- * Oauth Token Store
+ * OAuth Token Store
  *
  * @module oauth/token-store
  */

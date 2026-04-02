@@ -116,9 +116,9 @@ export async function resolveFrameworkFile(
  * Resolve a #veryfront/ import to the actual framework source file path.
  * Returns the resolved path if found, null otherwise.
  *
- * IMPORTANT: This function checks embedded sources FIRST (for compiled binaries),
- * then falls back to regular src/. This matches resolveFrameworkFile's behavior
- * and ensures consistent path resolution for cycle detection.
+ * IMPORTANT: This function prefers regular src/ when present, then falls back
+ * to embedded sources for compiled binaries. This matches resolveFrameworkFile's
+ * behavior and ensures consistent path resolution for cycle detection.
  */
 export async function resolveVeryfrontSourcePath(
   specifier: string,
@@ -132,13 +132,13 @@ export async function resolveVeryfrontSourcePath(
   const relativePath = mappedTarget.slice("./src/".length);
   const hasExtension = /\.(tsx?|jsx?|mjs)$/.test(relativePath);
 
-  // Check embedded sources first (for compiled binaries), then regular src/
+  // Prefer regular src/ when present, then fall back to embedded sources.
   // This order matches FRAMEWORK_LOOKUPS and resolveFrameworkFile to ensure
   // consistent path resolution across the codebase, which is critical for
   // cycle detection in transformingFiles.
   const lookupDirs = [
-    EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
     join(FRAMEWORK_ROOT, "src"), // Regular sources for dev mode
+    EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
   ];
 
   for (const dir of lookupDirs) {
@@ -221,24 +221,28 @@ export async function resolveRelativeFrameworkImport(
   // If specifier already has extension (e.g., ./Head.tsx), we need to try:
   // 1. The exact path (basePath)
   // 2. The path with .src suffix (basePath.src) for embedded sources
-  // 3. Fall back to extension probing
+  // 3. For transpiled .js/.mjs imports, fall back to sibling TS/TSX/JSX sources
   if (/\.(tsx?|jsx?|mjs)$/.test(specifier)) {
-    // Try exact path first
-    try {
-      if (await existsFn(basePath)) return basePath;
-    } catch (_) {
-      /* expected: file may not exist at this path */
+    const explicitCandidates = [basePath, `${basePath}.src`];
+
+    // esbuild rewrites TS/TSX relative imports to .js in transformed output.
+    // When the original source only exists as .ts/.tsx (or embedded .src),
+    // probe those sibling source extensions before giving up.
+    if (basePath.endsWith(".js") || basePath.endsWith(".mjs")) {
+      const stem = basePath.replace(/\.(?:m?js)$/, "");
+      for (const ext of [".ts", ".tsx", ".jsx", ".js", ".mjs"]) {
+        explicitCandidates.push(`${stem}${ext}.src`, `${stem}${ext}`);
+      }
     }
 
-    // Try with .src suffix for embedded sources
-    try {
-      const srcPath = basePath + ".src";
-      if (await existsFn(srcPath)) return srcPath;
-    } catch (_) {
-      /* expected: file may not exist at this path */
+    for (const candidate of explicitCandidates) {
+      try {
+        if (await existsFn(candidate)) return candidate;
+      } catch (_) {
+        /* expected: file may not exist at this path */
+      }
     }
 
-    // Not found with explicit extension
     return null;
   }
 

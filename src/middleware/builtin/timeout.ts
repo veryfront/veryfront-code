@@ -11,6 +11,7 @@ const logger = serverLogger.component("timeout");
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const TIMEOUT_SENTINEL = Symbol("timeout");
+const DEFAULT_EXCLUDE_PATHS = ["/healthz", "/readyz", "/_health"];
 
 export interface TimeoutOptions {
   /** Timeout in milliseconds (default: 60000) */
@@ -23,6 +24,24 @@ export interface TimeoutOptions {
   exclude?: string[];
 }
 
+function isExcludedPath(pathname: string, exclude: string[]): boolean {
+  return exclude.some((path) => pathname === path || pathname.startsWith(path));
+}
+
+function timeoutResponse(pathname: string, timeoutMs: number, message: string): Response {
+  return new Response(
+    JSON.stringify({
+      error: message,
+      timeoutMs,
+      path: pathname,
+    }),
+    {
+      status: HTTP_GATEWAY_TIMEOUT,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
+}
+
 /**
  * Creates a middleware that enforces request timeouts.
  *
@@ -32,13 +51,13 @@ export interface TimeoutOptions {
 export function timeout(options?: TimeoutOptions): Middleware {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const message = options?.message ?? "Request timeout";
-  const exclude = options?.exclude ?? ["/healthz", "/readyz", "/_health"];
+  const exclude = options?.exclude ?? DEFAULT_EXCLUDE_PATHS;
 
   return async (ctx, next) => {
     const req = getRequest(ctx);
     const { pathname } = new URL(req.url);
 
-    if (exclude.some((path) => pathname === path || pathname.startsWith(path))) {
+    if (isExcludedPath(pathname, exclude)) {
       return next();
     }
 
@@ -59,17 +78,7 @@ export function timeout(options?: TimeoutOptions): Middleware {
         timeoutMs,
       });
 
-      return new Response(
-        JSON.stringify({
-          error: message,
-          timeoutMs,
-          path: pathname,
-        }),
-        {
-          status: HTTP_GATEWAY_TIMEOUT,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+      return timeoutResponse(pathname, timeoutMs, message);
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
     }

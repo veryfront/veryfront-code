@@ -12,10 +12,11 @@ import { getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts
 function getVeryfrontSsrImportMap(): Record<string, string> {
   const base = "/_vf_modules/_veryfront";
   const ssr = "?ssr=true";
+  const coreReact = `${base}/react/runtime/core.js${ssr}`;
 
-  const head = `${base}/react/components/Head.js${ssr}`;
-  const router = `${base}/react/router/index.js${ssr}`;
-  const context = `${base}/react/context/index.js${ssr}`;
+  const head = coreReact;
+  const router = coreReact;
+  const context = coreReact;
   const fonts = `${base}/react/fonts/index.js${ssr}`;
 
   const markdown = `${base}/markdown/index.js${ssr}`;

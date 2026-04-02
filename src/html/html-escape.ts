@@ -14,3 +14,7 @@ export function buildAttributes(attrs: Record<string, string>): string {
     .map(([key, value]) => `${key}="${escapeHTML(value)}"`)
     .join(" ");
 }
+
+export function buildNonceAttribute(nonce?: string): string {
+  return nonce ? ` nonce="${escapeHTML(nonce)}"` : "";
+}

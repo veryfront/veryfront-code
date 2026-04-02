@@ -51,7 +51,7 @@ async function isLocalSymlink(path: string): Promise<boolean> {
     const fs = await import("node:fs/promises");
     const info = await fs.lstat(path);
     return info.isSymbolicLink();
-  } catch (_) {
+  } catch {
     // expected: path may not exist or not be accessible
     return false;
   }

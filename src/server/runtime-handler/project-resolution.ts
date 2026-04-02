@@ -17,6 +17,7 @@ import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-looku
 import { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
 import { SpanNames, withSpan } from "./tracing.ts";
 import { isInternalHost } from "./request-utils.ts";
+import { getEffectiveRequestHost } from "../utils/request-host.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -71,17 +72,8 @@ interface RequestHeaders {
   projectPath: string | undefined;
 }
 
-function parseForwardedHost(raw: string | null): string | undefined {
-  if (!raw) return undefined;
-  // x-forwarded-host can be a comma-separated list when multiple proxies
-  // are chained. Take the first (client-facing) entry and trim whitespace.
-  const first = raw.split(",")[0]?.trim();
-  return first || undefined;
-}
-
 function getEffectiveHost(req: Request, url: URL): string {
-  const forwardedHost = parseForwardedHost(req.headers.get("x-forwarded-host"));
-  return forwardedHost ?? req.headers.get("host") ?? url.host;
+  return getEffectiveRequestHost(req, url);
 }
 
 /**

@@ -7,6 +7,7 @@
 import { dirname, join, resolve } from "#veryfront/compat/path";
 import { FRAMEWORK_ROOT } from "../constants.ts";
 import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
+import { getLocalFs } from "../cache/index.ts";
 
 /**
  * Rewrite veryfront/* imports to /_vf_modules/_veryfront/ paths for MDX module loading.
@@ -33,7 +34,32 @@ export function rewriteVeryfrontImports(code: string): string {
  *
  * Fix: Replace ALL relative imports with absolute file:// paths resolved from the source file's directory.
  */
-export function rewriteDntImports(code: string, sourceFilePath: string): string {
+async function findExistingFrameworkRelativeTarget(
+  absolutePath: string,
+): Promise<string | null> {
+  const fs = getLocalFs();
+  const candidates = [absolutePath, `${absolutePath}.src`];
+
+  if (absolutePath.endsWith(".js") || absolutePath.endsWith(".mjs")) {
+    const stem = absolutePath.replace(/\.(?:m?js)$/, "");
+    for (const ext of [".ts", ".tsx", ".jsx", ".js", ".mjs"]) {
+      candidates.push(`${stem}${ext}.src`, `${stem}${ext}`);
+    }
+  }
+
+  for (const candidate of candidates) {
+    try {
+      await fs.stat(candidate);
+      return candidate;
+    } catch {
+      /* expected: candidate may not exist */
+    }
+  }
+
+  return null;
+}
+
+export async function rewriteDntImports(code: string, sourceFilePath: string): Promise<string> {
   // Only needed for framework files that come from the npm package.
   // IMPORTANT: Use FRAMEWORK_ROOT + "src/" or dist/framework-src to avoid matching project source files
   // that live under FRAMEWORK_ROOT (e.g., projects/myproject/components/...).
@@ -49,18 +75,34 @@ export function rewriteDntImports(code: string, sourceFilePath: string): string 
   }
 
   const sourceDir = dirname(sourceFilePath);
+  const needsFrameworkSourceFallback = sourceFilePath.startsWith(frameworkSrcRoot) ||
+    sourceFilePath.startsWith(embeddedSrcRoot);
 
-  return code.replace(
-    /from\s*["'](\.\.?\/[^"']+)["']/g,
-    (_match, relativePath: string) => {
-      const absolutePath = resolve(sourceDir, relativePath);
-      return `from "file://${absolutePath}"`;
+  let rewritten = code;
+  const patterns = [
+    {
+      regex: /from\s*["'](\.\.?\/[^"']+)["']/g,
+      buildReplacement: (path: string) => `from "file://${path}"`,
     },
-  ).replace(
-    /import\s*["'](\.\.?\/[^"']+)["']/g,
-    (_match, relativePath: string) => {
-      const absolutePath = resolve(sourceDir, relativePath);
-      return `import "file://${absolutePath}"`;
+    {
+      regex: /import\s*["'](\.\.?\/[^"']+)["']/g,
+      buildReplacement: (path: string) => `import "file://${path}"`,
     },
-  );
+  ] as const;
+
+  for (const { regex, buildReplacement } of patterns) {
+    const matches = [...rewritten.matchAll(regex)];
+    for (const match of matches) {
+      const original = match[0];
+      const relativePath = match[1];
+      if (!relativePath) continue;
+      const absolutePath = resolve(sourceDir, relativePath);
+      const resolvedPath = needsFrameworkSourceFallback
+        ? await findExistingFrameworkRelativeTarget(absolutePath) ?? absolutePath
+        : absolutePath;
+      rewritten = rewritten.replace(original, buildReplacement(resolvedPath));
+    }
+  }
+
+  return rewritten;
 }

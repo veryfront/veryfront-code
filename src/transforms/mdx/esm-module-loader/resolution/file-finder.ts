@@ -2,41 +2,20 @@ import { join } from "#veryfront/compat/path";
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
-  DIRECTORY_PREFIXES,
+  FRAMEWORK_EMBEDDED_SRC_DIR,
   FRAMEWORK_ROOT,
-  LOG_PREFIX_MDX_LOADER,
-  MODULE_EXTENSIONS,
-} from "../constants.ts";
+  resolveFrameworkSourcePath,
+} from "#veryfront/platform/compat/framework-source-resolver.ts";
+import { DIRECTORY_PREFIXES, LOG_PREFIX_MDX_LOADER, MODULE_EXTENSIONS } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
 
 const logger = rendererLogger.component("file-finder");
 
-// Embedded source directory for compiled binaries (created by prepare-framework-sources.ts)
-const EMBEDDED_SRC_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
-
 // Log framework paths on first load for debugging
 logger.debug("Module loaded with framework paths", {
   FRAMEWORK_ROOT,
-  EMBEDDED_SRC_DIR,
+  EMBEDDED_SRC_DIR: FRAMEWORK_EMBEDDED_SRC_DIR,
 });
-
-// Extensions to try for framework files (includes .src for compiled binary embedded sources)
-const FRAMEWORK_EXTENSIONS = [
-  ".tsx.src",
-  ".ts.src",
-  ".jsx.src",
-  ".js.src", // Embedded sources for compiled binaries
-  ".tsx",
-  ".ts",
-  ".jsx",
-  ".js", // Regular sources for dev mode
-];
-
-// Framework lookup directories in priority order
-const FRAMEWORK_LOOKUP_DIRS = [
-  EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
-  join(FRAMEWORK_ROOT, "src"), // Regular sources for dev mode
-];
 
 export interface FileResolutionResult {
   sourceCode: string;
@@ -145,43 +124,36 @@ export async function resolveModuleFile(
   if (!isFramework) return null;
 
   // Try to resolve framework files from multiple locations:
-  // 1. EMBEDDED_SRC_DIR (dist/framework-src) - for compiled binaries with .src extensions
-  // 2. FRAMEWORK_ROOT/src - for development mode with regular extensions
+  // 1. FRAMEWORK_ROOT/src - source checkouts should prefer current source files
+  // 2. EMBEDDED_SRC_DIR (dist/framework-src) - fallback for compiled binaries
   const localFs = getLocalFs();
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Resolving framework file`, {
     normalizedPath,
     filePathWithoutJs,
     FRAMEWORK_ROOT,
-    EMBEDDED_SRC_DIR,
-    lookupDirs: FRAMEWORK_LOOKUP_DIRS,
+    EMBEDDED_SRC_DIR: FRAMEWORK_EMBEDDED_SRC_DIR,
   });
 
-  for (const lookupDir of FRAMEWORK_LOOKUP_DIRS) {
-    for (const ext of FRAMEWORK_EXTENSIONS) {
-      const frameworkPath = join(lookupDir, filePathWithoutJs + ext);
-
-      try {
-        const stat = await localFs.stat(frameworkPath);
-        if (!stat?.isFile) continue;
-
-        const content = await localFs.readTextFile(frameworkPath);
-        logger.debug(`${LOG_PREFIX_MDX_LOADER} Found framework file`, {
-          basePath: filePathWithoutJs,
-          resolvedPath: frameworkPath,
-          lookupDir,
-        });
-        return { sourceCode: content, actualFilePath: frameworkPath };
-      } catch (_) {
-        /* expected: file may not exist with this extension/directory combination */
-      }
-    }
+  const resolvedFrameworkPath = await resolveFrameworkSourcePath(filePathWithoutJs, {
+    fileSystem: localFs,
+    extensions: [".tsx.src", ".ts.src", ".jsx.src", ".js.src", ".tsx", ".ts", ".jsx", ".js"],
+    includeIndexFallback: false,
+  });
+  if (resolvedFrameworkPath) {
+    const content = await localFs.readTextFile(resolvedFrameworkPath.path);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Found framework file`, {
+      basePath: filePathWithoutJs,
+      resolvedPath: resolvedFrameworkPath.path,
+      lookupDir: resolvedFrameworkPath.lookupDir,
+    });
+    return { sourceCode: content, actualFilePath: resolvedFrameworkPath.path };
   }
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Framework file not found`, {
     filePathWithoutJs,
-    triedDirs: FRAMEWORK_LOOKUP_DIRS,
-    triedExtensions: FRAMEWORK_EXTENSIONS,
+    triedDirs: [join(FRAMEWORK_ROOT, "src"), FRAMEWORK_EMBEDDED_SRC_DIR],
+    triedExtensions: [".tsx.src", ".ts.src", ".jsx.src", ".js.src", ".tsx", ".ts", ".jsx", ".js"],
   });
 
   return null;

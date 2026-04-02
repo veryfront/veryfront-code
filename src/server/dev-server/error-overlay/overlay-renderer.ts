@@ -4,11 +4,12 @@ import { generateErrorHTML, generateRuntimeScript } from "./html-template.ts";
 export const ErrorOverlay = {
   getRuntime: generateRuntimeScript,
   getSuggestion,
-  createHTML(errorInfo: ErrorInfo, projectSlug?: string): string {
+  createHTML(errorInfo: ErrorInfo, projectSlug?: string, nonce?: string): string {
     return generateErrorHTML(
       errorInfo,
       errorInfo.suggestion ?? getSuggestion(errorInfo.error),
       projectSlug,
+      nonce,
     );
   },
 };

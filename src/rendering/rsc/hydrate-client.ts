@@ -2,12 +2,15 @@
 // Minimal: hydrate default export without props in dev
 
 import { rscLogger } from "../client/browser-logger.ts";
-import { getReactCDNUrl, getReactDOMClientCDNUrl } from "#veryfront/utils/constants/cdn.ts";
 import { base64urlEncode } from "#veryfront/utils/base64url.ts";
+import {
+  buildClientModuleUrl,
+  type ClientModuleStrategy,
+  getHydrationReactImportSpecifiers,
+  readHydrationData,
+  resolveClientModuleStrategy,
+} from "./client-module-strategy.ts";
 import type { Root } from "https://esm.sh/react-dom@18.3.1/client";
-
-const REACT_URL = getReactCDNUrl();
-const REACT_DOM_CLIENT_URL = getReactDOMClientCDNUrl();
 
 type Manifest = {
   version: number;
@@ -70,15 +73,12 @@ async function fetchManifest(): Promise<Manifest | null> {
   }
 }
 
-function resolveImportUrlDev(absPath: string): string {
-  return `/_veryfront/fs/${base64url(absPath)}.js`;
-}
-
-async function importClientModule(manifest: Manifest, rel: string): Promise<ClientModule | null> {
+async function importClientModule(
+  manifest: Manifest,
+  rel: string,
+  strategy: ClientModuleStrategy,
+): Promise<ClientModule | null> {
   const abs = manifest.graphIds?.client.find((e) => e.rel === rel)?.path;
-  if (!abs) return null;
-
-  const devUrl = resolveImportUrlDev(abs);
   const cacheKey = `${rel}#${manifest.hash ?? ""}`;
 
   try {
@@ -88,32 +88,26 @@ async function importClientModule(manifest: Manifest, rel: string): Promise<Clie
     rscLogger.debug("hydrate: cache get failed", e);
   }
 
+  const moduleUrl = buildClientModuleUrl({
+    strategy,
+    rel,
+    absPath: abs,
+    version: manifest.hash,
+  });
+  if (!moduleUrl) return null;
+
   try {
-    const mod = (await import(devUrl)) as ClientModule;
+    const mod = (await import(moduleUrl)) as ClientModule;
+
     try {
       setClientModCache(cacheKey, mod);
     } catch (e) {
       rscLogger.debug("hydrate: cache set failed", e);
     }
-    return mod;
-  } catch (e) {
-    rscLogger.debug("hydrate: failed to import dev url", { devUrl, error: e });
-  }
-
-  try {
-    const v = manifest.hash ? `&v=${encodeURIComponent(manifest.hash)}` : "";
-    const url = `/_veryfront/rsc/module?rel=${encodeURIComponent(rel)}${v}`;
-    const mod = (await import(url)) as ClientModule;
-
-    try {
-      setClientModCache(cacheKey, mod);
-    } catch (e) {
-      rscLogger.debug("hydrate: cache set failed (prod)", e);
-    }
 
     return mod;
   } catch (e) {
-    rscLogger.debug("hydrate: failed to import prod url", { rel, error: e });
+    rscLogger.debug("hydrate: failed to import module", { moduleUrl, error: e });
     return null;
   }
 }
@@ -151,6 +145,8 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     return;
   }
 
+  const clientModuleStrategy = resolveClientModuleStrategy(readHydrationData(doc));
+
   try {
     if (globalThis.__VF_TEST_MODE__) {
       globalThis.__VF_HYDRATE_CALLED = true;
@@ -161,8 +157,11 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     rscLogger.debug("hydrate: test mode flags failed", e);
   }
 
-  const { default: React } = await import(REACT_URL);
-  const { createRoot } = await import(REACT_DOM_CLIENT_URL);
+  const reactSpecifiers = getHydrationReactImportSpecifiers(doc);
+  const [{ default: React }, { createRoot }] = await Promise.all([
+    import(reactSpecifiers.react),
+    import(reactSpecifiers.reactDomClient),
+  ]);
 
   for (const el of nodes) {
     const ref = el.dataset?.clientRef ?? "";
@@ -171,7 +170,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     const parsed = parseClientRef(ref);
     if (!parsed) continue;
 
-    const mod = await importClientModule(manifest, parsed.rel);
+    const mod = await importClientModule(manifest, parsed.rel, clientModuleStrategy);
     if (!mod) continue;
 
     const Cmp = mod[parsed.exportName] ?? mod.default;

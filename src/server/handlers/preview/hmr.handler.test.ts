@@ -61,7 +61,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       const handler = new HMRHandler();
       assertEquals(
         typeof handler.metadata.enabled === "function"
-          ? handler.metadata.enabled()
+          ? handler.metadata.enabled(makeCtx())
           : handler.metadata.enabled,
         true,
       );
@@ -171,6 +171,38 @@ describe("server/handlers/preview/hmr.handler", () => {
       });
       const result = await handler.handle(req, ctx);
       assertEquals(result.continue, false);
+    });
+
+    it("proceeds when x-forwarded-host is a local preview host", async () => {
+      const handler = new HMRHandler();
+      const req = new Request("http://example.com/_ws", {
+        headers: {
+          host: "internal.proxy:3000",
+          "x-forwarded-host": "preview.veryfront.me:3000",
+        },
+      });
+      const ctx = makeCtx({
+        isLocalProject: false,
+        adapter: createMockAdapter({ upgradeWebSocket: undefined }),
+      });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.continue, false);
+    });
+
+    it("continues when x-forwarded-host is external even if host header is localhost", async () => {
+      const handler = new HMRHandler();
+      const req = new Request("http://example.com/_ws", {
+        headers: {
+          host: "localhost:3000",
+          "x-forwarded-host": "evil.example.com",
+        },
+      });
+      const ctx = makeCtx({
+        isLocalProject: false,
+        requestContext: { mode: "production" } as any,
+      });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.continue, true);
     });
   });
 

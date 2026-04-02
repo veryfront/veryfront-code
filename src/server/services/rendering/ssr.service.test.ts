@@ -193,17 +193,17 @@ describe("server/services/rendering/ssr.service", () => {
       });
 
       it("passes handler context to the provider", async () => {
-        let receivedCtx: HandlerContext | null = null;
+        let receivedProjectSlug = "";
         const provider: RendererProvider = {
           getRenderer: (ctx) => {
-            receivedCtx = ctx;
+            receivedProjectSlug = ctx.projectSlug ?? "";
             return Promise.resolve(createMockRendererAdapter());
           },
         };
         const service = new SSRService({ rendererProvider: provider });
         const ctx = makeCtx({ projectSlug: "my-project" });
         await service.getRenderer(ctx);
-        assertEquals(receivedCtx?.projectSlug, "my-project");
+        assertEquals(receivedProjectSlug, "my-project");
       });
     });
 
@@ -215,6 +215,7 @@ describe("server/services/rendering/ssr.service", () => {
               html: "<html>rendered</html>",
               stream: undefined,
               ssrHash: "hash123",
+              frontmatter: {},
             }),
         });
         const service = new SSRService({
@@ -236,7 +237,13 @@ describe("server/services/rendering/ssr.service", () => {
           },
         });
         const adapter = createMockRendererAdapter({
-          renderPage: () => Promise.resolve({ html: undefined, stream, ssrHash: undefined }),
+          renderPage: () =>
+            Promise.resolve({
+              html: "",
+              stream,
+              ssrHash: undefined,
+              frontmatter: {},
+            }),
         });
         const service = new SSRService({
           rendererProvider: createMockRendererProvider(adapter),
@@ -280,7 +287,7 @@ describe("server/services/rendering/ssr.service", () => {
           renderPage: () => {
             throw new VeryfrontError("Not found", {
               slug: "file-not-found",
-              category: "not-found",
+              category: "ROUTE",
               status: 404,
               title: "File not found",
             });
@@ -302,7 +309,7 @@ describe("server/services/rendering/ssr.service", () => {
           renderPage: () => {
             throw new VeryfrontError("API error", {
               slug: "api-client-error",
-              category: "client",
+              category: "SERVER",
               status: 404,
               title: "API Client Error",
               context: {
@@ -318,6 +325,34 @@ describe("server/services/rendering/ssr.service", () => {
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 404);
         assertEquals(result.errorType, "undeployed");
+      });
+
+      it("maps render redirects to redirect results", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw new VeryfrontError("Redirect to /login", {
+              slug: "render-error",
+              category: "RUNTIME",
+              status: 500,
+              title: "Component render failed",
+              context: {
+                redirect: {
+                  destination: "/login",
+                  permanent: false,
+                },
+              },
+            });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(makeCtx(), makeRenderOptions());
+        assertEquals(result.status, 302);
+        assertEquals(result.errorType, "redirect");
+        assertEquals(result.redirectLocation, "/login");
+        assertEquals(result.cacheStrategy, "no-cache");
       });
 
       it("returns server-error for generic errors in production", async () => {
@@ -352,6 +387,7 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.status, 500);
         assertEquals(result.errorType, "runtime");
         assertEquals(result.showDevOverlay, true);
+        assertEquals(result.html?.includes('nonce="test-nonce"'), true);
       });
     });
   });

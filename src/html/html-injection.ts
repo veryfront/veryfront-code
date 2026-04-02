@@ -1,11 +1,20 @@
 import type { HTMLMetadata } from "#veryfront/transforms/mdx/types.ts";
+import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
+import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 import {
   generateLinkTags,
   generateMetaTags,
   generateScriptTags,
   generateStyleTags,
 } from "./tag-generators.ts";
-import { getDevScripts, getDevStyles, getProdScripts, getStudioScripts } from "./dev-scripts.ts";
+import { buildNonceAttribute } from "./html-escape.ts";
+import {
+  getDevScripts,
+  getDevStyles,
+  getPreviewStylesheetLink,
+  getProdScripts,
+  getStudioScripts,
+} from "./dev-scripts.ts";
 
 export interface InjectHTMLContentOptions {
   mode: string;
@@ -13,6 +22,8 @@ export interface InjectHTMLContentOptions {
   devPort?: number;
   /** Absolute path to the page file, used for 'use client' hydration */
   pagePath?: string;
+  /** Project root used to normalize absolute page paths in hydration data */
+  projectDir?: string;
   /** Whether the page has 'use client' directive */
   isClientPage?: boolean;
   /** Whether page is embedded in Studio iframe */
@@ -23,12 +34,30 @@ export interface InjectHTMLContentOptions {
   pageId?: string;
   /** CSP nonce */
   nonce?: string;
+  /** Deployment environment for hydration module selection */
+  environment?: "preview" | "production";
+  /** Whether the request is being served from a local project */
+  isLocalProject?: boolean;
   /** WebSocket URL for direct Yjs connection from the bridge */
   wsUrl?: string;
   /** Yjs document GUID for the bridge to join the same room */
   yjsGuid?: string;
   /** Pre-built import map JSON for ESM module resolution (injected into <head>) */
   importMapJson?: string;
+}
+
+function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
+  const normalizedPath = absolutePath.replace(/\\/g, "/");
+
+  if (!projectDir) return normalizedPath.replace(/^\//, "");
+
+  return resolveRelativePath(normalizedPath, projectDir);
+}
+
+function hasProjectStylesheet(html: string): boolean {
+  return /id=["']vf-tailwind-css["']/i.test(html) ||
+    /href=["'][^"']*\/_vf_styles\/styles\.css(?:\?[^"']*)?["']/i.test(html) ||
+    /href=["'][^"']*\/_vf\/css\/[^"']+\.css["']/i.test(html);
 }
 
 export function injectHTMLContent(
@@ -61,10 +90,17 @@ export function injectHTMLContent(
 
   // Inject import map into <head> for ESM module resolution (must be before any module scripts)
   if (options.importMapJson && /<\/head>/i.test(html)) {
-    const nonceAttr = options.nonce ? ` nonce="${options.nonce}"` : "";
+    const nonceAttr = buildNonceAttribute(options.nonce);
     const importMapTag =
       `<script type="importmap"${nonceAttr}>\n${options.importMapJson}\n</script>`;
     html = html.replace(/<\/head>/i, `${importMapTag}\n</head>`);
+  }
+
+  const shouldUsePreviewStylesheet = options.mode === "development" ||
+    options.environment === "preview";
+
+  if (shouldUsePreviewStylesheet && /<\/head>/i.test(html) && !hasProjectStylesheet(html)) {
+    html = html.replace(/<\/head>/i, `${getPreviewStylesheetLink()}\n</head>`);
   }
 
   const hasBodyClose = /<\/body>/i.test(html);
@@ -72,9 +108,13 @@ export function injectHTMLContent(
   // Inject hydration data for 'use client' pages (before scripts, so client.js can find it)
   if (options.pagePath && options.isClientPage && hasBodyClose) {
     const hydrationData = JSON.stringify({
-      pagePath: options.pagePath,
+      pagePath: toProjectRelativePath(options.pagePath, options.projectDir),
       slug: options.slug,
       isClientPage: true,
+      clientModuleStrategy: determineClientModuleStrategy({
+        isLocalProject: options.isLocalProject ?? options.mode === "development",
+        environment: options.environment,
+      }),
     });
     const hydrationScript =
       `<script id="veryfront-hydration-data" type="application/json">${hydrationData}</script>`;

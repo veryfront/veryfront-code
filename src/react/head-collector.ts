@@ -44,11 +44,16 @@ export interface CollectedHead {
   scripts: HeadScript[];
 }
 
+export const HEAD_COLLECTOR_SYMBOL = Symbol.for("veryfront.react.collect-head");
+
 function createEmpty(): CollectedHead {
   return { metas: [], links: [], styles: [], scripts: [] };
 }
 
 const headStorage = new AsyncLocalStorage<CollectedHead>();
+const globalHeadCollector = globalThis as typeof globalThis & {
+  [HEAD_COLLECTOR_SYMBOL]?: typeof collectHead;
+};
 
 export async function runWithHeadCollector<T>(
   fn: () => T | Promise<T>,
@@ -87,6 +92,8 @@ export function collectHead(data: Partial<CollectedHead>): void {
     if (!isDupe) collected.scripts.push(script);
   }
 }
+
+globalHeadCollector[HEAD_COLLECTOR_SYMBOL] = collectHead;
 
 export function hasCollectedHead(): boolean {
   const collected = headStorage.getStore();

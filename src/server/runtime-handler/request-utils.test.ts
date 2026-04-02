@@ -8,6 +8,7 @@ import {
   isWebSocketPath,
   LIGHTWEIGHT_PATH_PREFIXES,
   MONITORING_PATHS,
+  shouldSkipEnrichedContext,
   TIMEOUT_SENTINEL,
 } from "./request-utils.ts";
 
@@ -31,6 +32,7 @@ describe("request-utils", () => {
     it("LIGHTWEIGHT_PATH_PREFIXES includes module paths", () => {
       assertEquals(LIGHTWEIGHT_PATH_PREFIXES.includes("/_vf_modules/"), true);
       assertEquals(LIGHTWEIGHT_PATH_PREFIXES.includes("/_veryfront/modules/"), true);
+      assertEquals(LIGHTWEIGHT_PATH_PREFIXES.includes("/_veryfront/hydration-runtime.js"), true);
     });
   });
 
@@ -95,6 +97,7 @@ describe("request-utils", () => {
     it("returns true for module paths", () => {
       assertEquals(isLightweightPath("/_vf_modules/react.js"), true);
       assertEquals(isLightweightPath("/_veryfront/modules/client.js"), true);
+      assertEquals(isLightweightPath("/_veryfront/hydration-runtime.js"), true);
       assertEquals(isLightweightPath("/_veryfront/preview-hmr.js"), true);
       assertEquals(isLightweightPath("/_veryfront/studio-bridge.js"), true);
     });
@@ -123,6 +126,22 @@ describe("request-utils", () => {
       assertEquals(isWebSocketPath("/"), false);
       assertEquals(isWebSocketPath("/_ws/sub"), false);
       assertEquals(isWebSocketPath("/_wss"), false);
+    });
+  });
+
+  describe("shouldSkipEnrichedContext", () => {
+    it("returns true for API routes", () => {
+      assertEquals(shouldSkipEnrichedContext("/api/users"), true);
+      assertEquals(shouldSkipEnrichedContext("/api/bench/status"), true);
+    });
+
+    it("returns true for internal agent control-plane routes", () => {
+      assertEquals(shouldSkipEnrichedContext("/internal/agents/list"), true);
+    });
+
+    it("returns false for render routes", () => {
+      assertEquals(shouldSkipEnrichedContext("/"), false);
+      assertEquals(shouldSkipEnrichedContext("/bench/interactive"), false);
     });
   });
 });

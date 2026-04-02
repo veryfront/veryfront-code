@@ -111,20 +111,3 @@ export interface ToolDefinition {
   description: string;
   parameters: JsonSchema;
 }
-
-/**
- * Tool registry entry
- */
-interface ToolRegistryEntry {
-  /** Tool ID */
-  id: string;
-
-  /** Tool instance */
-  tool: Tool;
-
-  /** File path where tool was defined */
-  filePath?: string;
-
-  /** Auto-discovered */
-  autoDiscovered: boolean;
-}

@@ -54,6 +54,10 @@ export interface RenderOptions {
   skipCachePersist?: boolean;
   /** Disable HMR scripts (for embedded iframes where WebSocket is unwanted) */
   noHmr?: boolean;
+  /** Force production client scripts even when rendering a local project */
+  forceProductionScripts?: boolean;
+  /** Internal SSR module-tracking session id for first-response manifest preloads */
+  renderSessionId?: string;
 }
 
 export interface RenderContext {

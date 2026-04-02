@@ -12,6 +12,22 @@ import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 const DEFAULT_RATE_LIMIT_REQUESTS = 100;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = MS_PER_MINUTE;
 
+function createRateLimitEntry(windowMs: number): RateLimitEntry {
+  return { count: 1, resetAt: Date.now() + windowMs };
+}
+
+function getRightmostForwardedIp(req: Request): string | undefined {
+  const forwarded = req.headers.get("x-forwarded-for");
+  if (!forwarded) return undefined;
+
+  const parts = forwarded.split(",").map((value) => value.trim()).filter(Boolean);
+  return parts.at(-1);
+}
+
+function defaultKeyGenerator(req: Request): string {
+  return getRightmostForwardedIp(req) ?? "anonymous";
+}
+
 export class MemoryRateLimitStore implements RateLimitStore {
   private counts = new Map<string, RateLimitEntry>();
   private cleanupInterval?: ReturnType<typeof setInterval>;
@@ -33,11 +49,11 @@ export class MemoryRateLimitStore implements RateLimitStore {
   }
 
   increment(key: string, windowMs: number): Promise<RateLimitEntry> {
-    const now = Date.now();
     const existing = this.counts.get(key);
+    const now = Date.now();
 
     if (!existing || existing.resetAt < now) {
-      const entry: RateLimitEntry = { count: 1, resetAt: now + windowMs };
+      const entry = createRateLimitEntry(windowMs);
       this.counts.set(key, entry);
       return Promise.resolve(entry);
     }
@@ -54,6 +70,7 @@ export class MemoryRateLimitStore implements RateLimitStore {
   destroy(): void {
     if (!this.cleanupInterval) return;
     clearInterval(this.cleanupInterval);
+    this.cleanupInterval = undefined;
   }
 }
 
@@ -75,15 +92,7 @@ export function rateLimit(
   const maxRequests = options.maxRequests ?? DEFAULT_RATE_LIMIT_REQUESTS;
   const windowMs = options.windowMs ?? DEFAULT_RATE_LIMIT_WINDOW_MS;
   const store = options.store ?? new MemoryRateLimitStore(windowMs);
-  const keyGenerator = options.keyGenerator ?? ((req: Request) => {
-    const forwarded = req.headers.get("x-forwarded-for");
-    if (forwarded) {
-      const parts = forwarded.split(",").map((s) => s.trim()).filter(Boolean);
-      // Use rightmost IP — added by nearest trusted proxy, not spoofable by clients
-      if (parts.length > 0) return parts[parts.length - 1]!;
-    }
-    return "anonymous";
-  });
+  const keyGenerator = options.keyGenerator ?? defaultKeyGenerator;
 
   return async (ctx, next) => {
     const req = getRequest(ctx);

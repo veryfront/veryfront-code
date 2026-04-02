@@ -26,13 +26,14 @@ export const FRAMEWORK_ROOT = RUNTIME_FRAMEWORK_ROOT;
 // In compiled binaries, files are extracted to the runtime directory.
 export const EMBEDDED_SRC_DIR = join(RUNTIME_FRAMEWORK_ROOT, "dist", "framework-src");
 
-// Map of _vf_modules prefixes to framework directories
-// We try embedded sources first (for compiled binaries), then regular src/
+// Map of _vf_modules prefixes to framework directories.
+// Prefer regular src/ when present so source checkouts never serve stale
+// dist/framework-src copies; compiled binaries fall back to embedded .src files.
 export const FRAMEWORK_LOOKUPS: Array<[prefix: string, frameworkDir: string]> = [
-  // Embedded sources for compiled binaries (these are .src files)
-  ["_veryfront/", EMBEDDED_SRC_DIR],
   // Regular sources for dev mode
   ["_veryfront/", join(FRAMEWORK_ROOT, "src")],
+  // Embedded sources for compiled binaries (these are .src files)
+  ["_veryfront/", EMBEDDED_SRC_DIR],
 ];
 
 // Singleflight for framework module file writes to prevent race conditions

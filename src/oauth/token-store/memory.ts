@@ -29,19 +29,19 @@ export class MemoryTokenStore implements TokenStore {
   }
 
   async getState(state: string): Promise<OAuthState | null> {
-    const oauthState = this.states.get(state);
-    if (!oauthState) return null;
+    const storedState = this.states.get(state);
+    if (!storedState) return null;
 
-    if (Date.now() - oauthState.createdAt > STATE_EXPIRATION_MS) {
+    if (Date.now() - storedState.createdAt > STATE_EXPIRATION_MS) {
       this.states.delete(state);
       return null;
     }
 
-    return oauthState;
+    return storedState;
   }
 
-  async setState(oauthState: OAuthState): Promise<void> {
-    this.states.set(oauthState.state, oauthState);
+  async setState(storedState: OAuthState): Promise<void> {
+    this.states.set(storedState.state, storedState);
     this.cleanupExpiredStates();
   }
 
@@ -51,8 +51,8 @@ export class MemoryTokenStore implements TokenStore {
 
   private cleanupExpiredStates(): void {
     const now = Date.now();
-    for (const [state, oauthState] of this.states) {
-      if (now - oauthState.createdAt > STATE_EXPIRATION_MS) {
+    for (const [state, storedState] of this.states) {
+      if (now - storedState.createdAt > STATE_EXPIRATION_MS) {
         this.states.delete(state);
       }
     }

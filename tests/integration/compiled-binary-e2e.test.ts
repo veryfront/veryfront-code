@@ -24,6 +24,12 @@ import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
+import {
+  captureBrowserDiagnostics,
+  findHydrationOrCspFailures,
+  getBrowserDiagnosticMessages,
+  launchChromium,
+} from "../_helpers/playwright.ts";
 import { withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
 
 // Load .env file for test configuration (VERYFRONT_BINARY_FRESH, etc.)
@@ -37,6 +43,21 @@ try {
 // test suites run concurrently (e.g., deno task test picking up this file)
 const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? `/tmp/veryfront-e2e-bin-${Deno.pid}`;
 const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
+
+function stripReactSSRMarkers(html: string): string {
+  return html.replaceAll("<!-- -->", "");
+}
+
+function getDirectiveSources(csp: string, directiveName: string): string[] {
+  const directive = csp
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${directiveName} `));
+
+  if (!directive) return [];
+  return directive.split(/\s+/).slice(1);
+}
+
 /** Get an available port using OS-assigned port 0. */
 async function getAvailablePort(): Promise<number> {
   const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
@@ -90,6 +111,14 @@ interface TestServer {
   port: number;
   logs: string[];
   kill: () => Promise<void>;
+}
+
+type BrowserDiagnostics = ReturnType<typeof captureBrowserDiagnostics>;
+
+interface BrowserPageSession {
+  page: import("npm:playwright").Page;
+  response: import("npm:playwright").Response | null;
+  diagnostics: BrowserDiagnostics;
 }
 
 async function ensureBinaryCompiled(): Promise<void> {
@@ -307,6 +336,100 @@ async function withServer(
   } finally {
     await server.kill();
     await Deno.remove(projectDir, { recursive: true });
+  }
+}
+
+async function withBrowserPageAgainstServer(
+  server: TestServer,
+  run: (session: BrowserPageSession) => Promise<void>,
+): Promise<void> {
+  const browser = await launchChromium();
+  if (!browser) return;
+
+  try {
+    const browserContext = await browser.newContext();
+    const page = await browserContext.newPage();
+    const diagnostics = captureBrowserDiagnostics(page);
+
+    try {
+      const response = await page.goto(`http://127.0.0.1:${server.port}/`);
+      assertEquals(response?.status(), 200, "Should return 200");
+      await run({ page, response, diagnostics });
+    } finally {
+      await browserContext.close();
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
+function assertNoBrowserHydrationErrors(
+  diagnostics: BrowserDiagnostics,
+  label = "Unexpected hydration/CSP errors",
+): void {
+  const hydrationErrors = findHydrationOrCspFailures(
+    getBrowserDiagnosticMessages(diagnostics),
+  );
+  assertEquals(hydrationErrors.length, 0, `${label}: ${hydrationErrors.join("\n")}`);
+}
+
+function assertNoServerLogErrors(
+  server: TestServer,
+  patterns: string[],
+  label: string,
+): void {
+  const serverErrors = server.logs.filter((line) =>
+    patterns.some((pattern) => line.includes(pattern))
+  );
+  assertEquals(serverErrors.length, 0, `${label}: ${serverErrors.join("\n")}`);
+}
+
+async function assertCounterHydration(
+  page: import("npm:playwright").Page,
+  options: {
+    expectedStrategy?: string;
+    expectedPagePath?: string;
+    expectedModulePath?: string;
+    assertBeforeClick?: () => Promise<void>;
+    assertAfterClick?: () => Promise<void>;
+  } = {},
+): Promise<void> {
+  await page.waitForSelector('#counter[data-hydrated="yes"]');
+
+  const initialText = await page.textContent("#counter");
+  assertEquals(initialText?.trim(), "Count: 0");
+
+  if (options.expectedStrategy || options.expectedPagePath) {
+    const hydrationData = JSON.parse(
+      (await page.textContent("#veryfront-hydration-data")) ?? "{}",
+    ) as { clientModuleStrategy?: string; pagePath?: string };
+
+    if (options.expectedStrategy) {
+      assertEquals(hydrationData.clientModuleStrategy, options.expectedStrategy);
+    }
+
+    if (options.expectedPagePath) {
+      assertEquals(hydrationData.pagePath, options.expectedPagePath);
+    }
+  }
+
+  await options.assertBeforeClick?.();
+
+  await page.click("#counter");
+  await page.waitForFunction(
+    () => document.querySelector("#counter")?.textContent?.trim() === "Count: 1",
+  );
+
+  const hydratedText = await page.textContent("#counter");
+  assertEquals(hydratedText?.trim(), "Count: 1");
+
+  await options.assertAfterClick?.();
+
+  if (options.expectedModulePath) {
+    const resources = await page.evaluate(() =>
+      performance.getEntriesByType("resource").map((entry) => entry.name)
+    );
+    assertEquals(resources.some((name) => name.includes(options.expectedModulePath!)), true);
   }
 }
 
@@ -714,6 +837,62 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       assertEquals(response.status, 200, "Should return 200");
       assertStringIncludes(html, "layout-wrapper", "Should have layout wrapper");
       assertStringIncludes(html, "page-content", "Should have page content");
+
+      const errors = server.logs.filter((l) =>
+        l.includes("Invalid hook call") || l.includes("Module not found")
+      );
+      assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
+    });
+  });
+
+  it("should expose params and query through usePageContext in the compiled runtime", async () => {
+    const projectDir = await createTestProject(
+      "page-context-request-values-test",
+      `
+export default function Home() {
+  return <div>Unused home page</div>;
+}
+`,
+      {
+        "pages/blog/[slug].tsx": `
+import { usePageContext } from "veryfront/context";
+
+export default function BlogPost() {
+  const ctx = usePageContext();
+  return (
+    <div id="page-context">
+      Page params: {ctx?.params?.slug || "none"} | Page query: {ctx?.query?.tab || "none"}
+    </div>
+  );
+}
+`,
+        "pages/layout.tsx": `
+import { usePageContext } from "veryfront/context";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const ctx = usePageContext();
+  return (
+    <div id="layout-wrapper">
+      <header id="layout-context">
+        Layout params: {ctx?.params?.slug || "none"} | Layout query: {ctx?.query?.lang || "none"}
+      </header>
+      <main>{children}</main>
+    </div>
+  );
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/blog/hello?tab=files&lang=en`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, "Should return 200");
+      assertStringIncludes(html, "layout-wrapper", "Should render layout wrapper");
+      const normalizedHtml = stripReactSSRMarkers(html);
+      assertStringIncludes(normalizedHtml, "Layout params: hello | Layout query: en");
+      assertStringIncludes(normalizedHtml, "Page params: hello | Page query: files");
 
       const errors = server.logs.filter((l) =>
         l.includes("Invalid hook call") || l.includes("Module not found")
@@ -1647,6 +1826,247 @@ export default function ClientPage() {
         l.includes("Invalid hook call") || l.includes("more than one copy of React")
       );
       assertEquals(errors.length, 0, "Should have no React errors");
+    });
+  });
+
+  it("should hydrate app-router client pages interactively in the compiled binary", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-binary-browser-hydration-" });
+
+    await Deno.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify(
+        {
+          name: "test-binary-browser-hydration",
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2,
+      ),
+    );
+
+    await Deno.writeTextFile(
+      join(projectDir, "veryfront.config.ts"),
+      `export default {
+  fs: { type: "local" },
+  experimental: { rsc: true }
+};`,
+    );
+
+    await Deno.mkdir(join(projectDir, "app"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "app", "layout.tsx"),
+      `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <html><body>{children}</body></html>;
+}
+`,
+    );
+    await Deno.writeTextFile(
+      join(projectDir, "app", "page.tsx"),
+      `
+"use client";
+import { useEffect, useState } from "react";
+
+export default function ClientPage() {
+  const [count, setCount] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
+  return (
+    <button
+      id="counter"
+      data-hydrated={hydrated ? "yes" : "no"}
+      onClick={() => setCount((value) => value + 1)}
+    >
+      Count: {count}
+    </button>
+  );
+}
+`,
+    );
+
+    await withServer(projectDir, async (server) => {
+      await withBrowserPageAgainstServer(server, async ({ page, diagnostics }) => {
+        await assertCounterHydration(page, {
+          expectedStrategy: "fs",
+          expectedPagePath: "app/page.tsx",
+          expectedModulePath: "/_veryfront/fs/",
+        });
+
+        assertNoBrowserHydrationErrors(diagnostics, "Unexpected hydration errors");
+        assertNoServerLogErrors(
+          server,
+          ["Invalid hook call", "more than one copy of React", "Page hydration failed"],
+          "Unexpected server errors",
+        );
+      });
+    });
+  });
+
+  it("should hydrate pages-router client pages under strict CSP in the compiled binary", async () => {
+    const projectDir = await createTestProject(
+      "pages-browser-csp-hydration",
+      `
+import { useEffect, useState } from "react";
+
+export default function HomePage() {
+  const [count, setCount] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
+  return (
+    <button
+      id="counter"
+      data-hydrated={hydrated ? "yes" : "no"}
+      onClick={() => setCount((value) => value + 1)}
+      style={{
+        backgroundColor: hydrated
+          ? (count > 0 ? "rgb(22, 101, 52)" : "rgb(37, 99, 235)")
+          : "rgb(156, 163, 175)",
+        color: "rgb(255, 255, 255)",
+        padding: String(12 + count) + "px",
+        border: "none",
+        borderRadius: "8px",
+      }}
+    >
+      Count: {count}
+    </button>
+  );
+}
+`,
+    );
+
+    await withServer(projectDir, async (server) => {
+      await withBrowserPageAgainstServer(server, async ({ page, response, diagnostics }) => {
+        const csp = response?.headers()["content-security-policy"] ?? "";
+        assert(
+          csp.includes("https://esm.sh"),
+          `Expected CSP to allow esm.sh scripts, got: ${csp}`,
+        );
+        assert(
+          csp.includes("style-src-elem"),
+          `Expected CSP to include style-src-elem, got: ${csp}`,
+        );
+        assert(
+          !csp.includes("style-src 'self' 'unsafe-inline' 'nonce-"),
+          `style-src should not mix unsafe-inline with a nonce, got: ${csp}`,
+        );
+
+        await assertCounterHydration(page, {
+          assertBeforeClick: async () => {
+            const initialBackground = await page.$eval(
+              "#counter",
+              (element) => globalThis.getComputedStyle(element).backgroundColor,
+            );
+            const initialPadding = await page.$eval(
+              "#counter",
+              (element) => globalThis.getComputedStyle(element).paddingTop,
+            );
+            assertEquals(initialBackground, "rgb(37, 99, 235)");
+            assertEquals(initialPadding, "12px");
+          },
+          assertAfterClick: async () => {
+            const clickedBackground = await page.$eval(
+              "#counter",
+              (element) => globalThis.getComputedStyle(element).backgroundColor,
+            );
+            const clickedPadding = await page.$eval(
+              "#counter",
+              (element) => globalThis.getComputedStyle(element).paddingTop,
+            );
+            assertEquals(clickedBackground, "rgb(22, 101, 52)");
+            assertEquals(clickedPadding, "13px");
+          },
+        });
+
+        assertNoBrowserHydrationErrors(diagnostics);
+        assertNoServerLogErrors(
+          server,
+          [
+            "Page hydration failed",
+            "Refused to load the script",
+            "violates the following Content Security Policy directive",
+          ],
+          "Unexpected server/browser CSP errors",
+        );
+      });
+    });
+  });
+
+  it("should allow hydrated client inline styles under the default CSP in the compiled binary", async () => {
+    const projectDir = await createTestProject(
+      "pages-browser-csp-inline-style",
+      `
+import { useEffect, useState } from "react";
+
+export default function HomePage() {
+  const [hydrated, setHydrated] = useState(false);
+  const [backgroundColor, setBackgroundColor] = useState("rgb(255, 0, 0)");
+
+  useEffect(() => {
+    setHydrated(true);
+    setBackgroundColor("rgb(0, 128, 0)");
+  }, []);
+
+  return (
+    <div
+      id="styled-box"
+      data-hydrated={hydrated ? "yes" : "no"}
+      style={{ backgroundColor, padding: "12px" }}
+    >
+      Styled Box
+    </div>
+  );
+}
+`,
+    );
+
+    await withServer(projectDir, async (server) => {
+      await withBrowserPageAgainstServer(server, async ({ page, response, diagnostics }) => {
+        await page.waitForSelector('#styled-box[data-hydrated="yes"]');
+
+        const csp = response?.headers()["content-security-policy"] ?? "";
+        const styleSources = getDirectiveSources(csp, "style-src");
+        assert(
+          csp.includes("style-src 'self' 'unsafe-inline'"),
+          `Expected CSP to allow inline styles, got: ${csp}`,
+        );
+        assert(
+          !styleSources.some((source) => source.startsWith("'nonce-")),
+          `style-src should not include a nonce when unsafe-inline is enabled, got: ${csp}`,
+        );
+
+        const styles = await page.evaluate(() => {
+          const el = document.querySelector("#styled-box");
+          if (!(el instanceof HTMLElement)) return null;
+          const computed = getComputedStyle(el);
+          return {
+            backgroundColor: computed.backgroundColor,
+            paddingTop: computed.paddingTop,
+          };
+        });
+
+        assert(styles !== null, "Expected styled element to exist");
+        assertEquals(styles.backgroundColor, "rgb(0, 128, 0)");
+        assertEquals(styles.paddingTop, "12px");
+
+        assertNoBrowserHydrationErrors(diagnostics);
+        assertNoServerLogErrors(
+          server,
+          [
+            "Page hydration failed",
+            "Content Security Policy",
+            "violates the following Content Security Policy directive",
+          ],
+          "Unexpected server/browser CSP errors",
+        );
+      });
     });
   });
 

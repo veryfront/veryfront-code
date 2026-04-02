@@ -1,5 +1,4 @@
-// Re-export schema-based type
-export type { PromptConfig } from "./schemas/index.ts";
+export type { PromptConfig } from "./schemas/prompt.schema.ts";
 
 export interface Prompt {
   id: string;

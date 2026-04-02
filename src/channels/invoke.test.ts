@@ -360,7 +360,6 @@ describe("channels/invoke", () => {
       const agent = createAgent({ id: "agent-1" });
       const resolved = resolveChannelInvokeAgent("agent-1", {
         getAgent: (id) => id === "agent-1" ? agent : undefined,
-        getAllAgentIds: () => ["agent-1", "agent-2"],
       });
 
       assertEquals(resolved, agent);
@@ -369,7 +368,6 @@ describe("channels/invoke", () => {
     it("fails closed when the requested assistant is not registered", () => {
       const resolved = resolveChannelInvokeAgent("api-agent-config", {
         getAgent: () => undefined,
-        getAllAgentIds: () => ["agent-runtime"],
       });
 
       assertEquals(resolved, undefined);
@@ -406,6 +404,57 @@ describe("channels/invoke", () => {
           output: { hits: 2 },
         },
         { type: "text", text: "Final answer" },
+      ]);
+    });
+
+    it("falls back to response text when no assistant message is present", () => {
+      const response = createAgentResponse("Fallback answer", {
+        messages: [{
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "Question" }],
+          timestamp: Date.now(),
+        }],
+      });
+
+      assertEquals(buildChannelResponseParts(response), [
+        { type: "text", text: "Fallback answer" },
+      ]);
+    });
+
+    it("does not duplicate tool calls already present in runtime toolCalls", () => {
+      const response = createAgentResponse("Tool answer", {
+        toolCalls: [{
+          id: "tool-1",
+          name: "search",
+          args: { query: "docs" },
+          status: "pending",
+        }],
+        messages: [{
+          id: "assistant-1",
+          role: "assistant",
+          parts: [
+            {
+              type: "tool-search",
+              toolCallId: "tool-1",
+              toolName: "search",
+              args: { query: "docs" },
+            },
+            { type: "text", text: "Tool answer" },
+          ],
+          timestamp: Date.now(),
+        }],
+      });
+
+      assertEquals(buildChannelResponseParts(response), [
+        {
+          type: "tool_call",
+          id: "tool-1",
+          name: "search",
+          input: { query: "docs" },
+          state: "pending",
+        },
+        { type: "text", text: "Tool answer" },
       ]);
     });
   });

@@ -19,5 +19,10 @@ describe("html/styles-builder/dev-styles", () => {
       const styles = getDevStyles("my-nonce");
       assertEquals(styles.includes('nonce="my-nonce"'), true);
     });
+
+    it("should escape nonce when provided", () => {
+      const styles = getDevStyles('"my<nonce>');
+      assertEquals(styles.includes('nonce="&quot;my&lt;nonce&gt;"'), true);
+    });
   });
 });

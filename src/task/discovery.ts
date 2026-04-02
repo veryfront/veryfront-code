@@ -30,6 +30,14 @@ import type { TaskDefinition } from "./types.ts";
 import { isTaskDefinition } from "./types.ts";
 
 const logger = baseLogger.component("task-discovery");
+const TASK_FILE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
+const TASK_IGNORE_PATTERNS = [
+  "node_modules",
+  ".git",
+  "__tests__",
+  "*.test.*",
+  "*.spec.*",
+] as const;
 
 /**
  * Discovered task info
@@ -82,6 +90,76 @@ export interface TaskDiscoveryResult {
   errors: Array<{ filePath: string; error: string }>;
 }
 
+function resolveTasksBaseDir(
+  projectDir: string,
+  tasksDir: string,
+  config?: VeryfrontConfig,
+): string {
+  const fsType = config?.fs?.type ?? "local";
+  return fsType === "github" || fsType === "veryfront-api" ? tasksDir : join(projectDir, tasksDir);
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function collectTaskFiles(baseDir: string, adapter: RuntimeAdapter): Promise<
+  Awaited<ReturnType<typeof collectFiles>>
+> {
+  return await collectFiles({
+    baseDir,
+    extensions: [...TASK_FILE_EXTENSIONS],
+    recursive: true,
+    ignorePatterns: [...TASK_IGNORE_PATTERNS],
+    adapter,
+  });
+}
+
+function extractTaskExport(
+  module: Record<string, unknown>,
+): { exportName: string; definition: TaskDefinition } | null {
+  const defaultExport = module.default;
+  if (isTaskDefinition(defaultExport)) {
+    return { exportName: "default", definition: defaultExport };
+  }
+
+  for (const [exportName, value] of Object.entries(module)) {
+    if (exportName !== "default" && isTaskDefinition(value)) {
+      return { exportName, definition: value };
+    }
+  }
+
+  return null;
+}
+
+async function loadTaskFromFile(
+  filePath: string,
+  id: string,
+  adapter: RuntimeAdapter,
+  projectDir: string,
+): Promise<DiscoveredTask | null> {
+  const module = await importDiscoveryModule(filePath, {
+    adapter,
+    projectDir,
+  }) as Record<string, unknown>;
+  const taskExport = extractTaskExport(module);
+  if (!taskExport) return null;
+
+  return {
+    id,
+    name: taskExport.definition.name || id,
+    filePath,
+    exportName: taskExport.exportName,
+    definition: taskExport.definition,
+  };
+}
+
+function logDiscoveredTask(task: DiscoveredTask, debug: boolean): void {
+  if (debug) {
+    logger.info(`Found task "${task.id}" in ${task.filePath} (export: ${task.exportName})`);
+  }
+}
+
 /**
  * Derive task ID from file path (e.g., "tasks/sync-data.ts" → "sync-data")
  */
@@ -112,10 +190,7 @@ export async function discoverTasks(
 
   const tasks: DiscoveredTask[] = [];
   const errors: Array<{ filePath: string; error: string }> = [];
-
-  const fsType = config?.fs?.type ?? "local";
-  const useRelativePaths = fsType === "github" || fsType === "veryfront-api";
-  const baseDir = useRelativePaths ? tasksDir : join(projectDir, tasksDir);
+  const baseDir = resolveTasksBaseDir(projectDir, tasksDir, config);
 
   if (debug) {
     logger.info(`Scanning ${baseDir} for tasks`);
@@ -130,13 +205,7 @@ export async function discoverTasks(
       return { tasks, errors };
     }
 
-    const files = await collectFiles({
-      baseDir,
-      extensions: [".ts", ".tsx", ".js", ".jsx"],
-      recursive: true,
-      ignorePatterns: ["node_modules", ".git", "__tests__", "*.test.*", "*.spec.*"],
-      adapter,
-    });
+    const files = await collectTaskFiles(baseDir, adapter);
 
     if (debug) {
       logger.info(`Found ${files.length} potential task files`);
@@ -144,49 +213,18 @@ export async function discoverTasks(
 
     for (const file of files) {
       try {
-        const module = await importDiscoveryModule(file.path, {
+        const task = await loadTaskFromFile(
+          file.path,
+          deriveTaskId(file.path, baseDir),
           adapter,
           projectDir,
-        });
-
-        // Prefer default export (aligned with discovery-engine behaviour)
-        const defaultExport = module.default;
-        if (isTaskDefinition(defaultExport)) {
-          const id = deriveTaskId(file.path, baseDir);
-          tasks.push({
-            id,
-            name: defaultExport.name || id,
-            filePath: file.path,
-            exportName: "default",
-            definition: defaultExport,
-          });
-
-          if (debug) {
-            logger.info(`Found task "${id}" in ${file.path} (export: default)`);
-          }
-        } else {
-          // Fallback: check named exports
-          for (const [exportName, value] of Object.entries(module)) {
-            if (exportName === "default") continue;
-            if (isTaskDefinition(value)) {
-              const id = deriveTaskId(file.path, baseDir);
-              tasks.push({
-                id,
-                name: value.name || id,
-                filePath: file.path,
-                exportName,
-                definition: value,
-              });
-
-              if (debug) {
-                logger.info(`Found task "${id}" in ${file.path} (export: ${exportName})`);
-              }
-              break; // Only take the first valid named export per file
-            }
-          }
+        );
+        if (task) {
+          tasks.push(task);
+          logDiscoveredTask(task, debug);
         }
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = toErrorMessage(error);
         errors.push({ filePath: file.path, error: errorMsg });
 
         if (debug) {
@@ -201,7 +239,7 @@ export async function discoverTasks(
 
     return { tasks, errors };
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorMsg = toErrorMessage(error);
     logger.error(`Task discovery failed: ${errorMsg}`);
     errors.push({ filePath: baseDir, error: errorMsg });
     return { tasks, errors };
@@ -222,71 +260,33 @@ export async function findTaskById(
     tasksDir = "tasks",
     debug = false,
   } = options;
-
-  const fsType = config?.fs?.type ?? "local";
-  const useRelativePaths = fsType === "github" || fsType === "veryfront-api";
-  const baseDir = useRelativePaths ? tasksDir : join(projectDir, tasksDir);
+  const baseDir = resolveTasksBaseDir(projectDir, tasksDir, config);
 
   try {
     const dirExists = await adapter.fs.exists(baseDir);
     if (!dirExists) return null;
 
-    const files = await collectFiles({
-      baseDir,
-      extensions: [".ts", ".tsx", ".js", ".jsx"],
-      recursive: true,
-      ignorePatterns: ["node_modules", ".git", "__tests__", "*.test.*", "*.spec.*"],
-      adapter,
-    });
+    const files = await collectTaskFiles(baseDir, adapter);
 
     for (const file of files) {
       const id = deriveTaskId(file.path, baseDir);
       if (id !== taskId) continue;
 
       try {
-        const module = await importDiscoveryModule(file.path, {
-          adapter,
-          projectDir,
-        });
-
-        const defaultExport = module.default;
-        if (isTaskDefinition(defaultExport)) {
-          if (debug) {
-            logger.info(`Found task "${id}" in ${file.path} (export: default)`);
-          }
-          return {
-            id,
-            name: defaultExport.name || id,
-            filePath: file.path,
-            exportName: "default",
-            definition: defaultExport,
-          };
-        }
-
-        for (const [exportName, value] of Object.entries(module)) {
-          if (exportName === "default") continue;
-          if (isTaskDefinition(value)) {
-            if (debug) {
-              logger.info(`Found task "${id}" in ${file.path} (export: ${exportName})`);
-            }
-            return {
-              id,
-              name: value.name || id,
-              filePath: file.path,
-              exportName,
-              definition: value,
-            };
-          }
+        const task = await loadTaskFromFile(file.path, id, adapter, projectDir);
+        if (task) {
+          logDiscoveredTask(task, debug);
+          return task;
         }
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = toErrorMessage(error);
         if (debug) {
           logger.warn(`Failed to load ${file.path}: ${errorMsg}`);
         }
       }
     }
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorMsg = toErrorMessage(error);
     logger.error(`Task discovery failed while finding "${taskId}": ${errorMsg}`);
   }
 

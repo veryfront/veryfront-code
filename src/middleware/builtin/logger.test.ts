@@ -235,6 +235,22 @@ describe("middleware/builtin/logger", () => {
       assertEquals(entry.http.remoteAddr, "192.168.1.1");
     });
 
+    it("should prefer x-forwarded-for over x-real-ip", async () => {
+      const logs: string[] = [];
+      const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
+
+      await mw(
+        makeCtx("http://localhost/", {
+          "x-forwarded-for": "203.0.113.10",
+          "x-real-ip": "192.168.1.1",
+        }),
+        nextOk,
+      );
+
+      const entry = JSON.parse(getFirstLog(logs));
+      assertEquals(entry.http.remoteAddr, "203.0.113.10");
+    });
+
     it("should use - when no remote address headers present", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });

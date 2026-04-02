@@ -27,64 +27,65 @@ import {
   isRscExperimentalEnabled,
 } from "./env.ts";
 
+const BASE_MOCK_ENV: EnvironmentConfig = {
+  nodeEnv: "test",
+  veryfrontEnv: "",
+  veryfrontMode: "",
+  debug: false,
+  ci: false,
+  denoTesting: false,
+  perfEnabled: false,
+  apiBaseUrl: "http://localhost:4000",
+  publicApiBaseUrl: "http://localhost:4000",
+  apiUrl: undefined,
+  apiToken: undefined,
+  projectSlug: undefined,
+  homeDir: undefined,
+  xdgConfigHome: undefined,
+  continuousIntegration: false,
+  sshClient: undefined,
+  sshTty: undefined,
+  display: undefined,
+  waylandDisplay: undefined,
+  cursorSession: undefined,
+  serverStartTime: undefined,
+  vcr: undefined,
+  experimentalRsc: false,
+  redisUrl: undefined,
+  cacheDir: undefined,
+  disableLruInterval: false,
+  appUrl: undefined,
+  port: 3000,
+  requestTimeoutMs: undefined,
+  httpFetchTimeoutMs: undefined,
+  ssrMaxConcurrentTransforms: 3,
+  otelEnabled: false,
+  otelServiceName: undefined,
+  otelEndpoint: undefined,
+  otelTracesEndpoint: undefined,
+  otelMetricsEndpoint: undefined,
+  otelTracesExporter: undefined,
+  otelMetricsExporter: undefined,
+  otelHeaders: undefined,
+  otelMetricsEnabled: false,
+  openaiApiKey: undefined,
+  openaiBaseUrl: undefined,
+  anthropicApiKey: undefined,
+  anthropicBaseUrl: undefined,
+  googleApiKey: undefined,
+  githubToken: undefined,
+  githubOwner: undefined,
+  githubRepo: undefined,
+  githubRef: undefined,
+  noColor: false,
+  forceColor: false,
+  veryfrontVersion: undefined,
+  denoV8Flags: "",
+  v8MaxOldSpaceSize: undefined,
+};
+
 function createMockEnv(overrides: Partial<EnvironmentConfig> = {}): EnvironmentConfig {
-  return {
-    nodeEnv: "test",
-    veryfrontEnv: "",
-    veryfrontMode: "",
-    debug: false,
-    ci: false,
-    denoTesting: false,
-    perfEnabled: false,
-    apiBaseUrl: "http://localhost:4000",
-    publicApiBaseUrl: "http://localhost:4000",
-    apiUrl: undefined,
-    apiToken: undefined,
-    projectSlug: undefined,
-    homeDir: undefined,
-    xdgConfigHome: undefined,
-    continuousIntegration: false,
-    sshClient: undefined,
-    sshTty: undefined,
-    display: undefined,
-    waylandDisplay: undefined,
-    cursorSession: undefined,
-    serverStartTime: undefined,
-    vcr: undefined,
-    experimentalRsc: false,
-    redisUrl: undefined,
-    cacheDir: undefined,
-    disableLruInterval: false,
-    appUrl: undefined,
-    port: 3000,
-    requestTimeoutMs: undefined,
-    httpFetchTimeoutMs: undefined,
-    ssrMaxConcurrentTransforms: 3,
-    otelEnabled: false,
-    otelServiceName: undefined,
-    otelEndpoint: undefined,
-    otelTracesEndpoint: undefined,
-    otelMetricsEndpoint: undefined,
-    otelTracesExporter: undefined,
-    otelMetricsExporter: undefined,
-    otelHeaders: undefined,
-    otelMetricsEnabled: false,
-    openaiApiKey: undefined,
-    openaiBaseUrl: undefined,
-    anthropicApiKey: undefined,
-    anthropicBaseUrl: undefined,
-    googleApiKey: undefined,
-    githubToken: undefined,
-    githubOwner: undefined,
-    githubRepo: undefined,
-    githubRef: undefined,
-    noColor: false,
-    forceColor: false,
-    veryfrontVersion: undefined,
-    denoV8Flags: "",
-    v8MaxOldSpaceSize: undefined,
-    ...overrides,
-  };
+  return { ...BASE_MOCK_ENV, ...overrides };
 }
 
 describe("config/env", () => {
@@ -263,6 +264,12 @@ describe("config/env", () => {
       const config = getGoogleGenAIEnvConfig();
       assertEquals(config.apiKey, "AIza-test");
     });
+
+    it("should fall back to GOOGLE_GENERATIVE_AI_API_KEY", () => {
+      setEnv("GOOGLE_GENERATIVE_AI_API_KEY", "AIza-fallback");
+      const config = getGoogleGenAIEnvConfig();
+      assertEquals(config.apiKey, "AIza-fallback");
+    });
   });
 
   describe("isDebugEnvEnabled", () => {
@@ -361,14 +368,19 @@ describe("config/env", () => {
           otelEnabled: true,
           otelServiceName: "my-svc",
           otelEndpoint: "http://localhost:4318",
+          otelTracesEndpoint: "http://traces:4318",
           otelTracesExporter: "otlp",
+          otelHeaders: "Authorization=Bearer test-token",
         }),
       );
       assertEquals(config.enabledFlag, "true");
       assertEquals(config.veryfrontFlag, "1");
       assertEquals(config.serviceName, "my-svc");
       assertEquals(config.endpoint, "http://localhost:4318");
+      assertEquals(config.tracesEndpoint, "http://traces:4318");
       assertEquals(config.exporter, "otlp");
+      assertEquals(config.headers, "Authorization=Bearer test-token");
+      assertEquals(config.tracesHeaders, undefined);
     });
   });
 
@@ -391,6 +403,18 @@ describe("config/env", () => {
       assertEquals(config.endpoint, "http://localhost:4318");
       assertEquals(config.metricsEndpoint, "http://metrics:4318");
       assertEquals(config.exporter, "otlp");
+    });
+
+    it("should only set veryfrontFlag when OTEL is globally enabled", () => {
+      const metricsOnlyConfig = getOtelMetricsConfig(
+        createMockEnv({ otelMetricsEnabled: true, otelEnabled: false }),
+      );
+      const fullyEnabledConfig = getOtelMetricsConfig(
+        createMockEnv({ otelMetricsEnabled: true, otelEnabled: true }),
+      );
+
+      assertEquals(metricsOnlyConfig.veryfrontFlag, undefined);
+      assertEquals(fullyEnabledConfig.veryfrontFlag, "1");
     });
   });
 });

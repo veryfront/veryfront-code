@@ -212,6 +212,7 @@ export function generateErrorHTML(
   errorInfo: ErrorInfo,
   suggestion?: string,
   projectSlug?: string,
+  nonce?: string,
 ): string {
   const errorType = escapeHtml(formatErrorType(errorInfo.type));
   const errorName = escapeHtml(errorInfo.error.name);
@@ -221,6 +222,7 @@ export function generateErrorHTML(
   const errorColumn = errorInfo.column ? escapeHtml(String(errorInfo.column)) : "";
   const errorSuggestion = suggestion ? escapeHtml(suggestion) : "";
   const errorStack = errorInfo.error.stack ? escapeHtml(errorInfo.error.stack) : "";
+  const nonceAttr = nonce ? ` nonce="${escapeHtml(nonce)}"` : "";
 
   const fileSection = errorFile
     ? `
@@ -258,7 +260,7 @@ export function generateErrorHTML(
 <head>
   <meta charset="UTF-8">
   <title>${errorType} Error - Veryfront</title>
-  <style>
+  <style${nonceAttr}>
     body {
       margin: 0;
       padding: 20px;
@@ -365,7 +367,7 @@ export function generateErrorHTML(
     </div>
     ${fixButtonHtml}
   </div>
-  <script>${
+  <script${nonceAttr}>${
     projectSlug
       ? `
     (function() {

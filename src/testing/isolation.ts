@@ -11,6 +11,10 @@
 import { isBun } from "#veryfront/platform/compat/runtime.ts";
 
 type CleanupTask = () => void | Promise<void>;
+type LabeledCleanupTask = {
+  label: string;
+  task: CleanupTask;
+};
 
 const cleanupTasks = new Set<CleanupTask>();
 
@@ -18,17 +22,26 @@ export function registerTestCleanup(task: CleanupTask): void {
   cleanupTasks.add(task);
 }
 
+async function runBestEffortCleanups(cleanups: Iterable<LabeledCleanupTask>): Promise<void> {
+  for (const { label, task } of cleanups) {
+    try {
+      await task();
+    } catch (error) {
+      console.debug(`resetAllTestState ${label} failed`, error);
+    }
+  }
+}
+
 async function runRegisteredCleanups(): Promise<void> {
   const tasks = Array.from(cleanupTasks);
   cleanupTasks.clear();
 
-  for (const task of tasks) {
-    try {
-      await task();
-    } catch (error) {
-      console.debug("resetAllTestState registered cleanup failed", error);
-    }
-  }
+  await runBestEffortCleanups(
+    tasks.map((task) => ({
+      label: "registered cleanup",
+      task,
+    })),
+  );
 }
 
 /**
@@ -50,85 +63,115 @@ async function runRegisteredCleanups(): Promise<void> {
 export async function resetAllTestState(): Promise<void> {
   await runRegisteredCleanups();
 
-  const cleanups: Array<() => Promise<void> | void> = [
+  const cleanupSteps: LabeledCleanupTask[] = [
     // Config state - CRITICAL for test isolation
-    async () => {
-      const { clearConfigCache } = await import("../config/loader.ts");
-      clearConfigCache();
+    {
+      label: "config cache cleanup",
+      task: async () => {
+        const { clearConfigCache } = await import("../config/loader.ts");
+        clearConfigCache();
+      },
     },
-    async () => {
-      const { _resetEnvironmentConfig } = await import("../config/environment-config.ts");
-      _resetEnvironmentConfig();
+    {
+      label: "environment config cleanup",
+      task: async () => {
+        const { _resetEnvironmentConfig } = await import("../config/environment-config.ts");
+        _resetEnvironmentConfig();
+      },
     },
-    async () => {
-      const { _resetRuntimeConfig } = await import("../config/runtime-config.ts");
-      _resetRuntimeConfig();
+    {
+      label: "runtime config cleanup",
+      task: async () => {
+        const { _resetRuntimeConfig } = await import("../config/runtime-config.ts");
+        _resetRuntimeConfig();
+      },
     },
 
     // Layout discovery cache - prevents stale layouts across tests
-    async () => {
-      const { clearLayoutDiscoveryCache } = await import(
-        "../rendering/layouts/utils/discovery.ts"
-      );
-      clearLayoutDiscoveryCache();
+    {
+      label: "layout discovery cleanup",
+      task: async () => {
+        const { clearLayoutDiscoveryCache } = await import(
+          "../rendering/layouts/utils/discovery.ts"
+        );
+        clearLayoutDiscoveryCache();
+      },
     },
 
     // SSR module caches
-    async () => {
-      const { clearSSRModuleCache } = await import("#veryfront/modules");
-      clearSSRModuleCache();
+    {
+      label: "SSR module cache cleanup",
+      task: async () => {
+        const { clearSSRModuleCache } = await import("#veryfront/modules");
+        clearSSRModuleCache();
+      },
     },
 
     // React cache and compat hooks
-    async () => {
-      const { resetReactCache } = await import("../react/compat/ssr-adapter/server-loader.ts");
-      resetReactCache();
+    {
+      label: "React cache cleanup",
+      task: async () => {
+        const { resetReactCache } = await import("../react/compat/ssr-adapter/server-loader.ts");
+        resetReactCache();
+      },
     },
-    async () => {
-      const { resetCompatHooksContext } = await import("../react/compat/hooks-adapter.ts");
-      resetCompatHooksContext();
+    {
+      label: "compat hooks cleanup",
+      task: async () => {
+        const { resetCompatHooksContext } = await import("../react/compat/hooks-adapter.ts");
+        resetCompatHooksContext();
+      },
     },
 
     // Snippet cache
-    async () => {
-      const { clearSnippetCache } = await import("../rendering/snippet-renderer.ts");
-      clearSnippetCache();
+    {
+      label: "snippet cache cleanup",
+      task: async () => {
+        const { clearSnippetCache } = await import("../rendering/snippet-renderer.ts");
+        clearSnippetCache();
+      },
     },
 
     // API handler state
-    async () => {
-      const { resetApiHandler } = await import("../server/handlers/request/api/index.ts");
-      await resetApiHandler();
+    {
+      label: "API handler cleanup",
+      task: async () => {
+        const { resetApiHandler } = await import("../server/handlers/request/api/index.ts");
+        await resetApiHandler();
+      },
     },
 
     // Reload notifier
-    async () => {
-      const { ReloadNotifier } = await import("../server/reload-notifier.ts");
-      ReloadNotifier.reset();
+    {
+      label: "reload notifier cleanup",
+      task: async () => {
+        const { ReloadNotifier } = await import("../server/reload-notifier.ts");
+        ReloadNotifier.reset();
+      },
     },
 
     // HTTP module in-flight fetches - prevents test interference from shared promises
-    async () => {
-      const { __clearInFlightHttpFetches } = await import("../transforms/esm/http-cache.ts");
-      __clearInFlightHttpFetches();
+    {
+      label: "HTTP in-flight fetch cleanup",
+      task: async () => {
+        const { __clearInFlightHttpFetches } = await import("../transforms/esm/http-cache.ts");
+        __clearInFlightHttpFetches();
+      },
     },
   ];
 
-  for (const cleanup of cleanups) {
-    try {
-      await cleanup();
-    } catch (error) {
-      console.debug("resetAllTestState cleanup task failed", error);
-    }
-  }
+  await runBestEffortCleanups(cleanupSteps);
 
   // Bun-specific cleanup
   if (isBun) {
-    try {
-      const { cleanupBundler } = await import("../rendering/cleanup.ts");
-      await cleanupBundler();
-    } catch (error) {
-      console.debug("resetAllTestState bundler cleanup failed", error);
-    }
+    await runBestEffortCleanups([
+      {
+        label: "bundler cleanup",
+        task: async () => {
+          const { cleanupBundler } = await import("../rendering/cleanup.ts");
+          await cleanupBundler();
+        },
+      },
+    ]);
   }
 }

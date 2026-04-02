@@ -65,7 +65,6 @@ const AGENT_RUN_SESSION_MANAGER_GLOBAL_KEY = "__veryfrontAgentRunSessionManager"
 type SessionStatus = "running" | "waiting" | "completed" | "cancelled" | "failed";
 
 interface SubmittedToolResult {
-  toolCallId: string;
   result: unknown;
   isError: boolean;
   key: string;
@@ -79,7 +78,6 @@ interface WaitingToolState {
 
 interface AgentRunSession {
   runId: string;
-  threadId: string;
   status: SessionStatus;
   abortController: AbortController;
   waitingTool: WaitingToolState | null;
@@ -166,6 +164,17 @@ export class AgentRunSessionManager {
     }
   }
 
+  private finalizeSession(
+    session: AgentRunSession,
+    status: Exclude<SessionStatus, "running" | "waiting">,
+  ): void {
+    session.status = status;
+    this.clearWaitingTimeout(session);
+    this.clearSessionTimeout(session);
+    session.waitingTool = null;
+    this.sessions.delete(session.runId);
+  }
+
   private get maxConcurrentSessions(): number {
     return this.options.maxConcurrentSessions ?? DEFAULT_MAX_CONCURRENT_SESSIONS;
   }
@@ -184,7 +193,6 @@ export class AgentRunSessionManager {
 
     const session: AgentRunSession = {
       runId: input.runId,
-      threadId: input.threadId,
       status: "running",
       abortController: new AbortController(),
       waitingTool: null,
@@ -265,7 +273,6 @@ export class AgentRunSessionManager {
     }
 
     const normalized: SubmittedToolResult = {
-      toolCallId: input.toolCallId,
       result: input.result,
       isError: Boolean(input.isError),
       key: createToolResultKey(input.result, Boolean(input.isError)),
@@ -310,34 +317,23 @@ export class AgentRunSessionManager {
       return false;
     }
 
-    session.status = "cancelled";
-    this.clearWaitingTimeout(session);
-    this.clearSessionTimeout(session);
+    const waitingTool = session.waitingTool;
     session.abortController.abort(new AgentRunCancelledError());
-    session.waitingTool?.reject(new AgentRunCancelledError());
-    session.waitingTool = null;
-    this.sessions.delete(runId);
+    waitingTool?.reject(new AgentRunCancelledError());
+    this.finalizeSession(session, "cancelled");
     return true;
   }
 
   completeRun(runId: string): void {
     const session = this.sessions.get(runId);
     if (!session) return;
-    session.status = "completed";
-    this.clearWaitingTimeout(session);
-    this.clearSessionTimeout(session);
-    session.waitingTool = null;
-    this.sessions.delete(runId);
+    this.finalizeSession(session, "completed");
   }
 
   failRun(runId: string): void {
     const session = this.sessions.get(runId);
     if (!session) return;
-    session.status = "failed";
-    this.clearWaitingTimeout(session);
-    this.clearSessionTimeout(session);
-    session.waitingTool = null;
-    this.sessions.delete(runId);
+    this.finalizeSession(session, "failed");
   }
 
   getRunStatus(runId: string): SessionStatus | null {

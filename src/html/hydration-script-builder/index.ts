@@ -13,5 +13,9 @@ export { generateDevErrorLoggerScript } from "./dev-error-logger.ts";
 export { generateDevComponentManifestScript } from "./dev-component-manifest.ts";
 export { generateDevClientRendererScript } from "./dev-client-renderer.ts";
 
-export { getProdScripts } from "./prod-scripts.ts";
+export {
+  generateProdHydrationModule,
+  getProdScripts,
+  PROD_HYDRATION_MODULE_PATH,
+} from "./prod-scripts.ts";
 export { generateProdHydrationScript } from "./prod-hydration.ts";

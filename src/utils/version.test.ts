@@ -34,6 +34,10 @@ describe("version", () => {
     it("preserves plain semver values", () => {
       assertEquals(normalizeVeryfrontVersion("1.2.3"), "1.2.3");
     });
+
+    it("does not strip a leading v unless it prefixes a digit", () => {
+      assertEquals(normalizeVeryfrontVersion("vnext"), "vnext");
+    });
   });
 
   describe("resolveRuntimeVersion", () => {
@@ -67,6 +71,18 @@ describe("version", () => {
           fallbackVersion: "4.0.0",
         }),
         "3.0.0",
+      );
+    });
+
+    it("falls back to VERSION when no explicit sources are available", () => {
+      assertEquals(
+        resolveRuntimeVersion({
+          veryfrontVersion: undefined,
+          releaseVersion: undefined,
+          denoVersion: undefined,
+          fallbackVersion: undefined,
+        }),
+        VERSION,
       );
     });
   });

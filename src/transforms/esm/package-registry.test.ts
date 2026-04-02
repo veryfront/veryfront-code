@@ -5,6 +5,7 @@ import {
   DEFAULT_REACT_VERSION,
   isValidReactVersion,
   normalizeReactVersion,
+  readProjectDependencyVersions,
   resolveProjectReactVersion,
   stripSemverRange,
 } from "./package-registry.ts";
@@ -139,6 +140,38 @@ describe("package-registry", () => {
         },
       });
       assertEquals(version, DEFAULT_REACT_VERSION);
+    });
+
+    it("invalidates cached package versions when package.json changes", async () => {
+      const dir = await Deno.makeTempDir({ prefix: "vf-react-version-cache-" });
+
+      try {
+        const packageJsonPath = `${dir}/package.json`;
+        await Deno.writeTextFile(
+          packageJsonPath,
+          JSON.stringify({
+            dependencies: { react: "^18.3.1", veryfront: "^0.1.10" },
+          }),
+        );
+
+        const first = await readProjectDependencyVersions(dir);
+        assertEquals(first.react, "18.3.1");
+        assertEquals(first.veryfront, "0.1.10");
+
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await Deno.writeTextFile(
+          packageJsonPath,
+          JSON.stringify({
+            dependencies: { react: "^19.0.0", veryfront: "^0.2.0" },
+          }),
+        );
+
+        const second = await readProjectDependencyVersions(dir);
+        assertEquals(second.react, "19.0.0");
+        assertEquals(second.veryfront, "0.2.0");
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
     });
   });
 });
