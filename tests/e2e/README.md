@@ -2,7 +2,7 @@
 
 This directory currently contains multiple end-to-end harnesses:
 
-- `deno task test:e2e:playwright`: Playwright browser E2E tests in `*.playwright.ts`
+- `deno task test:e2e:playwright`: Playwright browser E2E tests in `*.playwright.ts` across named runtime projects (`production-host`, `preview-host`)
 - `deno task test:e2e:rsc-browser`: browser-backed Deno regression for proxy-mode RSC hydration
 - `deno task test:e2e:binary`: compiled-binary end-to-end coverage
 
@@ -44,6 +44,7 @@ deno task test:e2e:playwright
 
 The Playwright harness provisions temporary `projects/<slug>` fixtures automatically from
 `E2E_PROJECT` / `E2E_PROJECTS`, so it no longer depends on checked-in local projects.
+Use `PLAYWRIGHT_PROJECT=production-host` or `PLAYWRIGHT_PROJECT=preview-host` to run a single runtime lane.
 
 ### RSC Browser Regression
 
@@ -75,6 +76,7 @@ VERYFRONT_BINARY=/path/to/binary deno task test:e2e:binary
 PW_DISABLE_TS_ESM=1 npx playwright test tests/e2e/smoke.playwright.ts --config=tests/e2e/playwright.config.cjs
 PW_DISABLE_TS_ESM=1 npx playwright test tests/e2e/ssr.playwright.ts --config=tests/e2e/playwright.config.cjs
 PW_DISABLE_TS_ESM=1 npx playwright test tests/e2e/navigation.playwright.ts --config=tests/e2e/playwright.config.cjs
+PLAYWRIGHT_PROJECT=preview-host deno task test:e2e:playwright
 deno test --allow-all tests/e2e/features/layouts.test.ts
 deno test --allow-all tests/e2e/regressions/rsc-proxy-hydration.test.ts
 ```

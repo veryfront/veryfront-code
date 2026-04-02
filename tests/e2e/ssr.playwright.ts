@@ -6,19 +6,19 @@
 
 import { expect, test } from "./fixtures/playwright.ts";
 import { getProjectsToTest } from "./helpers/projects.ts";
+import { getRuntimeForPlaywrightProject } from "./helpers/runtime.ts";
 
 const PROJECTS = getProjectsToTest();
 
 for (const subdomain of PROJECTS) {
-  const baseUrl = `http://${subdomain}.lvh.me:8080`;
-
   test.describe(`${subdomain} SSR without JavaScript`, () => {
-    test("root page renders meaningful SSR HTML with JavaScript disabled", async ({ browser }) => {
+    test("root page renders meaningful SSR HTML with JavaScript disabled", async ({ browser }, testInfo) => {
+      const runtime = getRuntimeForPlaywrightProject(testInfo.project.name);
       const context = await browser.newContext({ javaScriptEnabled: false });
       const page = await context.newPage();
 
       try {
-        const response = await page.goto(`${baseUrl}/`);
+        const response = await page.goto(`${runtime.getUrl(subdomain)}/`);
 
         expect(response?.ok()).toBeTruthy();
         await expect(page.locator("#project-name")).toHaveText(subdomain);
@@ -29,12 +29,13 @@ for (const subdomain of PROJECTS) {
       }
     });
 
-    test("secondary route renders meaningful SSR HTML with JavaScript disabled", async ({ browser }) => {
+    test("secondary route renders meaningful SSR HTML with JavaScript disabled", async ({ browser }, testInfo) => {
+      const runtime = getRuntimeForPlaywrightProject(testInfo.project.name);
       const context = await browser.newContext({ javaScriptEnabled: false });
       const page = await context.newPage();
 
       try {
-        const response = await page.goto(`${baseUrl}/about`);
+        const response = await page.goto(`${runtime.getUrl(subdomain)}/about`);
 
         expect(response?.ok()).toBeTruthy();
         await expect(page.locator("#about-page")).toHaveText(`About ${subdomain}`);
