@@ -8,6 +8,7 @@
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { resolveRelativeFrameworkSourceImport } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { resolveInternalModuleTarget } from "../../../veryfront-module-urls.ts";
 import {
   EMBEDDED_SRC_DIR,
@@ -201,75 +202,15 @@ export async function resolveVeryfrontSourcePath(
 export async function resolveRelativeFrameworkImport(
   specifier: string,
   fromSourcePath: string,
-  _fs: ReturnType<typeof createFileSystem>,
+  fs: ReturnType<typeof createFileSystem>,
   existsFn: (path: string) => Promise<boolean> = exists,
 ): Promise<string | null> {
-  const fromDir = fromSourcePath.substring(0, fromSourcePath.lastIndexOf("/"));
-  const parts = fromDir.split("/").filter(Boolean);
-  const importParts = specifier.split("/").filter(Boolean);
-
-  for (const part of importParts) {
-    if (part === "..") {
-      parts.pop();
-    } else if (part !== ".") {
-      parts.push(part);
-    }
-  }
-
-  const basePath = "/" + parts.join("/");
-
-  // If specifier already has extension (e.g., ./Head.tsx), we need to try:
-  // 1. The exact path (basePath)
-  // 2. The path with .src suffix (basePath.src) for embedded sources
-  // 3. For transpiled .js/.mjs imports, fall back to sibling TS/TSX/JSX sources
-  if (/\.(tsx?|jsx?|mjs)$/.test(specifier)) {
-    const explicitCandidates = [basePath, `${basePath}.src`];
-
-    // esbuild rewrites TS/TSX relative imports to .js in transformed output.
-    // When the original source only exists as .ts/.tsx (or embedded .src),
-    // probe those sibling source extensions before giving up.
-    if (basePath.endsWith(".js") || basePath.endsWith(".mjs")) {
-      const stem = basePath.replace(/\.(?:m?js)$/, "");
-      for (const ext of [".ts", ".tsx", ".jsx", ".js", ".mjs"]) {
-        explicitCandidates.push(`${stem}${ext}.src`, `${stem}${ext}`);
-      }
-    }
-
-    for (const candidate of explicitCandidates) {
-      try {
-        if (await existsFn(candidate)) return candidate;
-      } catch (_) {
-        /* expected: file may not exist at this path */
-      }
-    }
-
-    return null;
-  }
-
-  // No extension provided - try all extensions (including .src for embedded sources)
-  const allExtensions = [
-    ...EXTENSIONS.map((ext) => ext + ".src"),
-    ...EXTENSIONS,
-  ];
-
-  for (const ext of allExtensions) {
-    const pathWithExt = basePath + ext;
-    try {
-      if (await existsFn(pathWithExt)) return pathWithExt;
-    } catch (_) {
-      /* expected: file may not exist at this path */
-    }
-  }
-
-  // Try index file
-  for (const ext of allExtensions) {
-    const indexPath = join(basePath, "index" + ext);
-    try {
-      if (await existsFn(indexPath)) return indexPath;
-    } catch (_) {
-      /* expected: file may not exist at this path */
-    }
-  }
-
-  return null;
+  return await resolveRelativeFrameworkSourceImport(specifier, fromSourcePath, {
+    fileSystem: fs,
+    exists: existsFn,
+    extensions: [
+      ...EXTENSIONS.map((ext) => `${ext}.src`),
+      ...EXTENSIONS,
+    ],
+  });
 }

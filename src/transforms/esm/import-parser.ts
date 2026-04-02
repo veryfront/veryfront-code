@@ -1,6 +1,10 @@
 import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { join } from "#veryfront/compat/path";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import {
+  isFrameworkSourcePath,
+  resolveRelativeFrameworkSourceImport,
+} from "#veryfront/platform/compat/framework-source-resolver.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isCrossProjectImport, parseCrossProjectImport } from "./path-resolver.ts";
 import { parseImports } from "./lexer.ts";
@@ -138,6 +142,14 @@ async function resolveLocalImportPath(
   importSpecifier: string,
   adapter?: RuntimeAdapter,
 ): Promise<string | null> {
+  if (isFrameworkSourcePath(fromFile)) {
+    const resolvedFrameworkImport = await resolveRelativeFrameworkSourceImport(
+      importSpecifier,
+      fromFile,
+    );
+    if (resolvedFrameworkImport) return resolvedFrameworkImport;
+  }
+
   const fromDir = fromFile.substring(0, fromFile.lastIndexOf("/"));
   const basePath = resolveRelative(fromDir, importSpecifier);
 

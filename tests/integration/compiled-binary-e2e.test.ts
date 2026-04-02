@@ -19,7 +19,12 @@
  *   VERYFRONT_BINARY_FRESH=1         # Force recompilation
  */
 
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
@@ -1903,6 +1908,103 @@ export default function ClientPage() {
           "Unexpected server errors",
         );
       });
+    });
+  });
+
+  it("should render app-router layouts using veryfront/router and veryfront/context in the compiled binary", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-binary-app-router-hooks-" });
+
+    await Deno.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify(
+        {
+          name: "test-binary-app-router-hooks",
+          type: "module",
+          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        },
+        null,
+        2,
+      ),
+    );
+
+    await Deno.writeTextFile(
+      join(projectDir, "veryfront.config.ts"),
+      `export default {
+  fs: { type: "local" },
+  experimental: { rsc: true }
+};`,
+    );
+
+    await Deno.mkdir(join(projectDir, "app"), { recursive: true });
+    await Deno.writeTextFile(
+      join(projectDir, "app", "layout.tsx"),
+      `
+import { Head } from "veryfront/head";
+import { useRouter } from "veryfront/router";
+import { usePageContext } from "veryfront/context";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const ctx = usePageContext();
+
+  return (
+    <html lang="en">
+      <body>
+        <Head><title>{ctx?.frontmatter?.title || "fallback"}</title></Head>
+        <div id="app-router-layout">
+          <header id="app-router-header">
+            Layout path: {router.pathname} / Title: {ctx?.frontmatter?.title || "none"}
+          </header>
+          <main>{children}</main>
+        </div>
+      </body>
+    </html>
+  );
+}
+`,
+    );
+    await Deno.writeTextFile(
+      join(projectDir, "app", "page.tsx"),
+      `
+export const frontmatter = {
+  title: "App Router Hooks",
+};
+
+export default function HomePage() {
+  return <div id="app-router-page">App router page content</div>;
+}
+`,
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
+      assertStringIncludes(html, "app-router-layout", "Should render app-router layout");
+      assertStringIncludes(html, "app-router-header", "Should render app-router header");
+      assertStringIncludes(
+        html,
+        "App router page content",
+        "Should render app-router page content",
+      );
+      assertMatch(
+        html,
+        /Layout path:\s*<!-- -->\/<!-- -->\s*\/\s*Title:\s*<!-- -->(?:App Router Hooks|none)/,
+        "Should render router pathname and keep usePageContext available in the layout",
+      );
+
+      const frameworkErrors = server.logs.filter((l) =>
+        l.includes("Component has missing dependencies") ||
+        l.includes("../runtime/core.ts") ||
+        l.includes("Missing dependencies detected") ||
+        l.includes("Render failed")
+      );
+      assertEquals(
+        frameworkErrors.length,
+        0,
+        `Should have no framework dependency errors: ${frameworkErrors.join("\n")}`,
+      );
     });
   });
 
