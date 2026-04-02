@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getProjectsToTest } from "../helpers/projects.ts";
+import { getProjectsToProvision } from "../helpers/projects.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..", "..", "..");
@@ -172,7 +172,7 @@ export async function startServer(): Promise<void> {
     return;
   }
 
-  const projectSlugs = getProjectsToTest();
+  const projectSlugs = getProjectsToProvision();
   workspaceRoot = await createPlaywrightWorkspace(projectSlugs);
   readinessUrl = `http://${projectSlugs[0]}.lvh.me:8080/`;
   await persistWorkspaceState(workspaceRoot);

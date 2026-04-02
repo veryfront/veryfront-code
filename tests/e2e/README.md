@@ -15,6 +15,7 @@ tests/e2e/
 ├── smoke.playwright.ts # Broad browser smoke coverage against temp multi-project fixtures on the dev/proxy stack
 ├── ssr.playwright.ts   # No-JavaScript SSR proof for core routes
 ├── navigation.playwright.ts # Client navigation/history browser semantics
+├── multi-project.playwright.ts # Multi-tenant runtime routing/browser matrix coverage
 ├── setup/              # Test infrastructure
 │   ├── binary.ts       # Binary compilation management
 │   ├── binary-server.ts # Server lifecycle management
@@ -45,6 +46,7 @@ deno task test:e2e:playwright
 The Playwright harness provisions temporary `projects/<slug>` fixtures automatically from
 `E2E_PROJECT` / `E2E_PROJECTS`, so it no longer depends on checked-in local projects.
 Use `PLAYWRIGHT_PROJECT=production-host` or `PLAYWRIGHT_PROJECT=preview-host` to run a single runtime lane.
+By default the setup provisions `blank` and `second`; set `E2E_PROJECT` or `E2E_PROJECTS` to override the matrix explicitly.
 
 ### RSC Browser Regression
 
@@ -77,6 +79,7 @@ PW_DISABLE_TS_ESM=1 npx playwright test tests/e2e/smoke.playwright.ts --config=t
 PW_DISABLE_TS_ESM=1 npx playwright test tests/e2e/ssr.playwright.ts --config=tests/e2e/playwright.config.cjs
 PW_DISABLE_TS_ESM=1 npx playwright test tests/e2e/navigation.playwright.ts --config=tests/e2e/playwright.config.cjs
 PLAYWRIGHT_PROJECT=preview-host deno task test:e2e:playwright
+E2E_PROJECTS=blank,second deno task test:e2e:playwright
 deno test --allow-all tests/e2e/features/layouts.test.ts
 deno test --allow-all tests/e2e/regressions/rsc-proxy-hydration.test.ts
 ```
