@@ -1,36 +1,28 @@
 import {
-  type BrowserResultFile,
   ensureNextBaseline,
+  type FrameworkArtifacts,
   loadFrameworkArtifacts,
   loadLatestCompareReport,
   parsePerfCliFlags,
+  parsePerfLoopRuns,
   type PerfOverview,
   printMetricLines,
   runBenchmarkPair,
   runTask,
-  type ServerResultFile,
   summarizePerfOverview,
   verifyPerfPrerequisites,
   writePerfArtifact,
 } from "./_perf_lib.ts";
 
-const rawArgs = Deno.args[0] === "--" ? Deno.args.slice(1) : Deno.args;
+const rawArgs = Deno.args;
 const { runtime, project, skipVerify, refreshBaseline } = parsePerfCliFlags(rawArgs);
-const parsedRuns = parseInt(
-  String(
-    (rawArgs.find((arg) => arg.startsWith("--runs="))?.split("=")[1]) ??
-      rawArgs[rawArgs.indexOf("--runs") + 1] ?? 3,
-  ),
-  10,
-);
-const requestedRuns = Number.isFinite(parsedRuns) ? parsedRuns : 3;
-const runs = Number.isFinite(requestedRuns) && requestedRuns > 0 ? Math.floor(requestedRuns) : 3;
+const runs = parsePerfLoopRuns(rawArgs);
 const runId = new Date().toISOString().replace(/[:.]/g, "-");
 
-async function captureVeryfrontRun(index: number, baseline: {
-  cold: { browser: BrowserResultFile | null; server: ServerResultFile | null };
-  warm: { browser: BrowserResultFile | null; server: ServerResultFile | null };
-}): Promise<PerfOverview> {
+async function captureVeryfrontRun(
+  index: number,
+  baseline: FrameworkArtifacts,
+): Promise<PerfOverview> {
   console.log(`\n=== Perf loop run ${index}/${runs} ===`);
   await runBenchmarkPair("veryfront", runtime, project);
 

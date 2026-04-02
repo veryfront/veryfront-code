@@ -2,12 +2,18 @@ import { join } from "#std/path";
 import {
   BENCHMARKS_ROOT,
   getReportDir,
-  getResultsDir,
   getStringFlag,
-  listJsonArtifacts,
   loadBenchmarkContract,
   writeReportArtifact,
 } from "../_shared_contract.ts";
+import {
+  type BenchmarkFramework,
+  type BenchmarkRuntime,
+  type BrowserResultFile,
+  type FrameworkArtifacts,
+  loadFrameworkArtifacts,
+  type ServerResultFile,
+} from "../_perf_lib.ts";
 
 interface BenchmarkAppManifest {
   name: string;
@@ -18,41 +24,6 @@ interface BenchmarkAppManifest {
   browser_lane?: string;
   server_lane?: string;
   notes?: string[];
-}
-
-interface BrowserResultFile {
-  generated_at: string;
-  framework: string;
-  runtime: string;
-  project: string;
-  request_mode?: "cold" | "warm";
-  results: Array<{
-    scenario: string;
-    runtime: string;
-    project: string;
-    request_mode?: "cold" | "warm";
-    url: string;
-    status: number | null;
-    metrics: Record<string, number | string | null>;
-  }>;
-}
-
-interface ServerResultFile {
-  generated_at: string;
-  framework: string;
-  runtime: string;
-  project: string;
-  request_mode?: "cold" | "warm";
-  metrics_before?: unknown;
-  metrics_after?: unknown;
-  results: Array<{
-    scenario: string;
-    runtime: string;
-    project: string;
-    request_mode?: "cold" | "warm";
-    url: string;
-    metrics: Record<string, number | string | null>;
-  }>;
 }
 
 type FrameworkSummary = {
@@ -68,6 +39,10 @@ const DEFAULT_FRAMEWORKS = getStringFlag("frameworks")
   .map((value) => value.trim())
   .filter(Boolean);
 const RUN_ID = new Date().toISOString().replace(/[:.]/g, "-");
+const EMPTY_ARTIFACTS: FrameworkArtifacts = {
+  cold: { browser: null, server: null },
+  warm: { browser: null, server: null },
+};
 
 function formatDelta(
   current: number | null | undefined,
@@ -90,28 +65,8 @@ async function loadManifest(framework: string): Promise<BenchmarkAppManifest | n
   }
 }
 
-async function loadLatestResult<T extends { framework: string; runtime: string; project: string }>(
-  kind: "browser" | "server",
-  framework: string,
-  runtime: string,
-  project: string,
-  requestMode: "cold" | "warm",
-): Promise<T | null> {
-  const files = await listJsonArtifacts(getResultsDir(kind));
-
-  for (const filePath of [...files].reverse()) {
-    const parsed = JSON.parse(await Deno.readTextFile(filePath)) as T & { request_mode?: string };
-    if (
-      parsed.framework === framework &&
-      parsed.runtime === runtime &&
-      parsed.project === project &&
-      (parsed.request_mode ?? "cold") === requestMode
-    ) {
-      return parsed;
-    }
-  }
-
-  return null;
+function isSupportedFramework(framework: string): framework is BenchmarkFramework {
+  return framework === "veryfront" || framework === "nextjs";
 }
 
 function buildMarkdownSummary(
@@ -337,39 +292,24 @@ async function main() {
 
   for (const framework of frameworks) {
     const manifest = await loadManifest(framework);
-    const browserCold = await loadLatestResult<BrowserResultFile>(
-      "browser",
-      framework,
-      DEFAULT_RUNTIME,
-      DEFAULT_PROJECT,
-      "cold",
-    );
-    const browserWarm = await loadLatestResult<BrowserResultFile>(
-      "browser",
-      framework,
-      DEFAULT_RUNTIME,
-      DEFAULT_PROJECT,
-      "warm",
-    );
-    const serverCold = await loadLatestResult<ServerResultFile>(
-      "server",
-      framework,
-      DEFAULT_RUNTIME,
-      DEFAULT_PROJECT,
-      "cold",
-    );
-    const serverWarm = await loadLatestResult<ServerResultFile>(
-      "server",
-      framework,
-      DEFAULT_RUNTIME,
-      DEFAULT_PROJECT,
-      "warm",
-    );
+    const frameworkArtifacts = isSupportedFramework(framework)
+      ? await loadFrameworkArtifacts(
+        framework,
+        DEFAULT_RUNTIME as BenchmarkRuntime,
+        DEFAULT_PROJECT,
+      )
+      : EMPTY_ARTIFACTS;
 
     summary[framework] = {
       manifest,
-      browser: { cold: browserCold, warm: browserWarm },
-      server: { cold: serverCold, warm: serverWarm },
+      browser: {
+        cold: frameworkArtifacts.cold.browser,
+        warm: frameworkArtifacts.warm.browser,
+      },
+      server: {
+        cold: frameworkArtifacts.cold.server,
+        warm: frameworkArtifacts.warm.server,
+      },
     };
   }
 

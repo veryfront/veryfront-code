@@ -10,21 +10,22 @@ import {
 export type BenchmarkFramework = "veryfront" | "nextjs";
 export type BenchmarkRuntime = "production-host" | "preview-host";
 
+export interface BenchmarkMetricsRow {
+  scenario: string;
+  runtime: string;
+  project: string;
+  request_mode?: RequestMode;
+  url: string;
+  metrics: Record<string, number | string | null>;
+}
+
 export interface BrowserResultFile {
   generated_at: string;
   framework: string;
   runtime: string;
   project: string;
   request_mode?: RequestMode;
-  results: Array<{
-    scenario: string;
-    runtime: string;
-    project: string;
-    request_mode?: RequestMode;
-    url: string;
-    status: number | null;
-    metrics: Record<string, number | string | null>;
-  }>;
+  results: Array<BenchmarkMetricsRow & { status: number | null }>;
 }
 
 export interface ServerResultFile {
@@ -33,14 +34,9 @@ export interface ServerResultFile {
   runtime: string;
   project: string;
   request_mode?: RequestMode;
-  results: Array<{
-    scenario: string;
-    runtime: string;
-    project: string;
-    request_mode?: RequestMode;
-    url: string;
-    metrics: Record<string, number | string | null>;
-  }>;
+  metrics_before?: unknown;
+  metrics_after?: unknown;
+  results: BenchmarkMetricsRow[];
 }
 
 export interface PerfSummary {
@@ -70,6 +66,11 @@ export interface PerfCliOptions {
   refreshBaseline: boolean;
 }
 
+export interface FrameworkArtifacts {
+  cold: { browser: BrowserResultFile | null; server: ServerResultFile | null };
+  warm: { browser: BrowserResultFile | null; server: ServerResultFile | null };
+}
+
 export function parsePerfCliFlags(args: string[]): PerfCliOptions {
   const rawArgs = args[0] === "--" ? args.slice(1) : args;
   const flags = parseArgs(rawArgs, {
@@ -89,6 +90,18 @@ export function parsePerfCliFlags(args: string[]): PerfCliOptions {
     skipVerify: Boolean(flags["skip-verify"]),
     refreshBaseline: Boolean(flags["refresh-baseline"]),
   };
+}
+
+export function parsePerfLoopRuns(args: string[], defaultRuns = 3): number {
+  const rawArgs = args[0] === "--" ? args.slice(1) : args;
+  const flags = parseArgs(rawArgs, {
+    string: ["runs"],
+    default: {
+      runs: String(defaultRuns),
+    },
+  });
+  const parsed = Number.parseInt(String(flags.runs), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : defaultRuns;
 }
 
 function tail(text: string, lines = 80): string {
@@ -219,10 +232,7 @@ export async function loadFrameworkArtifacts(
   framework: BenchmarkFramework,
   runtime: BenchmarkRuntime,
   project: string,
-): Promise<{
-  cold: { browser: BrowserResultFile | null; server: ServerResultFile | null };
-  warm: { browser: BrowserResultFile | null; server: ServerResultFile | null };
-}> {
+): Promise<FrameworkArtifacts> {
   const [coldBrowser, coldServer, warmBrowser, warmServer] = await Promise.all([
     loadLatestResult<BrowserResultFile>("browser", framework, runtime, project, "cold"),
     loadLatestResult<ServerResultFile>("server", framework, runtime, project, "cold"),
@@ -240,10 +250,7 @@ export async function ensureNextBaseline(
   runtime: BenchmarkRuntime,
   project: string,
   refreshBaseline: boolean,
-): Promise<{
-  cold: { browser: BrowserResultFile | null; server: ServerResultFile | null };
-  warm: { browser: BrowserResultFile | null; server: ServerResultFile | null };
-}> {
+): Promise<FrameworkArtifacts> {
   const baseline = await loadFrameworkArtifacts("nextjs", runtime, project);
   const missingModes = (["cold", "warm"] as const).filter((mode) =>
     !baseline[mode].browser || !baseline[mode].server
