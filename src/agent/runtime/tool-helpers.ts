@@ -100,6 +100,7 @@ export async function executeConfiguredTool(
   input: Record<string, unknown>,
   toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
   context?: ToolExecutionContext,
+  allowedRemoteToolNames?: string[],
 ): Promise<unknown> {
   const configuredTool = resolveConfiguredTool(toolsConfig, toolName);
   if (configuredTool) {
@@ -114,6 +115,9 @@ export async function executeConfiguredTool(
 
   // Fall back to remote execution for integration tools (e.g., github:list-repos)
   if (isRemoteIntegrationTool(toolName)) {
+    if (allowedRemoteToolNames && !allowedRemoteToolNames.includes(toolName)) {
+      throw new Error(`Tool "${toolName}" is not allowed for this run`);
+    }
     return await executeRemoteIntegrationTool(
       toolName,
       input,
@@ -152,7 +156,11 @@ function addToolDefinition(
  */
 export async function getAvailableTools(
   toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
-  options?: { includeSkillTools?: boolean; includeIntegrationTools?: boolean },
+  options?: {
+    includeSkillTools?: boolean;
+    includeIntegrationTools?: boolean;
+    allowedRemoteToolNames?: string[];
+  },
 ): Promise<ToolDefinition[]> {
   if (!toolsConfig) return [];
 
@@ -176,7 +184,9 @@ export async function getAvailableTools(
         const { getRemoteIntegrationToolDefinitions } = await import(
           "#veryfront/integrations/remote-tools.ts"
         );
-        const remoteDefs = await getRemoteIntegrationToolDefinitions();
+        const remoteDefs = (await getRemoteIntegrationToolDefinitions()).filter((def) =>
+          !options?.allowedRemoteToolNames || options.allowedRemoteToolNames.includes(def.name)
+        );
         for (const def of remoteDefs) {
           logToolDefinition(def.name, def);
         }
@@ -211,7 +221,9 @@ export async function getAvailableTools(
       const { getRemoteIntegrationToolDefinitions } = await import(
         "#veryfront/integrations/remote-tools.ts"
       );
-      const remoteDefs = await getRemoteIntegrationToolDefinitions();
+      const remoteDefs = (await getRemoteIntegrationToolDefinitions()).filter((def) =>
+        !options?.allowedRemoteToolNames || options.allowedRemoteToolNames.includes(def.name)
+      );
       for (const def of remoteDefs) {
         // Skip if already present (e.g., explicitly configured by name)
         if (!tools.some((t) => t.name === def.name)) {
