@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildAttributes, escapeHTML, escapeHtml } from "./html-escape.ts";
+import { buildAttributes, buildNonceAttribute, escapeHTML, escapeHtml } from "./html-escape.ts";
 
 describe("html-escape", () => {
   describe("escapeHTML", () => {
@@ -95,6 +95,19 @@ describe("html-escape", () => {
         }),
         'data-value="test &amp; value" aria-label="Say &quot;Hello&quot;"',
       );
+    });
+  });
+
+  describe("buildNonceAttribute", () => {
+    it("should build an escaped nonce attribute", () => {
+      assertEquals(
+        buildNonceAttribute('"nonce<value>'),
+        ' nonce="&quot;nonce&lt;value&gt;"',
+      );
+    });
+
+    it("should omit the attribute when nonce is missing", () => {
+      assertEquals(buildNonceAttribute(undefined), "");
     });
   });
 });

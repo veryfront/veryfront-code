@@ -16,12 +16,45 @@ import { logger as baseLogger } from "#veryfront/utils";
 const logger = baseLogger.component("mcp-server");
 
 const MAX_REQUEST_BODY_SIZE = 1_048_576; // 1 MB
+const MAX_CONTEXT_HEADER_LENGTH = 255;
+const JSON_CONTENT_TYPE = "application/json";
+const END_USER_ID_PATTERN = /^[a-zA-Z0-9._@-]+$/;
+const PROJECT_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
 
 type JSONRPCParams = Record<string, unknown> | unknown[];
 
-function asParamsRecord(params: JSONRPCParams | undefined): Record<string, unknown> {
+function toParamsRecord(params: JSONRPCParams | undefined): Record<string, unknown> {
   if (!params || Array.isArray(params)) return {};
   return params;
+}
+
+function createJSONResponse(body: unknown, init?: ResponseInit): Response {
+  const headers = new Headers(init?.headers);
+  headers.set("Content-Type", JSON_CONTENT_TYPE);
+  return new Response(JSON.stringify(body), { ...init, headers });
+}
+
+function createJSONRPCErrorResponse(status: number, code: number, message: string): Response {
+  return createJSONResponse(
+    {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code, message },
+    },
+    { status },
+  );
+}
+
+function readAllowedHeader(
+  request: Request,
+  headerName: string,
+  pattern: RegExp,
+): string | undefined {
+  const value = request.headers.get(headerName);
+  if (!value || value.length > MAX_CONTEXT_HEADER_LENGTH || !pattern.test(value)) {
+    return undefined;
+  }
+  return value;
 }
 
 interface JSONRPCRequest {
@@ -167,7 +200,7 @@ export class MCPServer {
     params: JSONRPCParams | undefined,
     context?: ToolExecutionContext,
   ): Promise<Record<string, unknown>> {
-    const { name, arguments: args } = asParamsRecord(params);
+    const { name, arguments: args } = toParamsRecord(params);
 
     if (!name) {
       throw toError(
@@ -215,7 +248,7 @@ export class MCPServer {
   }
 
   private readResource(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
-    const { uri } = asParamsRecord(params);
+    const { uri } = toParamsRecord(params);
 
     if (!uri) {
       throw toError(
@@ -274,7 +307,7 @@ export class MCPServer {
   }
 
   private getPrompt(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
-    const { name, arguments: args } = asParamsRecord(params);
+    const { name, arguments: args } = toParamsRecord(params);
 
     if (!name) {
       throw toError(
@@ -315,7 +348,9 @@ export class MCPServer {
   createHTTPHandler(): (request: Request) => Promise<Response> {
     return async (request: Request) => {
       const requestOrigin = request.headers.get("Origin");
-      if (request.method === "OPTIONS") return this.handleCORS(requestOrigin);
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: this.getCORSHeaders(requestOrigin) });
+      }
 
       if (this.config.auth?.type && this.config.auth.type !== "none") {
         const authorized = await this.validateAuth(request);
@@ -325,66 +360,34 @@ export class MCPServer {
       // Enforce request body size limit (fast path via Content-Length header)
       const contentLength = request.headers.get("content-length");
       if (contentLength && Number(contentLength) > MAX_REQUEST_BODY_SIZE) {
-        return new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: null,
-            error: { code: -32600, message: "Request body too large" },
-          }),
-          { status: 413, headers: { "Content-Type": "application/json" } },
-        );
+        return createJSONRPCErrorResponse(413, -32600, "Request body too large");
       }
 
       try {
-        validateContentType(request, "application/json");
+        validateContentType(request, JSON_CONTENT_TYPE);
       } catch (error) {
         const message = error instanceof VeryfrontError ? error.message : "Invalid Content-Type";
-        return new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: null,
-            error: { code: -32700, message },
-          }),
-          { status: 400, headers: { "Content-Type": "application/json" } },
-        );
+        return createJSONRPCErrorResponse(400, -32700, message);
       }
 
       let rpcRequest: JSONRPCRequest;
       try {
         const bodyText = await request.text();
         if (bodyText.length > MAX_REQUEST_BODY_SIZE) {
-          return new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: null,
-              error: { code: -32600, message: "Request body too large" },
-            }),
-            { status: 413, headers: { "Content-Type": "application/json" } },
-          );
+          return createJSONRPCErrorResponse(413, -32600, "Request body too large");
         }
         rpcRequest = JSON.parse(bodyText) as JSONRPCRequest;
       } catch (_) {
         // expected: malformed JSON in request body
-        return new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: null,
-            error: { code: -32700, message: "Parse error" },
-          }),
-          {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          },
-        );
+        return createJSONRPCErrorResponse(400, -32700, "Parse error");
       }
 
       // Extract end-user identity from request headers for per-user token flows
       const context = this.extractRequestContext(request);
       const rpcResponse = await this.handleRequest(rpcRequest, context);
 
-      return new Response(JSON.stringify(rpcResponse), {
+      return createJSONResponse(rpcResponse, {
         headers: {
-          "Content-Type": "application/json",
           ...this.getCORSHeaders(requestOrigin),
         },
       });
@@ -394,15 +397,13 @@ export class MCPServer {
   private extractRequestContext(request: Request): ToolExecutionContext | undefined {
     const context: ToolExecutionContext = {};
 
-    const endUserId = request.headers.get("x-end-user-id");
-    // Allowlist: alphanumeric, hyphens, underscores, dots, @ (for email-style IDs)
-    if (endUserId && endUserId.length <= 255 && /^[a-zA-Z0-9._@-]+$/.test(endUserId)) {
+    const endUserId = readAllowedHeader(request, "x-end-user-id", END_USER_ID_PATTERN);
+    if (endUserId) {
       context.endUserId = endUserId;
     }
 
-    const projectId = request.headers.get("x-project-id");
-    // Keep project IDs strict but compatible with UUID/slug formats.
-    if (projectId && projectId.length <= 255 && /^[a-zA-Z0-9._-]+$/.test(projectId)) {
+    const projectId = readAllowedHeader(request, "x-project-id", PROJECT_ID_PATTERN);
+    if (projectId) {
       context.projectId = projectId;
     }
 
@@ -429,10 +430,6 @@ export class MCPServer {
     // z.function() in v4 doesn't carry arg/return types — cast to expected signature
     const validate = auth.validate as (token: string) => Promise<boolean>;
     return await validate(token);
-  }
-
-  private handleCORS(requestOrigin?: string | null): Response {
-    return new Response(null, { status: 204, headers: this.getCORSHeaders(requestOrigin) });
   }
 
   private getCORSHeaders(requestOrigin?: string | null): Record<string, string> {

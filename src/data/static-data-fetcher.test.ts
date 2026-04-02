@@ -289,5 +289,53 @@ describe("StaticDataFetcher", () => {
         assertEquals(callCount, 1);
       });
     });
+
+    it("should trigger only one background revalidation for the same stale cache entry", async () => {
+      await withProductionContext(async () => {
+        const { cache, fetcher } = createFetcher();
+        let callCount = 0;
+        let resolveRevalidation!: (
+          result: { props: { version: number }; revalidate: number },
+        ) => void;
+
+        const revalidationResult = new Promise<{ props: { version: number }; revalidate: number }>(
+          (resolve) => {
+            resolveRevalidation = resolve;
+          },
+        );
+
+        const pageModule: PageWithData<{ version: number }> = {
+          default: () => null,
+          getStaticData: () => {
+            callCount++;
+            return revalidationResult;
+          },
+        };
+
+        const context = createContext({ url: new URL("http://localhost/stale-page") });
+        const cacheKey = cache.createCacheKey(context);
+        assertExists(cacheKey);
+
+        cache.set(cacheKey, {
+          data: { props: { version: 1 }, revalidate: 0 },
+          timestamp: Date.now() - 10_000,
+          revalidate: 0,
+        });
+
+        const firstResult = await fetcher.fetch(pageModule, context);
+        const secondResult = await fetcher.fetch(pageModule, context);
+
+        assertEquals((firstResult.props as { version: number }).version, 1);
+        assertEquals((secondResult.props as { version: number }).version, 1);
+        assertEquals(callCount, 1);
+
+        resolveRevalidation({ props: { version: 2 }, revalidate: 60 });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const refreshedEntry = cache.get(cacheKey);
+        assertExists(refreshedEntry);
+        assertEquals((refreshedEntry.data.props as { version: number }).version, 2);
+      });
+    });
   });
 });

@@ -186,8 +186,87 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     assertEquals(result.tasks[0]?.name, "Ping task");
   });
 
+  it("prefers a default-exported task over named task exports in the same file", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/ping.ts": [
+        "export const namedTask = {",
+        '  name: "Named task",',
+        "  run() {",
+        "    return { ok: true };",
+        "  },",
+        "};",
+        "",
+        "export default {",
+        '  name: "Default task",',
+        "  run() {",
+        "    return { ok: true };",
+        "  },",
+        "};",
+      ].join("\n"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.errors, []);
+    assertEquals(result.tasks.map((task) => task.id), ["ping"]);
+    assertEquals(result.tasks[0]?.name, "Default task");
+    assertEquals(result.tasks[0]?.exportName, "default");
+  });
+
+  it("continues discovering other tasks after a module load failure", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/broken.ts": 'import "./missing.ts"; export default { run() {} };',
+      "/project/tasks/ping.ts": [
+        "export default {",
+        '  name: "Ping task",',
+        "  run() {",
+        "    return { ok: true };",
+        "  },",
+        "};",
+      ].join("\n"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.tasks.map((task) => task.id), ["ping"]);
+    assertEquals(result.errors.length, 1);
+    assertEquals(result.errors[0]?.filePath, "tasks/broken.ts");
+  });
+
   it("finds a task by id through the discovery module loader", async () => {
     const adapter = createRuntimeAdapter({
+      "/project/tasks/ping.ts": [
+        "export const pingTask = {",
+        '  name: "Ping task",',
+        "  run() {",
+        "    return { ok: true };",
+        "  },",
+        "};",
+      ].join("\n"),
+    });
+
+    const task = await findTaskById("ping", {
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(task?.id, "ping");
+    assertEquals(task?.name, "Ping task");
+    assertEquals(task?.exportName, "pingTask");
+  });
+
+  it("finds a task by id even if another task file fails to load", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/broken.ts": 'import "./missing.ts"; export default { run() {} };',
       "/project/tasks/ping.ts": [
         "export const pingTask = {",
         '  name: "Ping task",',

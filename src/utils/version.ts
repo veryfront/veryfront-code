@@ -32,7 +32,6 @@ export const RUNTIME_VERSION = resolveRuntimeVersion({
   veryfrontVersion: getVersionEnv("VERYFRONT_VERSION"),
   releaseVersion: getVersionEnv("RELEASE_VERSION"),
   denoVersion: typeof denoConfig.version === "string" ? denoConfig.version : undefined,
-  fallbackVersion: VERSION,
 });
 
 export const SERVER_START_TIME: number = Date.now();

@@ -1,8 +1,8 @@
 import { Z_INDEX_ERROR_OVERLAY } from "#veryfront/utils";
-import { escapeHtml } from "../html-escape.ts";
+import { buildNonceAttribute } from "../html-escape.ts";
 
 export function getDevStyles(nonce?: string): string {
-  const nonceAttr = nonce ? ` nonce="${escapeHtml(nonce)}"` : "";
+  const nonceAttr = buildNonceAttribute(nonce);
 
   return `
   <style${nonceAttr}>

@@ -1,5 +1,5 @@
 import { getLoaderScript, getRendererScript, getRouterScript } from "./templates/index.ts";
-import { escapeHtml } from "../html-escape.ts";
+import { buildNonceAttribute } from "../html-escape.ts";
 
 export function getProdScripts(
   _slug: string,
@@ -7,7 +7,7 @@ export function getProdScripts(
   _props?: Record<string, unknown>,
   nonce?: string,
 ): string {
-  const nonceAttr = nonce ? ` nonce="${escapeHtml(nonce)}"` : "";
+  const nonceAttr = buildNonceAttribute(nonce);
 
   return `
   <script type="module"${nonceAttr}>

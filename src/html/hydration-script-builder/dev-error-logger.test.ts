@@ -15,6 +15,11 @@ describe("hydration-script-builder/dev-error-logger", () => {
       assertEquals(result.includes('nonce="abc123"'), true);
     });
 
+    it("should escape nonce attribute when provided", () => {
+      const result = generateDevErrorLoggerScript('"abc<123>');
+      assertEquals(result.includes('nonce="&quot;abc&lt;123&gt;"'), true);
+    });
+
     it("should not include nonce attribute when not provided", () => {
       const result = generateDevErrorLoggerScript();
       assertEquals(result.includes("nonce="), false);

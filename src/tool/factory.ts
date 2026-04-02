@@ -14,6 +14,10 @@ interface ZodLikeSchema {
   parse?: (input: unknown) => void;
 }
 
+interface SchemaWithParse {
+  parse: (input: unknown) => unknown;
+}
+
 function hasValidZodTypeName(schema: unknown): schema is ZodLikeSchema {
   if (schema === null || typeof schema !== "object") return false;
   if (!("_def" in schema)) return false;
@@ -25,6 +29,10 @@ function getSchemaShape(schema: ZodLikeSchema): Record<string, unknown> | null {
   const shape = schema._def?.shape;
   if (!shape) return null;
   return typeof shape === "function" ? shape() : shape;
+}
+
+function hasSchemaParse(schema: unknown): schema is SchemaWithParse {
+  return typeof (schema as { parse?: unknown } | null | undefined)?.parse === "function";
 }
 
 function buildSchemaFromShape(
@@ -52,17 +60,17 @@ function schemaError(toolId: string, message: string): never {
 }
 
 function tryConvert(
-  fn: () => JsonSchema,
+  convertSchema: () => JsonSchema,
   toolId: string,
   logPrefix: string,
   permissive: boolean,
-  errorDetail: string,
-): JsonSchema | null {
+  failureLabel: string,
+): JsonSchema {
   try {
-    return fn();
+    return convertSchema();
   } catch (error) {
     if (permissive) return permissiveFallback(logPrefix, toolId, "Using permissive schema");
-    schemaError(toolId, `${errorDetail}: ${getErrorMessage(error)}`);
+    schemaError(toolId, `${failureLabel}: ${getErrorMessage(error)}`);
   }
 }
 
@@ -88,10 +96,8 @@ function convertSchemaToJson(
       permissive,
       "input schema conversion failed",
     );
-    if (result) {
-      logSchemaResult(logPrefix, toolId, "Pre-converted", result);
-      return result;
-    }
+    logSchemaResult(logPrefix, toolId, "Pre-converted", result);
+    return result;
   }
 
   const shape = getSchemaShape(schema as ZodLikeSchema);
@@ -103,10 +109,8 @@ function convertSchemaToJson(
       permissive,
       "schema introspection failed",
     );
-    if (result) {
-      logSchemaResult(logPrefix, toolId, "Introspected", result);
-      return result;
-    }
+    logSchemaResult(logPrefix, toolId, "Introspected", result);
+    return result;
   }
 
   if (permissive) return permissiveFallback(logPrefix, toolId, "Using fully dynamic schema");
@@ -142,11 +146,9 @@ export function tool<TInput = unknown, TOutput = unknown>(
     inputSchema: config.inputSchema,
     inputSchemaJson,
     execute: async (input: TInput, context?: ToolExecutionContext) => {
-      const schema = config.inputSchema as ZodLikeSchema;
-
-      if (typeof schema?.parse === "function") {
+      if (hasSchemaParse(config.inputSchema)) {
         try {
-          schema.parse(input);
+          config.inputSchema.parse(input);
         } catch (error) {
           throw toError(
             createError({
@@ -188,11 +190,8 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
     inputSchema: config.inputSchema as z.ZodSchema<unknown>,
     inputSchemaJson,
     execute: async (input: unknown, context?: ToolExecutionContext) => {
-      if (
-        config.inputSchema &&
-        typeof (config.inputSchema as { parse?: unknown }).parse === "function"
-      ) {
-        (config.inputSchema as { parse: (v: unknown) => unknown }).parse(input);
+      if (hasSchemaParse(config.inputSchema)) {
+        config.inputSchema.parse(input);
       } else if (input === undefined) {
         input = {};
       } else if (input === null || typeof input !== "object") {

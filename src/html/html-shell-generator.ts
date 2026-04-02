@@ -8,7 +8,7 @@ import {
   generateModulePreloadHintsFromManifest,
   getRouteManifest,
 } from "#veryfront/modules/manifest/route-module-manifest.ts";
-import { escapeHTML } from "./html-escape.ts";
+import { buildNonceAttribute, escapeHTML } from "./html-escape.ts";
 import {
   generateHydrationData,
   getDevScripts,
@@ -16,7 +16,11 @@ import {
 } from "./hydration-script-builder/index.ts";
 import { getPreviewStylesheetLink, getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
-import { extractCandidates, getDevStyles, getProjectCSS } from "./styles-builder/index.ts";
+import {
+  extractCandidates,
+  getDevStyles as getErrorOverlayStyles,
+  getProjectCSS,
+} from "./styles-builder/index.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
 import { buildImportMapJson, buildRootAttributes, shouldDisableLayout } from "./utils.ts";
 
@@ -194,7 +198,7 @@ async function generateHTMLShellPartsImpl(
     })
     : getProdScripts(meta.slug || "", params, props, nonce);
 
-  const modeStyles = useDevScripts ? getDevStyles(nonce) : "";
+  const modeStyles = useDevScripts ? getErrorOverlayStyles(nonce) : "";
 
   const modulePreloadHints = generateModulePreloadHints(options);
 
@@ -206,7 +210,7 @@ async function generateHTMLShellPartsImpl(
     ? `<link rel="modulepreload" href="${jsxRuntimeUrl}">`
     : "";
 
-  const nonceAttr = nonce ? ` nonce="${escapeHTML(nonce)}"` : "";
+  const nonceAttr = buildNonceAttribute(nonce);
 
   // Expose project slug for runtime error overlay "Fix in Veryfront" button
   const overlaySlug = options.projectId || meta.slug;

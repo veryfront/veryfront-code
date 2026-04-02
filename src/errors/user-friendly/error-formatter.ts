@@ -5,31 +5,30 @@ import { identifyError } from "./error-identifier.ts";
 
 const errorColor = "\x1b[38;2;239;68;68m"; // Red
 
-function buildSolutionLines(solution: (typeof ERROR_SOLUTIONS)[string]): string[] {
+function buildSolutionDetailsLines(
+  solution: (typeof ERROR_SOLUTIONS)[string],
+  options?: {
+    exampleLabel?: string;
+  },
+): string[] {
   const lines: string[] = [];
 
-  if (solution.message) {
-    lines.push(yellow("Problem: ") + solution.message, "");
-  }
-
   if (solution.steps?.length) {
-    lines.push(cyan("How to fix:"));
+    lines.push("", cyan("How to fix:"));
     for (const [i, step] of solution.steps.entries()) {
       lines.push(`  ${dim(`${i + 1}.`)} ${step}`);
     }
-    lines.push("");
   }
 
   if (solution.example) {
-    lines.push(cyan("Example:"), "");
+    lines.push("", options?.exampleLabel ?? cyan("Example:"));
     for (const line of solution.example.split("\n")) {
       lines.push(`  ${dim(line)}`);
     }
-    lines.push("");
   }
 
   if (solution.docs) {
-    lines.push(dim("Learn more: ") + cyan(solution.docs), "");
+    lines.push("", dim("Learn more: ") + cyan(solution.docs));
   }
 
   return lines;
@@ -50,24 +49,7 @@ export function formatErrorBox(error: Error): string {
     if (solution.message) {
       content.push("", dim(solution.message));
     }
-
-    if (solution.steps?.length) {
-      content.push("", cyan("How to fix:"));
-      for (const [i, step] of solution.steps.entries()) {
-        content.push(`  ${dim(`${i + 1}.`)} ${step}`);
-      }
-    }
-
-    if (solution.example) {
-      content.push("", dim("Example:"));
-      for (const line of solution.example.split("\n")) {
-        content.push(`  ${dim(line)}`);
-      }
-    }
-
-    if (solution.docs) {
-      content.push("", dim("Learn more: ") + cyan(solution.docs));
-    }
+    content.push(...buildSolutionDetailsLines(solution, { exampleLabel: dim("Example:") }));
   }
 
   return box(content.join("\n"), {
@@ -90,7 +72,10 @@ export function formatUserError(error: Error): string {
   const solution = ERROR_SOLUTIONS[errorKey];
 
   if (solution) {
-    output.push(...buildSolutionLines(solution));
+    if (solution.message) {
+      output.push(yellow("Problem: ") + solution.message);
+    }
+    output.push(...buildSolutionDetailsLines(solution), "");
     return output.join("\n");
   }
 

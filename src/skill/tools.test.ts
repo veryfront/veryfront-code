@@ -43,6 +43,65 @@ Do work.`,
     assertEquals(result.scripts, ["scripts/run.sh"]);
   });
 
+  it("load-skill should note when no references or scripts are available", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/SKILL.md": `---
+name: my-skill
+description: Skill from adapter
+---
+# Instructions
+Do work.`,
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+
+    const tool = createLoadSkillTool();
+    const result = await tool.execute({ skillId: "my-skill" });
+
+    assertEquals(
+      result.note,
+      "This skill has no scripts or reference files. Do NOT call execute-skill-script or load-skill-reference.",
+    );
+  });
+
+  it("load-skill should note when only references are available", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/SKILL.md": `---
+name: my-skill
+description: Skill from adapter
+---
+# Instructions
+Do work.`,
+      "/project/skills/my-skill/references/guide.md": "Guide",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+
+    const tool = createLoadSkillTool();
+    const result = await tool.execute({ skillId: "my-skill" });
+
+    assertEquals(result.note, "This skill has no scripts. Do NOT call execute-skill-script.");
+  });
+
+  it("load-skill should note when only scripts are available", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/SKILL.md": `---
+name: my-skill
+description: Skill from adapter
+---
+# Instructions
+Do work.`,
+      "/project/skills/my-skill/scripts/run.sh": "echo run",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+
+    const tool = createLoadSkillTool();
+    const result = await tool.execute({ skillId: "my-skill" });
+
+    assertEquals(
+      result.note,
+      "This skill has no reference files. Do NOT call load-skill-reference.",
+    );
+  });
+
   it("load-skill-reference should read content via fsAdapter", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/references/guide.md": "Reference text",

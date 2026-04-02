@@ -1,9 +1,3 @@
-/**************************************************
- * OAuth Callback Handler
- *
- * Reusable handler for OAuth callback routes.
- **************************************************/
-
 import { logger as baseLogger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
@@ -91,24 +85,24 @@ export function createOAuthCallbackHandler(
     const url = new URL(request.url);
     const code = url.searchParams.get("code");
     const state = url.searchParams.get("state");
-    const oauthError = url.searchParams.get("error");
+    const providerError = url.searchParams.get("error");
     const errorDescription = url.searchParams.get("error_description");
 
     const appUrl = getAppUrl();
 
-    if (oauthError) {
+    if (providerError) {
       logger.error("Callback error", {
         serviceId: config.serviceId,
-        error: oauthError,
+        error: providerError,
         description: errorDescription,
       });
-      await onError?.(config.serviceId, oauthError);
-      return redirectWithError(appUrl, oauthError, errorDescription);
+      await onError?.(config.serviceId, providerError);
+      return redirectWithError(appUrl, providerError, errorDescription);
     }
 
     if (!code) return handleError(appUrl, "no_code");
 
-    let oauthState: OAuthState | null = null;
+    let storedState: OAuthState | null = null;
 
     if (!skipStateValidation && !state) {
       return handleError(appUrl, "invalid_state", "Missing state parameter", {
@@ -117,8 +111,8 @@ export function createOAuthCallbackHandler(
     }
 
     if (state) {
-      oauthState = await tokenStore.getState(state);
-      if (!skipStateValidation && !oauthState) {
+      storedState = await tokenStore.getState(state);
+      if (!skipStateValidation && !storedState) {
         return handleError(appUrl, "invalid_state", "Invalid or expired state", {
           serviceId: config.serviceId,
         });
@@ -132,7 +126,7 @@ export function createOAuthCallbackHandler(
       const result = await service.exchangeCode({
         code,
         redirectUri,
-        codeVerifier: oauthState?.codeVerifier,
+        codeVerifier: storedState?.codeVerifier,
       });
 
       if (!result.success || !result.tokens) {

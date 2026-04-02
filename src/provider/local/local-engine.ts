@@ -15,7 +15,7 @@ import { serverLogger } from "#veryfront/utils";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { importTransformers } from "#veryfront/compat/opaque-deps.ts";
 import { DEFAULT_LOCAL_MODEL, type ModelInfo, resolveLocalModel } from "./model-catalog.ts";
-import { isLocalAIDisabled } from "./env.ts";
+import { throwIfLocalAIDisabled } from "./env.ts";
 
 const logger = serverLogger.component("local-llm");
 
@@ -89,14 +89,7 @@ let transformersModule: TransformersModule | null = null;
 export async function getTransformers(): Promise<TransformersModule> {
   if (transformersModule) return transformersModule;
 
-  if (isLocalAIDisabled()) {
-    throw toError(
-      createError({
-        type: "no_ai_available",
-        message: "Local AI disabled via VERYFRONT_DISABLE_LOCAL_AI environment variable.",
-      }),
-    );
-  }
+  throwIfLocalAIDisabled();
 
   logger.info("Loading @huggingface/transformers...");
 

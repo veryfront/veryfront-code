@@ -1,11 +1,11 @@
-import { escapeHtml } from "./html-escape.ts";
+import { buildNonceAttribute } from "./html-escape.ts";
 
 export function getPreviewStylesheetLink(): string {
   return `<link id="vf-tailwind-css" rel="stylesheet" href="/_vf_styles/styles.css?t=${Date.now()}">`;
 }
 
 export function getDevStyles(nonce?: string): string {
-  const nonceAttr = nonce ? ` nonce="${escapeHtml(nonce)}"` : "";
+  const nonceAttr = buildNonceAttribute(nonce);
 
   return `
   <style${nonceAttr}>
@@ -37,12 +37,8 @@ export function getDevStyles(nonce?: string): string {
   </style>`;
 }
 
-function getNonceAttr(nonce?: string): string {
-  return nonce ? ` nonce="${escapeHtml(nonce)}"` : "";
-}
-
 export function getDevScripts(_hmrPort?: number, nonce?: string): string {
-  const nonceAttr = getNonceAttr(nonce);
+  const nonceAttr = buildNonceAttribute(nonce);
 
   return `
   <script type="module" src="/_veryfront/rsc/client.js"${nonceAttr}></script>
@@ -50,7 +46,7 @@ export function getDevScripts(_hmrPort?: number, nonce?: string): string {
 }
 
 export function getProdScripts(slug: string, nonce?: string): string {
-  const nonceAttr = getNonceAttr(nonce);
+  const nonceAttr = buildNonceAttribute(nonce);
   const encodedSlug = encodeURIComponent(slug);
 
   return `
@@ -72,7 +68,7 @@ interface StudioScriptOptions {
 }
 
 export function getStudioScripts(options: StudioScriptOptions): string {
-  const nonceAttr = getNonceAttr(options.nonce);
+  const nonceAttr = buildNonceAttribute(options.nonce);
 
   const bridgeConfig: Record<string, unknown> = {
     projectId: options.projectId,

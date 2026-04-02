@@ -25,6 +25,7 @@ async function sha256Base64url(body: string): Promise<string> {
 async function createControlPlaneSignature(
   body: string,
   overrides: Partial<{
+    algorithm: string;
     audience: string;
     projectId: string;
     requestId: string;
@@ -43,7 +44,10 @@ async function createControlPlaneSignature(
   const publicKeyPem = encodePem("PUBLIC KEY", publicKeyDer);
   const now = Math.floor(Date.now() / 1000);
 
-  const header = base64urlEncode(JSON.stringify({ alg: "EdDSA", typ: "JWT" }));
+  const header = base64urlEncode(JSON.stringify({
+    alg: overrides.algorithm ?? "EdDSA",
+    typ: "JWT",
+  }));
   const payload = base64urlEncode(JSON.stringify({
     iss: "veryfront-api",
     aud: overrides.audience ?? "demo-project",
@@ -149,6 +153,26 @@ describe("channels/control-plane", () => {
         })
       );
     });
+
+    it("rejects a control-plane signature with an unsupported algorithm header", async () => {
+      const body = JSON.stringify({
+        requestId: "agents-1",
+        projectId: "proj-1",
+        surface: "studio",
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        algorithm: "HS256",
+      });
+
+      await assertRejects(() =>
+        verifyControlPlaneJws(jws, body, {
+          audience: "demo-project",
+          expectedProjectId: "proj-1",
+          publicKeyPem,
+          maxAgeSeconds: 60,
+        })
+      );
+    });
   });
 
   describe("listRuntimeAgents", () => {
@@ -207,6 +231,37 @@ describe("channels/control-plane", () => {
               skills: [],
             },
           ],
+        }),
+      );
+    });
+
+    it("filters missing agents and falls back to the runtime id when config metadata is absent", async () => {
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) =>
+          id === "assistant-z"
+            ? {
+              ...createAgent({ id }),
+              config: {
+                system: "You are helpful.",
+                name: "",
+              } as unknown as Agent["config"],
+            }
+            : undefined,
+        getAllAgentIds: () => ["assistant-z", "assistant-missing"],
+      });
+
+      assertEquals(
+        response,
+        RuntimeAgentListResponseSchema.parse({
+          agents: [{
+            id: "assistant-z",
+            name: "assistant-z",
+            description: null,
+            model: null,
+            version: null,
+            skills: [],
+          }],
         }),
       );
     });

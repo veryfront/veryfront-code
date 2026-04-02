@@ -1,5 +1,5 @@
 import type { ComponentProps } from "#veryfront/types";
-import { escapeHtml } from "../html-escape.ts";
+import { buildNonceAttribute } from "../html-escape.ts";
 
 export function generateProdHydrationScript(
   slug: string,
@@ -7,7 +7,7 @@ export function generateProdHydrationScript(
   props?: ComponentProps,
   nonce?: string,
 ): string {
-  const nonceAttr = nonce ? ` nonce="${escapeHtml(nonce)}"` : "";
+  const nonceAttr = buildNonceAttribute(nonce);
   const pageProps = JSON.stringify(props ?? {});
 
   return `
