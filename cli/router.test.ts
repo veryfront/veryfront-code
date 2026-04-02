@@ -313,10 +313,10 @@ describe("cli/router helpers", () => {
     }
 
     const originalExit = Deno.exit;
+    const originalInfo = cliLogger.info;
+    const originalConsoleLog = console.log;
     let infoMessages: string[];
     let consoleOutput: string[];
-    let originalInfo: typeof cliLogger.info;
-    let originalConsoleLog: typeof console.log;
 
     function stubExit() {
       // deno-lint-ignore no-explicit-any
@@ -327,7 +327,6 @@ describe("cli/router helpers", () => {
 
     function stubLogger() {
       infoMessages = [];
-      originalInfo = cliLogger.info;
       cliLogger.info = (...args: unknown[]) => {
         infoMessages.push(args.map(String).join(" "));
       };
@@ -335,7 +334,6 @@ describe("cli/router helpers", () => {
 
     function stubConsole() {
       consoleOutput = [];
-      originalConsoleLog = console.log;
       console.log = (...args: unknown[]) => {
         consoleOutput.push(args.map(String).join(" "));
       };
@@ -344,8 +342,8 @@ describe("cli/router helpers", () => {
     function restoreAll() {
       // deno-lint-ignore no-explicit-any
       (Deno as any).exit = originalExit;
-      if (originalInfo) cliLogger.info = originalInfo;
-      if (originalConsoleLog) console.log = originalConsoleLog;
+      cliLogger.info = originalInfo;
+      console.log = originalConsoleLog;
       setJsonMode(false);
     }
 
