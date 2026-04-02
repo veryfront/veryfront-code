@@ -40,7 +40,7 @@ async function runScenario(url: string, totalRequests: number, concurrency: numb
 
   async function worker() {
     while (completed < totalRequests) {
-      const current = completed++;
+      completed++;
 
       const started = performance.now();
       try {
