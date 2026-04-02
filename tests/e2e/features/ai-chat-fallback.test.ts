@@ -16,12 +16,7 @@
 
 import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import {
-  createProject,
-  ensureBinaryCompiled,
-  pages,
-  withServer,
-} from "../setup/index.ts";
+import { createProject, ensureBinaryCompiled, pages, withServer } from "../setup/index.ts";
 
 describe("Feature: AI Chat Fallback", {
   sanitizeOps: false,
@@ -75,7 +70,7 @@ export const POST = createChatHandler("test-assistant");
       assertEquals(body.code, "NO_AI_AVAILABLE");
       assertEquals(body.fallback, "browser");
       assertEquals(body.model, "smollm2-135m");
-      assertEquals(body.systemPrompt, "You are a helpful test assistant.");
+      assertEquals(body.systemPrompt, undefined);
     }, {
       timeout: 60_000,
       env: {
@@ -87,7 +82,7 @@ export const POST = createChatHandler("test-assistant");
     });
   });
 
-  it("should include system prompt from agent config in 503 response", async () => {
+  it("should not expose the agent system prompt in the 503 fallback response", async () => {
     const projectDir = await createProject("ai-fallback-prompt", pages.basic, {
       files: {
         "pages/api/chat.ts": `
@@ -125,7 +120,7 @@ export const POST = createChatHandler("custom-bot");
       assertEquals(response.status, 503);
       const body = await response.json();
       assertEquals(body.code, "NO_AI_AVAILABLE");
-      assertEquals(body.systemPrompt, "You are a pirate. Always say arrr.");
+      assertEquals(body.systemPrompt, undefined);
     }, {
       timeout: 60_000,
       env: {

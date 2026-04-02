@@ -11,7 +11,12 @@ export const agentHandler: DiscoveryHandler<Agent> = {
   typeName: "agent",
   validate: (item): item is Agent =>
     item !== null && typeof item === "object" && typeof (item as Agent).generate === "function",
-  getId: (agent, file) => agent.id || filenameToId(file),
+  getId: (agent, file) => {
+    const configuredId = agent.config.id;
+    return typeof configuredId === "string" && configuredId.trim().length > 0
+      ? configuredId
+      : filenameToId(file);
+  },
   register: (id, agent, file) => {
     registerAgent(id, agent);
     trackAgentPath(id, file);

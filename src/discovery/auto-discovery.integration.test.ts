@@ -7,6 +7,7 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { toolRegistry } from "#veryfront/tool";
 import { promptRegistry } from "#veryfront/prompt";
 import { resourceRegistry } from "#veryfront/resource";
+import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { join, resolve } from "#veryfront/compat/path";
 import { cwd } from "#veryfront/compat/process.ts";
 import { discoverAll } from "./index.ts";
@@ -23,6 +24,7 @@ describe(
       toolRegistry.clear();
       resourceRegistry.clear();
       promptRegistry.clear();
+      agentRegistry.clear();
     });
 
     it("should discover tools from tools/ directory", async () => {
@@ -126,6 +128,34 @@ describe(
 
         assertEquals(Array.from(result.tools.keys()).sort(), ["bar", "foo"]);
         assertEquals(toolRegistry.getAllIds().sort(), ["bar", "foo"]);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("should register agents by filename when config.id is omitted", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-agent-filename-id-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/agents`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/agents/researcher.ts`,
+          [
+            'import { agent } from "veryfront/agent";',
+            "",
+            "export default agent({",
+            '  system: "Research deeply.",',
+            "});",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        assertEquals(result.agents.has("researcher"), true);
+        assertExists(agentRegistry.get("researcher"));
       } finally {
         await Deno.remove(tempDir, { recursive: true });
       }
