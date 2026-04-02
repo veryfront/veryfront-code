@@ -39,4 +39,32 @@ describe("html/nonce-injection", () => {
     assertEquals(html.includes('<script nonce="nonce-123">alert(1)'), false);
     assertEquals(html.includes('<style nonce="nonce-123">.x{color:red}'), false);
   });
+
+  it("does not terminate raw-text mode on lookalike closing-tag prefixes inside script literals", () => {
+    const html = addNonceToHtmlTags(
+      `<script>window.tpl="</scripture><style>.x{color:red}</style>";</script><style>.chat{color:red}</style>`,
+      "nonce-123",
+    );
+
+    assertEquals(
+      html.includes(
+        '<script nonce="nonce-123">window.tpl="</scripture><style>.x{color:red}</style>";</script>',
+      ),
+      true,
+    );
+    assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
+    assertEquals(html.includes('<style nonce="nonce-123">.x{color:red}</style>'), false);
+  });
+
+  it("does not treat data-nonce as an existing nonce attribute", () => {
+    const html = addNonceToHtmlTags(
+      `<script data-nonce="existing">window.__vf=1</script>`,
+      "nonce-123",
+    );
+
+    assertEquals(
+      html.includes('<script data-nonce="existing" nonce="nonce-123">window.__vf=1</script>'),
+      true,
+    );
+  });
 });

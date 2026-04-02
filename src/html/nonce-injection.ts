@@ -29,8 +29,34 @@ function getOpeningTagName(tag: string): "script" | "style" | undefined {
   return undefined;
 }
 
+function isTagBoundary(char: string | undefined): boolean {
+  return char === undefined || /\s|\/|>/u.test(char);
+}
+
+function findRawTextClosingTagStart(
+  lowerHtml: string,
+  tagName: "script" | "style",
+  fromIndex: number,
+): number {
+  const needle = `</${tagName}`;
+  let searchIndex = fromIndex;
+
+  while (searchIndex < lowerHtml.length) {
+    const closingIndex = lowerHtml.indexOf(needle, searchIndex);
+    if (closingIndex === -1) return -1;
+
+    if (isTagBoundary(lowerHtml[closingIndex + needle.length])) {
+      return closingIndex;
+    }
+
+    searchIndex = closingIndex + needle.length;
+  }
+
+  return -1;
+}
+
 function injectNonceIntoOpeningTag(tag: string, escapedNonce: string): string {
-  if (/\bnonce\s*=/iu.test(tag)) return tag;
+  if (/(?:\s|<)nonce\s*=/iu.test(tag)) return tag;
 
   const closeIndex = tag.lastIndexOf(">");
   if (closeIndex === -1) return tag;
@@ -50,7 +76,7 @@ export function addNonceToHtmlTags(html: string, nonce?: string): string {
 
   while (index < html.length) {
     if (rawTextTag) {
-      const closingIndex = lowerHtml.indexOf(`</${rawTextTag}`, index);
+      const closingIndex = findRawTextClosingTagStart(lowerHtml, rawTextTag, index);
       if (closingIndex === -1) {
         result += html.slice(index);
         break;
