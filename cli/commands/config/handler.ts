@@ -1,5 +1,6 @@
 import type { ParsedArgs } from "#cli/shared/types";
 import { cliLogger } from "#cli/utils";
+import { getEnv } from "veryfront/platform";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { bold, dim } from "../../ui/colors.ts";
 
@@ -34,11 +35,7 @@ export async function detectConfigSource(
 export function getEnvOverrides(): string[] {
   const overrides: string[] = [];
   for (const [field, envVar] of Object.entries(ENV_OVERRIDES)) {
-    try {
-      if (Deno.env.get(envVar)) overrides.push(`${field} (${envVar})`);
-    } catch {
-      // env access may fail in restricted environments
-    }
+    if (getEnv(envVar)) overrides.push(`${field} (${envVar})`);
   }
   return overrides;
 }
