@@ -510,6 +510,50 @@ export default function Home() {
     });
   });
 
+  it("should render page with veryfront/fonts import correctly", async () => {
+    const projectDir = await createTestProject(
+      "fonts-test",
+      `
+import { GoogleFonts } from "veryfront/fonts";
+
+export default function Home() {
+  return (
+    <>
+      <GoogleFonts
+        fonts={[
+          { name: "Inter", weights: [400, 700], variable: "--font-inter" },
+        ]}
+      />
+      <div id="content">Fonts import works</div>
+    </>
+  );
+}
+`,
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200);
+      assertStringIncludes(html, "Fonts import works", "Should render page content");
+      assertStringIncludes(html, "fonts.googleapis.com", "Should render Google Fonts link");
+      assertStringIncludes(html, "--font-inter", "Should render generated CSS variables");
+
+      const frameworkErrors = server.logs.filter((l) =>
+        l.includes("Component has missing dependencies") ||
+        l.includes("../components/Head.tsx") ||
+        l.includes("Missing dependencies detected") ||
+        l.includes("Render failed")
+      );
+      assertEquals(
+        frameworkErrors.length,
+        0,
+        `Should have no framework dependency errors: ${frameworkErrors.join("\n")}`,
+      );
+    });
+  });
+
   it("should handle multiple framework imports without React errors", async () => {
     const projectDir = await createTestProject(
       "multi-test",
