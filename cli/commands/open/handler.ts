@@ -1,5 +1,6 @@
 import type { ParsedArgs } from "#cli/shared/types";
 import { parseArgsOrThrow } from "#cli/shared/args";
+import { cliLogger, exitProcess } from "#cli/utils";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { buildUrl, parseOpenArgs } from "./command.ts";
 
@@ -8,21 +9,19 @@ export async function handleOpenCommand(args: ParsedArgs): Promise<void> {
 
   let projectSlug = opts.projectSlug;
   if (!projectSlug) {
-    try {
-      const { cwd } = await import("veryfront/platform");
-      const { resolveConfigWithAuth } = await import("#cli/shared/config");
-      const config = await resolveConfigWithAuth(cwd());
-      projectSlug = config.projectSlug;
-    } catch {
-      // ignore
-    }
+    const { cwd } = await import("veryfront/platform");
+    const { getEnvironmentConfig } = await import("veryfront/config");
+    const { readConfigFile } = await import("#cli/shared/config");
+    projectSlug = getEnvironmentConfig().projectSlug
+      ?? (await readConfigFile(cwd()))?.projectSlug
+      ?? undefined;
   }
 
   if (!projectSlug) {
-    console.error(
+    cliLogger.error(
       "No project found. Run from a project directory or use --project-slug",
     );
-    Deno.exit(1);
+    exitProcess(1);
   }
 
   const url = buildUrl(projectSlug, opts);
