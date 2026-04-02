@@ -214,13 +214,14 @@ function getAllowedRemoteToolNames(
   const runtimeOverrides = isRecord(forwardedProps?.runtimeOverrides)
     ? forwardedProps.runtimeOverrides
     : null;
-  const allowedTools = runtimeOverrides && Array.isArray(runtimeOverrides.allowedTools)
-    ? runtimeOverrides.allowedTools
-    : null;
-  if (!allowedTools || !allowedTools.every((toolName) => typeof toolName === "string")) {
+  if (!runtimeOverrides || !Object.hasOwn(runtimeOverrides, "allowedTools")) {
     return undefined;
   }
-  return allowedTools;
+  const allowedTools = runtimeOverrides.allowedTools;
+  if (!Array.isArray(allowedTools)) {
+    return [];
+  }
+  return allowedTools.every((toolName) => typeof toolName === "string") ? allowedTools : [];
 }
 
 export async function createRuntimeAgentStreamResponse(
@@ -240,7 +241,9 @@ export async function createRuntimeAgentStreamResponse(
     config: {
       ...agent.config,
       tools: mergedTools,
-      ...(allowedRemoteToolNames ? { __vfAllowedRemoteTools: allowedRemoteToolNames } : {}),
+      ...(allowedRemoteToolNames !== undefined
+        ? { __vfAllowedRemoteTools: allowedRemoteToolNames }
+        : {}),
     },
   };
   const runtime = deps.createRuntime?.(runtimeAgent, mergedTools) ??

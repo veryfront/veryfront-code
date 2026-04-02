@@ -283,6 +283,68 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(capturedAllowedTools, ["gmail:list-emails", "gmail:get-email"]);
   });
 
+  it("fails closed for malformed runtime integration tool allowlists from forwarded props", async () => {
+    let capturedAllowedTools: string[] | undefined;
+
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: (agent) => {
+        const config = agent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] };
+        capturedAllowedTools = config.__vfAllowedRemoteTools;
+
+        return {
+          stream: async (_messages, _context, callbacks) => {
+            callbacks?.onFinish?.({
+              text: "ok",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: {
+                promptTokens: 1,
+                completionTokens: 1,
+                totalTokens: 2,
+              },
+            });
+
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        };
+      },
+    });
+
+    const body = createAgentStreamRequestBody({
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["gmail:list-emails", 123],
+        },
+      },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(capturedAllowedTools, []);
+  });
+
   it("rejects oversized internal agent stream payloads before parsing", async () => {
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => {},

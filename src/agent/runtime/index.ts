@@ -192,11 +192,15 @@ function isLocalModel(model: LanguageModel): boolean {
 }
 
 function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {
-  const raw = (config as RuntimeToolFilterConfig).__vfAllowedRemoteTools;
-  if (!Array.isArray(raw) || !raw.every((toolName) => typeof toolName === "string")) {
+  const configWithRuntimeFilters = config as RuntimeToolFilterConfig;
+  if (!Object.hasOwn(configWithRuntimeFilters, "__vfAllowedRemoteTools")) {
     return undefined;
   }
-  return raw;
+  const raw = configWithRuntimeFilters.__vfAllowedRemoteTools;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.every((toolName) => typeof toolName === "string") ? raw : [];
 }
 
 export class AgentRuntime {
