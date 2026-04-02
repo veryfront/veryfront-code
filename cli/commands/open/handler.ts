@@ -22,6 +22,7 @@ export async function handleOpenCommand(args: ParsedArgs): Promise<void> {
       "No project found. Run from a project directory or use --project-slug",
     );
     exitProcess(1);
+    return;
   }
 
   const url = buildUrl(projectSlug, opts);
