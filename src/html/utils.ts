@@ -257,9 +257,7 @@ export async function buildImportMapJson(
   const stringifyImportMap = (imports: Record<string, string>, pretty = true) =>
     JSON.stringify({ imports }, null, pretty ? 2 : undefined);
   const stableMapKey = (imports?: Record<string, string>) =>
-    imports
-      ? JSON.stringify(Object.entries(imports).sort(([a], [b]) => a.localeCompare(b)))
-      : "";
+    imports ? JSON.stringify(Object.entries(imports).sort(([a], [b]) => a.localeCompare(b))) : "";
 
   if (options && isImportMapOnlyOptions(options)) {
     const imports = options;
@@ -268,7 +266,8 @@ export async function buildImportMapJson(
     }
   }
 
-  const { projectDir, config, customImports, pretty = true } = (options ?? {}) as BuildImportMapOptions;
+  const { projectDir, config, customImports, pretty = true } =
+    (options ?? {}) as BuildImportMapOptions;
   const mode = config?.client?.moduleResolution ?? "cdn";
   const versions = projectDir ? await resolveVersions(projectDir, config) : DEFAULT_VERSIONS;
 

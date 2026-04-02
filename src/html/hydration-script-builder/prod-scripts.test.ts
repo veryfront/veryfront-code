@@ -10,7 +10,10 @@ describe("hydration-script-builder/prod-scripts", () => {
   describe("getProdScripts", () => {
     it("should return an external module script tag", () => {
       const result = getProdScripts("my-page");
-      assertEquals(result.includes(`<script type="module" src="${PROD_HYDRATION_MODULE_PATH}"`), true);
+      assertEquals(
+        result.includes(`<script type="module" src="${PROD_HYDRATION_MODULE_PATH}"`),
+        true,
+      );
       assertEquals(result.includes("</script>"), true);
       assertEquals(result.includes("renderPage"), false);
     });
@@ -24,7 +27,6 @@ describe("hydration-script-builder/prod-scripts", () => {
       const result = getProdScripts("page");
       assertEquals(result.includes("nonce="), false);
     });
-
   });
 
   describe("generateProdHydrationModule", () => {

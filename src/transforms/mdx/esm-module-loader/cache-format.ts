@@ -2,14 +2,21 @@ import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { createCacheNamespace } from "#veryfront/utils/cache-namespace.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { resolveVeryfrontModuleTarget, resolveVeryfrontModuleUrl } from "../../veryfront-module-urls.ts";
+import {
+  resolveVeryfrontModuleTarget,
+  resolveVeryfrontModuleUrl,
+} from "../../veryfront-module-urls.ts";
 import { UNRESOLVED_VF_MODULES_PATTERN } from "./constants.ts";
 import { hashString } from "./utils/hash.ts";
 
 const ALL_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+)/.source;
 const MJS_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+\.mjs)/.source;
 const CACHE_NAMESPACE_SENTINEL = "__vf_cache_namespace__";
-const PUBLIC_RUNTIME_SPECIFIERS = ["veryfront/head", "veryfront/router", "veryfront/context"] as const;
+const PUBLIC_RUNTIME_SPECIFIERS = [
+  "veryfront/head",
+  "veryfront/router",
+  "veryfront/context",
+] as const;
 
 function buildPublicRuntimeAliasSchema(
   overrides?: Partial<Record<(typeof PUBLIC_RUNTIME_SPECIFIERS)[number], string>>,

@@ -145,11 +145,13 @@ describe("html-generation/utils", () => {
           JSON.stringify({ dependencies: { react: "^18.3.1", veryfront: "^0.1.10" } }),
         );
 
-        const first = JSON.parse(await buildImportMapJson({
-          projectDir: dir,
-          pretty: false,
-          config: { client: { cdn: { provider: "unpkg" } } },
-        })) as {
+        const first = JSON.parse(
+          await buildImportMapJson({
+            projectDir: dir,
+            pretty: false,
+            config: { client: { cdn: { provider: "unpkg" } } },
+          }),
+        ) as {
           imports: Record<string, string>;
         };
         assertStringIncludes(first.imports.react, "18.3.1");
@@ -161,11 +163,13 @@ describe("html-generation/utils", () => {
           JSON.stringify({ dependencies: { react: "^19.0.0", veryfront: "^0.2.0" } }),
         );
 
-        const second = JSON.parse(await buildImportMapJson({
-          projectDir: dir,
-          pretty: false,
-          config: { client: { cdn: { provider: "unpkg" } } },
-        })) as {
+        const second = JSON.parse(
+          await buildImportMapJson({
+            projectDir: dir,
+            pretty: false,
+            config: { client: { cdn: { provider: "unpkg" } } },
+          }),
+        ) as {
           imports: Record<string, string>;
         };
         assertStringIncludes(second.imports.react, "19.0.0");

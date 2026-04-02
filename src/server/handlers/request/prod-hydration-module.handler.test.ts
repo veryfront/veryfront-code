@@ -50,12 +50,18 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
 describe("server/handlers/request/prod-hydration-module.handler", () => {
   it("serves the production hydration runtime module", async () => {
     const handler = new ProdHydrationModuleHandler();
-    const result = await handler.handle(new Request(`http://localhost${PROD_HYDRATION_MODULE_PATH}`), makeCtx());
+    const result = await handler.handle(
+      new Request(`http://localhost${PROD_HYDRATION_MODULE_PATH}`),
+      makeCtx(),
+    );
 
     assertEquals(result.continue, false);
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(result.response.headers.get("content-type"), "application/javascript; charset=utf-8");
+    assertEquals(
+      result.response.headers.get("content-type"),
+      "application/javascript; charset=utf-8",
+    );
 
     const body = await result.response.text();
     assertStringIncludes(body, "MODULE_SERVER_URL");
@@ -64,7 +70,10 @@ describe("server/handlers/request/prod-hydration-module.handler", () => {
 
   it("returns not modified when ETag matches", async () => {
     const handler = new ProdHydrationModuleHandler();
-    const first = await handler.handle(new Request(`http://localhost${PROD_HYDRATION_MODULE_PATH}`), makeCtx());
+    const first = await handler.handle(
+      new Request(`http://localhost${PROD_HYDRATION_MODULE_PATH}`),
+      makeCtx(),
+    );
     const etag = first.response?.headers.get("etag");
     assertExists(etag);
 
