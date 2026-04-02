@@ -1,7 +1,7 @@
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { StaticPathsFetcher } from "./static-paths-fetcher.ts";
-import type { PageWithData } from "./types.ts";
+import type { PageWithData, StaticPathsResult } from "./types.ts";
 
 function createFetcher(): StaticPathsFetcher {
   return new StaticPathsFetcher();
@@ -129,6 +129,19 @@ describe("StaticPathsFetcher", () => {
 
       assertExists(result);
       assertEquals(result.paths[0]?.params.id, "sync");
+    });
+
+    it("should default nullish getStaticPaths results to an empty non-fallback response", async () => {
+      const fetcher = createFetcher();
+      const pageModule = createPageModule(
+        () => undefined as unknown as StaticPathsResult,
+      );
+
+      const result = await fetcher.fetch(pageModule);
+
+      assertExists(result);
+      assertEquals(result.paths, []);
+      assertEquals(result.fallback, false);
     });
 
     it("should throw when getStaticPaths throws", async () => {

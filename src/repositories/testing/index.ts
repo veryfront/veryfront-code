@@ -22,6 +22,17 @@ export interface TrackedCall {
   timestamp: number;
 }
 
+function createEmptyCacheStats(): CacheStats {
+  return {
+    gets: 0,
+    hits: 0,
+    misses: 0,
+    sets: 0,
+    deletes: 0,
+    hitRate: 0,
+  };
+}
+
 export class MockFileSystemRepository implements FileSystemRepository {
   readonly context: RepositoryContext;
   private readonly files = new Map<string, string | Uint8Array>();
@@ -34,9 +45,7 @@ export class MockFileSystemRepository implements FileSystemRepository {
   }) {
     this.context = options.context;
 
-    if (!options.files) return;
-
-    for (const [path, content] of Object.entries(options.files)) {
+    for (const [path, content] of Object.entries(options.files ?? {})) {
       this.files.set(path, content);
     }
   }
@@ -45,13 +54,15 @@ export class MockFileSystemRepository implements FileSystemRepository {
     this.calls.push({ method, args, timestamp: Date.now() });
   }
 
+  private getStoredContent(path: string): string | Uint8Array {
+    const content = this.files.get(path);
+    if (content !== undefined) return content;
+    throw INVALID_ARGUMENT.create({ detail: `ENOENT: no such file: ${path}` });
+  }
+
   async readFile(path: string): Promise<string> {
     this.track("readFile", path);
-
-    const content = this.files.get(path);
-    if (content === undefined) {
-      throw INVALID_ARGUMENT.create({ detail: `ENOENT: no such file: ${path}` });
-    }
+    const content = this.getStoredContent(path);
 
     if (content instanceof Uint8Array) {
       return new TextDecoder().decode(content);
@@ -62,11 +73,7 @@ export class MockFileSystemRepository implements FileSystemRepository {
 
   async readFileBytes(path: string): Promise<Uint8Array> {
     this.track("readFileBytes", path);
-
-    const content = this.files.get(path);
-    if (content === undefined) {
-      throw INVALID_ARGUMENT.create({ detail: `ENOENT: no such file: ${path}` });
-    }
+    const content = this.getStoredContent(path);
 
     if (content instanceof Uint8Array) return content;
 
@@ -205,21 +212,12 @@ export class MockCacheRepository<T = string> implements CacheRepository<T> {
   readonly context: RepositoryContext;
   private readonly store = new Map<string, T>();
   private readonly calls: TrackedCall[] = [];
-  private stats: CacheStats = {
-    gets: 0,
-    hits: 0,
-    misses: 0,
-    sets: 0,
-    deletes: 0,
-    hitRate: 0,
-  };
+  private stats: CacheStats = createEmptyCacheStats();
 
   constructor(options: { context: RepositoryContext; initial?: Record<string, T> }) {
     this.context = options.context;
 
-    if (!options.initial) return;
-
-    for (const [key, value] of Object.entries(options.initial)) {
+    for (const [key, value] of Object.entries(options.initial ?? {})) {
       this.store.set(key, value);
     }
   }
@@ -303,14 +301,7 @@ export class MockCacheRepository<T = string> implements CacheRepository<T> {
   }
 
   resetStats(): void {
-    this.stats = {
-      gets: 0,
-      hits: 0,
-      misses: 0,
-      sets: 0,
-      deletes: 0,
-      hitRate: 0,
-    };
+    this.stats = createEmptyCacheStats();
   }
 
   getStore(): Map<string, T> {

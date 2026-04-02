@@ -39,12 +39,20 @@ import { handleTestCommand } from "./commands/test/handler.ts";
 import { handleLintCommand } from "./commands/lint/handler.ts";
 import { handleSkillsCommand } from "./commands/skills/handler.ts";
 import { handleConfigCommand } from "./commands/config/handler.ts";
+import { handleOpenCommand } from "./commands/open/handler.ts";
+import { handleCompletionsCommand } from "./commands/completions/handler.ts";
 import { login, logout, whoami } from "./auth/index.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
 import { setColorOverride } from "./ui/colors.ts";
 import { exitProcess, setQuietMode, setVerboseMode } from "./utils/index.ts";
-import { setJsonMode, setOutputPath } from "./shared/json-output.ts";
+import {
+  createSuccessEnvelope,
+  isJsonMode,
+  outputJson,
+  setJsonMode,
+  setOutputPath,
+} from "./shared/json-output.ts";
 import { detectCI, setNonInteractive } from "./shared/interactive.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
@@ -98,6 +106,8 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "lint": handleLintCommand,
   "skills": handleSkillsCommand,
   "config": handleConfigCommand,
+  "open": handleOpenCommand,
+  "completions": handleCompletionsCommand,
 };
 
 /**
@@ -130,8 +140,33 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
   if (args.yes || args.y || detectCI()) setNonInteractive(true);
 
+  // Start update check early so the network request runs during command execution
+  const updateCheck = import("./shared/update-check.ts")
+    .then(({ checkForUpdates }) => checkForUpdates(VERSION))
+    .catch(() => {});
+
   if (args.version || args.v) {
+    if (isJsonMode()) {
+      await outputJson(createSuccessEnvelope("version", {
+        version: VERSION,
+        deno: Deno.version.deno,
+        v8: Deno.version.v8,
+        typescript: Deno.version.typescript,
+        os: Deno.build.os,
+        arch: Deno.build.arch,
+        standalone: Deno.build.standalone ?? false,
+      }));
+      exitProcess(0);
+      return;
+    }
     cliLogger.info(`Veryfront CLI v${VERSION}`);
+    if (args.verbose) {
+      cliLogger.info(
+        `Deno ${Deno.version.deno} (V8 ${Deno.version.v8}, TypeScript ${Deno.version.typescript})`,
+      );
+      cliLogger.info(`OS: ${Deno.build.os} ${Deno.build.arch}`);
+    }
+    await updateCheck;
     exitProcess(0);
     return;
   }
@@ -140,6 +175,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
   if (args.help || args.h) {
     showHelp(command);
+    await updateCheck;
     exitProcess(0);
     return;
   }
@@ -147,19 +183,37 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   await cliErrorBoundary(async () => {
     if (command === "help") {
       showHelp();
-      exitProcess(0);
       return;
     }
 
     const handler = command ? commands[command] : undefined;
 
     if (command && !handler) {
+      const { suggestCommand } = await import("./shared/suggest.ts");
+      const { COMMANDS } = await import("./help/command-definitions.ts");
+      // Use canonical command names from help registry (excludes aliases like "g", "preview")
+      const canonicalNames = Object.keys(COMMANDS);
+      const suggestions = suggestCommand(command, canonicalNames);
       cliLogger.error(`Unknown command: ${command}\n`);
-      showHelp();
+      if (suggestions.length > 0) {
+        cliLogger.info(`  Did you mean?`);
+        for (const s of suggestions) {
+          const desc = COMMANDS[s]?.description ?? "";
+          cliLogger.info(`    ${s}    ${desc}`);
+        }
+      } else {
+        showHelp();
+      }
       exitProcess(1);
       return;
     }
 
     await (handler ?? handleStartCommand)(args);
   });
+
+  // Wait for update check to finish (with timeout to avoid hanging)
+  await Promise.race([
+    updateCheck,
+    new Promise((r) => setTimeout(r, 5000)),
+  ]);
 }

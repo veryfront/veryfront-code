@@ -2,6 +2,9 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { COMMANDS } from "./help/command-definitions.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
+import { routeCommand } from "./router.ts";
+import { cliLogger, VERSION } from "./utils/index.ts";
+import { setJsonMode } from "./shared/json-output.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
 /**
@@ -296,6 +299,132 @@ describe("cli/router helpers", () => {
     it("should detect quiet/q flags", () => {
       assertEquals(Boolean({ quiet: true }.quiet), true);
       assertEquals(Boolean({ q: true }.q), true);
+    });
+  });
+
+  describe("version output", () => {
+    /** Sentinel thrown by our Deno.exit stub so routeCommand stops without killing the process. */
+    class ExitSentinel extends Error {
+      code: number;
+      constructor(code: number) {
+        super(`exit(${code})`);
+        this.code = code;
+      }
+    }
+
+    const originalExit = Deno.exit;
+    const originalInfo = cliLogger.info;
+    const originalConsoleLog = console.log;
+    let infoMessages: string[];
+    let consoleOutput: string[];
+
+    function stubExit() {
+      // deno-lint-ignore no-explicit-any
+      (Deno as any).exit = (code: number) => {
+        throw new ExitSentinel(code ?? 0);
+      };
+    }
+
+    function stubLogger() {
+      infoMessages = [];
+      cliLogger.info = (...args: unknown[]) => {
+        infoMessages.push(args.map(String).join(" "));
+      };
+    }
+
+    function stubConsole() {
+      consoleOutput = [];
+      console.log = (...args: unknown[]) => {
+        consoleOutput.push(args.map(String).join(" "));
+      };
+    }
+
+    function restoreAll() {
+      // deno-lint-ignore no-explicit-any
+      (Deno as any).exit = originalExit;
+      cliLogger.info = originalInfo;
+      console.log = originalConsoleLog;
+      setJsonMode(false);
+    }
+
+    async function runAndCaptureExit(args: ParsedArgs): Promise<number> {
+      try {
+        await routeCommand(args);
+        throw new Error("routeCommand did not exit");
+      } catch (e) {
+        if (e instanceof ExitSentinel) return e.code;
+        throw e;
+      }
+    }
+
+    it("--version prints version string and exits 0", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit({ version: true, _: [] } as ParsedArgs);
+        assertEquals(code, 0);
+        assertEquals(infoMessages.length, 1);
+        assertEquals(infoMessages[0], `Veryfront CLI v${VERSION}`);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("-v short form prints version string", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit({ v: true, _: [] } as ParsedArgs);
+        assertEquals(code, 0);
+        assertEquals(infoMessages[0], `Veryfront CLI v${VERSION}`);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("--version --verbose prints runtime and OS details", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(
+          { version: true, verbose: true, _: [] } as ParsedArgs,
+        );
+        assertEquals(code, 0);
+        assertEquals(infoMessages.length, 3);
+        assertEquals(infoMessages[0], `Veryfront CLI v${VERSION}`);
+        assertEquals(
+          infoMessages[1],
+          `Deno ${Deno.version.deno} (V8 ${Deno.version.v8}, TypeScript ${Deno.version.typescript})`,
+        );
+        assertEquals(infoMessages[2], `OS: ${Deno.build.os} ${Deno.build.arch}`);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("--version --json outputs structured JSON envelope", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit(
+          { version: true, json: true, _: [] } as ParsedArgs,
+        );
+        assertEquals(code, 0);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0]);
+        assertEquals(parsed.success, true);
+        assertEquals(parsed.command, "version");
+        assertEquals(parsed.data.version, VERSION);
+        assertEquals(parsed.data.deno, Deno.version.deno);
+        assertEquals(parsed.data.v8, Deno.version.v8);
+        assertEquals(parsed.data.typescript, Deno.version.typescript);
+        assertEquals(parsed.data.os, Deno.build.os);
+        assertEquals(parsed.data.arch, Deno.build.arch);
+        assertEquals(typeof parsed.data.standalone, "boolean");
+      } finally {
+        restoreAll();
+      }
     });
   });
 

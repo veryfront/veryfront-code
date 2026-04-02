@@ -30,7 +30,7 @@ type LayoutComponentType = ComponentType<{ children: ReactNode; [key: string]: u
 
 function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): JSX.Element {
   const [LayoutComponent, setLayoutComponent] = useState<LayoutComponentType | null>(() => {
-    return (getCachedComponent(layout.path) as LayoutComponentType | null) ?? null;
+    return getCachedComponent(layout.path) as LayoutComponentType | null;
   });
 
   useEffect(() => {

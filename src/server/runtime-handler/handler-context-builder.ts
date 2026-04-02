@@ -19,7 +19,7 @@ import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { buildEnrichedContext } from "../context/enriched-context.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 
-interface HandlerContextOptions {
+export interface HandlerContextOptions {
   /** Project directory */
   projectDir: string;
   /** Runtime adapter */

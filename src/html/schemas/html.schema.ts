@@ -5,6 +5,7 @@ export const colorSchemeSchema = z.enum(["light", "dark"]);
 export const environmentSchema = z.enum(["preview", "production"]);
 
 export const pageTypeSchema = z.enum(["mdx", "md", "tsx", "jsx", "ts", "js"]);
+export const clientModuleStrategySchema = z.enum(["fs", "rsc-module"]);
 
 export const HTMLGenerationOptionsSchema = z.object({
   mode: z.enum(["development", "production"]),
@@ -29,6 +30,7 @@ export const HTMLGenerationOptionsSchema = z.object({
   layoutProps: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
   studioEmbed: z.boolean().optional(),
   projectId: z.string().optional(),
+  projectSlug: z.string().optional(),
   pageId: z.string().optional(),
   sourceHash: z.string().optional(),
   colorScheme: colorSchemeSchema.optional(),
@@ -47,6 +49,7 @@ export const HTMLGenerationOptionsSchema = z.object({
   projectClasses: z.set(z.string()).optional(),
   isLocalProject: z.boolean().optional(),
   noHmr: z.boolean().optional(),
+  forceProductionScripts: z.boolean().optional(),
 });
 
 export const HydrationDataSchema = z.object({
@@ -61,6 +64,7 @@ export const HydrationDataSchema = z.object({
   ),
   appPath: z.string().optional(),
   pagePath: z.string().optional(),
+  clientModuleStrategy: clientModuleStrategySchema.optional(),
 });
 
 // Inferred types

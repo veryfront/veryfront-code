@@ -1,4 +1,5 @@
 import { normalize } from "#veryfront/compat/path/index.ts";
+import { base64urlEncode } from "./base64url.ts";
 import { logger } from "./logger/logger.ts";
 
 function stripTrailingSlash(pathname: string): string {
@@ -72,21 +73,29 @@ export function getEsbuildLoader(filePath: string): "tsx" | "jsx" | "ts" | "js" 
 
 export { isAbsolute as isAbsolutePath } from "#veryfront/compat/path/index.ts";
 
-export function toBase64Url(s: string): string {
-  return btoa(s).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+export function toBase64Url(input: string): string {
+  return base64urlEncode(input);
 }
 
-function getBase64Padding(length: number): string {
-  if (length % 4 === 2) return "==";
-  if (length % 4 === 3) return "=";
-  return "";
+function getRequiredBase64Padding(length: number): string | undefined {
+  const remainder = length % 4;
+  if (remainder === 0) return "";
+  if (remainder === 2) return "==";
+  if (remainder === 3) return "=";
+  return undefined;
 }
 
 export function fromBase64Url(encoded: string): string {
   const b64 = encoded.replaceAll("-", "+").replaceAll("_", "/");
+  const padding = getRequiredBase64Padding(b64.length);
+
+  if (padding === undefined) {
+    logger.debug(`Failed to decode base64url string "${encoded}": invalid length`);
+    return "";
+  }
 
   try {
-    return atob(b64 + getBase64Padding(b64.length));
+    return atob(b64 + padding);
   } catch (error) {
     logger.debug(`Failed to decode base64url string "${encoded}":`, error);
     return "";

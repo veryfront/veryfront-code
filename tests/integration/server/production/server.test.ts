@@ -260,7 +260,46 @@ describe(
       });
     });
 
-    it("renders App Router loading/error via production server", async () => {
+    it("returns HTTP redirects from getServerData in the adapter-backed server path", async () => {
+      await withTestContext("production-server-adapter-redirects", async (context: TestContext) => {
+        const pagesDir = join(context.projectDir, "pages");
+        await mkdir(pagesDir, { recursive: true });
+        await writeTextFile(
+          join(pagesDir, "redirect.tsx"),
+          `export function getServerData(){ return { redirect: { destination: '/login', permanent: false } }; }
+           export default function Page(){ return <div>Redirect source</div>; }`,
+        );
+        await writeTextFile(
+          join(pagesDir, "permanent.tsx"),
+          `export function getServerData(){ return { redirect: { destination: '/moved', permanent: true } }; }
+           export default function Page(){ return <div>Permanent redirect</div>; }`,
+        );
+
+        const port = await context.allocatePort();
+        const controller = new AbortController();
+        const server = await startServer(context, port, controller.signal);
+
+        const res = await fetch(`http://127.0.0.1:${port}/redirect`, {
+          redirect: "manual",
+        });
+        assertEquals(res.status, 302);
+        assertEquals(res.headers.get("location"), "/login");
+        assertEquals(await res.text(), "");
+
+        const head = await fetch(`http://127.0.0.1:${port}/permanent`, {
+          method: "HEAD",
+          redirect: "manual",
+        });
+        assertEquals(head.status, 301);
+        assertEquals(head.headers.get("location"), "/moved");
+        assertEquals(head.body, null);
+
+        controller.abort();
+        await server.stop();
+      });
+    });
+
+    it("renders App Router loading fallback HTML when a suspended page later errors", async () => {
       await withTestContext("production-server-app-loading-error", async (context: TestContext) => {
         try {
           await remove(join(context.projectDir, "app"), { recursive: true });
@@ -294,17 +333,57 @@ describe(
         const server = await startServer(context, port, controller.signal);
 
         const res = await fetch(`http://127.0.0.1:${port}/a/b`);
+        assertEquals(res.status, 200);
+        assertMatch(res.headers.get("content-type") ?? "", /text\/html/i);
         const html = await res.text();
-        if (!html.includes("ErrA:") && !html.includes("Loading A...")) {
-          throw new Error("Expected loading or error content in HTML");
-        }
+        assertStringIncludes(html, "Loading A...");
+        assertStringIncludes(html, "veryfront-hydration-data");
 
         controller.abort();
         await server.stop();
       });
     });
 
-    it.ignore("renders not-found.tsx for missing App Router page", async () => {
+    it("returns runtime error HTML instead of app/error.tsx when page throws synchronously", async () => {
+      await withTestContext("production-server-app-error-boundary-ssr", async (context) => {
+        try {
+          await remove(join(context.projectDir, "app"), { recursive: true });
+        } catch (e) {
+          if (!isNotFoundError(e)) console.warn("[TEST] cleanup: failed to remove app dir", e);
+        }
+
+        await mkdir(join(context.projectDir, "app", "a", "b"), { recursive: true });
+        await writeTextFile(
+          join(context.projectDir, "app", "layout.tsx"),
+          `export default function Root({ children }: any){ return (<html><body><main data-router-focus>{children}</main></body></html>); }`,
+        );
+        await writeTextFile(
+          join(context.projectDir, "app", "a", "error.tsx"),
+          `export default function Error({ error }: any){ return <p>ErrA:{String(error&&error.message||error)}</p>; }`,
+        );
+        await writeTextFile(
+          join(context.projectDir, "app", "a", "b", "page.tsx"),
+          `export default function Page(){ throw new Error('boom'); }`,
+        );
+
+        const port = await context.allocatePort();
+        const controller = new AbortController();
+        const server = await startServer(context, port, controller.signal);
+
+        const res = await fetch(`http://127.0.0.1:${port}/a/b`);
+        assertEquals(res.status, 500);
+        assertMatch(res.headers.get("content-type") ?? "", /text\/html/i);
+        const html = await res.text();
+        assertStringIncludes(html, "Runtime Error");
+        assertStringIncludes(html, "boom");
+        assertEquals(html.includes("ErrA:"), false);
+
+        controller.abort();
+        await server.stop();
+      });
+    });
+
+    it("renders the nearest app not-found.tsx for missing App Router pages", async () => {
       await withTestContext("production-server-app-not-found", async (context: TestContext) => {
         try {
           await remove(join(context.projectDir, "app"), { recursive: true });
@@ -314,6 +393,10 @@ describe(
 
         const segDir = join(context.projectDir, "app", "a", "b");
         await mkdir(segDir, { recursive: true });
+        await writeTextFile(
+          join(context.projectDir, "app", "not-found.tsx"),
+          `export default function RootNotFound(){ return <p>Root Missing</p>; }`,
+        );
         await writeTextFile(
           join(segDir, "not-found.tsx"),
           `export default function NotFound(){ return <p>Missing B</p>; }`,
@@ -325,8 +408,11 @@ describe(
 
         const res = await fetch(`http://127.0.0.1:${port}/a/b/missing`);
         assertEquals(res.status, 404);
+        assertMatch(res.headers.get("content-type") ?? "", /text\/html/i);
         const html = await res.text();
         assertStringIncludes(html, "Missing B");
+        assertStringIncludes(html, 'data-node-file="app/a/b/not-found.tsx"');
+        assertEquals(html.includes("Root Missing"), false);
 
         controller.abort();
         await server.stop();

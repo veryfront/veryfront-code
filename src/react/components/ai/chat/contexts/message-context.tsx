@@ -8,7 +8,7 @@
  */
 
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors";
+import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { BranchInfo, UIMessage } from "#veryfront/agent/react";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
 import type { PartGroup } from "../utils/message-parts.ts";

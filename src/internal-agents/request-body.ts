@@ -17,6 +17,12 @@ export class InternalAgentRequestBodyTooLargeError extends Error {
   }
 }
 
+function isRequestBodyTooLargeError(error: unknown): error is VeryfrontError {
+  return error instanceof VeryfrontError &&
+    error.slug === "input-validation-failed" &&
+    error.detail === "Request body exceeds size limit";
+}
+
 export async function readInternalAgentRequestBody(
   request: Request,
   maxBodyBytes = INTERNAL_AGENT_STREAM_MAX_BODY_BYTES,
@@ -28,11 +34,7 @@ export async function readInternalAgentRequestBody(
   try {
     return await readBodyWithLimit(request, maxBodyBytes);
   } catch (error) {
-    if (
-      error instanceof VeryfrontError &&
-      error.slug === "input-validation-failed" &&
-      error.detail === "Request body exceeds size limit"
-    ) {
+    if (isRequestBodyTooLargeError(error)) {
       throw new InternalAgentRequestBodyTooLargeError();
     }
 

@@ -183,7 +183,7 @@ export async function transformJsxImports(
         // Rewrite _dnt.polyfills.js / _dnt.shims.js relative imports to absolute file:// paths.
         // Framework files from the npm package contain relative dnt imports that resolve
         // incorrectly when cached to a different directory.
-        transformed = rewriteDntImports(transformed, filePath);
+        transformed = await rewriteDntImports(transformed, filePath);
 
         await getLocalFs().writeTextFile(transformedPath, transformed);
 

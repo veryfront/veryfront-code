@@ -105,6 +105,15 @@ describe("MemoryCacheRepository", () => {
     await cache.set("key", "value");
     expect(await cache.get("key")).toBe("value");
   });
+
+  it("expires entries for has checks", async () => {
+    const cache = new MemoryCacheRepository({ context: createCtx() });
+
+    await cache.set("key1", "value1", -1);
+
+    expect(await cache.has!("key1")).toBe(false);
+    expect(await cache.get("key1")).toBe(null);
+  });
 });
 
 describe("MockFileSystemRepository", () => {
@@ -143,6 +152,45 @@ describe("MockFileSystemRepository", () => {
 
     await expect(mockFs.readFile("nonexistent.txt")).rejects.toThrow("ENOENT");
   });
+
+  it("converts between text and bytes without changing content", async () => {
+    const mockFs = new MockFileSystemRepository({
+      context: createMockRepositoryContext(),
+      files: {
+        "bytes.txt": new TextEncoder().encode("hello"),
+      },
+    });
+
+    expect(await mockFs.readFile("bytes.txt")).toBe("hello");
+
+    await mockFs.writeFile("text.txt", "world");
+    expect(new TextDecoder().decode(await mockFs.readFileBytes("text.txt"))).toBe("world");
+  });
+
+  it("supports recursive directory lifecycle", async () => {
+    const mockFs = new MockFileSystemRepository({
+      context: createMockRepositoryContext(),
+      files: {
+        "nested/child.txt": "child",
+        "nested/subdir/grandchild.txt": "grandchild",
+      },
+    });
+
+    await mockFs.mkdir("nested/generated/path", { recursive: true });
+    expect(await mockFs.exists("nested/generated")).toBe(true);
+    expect(await mockFs.exists("nested/generated/path")).toBe(true);
+
+    const entryNames: string[] = [];
+    for await (const entry of mockFs.readDir("nested")) {
+      entryNames.push(entry.name);
+    }
+
+    expect(entryNames.sort()).toEqual(["child.txt", "generated", "subdir"]);
+
+    await mockFs.remove("nested/subdir", { recursive: true });
+    expect(await mockFs.exists("nested/subdir")).toBe(false);
+    expect(await mockFs.exists("nested/subdir/grandchild.txt")).toBe(false);
+  });
 });
 
 describe("MockCacheRepository", () => {
@@ -175,6 +223,31 @@ describe("MockCacheRepository", () => {
 
     expect(await mockCache.get("key1")).toBe("value1");
     expect(await mockCache.get("key2")).toBe("value2");
+  });
+
+  it("deletes by prefix and resets tracked stats", async () => {
+    const mockCache = new MockCacheRepository({
+      context: createMockRepositoryContext(),
+      initial: {
+        "pages/home": "home",
+        "pages/about": "about",
+        "config/main": "config",
+      },
+    });
+
+    expect(await mockCache.deleteByPrefix("pages/")).toBe(2);
+    expect(await mockCache.get("pages/home")).toBe(null);
+    expect(await mockCache.get("config/main")).toBe("config");
+
+    mockCache.resetStats();
+    expect(mockCache.getStats()).toEqual({
+      gets: 0,
+      hits: 0,
+      misses: 0,
+      sets: 0,
+      deletes: 0,
+      hitRate: 0,
+    });
   });
 });
 
@@ -225,5 +298,36 @@ describe("extractRepositoryContext", () => {
 
     const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
     expect(ctx.environment).toBe("production");
+  });
+
+  it("falls back to projectId and enriched release identifiers", () => {
+    const handlerCtx: Partial<HandlerContext> = {
+      ...createBaseHandlerCtx(),
+      projectId: "project-from-id",
+      enriched: {
+        contentSourceId: "content-source-123",
+      } as HandlerContext["enriched"],
+    };
+
+    const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
+    expect(ctx.projectId).toBe("project-from-id");
+    expect(ctx.versionId).toBe("content-source-123");
+  });
+
+  it("prefers resolvedEnvironment over requestContext.mode", () => {
+    const handlerCtx: Partial<HandlerContext> = {
+      ...createBaseHandlerCtx(),
+      projectSlug: "my-project",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        mode: "production",
+        token: "",
+        slug: "",
+        branch: null,
+      },
+    };
+
+    const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
+    expect(ctx.environment).toBe("preview");
   });
 });

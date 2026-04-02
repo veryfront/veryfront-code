@@ -1,4 +1,5 @@
 import * as React from "react";
+import { getDocumentNonce } from "./csp-nonce.ts";
 import { cn, generateTokenCSS } from "./theme.ts";
 import { Chat, type ChatProps } from "./chat/index.tsx";
 import { ChatSidebar } from "./chat/components/sidebar.tsx";
@@ -142,6 +143,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
     },
     ref,
   ): React.ReactElement {
+    const nonce = getDocumentNonce();
     const storageKey = sidebar?.storageKey;
     const controlledOpen = sidebar?.open;
     const onSidebarToggle = sidebar?.onToggle;
@@ -320,7 +322,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
         className={cn("flex h-full bg-[var(--background)]", className)}
         data-vf-chat=""
       >
-        <style dangerouslySetInnerHTML={{ __html: tokenCSS }} />
+        <style nonce={nonce} dangerouslySetInnerHTML={{ __html: tokenCSS }} />
         {sidebarOpen && (
           <ChatSidebar
             threads={threads}

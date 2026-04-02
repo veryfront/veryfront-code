@@ -42,20 +42,46 @@ async function pipeToString(
 
 function pipeToReadableStream(
   pipeFn: (writable: NodeJS.WritableStream) => void,
+  abortFn?: () => void,
 ): ReadableStream<Uint8Array> {
+  let passThrough: import("node:stream").PassThrough | null = null;
+  let cancelled = false;
+
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const { PassThrough } = await import("node:stream");
-      const passThrough = new PassThrough();
+      passThrough = new PassThrough();
 
-      passThrough.on("data", (chunk: Uint8Array) => controller.enqueue(new Uint8Array(chunk)));
-      passThrough.on("end", () => controller.close());
-      passThrough.on("error", (err: Error) => controller.error(err));
+      passThrough.on("data", (chunk: Uint8Array) => {
+        if (cancelled) return;
+        controller.enqueue(new Uint8Array(chunk));
+      });
+      passThrough.on("end", () => {
+        if (!cancelled) controller.close();
+      });
+      passThrough.on("error", (err: Error) => {
+        if (!cancelled) controller.error(err);
+      });
 
       try {
         pipeFn(passThrough);
       } catch (error) {
-        controller.error(error);
+        if (!cancelled) controller.error(error);
+      }
+    },
+    cancel(reason) {
+      cancelled = true;
+
+      if (abortFn) {
+        try {
+          abortFn();
+        } catch (error) {
+          logger.warn("Error aborting pipeable SSR stream", error);
+        }
+      }
+
+      if (passThrough && !passThrough.destroyed) {
+        passThrough.destroy(reason instanceof Error ? reason : undefined);
       }
     },
   });
@@ -182,7 +208,7 @@ export class SSRRenderer {
     if (renderResult.pipe) {
       if (options.wantsStream) {
         logger.debug("Converting pipeable stream to ReadableStream for true streaming");
-        return { html: "", stream: pipeToReadableStream(renderResult.pipe) };
+        return { html: "", stream: pipeToReadableStream(renderResult.pipe, renderResult.abort) };
       }
 
       logger.debug("Converting pipeable stream to string (Node.js renderToPipeableStream)");

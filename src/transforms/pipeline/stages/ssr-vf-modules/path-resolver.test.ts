@@ -125,4 +125,16 @@ describe("resolveRelativeFrameworkImport", () => {
     );
     assertEquals(result, "/foo/bar/utils.ts");
   });
+
+  it("resolves transpiled .js imports back to embedded TypeScript sources", async () => {
+    const files: Record<string, string> = { "/foo/bar/csp-nonce.ts.src": "embedded" };
+    const fs = createMockFs(files);
+    const result = await resolveRelativeFrameworkImport(
+      "./csp-nonce.js",
+      "/foo/bar/Head.tsx",
+      fs,
+      createExistsFn(files),
+    );
+    assertEquals(result, "/foo/bar/csp-nonce.ts.src");
+  });
 });

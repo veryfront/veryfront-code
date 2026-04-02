@@ -31,19 +31,23 @@ function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
+function createInvalidModelIdError(modelId: string): Error {
+  return toError(
+    createError({
+      type: "config",
+      message: `Invalid veryfront-cloud model string: "${modelId}". Expected ` +
+        `"veryfront-cloud/provider/model".`,
+    }),
+  );
+}
+
 export function parseVeryfrontCloudModelId(
   modelId: string,
   kind: "language" | "embedding",
 ): ParsedVeryfrontCloudModelId {
   const slashIndex = modelId.indexOf("/");
   if (slashIndex === -1) {
-    throw toError(
-      createError({
-        type: "config",
-        message: `Invalid veryfront-cloud model string: "${modelId}". Expected ` +
-          `"veryfront-cloud/provider/model".`,
-      }),
-    );
+    throw createInvalidModelIdError(modelId);
   }
 
   const rawProvider = modelId.slice(0, slashIndex);
@@ -51,13 +55,7 @@ export function parseVeryfrontCloudModelId(
   const upstreamModelId = modelId.slice(slashIndex + 1);
 
   if (!normalizedProvider || !upstreamModelId) {
-    throw toError(
-      createError({
-        type: "config",
-        message: `Invalid veryfront-cloud model string: "${modelId}". Expected ` +
-          `"veryfront-cloud/provider/model".`,
-      }),
-    );
+    throw createInvalidModelIdError(modelId);
   }
 
   if (
@@ -127,7 +125,6 @@ export function createVeryfrontCloudFetch(apiToken: string): typeof fetch {
 
     headers.delete("x-api-key");
     headers.delete("x-goog-api-key");
-    headers.delete("Authorization");
     headers.set("Authorization", `Bearer ${apiToken}`);
 
     return fetch(new Request(request, { headers }));

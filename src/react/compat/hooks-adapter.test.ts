@@ -4,7 +4,10 @@ import * as React from "react";
 import { renderToString } from "react-dom/server";
 import {
   compatHooks,
+  CompatHooksProvider,
   createTransitionFallbackScheduler,
+  resetCompatHooksContext,
+  useCompatHooks,
   useDeferredValueCompat,
   useFormStatusCompat,
   useIdCompat,
@@ -35,6 +38,47 @@ function clientOnlyIt(name: string, fn: () => void | Promise<void>): void {
 
 describe("hooks-adapter", () => {
   describe("version detection", () => {
+    it("useCompatHooks exposes the default compat hook set without a provider", () => {
+      let hooksFromContext: any;
+
+      function TestComponent() {
+        hooksFromContext = useCompatHooks();
+        return React.createElement("div", null, "test");
+      }
+
+      renderToString(React.createElement(TestComponent));
+
+      assertEquals(hooksFromContext.useId, compatHooks.useId);
+      assertEquals(hooksFromContext.useFormStatus, compatHooks.useFormStatus);
+      assertEquals(hooksFromContext.useOptimistic, compatHooks.useOptimistic);
+      assertEquals(hooksFromContext.useDeferredValue, compatHooks.useDeferredValue);
+      assertEquals(hooksFromContext.useTransition, compatHooks.useTransition);
+    });
+
+    it("CompatHooksProvider wires the compat hook set into context", () => {
+      let hooksFromContext: any;
+
+      function TestComponent() {
+        hooksFromContext = useCompatHooks();
+        return React.createElement("div", null, "test");
+      }
+
+      resetCompatHooksContext();
+      renderToString(
+        React.createElement(
+          CompatHooksProvider,
+          null,
+          React.createElement(TestComponent),
+        ),
+      );
+
+      assertEquals(hooksFromContext.useId, compatHooks.useId);
+      assertEquals(hooksFromContext.useFormStatus, compatHooks.useFormStatus);
+      assertEquals(hooksFromContext.useOptimistic, compatHooks.useOptimistic);
+      assertEquals(hooksFromContext.useDeferredValue, compatHooks.useDeferredValue);
+      assertEquals(hooksFromContext.useTransition, compatHooks.useTransition);
+    });
+
     it("exports compatibility hooks", () => {
       assert(compatHooks.useId, "useId should be exported");
       assert(compatHooks.useFormStatus, "useFormStatus should be exported");

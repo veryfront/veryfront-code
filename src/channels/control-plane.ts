@@ -100,6 +100,10 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return buffer;
 }
 
+function parseCompactJwsPart<T>(encodedPart: string): T {
+  return JSON.parse(new TextDecoder().decode(base64urlDecodeToBytes(encodedPart))) as T;
+}
+
 function pemToDer(pem: string, label: string): ArrayBuffer {
   const body = pem
     .replace(`-----BEGIN ${label}-----`, "")
@@ -154,16 +158,8 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
     throw new Error("Control-plane signature must include header, payload, and signature");
   }
 
-  const header = compactJwsHeaderSchema.parse(
-    JSON.parse(new TextDecoder().decode(base64urlDecodeToBytes(encodedHeader))),
-  );
-  const claims = options.claimsSchema.parse(
-    JSON.parse(new TextDecoder().decode(base64urlDecodeToBytes(encodedPayload))),
-  );
-
-  if (header.alg !== "EdDSA") {
-    throw new Error("Unsupported control-plane JWS algorithm");
-  }
+  compactJwsHeaderSchema.parse(parseCompactJwsPart(encodedHeader));
+  const claims = options.claimsSchema.parse(parseCompactJwsPart(encodedPayload));
 
   const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
   const signature = base64urlDecodeToBytes(encodedSignature);

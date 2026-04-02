@@ -119,6 +119,22 @@ Deno.test("serializeYaml - produces valid YAML", () => {
   assertEquals(yaml.includes('assignees: ["alice"]'), true);
 });
 
+Deno.test("serializeYaml - preserves empty arrays", () => {
+  const metadata: IssueMetadata = {
+    id: "ISSUE-001",
+    title: "Test issue",
+    state: "open",
+    labels: [],
+    assignees: [],
+    created_at: "2026-01-23T00:00:00.000Z",
+    updated_at: "2026-01-23T00:00:00.000Z",
+  };
+
+  const yaml = serializeYaml(metadata);
+  assertEquals(yaml.includes("labels: []"), true);
+  assertEquals(yaml.includes("assignees: []"), true);
+});
+
 Deno.test("serializeIssue - produces valid markdown with frontmatter", () => {
   const issue: Issue = {
     metadata: {
@@ -271,6 +287,23 @@ Deno.test("IssuesManager.update - updates issue fields", async () => {
   });
 });
 
+Deno.test("IssuesManager.update - clears milestone when set to null", async () => {
+  await withTempDir(async (dir) => {
+    const manager = createIssuesManager(dir);
+    const created = await manager.create({
+      title: "Original",
+      milestone: "v1",
+    });
+
+    const updated = await manager.update(created.metadata.id, {
+      milestone: null,
+    });
+
+    assertExists(updated);
+    assertEquals(updated.metadata.milestone, undefined);
+  });
+});
+
 Deno.test("IssuesManager.update - returns null for non-existent issue", async () => {
   await withTempDir(async (dir) => {
     const manager = createIssuesManager(dir);
@@ -375,6 +408,23 @@ Deno.test("IssuesManager.list - sorts by created_at", async () => {
   });
 });
 
+Deno.test("IssuesManager.list - sorts by id", async () => {
+  await withTempDir(async (dir) => {
+    const manager = createIssuesManager(dir);
+    await manager.create({ title: "Issue 1", prefix: "ISSUE" });
+    await manager.create({ title: "Task 1", prefix: "TASK" });
+    await manager.create({ title: "Issue 2", prefix: "ISSUE" });
+
+    const asc = await manager.list({ prefix: "ISSUE", sortBy: "id", sortDirection: "asc" });
+    assertExists(asc.issues[0]);
+    assertExists(asc.issues[1]);
+    assertEquals(asc.issues.map((issue) => issue.metadata.id), ["ISSUE-001", "ISSUE-002"]);
+
+    const desc = await manager.list({ prefix: "ISSUE", sortBy: "id", sortDirection: "desc" });
+    assertEquals(desc.issues.map((issue) => issue.metadata.id), ["ISSUE-002", "ISSUE-001"]);
+  });
+});
+
 Deno.test("IssuesManager.list - respects limit", async () => {
   await withTempDir(async (dir) => {
     const manager = createIssuesManager(dir);
@@ -444,5 +494,18 @@ Deno.test("IssuesManager.removeLabels - removes labels from issue", async () => 
     const updated = await manager.removeLabels(created.metadata.id, ["wontfix"]);
     assertExists(updated);
     assertEquals(updated.metadata.labels, ["bug", "feature"]);
+  });
+});
+
+Deno.test("IssuesManager.listIds - ignores non-issue markdown files", async () => {
+  await withTempDir(async (dir) => {
+    const manager = createIssuesManager(dir);
+    await manager.ensureDir();
+
+    await Deno.writeTextFile(join(dir, "issues/ISSUE-002.md"), "");
+    await Deno.writeTextFile(join(dir, "issues/not-an-issue.md"), "");
+    await Deno.writeTextFile(join(dir, "issues/ISSUE-003.txt"), "");
+
+    assertEquals(await manager.listIds(), ["ISSUE-002"]);
   });
 });

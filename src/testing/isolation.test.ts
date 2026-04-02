@@ -4,33 +4,31 @@ import { registerTestCleanup, resetAllTestState } from "./isolation.ts";
 
 describe("isolation", () => {
   describe("registerTestCleanup", () => {
-    it("accepts a cleanup function without error", () => {
-      let called = false;
+    it("runs registered sync and async cleanups, keeps going after failures, and clears them after reset", async () => {
+      const calls: string[] = [];
 
       registerTestCleanup(() => {
-        called = true;
+        calls.push("sync");
       });
 
-      assertEquals(typeof called, "boolean");
-    });
-
-    it("accepts an async cleanup function", () => {
       registerTestCleanup(async () => {
         await Promise.resolve();
+        calls.push("async");
       });
-    });
-
-    it("runs registered cleanups and clears them after reset", async () => {
-      let calls = 0;
 
       registerTestCleanup(() => {
-        calls++;
+        calls.push("throws");
+        throw new Error("expected cleanup failure");
+      });
+
+      registerTestCleanup(() => {
+        calls.push("after-throw");
       });
 
       await resetAllTestState();
       await resetAllTestState();
 
-      assertEquals(calls, 1);
+      assertEquals(calls, ["sync", "async", "throws", "after-throw"]);
     });
   });
 });

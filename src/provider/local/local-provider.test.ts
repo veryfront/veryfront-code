@@ -61,6 +61,26 @@ describe("ai-sdk-adapter", () => {
     const m = model as Record<string, unknown>;
     assertEquals(m._isVfLocalModel, true);
   });
+
+  it("fails before creating a stream when local AI is disabled", async () => {
+    const prev = Deno.env.get("VERYFRONT_DISABLE_LOCAL_AI");
+    Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", "1");
+
+    try {
+      // deno-lint-ignore no-explicit-any
+      const model = createLocalModel("smollm2-135m") as any;
+      const error = await assertRejects(() =>
+        model.doStream({
+          prompt: [{ role: "user", content: "hello" }],
+        })
+      );
+      const vfError = fromError(error);
+      assertEquals(vfError?.type, "no_ai_available");
+    } finally {
+      if (prev === undefined) Deno.env.delete("VERYFRONT_DISABLE_LOCAL_AI");
+      else Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", prev);
+    }
+  });
 });
 
 describe("ensureModelReady", () => {

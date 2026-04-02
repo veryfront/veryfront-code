@@ -7,7 +7,12 @@
  */
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
+import {
+  createProxyHandler,
+  injectContextHeaders,
+  INTERNAL_PROXY_HEADERS,
+  type ProxyContext,
+} from "./handler.ts";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 
 function extractProxyHeaders(req: Request): Record<string, string | null> {
@@ -15,6 +20,7 @@ function extractProxyHeaders(req: Request): Record<string, string | null> {
     "x-token": req.headers.get("x-token"),
     "x-project-slug": req.headers.get("x-project-slug"),
     "x-environment": req.headers.get("x-environment"),
+    "x-environment-id": req.headers.get("x-environment-id"),
     "x-content-source-id": req.headers.get("x-content-source-id"),
     "x-forwarded-host": req.headers.get("x-forwarded-host"),
     "x-project-path": req.headers.get("x-project-path"),
@@ -207,6 +213,57 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(injected.headers.get("x-project-path"), null);
       assertEquals(injected.headers.get("x-token"), null);
       assertEquals(injected.headers.get("x-environment"), "preview");
+    });
+
+    it("replaces every internal proxy header with proxy-derived values", () => {
+      const ctx: ProxyContext = {
+        token: "proxy-token",
+        projectSlug: "proj",
+        projectId: "proj-id",
+        releaseId: "rel-id",
+        branchId: "branch-id",
+        branchName: "feature-branch",
+        environmentId: "env-id",
+        environment: "production",
+        contentSourceId: "release-rel-id",
+        host: "proj.production.veryfront.com",
+        parsedDomain: {
+          slug: "proj",
+          isVeryfrontDomain: true,
+          environment: "production",
+          branch: null,
+          isDraft: false,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      };
+
+      const attackerHeaders = Object.fromEntries(
+        INTERNAL_PROXY_HEADERS.map((header) => [header, `attacker-${header}`]),
+      );
+
+      const originalReq = new Request("http://proj.production.veryfront.com/page", {
+        headers: {
+          ...attackerHeaders,
+          accept: "text/html",
+        },
+      });
+
+      const injected = injectContextHeaders(originalReq, ctx);
+      const headers = extractProxyHeaders(injected);
+
+      assertEquals(headers["x-token"], "proxy-token");
+      assertEquals(headers["x-project-slug"], "proj");
+      assertEquals(headers["x-environment"], "production");
+      assertEquals(headers["x-environment-id"], "env-id");
+      assertEquals(headers["x-content-source-id"], "release-rel-id");
+      assertEquals(headers["x-forwarded-host"], "proj.production.veryfront.com");
+      assertEquals(headers["x-project-path"], null);
+      assertEquals(headers["x-project-id"], "proj-id");
+      assertEquals(headers["x-release-id"], "rel-id");
+      assertEquals(headers["x-branch-id"], "branch-id");
+      assertEquals(headers["x-branch-name"], "feature-branch");
+      assertEquals(injected.headers.get("accept"), "text/html");
     });
   });
 
