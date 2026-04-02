@@ -2,6 +2,9 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { COMMANDS } from "./help/command-definitions.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
+import { routeCommand } from "./router.ts";
+import { cliLogger, VERSION } from "./utils/index.ts";
+import { setJsonMode } from "./shared/json-output.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
 /**
@@ -300,105 +303,130 @@ describe("cli/router helpers", () => {
   });
 
   describe("version output", () => {
-    it("VERSION is a non-empty string", async () => {
-      const { VERSION } = await import("./utils/index.ts");
-      assertEquals(typeof VERSION, "string");
-      assertEquals(VERSION.length > 0, true);
+    /** Sentinel thrown by our Deno.exit stub so routeCommand stops without killing the process. */
+    class ExitSentinel extends Error {
+      code: number;
+      constructor(code: number) {
+        super(`exit(${code})`);
+        this.code = code;
+      }
+    }
+
+    const originalExit = Deno.exit;
+    let infoMessages: string[];
+    let consoleOutput: string[];
+    let originalInfo: typeof cliLogger.info;
+    let originalConsoleLog: typeof console.log;
+
+    function stubExit() {
+      // deno-lint-ignore no-explicit-any
+      (Deno as any).exit = (code: number) => {
+        throw new ExitSentinel(code ?? 0);
+      };
+    }
+
+    function stubLogger() {
+      infoMessages = [];
+      originalInfo = cliLogger.info;
+      cliLogger.info = (...args: unknown[]) => {
+        infoMessages.push(args.map(String).join(" "));
+      };
+    }
+
+    function stubConsole() {
+      consoleOutput = [];
+      originalConsoleLog = console.log;
+      console.log = (...args: unknown[]) => {
+        consoleOutput.push(args.map(String).join(" "));
+      };
+    }
+
+    function restoreAll() {
+      // deno-lint-ignore no-explicit-any
+      (Deno as any).exit = originalExit;
+      if (originalInfo) cliLogger.info = originalInfo;
+      if (originalConsoleLog) console.log = originalConsoleLog;
+      setJsonMode(false);
+    }
+
+    async function runAndCaptureExit(args: ParsedArgs): Promise<number> {
+      try {
+        await routeCommand(args);
+        throw new Error("routeCommand did not exit");
+      } catch (e) {
+        if (e instanceof ExitSentinel) return e.code;
+        throw e;
+      }
+    }
+
+    it("--version prints version string and exits 0", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit({ version: true, _: [] } as ParsedArgs);
+        assertEquals(code, 0);
+        assertEquals(infoMessages.length, 1);
+        assertEquals(infoMessages[0], `Veryfront CLI v${VERSION}`);
+      } finally {
+        restoreAll();
+      }
     });
 
-    it("Deno.version contains deno, v8, typescript", () => {
-      assertEquals(typeof Deno.version.deno, "string");
-      assertEquals(typeof Deno.version.v8, "string");
-      assertEquals(typeof Deno.version.typescript, "string");
+    it("-v short form prints version string", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit({ v: true, _: [] } as ParsedArgs);
+        assertEquals(code, 0);
+        assertEquals(infoMessages[0], `Veryfront CLI v${VERSION}`);
+      } finally {
+        restoreAll();
+      }
     });
 
-    it("Deno.build contains os and arch", () => {
-      assertEquals(typeof Deno.build.os, "string");
-      assertEquals(typeof Deno.build.arch, "string");
+    it("--version --verbose prints runtime and OS details", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit(
+          { version: true, verbose: true, _: [] } as ParsedArgs,
+        );
+        assertEquals(code, 0);
+        assertEquals(infoMessages.length, 3);
+        assertEquals(infoMessages[0], `Veryfront CLI v${VERSION}`);
+        assertEquals(
+          infoMessages[1],
+          `Deno ${Deno.version.deno} (V8 ${Deno.version.v8}, TypeScript ${Deno.version.typescript})`,
+        );
+        assertEquals(infoMessages[2], `OS: ${Deno.build.os} ${Deno.build.arch}`);
+      } finally {
+        restoreAll();
+      }
     });
 
-    it("createSuccessEnvelope produces valid version envelope", async () => {
-      const { createSuccessEnvelope } = await import(
-        "./shared/json-output.ts"
-      );
-      const { VERSION } = await import("./utils/index.ts");
-      const envelope = createSuccessEnvelope("version", {
-        version: VERSION,
-        deno: Deno.version.deno,
-        v8: Deno.version.v8,
-        typescript: Deno.version.typescript,
-        os: Deno.build.os,
-        arch: Deno.build.arch,
-        standalone: false,
-      });
-      assertEquals(envelope.success, true);
-      assertEquals(envelope.command, "version");
-      assertEquals(typeof envelope.data.version, "string");
-      assertEquals(typeof envelope.data.deno, "string");
-      assertEquals(typeof envelope.data.os, "string");
-      assertEquals(typeof envelope.data.standalone, "boolean");
-    });
-
-    it("JSON envelope contains all expected keys", async () => {
-      const { createSuccessEnvelope } = await import(
-        "./shared/json-output.ts"
-      );
-      const envelope = createSuccessEnvelope("version", {
-        version: "1.0.0",
-        deno: "2.0.0",
-        v8: "12.0",
-        typescript: "5.0",
-        os: "linux",
-        arch: "x86_64",
-        standalone: true,
-      });
-      const data = envelope.data;
-      const keys = Object.keys(data);
-      assertEquals(keys.includes("version"), true);
-      assertEquals(keys.includes("deno"), true);
-      assertEquals(keys.includes("v8"), true);
-      assertEquals(keys.includes("typescript"), true);
-      assertEquals(keys.includes("os"), true);
-      assertEquals(keys.includes("arch"), true);
-      assertEquals(keys.includes("standalone"), true);
-      assertEquals(keys.length, 7);
-    });
-
-    it("JSON output is valid parseable JSON", async () => {
-      const { formatJsonOutput, createSuccessEnvelope } = await import(
-        "./shared/json-output.ts"
-      );
-      const envelope = createSuccessEnvelope("version", {
-        version: "1.0.0",
-        deno: "2.0.0",
-        v8: "12.0",
-        typescript: "5.0",
-        os: "linux",
-        arch: "x86_64",
-        standalone: false,
-      });
-      const json = formatJsonOutput(envelope);
-      const parsed = JSON.parse(json);
-      assertEquals(parsed.success, true);
-      assertEquals(parsed.command, "version");
-      assertEquals(parsed.data.version, "1.0.0");
-      assertEquals(parsed.data.standalone, false);
-    });
-
-    it("VERSION matches semver pattern", async () => {
-      const { VERSION } = await import("./utils/index.ts");
-      assertEquals(/^\d+\.\d+\.\d+/.test(VERSION), true);
-    });
-
-    it("verbose flag detection works alongside version", () => {
-      const args = { version: true, verbose: true, _: [] };
-      assertEquals(Boolean(args.version), true);
-      assertEquals(Boolean(args.verbose), true);
-    });
-
-    it("-v short form triggers version", () => {
-      const args = { v: true, _: [] };
-      assertEquals(Boolean(args.v), true);
+    it("--version --json outputs structured JSON envelope", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit(
+          { version: true, json: true, _: [] } as ParsedArgs,
+        );
+        assertEquals(code, 0);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0]);
+        assertEquals(parsed.success, true);
+        assertEquals(parsed.command, "version");
+        assertEquals(parsed.data.version, VERSION);
+        assertEquals(parsed.data.deno, Deno.version.deno);
+        assertEquals(parsed.data.v8, Deno.version.v8);
+        assertEquals(parsed.data.typescript, Deno.version.typescript);
+        assertEquals(parsed.data.os, Deno.build.os);
+        assertEquals(parsed.data.arch, Deno.build.arch);
+        assertEquals(typeof parsed.data.standalone, "boolean");
+      } finally {
+        restoreAll();
+      }
     });
   });
 
