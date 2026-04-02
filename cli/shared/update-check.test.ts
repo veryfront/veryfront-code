@@ -94,7 +94,15 @@ describe("update-check", () => {
     });
 
     it("does not skip under normal conditions", () => {
-      const keys = ["VERYFRONT_NO_UPDATE_CHECK", "CI", "GITHUB_ACTIONS", "GITLAB_CI", "JENKINS_URL", "CIRCLECI", "BUILDKITE"];
+      const keys = [
+        "VERYFRONT_NO_UPDATE_CHECK",
+        "CI",
+        "GITHUB_ACTIONS",
+        "GITLAB_CI",
+        "JENKINS_URL",
+        "CIRCLECI",
+        "BUILDKITE",
+      ];
       const saved = keys.map((k) => Deno.env.get(k));
       keys.forEach((k) => Deno.env.delete(k));
       setJsonMode(false);
