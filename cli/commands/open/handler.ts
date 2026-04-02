@@ -12,9 +12,9 @@ export async function handleOpenCommand(args: ParsedArgs): Promise<void> {
     const { cwd } = await import("veryfront/platform");
     const { getEnvironmentConfig } = await import("veryfront/config");
     const { readConfigFile } = await import("#cli/shared/config");
-    projectSlug = getEnvironmentConfig().projectSlug
-      ?? (await readConfigFile(cwd()))?.projectSlug
-      ?? undefined;
+    projectSlug = getEnvironmentConfig().projectSlug ??
+      (await readConfigFile(cwd()))?.projectSlug ??
+      undefined;
   }
 
   if (!projectSlug) {
