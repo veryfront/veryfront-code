@@ -1,10 +1,6 @@
 import type { ParsedArgs } from "#cli/shared/types";
 import { cliLogger } from "#cli/utils";
-import {
-  createSuccessEnvelope,
-  isJsonMode,
-  outputJson,
-} from "../../shared/json-output.ts";
+import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { bold, dim } from "../../ui/colors.ts";
 
 const ENV_OVERRIDES: Record<string, string> = {
@@ -23,11 +19,13 @@ export async function detectConfigSource(
   const { join } = await import("veryfront/platform/path");
   const fs = createFileSystem();
 
-  for (const name of [
-    "veryfront.config.ts",
-    "veryfront.config.js",
-    "veryfront.json",
-  ]) {
+  for (
+    const name of [
+      "veryfront.config.ts",
+      "veryfront.config.js",
+      "veryfront.json",
+    ]
+  ) {
     if (await fs.exists(join(projectDir, name))) return name;
   }
   return null;

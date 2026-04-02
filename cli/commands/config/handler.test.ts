@@ -68,9 +68,7 @@ describe("Config Command", () => {
       Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
       try {
         const overrides = getEnvOverrides();
-        const hasToken = overrides.some((o) =>
-          o.includes("VERYFRONT_API_TOKEN")
-        );
+        const hasToken = overrides.some((o) => o.includes("VERYFRONT_API_TOKEN"));
         assertEquals(hasToken, true);
       } finally {
         if (saved) Deno.env.set("VERYFRONT_API_TOKEN", saved);
