@@ -106,6 +106,28 @@ describe("html/html-injection", () => {
       assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
     });
 
+    it("adds the provided nonce to client-page hydration data", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          pagePath: "/app/page.tsx",
+          isClientPage: true,
+          nonce: "nonce-123",
+        },
+      );
+
+      assertEquals(
+        html.includes(
+          '<script id="veryfront-hydration-data" type="application/json" nonce="nonce-123">',
+        ),
+        true,
+      );
+    });
+
     it("should use fs hydration strategy for local development client pages", () => {
       const html = injectHTMLContent(
         baseTemplate,
@@ -138,6 +160,57 @@ describe("html/html-injection", () => {
       );
 
       assertEquals(html.includes("studio-bridge.js"), true);
+    });
+
+    it("propagates the nonce to injected development styles and scripts", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "development",
+          slug: "test",
+          nonce: "nonce-123",
+        },
+      );
+
+      assertEquals(html.includes('<style nonce="nonce-123">'), true);
+      assertEquals(
+        html.includes(
+          '<script type="module" src="/_veryfront/rsc/client.js" nonce="nonce-123"></script>',
+        ),
+        true,
+      );
+      assertEquals(
+        html.includes('<script type="module" src="/_veryfront/hmr.js" nonce="nonce-123"></script>'),
+        true,
+      );
+    });
+
+    it("propagates the nonce to injected production scripts", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "my-slug",
+          nonce: "nonce-123",
+        },
+      );
+
+      assertEquals(
+        html.includes(
+          '<script type="module" src="/_veryfront/rsc/client.js" nonce="nonce-123"></script>',
+        ),
+        true,
+      );
+      assertEquals(
+        html.includes(
+          '<script type="module" src="/_veryfront/hydrate.js?slug=my-slug" nonce="nonce-123"></script>',
+        ),
+        true,
+      );
     });
 
     it("injects preview utility CSS for remote preview full HTML documents", () => {
