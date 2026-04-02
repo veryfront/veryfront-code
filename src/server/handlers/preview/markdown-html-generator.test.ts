@@ -133,4 +133,17 @@ describe("generateMarkdownHtml", () => {
     );
     assert(html.includes("studio-bridge.js"));
   });
+
+  it("adds nonce attributes to inline preview scripts when provided", () => {
+    const html = generateMarkdownHtml(
+      makeOptions({
+        nonce: "nonce-123",
+        url: new URL("http://localhost/test.md?studio_embed=true"),
+      }),
+    );
+
+    assert(html.includes('<script nonce="nonce-123">window.__VF_BRIDGE_CONFIG__='));
+    assert(html.includes('<script type="module" nonce="nonce-123">'));
+    assert(html.includes('<script src="/_veryfront/preview-hmr.js" nonce="nonce-123"></script>'));
+  });
 });

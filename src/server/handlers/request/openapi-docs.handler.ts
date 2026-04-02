@@ -10,7 +10,7 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
-import { escapeHtml } from "#veryfront/html/html-escape.ts";
+import { buildNonceAttribute, escapeHtml } from "#veryfront/html/html-escape.ts";
 
 /** Default paths */
 const DEFAULT_DOCS_PATH = "/_docs";
@@ -36,20 +36,23 @@ export class OpenAPIDocsHandler extends BaseHandler {
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) return Promise.resolve(this.continue());
 
-    const html = this.generateDocsPage(ctx);
     const isDev = !!ctx.isLocalProject;
+    const builder = this.createResponseBuilder(ctx);
+    const html = this.generateDocsPage(ctx, builder.nonce);
 
-    const response = this.createResponseBuilder(ctx)
+    const response = builder
       .withCache(isDev ? "no-cache" : { maxAge: DOCS_CACHE_MAX_AGE_SECONDS, public: true })
+      .withSecurity(ctx.securityConfig ?? undefined, req)
       .withContentType("text/html; charset=utf-8", html, HTTP_OK);
 
     return Promise.resolve(this.respond(response));
   }
 
-  private generateDocsPage(ctx: HandlerContext): string {
+  private generateDocsPage(ctx: HandlerContext, nonce?: string): string {
     const specUrl = ctx.config?.openapi?.paths?.json ?? DEFAULT_JSON_PATH;
     const title = escapeHtml(ctx.config?.openapi?.title ?? "API Documentation");
     const description = escapeHtml(ctx.config?.openapi?.description ?? "");
+    const nonceAttr = buildNonceAttribute(nonce);
 
     const configuration = JSON.stringify({
       theme: "purple",
@@ -67,7 +70,7 @@ export class OpenAPIDocsHandler extends BaseHandler {
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>${title}</title>
   ${description ? `<meta name="description" content="${description}"/>` : ""}
-  <style>
+  <style${nonceAttr}>
     body {
       margin: 0;
       padding: 0;
@@ -79,8 +82,9 @@ export class OpenAPIDocsHandler extends BaseHandler {
     id="api-reference"
     data-url="${specUrl}"
     data-configuration='${configuration}'
+    ${nonce ? `nonce="${escapeHtml(nonce)}"` : ""}
   ></script>
-  <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"${nonceAttr}></script>
 </body>
 </html>`;
   }

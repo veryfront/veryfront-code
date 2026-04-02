@@ -177,5 +177,18 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       // ErrorPages.serverError() should produce some HTML
       assertEquals(body.includes("<!DOCTYPE html>") || body.includes("<html"), true);
     });
+
+    it("adds the builder nonce to inline error-page tags", async () => {
+      const req = new Request("http://localhost/");
+      const ctx = makeCtx();
+      const result = makeResult({ html: undefined, stream: undefined });
+      const builder = new ResponseBuilder({ nonce: "nonce-123" });
+
+      const response = await buildSSRResponse(req, ctx, result, builder);
+      const body = await response.text();
+
+      assertEquals(body.includes('<style nonce="nonce-123">'), true);
+      assertEquals(body.includes('<script nonce="nonce-123">'), true);
+    });
   });
 });

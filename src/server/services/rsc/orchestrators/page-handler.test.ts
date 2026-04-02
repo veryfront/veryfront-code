@@ -61,6 +61,18 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
       assertEquals(html.includes("/_veryfront/rsc/hydrate.js"), true);
     });
 
+    it("should add nonce attributes to inline scripts when provided", async () => {
+      const handler = new PageHandler();
+      const response = handler.handle("/", new URLSearchParams(), "nonce-123");
+      const html = await response.text();
+
+      assertEquals(
+        html.includes('<script nonce="nonce-123">window.__VERYFRONT_DEV__ = true;</script>'),
+        true,
+      );
+      assertEquals(html.includes('<script type="module" nonce="nonce-123">'), true);
+    });
+
     it("should include security validation function", async () => {
       const handler = new PageHandler();
       const response = handler.handle("/", new URLSearchParams());

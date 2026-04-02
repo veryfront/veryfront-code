@@ -6,6 +6,7 @@
 import type { ClientModuleStrategy } from "./client-module-strategy.ts";
 import {
   buildClientModuleUrl,
+  type ClientRuntimeHydrationData,
   getHydrationReactImportSpecifiers,
   readHydrationData,
   resolveClientModuleStrategy,
@@ -56,6 +57,18 @@ export function selectHydrationRoot<T extends HydrationRootCandidate>(
   ) ??
     children.find((element) => !isHiddenHydrationPlaceholder(element)) ??
     fallback;
+}
+
+interface RSCBootDocument {
+  getElementById(id: string): Element | null;
+}
+
+export function shouldAttemptRSCTransport(
+  doc: RSCBootDocument,
+  hydrationData: ClientRuntimeHydrationData | null,
+): boolean {
+  if (hydrationData?.pagePath) return false;
+  return !!doc.getElementById(RSC_ROOT_ID);
 }
 
 async function tryStream(q: string): Promise<boolean> {
@@ -151,8 +164,12 @@ export async function boot(): Promise<void> {
       console.debug?.("[RSC] Found page component in hydration data:", pagePath);
       if (await hydratePageComponent(pagePath, clientModuleStrategy)) {
         console.debug?.("[RSC] Client component hydrated successfully");
-        return;
       }
+      return;
+    }
+
+    if (!shouldAttemptRSCTransport(document, hydrationData)) {
+      return;
     }
 
     if (await tryStream(q)) {

@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { selectHydrationRoot } from "./client-boot.ts";
+import { selectHydrationRoot, shouldAttemptRSCTransport } from "./client-boot.ts";
 
 type MockElement = {
   tagName: string;
@@ -24,6 +24,38 @@ function toCandidate(element: MockElement) {
 }
 
 describe("rendering/rsc/client-boot", () => {
+  describe("shouldAttemptRSCTransport", () => {
+    function makeDocument(ids: string[] = []) {
+      const elements = new Set(ids);
+      return {
+        getElementById(id: string): Element | null {
+          return elements.has(id) ? ({} as Element) : null;
+        },
+      };
+    }
+
+    it("skips RSC transport fallback for client pages with hydration data", () => {
+      const shouldAttempt = shouldAttemptRSCTransport(
+        makeDocument(["rsc-root"]),
+        { pagePath: "app/page.tsx", clientModuleStrategy: "rsc-module" },
+      );
+
+      assertEquals(shouldAttempt, false);
+    });
+
+    it("skips RSC transport fallback for plain documents without an RSC root", () => {
+      const shouldAttempt = shouldAttemptRSCTransport(makeDocument(), null);
+
+      assertEquals(shouldAttempt, false);
+    });
+
+    it("allows RSC transport fallback when the page includes an RSC root", () => {
+      const shouldAttempt = shouldAttemptRSCTransport(makeDocument(["rsc-root"]), null);
+
+      assertEquals(shouldAttempt, true);
+    });
+  });
+
   describe("selectHydrationRoot", () => {
     it("prefers a direct child div with a class", () => {
       const main = toCandidate(createElement("MAIN"));
