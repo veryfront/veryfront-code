@@ -86,7 +86,6 @@ docs/api/
 .local/
 .refactor/
 .omx/
-auto/results/
 benchmarks/results/
 benchmarks/report/
 benchmarks/apps/nextjs/.next/

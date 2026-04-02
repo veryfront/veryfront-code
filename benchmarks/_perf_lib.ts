@@ -1,10 +1,11 @@
 import { join } from "#std/path";
+import { parseArgs } from "#std/flags";
 import {
   getReportDir,
   getResultsDir,
   listJsonArtifacts,
   type RequestMode,
-} from "../benchmarks/_shared_contract.ts";
+} from "./_shared_contract.ts";
 
 export type BenchmarkFramework = "veryfront" | "nextjs";
 export type BenchmarkRuntime = "production-host" | "preview-host";
@@ -60,7 +61,35 @@ export interface PerfOverview {
   metrics: Record<string, number | null>;
 }
 
-const OUTPUT_DIR = join("auto", "results");
+const OUTPUT_DIR = join("benchmarks", "report");
+
+export interface PerfCliOptions {
+  runtime: BenchmarkRuntime;
+  project: string;
+  skipVerify: boolean;
+  refreshBaseline: boolean;
+}
+
+export function parsePerfCliFlags(args: string[]): PerfCliOptions {
+  const rawArgs = args[0] === "--" ? args.slice(1) : args;
+  const flags = parseArgs(rawArgs, {
+    string: ["runtime", "project"],
+    boolean: ["skip-verify", "refresh-baseline"],
+    default: {
+      runtime: "production-host",
+      project: "blank",
+      "skip-verify": false,
+      "refresh-baseline": false,
+    },
+  });
+
+  return {
+    runtime: String(flags.runtime) as BenchmarkRuntime,
+    project: String(flags.project),
+    skipVerify: Boolean(flags["skip-verify"]),
+    refreshBaseline: Boolean(flags["refresh-baseline"]),
+  };
+}
 
 function tail(text: string, lines = 80): string {
   return text.split("\n").slice(-lines).join("\n").trim();
@@ -112,6 +141,42 @@ export async function runTask(task: string, args: string[] = []): Promise<void> 
   }
 }
 
+export async function verifyPerfPrerequisites(skipVerify: boolean): Promise<void> {
+  if (skipVerify) return;
+  await runTask("typecheck");
+  await runTask("test:e2e:playwright");
+}
+
+export async function runBenchmarkPair(
+  framework: BenchmarkFramework,
+  runtime: BenchmarkRuntime,
+  project: string,
+  requestModes: RequestMode[] = ["cold", "warm"],
+): Promise<void> {
+  for (const requestMode of requestModes) {
+    await runTask("bench:browser", [
+      "--framework",
+      framework,
+      "--runtime",
+      runtime,
+      "--project",
+      project,
+      "--request-mode",
+      requestMode,
+    ]);
+    await runTask("bench:server", [
+      "--framework",
+      framework,
+      "--runtime",
+      runtime,
+      "--project",
+      project,
+      "--request-mode",
+      requestMode,
+    ]);
+  }
+}
+
 export async function loadLatestResult<
   T extends { framework: string; runtime: string; project: string; request_mode?: RequestMode },
 >(
@@ -148,6 +213,54 @@ export async function loadLatestCompareReport(
     return JSON.parse(await Deno.readTextFile(filePath)) as Record<string, unknown>;
   }
   return null;
+}
+
+export async function loadFrameworkArtifacts(
+  framework: BenchmarkFramework,
+  runtime: BenchmarkRuntime,
+  project: string,
+): Promise<{
+  cold: { browser: BrowserResultFile | null; server: ServerResultFile | null };
+  warm: { browser: BrowserResultFile | null; server: ServerResultFile | null };
+}> {
+  const [coldBrowser, coldServer, warmBrowser, warmServer] = await Promise.all([
+    loadLatestResult<BrowserResultFile>("browser", framework, runtime, project, "cold"),
+    loadLatestResult<ServerResultFile>("server", framework, runtime, project, "cold"),
+    loadLatestResult<BrowserResultFile>("browser", framework, runtime, project, "warm"),
+    loadLatestResult<ServerResultFile>("server", framework, runtime, project, "warm"),
+  ]);
+
+  return {
+    cold: { browser: coldBrowser, server: coldServer },
+    warm: { browser: warmBrowser, server: warmServer },
+  };
+}
+
+export async function ensureNextBaseline(
+  runtime: BenchmarkRuntime,
+  project: string,
+  refreshBaseline: boolean,
+): Promise<{
+  cold: { browser: BrowserResultFile | null; server: ServerResultFile | null };
+  warm: { browser: BrowserResultFile | null; server: ServerResultFile | null };
+}> {
+  const baseline = await loadFrameworkArtifacts("nextjs", runtime, project);
+  const missingModes = (["cold", "warm"] as const).filter((mode) =>
+    !baseline[mode].browser || !baseline[mode].server
+  );
+
+  if (refreshBaseline || missingModes.length > 0) {
+    console.log("Refreshing Next.js baseline artifacts...");
+    await runBenchmarkPair(
+      "nextjs",
+      runtime,
+      project,
+      refreshBaseline ? ["cold", "warm"] : [...missingModes],
+    );
+    return loadFrameworkArtifacts("nextjs", runtime, project);
+  }
+
+  return baseline;
 }
 
 export function summarizePerf(
@@ -370,7 +483,7 @@ function prefixMetrics(
   );
 }
 
-export async function writeAutoResult(name: string, data: unknown): Promise<string> {
+export async function writePerfArtifact(name: string, data: unknown): Promise<string> {
   await Deno.mkdir(OUTPUT_DIR, { recursive: true });
   const path = join(OUTPUT_DIR, `${name.replace(/[^a-zA-Z0-9._-]+/g, "-")}.json`);
   await Deno.writeTextFile(path, JSON.stringify(data, null, 2));

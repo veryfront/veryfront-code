@@ -111,7 +111,7 @@ These command names are the target command surface for the benchmark harness:
 - `deno task bench:server`
 - `deno task bench:compare:local`
 - `deno task perf:bench`
-- `deno task perf:autoresearch`
+- `deno task perf:loop`
 - `PLAYWRIGHT_PROJECT=production-host deno task bench:browser`
 - `PLAYWRIGHT_PROJECT=preview-host deno task bench:browser`
 
@@ -146,16 +146,14 @@ Profiling semantics:
 
 ## Agent-facing performance loop
 
-For iterative performance work, use the TypeScript/Deno autoresearch scripts
-under `auto/`:
+For iterative performance work, use the TypeScript/Deno perf scripts
+under `benchmarks/`:
 
 - `deno task perf:bench`
   - runs correctness gates, refreshes benchmarks, and writes a summary artifact
-- `deno task perf:autoresearch -- --runs 3`
+- `deno task perf:loop -- --runs 3`
   - repeats the Veryfront benchmark lane, picks the best run, and prints
     parseable `METRIC ...` lines for agent iteration
-
-See `auto/autoresearch.md` for the optimization contract and constraints.
 
 ## Out of scope for phase 1
 
