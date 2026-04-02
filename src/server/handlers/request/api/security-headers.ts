@@ -30,10 +30,19 @@ export function getSecurityHeader(
 }
 
 export function applySecurityHeaders(headers: Headers, ctx: HandlerContext, req?: Request): void {
+  applySecurityHeadersWithNonce(headers, ctx, generateNonce(), req);
+}
+
+export function applySecurityHeadersWithNonce(
+  headers: Headers,
+  ctx: HandlerContext,
+  nonce: string,
+  req?: Request,
+): void {
   coreApplySecurityHeaders(
     headers,
     isDev(ctx),
-    generateNonce(),
+    nonce,
     ctx.cspUserHeader ?? null,
     ctx.securityConfig,
     ctx.adapter,

@@ -13,10 +13,11 @@ import type {
 } from "../../types.ts";
 import { isRSCEnabled } from "#veryfront/utils";
 import { handleRSCEndpoint } from "../../../services/rsc/endpoints/index.ts";
-import { applySecurityHeaders } from "../api/security-headers.ts";
+import { applySecurityHeadersWithNonce } from "../api/security-headers.ts";
 import { applyCORSHeaders } from "#veryfront/security";
 import { HTTP_NOT_FOUND, PRIORITY_MEDIUM } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { generateNonce } from "#veryfront/security/http/response/security-handler.ts";
 
 export class RSCHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -44,6 +45,7 @@ export class RSCHandler extends BaseHandler {
           return this.respond(new Response("Not Found", { status: HTTP_NOT_FOUND }));
         }
 
+        const nonce = generateNonce();
         const res = await handleRSCEndpoint({
           req,
           pathname,
@@ -51,6 +53,7 @@ export class RSCHandler extends BaseHandler {
           projectId: ctx.projectId,
           adapter: ctx.adapter,
           config: ctx.config,
+          nonce,
         });
 
         if (!res) {
@@ -63,7 +66,7 @@ export class RSCHandler extends BaseHandler {
           headers,
           config: ctx.securityConfig?.cors,
         });
-        applySecurityHeaders(headers, ctx, req);
+        applySecurityHeadersWithNonce(headers, ctx, nonce, req);
 
         return this.respond(
           new Response(res.body, {

@@ -1,6 +1,7 @@
 import type { Agent } from "#veryfront/agent";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import {
@@ -89,6 +90,7 @@ function createAgent(overrides: {
   description?: string;
   model?: string;
   version?: string;
+  skills?: true | string[];
 } = {}): Agent {
   return {
     id: overrides.id ?? "agent-1",
@@ -98,6 +100,7 @@ function createAgent(overrides: {
       name: overrides.name ?? "Support",
       description: overrides.description ?? "Helps with support questions",
       version: overrides.version ?? "2.0.0",
+      skills: overrides.skills,
     } as unknown as Agent["config"],
     generate: async () => ({}) as never,
     stream: async () => ({ toDataStreamResponse: () => new Response() } as never),
@@ -264,6 +267,78 @@ describe("channels/control-plane", () => {
           }],
         }),
       );
+    });
+
+    it("uses the registry id for discovered agents whose factory id was auto-generated", async () => {
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) =>
+          id === "researcher"
+            ? {
+              ...createAgent({ id: "agent_123" }),
+              config: {
+                system: "You are helpful.",
+                name: "",
+              } as unknown as Agent["config"],
+            }
+            : undefined,
+        getAllAgentIds: () => ["researcher"],
+      });
+
+      assertEquals(
+        response,
+        RuntimeAgentListResponseSchema.parse({
+          agents: [{
+            id: "researcher",
+            name: "researcher",
+            description: null,
+            model: null,
+            version: null,
+            skills: [],
+          }],
+        }),
+      );
+    });
+
+    it("includes resolved skill metadata for agents that enable discovered skills", async () => {
+      skillRegistry.clearAll();
+      registerSkill("writer-helper", {
+        id: "writer-helper",
+        metadata: {
+          name: "Writer Helper",
+          description: "Turns rough notes into polished copy",
+        },
+        rootPath: "/project/skills/writer-helper",
+      });
+
+      try {
+        const response = await listRuntimeAgents(createHandlerContext(), {
+          ensureProjectDiscovery: async () => {},
+          getAgent: (id) =>
+            id === "assistant" ? createAgent({ id, skills: ["writer-helper"] }) : undefined,
+          getAllAgentIds: () => ["assistant"],
+        });
+
+        assertEquals(
+          response,
+          RuntimeAgentListResponseSchema.parse({
+            agents: [{
+              id: "assistant",
+              name: "Support",
+              description: "Helps with support questions",
+              model: "anthropic/claude-sonnet-4-6",
+              version: "2.0.0",
+              skills: [{
+                id: "writer-helper",
+                name: "Writer Helper",
+                description: "Turns rough notes into polished copy",
+              }],
+            }],
+          }),
+        );
+      } finally {
+        skillRegistry.clearAll();
+      }
     });
   });
 });

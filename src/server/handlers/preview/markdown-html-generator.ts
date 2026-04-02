@@ -9,6 +9,7 @@
  */
 
 import { escapeHtml } from "veryfront/utils/html-escape";
+import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
 
 /** Options for generating markdown preview HTML. */
 interface MarkdownHtmlOptions {
@@ -26,6 +27,8 @@ interface MarkdownHtmlOptions {
   projectId: string;
   /** File path of the markdown file. */
   filePath: string;
+  /** CSP nonce for inline scripts. */
+  nonce?: string;
 }
 
 /**
@@ -58,9 +61,11 @@ function buildStudioScript(
   url: URL,
   projectId: string,
   filePath: string,
+  nonce?: string,
 ): string {
   const studioEmbed = url.searchParams.get("studio_embed") === "true";
   if (!studioEmbed) return "";
+  const nonceAttr = buildNonceAttribute(nonce);
 
   const rawQueryProjectId = url.searchParams.get("vf_project_id")?.trim() || "";
   // Validate query param before using it in bridge config.
@@ -77,8 +82,8 @@ function buildStudioScript(
 
   // Escape </script> sequences to prevent XSS breakout from inline JSON
   const safeJson = JSON.stringify(bridgeConfig).replace(/</g, "\\u003c");
-  return `<script>window.__VF_BRIDGE_CONFIG__=${safeJson};</script>
-  <script type="module" src="/_veryfront/studio-bridge.js"></script>`;
+  return `<script${nonceAttr}>window.__VF_BRIDGE_CONFIG__=${safeJson};</script>
+  <script type="module" src="/_veryfront/studio-bridge.js"${nonceAttr}></script>`;
 }
 
 /**
@@ -89,11 +94,12 @@ function buildStudioScript(
  * studio bridge integration.
  */
 export function generateMarkdownHtml(options: MarkdownHtmlOptions): string {
-  const { rawHtml, title, description, request, url, projectId, filePath } = options;
+  const { rawHtml, title, description, request, url, projectId, filePath, nonce } = options;
 
   const theme = detectTheme(request, url);
-  const studioScript = buildStudioScript(url, projectId, filePath);
+  const studioScript = buildStudioScript(url, projectId, filePath, nonce);
   const themeAttrs = theme ? ` data-theme="${theme}" style="color-scheme: ${theme};"` : "";
+  const nonceAttr = buildNonceAttribute(nonce);
 
   return `<!DOCTYPE html>
 <html lang="en"${themeAttrs}>
@@ -115,7 +121,7 @@ export function generateMarkdownHtml(options: MarkdownHtmlOptions): string {
 
   ${studioScript}
 
-  <script type="module">
+  <script type="module"${nonceAttr}>
     import mermaid from 'https://esm.sh/mermaid@11.4.1?pin=v135';
 
     function getMermaidTheme() {
@@ -175,7 +181,7 @@ export function generateMarkdownHtml(options: MarkdownHtmlOptions): string {
   </script>
 
   <!-- Preview HMR -->
-  <script src="/_veryfront/preview-hmr.js"></script>
+  <script src="/_veryfront/preview-hmr.js"${nonceAttr}></script>
 </body>
 </html>`;
 }

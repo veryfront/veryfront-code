@@ -232,14 +232,14 @@ function resolveAgentSkills(agent: Agent): RuntimeAgentSkill[] {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function getRuntimeAgentMetadata(agent: Agent): RuntimeAgent {
+function getRuntimeAgentMetadata(id: string, agent: Agent): RuntimeAgent {
   const rawConfig = agent.config as unknown as Record<string, unknown>;
 
   return RuntimeAgentSchema.parse({
-    id: agent.id,
+    id,
     name: typeof rawConfig.name === "string" && rawConfig.name.trim().length > 0
       ? rawConfig.name
-      : agent.id,
+      : id,
     description: typeof rawConfig.description === "string" ? rawConfig.description : null,
     model: agent.config.model ?? null,
     version: typeof rawConfig.version === "string" ? rawConfig.version : null,
@@ -254,9 +254,9 @@ export async function listRuntimeAgents(
   await deps.ensureProjectDiscovery(ctx);
 
   const agents = deps.getAllAgentIds()
-    .map((id) => deps.getAgent(id))
-    .filter((agent): agent is Agent => Boolean(agent))
-    .map(getRuntimeAgentMetadata)
+    .map((id) => ({ id, agent: deps.getAgent(id) }))
+    .filter((entry): entry is { id: string; agent: Agent } => Boolean(entry.agent))
+    .map(({ id, agent }) => getRuntimeAgentMetadata(id, agent))
     .sort((left, right) => left.name.localeCompare(right.name));
 
   return RuntimeAgentListResponseSchema.parse({ agents });

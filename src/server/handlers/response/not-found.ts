@@ -6,7 +6,7 @@ import {
   HTTP_NOT_FOUND,
   PRIORITY_FALLBACK,
 } from "#veryfront/utils/constants/index.ts";
-import { escapeHtml } from "#veryfront/html/html-escape.ts";
+import { buildNonceAttribute, escapeHtml } from "#veryfront/html/html-escape.ts";
 
 export class NotFoundHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -17,17 +17,15 @@ export class NotFoundHandler extends BaseHandler {
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const pathname = new URL(req.url).pathname;
-    const securityConfig = ctx.securityConfig;
-    const corsConfig = ctx.securityConfig?.cors;
 
     try {
-      const html = this.generate404Html(pathname);
-      const response = ResponseBuilder.html(html, req, {
-        securityConfig,
-        corsConfig,
-        cache: "no-cache",
-        status: HTTP_NOT_FOUND,
-      });
+      const builder = this.createResponseBuilder(ctx);
+      const html = this.generate404Html(pathname, builder.nonce);
+      const response = builder
+        .withCORS(req, ctx.securityConfig?.cors)
+        .withSecurity(ctx.securityConfig ?? undefined, req)
+        .withCache("no-cache")
+        .html(html, HTTP_NOT_FOUND);
 
       return Promise.resolve(this.respond(response));
     } catch (e) {
@@ -38,8 +36,8 @@ export class NotFoundHandler extends BaseHandler {
         "Internal Server Error",
         req,
         {
-          securityConfig,
-          corsConfig,
+          securityConfig: ctx.securityConfig,
+          corsConfig: ctx.securityConfig?.cors,
         },
       );
 
@@ -47,14 +45,15 @@ export class NotFoundHandler extends BaseHandler {
     }
   }
 
-  private generate404Html(pathname: string): string {
+  private generate404Html(pathname: string, nonce?: string): string {
+    const nonceAttr = buildNonceAttribute(nonce);
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <title>404 Not Found</title>
-    <style>
+    <style${nonceAttr}>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             margin: 0;
@@ -148,7 +147,7 @@ export class NotFoundHandler extends BaseHandler {
         </p>
         <div class="actions">
             <a href="/" class="button">Go Home</a>
-            <a href="javascript:history.back()" class="button secondary">Go Back</a>
+            <a href=".." class="button secondary">Go Back</a>
         </div>
     </div>
 </body>

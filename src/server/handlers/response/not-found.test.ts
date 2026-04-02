@@ -60,8 +60,19 @@ describe("server/handlers/response/not-found", () => {
     it("should include Go Home and Go Back links", async () => {
       const body = await getBody("http://localhost/test");
       assertEquals(body.includes('href="/"'), true);
+      assertEquals(body.includes('href=".."'), true);
       assertEquals(body.includes("Go Home"), true);
       assertEquals(body.includes("Go Back"), true);
+    });
+
+    it("should avoid javascript: links in the fallback page", async () => {
+      const body = await getBody("http://localhost/test");
+      assertEquals(body.includes("javascript:history.back()"), false);
+    });
+
+    it("should add a nonce to the inline style block", async () => {
+      const body = await getBody("http://localhost/test");
+      assertEquals(body.includes("<style nonce="), true);
     });
   });
 });
