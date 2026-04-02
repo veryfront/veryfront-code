@@ -47,9 +47,11 @@ function releaseRevalidationSlot(projectId: string): void {
   projectRevalidationCounts.set(projectId, current - 1);
 }
 
-function getProjectId(context: DataContext, fallback: string): string {
+function resolveProjectId(context: DataContext, fallback: string): string {
   return context.request?.headers?.get("x-project-id") ?? context.url?.hostname ?? fallback;
 }
+
+type StaticDataHandler = NonNullable<PageWithData["getStaticData"]>;
 
 export class StaticDataFetcher {
   private pendingRevalidations = new Map<string, Promise<void>>();
@@ -57,14 +59,15 @@ export class StaticDataFetcher {
   constructor(private cacheManager: CacheManager) {}
 
   async fetch(pageModule: PageWithData, context: DataContext): Promise<DataResult> {
-    if (typeof pageModule.getStaticData !== "function") return { props: {} };
+    const getStaticData = pageModule.getStaticData;
+    if (typeof getStaticData !== "function") return { props: {} };
 
     const pathname = context.url?.pathname ?? "unknown";
     const cacheKey = this.cacheManager.createCacheKey(context);
 
     // No caching in preview mode (cacheKey is null)
     if (!cacheKey) {
-      return withSpan("data.fetch_static", () => this.fetchFreshNoCache(pageModule, context), {
+      return withSpan("data.fetch_static", () => this.fetchFreshNoCache(getStaticData, context), {
         "data.fetch_method": "getStaticData",
         "data.pathname": pathname,
         "data.cache": "disabled",
@@ -78,33 +81,65 @@ export class StaticDataFetcher {
     );
 
     if (!cached) {
-      return withSpan("data.fetch_static", () => this.fetchFresh(pageModule, context, cacheKey), {
-        "data.fetch_method": "getStaticData",
-        "data.pathname": pathname,
-        "data.cache": "miss",
-      });
+      return withSpan(
+        "data.fetch_static",
+        () => this.fetchFresh(getStaticData, context, cacheKey),
+        {
+          "data.fetch_method": "getStaticData",
+          "data.pathname": pathname,
+          "data.cache": "miss",
+        },
+      );
     }
 
     if (this.cacheManager.shouldRevalidate(cached) && !this.pendingRevalidations.has(cacheKey)) {
       this.pendingRevalidations.set(
         cacheKey,
-        this.revalidateInBackground(pageModule, context, cacheKey),
+        this.revalidateInBackground(getStaticData, context, cacheKey),
       );
     }
 
     return cached.data;
   }
 
+  private createStaticDataContext(
+    context: DataContext,
+  ): Omit<DataContext, "request" | "query"> {
+    return { params: context.params, url: context.url };
+  }
+
+  private executeStaticData(
+    getStaticData: StaticDataHandler,
+    context: DataContext,
+    timeoutMs: number,
+    label: string,
+  ): Promise<DataResult> {
+    return withTimeoutThrow(
+      Promise.resolve(getStaticData(this.createStaticDataContext(context))),
+      timeoutMs,
+      label,
+    );
+  }
+
+  private storeCacheEntry(cacheKey: string, result: DataResult): void {
+    this.cacheManager.set(cacheKey, {
+      data: result,
+      timestamp: Date.now(),
+      revalidate: result.revalidate,
+    });
+  }
+
   private async fetchFreshNoCache(
-    pageModule: PageWithData,
+    getStaticData: StaticDataHandler,
     context: DataContext,
   ): Promise<DataResult> {
     const pathname = context.url?.pathname ?? "unknown";
     const start = performance.now();
 
     try {
-      return await withTimeoutThrow(
-        Promise.resolve(pageModule.getStaticData!({ params: context.params, url: context.url })),
+      return await this.executeStaticData(
+        getStaticData,
+        context,
         DATA_FETCH_TIMEOUT_MS,
         `getStaticData for ${pathname}`,
       );
@@ -126,13 +161,13 @@ export class StaticDataFetcher {
   }
 
   private async fetchFresh(
-    pageModule: PageWithData,
+    getStaticData: StaticDataHandler,
     context: DataContext,
     cacheKey: string,
   ): Promise<DataResult> {
     const pathname = context.url?.pathname ?? "unknown";
     // Extract projectId from request headers (set by proxy) for proper circuit breaker isolation
-    const projectId = getProjectId(context, "default");
+    const projectId = resolveProjectId(context, "default");
     const start = performance.now();
 
     // Circuit breaker per project to prevent cascade failures
@@ -144,8 +179,9 @@ export class StaticDataFetcher {
 
     try {
       const result = await circuitBreaker.execute(() =>
-        withTimeoutThrow(
-          Promise.resolve(pageModule.getStaticData!({ params: context.params, url: context.url })),
+        this.executeStaticData(
+          getStaticData,
+          context,
           DATA_FETCH_TIMEOUT_MS,
           `getStaticData for ${pathname}`,
         )
@@ -154,11 +190,7 @@ export class StaticDataFetcher {
       await withSpan(
         SpanNames.DATA_CACHE_SET,
         () => {
-          this.cacheManager.set(cacheKey, {
-            data: result,
-            timestamp: Date.now(),
-            revalidate: result.revalidate,
-          });
+          this.storeCacheEntry(cacheKey, result);
           return Promise.resolve();
         },
         { "data.cache_key": cacheKey, "data.revalidate": result.revalidate ?? 0 },
@@ -198,15 +230,13 @@ export class StaticDataFetcher {
   }
 
   private async revalidateInBackground(
-    pageModule: PageWithData,
+    getStaticData: StaticDataHandler,
     context: DataContext,
     cacheKey: string,
   ): Promise<void> {
-    if (typeof pageModule.getStaticData !== "function") return;
-
     const pathname = context.url?.pathname ?? "unknown";
     // Use projectId from request headers for proper per-project fairness
-    const projectId = getProjectId(context, "unknown");
+    const projectId = resolveProjectId(context, "unknown");
 
     // Check per-project limit before acquiring global semaphore
     if (!acquireRevalidationSlot(projectId)) {
@@ -225,19 +255,14 @@ export class StaticDataFetcher {
         const start = performance.now();
 
         try {
-          const result = await withTimeoutThrow(
-            Promise.resolve(
-              pageModule.getStaticData!({ params: context.params, url: context.url }),
-            ),
+          const result = await this.executeStaticData(
+            getStaticData,
+            context,
             REVALIDATION_TIMEOUT_MS,
             `getStaticData revalidation for ${pathname}`,
           );
 
-          this.cacheManager.set(cacheKey, {
-            data: result,
-            timestamp: Date.now(),
-            revalidate: result.revalidate,
-          });
+          this.storeCacheEntry(cacheKey, result);
         } catch (error) {
           const durationMs = Math.round(performance.now() - start);
 

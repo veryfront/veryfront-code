@@ -55,6 +55,26 @@ function buildDefaultCSP(nonce: string): string {
   ].join("; ");
 }
 
+export function serializeCSPDirectives(
+  csp: SecurityConfig["csp"],
+  nonce?: string,
+): string | null {
+  if (!csp || typeof csp !== "object") return null;
+
+  const pieces: string[] = [];
+
+  for (const [key, value] of Object.entries(csp)) {
+    if (value === undefined) continue;
+
+    const directive = key.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
+    const sources = Array.isArray(value) ? value.join(" ") : String(value);
+    const serialized = `${directive} ${sources}`;
+    pieces.push(nonce ? serialized.replace(/{NONCE}/g, nonce) : serialized);
+  }
+
+  return pieces.length ? pieces.join("; ") : null;
+}
+
 export function buildCSP(
   isDev: boolean,
   nonce: string,
@@ -68,19 +88,8 @@ export function buildCSP(
   if (cspUserHeader?.trim()) return cspUserHeader.replace(/{NONCE}/g, nonce);
 
   const cfgCsp = config?.csp;
-  if (cfgCsp && typeof cfgCsp === "object") {
-    const pieces: string[] = [];
-
-    for (const [k, v] of Object.entries(cfgCsp)) {
-      if (v === undefined) continue;
-
-      const key = k.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
-      const val = Array.isArray(v) ? v.join(" ") : String(v);
-      pieces.push(`${key} ${val}`.replace(/{NONCE}/g, nonce));
-    }
-
-    if (pieces.length) return pieces.join("; ");
-  }
+  const serializedConfigCsp = serializeCSPDirectives(cfgCsp, nonce);
+  if (serializedConfigCsp) return serializedConfigCsp;
 
   // No explicit CSP configured — apply a secure default in production.
   // Dev mode skips the default to avoid blocking HMR and dev tooling.

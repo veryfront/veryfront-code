@@ -99,6 +99,41 @@ describe("resource factory", () => {
       );
     });
 
+    it("should include the derived resource id in validation errors", async () => {
+      const r = resource({
+        pattern: "/items/:id/details",
+        description: "Item details",
+        paramsSchema: z.object({ id: z.string() }),
+        load: async () => ({}),
+      });
+
+      await assertRejects(
+        () => r.load({ id: 42 } as unknown as { id: string }),
+        Error,
+        'Resource "items_id_details" params validation failed',
+      );
+    });
+
+    it("should not call load when params validation fails", async () => {
+      let loadCalls = 0;
+      const r = resource({
+        pattern: "/items/:id",
+        description: "Item",
+        paramsSchema: z.object({ id: z.string() }),
+        load: async () => {
+          loadCalls += 1;
+          return {};
+        },
+      });
+
+      await assertRejects(
+        () => r.load({ id: 42 } as unknown as { id: string }),
+        Error,
+      );
+
+      assertEquals(loadCalls, 0);
+    });
+
     it("should support sync load functions", async () => {
       const r = resource({
         pattern: "/sync",

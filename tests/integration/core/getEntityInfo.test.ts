@@ -213,6 +213,18 @@ describe("getEntityBySlug", () => {
     });
   });
 
+  it("normalizes leading and trailing slashes in slugs", async () => {
+    await withTestContext("entity-byslug-normalized", async (context) => {
+      const pagesDir = join(context.projectDir, "pages");
+      await createTestFile(join(pagesDir, "about.mdx"), "# About");
+
+      const info = await getEntityBySlug(context.projectDir, "/about/");
+
+      assertExists(info);
+      assertEquals(info.entity.content.includes("# About"), true);
+    });
+  });
+
   it("handles additional file extensions", async () => {
     await withTestContext("entity-slug-extensions", async (context) => {
       const pagesDir = join(context.projectDir, "pages");

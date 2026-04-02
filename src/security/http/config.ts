@@ -3,7 +3,7 @@ import type { SecurityConfig } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config";
 import { serverLogger } from "#veryfront/utils";
-import { buildCSP, generateNonce } from "./response/security-handler.ts";
+import { buildCSP, generateNonce, serializeCSPDirectives } from "./response/security-handler.ts";
 
 const logger = serverLogger.component("security-config-loader");
 
@@ -33,7 +33,7 @@ export class SecurityConfigLoader {
       this.applyConfig(cfg);
     } catch (error) {
       // Config is optional, so we don't throw
-      logger.debug("Failed to load config:", error);
+      logger.debug("Failed to load config", { error });
       this.isLoaded = true; // Mark as loaded even on error to prevent retry
     }
   }
@@ -54,24 +54,8 @@ export class SecurityConfigLoader {
     }
 
     this.securityConfig = security;
-    this.cspUserHeader = this.parseCspUserHeader(security.csp);
+    this.cspUserHeader = serializeCSPDirectives(security.csp);
     this.isLoaded = true;
-  }
-
-  private parseCspUserHeader(csp: SecurityConfig["csp"]): string | null {
-    if (!csp || typeof csp !== "object") return null;
-
-    const pieces: string[] = [];
-
-    for (const [k, v] of Object.entries(csp)) {
-      if (v === undefined) continue;
-
-      const key = k.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
-      const val = Array.isArray(v) ? v.join(" ") : String(v);
-      pieces.push(`${key} ${val}`);
-    }
-
-    return pieces.length ? pieces.join("; ") : null;
   }
 
   getSecurityConfig(): SecurityConfig | null {

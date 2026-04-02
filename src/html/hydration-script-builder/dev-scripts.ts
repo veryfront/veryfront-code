@@ -1,6 +1,6 @@
 import type { ComponentProps } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { escapeHtml } from "../html-escape.ts";
+import { buildNonceAttribute } from "../html-escape.ts";
 import { generateDevErrorLoggerScript } from "./dev-error-logger.ts";
 import { generateDevComponentManifestScript } from "./dev-component-manifest.ts";
 import { generateDevClientRendererScript } from "./dev-client-renderer.ts";
@@ -13,7 +13,7 @@ function generateHMRScript(
   // Skip dev HMR script when preview-hmr.js will be used instead
   if (skipDevHMR || !config.dev?.hmr) return "";
 
-  const nonceAttr = nonce ? ` nonce="${escapeHtml(nonce)}"` : "";
+  const nonceAttr = buildNonceAttribute(nonce);
   return `<script type="module" src="/_veryfront/hmr.js"${nonceAttr}></script>`;
 }
 

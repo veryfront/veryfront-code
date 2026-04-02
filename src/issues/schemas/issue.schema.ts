@@ -1,7 +1,9 @@
 import { z } from "zod";
 
 export const ISSUE_PREFIXES = ["ISSUE", "TASK", "PLAN"] as const;
-export const ISSUE_ID_PATTERN = /^(ISSUE|TASK|PLAN)-(\d{3,})$/;
+const ISSUE_ID_BODY = `(${ISSUE_PREFIXES.join("|")})-(\\d{3,})`;
+
+export const ISSUE_ID_PATTERN = new RegExp(`^${ISSUE_ID_BODY}$`);
 
 export const issueStateSchema = z.enum(["open", "closed"]);
 

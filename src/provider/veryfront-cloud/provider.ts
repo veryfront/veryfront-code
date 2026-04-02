@@ -25,14 +25,6 @@ export function createVeryfrontCloudModel(modelId: string): LanguageModel {
         fetch,
       })(upstreamModelId);
 
-    case "openai":
-      return createOpenAI({
-        apiKey: apiToken,
-        baseURL,
-        name: "veryfront-cloud",
-        fetch,
-      })(upstreamModelId);
-
     case "google":
       return createGoogleGenerativeAI({
         apiKey: apiToken,
@@ -41,6 +33,7 @@ export function createVeryfrontCloudModel(modelId: string): LanguageModel {
         fetch,
       })(upstreamModelId);
 
+    case "openai":
     case "moonshotai":
       return createOpenAI({
         apiKey: apiToken,

@@ -34,13 +34,6 @@ export function matchesAllowedTool(toolName: string, pattern: string): boolean {
   return toolName === pattern;
 }
 
-/** Minimal tool definition shape for filtering */
-interface FilterableToolDefinition {
-  name: string;
-  description: string;
-  parameters: unknown;
-}
-
 /**
  * Layer 1: Filter tool definitions before sending to model.
  *
@@ -51,7 +44,7 @@ interface FilterableToolDefinition {
  * @param allowedTools - Allowed tool patterns, or undefined for no restrictions
  * @returns Filtered tool definitions
  */
-export function filterToolsForSkill<T extends FilterableToolDefinition>(
+export function filterToolsForSkill<T extends { name: string }>(
   tools: T[],
   allowedTools: string[] | undefined,
 ): T[] {

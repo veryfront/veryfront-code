@@ -7,14 +7,16 @@ export function executeTool(
   input: unknown,
   context?: ToolExecutionContext,
 ): Promise<unknown> {
-  const tool = toolRegistry.get(toolId);
+  const registeredTool = toolRegistry.get(toolId);
 
-  if (tool) return tool.execute(input, context);
+  if (!registeredTool) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Tool "${toolId}" not found`,
+      }),
+    );
+  }
 
-  throw toError(
-    createError({
-      type: "agent",
-      message: `Tool "${toolId}" not found`,
-    }),
-  );
+  return registeredTool.execute(input, context);
 }

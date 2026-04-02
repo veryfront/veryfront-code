@@ -97,6 +97,95 @@ describe("Token Priority Cascade", () => {
     });
   });
 
+  describe("API proxy token selection", () => {
+    it("prefers user auth cookie for preview API requests", async () => {
+      const { server, port } = createTokenServer("oauth-preview-token");
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://my-project.preview.veryfront.com/api/proxy/data", {
+          headers: {
+            host: "my-project.preview.veryfront.com",
+            cookie: "authToken=user-cookie-token",
+          },
+        });
+
+        const token = await handler.getTokenForApi(req);
+
+        assertEquals(token, "user-cookie-token");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("strips the port before fetching an API token for custom domains", async () => {
+      const tokenRequests: string[] = [];
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname !== "/auth/token") {
+          return new Response("Not found", { status: 404 });
+        }
+
+        req.text()
+          .then((body) => JSON.parse(body))
+          .then((body) => {
+            if (body.custom_domain) tokenRequests.push(body.custom_domain);
+          });
+
+        return Response.json({
+          access_token: "oauth-custom-domain-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        });
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://fin-ops.ai:443/api/proxy/data", {
+          headers: { host: "fin-ops.ai:443" },
+        });
+
+        const token = await handler.getTokenForApi(req);
+
+        assertEquals(token, "oauth-custom-domain-token");
+        assertEquals(tokenRequests, ["fin-ops.ai"]);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("falls back to the static API token when OAuth credentials are missing", async () => {
+      const handler = createProxyHandler({
+        config: {
+          apiBaseUrl: "http://localhost:9999",
+          apiClientId: "",
+          apiClientSecret: "",
+          previewApiClientId: "",
+          previewApiClientSecret: "",
+          apiToken: "static-api-token",
+        },
+      });
+
+      try {
+        const req = new Request("http://example.com/api/proxy/data", {
+          headers: { host: "example.com" },
+        });
+
+        const token = await handler.getTokenForApi(req);
+
+        assertEquals(token, "static-api-token");
+      } finally {
+        await handler.close();
+      }
+    });
+  });
+
   describe("production scope token priority", () => {
     it("uses OAuth token in production (user cookie ignored for production scope)", async () => {
       const { server, port } = createMockServer((req: Request) => {

@@ -22,43 +22,52 @@ interface BridgeConfig {
 
 let config: BridgeConfig | null = null;
 
-export function initConfig(): void {
-  const raw: Record<string, unknown> | undefined = (globalThis as Record<string, unknown>)
-    .__VF_BRIDGE_CONFIG__ as
-      | Record<string, unknown>
-      | undefined;
+const DEFAULT_CONFIG: BridgeConfig = {
+  projectId: "",
+  pageId: "",
+  pagePath: "",
+  wsUrl: "",
+  yjsGuid: "",
+  studioMode: "advanced",
+  debugSkipInit: false,
+  debugExposeInternals: false,
+};
 
-  // studioMode can come from the injected config or from a query parameter
-  // (Studio sets vf_studio_mode on the iframe URL).
-  const params = new URLSearchParams(window.location.search);
-  const qsMode = params.get("vf_studio_mode");
-  const resolveMode = (value: unknown): StudioMode =>
-    value === "simple" || qsMode === "simple" ? "simple" : "advanced";
+function resolveStudioMode(value: unknown, queryString: string): StudioMode {
+  const params = new URLSearchParams(queryString);
+  return value === "simple" || params.get("vf_studio_mode") === "simple" ? "simple" : "advanced";
+}
+
+function normalizeConfig(raw?: Record<string, unknown>): BridgeConfig {
+  const queryString = window.location.search;
 
   if (!raw || typeof raw !== "object") {
     logger.warn("No bridge config found on window.__VF_BRIDGE_CONFIG__");
-    config = {
-      projectId: "",
-      pageId: "",
-      pagePath: "",
-      wsUrl: "",
-      yjsGuid: "",
-      studioMode: resolveMode(undefined),
-      debugSkipInit: false,
-      debugExposeInternals: false,
+    return {
+      ...DEFAULT_CONFIG,
+      studioMode: resolveStudioMode(undefined, queryString),
     };
-    return;
   }
-  config = {
+
+  return {
+    ...DEFAULT_CONFIG,
     projectId: String(raw.projectId ?? ""),
     pageId: String(raw.pageId ?? ""),
     pagePath: String(raw.pagePath ?? raw.pageId ?? ""),
     wsUrl: String(raw.wsUrl ?? ""),
     yjsGuid: String(raw.yjsGuid ?? ""),
-    studioMode: resolveMode(raw.studioMode),
+    studioMode: resolveStudioMode(raw.studioMode, queryString),
     debugSkipInit: !!raw.debugSkipInit,
     debugExposeInternals: !!raw.debugExposeInternals,
   };
+}
+
+export function initConfig(): void {
+  const raw: Record<string, unknown> | undefined = (globalThis as Record<string, unknown>)
+    .__VF_BRIDGE_CONFIG__ as
+      | Record<string, unknown>
+      | undefined;
+  config = normalizeConfig(raw);
 }
 
 export function getConfig(): BridgeConfig {
@@ -68,31 +77,10 @@ export function getConfig(): BridgeConfig {
   return config;
 }
 
-export function isMarkdownPage(): boolean {
-  const cfg = getConfig();
-  if (typeof cfg.pagePath !== "string") {
-    return false;
-  }
-  const lowerPath = cfg.pagePath.toLowerCase();
-  return lowerPath.endsWith(".md") || lowerPath.endsWith(".mdx");
-}
-
-export function isMdxPage(): boolean {
-  const cfg = getConfig();
-  return typeof cfg.pagePath === "string" && cfg.pagePath.toLowerCase().endsWith(".mdx");
-}
-
 /** Set config directly (for tests only). */
 export function setConfigForTest(override: Partial<BridgeConfig>): void {
   config = {
-    projectId: "",
-    pageId: "",
-    pagePath: "",
-    wsUrl: "",
-    yjsGuid: "",
-    studioMode: "advanced",
-    debugSkipInit: false,
-    debugExposeInternals: false,
+    ...DEFAULT_CONFIG,
     ...override,
   };
 }

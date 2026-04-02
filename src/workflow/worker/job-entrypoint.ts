@@ -22,12 +22,16 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { env as getProcessEnv } from "#veryfront/compat/process.ts";
-import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { mergeInjectedWorkflowEnv } from "../../jobs/runtime-env.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
-import type { CapturedTenantContext, WorkflowDefinition } from "../types.ts";
+import type { WorkflowDefinition } from "../types.ts";
+import {
+  failRunExecution,
+  getFinalRunExitCode,
+  getTenantFromEnv,
+  hydrateRunContextEnv,
+  runWithTenantContext,
+} from "./shared.ts";
 
 const logger = baseLogger.component("workflow-job");
 
@@ -54,26 +58,6 @@ export const EXIT_CODES = {
   CONFIG_ERROR: 2,
   NOT_FOUND: 3,
 } as const;
-
-/**
- * Get tenant context from environment variables
- */
-function getTenantFromEnv(): CapturedTenantContext | undefined {
-  const projectSlug = getEnv("TENANT_PROJECT_SLUG");
-  const token = getEnv("TENANT_TOKEN");
-
-  if (!projectSlug || !token) {
-    return undefined;
-  }
-
-  return {
-    projectSlug,
-    token,
-    projectId: getEnv("TENANT_PROJECT_ID") || undefined,
-    productionMode: getEnv("TENANT_PRODUCTION_MODE") === "1",
-    releaseId: getEnv("TENANT_RELEASE_ID") || undefined,
-  };
-}
 
 /**
  * Run the workflow job
@@ -124,21 +108,7 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
       return EXIT_CODES.NOT_FOUND;
     }
 
-    const injectedEnv = mergeInjectedWorkflowEnv(run.context.env, getProcessEnv());
-    if (injectedEnv) {
-      const currentEnv = run.context.env;
-      const currentSerialized = currentEnv ? JSON.stringify(currentEnv) : "";
-      const nextSerialized = JSON.stringify(injectedEnv);
-      if (currentSerialized !== nextSerialized) {
-        await backend.updateRun(runId, {
-          context: {
-            ...run.context,
-            env: injectedEnv,
-          },
-        });
-        run = (await backend.getRun(runId)) ?? run;
-      }
-    }
+    run = await hydrateRunContextEnv(backend, runId, run);
 
     // Get tenant context (from env or from stored run)
     const tenant = getTenantFromEnv() ?? run._tenant;
@@ -152,30 +122,13 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
     const executeWorkflow = async (): Promise<number> => {
       await executor.resume(runId);
 
-      const finalRun = await backend.getRun(runId);
-      const status = finalRun?.status;
-
-      switch (status) {
-        case "completed":
-          if (debug) {
-            logger.info(`Workflow completed successfully: ${runId}`);
-          }
-          return EXIT_CODES.SUCCESS;
-
-        case "failed":
-          logger.error(`Workflow failed: ${runId}`, finalRun?.error);
-          return EXIT_CODES.WORKFLOW_FAILED;
-
-        case "waiting":
-          if (debug) {
-            logger.info(`Workflow paused (waiting): ${runId}`);
-          }
-          return EXIT_CODES.SUCCESS;
-
-        default:
-          logger.warn(`Unexpected final status: ${status}`);
-          return EXIT_CODES.SUCCESS;
-      }
+      return getFinalRunExitCode(
+        logger,
+        EXIT_CODES,
+        runId,
+        await backend.getRun(runId),
+        debug,
+      );
     };
 
     // Wrapper that handles execution errors
@@ -183,33 +136,13 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
       try {
         return await executeWorkflow();
       } catch (error) {
-        logger.error(`Execution error:`, error);
-
-        await backend.updateRun(runId, {
-          status: "failed",
-          error: {
-            message: `EXECUTION_ERROR: ${error instanceof Error ? error.message : String(error)}`,
-            stack: error instanceof Error ? error.stack : undefined,
-          },
-          completedAt: new Date(),
-        });
-
-        return EXIT_CODES.WORKFLOW_FAILED;
+        return await failRunExecution(backend, logger, EXIT_CODES, runId, error);
       }
     };
 
     // Run with tenant context if available
     if (tenant) {
-      return await runWithRequestContext(
-        {
-          projectSlug: tenant.projectSlug,
-          token: tenant.token,
-          projectId: tenant.projectId,
-          productionMode: tenant.productionMode,
-          releaseId: tenant.releaseId,
-        },
-        safeExecute,
-      );
+      return await runWithTenantContext(tenant, safeExecute);
     }
 
     return await safeExecute();
