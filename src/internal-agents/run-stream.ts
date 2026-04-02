@@ -243,7 +243,8 @@ export async function createRuntimeAgentStreamResponse(
       ...(allowedRemoteToolNames ? { __vfAllowedRemoteTools: allowedRemoteToolNames } : {}),
     },
   };
-  const runtime = deps.createRuntime?.(runtimeAgent, mergedTools) ?? new AgentRuntime(runtimeAgent.id, runtimeAgent.config);
+  const runtime = deps.createRuntime?.(runtimeAgent, mergedTools) ??
+    new AgentRuntime(runtimeAgent.id, runtimeAgent.config);
 
   let completedResponse: AgentResponse | null = null;
   const runtimeMessages = normalizeRuntimeMessages(input.messages);
