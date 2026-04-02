@@ -1,7 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill, skillRegistry } from "./registry.ts";
-import { createLoadSkillReferenceTool, createLoadSkillTool } from "./tools.ts";
+import {
+  createExecuteSkillScriptTool,
+  createLoadSkillReferenceTool,
+  createLoadSkillTool,
+} from "./tools.ts";
 import type { Skill } from "./types.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSkillTestAdapter } from "./testing.ts";
@@ -116,5 +120,41 @@ Do work.`,
 
     assertEquals(result.content, "Reference text");
     assertEquals(result.path, "references/guide.md");
+  });
+
+  it("execute-skill-script should run a local script from the skill directory", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-skill-script-" });
+
+    try {
+      const skillRoot = `${tempDir}/my-skill`;
+      await Deno.mkdir(`${skillRoot}/scripts`, { recursive: true });
+      await Deno.writeTextFile(
+        `${skillRoot}/scripts/echo-style.sh`,
+        [
+          "#!/usr/bin/env bash",
+          'echo "style=$STYLE voice=$1"',
+        ].join("\n"),
+      );
+
+      registerSkill("my-skill", {
+        id: "my-skill",
+        metadata: { name: "my-skill", description: "Executes scripts" },
+        rootPath: skillRoot,
+      });
+
+      const tool = createExecuteSkillScriptTool();
+      const result = await tool.execute({
+        skillId: "my-skill",
+        script: "scripts/echo-style.sh",
+        args: ["active"],
+        env: { STYLE: "tight" },
+      });
+
+      assertEquals(result.exitCode, 0);
+      assertEquals(result.stderr, "");
+      assertEquals(result.stdout.trim(), "style=tight voice=active");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
   });
 });

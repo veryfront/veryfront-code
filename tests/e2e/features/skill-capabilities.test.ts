@@ -170,6 +170,10 @@ Use this when the task needs a crisp final draft.
 Use short sentences.
 Prefer active voice.
 `,
+      "skills/writer-helper/scripts/echo-style.sh": `
+#!/usr/bin/env bash
+echo "style=$STYLE voice=$1"
+`,
       "app/api/research-chat/route.ts": `
 import { createChatHandler } from "veryfront/agent";
 
@@ -254,11 +258,7 @@ export const POST = createChatHandler("researcher");
       assertEquals(loadSkillJson.toolId, "load-skill");
       assertStringIncludes(loadSkillJson.result.instructions, "crisp final draft");
       assertEquals(loadSkillJson.result.references, ["references/style-guide.md"]);
-      assertEquals(loadSkillJson.result.scripts, []);
-      assertEquals(
-        loadSkillJson.result.note,
-        "This skill has no scripts. Do NOT call execute-skill-script.",
-      );
+      assertEquals(loadSkillJson.result.scripts, ["scripts/echo-style.sh"]);
 
       const { response: loadSkillReferenceResponse, json: loadSkillReferenceJson } = await postJson<
         {
@@ -283,6 +283,34 @@ export const POST = createChatHandler("researcher");
       assertEquals(loadSkillReferenceJson.toolId, "load-skill-reference");
       assertEquals(loadSkillReferenceJson.result.path, "references/style-guide.md");
       assertStringIncludes(loadSkillReferenceJson.result.content, "Prefer active voice.");
+
+      const { response: executeSkillScriptResponse, json: executeSkillScriptJson } = await postJson<
+        {
+          success: boolean;
+          toolId: string;
+          result: {
+            stdout: string;
+            stderr: string;
+            exitCode: number;
+          };
+        }
+      >(server, "/_dev/api/execute-tool", {
+        body: {
+          toolId: "execute-skill-script",
+          args: {
+            skillId: "writer-helper",
+            script: "scripts/echo-style.sh",
+            args: ["active"],
+            env: { STYLE: "tight" },
+          },
+        },
+      });
+      assertEquals(executeSkillScriptResponse.status, 200);
+      assertEquals(executeSkillScriptJson.success, true);
+      assertEquals(executeSkillScriptJson.toolId, "execute-skill-script");
+      assertEquals(executeSkillScriptJson.result.exitCode, 0);
+      assertEquals(executeSkillScriptJson.result.stderr, "");
+      assertStringIncludes(executeSkillScriptJson.result.stdout, "style=tight voice=active");
 
       const { response: workflowsResponse, json: workflowsJson } = await fetchJson<{
         workflows: Array<{ id: string }>;
