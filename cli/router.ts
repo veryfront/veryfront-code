@@ -128,8 +128,14 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
   if (args.yes || args.y || detectCI()) setNonInteractive(true);
 
+  // Start update check early so the network request runs during command execution
+  const updateCheck = import("./shared/update-check.ts")
+    .then(({ checkForUpdates }) => checkForUpdates(VERSION))
+    .catch(() => {});
+
   if (args.version || args.v) {
     cliLogger.info(`Veryfront CLI v${VERSION}`);
+    await updateCheck;
     exitProcess(0);
     return;
   }
@@ -138,6 +144,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
   if (args.help || args.h) {
     showHelp(command);
+    await updateCheck;
     exitProcess(0);
     return;
   }
@@ -145,7 +152,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   await cliErrorBoundary(async () => {
     if (command === "help") {
       showHelp();
-      exitProcess(0);
       return;
     }
 
@@ -161,8 +167,9 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     await (handler ?? handleStartCommand)(args);
   });
 
-  // Non-blocking update check (fire-and-forget)
-  import("./shared/update-check.ts")
-    .then(({ checkForUpdates }) => checkForUpdates(VERSION))
-    .catch(() => {});
+  // Wait for update check to finish (with timeout to avoid hanging)
+  await Promise.race([
+    updateCheck,
+    new Promise((r) => setTimeout(r, 5000)),
+  ]);
 }
