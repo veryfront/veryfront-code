@@ -4,7 +4,7 @@
  * Common utilities for checking page state, errors, and hydration.
  */
 
-import { ConsoleMessage, expect, Page } from "playwright/test";
+import { ConsoleMessage, expect, Page } from "npm:playwright@1.59.0/test";
 import { findHydrationOrCspFailures } from "../../_helpers/playwright.ts";
 
 /**

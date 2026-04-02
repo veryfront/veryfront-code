@@ -8,16 +8,16 @@
  * Zero tolerance: ANY failure blocks push
  */
 
-import { expect, test } from "playwright/test";
-import { findHydrationOrCspFailures, setupErrorCollection } from "./helpers/assertions.js";
-import { getProjectsToTest } from "./helpers/projects.js";
+import { expect, test } from "npm:playwright@1.59.0/test";
+import { findHydrationOrCspFailures, setupErrorCollection } from "./helpers/assertions.ts";
+import { getProjectsToTest } from "./helpers/projects.ts";
 
 /**
  * Projects to test.
  *
  * Configure via environment variables:
- *   E2E_PROJECT=myproject npx playwright test     # Test a single project
- *   E2E_PROJECTS="proj1,proj2" npx playwright test # Test multiple projects
+ *   E2E_PROJECT=myproject PW_DISABLE_TS_ESM=1 npx playwright test --config=tests/e2e/playwright.config.cjs
+ *   E2E_PROJECTS="proj1,proj2" PW_DISABLE_TS_ESM=1 npx playwright test --config=tests/e2e/playwright.config.cjs
  *
  * If neither is set, uses example projects for demonstration.
  */
@@ -31,12 +31,12 @@ const MODES = [
   { name: "preview", getUrl: (subdomain: string) => `http://${subdomain}.preview.lvh.me:8080` },
 ];
 
-async function expectPageRenders(page: import("playwright/test").Page): Promise<void> {
+async function expectPageRenders(page: import("npm:playwright@1.59.0/test").Page): Promise<void> {
   const body = await page.locator("body").innerHTML();
   expect(body.length).toBeGreaterThan(0);
 }
 
-async function visit(page: import("playwright/test").Page, url: string) {
+async function visit(page: import("npm:playwright@1.59.0/test").Page, url: string) {
   const response = await page.goto(url);
   await page.waitForLoadState("networkidle");
   return response;

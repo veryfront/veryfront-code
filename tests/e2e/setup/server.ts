@@ -1,9 +1,9 @@
-import { type ChildProcess, spawn } from "child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
-import { dirname, join } from "path";
-import { fileURLToPath } from "url";
-import { getProjectsToTest } from "../helpers/projects.js";
+import { type ChildProcess, spawn } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { getProjectsToTest } from "../helpers/projects.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..", "..", "..");
