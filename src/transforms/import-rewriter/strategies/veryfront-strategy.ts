@@ -54,7 +54,8 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
     // Handle #veryfront/* (internal framework imports)
     if (specifier.startsWith("#veryfront/")) {
       const path = specifier.slice("#veryfront/".length);
-      // Try resolving via deno.json mappings first (veryfront/head → react/components/Head.js)
+      // Try resolving via deno.json mappings first (for example,
+      // veryfront/head → react/runtime/core.js).
       const mapped = resolveVeryfrontModuleUrl(`veryfront/${path}`);
       if (mapped) {
         if (ctx.target === "ssr") return { specifier: `${mapped}?ssr=true` };

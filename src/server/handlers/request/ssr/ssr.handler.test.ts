@@ -656,6 +656,29 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
 
       assertEquals(capturedOptions!.noHmr, true);
     });
+
+    it("passes forceProductionScripts when forceProductionScripts=1", async () => {
+      let capturedOptions: SSRRenderOptions | null = null;
+      const mockService = createMockSSRService({
+        renderPage: (_ctx: HandlerContext, options: SSRRenderOptions) => {
+          capturedOptions = options;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>ok</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "page",
+          });
+        },
+      });
+      const handler = new SSRHandler(mockService);
+      await handler.handle(
+        new Request("http://localhost/page?forceProductionScripts=1"),
+        makeCtx(),
+      );
+
+      assertEquals(capturedOptions!.forceProductionScripts, true);
+    });
   });
 
   describe("isProductionMode", () => {

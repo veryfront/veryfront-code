@@ -46,6 +46,8 @@ function isIgnorableError(message: string): boolean {
     // Font loading errors are not critical
     "Failed to decode downloaded font",
     "OTS parsing error",
+    // lvh.me is intentionally plain HTTP in local E2E; Chrome logs this warning for COOP headers.
+    "The Cross-Origin-Opener-Policy header has been ignored, because the URL's origin was untrustworthy",
   ];
 
   const lower = message.toLowerCase();

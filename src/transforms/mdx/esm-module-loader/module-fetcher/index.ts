@@ -37,7 +37,7 @@ import { cacheModule, normalizePath } from "./module-cache.ts";
 
 // Re-export extracted modules for backward compatibility
 export { rewriteDntImports } from "./import-rewriter.ts";
-export { endRenderSession, startRenderSession } from "./render-sessions.ts";
+export { endRenderSession, hasRenderSession, startRenderSession } from "./render-sessions.ts";
 
 /**
  * Maximum time allowed for the entire transform tree (recursive module resolution).

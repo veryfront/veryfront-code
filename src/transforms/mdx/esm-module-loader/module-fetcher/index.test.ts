@@ -156,7 +156,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     it("rewrites known veryfront/* imports to /_vf_modules/ paths", () => {
       const code = `import Head from "veryfront/head";`;
       const result = rewriteVeryfrontImports(code);
-      assertEquals(result, `import Head from "/_vf_modules/_veryfront/react/components/Head.js";`);
+      assertEquals(result, `import Head from "/_vf_modules/_veryfront/react/runtime/core.js";`);
     });
 
     it("rewrites veryfront/router", () => {
@@ -164,7 +164,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       const result = rewriteVeryfrontImports(code);
       assertEquals(
         result,
-        `import { useRouter } from "/_vf_modules/_veryfront/react/router/index.js";`,
+        `import { useRouter } from "/_vf_modules/_veryfront/react/runtime/core.js";`,
       );
     });
 
@@ -181,15 +181,14 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
         `import other from "other-lib";`,
       ].join("\n");
       const result = rewriteVeryfrontImports(code);
-      assertEquals(result.includes("/_vf_modules/_veryfront/react/components/Head.js"), true);
-      assertEquals(result.includes("/_vf_modules/_veryfront/react/router/index.js"), true);
+      assertEquals(result.includes("/_vf_modules/_veryfront/react/runtime/core.js"), true);
       assertEquals(result.includes(`from "other-lib"`), true);
     });
 
     it("handles single-quoted imports", () => {
       const code = `import Head from 'veryfront/head';`;
       const result = rewriteVeryfrontImports(code);
-      assertEquals(result, `import Head from "/_vf_modules/_veryfront/react/components/Head.js";`);
+      assertEquals(result, `import Head from "/_vf_modules/_veryfront/react/runtime/core.js";`);
     });
 
     it("does not rewrite non-veryfront imports", () => {

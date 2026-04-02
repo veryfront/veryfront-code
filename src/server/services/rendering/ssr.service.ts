@@ -11,9 +11,11 @@ import { VeryfrontError } from "#veryfront/errors/index.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
 import {
   endRenderSession,
+  hasRenderSession,
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
+import { profilePhase } from "#veryfront/observability/request-profiler.ts";
 import { ErrorOverlay, parseErrorLocation } from "../../dev-server/error-overlay/index.ts";
 import { ErrorPages } from "../../utils/error-html.ts";
 import {
@@ -76,6 +78,7 @@ export interface SSRRenderOptions {
   projectId?: string;
   pageId?: string;
   noHmr: boolean;
+  forceProductionScripts?: boolean;
   useNoCache: boolean;
 }
 
@@ -169,22 +172,28 @@ export class SSRService implements SSRServiceLike {
       });
 
       const renderStartTime = performance.now();
-      const result = await timeAsync("render-page", () =>
-        renderer.renderPage(slug, {
-          delivery: "stream",
-          request,
-          url,
-          nonce,
-          studioEmbed,
-          projectId,
-          pageId,
-          colorScheme,
-          colorSchemeFromParam,
-          colorSchemeFromHeader,
-          environment: ctx.requestContext?.mode,
-          projectSlug: ctx.projectSlug,
-          noHmr,
-        }));
+      const result = await profilePhase(
+        "ssr.render_page",
+        () =>
+          timeAsync("render-page", () =>
+            renderer.renderPage(slug, {
+              delivery: "stream",
+              request,
+              url,
+              nonce,
+              studioEmbed,
+              projectId,
+              pageId,
+              colorScheme,
+              colorSchemeFromParam,
+              colorSchemeFromHeader,
+              environment: ctx.requestContext?.mode,
+              projectSlug: ctx.projectSlug,
+              noHmr,
+              forceProductionScripts: options.forceProductionScripts,
+              renderSessionId,
+            })),
+      );
 
       logger.debug("renderPage DONE", {
         projectSlug: ctx.projectSlug,
@@ -194,7 +203,9 @@ export class SSRService implements SSRServiceLike {
         hasStream: !!result.stream,
       });
 
-      endRenderSession(renderSessionId);
+      if (hasRenderSession(renderSessionId)) {
+        endRenderSession(renderSessionId);
+      }
 
       const postRenderHeap = getHeapStats();
       const heapGrowthMB = postRenderHeap.usedHeapSizeMB - preRenderHeap.usedHeapSizeMB;
@@ -224,7 +235,9 @@ export class SSRService implements SSRServiceLike {
         slug,
       };
     } catch (error) {
-      endRenderSession(renderSessionId);
+      if (hasRenderSession(renderSessionId)) {
+        endRenderSession(renderSessionId);
+      }
       return this.handleRenderError(error, ctx, slug, request, nonce);
     }
   }

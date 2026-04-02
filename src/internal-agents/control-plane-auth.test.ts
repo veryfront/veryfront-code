@@ -27,6 +27,8 @@ function createCtx(envGet: (key: string) => string | undefined): HandlerContext 
 }
 
 describe("internal-agents/control-plane-auth", () => {
+  const envKey = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+
   it("prefers adapter-provided verification keys", () => {
     const ctx = createCtx((key) =>
       key === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY" ? "adapter-key" : undefined
@@ -36,7 +38,6 @@ describe("internal-agents/control-plane-auth", () => {
   });
 
   it("falls back to host env when project overlays hide adapter env reads", () => {
-    const envKey = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
     const originalValue = Deno.env.get(envKey);
     Deno.env.set(envKey, "host-key");
 
@@ -75,18 +76,29 @@ describe("internal-agents/control-plane-auth", () => {
   });
 
   it("rejects requests when verification is not configured", async () => {
-    const error = await assertRejects(
-      () =>
-        verifyControlPlaneRequest(
-          new Request("https://veryfront.test/internal/agents/stream"),
-          createVerificationCtx(),
-          "{}",
-        ),
-      ControlPlaneRequestError,
-      "Control-plane verification is not configured",
-    ) as ControlPlaneRequestError;
+    const originalValue = Deno.env.get(envKey);
+    Deno.env.delete(envKey);
 
-    assertEquals(error.status, 500);
+    try {
+      const error = await assertRejects(
+        () =>
+          verifyControlPlaneRequest(
+            new Request("https://veryfront.test/internal/agents/stream"),
+            createVerificationCtx(),
+            "{}",
+          ),
+        ControlPlaneRequestError,
+        "Control-plane verification is not configured",
+      ) as ControlPlaneRequestError;
+
+      assertEquals(error.status, 500);
+    } finally {
+      if (originalValue === undefined) {
+        Deno.env.delete(envKey);
+      } else {
+        Deno.env.set(envKey, originalValue);
+      }
+    }
   });
 
   it("rejects requests when the project context is unavailable", async () => {

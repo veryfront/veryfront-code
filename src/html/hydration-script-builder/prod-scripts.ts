@@ -1,6 +1,19 @@
 import { getLoaderScript, getRendererScript, getRouterScript } from "./templates/index.ts";
 import { buildNonceAttribute } from "../html-escape.ts";
 
+export const PROD_HYDRATION_MODULE_PATH = "/_veryfront/hydration-runtime.js";
+
+export function generateProdHydrationModule(): string {
+  return [
+    `import * as React from 'react';`,
+    `import { RouterProvider, useRouter as useRouterFromModule } from 'veryfront/router';`,
+    `import { PageContextProvider } from 'veryfront/context';`,
+    getRouterScript().trim(),
+    getLoaderScript().trim(),
+    getRendererScript().trim(),
+  ].join("\n\n");
+}
+
 export function getProdScripts(
   _slug: string,
   _params?: Record<string, string | string[]>,
@@ -8,17 +21,5 @@ export function getProdScripts(
   nonce?: string,
 ): string {
   const nonceAttr = buildNonceAttribute(nonce);
-
-  return `
-  <script type="module"${nonceAttr}>
-    import * as React from 'react';
-    import { RouterProvider, useRouter as useRouterFromModule } from 'veryfront/router';
-    import { PageContextProvider } from 'veryfront/context';
-
-    ${getRouterScript()}
-
-    ${getLoaderScript()}
-
-    ${getRendererScript()}
-  </script>`;
+  return `\n  <script type="module" src="${PROD_HYDRATION_MODULE_PATH}"${nonceAttr}></script>`;
 }

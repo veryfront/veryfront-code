@@ -32,6 +32,7 @@ export function generateHydrationData(
   params: Record<string, string | string[]>,
   props: ComponentProps,
   options: HTMLGenerationOptions,
+  serializeOptions?: { pretty?: boolean },
 ): string {
   const layouts = (options.nestedLayouts ?? [])
     .map((layout) => {
@@ -74,5 +75,5 @@ export function generateHydrationData(
     studioEmbed: options.studioEmbed,
   };
 
-  return JSON.stringify(data, null, 2);
+  return JSON.stringify(data, null, serializeOptions?.pretty ?? true ? 2 : undefined);
 }
