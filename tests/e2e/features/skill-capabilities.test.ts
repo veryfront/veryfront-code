@@ -163,12 +163,16 @@ export default workflow({
 ---
 name: writer-helper
 description: Helps agents turn notes into polished copy.
+allowed-tools: Read api:*
 ---
 Use this when the task needs a crisp final draft.
 `,
       "skills/writer-helper/references/style-guide.md": `
 Use short sentences.
 Prefer active voice.
+`,
+      "skills/writer-helper/assets/voice.txt": `
+Keep the tone warm and direct.
 `,
       "skills/writer-helper/scripts/echo-style.sh": `
 #!/usr/bin/env bash
@@ -243,6 +247,7 @@ export const POST = createChatHandler("researcher");
         toolId: string;
         result: {
           instructions: string;
+          allowedTools?: string[];
           references: string[];
           scripts: string[];
           note?: string;
@@ -257,6 +262,7 @@ export const POST = createChatHandler("researcher");
       assertEquals(loadSkillJson.success, true);
       assertEquals(loadSkillJson.toolId, "load-skill");
       assertStringIncludes(loadSkillJson.result.instructions, "crisp final draft");
+      assertEquals(loadSkillJson.result.allowedTools, ["Read", "api:*"]);
       assertEquals(loadSkillJson.result.references, ["references/style-guide.md"]);
       assertEquals(loadSkillJson.result.scripts, ["scripts/echo-style.sh"]);
 
@@ -283,6 +289,42 @@ export const POST = createChatHandler("researcher");
       assertEquals(loadSkillReferenceJson.toolId, "load-skill-reference");
       assertEquals(loadSkillReferenceJson.result.path, "references/style-guide.md");
       assertStringIncludes(loadSkillReferenceJson.result.content, "Prefer active voice.");
+
+      const { response: loadSkillAssetResponse, json: loadSkillAssetJson } = await postJson<{
+        success: boolean;
+        toolId: string;
+        result: {
+          path: string;
+          content: string;
+        };
+      }>(server, "/_dev/api/execute-tool", {
+        body: {
+          toolId: "load-skill-reference",
+          args: {
+            skillId: "writer-helper",
+            reference: "assets/voice.txt",
+          },
+        },
+      });
+      assertEquals(loadSkillAssetResponse.status, 200);
+      assertEquals(loadSkillAssetJson.success, true);
+      assertEquals(loadSkillAssetJson.result.path, "assets/voice.txt");
+      assertStringIncludes(loadSkillAssetJson.result.content, "warm and direct");
+
+      const { response: blockedSkillReferenceResponse, json: blockedSkillReferenceJson } =
+        await postJson<{
+          error: string;
+        }>(server, "/_dev/api/execute-tool", {
+          body: {
+            toolId: "load-skill-reference",
+            args: {
+              skillId: "writer-helper",
+              reference: "../SKILL.md",
+            },
+          },
+        });
+      assertEquals(blockedSkillReferenceResponse.status, 500);
+      assertStringIncludes(blockedSkillReferenceJson.error, "Skill path validation failed");
 
       const { response: executeSkillScriptResponse, json: executeSkillScriptJson } = await postJson<
         {
@@ -445,6 +487,131 @@ export const POST = createChatHandler("assistant");
         },
       });
 
+      assertEquals(chatResponse.status, 503);
+      assertEquals(chatJson.code, "NO_AI_AVAILABLE");
+      assertEquals(chatJson.fallback, "browser");
+      assertEquals(chatJson.model, "smollm2-135m");
+
+      expectServer(server).withoutErrors();
+    }, {
+      timeout: 60_000,
+      env: {
+        OPENAI_API_KEY: "",
+        ANTHROPIC_API_KEY: "",
+        GOOGLE_API_KEY: "",
+        VERYFRONT_DISABLE_LOCAL_AI: "1",
+      },
+    });
+  });
+
+  it("honors the skill's documented custom discovery path configuration", async () => {
+    const projectDir = await createSkillProject("custom-discovery", {
+      "veryfront.config.ts": `
+export default {
+  fs: { type: "local" },
+  directories: {
+    app: "src/app",
+  },
+  ai: {
+    tools: { discovery: { paths: ["tooling"] } },
+    agents: { discovery: { paths: ["crew"] } },
+    skills: { discovery: { paths: ["custom-skills"] } },
+  },
+};
+`,
+      "src/app/page.tsx": `
+export default function Home() {
+  return <main id="custom-discovery-page">Custom discovery paths</main>;
+}
+`,
+      "src/app/api/chat/route.ts": `
+import { createChatHandler } from "veryfront/agent";
+
+export const POST = createChatHandler("custom-assistant");
+`,
+      "tooling/get-weather.ts": `
+import { tool } from "veryfront/tool";
+import { z } from "zod";
+
+export default tool({
+  description: "Return a deterministic weather report",
+  inputSchema: z.object({ city: z.string() }),
+  execute: async ({ city }) => ({ city, forecast: "windy" }),
+});
+`,
+      "crew/custom-assistant.ts": `
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "custom-assistant",
+  system: "You are a helpful assistant loaded from a custom discovery path.",
+  skills: ["writer-helper"],
+  tools: { getWeather: true },
+  maxSteps: 3,
+});
+`,
+      "custom-skills/writer-helper/SKILL.md": `
+---
+name: writer-helper
+description: Loaded from a custom skills directory.
+---
+Use this skill when writing polished copy.
+`,
+    });
+
+    await withServer(projectDir, async (server) => {
+      const { response: pageResponse, html } = await fetchPage(server, "/");
+      expectPage(html, pageResponse)
+        .toRender()
+        .withElement("custom-discovery-page")
+        .withText("Custom discovery paths")
+        .withoutErrors();
+
+      const { response: toolResponse, json: toolJson } = await postJson<{
+        success: boolean;
+        toolId: string;
+        result: { city: string; forecast: string };
+      }>(server, "/_dev/api/execute-tool", {
+        body: {
+          toolId: "getWeather",
+          args: { city: "Stockholm" },
+        },
+      });
+      assertEquals(toolResponse.status, 200);
+      assertEquals(toolJson.success, true);
+      assertEquals(toolJson.toolId, "getWeather");
+      assertEquals(toolJson.result.forecast, "windy");
+
+      const { response: loadSkillResponse, json: loadSkillJson } = await postJson<{
+        success: boolean;
+        toolId: string;
+        result: { instructions: string };
+      }>(server, "/_dev/api/execute-tool", {
+        body: {
+          toolId: "load-skill",
+          args: { skillId: "writer-helper" },
+        },
+      });
+      assertEquals(loadSkillResponse.status, 200);
+      assertEquals(loadSkillJson.success, true);
+      assertEquals(loadSkillJson.toolId, "load-skill");
+      assertStringIncludes(loadSkillJson.result.instructions, "polished copy");
+
+      const { response: chatResponse, json: chatJson } = await postJson<{
+        code: string;
+        fallback: string;
+        model: string;
+      }>(server, "/api/chat", {
+        body: {
+          messages: [
+            {
+              id: "msg-1",
+              role: "user",
+              parts: [{ type: "text", text: "Hello from the custom discovery test" }],
+            },
+          ],
+        },
+      });
       assertEquals(chatResponse.status, 503);
       assertEquals(chatJson.code, "NO_AI_AVAILABLE");
       assertEquals(chatJson.fallback, "browser");
