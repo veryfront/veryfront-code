@@ -93,16 +93,138 @@ async function warmScenarioCache(
   }
 }
 
+async function withBenchmarkServer<T>(
+  environment: "preview" | "production",
+  fn: (baseUrl: string) => Promise<T>,
+): Promise<T> {
+  const server = await startBenchmarkServer({
+    framework: FRAMEWORK,
+    projectSlug: PROJECT_SLUG,
+    environment,
+    enableProfiling: ENABLE_PROFILING,
+  });
+
+  try {
+    return await fn(getRuntimeForPlaywrightProject(DEFAULT_RUNTIME).getUrl(PROJECT_SLUG));
+  } finally {
+    await server.stop();
+  }
+}
+
+async function measureScenario(
+  browser: Awaited<ReturnType<typeof chromium.launch>>,
+  baseUrl: string,
+  runtimeName: string,
+  scenario: (Awaited<ReturnType<typeof loadBenchmarkContract>>)["scenarios"][number],
+): Promise<Record<string, unknown>> {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    (window as typeof window & {
+      __vfBench?: {
+        lcp: number | null;
+        cls: number;
+        longTasks: number[];
+        inpDurations: number[];
+      };
+    }).__vfBench = { lcp: null, cls: 0, longTasks: [], inpDurations: [] };
+
+    new PerformanceObserver((entryList) => {
+      for (const entry of entryList.getEntries()) {
+        (window as typeof window & { __vfBench: { lcp: number | null } }).__vfBench.lcp =
+          entry.startTime;
+      }
+    }).observe({ type: "largest-contentful-paint", buffered: true });
+
+    new PerformanceObserver((entryList) => {
+      for (
+        const entry of entryList.getEntries() as Array<
+          PerformanceEntry & { hadRecentInput?: boolean; value?: number }
+        >
+      ) {
+        if (!entry.hadRecentInput) {
+          (window as typeof window & { __vfBench: { cls: number } }).__vfBench.cls += entry.value ??
+            0;
+        }
+      }
+    }).observe({ type: "layout-shift", buffered: true });
+
+    new PerformanceObserver((entryList) => {
+      for (const entry of entryList.getEntries()) {
+        (window as typeof window & { __vfBench: { longTasks: number[] } }).__vfBench.longTasks
+          .push(entry.duration);
+      }
+    }).observe({ type: "longtask", buffered: true });
+
+    new PerformanceObserver((entryList) => {
+      for (const entry of entryList.getEntries()) {
+        const typed = entry as PerformanceEntry & { interactionId?: number };
+        if ((typed.interactionId ?? 0) > 0) {
+          (window as typeof window & { __vfBench: { inpDurations: number[] } }).__vfBench
+            .inpDurations.push(entry.duration);
+        }
+      }
+    }).observe(
+      { type: "event", buffered: true, durationThreshold: 16 } as PerformanceObserverInit & {
+        durationThreshold: number;
+      },
+    );
+  });
+
+  try {
+    const page = await context.newPage();
+    const errors = setupErrorCollection(page);
+    const url = getScenarioPath(baseUrl, scenario, {
+      forceProductionScripts: FRAMEWORK === "veryfront",
+    });
+    const beforeProfiling = await fetchProfilingSnapshot(baseUrl);
+
+    if (REQUEST_MODE === "warm") {
+      await warmScenarioCache(page, url, scenario.requirements.hydration);
+      await page.close();
+    }
+
+    const measuredPage = REQUEST_MODE === "warm" ? await context.newPage() : page;
+    const measuredErrors = REQUEST_MODE === "warm" ? setupErrorCollection(measuredPage) : errors;
+    const response = await measuredPage.goto(url, { waitUntil: "networkidle" });
+
+    if (scenario.requirements.hydration) {
+      const button = measuredPage.locator("#bench-interactive-button");
+      if (await button.count()) {
+        await button.click();
+        await measuredPage.waitForTimeout(250);
+      }
+    }
+
+    const metrics = await collectScenarioMetrics(measuredPage);
+    const afterProfiling = await fetchProfilingSnapshot(baseUrl);
+    const profilingRecords = afterProfiling
+      ? afterProfiling.records.filter((record) =>
+        record.sequence > (beforeProfiling?.last_sequence ?? 0)
+      )
+      : [];
+    assertNoBrowserErrors(scenario.id, measuredErrors);
+
+    return {
+      scenario: scenario.id,
+      runtime: runtimeName,
+      project: PROJECT_SLUG,
+      request_mode: REQUEST_MODE,
+      url,
+      status: response?.status() ?? null,
+      metrics: Object.fromEntries(
+        Object.entries(metrics).map(([key, value]) => [key, ms(value) ?? value]),
+      ),
+      profiling: summarizeProfilingDelta(profilingRecords),
+    };
+  } finally {
+    await context.close();
+  }
+}
+
 async function main() {
   const contract = await loadBenchmarkContract();
   const runtime = getRuntimeForPlaywrightProject(DEFAULT_RUNTIME);
   const browser = await chromium.launch({ headless: true });
-  const server = await startBenchmarkServer({
-    framework: FRAMEWORK,
-    projectSlug: PROJECT_SLUG,
-    environment: runtime.modeName,
-    enableProfiling: ENABLE_PROFILING,
-  });
 
   try {
     const results: Array<Record<string, unknown>> = [];
@@ -110,105 +232,12 @@ async function main() {
     for (
       const scenario of contract.scenarios.filter((item) => item.kind === "browser_and_server")
     ) {
-      const context = await browser.newContext();
-      await context.addInitScript(() => {
-        (window as typeof window & {
-          __vfBench?: {
-            lcp: number | null;
-            cls: number;
-            longTasks: number[];
-            inpDurations: number[];
-          };
-        }).__vfBench = { lcp: null, cls: 0, longTasks: [], inpDurations: [] };
-
-        new PerformanceObserver((entryList) => {
-          for (const entry of entryList.getEntries()) {
-            (window as typeof window & { __vfBench: { lcp: number | null } }).__vfBench.lcp =
-              entry.startTime;
-          }
-        }).observe({ type: "largest-contentful-paint", buffered: true });
-
-        new PerformanceObserver((entryList) => {
-          for (
-            const entry of entryList.getEntries() as Array<
-              PerformanceEntry & { hadRecentInput?: boolean; value?: number }
-            >
-          ) {
-            if (!entry.hadRecentInput) {
-              (window as typeof window & { __vfBench: { cls: number } }).__vfBench.cls +=
-                entry.value ?? 0;
-            }
-          }
-        }).observe({ type: "layout-shift", buffered: true });
-
-        new PerformanceObserver((entryList) => {
-          for (const entry of entryList.getEntries()) {
-            (window as typeof window & { __vfBench: { longTasks: number[] } }).__vfBench.longTasks
-              .push(entry.duration);
-          }
-        }).observe({ type: "longtask", buffered: true });
-
-        new PerformanceObserver((entryList) => {
-          for (const entry of entryList.getEntries()) {
-            const typed = entry as PerformanceEntry & { interactionId?: number };
-            if ((typed.interactionId ?? 0) > 0) {
-              (window as typeof window & { __vfBench: { inpDurations: number[] } }).__vfBench
-                .inpDurations.push(entry.duration);
-            }
-          }
-        }).observe(
-          { type: "event", buffered: true, durationThreshold: 16 } as PerformanceObserverInit & {
-            durationThreshold: number;
-          },
-        );
-      });
-
-      const page = await context.newPage();
-      const errors = setupErrorCollection(page);
-      const url = getScenarioPath(runtime.getUrl(PROJECT_SLUG), scenario, {
-        forceProductionScripts: FRAMEWORK === "veryfront",
-      });
-      const beforeProfiling = await fetchProfilingSnapshot(runtime.getUrl(PROJECT_SLUG));
-
-      if (REQUEST_MODE === "warm") {
-        await warmScenarioCache(page, url, scenario.requirements.hydration);
-        await page.close();
-      }
-
-      const measuredPage = REQUEST_MODE === "warm" ? await context.newPage() : page;
-      const measuredErrors = REQUEST_MODE === "warm" ? setupErrorCollection(measuredPage) : errors;
-      const response = await measuredPage.goto(url, { waitUntil: "networkidle" });
-
-      if (scenario.requirements.hydration) {
-        const button = measuredPage.locator("#bench-interactive-button");
-        if (await button.count()) {
-          await button.click();
-          await measuredPage.waitForTimeout(250);
-        }
-      }
-
-      const metrics = await collectScenarioMetrics(measuredPage);
-      const afterProfiling = await fetchProfilingSnapshot(runtime.getUrl(PROJECT_SLUG));
-      const profilingRecords = afterProfiling
-        ? afterProfiling.records.filter((record) =>
-          record.sequence > (beforeProfiling?.last_sequence ?? 0)
-        )
-        : [];
-      assertNoBrowserErrors(scenario.id, measuredErrors);
-      results.push({
-        scenario: scenario.id,
-        runtime: runtime.name,
-        project: PROJECT_SLUG,
-        request_mode: REQUEST_MODE,
-        url,
-        status: response?.status() ?? null,
-        metrics: Object.fromEntries(
-          Object.entries(metrics).map(([key, value]) => [key, ms(value) ?? value]),
+      results.push(
+        await withBenchmarkServer(
+          runtime.modeName,
+          (baseUrl) => measureScenario(browser, baseUrl, runtime.name, scenario),
         ),
-        profiling: summarizeProfilingDelta(profilingRecords),
-      });
-
-      await context.close();
+      );
     }
 
     const summary = {
@@ -229,7 +258,6 @@ async function main() {
     console.log(`Wrote browser benchmark results to ${output}`);
   } finally {
     await browser.close();
-    await server.stop();
   }
 }
 

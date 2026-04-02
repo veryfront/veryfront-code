@@ -88,73 +88,104 @@ async function fetchProfilingSnapshot(baseUrl: string): Promise<ProfilingSnapsho
   }
 }
 
-async function main() {
-  const contract = await loadBenchmarkContract();
-  const runtime = getRuntimeForPlaywrightProject(DEFAULT_RUNTIME);
+async function withBenchmarkServer<T>(
+  environment: "preview" | "production",
+  fn: (baseUrl: string) => Promise<T>,
+): Promise<T> {
   const server = await startBenchmarkServer({
     framework: FRAMEWORK,
     projectSlug: PROJECT_SLUG,
-    environment: runtime.modeName,
+    environment,
     enableProfiling: ENABLE_PROFILING,
   });
 
   try {
-    const baseUrl = runtime.getUrl(PROJECT_SLUG);
-    const metricsBefore = FRAMEWORK === "veryfront"
-      ? await fetch(new URL("/_metrics", baseUrl)).then((res) => res.json()).catch(() => null)
-      : null;
-    const results: Array<Record<string, unknown>> = [];
-
-    for (const scenario of contract.scenarios) {
-      const url = getScenarioPath(baseUrl, scenario, {
-        forceProductionScripts: FRAMEWORK === "veryfront",
-      });
-      const beforeProfiling = await fetchProfilingSnapshot(baseUrl);
-      if (REQUEST_MODE === "warm") {
-        await warmScenario(url);
-      }
-      const summary = await runScenario(url, REQUESTS, CONCURRENCY);
-      const afterProfiling = await fetchProfilingSnapshot(baseUrl);
-      const profilingRecords = afterProfiling
-        ? afterProfiling.records.filter((record) =>
-          record.sequence > (beforeProfiling?.last_sequence ?? 0)
-        )
-        : [];
-      results.push({
-        scenario: scenario.id,
-        runtime: runtime.name,
-        project: PROJECT_SLUG,
-        request_mode: REQUEST_MODE,
-        url,
-        metrics: summary,
-        profiling: summarizeProfilingDelta(profilingRecords),
-      });
-    }
-
-    const metricsAfter = FRAMEWORK === "veryfront"
-      ? await fetch(new URL("/_metrics", baseUrl)).then((res) => res.json()).catch(() => null)
-      : null;
-
-    const output = await writeBenchmarkResult(
-      "server",
-      `server-${FRAMEWORK}-${runtime.name}-${PROJECT_SLUG}-${REQUEST_MODE}-${RUN_ID}`,
-      {
-        generated_at: new Date().toISOString(),
-        framework: FRAMEWORK,
-        runtime: runtime.name,
-        project: PROJECT_SLUG,
-        request_mode: REQUEST_MODE,
-        profiling_enabled: ENABLE_PROFILING,
-        metrics_before: metricsBefore,
-        metrics_after: metricsAfter,
-        results,
-      },
-    );
-
-    console.log(`Wrote server benchmark results to ${output}`);
+    return await fn(getRuntimeForPlaywrightProject(DEFAULT_RUNTIME).getUrl(PROJECT_SLUG));
   } finally {
     await server.stop();
   }
+}
+
+async function measureScenario(
+  baseUrl: string,
+  runtimeName: string,
+  scenario: (Awaited<ReturnType<typeof loadBenchmarkContract>>)["scenarios"][number],
+): Promise<Record<string, unknown>> {
+  const url = getScenarioPath(baseUrl, scenario, {
+    forceProductionScripts: FRAMEWORK === "veryfront",
+  });
+  const beforeProfiling = await fetchProfilingSnapshot(baseUrl);
+  if (REQUEST_MODE === "warm") {
+    await warmScenario(url);
+  }
+  const summary = await runScenario(url, REQUESTS, CONCURRENCY);
+  const afterProfiling = await fetchProfilingSnapshot(baseUrl);
+  const profilingRecords = afterProfiling
+    ? afterProfiling.records.filter((record) =>
+      record.sequence > (beforeProfiling?.last_sequence ?? 0)
+    )
+    : [];
+
+  return {
+    scenario: scenario.id,
+    runtime: runtimeName,
+    project: PROJECT_SLUG,
+    request_mode: REQUEST_MODE,
+    url,
+    metrics: summary,
+    profiling: summarizeProfilingDelta(profilingRecords),
+  };
+}
+
+async function main() {
+  const contract = await loadBenchmarkContract();
+  const runtime = getRuntimeForPlaywrightProject(DEFAULT_RUNTIME);
+  const results: Array<Record<string, unknown>> = [];
+  let metricsBefore: unknown = null;
+  let metricsAfter: unknown = null;
+
+  if (REQUEST_MODE === "cold") {
+    for (const scenario of contract.scenarios) {
+      results.push(
+        await withBenchmarkServer(
+          runtime.modeName,
+          (baseUrl) => measureScenario(baseUrl, runtime.name, scenario),
+        ),
+      );
+    }
+  } else {
+    await withBenchmarkServer(runtime.modeName, async (baseUrl) => {
+      metricsBefore = FRAMEWORK === "veryfront"
+        ? await fetch(new URL("/_metrics", baseUrl)).then((res) => res.json()).catch(() => null)
+        : null;
+
+      for (const scenario of contract.scenarios) {
+        results.push(await measureScenario(baseUrl, runtime.name, scenario));
+      }
+
+      metricsAfter = FRAMEWORK === "veryfront"
+        ? await fetch(new URL("/_metrics", baseUrl)).then((res) => res.json()).catch(() => null)
+        : null;
+    });
+  }
+
+  const output = await writeBenchmarkResult(
+    "server",
+    `server-${FRAMEWORK}-${runtime.name}-${PROJECT_SLUG}-${REQUEST_MODE}-${RUN_ID}`,
+    {
+      generated_at: new Date().toISOString(),
+      framework: FRAMEWORK,
+      runtime: runtime.name,
+      project: PROJECT_SLUG,
+      request_mode: REQUEST_MODE,
+      profiling_enabled: ENABLE_PROFILING,
+      metrics_before: metricsBefore,
+      metrics_after: metricsAfter,
+      results,
+    },
+  );
+
+  console.log(`Wrote server benchmark results to ${output}`);
 }
 
 if (import.meta.main) {
