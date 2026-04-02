@@ -14,6 +14,24 @@
 import { type EnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 
+function toEnabledFlag<T extends string>(enabled: boolean, truthyValue: T): T | undefined {
+  return enabled ? truthyValue : undefined;
+}
+
+function toCliBooleanFlag(enabled: boolean): "1" | undefined {
+  return toEnabledFlag(enabled, "1");
+}
+
+function getBaseOtelConfig(env: EnvironmentConfig): {
+  veryfrontFlag?: string;
+  endpoint?: string;
+} {
+  return {
+    veryfrontFlag: toCliBooleanFlag(env.otelEnabled),
+    endpoint: env.otelEndpoint,
+  };
+}
+
 export function getDisableLruIntervalEnv(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.disableLruInterval;
 }
@@ -108,13 +126,13 @@ export function isDenoTestingEnv(env: EnvironmentConfig = getEnvironmentConfig()
 }
 
 export function getNoColorEnv(env: EnvironmentConfig = getEnvironmentConfig()): string | undefined {
-  return env.noColor ? "1" : undefined;
+  return toCliBooleanFlag(env.noColor);
 }
 
 export function getForceColorEnv(
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): string | undefined {
-  return env.forceColor ? "1" : undefined;
+  return toCliBooleanFlag(env.forceColor);
 }
 
 export function isRscExperimentalEnabled(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
@@ -143,14 +161,10 @@ export function getOtelTracingConfig(env: EnvironmentConfig = getEnvironmentConf
   headers?: string;
   tracesHeaders?: string;
 } {
-  const enabledFlag = env.otelEnabled ? "true" : undefined;
-  const veryfrontFlag = env.otelEnabled ? "1" : undefined;
-
   return {
-    enabledFlag,
-    veryfrontFlag,
+    enabledFlag: toEnabledFlag(env.otelEnabled, "true"),
+    ...getBaseOtelConfig(env),
     serviceName: env.otelServiceName,
-    endpoint: env.otelEndpoint,
     tracesEndpoint: env.otelTracesEndpoint,
     exporter: env.otelTracesExporter,
     headers: env.otelHeaders,
@@ -166,9 +180,8 @@ export function getOtelMetricsConfig(env: EnvironmentConfig = getEnvironmentConf
   exporter?: string;
 } {
   return {
-    enabledFlag: env.otelMetricsEnabled ? "1" : undefined,
-    veryfrontFlag: env.otelEnabled ? "1" : undefined,
-    endpoint: env.otelEndpoint,
+    enabledFlag: toCliBooleanFlag(env.otelMetricsEnabled),
+    ...getBaseOtelConfig(env),
     metricsEndpoint: env.otelMetricsEndpoint,
     exporter: env.otelMetricsExporter,
   };

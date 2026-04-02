@@ -7,14 +7,23 @@
  */
 
 import { serverLogger } from "#veryfront/utils";
+import { join } from "#veryfront/compat/path/index.ts";
+import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { extractCandidatesFromFiles, getProjectCSS } from "./tailwind-compiler.ts";
 import {
   createPreparedProjectCSSContext,
   storePreparedProjectCSS,
+  tryGetPreparedProjectCSS,
 } from "./prepared-project-css-cache.ts";
-import type { StyleScopeProfile } from "./style-scope-profile.ts";
+import {
+  shouldIncludeStylePath,
+  shouldTraverseStyleDirectory,
+  type StyleScopeProfile,
+} from "./style-scope-profile.ts";
 
 const logger = serverLogger.component("css-pregeneration");
+const inFlightPreparedCSSBuilds = new Map<string, Promise<void>>();
+const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
 
 interface CSSPregenerationOptions {
   /** Project slug for cache keying */
@@ -45,6 +54,12 @@ export interface PreparedCSSArtifactBuildResult {
   candidateCount: number;
   fromCache: boolean;
   context: ReturnType<typeof createPreparedProjectCSSContext>;
+}
+
+interface LocalProjectSourceFilesOptions {
+  projectDir: string;
+  styleProfile: StyleScopeProfile;
+  fs?: FileSystem;
 }
 
 export async function buildPreparedCSSArtifactFromFiles(
@@ -91,6 +106,123 @@ export async function buildPreparedCSSArtifactFromFiles(
     fromCache: result.fromCache,
     context,
   };
+}
+
+export async function collectLocalProjectSourceFiles(
+  options: LocalProjectSourceFilesOptions,
+): Promise<Array<{ path: string; content?: string }>> {
+  const fs = options.fs ?? createFileSystem();
+  const files: Array<{ path: string; content?: string }> = [];
+
+  const scanDir = async (directoryPath: string): Promise<void> => {
+    let entries: AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
+    try {
+      entries = fs.readDir(directoryPath);
+    } catch {
+      return;
+    }
+
+    for await (const entry of entries) {
+      const fullPath = join(directoryPath, entry.name);
+
+      if (entry.isDirectory) {
+        if (shouldTraverseStyleDirectory(options.styleProfile, fullPath, options.projectDir)) {
+          await scanDir(fullPath);
+        }
+        continue;
+      }
+
+      if (!entry.isFile) continue;
+      if (!shouldIncludeStylePath(options.styleProfile, fullPath, options.projectDir)) continue;
+      if (!SOURCE_EXTENSIONS.some((extension) => entry.name.endsWith(extension))) continue;
+
+      try {
+        files.push({
+          path: fullPath,
+          content: await fs.readTextFile(fullPath),
+        });
+      } catch {
+        // ignore unreadable files during warmup
+      }
+    }
+  };
+
+  await scanDir(options.projectDir);
+  return files;
+}
+
+export async function readLocalProjectStylesheet(
+  projectDir: string,
+  stylesheetPath?: string,
+  fs: FileSystem = createFileSystem(),
+): Promise<string | undefined> {
+  const candidatePaths = stylesheetPath ? [stylesheetPath.replace(/^\/+/, "")] : [
+    "globals.css",
+    "global.css",
+    "styles/globals.css",
+    "app/globals.css",
+    "src/globals.css",
+    "src/styles/globals.css",
+  ];
+
+  for (const relativePath of candidatePaths) {
+    const absolutePath = join(projectDir, relativePath);
+    try {
+      return await fs.readTextFile(absolutePath);
+    } catch {
+      // keep searching
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Trigger prepared CSS generation in the background when the artifact is not
+ * already cached or currently being built.
+ */
+export async function warmPreparedCSSArtifactFromFiles(
+  options: CSSPregenerationOptions,
+): Promise<boolean> {
+  const stylesheet = options.stylesheet ??
+    findStylesheetFromFiles(options.files, options.stylesheetPath);
+  const context = createPreparedProjectCSSContext(
+    options.projectSlug,
+    options.projectVersion,
+    stylesheet,
+    options.styleProfile.hash,
+    {
+      minify: options.minify ?? true,
+      environment: options.environment ?? "preview",
+      buildMode: options.buildMode ?? "production",
+    },
+  );
+
+  if (await tryGetPreparedProjectCSS(context)) return false;
+  if (inFlightPreparedCSSBuilds.has(context.cacheKey)) return false;
+
+  const task = buildPreparedCSSArtifactFromFiles({
+    ...options,
+    stylesheet,
+  }).then(() => {
+    logger.debug("Warm prepared CSS complete", {
+      projectSlug: options.projectSlug,
+      projectVersion: options.projectVersion,
+      cacheKey: context.cacheKey,
+    });
+  }).catch((error) => {
+    logger.debug("Warm prepared CSS failed", {
+      projectSlug: options.projectSlug,
+      projectVersion: options.projectVersion,
+      cacheKey: context.cacheKey,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }).finally(() => {
+    inFlightPreparedCSSBuilds.delete(context.cacheKey);
+  });
+
+  inFlightPreparedCSSBuilds.set(context.cacheKey, task);
+  return true;
 }
 
 /**

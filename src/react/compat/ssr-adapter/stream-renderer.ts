@@ -12,8 +12,18 @@ interface VeryfrontGlobal {
   __VERYFRONT_DEBUG__?: boolean;
 }
 
+let ssrTimeoutMs = SSR_TIMEOUT_MS;
+
 function isDebugMode(): boolean {
   return Boolean((globalThis as VeryfrontGlobal).__VERYFRONT_DEBUG__ || isDebugEnvEnabled());
+}
+
+export function __setSSRStreamTimeoutForTests(timeoutMs: number): void {
+  ssrTimeoutMs = timeoutMs;
+}
+
+export function __resetSSRStreamRendererForTests(): void {
+  ssrTimeoutMs = SSR_TIMEOUT_MS;
 }
 
 async function renderToReadableStreamImpl(
@@ -36,9 +46,9 @@ async function renderToReadableStreamImpl(
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
-    logger.error("SSR_TIMEOUT aborting React render", { timeoutMs: SSR_TIMEOUT_MS });
-    controller.abort(new Error(`SSR timeout: React render exceeded ${SSR_TIMEOUT_MS}ms`));
-  }, SSR_TIMEOUT_MS);
+    logger.error("SSR_TIMEOUT aborting React render", { timeoutMs: ssrTimeoutMs });
+    controller.abort(new Error(`SSR timeout: React render exceeded ${ssrTimeoutMs}ms`));
+  }, ssrTimeoutMs);
 
   try {
     if (debug) logger.info("SSR renderToReadableStream started");
@@ -82,7 +92,7 @@ async function renderToReadableStreamImpl(
     if (isAbort) {
       logger.error("SSR_TIMEOUT React render was aborted", {
         durationMs,
-        timeoutMs: SSR_TIMEOUT_MS,
+        timeoutMs: ssrTimeoutMs,
       });
       throw error;
     }
@@ -128,7 +138,7 @@ function renderToPipeableStreamImpl(
       if (settled) return;
       settled = true;
 
-      logger.error("SSR_TIMEOUT aborting pipeable React render", { timeoutMs: SSR_TIMEOUT_MS });
+      logger.error("SSR_TIMEOUT aborting pipeable React render", { timeoutMs: ssrTimeoutMs });
 
       if (abortFn) {
         try {
@@ -140,10 +150,10 @@ function renderToPipeableStreamImpl(
 
       reject(
         new Error(
-          `SSR timeout: React render exceeded ${SSR_TIMEOUT_MS}ms - likely a hanging data fetch`,
+          `SSR timeout: React render exceeded ${ssrTimeoutMs}ms - likely a hanging data fetch`,
         ),
       );
-    }, SSR_TIMEOUT_MS);
+    }, ssrTimeoutMs);
 
     try {
       const { pipe, abort } = renderToPipeableStream(element, {

@@ -1,13 +1,9 @@
-function getOpenScriptTag(nonce?: string): string {
-  return nonce ? `<script nonce="${nonce}">` : "<script>";
-}
+import { buildNonceAttribute } from "../html-escape.ts";
 
 export function generateDevErrorLoggerScript(nonce?: string): string {
-  const openScriptTag = getOpenScriptTag(nonce);
-
   return `
   <!-- Client-side error logger -->
-  ${openScriptTag}
+  <script${buildNonceAttribute(nonce)}>
     (function() {
       const logToServer = (level, message, details) => {
         try {

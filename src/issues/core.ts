@@ -119,24 +119,21 @@ export function serializeYaml(metadata: IssueMetadata): string {
   lines.push(`id: ${metadata.id}`);
   lines.push(`title: "${metadata.title.replace(/"/g, '\\"')}"`);
   lines.push(`state: ${metadata.state}`);
-  lines.push(
-    metadata.labels.length
-      ? `labels: [${metadata.labels.map((l) => `"${l}"`).join(", ")}]`
-      : "labels: []",
-  );
+  lines.push(serializeYamlStringArray("labels", metadata.labels));
 
   if (metadata.milestone) lines.push(`milestone: ${metadata.milestone}`);
 
-  lines.push(
-    metadata.assignees.length
-      ? `assignees: [${metadata.assignees.map((a) => `"${a}"`).join(", ")}]`
-      : "assignees: []",
-  );
+  lines.push(serializeYamlStringArray("assignees", metadata.assignees));
 
   lines.push(`created_at: ${metadata.created_at}`);
   lines.push(`updated_at: ${metadata.updated_at}`);
 
   return lines.join("\n");
+}
+
+function serializeYamlStringArray(field: string, values: string[]): string {
+  if (!values.length) return `${field}: []`;
+  return `${field}: [${values.map((value) => `"${value}"`).join(", ")}]`;
 }
 
 /**
@@ -156,7 +153,7 @@ export function parseIssue(content: string, path: string): Issue | null {
   try {
     const metadata = validateMetadata(parseYaml(parsed.frontmatter));
     return { metadata, body: parsed.body, path };
-  } catch (_) {
+  } catch {
     // expected: invalid or unparseable frontmatter metadata
     return null;
   }
@@ -201,7 +198,7 @@ export class IssuesManager {
         const id = entry.name.replace(/\.md$/, "");
         if (ISSUE_ID_PATTERN.test(id)) ids.push(id);
       }
-    } catch (_) {
+    } catch {
       // expected: directory doesn't exist yet
     }
 
@@ -229,10 +226,10 @@ export class IssuesManager {
       updated_at: now,
     };
 
-    const path = `${ISSUES_DIR}/${id}.md`;
-    const issue: Issue = { metadata, body: validated.body ?? "", path };
+    const issuePath = `${ISSUES_DIR}/${id}.md`;
+    const issue: Issue = { metadata, body: validated.body ?? "", path: issuePath };
 
-    await this.fs.writeTextFile(join(this.projectDir, path), serializeIssue(issue));
+    await this.fs.writeTextFile(join(this.projectDir, issuePath), serializeIssue(issue));
     return issue;
   }
 
@@ -240,12 +237,12 @@ export class IssuesManager {
    * Get an issue by ID
    */
   async get(id: string): Promise<Issue | null> {
-    const path = `${ISSUES_DIR}/${id}.md`;
+    const issuePath = `${ISSUES_DIR}/${id}.md`;
 
     try {
-      const content = await this.fs.readTextFile(join(this.projectDir, path));
-      return parseIssue(content, path);
-    } catch (_) {
+      const content = await this.fs.readTextFile(join(this.projectDir, issuePath));
+      return parseIssue(content, issuePath);
+    } catch {
       // expected: issue file may not exist
       return null;
     }
@@ -284,12 +281,12 @@ export class IssuesManager {
    * Delete an issue
    */
   async delete(id: string): Promise<boolean> {
-    const path = `${ISSUES_DIR}/${id}.md`;
+    const issuePath = `${ISSUES_DIR}/${id}.md`;
 
     try {
-      await this.fs.remove(join(this.projectDir, path));
+      await this.fs.remove(join(this.projectDir, issuePath));
       return true;
-    } catch (_) {
+    } catch {
       // expected: issue file may not exist
       return false;
     }
@@ -325,16 +322,16 @@ export class IssuesManager {
     }
 
     const sortKey = validated.sortBy ?? "created_at";
-    const sortDir = validated.sortDirection ?? "desc";
+    const sortDirection = validated.sortDirection ?? "desc";
 
     issues.sort((a, b) => {
-      let cmp: number;
+      let comparison: number;
       if (sortKey === "id") {
-        cmp = a.metadata.id.localeCompare(b.metadata.id);
+        comparison = a.metadata.id.localeCompare(b.metadata.id);
       } else {
-        cmp = String(a.metadata[sortKey]).localeCompare(String(b.metadata[sortKey]));
+        comparison = String(a.metadata[sortKey]).localeCompare(String(b.metadata[sortKey]));
       }
-      return sortDir === "desc" ? -cmp : cmp;
+      return sortDirection === "desc" ? -comparison : comparison;
     });
 
     const total = issues.length;

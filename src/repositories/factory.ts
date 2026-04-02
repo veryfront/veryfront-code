@@ -63,18 +63,10 @@ export class RepositoryFactory {
 
 export function extractRepositoryContext(ctx: HandlerContext): RepositoryContext {
   const projectId = ctx.projectSlug ?? ctx.projectId ?? "unknown";
-
-  let environment: "production" | "preview" = "preview";
-  if (ctx.resolvedEnvironment) {
-    environment = ctx.resolvedEnvironment;
-  } else if (ctx.requestContext?.mode === "production") {
-    environment = "production";
-  }
-
-  const versionId = ctx.releaseId ??
-    ctx.enriched?.contentSourceId ??
-    ctx.enriched?.releaseId ??
-    "draft";
+  const environment = ctx.resolvedEnvironment ??
+    (ctx.requestContext?.mode === "production" ? "production" : "preview");
+  const versionId = ctx.releaseId ?? ctx.enriched?.contentSourceId ??
+    ctx.enriched?.releaseId ?? "draft";
 
   return { projectId, environment, versionId };
 }

@@ -39,6 +39,7 @@ function addMapping(
   index: ModuleTargetIndex,
   specifier: string,
   target: string,
+  options?: { preserveExistingExact?: boolean },
 ): void {
   if (!target.startsWith(SRC_PREFIX)) return;
 
@@ -50,6 +51,7 @@ function addMapping(
     return;
   }
 
+  if (options?.preserveExistingExact && index.exactTargets.has(specifier)) return;
   index.exactTargets.set(specifier, target);
 }
 
@@ -91,12 +93,14 @@ for (const [key, target] of Object.entries(config.exports ?? {})) {
   if (typeof target !== "string") continue;
 
   if (key === ".") {
-    addMapping(veryfrontTargetIndex, "veryfront", target);
+    addMapping(veryfrontTargetIndex, "veryfront", target, { preserveExistingExact: true });
     continue;
   }
 
   if (!key.startsWith("./")) continue;
-  addMapping(veryfrontTargetIndex, `veryfront/${key.slice(2)}`, target);
+  addMapping(veryfrontTargetIndex, `veryfront/${key.slice(2)}`, target, {
+    preserveExistingExact: true,
+  });
 }
 
 finalizeIndex(veryfrontTargetIndex);

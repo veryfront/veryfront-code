@@ -20,7 +20,7 @@ import { describe, it } from "#veryfront/testing/bdd";
 
 describe("003.1 & 003.3 Cache Behavior Fixes", () => {
   describe("003.1 - File Path Extraction", () => {
-    const ALL_FILE_PATHS_PATTERN = /file:\/\/([^"'\s]+\.(?:mjs|js))/gi;
+    const ALL_FILE_PATHS_PATTERN = /file:\/\/([^"'\s]+\.(?:mjs|js|tsx|ts|jsx)(?:\?[^"'\s]*)?)/gi;
 
     function extractAllFilePaths(code: string): string[] {
       const paths: string[] = [];
@@ -28,7 +28,7 @@ describe("003.1 & 003.3 Cache Behavior Fixes", () => {
 
       let match: RegExpExecArray | null;
       while ((match = ALL_FILE_PATHS_PATTERN.exec(code)) !== null) {
-        const path = match[1];
+        const path = match[1]?.replace(/\?.*$/, "");
         if (seen.has(path)) continue;
 
         seen.add(path);
@@ -93,6 +93,16 @@ describe("003.1 & 003.3 Cache Behavior Fixes", () => {
       const paths = extractAllFilePaths(code);
       assertEquals(paths.length, 1);
       assert(paths.includes("/tmp/legacy-module.js"));
+    });
+
+    it("should handle legacy .tsx cache paths", () => {
+      const code = `
+        import Markdown from "file:///app/.cache/markdown.tsx";
+      `;
+
+      const paths = extractAllFilePaths(code);
+      assertEquals(paths.length, 1);
+      assert(paths.includes("/app/.cache/markdown.tsx"));
     });
   });
 

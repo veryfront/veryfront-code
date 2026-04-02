@@ -1,5 +1,9 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  clearAllManifests,
+  recordSSRModules,
+} from "#veryfront/modules/manifest/route-module-manifest.ts";
 import { wrapInHTMLShell } from "./html-shell-generator.ts";
 import type { RenderMetadata } from "#veryfront/types";
 import type { HTMLGenerationOptions } from "./types.ts";
@@ -128,6 +132,32 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
+    it("should use projectSlug for manifest-based module preloads", async () => {
+      clearAllManifests();
+      recordSSRModules("project-slug", "test-page", [
+        "_veryfront/react/components/BenchInteractiveButton.js",
+      ]);
+
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          mode: "production",
+          environment: "production",
+          isLocalProject: false,
+          pagePath: "pages/test-page.tsx",
+          projectId: "default",
+          projectSlug: "project-slug",
+        }),
+      );
+      clearAllManifests();
+
+      assertStringIncludes(
+        result,
+        '<link rel="modulepreload" href="/_vf_modules/_veryfront/react/components/BenchInteractiveButton.js">',
+      );
+    });
+
     it("should include Tailwind CSS link in development mode", async () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",
@@ -161,6 +191,28 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(
         result,
         "<!-- Tailwind CSS: Server-side JIT compiled -->",
+      );
+    });
+
+    it("should prefer projectSlug over default projectId for production CSS caching", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta({ slug: "page-slug" }),
+        createOptions({
+          mode: "production",
+          environment: "production",
+          isLocalProject: false,
+          projectId: "default",
+          projectSlug: "project-slug",
+          globalCSS: '@import "tailwindcss";',
+        }),
+      );
+
+      assertStringIncludes(result, "/_vf/css/");
+      assertStringIncludes(result, ".css");
+      assert(
+        !result.includes('href="/_vf/css/.css"'),
+        "Should emit a real project-scoped CSS hash when projectSlug is available",
       );
     });
 
@@ -222,8 +274,41 @@ describe("html-generation/html-shell-generator", () => {
         createOptions({ mode: "production", isLocalProject: false }),
       );
 
-      assertStringIncludes(result, "hydrateRoot");
+      assertStringIncludes(result, "/_veryfront/hydration-runtime.js");
+      assertStringIncludes(result, 'rel="modulepreload" href="/_veryfront/hydration-runtime.js"');
       assert(!result.includes("Client-side error logger"));
+    });
+
+    it("should allow local production renders to force production scripts", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          mode: "production",
+          environment: "production",
+          isLocalProject: true,
+          forceProductionScripts: true,
+        }),
+      );
+
+      assertStringIncludes(result, "/_veryfront/hydration-runtime.js");
+      assert(!result.includes("Client-side error logger"));
+      assert(!result.includes("veryfront-error-overlay"));
+    });
+
+    it("should suppress preview hmr script when production scripts are forced", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          mode: "production",
+          environment: "preview",
+          isLocalProject: true,
+          forceProductionScripts: true,
+        }),
+      );
+
+      assert(!result.includes("preview-hmr.js"));
     });
 
     it("should handle layout disabled", async () => {

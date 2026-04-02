@@ -32,6 +32,10 @@ import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
 import { CorsHandler } from "../handlers/response/cors.ts";
 import { HealthHandler } from "../handlers/monitoring/health.handler.ts";
 import { MetricsHandler } from "../handlers/monitoring/metrics.handler.ts";
+import {
+  finalizeRequestProfiling,
+  runWithRequestProfiling,
+} from "#veryfront/observability/request-profiler.ts";
 import { ClientLogHandler } from "../handlers/monitoring/client-log.handler.ts";
 import { MemoryDebugHandler } from "../handlers/monitoring/memory.handler.ts";
 import { DevEndpointsHandler } from "../handlers/dev/endpoints.handler.ts";
@@ -42,6 +46,7 @@ import { StudioBridgeModulesHandler } from "../handlers/studio/bridge-modules.ha
 import { StaticHandler } from "../handlers/request/static.handler.ts";
 import { SnippetHandler } from "../handlers/request/snippet.handler.ts";
 import { LibModulesHandler } from "../handlers/request/lib-modules.handler.ts";
+import { ProdHydrationModuleHandler } from "../handlers/request/prod-hydration-module.handler.ts";
 import { CSSHandler } from "../handlers/request/css.handler.ts";
 import { RSCHandler } from "../handlers/request/rsc/index.ts";
 import { ModuleHandler } from "../handlers/request/module/index.ts";
@@ -97,6 +102,7 @@ import {
   isLightweightPath,
   isMonitoringPath,
   isWebSocketPath,
+  shouldSkipEnrichedContext,
 } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 import {
@@ -136,6 +142,7 @@ export const HANDLER_NAMES = [
   "DevDashboardHandler",
   "ProjectsHandler",
   "StudioBridgeModulesHandler",
+  "ProdHydrationModuleHandler",
   "CSSHandler",
   "DevFileHandler",
   "SnippetHandler",
@@ -190,6 +197,7 @@ const handlerFactories: Record<
   DevDashboardHandler: () => new DevDashboardHandler(),
   ProjectsHandler: () => new ProjectsHandler(),
   StudioBridgeModulesHandler: () => new StudioBridgeModulesHandler(),
+  ProdHydrationModuleHandler: () => new ProdHydrationModuleHandler(),
   CSSHandler: () => new CSSHandler(),
   DevFileHandler: () => new DevFileHandler(),
   SnippetHandler: () => new SnippetHandler(),
@@ -549,7 +557,7 @@ export function createVeryfrontHandler(
             return envRes.errorResponse;
           }
 
-          const isInternalAgentControlPlanePath = url.pathname.startsWith("/internal/agents/");
+          const skipRenderEnrichedContext = shouldSkipEnrichedContext(url.pathname);
 
           // Build handler context
           const ctx = buildHandlerContext({
@@ -571,7 +579,7 @@ export function createVeryfrontHandler(
             isLocalProject: adapterRes.isLocalProject,
             moduleServerUrl: opts.moduleServerUrl,
             environmentId: headers.environmentId,
-            skipEnrichedContext: isInternalAgentControlPlanePath,
+            skipEnrichedContext: skipRenderEnrichedContext,
           });
 
           // Fetch per-project env vars for remote projects
@@ -602,18 +610,41 @@ export function createVeryfrontHandler(
           // reqCtx.token indicates the request came through the proxy with auth.
           // Without it (standalone / test), host env must remain accessible.
           const shouldIsolateEnv = !adapterRes.isLocalProject && !!reqCtx.token;
-          const response = await withSpan(
-            SpanNames.HANDLER_EXECUTE,
-            () => {
-              if (shouldIsolateEnv) {
-                return runWithProjectEnv(envVarsForRequest, executeRoute);
-              }
-              return executeRoute();
-            },
+          const response = await runWithRequestProfiling(
             {
-              "handler.project_slug": projectRes.projectSlug || "unknown",
-              "handler.path": url.pathname,
-              "handler.method": req.method,
+              category: url.pathname.startsWith("/_vf_styles/")
+                ? "css"
+                : url.pathname.startsWith("/_vf_modules/")
+                ? "module"
+                : url.pathname.startsWith("/api/")
+                ? "api"
+                : "html",
+              method: req.method,
+              pathname: url.pathname,
+              projectSlug: projectRes.projectSlug,
+              requestMode: envRes.resolvedEnvironment,
+            },
+            async () => {
+              let routedResponse: Response | null | undefined;
+              try {
+                routedResponse = await withSpan(
+                  SpanNames.HANDLER_EXECUTE,
+                  () => {
+                    if (shouldIsolateEnv) {
+                      return runWithProjectEnv(envVarsForRequest, executeRoute);
+                    }
+                    return executeRoute();
+                  },
+                  {
+                    "handler.project_slug": projectRes.projectSlug || "unknown",
+                    "handler.path": url.pathname,
+                    "handler.method": req.method,
+                  },
+                );
+                return routedResponse;
+              } finally {
+                finalizeRequestProfiling(routedResponse?.status);
+              }
             },
           );
 

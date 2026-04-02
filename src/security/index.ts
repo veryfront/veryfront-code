@@ -30,13 +30,10 @@ export type {
   ValidatedHandlerFunction,
 } from "./input-validation/index.ts";
 
-export {
-  AuthHandler,
-  loadSecurityConfig,
-  SecurityConfigLoader,
-  setCors,
-} from "./http/handlers-index.ts";
-export type { CORSConfig, CSPDirectives, SecurityConfig } from "./http/handlers-index.ts";
+export { AuthHandler } from "./http/auth.ts";
+export { SecurityConfigLoader } from "./http/config.ts";
+export { loadSecurityConfig, setCors } from "./http/middleware/index.ts";
+export type { CORSConfig, CSPDirectives, SecurityConfig } from "./http/middleware/index.ts";
 
 export { CsrfHandler } from "./http/csrf/index.ts";
 export { applyCsrfCookie, generateCsrfToken, validateCsrf } from "./csrf/index.ts";

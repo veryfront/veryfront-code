@@ -2,7 +2,13 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
-import { makeTempDir, readTextFile, remove } from "#veryfront/testing/deno-compat.ts";
+import {
+  makeTempDir,
+  mkdir,
+  readTextFile,
+  remove,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
@@ -33,21 +39,23 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
   it("recovers missing vfmod dependencies for redis cache entries", async () => {
     const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
     const distributedCache = new FakeDistributedCache();
-    const vfmodDir = join(getMdxEsmCacheDir(), "project-a", "preview-main");
+    const projectId = `project-${crypto.randomUUID()}`;
+    const contentSourceId = `preview-${crypto.randomUUID()}`;
+    const vfmodDir = join(getMdxEsmCacheDir(), projectId, contentSourceId);
     const childPath = join(vfmodDir, "vfmod-child.mjs");
 
     try {
       __injectCachesForTests({ cacheBackend: distributedCache });
 
       await distributedCache.set(
-        buildMdxEsmModuleRecoveryCacheKey("project-a", "preview-main", "vfmod-child.mjs"),
+        buildMdxEsmModuleRecoveryCacheKey(projectId, contentSourceId, "vfmod-child.mjs"),
         tokenizeAllVeryFrontPaths(`export default "recovered";`),
       );
 
       const cacheManager = new SSRCacheManager({
         projectDir,
-        projectId: "project-a",
-        contentSourceId: "preview-main",
+        projectId,
+        contentSourceId,
         adapter: denoAdapter,
         dev: true,
       });
@@ -66,6 +74,75 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
       assertEquals(await readTextFile(childPath), `export default "recovered";`);
     } finally {
       __injectCachesForTests(null);
+      await remove(vfmodDir, { recursive: true }).catch(() => {});
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects redis cache entries with missing legacy .cache TSX imports", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
+    const projectId = `project-${crypto.randomUUID()}`;
+    const contentSourceId = `preview-${crypto.randomUUID()}`;
+
+    try {
+      const cacheManager = new SSRCacheManager({
+        projectDir,
+        projectId,
+        contentSourceId,
+        adapter: denoAdapter,
+        dev: true,
+      });
+
+      const isValid = await cacheManager.validateCachedCode(
+        `import child from "file:///app/.cache/markdown.tsx"; export default child;`,
+        join(projectDir, "pages", "index.tsx"),
+        "redis-cache",
+        {
+          checkLocalPaths: true,
+          checkInvalidEsmShPath: true,
+        },
+      );
+
+      assertEquals(isValid, false);
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects redis cache entries with nested legacy .cache TSX imports inside vfmods", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
+    const projectId = `project-${crypto.randomUUID()}`;
+    const contentSourceId = `preview-${crypto.randomUUID()}`;
+    const vfmodDir = join(getMdxEsmCacheDir(), projectId, contentSourceId);
+    const childPath = join(vfmodDir, "vfmod-child.mjs");
+
+    try {
+      await mkdir(vfmodDir, { recursive: true });
+      await writeTextFile(
+        childPath,
+        `import child from "file:///app/.cache/markdown.tsx"; export default child;`,
+      );
+
+      const cacheManager = new SSRCacheManager({
+        projectDir,
+        projectId,
+        contentSourceId,
+        adapter: denoAdapter,
+        dev: true,
+      });
+
+      const isValid = await cacheManager.validateCachedCode(
+        `import child from "file://${childPath}"; export default child;`,
+        join(projectDir, "pages", "index.tsx"),
+        "redis-cache",
+        {
+          checkLocalPaths: true,
+          checkInvalidEsmShPath: true,
+        },
+      );
+
+      assertEquals(isValid, false);
+    } finally {
       await remove(vfmodDir, { recursive: true }).catch(() => {});
       await remove(projectDir, { recursive: true });
     }

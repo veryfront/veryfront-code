@@ -7,7 +7,7 @@
  */
 
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors";
+import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { UIMessage } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
 import type { ModelOption } from "../../model-selector.tsx";

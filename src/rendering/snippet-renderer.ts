@@ -329,7 +329,7 @@ export function renderSnippet(
 function generateErrorHTML(error: unknown, options: SnippetRenderOptions): string {
   const message = error instanceof Error ? error.message : String(error);
   const stack = error instanceof Error ? error.stack : undefined;
-  const nonce = options.nonce ? ` nonce="${options.nonce}"` : "";
+  const nonce = options.nonce ? ` nonce="${escapeHtml(options.nonce)}"` : "";
   const stackHtml = options.mode === "development" && stack
     ? `<div class="error-stack">${escapeHtml(stack)}</div>`
     : "";

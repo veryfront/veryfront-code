@@ -19,8 +19,9 @@ import {
 import { detectAppRouter } from "../router-detection.ts";
 import { getProjectReact } from "#veryfront/react";
 import { extract } from "#std/front-matter/yaml.ts";
-import { RouterProvider } from "veryfront/router";
-import { PageContextProvider } from "veryfront/context";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
+import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
 
 const logger = rendererLogger.component("layout-applicator");
 
@@ -37,6 +38,7 @@ export interface LayoutApplicationOptions {
   mode: "development" | "production";
   moduleServerUrl?: string;
   requestUrl?: URL;
+  params?: Record<string, string | string[]>;
   frontmatter?: Record<string, unknown>;
   headings?: Array<{ id: string; text: string; level: number }>;
 }
@@ -49,12 +51,17 @@ export class LayoutApplicator {
   private mergedComponents: MDXComponents;
   private mode: "development" | "production";
   private requestUrl?: URL;
+  private params?: Record<string, string | string[]>;
   private frontmatter?: Record<string, unknown>;
   private headings?: Array<{ id: string; text: string; level: number }>;
   private projectId: string;
   private projectSlug: string;
   private contentSourceId: string;
   private preloadedImportMap?: ImportMapConfig | null;
+  private frameworkProviderModulesPromise?: Promise<{
+    PageContextProvider: BundledReact.ComponentType<Record<string, unknown>>;
+    RouterProvider: BundledReact.ComponentType<Record<string, unknown>>;
+  }>;
 
   constructor(options: LayoutApplicationOptions) {
     this.projectDir = options.projectDir;
@@ -68,6 +75,7 @@ export class LayoutApplicator {
     this.mergedComponents = options.mergedComponents;
     this.mode = options.mode;
     this.requestUrl = options.requestUrl;
+    this.params = options.params;
     this.frontmatter = options.frontmatter;
     this.headings = options.headings;
   }
@@ -109,11 +117,19 @@ export class LayoutApplicator {
         const React = await getProjectReact();
 
         const headingsArray = this.headings ?? [];
+        const flatParams = this.params
+          ? Object.fromEntries(
+            Object.entries(this.params)
+              .map(([key, value]) => [key, Array.isArray(value) ? value[0] : value])
+              .filter((entry): entry is [string, string] => entry[1] !== undefined),
+          )
+          : {};
+        const query = this.requestUrl ? Object.fromEntries(this.requestUrl.searchParams) : {};
         const pageContext = {
           slug: pageInfo.entity.slug || "",
           path: pageFilePath,
-          params: {},
-          query: {},
+          params: flatParams,
+          query,
           frontmatter: this.frontmatter ?? pageInfo.entity.frontmatter ?? {},
           headings: headingsArray,
           mdxHeadings: headingsArray,
@@ -123,6 +139,8 @@ export class LayoutApplicator {
           frontmatterKeys: Object.keys(pageContext.frontmatter),
           headingsCount: headingsArray.length,
         });
+
+        const { PageContextProvider, RouterProvider } = await this.loadFrameworkProviders();
 
         wrappedElement = React.createElement(PageContextProvider, {
           pageContext,
@@ -135,8 +153,8 @@ export class LayoutApplicator {
           domain: this.requestUrl?.origin ?? "",
           path: this.requestUrl?.pathname ?? pageFilePath,
           pathname: this.requestUrl?.pathname ?? `/${pageInfo.entity.slug || ""}`,
-          params: {},
-          query: this.requestUrl ? Object.fromEntries(this.requestUrl.searchParams) : {},
+          params: flatParams,
+          query,
           isPreview: false,
           isMounted: false,
           navigate: async () => {},
@@ -216,6 +234,77 @@ export class LayoutApplicator {
         "layout.use_esm": Boolean(this.config?.experimental?.esmLayouts),
       },
     );
+  }
+
+  private async loadFrameworkProviders(): Promise<{
+    PageContextProvider: BundledReact.ComponentType<Record<string, unknown>>;
+    RouterProvider: BundledReact.ComponentType<Record<string, unknown>>;
+  }> {
+    if (!this.frameworkProviderModulesPromise) {
+      this.frameworkProviderModulesPromise = this.loadFrameworkProvidersInternal();
+    }
+
+    return await this.frameworkProviderModulesPromise;
+  }
+
+  private async loadFrameworkProvidersInternal(): Promise<{
+    PageContextProvider: BundledReact.ComponentType<Record<string, unknown>>;
+    RouterProvider: BundledReact.ComponentType<Record<string, unknown>>;
+  }> {
+    const fs = createFileSystem();
+    const decoder = new TextDecoder();
+    const [contextModuleInfo, routerModuleInfo] = await Promise.all([
+      resolveFrameworkSourcePath("react/context"),
+      resolveFrameworkSourcePath("react/router"),
+    ]);
+
+    if (!contextModuleInfo?.path || !routerModuleInfo?.path) {
+      throw new Error("Failed to resolve framework context or router source modules");
+    }
+
+    const [contextSource, routerSource] = await Promise.all([
+      fs.readFile(contextModuleInfo.path),
+      fs.readFile(routerModuleInfo.path),
+    ]);
+
+    const loadOptions = {
+      projectId: this.projectId,
+      projectSlug: this.projectSlug,
+      contentSourceId: this.contentSourceId,
+      dev: this.mode === "development",
+      mode: this.mode,
+    } as const;
+
+    const [contextModule, routerModule] = await Promise.all([
+      loadModuleFromSource(
+        decoder.decode(contextSource),
+        contextModuleInfo.path,
+        this.projectDir,
+        this.adapter,
+        loadOptions,
+      ),
+      loadModuleFromSource(
+        decoder.decode(routerSource),
+        routerModuleInfo.path,
+        this.projectDir,
+        this.adapter,
+        loadOptions,
+      ),
+    ]);
+
+    const PageContextProvider = contextModule.PageContextProvider;
+    const RouterProvider = routerModule.RouterProvider;
+
+    if (typeof PageContextProvider !== "function" || typeof RouterProvider !== "function") {
+      throw new Error("Failed to load framework context or router providers");
+    }
+
+    return {
+      PageContextProvider: PageContextProvider as BundledReact.ComponentType<
+        Record<string, unknown>
+      >,
+      RouterProvider: RouterProvider as BundledReact.ComponentType<Record<string, unknown>>,
+    };
   }
 
   private async wrapWithAppComponent(

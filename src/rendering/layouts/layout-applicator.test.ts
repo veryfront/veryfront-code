@@ -12,11 +12,12 @@ function buildSSRRouter(
   requestUrl: URL | undefined,
   pageFilePath: string,
   pageSlug: string,
+  params?: Record<string, string | string[]>,
 ): {
   domain: string;
   path: string;
   pathname: string;
-  params: Record<string, never>;
+  params: Record<string, string>;
   query: Record<string, string>;
   isPreview: false;
   isMounted: false;
@@ -25,11 +26,19 @@ function buildSSRRouter(
   replace: () => void;
   reload: () => void;
 } {
+  const flatParams = params
+    ? Object.fromEntries(
+      Object.entries(params)
+        .map(([key, value]) => [key, Array.isArray(value) ? value[0] : value])
+        .filter((entry): entry is [string, string] => entry[1] !== undefined),
+    )
+    : {};
+
   return {
     domain: requestUrl?.origin ?? "",
     path: requestUrl?.pathname ?? pageFilePath,
     pathname: requestUrl?.pathname ?? `/${pageSlug}`,
-    params: {},
+    params: flatParams,
     query: requestUrl ? Object.fromEntries(requestUrl.searchParams) : {},
     isPreview: false,
     isMounted: false,
@@ -45,13 +54,15 @@ type Heading = { id: string; text: string; level: number };
 function buildPageContext(
   slug: string,
   path: string,
+  params: Record<string, string>,
+  query: Record<string, string>,
   frontmatter: Record<string, unknown>,
   headings: Heading[],
 ): {
   slug: string;
   path: string;
-  params: Record<string, never>;
-  query: Record<string, never>;
+  params: Record<string, string>;
+  query: Record<string, string>;
   frontmatter: Record<string, unknown>;
   headings: Heading[];
   mdxHeadings: Heading[];
@@ -59,8 +70,8 @@ function buildPageContext(
   return {
     slug,
     path,
-    params: {},
-    query: {},
+    params,
+    query,
     frontmatter,
     headings,
     mdxHeadings: headings,
@@ -111,10 +122,12 @@ describe("LayoutApplicator helpers", () => {
       assertEquals(router.query, {});
     });
 
-    it("should always have empty params", () => {
+    it("should flatten params into string values", () => {
       const url = new URL("https://example.com/blog/123");
-      const router = buildSSRRouter(url, "/pages/blog/[id].tsx", "blog/123");
-      assertEquals(router.params, {});
+      const router = buildSSRRouter(url, "/pages/blog/[id].tsx", "blog/123", {
+        id: ["123", "ignored"],
+      });
+      assertEquals(router.params, { id: "123" });
     });
 
     it("should handle URL with multiple search params", () => {
@@ -135,22 +148,31 @@ describe("LayoutApplicator helpers", () => {
   describe("buildPageContext", () => {
     it("should build context with all fields", () => {
       const headings = [{ id: "intro", text: "Introduction", level: 1 }];
-      const ctx = buildPageContext("about", "/pages/about.tsx", { title: "About" }, headings);
+      const ctx = buildPageContext(
+        "about",
+        "/pages/about.tsx",
+        { id: "123" },
+        { tab: "details" },
+        { title: "About" },
+        headings,
+      );
       assertEquals(ctx.slug, "about");
       assertEquals(ctx.path, "/pages/about.tsx");
+      assertEquals(ctx.params, { id: "123" });
+      assertEquals(ctx.query, { tab: "details" });
       assertEquals(ctx.frontmatter, { title: "About" });
       assertEquals(ctx.headings, headings);
       assertEquals(ctx.mdxHeadings, headings);
     });
 
-    it("should always have empty params and query", () => {
-      const ctx = buildPageContext("home", "/pages/index.tsx", {}, []);
+    it("should preserve empty params and query", () => {
+      const ctx = buildPageContext("home", "/pages/index.tsx", {}, {}, {}, []);
       assertEquals(ctx.params, {});
       assertEquals(ctx.query, {});
     });
 
     it("should handle empty frontmatter", () => {
-      const ctx = buildPageContext("test", "/test.tsx", {}, []);
+      const ctx = buildPageContext("test", "/test.tsx", {}, {}, {}, []);
       assertEquals(ctx.frontmatter, {});
     });
 
@@ -160,7 +182,7 @@ describe("LayoutApplicator helpers", () => {
         { id: "h2", text: "Subtitle", level: 2 },
         { id: "h3", text: "Section", level: 3 },
       ];
-      const ctx = buildPageContext("docs", "/docs.tsx", {}, headings);
+      const ctx = buildPageContext("docs", "/docs.tsx", {}, {}, {}, headings);
       assertEquals(ctx.headings.length, 3);
       assertEquals(ctx.mdxHeadings.length, 3);
     });
@@ -189,6 +211,13 @@ describe("LayoutApplicator helpers", () => {
         requestUrl: new URL("https://example.com/about"),
       };
       assertEquals(opts.requestUrl?.pathname, "/about");
+    });
+
+    it("should accept optional params", () => {
+      const opts: Partial<LayoutApplicationOptions> = {
+        params: { slug: "post-1" },
+      };
+      assertEquals(opts.params, { slug: "post-1" });
     });
 
     it("should accept optional frontmatter", () => {

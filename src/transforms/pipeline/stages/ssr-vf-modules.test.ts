@@ -260,7 +260,7 @@ describe("ssr-vf-modules integration", { sanitizeOps: false, sanitizeResources: 
 
     assertEquals(result !== null, true, "Should resolve Head.tsx");
     assertStringIncludes(result!.sourcePath, "Head.tsx");
-    assertStringIncludes(result!.content, "useRef");
+    assertStringIncludes(result!.content, "../runtime/core.ts");
   });
 
   it("resolves router index from /_vf_modules/ path", async () => {

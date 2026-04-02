@@ -9,10 +9,10 @@ import {
 
 describe("veryfront-module-urls", () => {
   it("resolves public exact mappings from deno.json", () => {
-    assertEquals(resolveVeryfrontModuleTarget("veryfront/head"), "./src/react/components/Head.tsx");
+    assertEquals(resolveVeryfrontModuleTarget("veryfront/head"), "./src/react/runtime/core.ts");
     assertEquals(
       resolveVeryfrontModuleUrl("veryfront/head"),
-      "/_vf_modules/_veryfront/react/components/Head.js",
+      "/_vf_modules/_veryfront/react/runtime/core.js",
     );
   });
 

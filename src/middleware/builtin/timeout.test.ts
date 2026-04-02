@@ -75,6 +75,15 @@ describe("middleware/builtin/timeout", () => {
       assertEquals(await res?.text(), "ok");
     });
 
+    it("should exclude nested paths for configured prefixes", async () => {
+      const mw = timeout({ timeoutMs: 5000, exclude: ["/custom"] });
+      const res = await mw(
+        makeCtx("http://localhost/custom/deep/path"),
+        () => Promise.resolve(new Response("ok")),
+      );
+      assertEquals(await res?.text(), "ok");
+    });
+
     it("should propagate non-timeout errors", async () => {
       const mw = timeout({ timeoutMs: 1000 });
       let caught: Error | undefined;

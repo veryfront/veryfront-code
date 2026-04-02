@@ -210,6 +210,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(text, "event: TextMessageContent");
     assertStringIncludes(text, "event: RunFinished");
     assertStringIncludes(text, '"inputTokens":21');
+    assertEquals(text.includes("event: StepStarted"), false);
+    assertEquals(text.includes("event: StepFinished"), false);
+    assertEquals(text.includes("event: Custom"), false);
+    assertEquals(text.includes("event: ActivitySnapshot"), false);
+    assertEquals(text.includes("event: ActivityDelta"), false);
+    assertEquals(text.includes("event: ReasoningStart"), false);
+    assertEquals(text.includes("event: ReasoningContent"), false);
+    assertEquals(text.includes("event: ReasoningEnd"), false);
   });
 
   it("rejects oversized internal agent stream payloads before parsing", async () => {

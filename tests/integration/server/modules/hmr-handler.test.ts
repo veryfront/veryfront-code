@@ -105,7 +105,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
     it("handle returns continue for non-preview/non-localdev requests", async () => {
       const handler = new HMRHandler();
 
-      const req = new Request("http://localhost:3000/_ws");
+      const req = new Request("http://production.example.com/_ws");
       const ctx = {
         requestContext: { mode: "production" },
         projectDir: "/tmp/test",
@@ -198,6 +198,52 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       assertExists(result.response);
       assertEquals(result.response.status, 200);
+    });
+
+    it("prefers x-forwarded-host over host when allowing local preview traffic", async () => {
+      const handler = new HMRHandler();
+
+      const req = new Request("http://localhost:3000/_ws", {
+        headers: {
+          host: "internal.proxy:3000",
+          "x-forwarded-host": "preview.veryfront.me:3000",
+        },
+      });
+      const ctx = {
+        requestContext: { mode: "production" },
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: { fs: {}, server: null },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      const result = await handler.handle(req, ctx);
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+    });
+
+    it("rejects localhost host-header bypass when x-forwarded-host is external", async () => {
+      const handler = new HMRHandler();
+
+      const req = new Request("http://localhost:3000/_ws", {
+        headers: {
+          host: "localhost:3000",
+          "x-forwarded-host": "evil.example.com",
+        },
+      });
+      const ctx = {
+        requestContext: { mode: "production" },
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: { fs: {}, server: null },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
     });
 
     it("handle accepts preview via query param (for proxy WebSocket)", async () => {
@@ -389,7 +435,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const unregisterExternalSource = HMRHandler.registerExternalBroadcastSource();
       const unsubscribeExternalReload = ReloadNotifier.subscribe((changedPaths, project) => {
-        broadcastUpdate(changedPaths, project?.projectSlug);
+        broadcastUpdate(changedPaths, project);
       });
 
       try {

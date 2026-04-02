@@ -1,5 +1,5 @@
 /**
- * Oauth Providers
+ * OAuth Providers
  *
  * @module oauth/providers
  */
