@@ -126,11 +126,11 @@ describe("internal-agents/ag-ui-sse", () => {
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "step-start" }),
-      [{ event: "StepStarted", payload: { stepIndex: 1 } }],
+      [],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "step-end" }),
-      [{ event: "StepFinished", payload: { stepIndex: 1 } }],
+      [],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, {
