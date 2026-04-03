@@ -218,6 +218,7 @@ export async function filesCommand(args: ParsedArgs): Promise<void> {
 
         if (!files.length) {
           cliLogger.info("No files found.");
+          cliLogger.info("  Push files with: veryfront push");
           return;
         }
 

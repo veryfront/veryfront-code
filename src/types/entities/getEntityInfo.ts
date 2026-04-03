@@ -16,6 +16,12 @@ const logger = baseLogger.component("get-entity-by-slug");
 
 const entityInfoScope = createErrorScope("getEntityInfo");
 const fs = createFileSystem();
+const PAGE_FILE_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts"] as const;
+const DIRECT_ROUTE_EXTENSIONS = ["mdx", "md", "tsx", "ts"] as const;
+const LAYOUT_FILE_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts", "js"] as const;
+const DYNAMIC_PAGE_ENTRY_PATTERN = /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/;
+
+type DirectoryEntry = { name: string; isFile: boolean; isDirectory: boolean };
 
 export async function getEntityInfo(
   filePath: string,
@@ -204,7 +210,7 @@ export async function getEntityBySlug(
           basePaths,
         });
 
-        const pathResults = await parallelMap(basePaths, async (basePath) => {
+        const candidateResults = await parallelMap(basePaths, async (basePath) => {
           const resolvedPath = await resolveFile.call(adapter.fs, basePath);
           logger.debug("resolveFile result", {
             basePath,
@@ -214,7 +220,7 @@ export async function getEntityBySlug(
           return await getEntityInfo(resolvedPath, adapter);
         });
 
-        for (const info of pathResults) {
+        for (const info of candidateResults) {
           if (info?.entity.isPage) {
             logger.debug("Found page via resolveFile", {
               slug,
@@ -225,147 +231,44 @@ export async function getEntityBySlug(
           }
         }
 
-        const slugParts = normalizedSlug === "" ? [] : normalizedSlug.split("/");
-        for (let depth = slugParts.length - 1; depth >= 0; depth--) {
-          const parentPath = slugParts.slice(0, depth).join("/");
-          const pagesDir = parentPath
-            ? pathHelper.join(projectDir, "pages", parentPath)
-            : pathHelper.join(projectDir, "pages");
-
-          try {
-            let dirExists = false;
-            try {
-              const stat = await withFallback(
-                () => adapter.fs.stat(pagesDir),
-                () => fs.stat(pagesDir),
-                { operationName: "stat:getEntityBySlug", logError: false },
-              );
-              dirExists = stat.isDirectory;
-            } catch (_) {
-              /* expected: stat may fail for non-existent directories */
-              dirExists = false;
-            }
-
-            if (!dirExists) continue;
-
-            const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-            for await (const entry of adapter.fs.readDir(pagesDir)) {
-              entries.push(entry);
-            }
-
-            const dynamicEntries = entries.filter(
-              (entry) => entry.isFile && /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/.test(entry.name),
-            );
-
-            const dynamicResults = await parallelMap(dynamicEntries, async (entry) => {
-              const dynamicPath = pathHelper.join(pagesDir, entry.name);
-              return await getEntityInfo(dynamicPath, adapter);
-            });
-
-            for (const info of dynamicResults) {
-              if (info?.entity.isPage) return info;
-            }
-          } catch (_) {
-            /* expected: directory may not exist or readDir may fail */
-          }
-        }
+        const dynamicPage = await findDynamicPageEntity(projectDir, normalizedSlug, adapter);
+        if (dynamicPage) return dynamicPage;
 
         logger.debug("No page found via resolveFile branch", { slug, normalizedSlug });
         return null;
       }
 
-      const possiblePaths = [
-        pathHelper.join(projectDir, "pages", `${normalizedSlug}.mdx`),
-        pathHelper.join(projectDir, "pages", `${normalizedSlug}.md`),
-        pathHelper.join(projectDir, "pages", `${normalizedSlug}.tsx`),
-        pathHelper.join(projectDir, "pages", `${normalizedSlug}.jsx`),
-        pathHelper.join(projectDir, "pages", `${normalizedSlug}.ts`),
-        pathHelper.join(projectDir, "pages", `${normalizedSlug}/index.mdx`),
-        pathHelper.join(projectDir, "pages", `${normalizedSlug}/index.md`),
-        pathHelper.join(projectDir, "pages", `${normalizedSlug}/index.tsx`),
-        pathHelper.join(projectDir, "pages", `${normalizedSlug}/index.jsx`),
-        pathHelper.join(projectDir, "pages", `${normalizedSlug}/index.ts`),
+      const candidatePaths = [
+        ...buildFileCandidates(projectDir, ["pages"], normalizedSlug, PAGE_FILE_EXTENSIONS),
+        ...buildFileCandidates(
+          projectDir,
+          ["pages"],
+          `${normalizedSlug}/index`,
+          PAGE_FILE_EXTENSIONS,
+        ),
       ];
 
       if (isVeryfrontRoute) {
-        possiblePaths.unshift(
-          pathHelper.join(projectDir, `${normalizedSlug}.mdx`),
-          pathHelper.join(projectDir, `${normalizedSlug}.md`),
-          pathHelper.join(projectDir, `${normalizedSlug}.tsx`),
-          pathHelper.join(projectDir, `${normalizedSlug}.ts`),
+        candidatePaths.unshift(
+          ...buildFileCandidates(projectDir, [], normalizedSlug, DIRECT_ROUTE_EXTENSIONS),
         );
       }
 
       if (normalizedSlug === "index" || normalizedSlug === "") {
-        possiblePaths.unshift(
-          pathHelper.join(projectDir, "pages", "index.mdx"),
-          pathHelper.join(projectDir, "pages", "index.md"),
-          pathHelper.join(projectDir, "pages", "index.tsx"),
-          pathHelper.join(projectDir, "pages", "index.ts"),
+        candidatePaths.unshift(
+          ...buildFileCandidates(projectDir, ["pages"], "index", DIRECT_ROUTE_EXTENSIONS),
         );
       }
 
-      const pathResults = await parallelMap(possiblePaths, async (p) => {
-        return await getEntityInfo(p, adapter);
+      const candidateResults = await parallelMap(candidatePaths, async (candidatePath) => {
+        return await getEntityInfo(candidatePath, adapter);
       });
 
-      for (const info of pathResults) {
+      for (const info of candidateResults) {
         if (info?.entity.isPage) return info;
       }
 
-      const slugParts = normalizedSlug === "" ? [] : normalizedSlug.split("/");
-      for (let depth = slugParts.length - 1; depth >= 0; depth--) {
-        const parentPath = slugParts.slice(0, depth).join("/");
-        const pagesDir = parentPath
-          ? pathHelper.join(projectDir, "pages", parentPath)
-          : pathHelper.join(projectDir, "pages");
-
-        try {
-          let dirExists = false;
-          if (adapter) {
-            try {
-              const stat = await withFallback(
-                () => adapter.fs.stat(pagesDir),
-                () => fs.stat(pagesDir),
-                { operationName: "stat:getEntityBySlug", logError: false },
-              );
-              dirExists = stat.isDirectory;
-            } catch (_) {
-              /* expected: stat may fail for non-existent directories */
-              dirExists = false;
-            }
-          } else {
-            dirExists = await fs.exists(pagesDir);
-          }
-
-          if (!dirExists) continue;
-
-          const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-          const dirIterator = adapter?.fs.readDir
-            ? adapter.fs.readDir(pagesDir)
-            : fs.readDir(pagesDir);
-          for await (const entry of dirIterator) {
-            entries.push(entry);
-          }
-
-          const dynamicEntries = entries.filter(
-            (entry) => entry.isFile && /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/.test(entry.name),
-          );
-
-          const dynamicResults = await parallelMap(dynamicEntries, async (entry) => {
-            const dynamicPath = pathHelper.join(pagesDir, entry.name);
-            return await getEntityInfo(dynamicPath, adapter);
-          });
-
-          for (const info of dynamicResults) {
-            if (info?.entity.isPage) return info;
-          }
-        } catch (_) {
-          /* expected: directory may not exist or readDir may fail */
-        }
-      }
-
-      return null;
+      return await findDynamicPageEntity(projectDir, normalizedSlug, adapter);
     },
     {
       "entity.slug": slug,
@@ -399,43 +302,38 @@ export async function getLayoutEntity(
       }
 
       // Files in layouts/ are treated as layouts by convention (any extension)
-      const layoutsDirPaths = [
-        pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.mdx`),
-        pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.md`),
-        pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.tsx`),
-        pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.jsx`),
-        pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.ts`),
-        pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.js`),
-      ];
+      const layoutCandidatePaths = buildFileCandidates(
+        projectDir,
+        ["layouts"],
+        resolvedLayoutName,
+        LAYOUT_FILE_EXTENSIONS,
+      );
 
       // Files in components/ must be detected as layouts by name/frontmatter
-      const componentsPaths = [
-        pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.mdx`),
-        pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.md`),
-        pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.tsx`),
-        pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.jsx`),
-        pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.ts`),
-        pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.js`),
-        pathHelper.join(projectDir, "components", "Layout.mdx"),
-        pathHelper.join(projectDir, "components", "Layout.md"),
-        pathHelper.join(projectDir, "components", "Layout.tsx"),
-        pathHelper.join(projectDir, "components", "Layout.jsx"),
-        pathHelper.join(projectDir, "components", "Layout.ts"),
-        pathHelper.join(projectDir, "components", "Layout.js"),
+      const componentCandidatePaths = [
+        ...buildFileCandidates(
+          projectDir,
+          ["components"],
+          `${resolvedLayoutName}Layout`,
+          LAYOUT_FILE_EXTENSIONS,
+        ),
+        ...buildFileCandidates(projectDir, ["components"], "Layout", LAYOUT_FILE_EXTENSIONS),
       ];
 
-      const allPaths = [...layoutsDirPaths, ...componentsPaths];
-      const pathResults = await parallelMap(allPaths, async (p) => {
-        return await getEntityInfo(p, adapter);
-      });
+      const candidateResults = await parallelMap(
+        [...layoutCandidatePaths, ...componentCandidatePaths],
+        async (candidatePath) => {
+          return await getEntityInfo(candidatePath, adapter);
+        },
+      );
 
-      const layoutsDirCount = layoutsDirPaths.length;
-      for (let i = 0; i < pathResults.length; i++) {
-        const info = pathResults[i];
+      const layoutCandidateCount = layoutCandidatePaths.length;
+      for (let i = 0; i < candidateResults.length; i++) {
+        const info = candidateResults[i];
         if (!info) continue;
         // layouts/ dir: any valid entity is a layout
         // components/ dir: must be detected as layout by name/frontmatter
-        if (i < layoutsDirCount || info.entity.isLayout) {
+        if (i < layoutCandidateCount || info.entity.isLayout) {
           return {
             entity: {
               ...info.entity,
@@ -452,6 +350,87 @@ export async function getLayoutEntity(
     },
     { "layout.name": layoutName, "layout.projectDir": projectDir },
   );
+}
+
+function buildFileCandidates(
+  projectDir: string,
+  segments: string[],
+  relativeStem: string,
+  extensions: readonly string[],
+): string[] {
+  return extensions.map((extension) =>
+    pathHelper.join(projectDir, ...segments, `${relativeStem}.${extension}`)
+  );
+}
+
+async function findDynamicPageEntity(
+  projectDir: string,
+  normalizedSlug: string,
+  adapter?: RuntimeAdapter,
+): Promise<EntityInfo | null> {
+  const slugParts = normalizedSlug === "" ? [] : normalizedSlug.split("/");
+  for (let depth = slugParts.length - 1; depth >= 0; depth--) {
+    const parentPath = slugParts.slice(0, depth).join("/");
+    const pagesDir = parentPath
+      ? pathHelper.join(projectDir, "pages", parentPath)
+      : pathHelper.join(projectDir, "pages");
+
+    try {
+      const canReadDirectory = await pagesDirectoryExists(pagesDir, adapter);
+      if (!canReadDirectory) continue;
+
+      const entries = await readDirectoryEntries(pagesDir, adapter);
+      const dynamicEntries = entries.filter(
+        (entry) => entry.isFile && DYNAMIC_PAGE_ENTRY_PATTERN.test(entry.name),
+      );
+
+      const candidateResults = await parallelMap(dynamicEntries, async (entry) => {
+        const candidatePath = pathHelper.join(pagesDir, entry.name);
+        return await getEntityInfo(candidatePath, adapter);
+      });
+
+      for (const info of candidateResults) {
+        if (info?.entity.isPage) return info;
+      }
+    } catch (_) {
+      /* expected: directory may not exist or readDir may fail */
+    }
+  }
+
+  return null;
+}
+
+async function pagesDirectoryExists(
+  pagesDir: string,
+  adapter?: RuntimeAdapter,
+): Promise<boolean> {
+  if (!adapter) return await fs.exists(pagesDir);
+
+  try {
+    const stat = await withFallback(
+      () => adapter.fs.stat(pagesDir),
+      () => fs.stat(pagesDir),
+      { operationName: "stat:getEntityBySlug", logError: false },
+    );
+    return stat.isDirectory;
+  } catch (_) {
+    /* expected: stat may fail for non-existent directories */
+    return false;
+  }
+}
+
+async function readDirectoryEntries(
+  pagesDir: string,
+  adapter?: RuntimeAdapter,
+): Promise<DirectoryEntry[]> {
+  const entries: DirectoryEntry[] = [];
+  const iterator = adapter?.fs.readDir ? adapter.fs.readDir(pagesDir) : fs.readDir(pagesDir);
+
+  for await (const entry of iterator) {
+    entries.push(entry);
+  }
+
+  return entries;
 }
 
 function getSlugFromPath(filePath: string): string {

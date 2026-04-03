@@ -1,4 +1,4 @@
-import { startServer } from "./server.js";
+import { startServer } from "./server.ts";
 
 export default async function globalSetup(): Promise<void> {
   console.log("\n=== E2E Test Setup ===");

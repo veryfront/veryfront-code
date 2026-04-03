@@ -1,5 +1,7 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { handleScriptPage } from "./script-page-handling.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 type ScriptModuleOutput =
   | string
@@ -32,6 +34,7 @@ function extractHtmlAndMetadata(output: ScriptModuleOutput): {
 
 interface PageContext {
   params: Record<string, string>;
+  query: Record<string, string>;
   slug: string;
   path: string;
   frontmatter: Record<string, unknown>;
@@ -41,17 +44,19 @@ function buildPageContext(
   pageInfo: { entity: { path: string; frontmatter: Record<string, unknown> } },
   slug: string,
   params?: Record<string, string | string[]>,
+  url?: URL,
 ): PageContext {
   const flatParams: Record<string, string> = params
     ? Object.fromEntries(
       Object.entries(params)
-        .map(([k, v]) => [k, Array.isArray(v) ? v[0] : v] as const)
-        .filter(([, v]): v is string => v !== undefined),
+        .map(([k, v]) => [k, Array.isArray(v) ? v[0] : v])
+        .filter((entry): entry is [string, string] => entry[1] !== undefined),
     )
     : {};
 
   return {
     params: flatParams,
+    query: url ? Object.fromEntries(url.searchParams) : {},
     slug,
     path: pageInfo.entity.path,
     frontmatter: pageInfo.entity.frontmatter ?? {},
@@ -147,10 +152,16 @@ describe("script-page-handling helpers", () => {
     };
 
     it("should build context with all fields", () => {
-      const ctx = buildPageContext(mockPageInfo, "about", { id: "123" });
+      const ctx = buildPageContext(
+        mockPageInfo,
+        "about",
+        { id: "123" },
+        new URL("https://example.com/about?tab=details"),
+      );
       assertEquals(ctx.slug, "about");
       assertEquals(ctx.path, "/project/pages/about.tsx");
       assertEquals(ctx.params, { id: "123" });
+      assertEquals(ctx.query, { tab: "details" });
       assertEquals(ctx.frontmatter, { title: "About" });
     });
 
@@ -162,17 +173,29 @@ describe("script-page-handling helpers", () => {
     it("should handle empty params", () => {
       const ctx = buildPageContext(mockPageInfo, "home");
       assertEquals(ctx.params, {});
+      assertEquals(ctx.query, {});
     });
 
     it("should handle undefined params", () => {
       const ctx = buildPageContext(mockPageInfo, "home", undefined);
       assertEquals(ctx.params, {});
+      assertEquals(ctx.query, {});
     });
 
     it("should use empty object when frontmatter is falsy", () => {
       const info = { entity: { path: "/p.tsx", frontmatter: {} } };
       const ctx = buildPageContext(info, "test");
       assertEquals(ctx.frontmatter, {});
+    });
+
+    it("should capture query params from the request URL", () => {
+      const ctx = buildPageContext(
+        mockPageInfo,
+        "search",
+        undefined,
+        new URL("https://example.com/search?q=test&page=2"),
+      );
+      assertEquals(ctx.query, { q: "test", page: "2" });
     });
   });
 
@@ -273,6 +296,58 @@ describe("script-page-handling helpers", () => {
 
     it("should have exactly 6 extensions", () => {
       assertEquals(APP_COMPONENT_EXTENSIONS.length, 6);
+    });
+  });
+
+  describe("handleScriptPage", () => {
+    it("forwards the request nonce when enhancing full HTML script pages", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-" });
+
+      try {
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(
+          pagePath,
+          `export default \`<!DOCTYPE html><html><head><title>Script</title></head><body><main>Hello</main></body></html>\`;`,
+        );
+
+        const adapter = {
+          fs: {
+            exists: async () => false,
+          },
+        } as unknown as RuntimeAdapter;
+
+        const result = await handleScriptPage(
+          {
+            entity: {
+              path: pagePath,
+              frontmatter: {},
+            },
+          } as never,
+          "script-page",
+          {
+            mode: "production",
+            config: {} as never,
+            projectDir,
+            adapter,
+            nonce: "nonce-123",
+          },
+        );
+
+        assertEquals(
+          result.html.includes(
+            '<script type="module" src="/_veryfront/rsc/client.js" nonce="nonce-123"></script>',
+          ),
+          true,
+        );
+        assertEquals(
+          result.html.includes(
+            '<script type="module" src="/_veryfront/hydrate.js?slug=script-page" nonce="nonce-123"></script>',
+          ),
+          true,
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
   });
 });

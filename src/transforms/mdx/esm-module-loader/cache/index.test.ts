@@ -5,6 +5,7 @@ import {
   clearModulePathCache,
   getModulePathCache,
   invalidateModulePaths,
+  lookupMdxEsmCache,
   saveModulePathCache,
   verifiedModuleDeps,
   waitForDiskCleanup,
@@ -181,6 +182,52 @@ describe("invalidateModulePaths — disk persistence", () => {
       );
     } finally {
       await remove(cacheDir, { recursive: true }).catch(() => {});
+      clearModulePathCache();
+    }
+  });
+});
+
+describe("lookupMdxEsmCache", () => {
+  it("isolates local path-cache entries by react version", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-react-version-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-project-" });
+    const filePath = join(projectDir, "components/Button.tsx");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("react18"));
+    const react18Key = buildMdxEsmPathCacheKey("_vf_modules/components/Button.js", "18.3.1");
+
+    try {
+      await writeTextFile(cachedPath, `export default "react18";`);
+      await writeTextFile(
+        join(cacheDir, "_index.json"),
+        JSON.stringify({ [react18Key]: cachedPath }),
+      );
+
+      const react19Result = await lookupMdxEsmCache(
+        filePath,
+        cacheDir,
+        projectDir,
+        undefined,
+        undefined,
+        "19.1.1",
+      );
+      assertEquals(react19Result, { status: "miss" });
+
+      const react18Result = await lookupMdxEsmCache(
+        filePath,
+        cacheDir,
+        projectDir,
+        undefined,
+        undefined,
+        "18.3.1",
+      );
+      assertEquals(react18Result, { status: "hit", path: cachedPath });
+    } finally {
+      await Promise.all([
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
       clearModulePathCache();
     }
   });

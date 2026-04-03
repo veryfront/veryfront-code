@@ -1,6 +1,7 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
+import { snapshotRequestProfiles } from "#veryfront/observability/request-profiler.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
@@ -28,11 +29,12 @@ export class MetricsHandler extends BaseHandler {
 
     try {
       const snap = metrics.snapshot();
+      const profiling = snapshotRequestProfiles();
       const memory = this.safeCall(memoryUsage);
       const uptimeValue = this.safeCall(uptime);
 
       const response = ResponseBuilder.json(
-        { counters: snap, memory, uptime: uptimeValue },
+        { counters: snap, profiling, memory, uptime: uptimeValue },
         req,
         { securityConfig, corsConfig, status: HTTP_OK },
       );

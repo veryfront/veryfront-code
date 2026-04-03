@@ -397,9 +397,11 @@ export class ProxyFSAdapterManager {
         projectId,
         apiToken: effectiveToken,
       },
-      invalidationCallbacks: createDefaultInvalidationCallbacks(
-        this.baseConfig.invalidationCallbacks,
-      ),
+      invalidationCallbacks: createDefaultInvalidationCallbacks({
+        ...this.baseConfig.invalidationCallbacks,
+        evictCurrentAdapter: () =>
+          this.evictAdapter(projectSlug, productionMode, releaseId, branch),
+      }),
     };
 
     const adapter = new VeryfrontFSAdapter(config);
@@ -554,6 +556,30 @@ export class ProxyFSAdapterManager {
       branch ?? null,
     );
     return this.adapters.has(cacheKey);
+  }
+
+  evictAdapter(
+    projectSlug: string,
+    productionMode?: boolean,
+    releaseId?: string | null,
+    branch?: string | null,
+  ): void {
+    const cacheKey = buildProxyManagerCacheKey(
+      projectSlug,
+      productionMode ?? false,
+      releaseId ?? null,
+      branch ?? null,
+    );
+
+    const adapter = this.adapters.get(cacheKey);
+    if (!adapter) {
+      logger.debug("No adapter to evict", { cacheKey });
+      return;
+    }
+
+    logger.debug("Evicting adapter", { cacheKey });
+    adapter.adapter.dispose();
+    this.adapters.delete(cacheKey);
   }
 
   getStats(): { adapters: number; stats: Record<string, CacheStats> } {

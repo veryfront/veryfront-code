@@ -59,6 +59,7 @@ export function isMonitoringPath(pathname: string): boolean {
 export const LIGHTWEIGHT_PATH_PREFIXES = [
   "/_vf_modules/",
   "/_veryfront/modules/",
+  "/_veryfront/hydration-runtime.js",
   "/_veryfront/preview-hmr.js",
   "/_veryfront/studio-bridge.js",
   "/_vf/css/",
@@ -73,4 +74,14 @@ export function isLightweightPath(pathname: string): boolean {
 /** Check if path is the WebSocket endpoint (long-lived, handled by HMR handler) */
 export function isWebSocketPath(pathname: string): boolean {
   return pathname === "/_ws";
+}
+
+/**
+ * Requests that do not need render-specific enriched context.
+ *
+ * These routes still receive the normal handler context, but they can skip
+ * render cache prefix/content-source derivation and the enriched render payload.
+ */
+export function shouldSkipEnrichedContext(pathname: string): boolean {
+  return pathname.startsWith("/api/") || pathname.startsWith("/internal/agents/");
 }

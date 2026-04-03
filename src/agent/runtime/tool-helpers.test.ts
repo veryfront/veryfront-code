@@ -2,7 +2,12 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { z } from "zod";
 import { tool, toolRegistry } from "#veryfront/tool";
-import { executeConfiguredTool, parseToolArgs, resolveConfiguredTool } from "./tool-helpers.ts";
+import {
+  executeConfiguredTool,
+  getAvailableTools,
+  parseToolArgs,
+  resolveConfiguredTool,
+} from "./tool-helpers.ts";
 
 describe("tool-helpers", () => {
   describe("parseToolArgs", () => {
@@ -151,6 +156,61 @@ describe("tool-helpers", () => {
         Error,
         'Tool "studio_invoke_agent" not found',
       );
+    });
+
+    it("rejects remote integration tools excluded by the runtime allowlist", async () => {
+      await assertRejects(
+        () =>
+          executeConfiguredTool(
+            "gmail:list-emails",
+            {},
+            undefined,
+            { toolCallId: "tool-3" },
+            ["gmail:get-email"],
+          ),
+        Error,
+        'Tool "gmail:list-emails" is not allowed for this run',
+      );
+    });
+  });
+
+  describe("getAvailableTools", () => {
+    it("filters remote integration tool definitions by the runtime allowlist", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
+      const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      globalThis.fetch = async () =>
+        Response.json({
+          tools: [
+            {
+              name: "gmail:list-emails",
+              description: "List emails",
+              inputSchema: { type: "object", properties: {} },
+            },
+            {
+              name: "gmail:get-email",
+              description: "Get email",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        });
+
+      try {
+        Deno.env.set("VERYFRONT_API_URL", "https://api.test");
+        Deno.env.set("VERYFRONT_API_TOKEN", "token");
+
+        const defs = await getAvailableTools(true, {
+          allowedRemoteToolNames: ["gmail:get-email"],
+        });
+
+        assertEquals(defs.map((def) => def.name), ["gmail:get-email"]);
+      } finally {
+        if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+        else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
+        if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+        else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 });

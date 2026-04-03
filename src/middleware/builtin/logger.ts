@@ -18,6 +18,17 @@ export interface LoggerOptions {
   log?: (message: string) => void;
 }
 
+interface RequestLogDetails {
+  method: string;
+  pathname: string;
+  remoteAddr: string;
+  referer?: string;
+  requestId?: string;
+  traceId?: string;
+  projectSlug?: string;
+  userAgent?: string;
+}
+
 const colors = {
   reset: "\x1b[0m",
   red: "\x1b[31m",
@@ -60,6 +71,19 @@ function getRemoteAddr(req: Request): string {
   return req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "-";
 }
 
+function getRequestLogDetails(req: Request): RequestLogDetails {
+  return {
+    method: req.method,
+    pathname: new URL(req.url).pathname,
+    remoteAddr: getRemoteAddr(req),
+    referer: req.headers.get("referer") ?? undefined,
+    requestId: req.headers.get("x-request-id") ?? undefined,
+    traceId: req.headers.get("x-trace-id") ?? req.headers.get("traceparent") ?? undefined,
+    projectSlug: req.headers.get("x-project-slug") ?? undefined,
+    userAgent: req.headers.get("user-agent") ?? undefined,
+  };
+}
+
 interface HttpLogEntry {
   timestamp: string;
   level: "info" | "warn" | "error";
@@ -86,30 +110,25 @@ function getLogLevel(status: number): HttpLogEntry["level"] {
 }
 
 function formatJsonLog(req: Request, status: number, duration: number): string {
-  const { pathname } = new URL(req.url);
-  const userAgent = req.headers.get("user-agent");
-  const referer = req.headers.get("referer");
-  const requestId = req.headers.get("x-request-id");
-  const traceId = req.headers.get("x-trace-id") ?? req.headers.get("traceparent");
-  const projectSlug = req.headers.get("x-project-slug");
+  const details = getRequestLogDetails(req);
 
   const entry: HttpLogEntry = {
     timestamp: new Date().toISOString(),
     level: getLogLevel(status),
     service: "server",
-    message: `${req.method} ${pathname} ${status}`,
+    message: `${details.method} ${details.pathname} ${status}`,
     http: {
-      method: req.method,
-      path: pathname,
+      method: details.method,
+      path: details.pathname,
       status,
       durationMs: Math.round(duration),
-      remoteAddr: getRemoteAddr(req),
-      ...(userAgent && userAgent !== "-" ? { userAgent } : {}),
-      ...(referer && referer !== "-" ? { referer } : {}),
+      remoteAddr: details.remoteAddr,
+      ...(details.userAgent && details.userAgent !== "-" ? { userAgent: details.userAgent } : {}),
+      ...(details.referer && details.referer !== "-" ? { referer: details.referer } : {}),
     },
-    ...(requestId ? { requestId } : {}),
-    ...(traceId ? { traceId } : {}),
-    ...(projectSlug ? { projectSlug } : {}),
+    ...(details.requestId ? { requestId: details.requestId } : {}),
+    ...(details.traceId ? { traceId: details.traceId } : {}),
+    ...(details.projectSlug ? { projectSlug: details.projectSlug } : {}),
   };
 
   return JSON.stringify(entry);
@@ -162,22 +181,18 @@ export function logger(options?: LoggerOptions): Middleware {
       return;
     }
 
-    const { pathname } = new URL(req.url);
-    const requestId = req.headers.get("x-request-id") ?? undefined;
-    const traceId = req.headers.get("x-trace-id") ?? req.headers.get("traceparent") ?? undefined;
-    const projectSlug = req.headers.get("x-project-slug") ?? undefined;
-    const userAgent = req.headers.get("user-agent") ?? undefined;
+    const details = getRequestLogDetails(req);
 
-    serverLogger.info(`${req.method} ${pathname} ${status}`, {
-      requestId,
-      traceId,
-      project_slug: projectSlug,
-      request_url: pathname,
+    serverLogger.info(`${details.method} ${details.pathname} ${status}`, {
+      requestId: details.requestId,
+      traceId: details.traceId,
+      project_slug: details.projectSlug,
+      request_url: details.pathname,
       durationMs: Math.round(duration),
-      method: req.method,
+      method: details.method,
       statusCode: status,
-      remoteAddr: getRemoteAddr(req),
-      ...(userAgent ? { userAgent } : {}),
+      remoteAddr: details.remoteAddr,
+      ...(details.userAgent ? { userAgent: details.userAgent } : {}),
     });
   }
 

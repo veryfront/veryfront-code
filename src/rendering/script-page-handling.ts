@@ -41,6 +41,7 @@ interface ScriptPageOptions {
   projectDir: string;
   adapter: RuntimeAdapter;
   params?: Record<string, string | string[]>;
+  url?: URL;
   props?: ComponentProps;
   nonce?: string;
 }
@@ -127,6 +128,7 @@ function buildPageContext(
   pageInfo: EntityInfo,
   slug: string,
   params?: Record<string, string | string[]>,
+  url?: URL,
 ): PageContext {
   const flatParams: Record<string, string> = params
     ? Object.fromEntries(
@@ -138,6 +140,7 @@ function buildPageContext(
 
   return {
     params: flatParams,
+    query: url ? Object.fromEntries(url.searchParams) : {},
     slug,
     path: pageInfo.entity.path,
     frontmatter: pageInfo.entity.frontmatter || {},
@@ -169,7 +172,7 @@ export async function handleScriptPage(
     logger.debug(`Loading TS/JS page module: ${pageInfo.entity.path}`);
 
     const mod = await loadScriptModule(pageInfo.entity.path, options.projectDir, options.adapter);
-    const ctx = buildPageContext(pageInfo, slug, options.params);
+    const ctx = buildPageContext(pageInfo, slug, options.params, options.url);
 
     let output = await executeModuleRender(mod, ctx);
     const generatedMetadata = await collectModuleMetadata(mod, ctx);
@@ -234,6 +237,7 @@ async function generateFullHtml(
       mode: options.mode,
       slug,
       devPort: options.config?.dev?.port ?? DEFAULT_DASHBOARD_PORT,
+      nonce: options.nonce,
     });
   }
 

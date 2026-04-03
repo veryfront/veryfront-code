@@ -7,6 +7,7 @@ import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { HandlerContext } from "../../types.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
 import { agentRegistry } from "#veryfront/agent/composition/composition.ts";
+import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { stop as stopEsbuild } from "esbuild";
 
 function createHandlerContext(
@@ -112,6 +113,7 @@ describe(
     it("uses cache-key context to isolate production discovery by release", async () => {
       agentRegistry.clearAll();
       toolRegistry.clearAll();
+      skillRegistry.clearAll();
 
       const ctx = createHandlerContext(
         "/production-scope-project",
@@ -153,6 +155,70 @@ describe(
       );
       assertExists(originalReleaseAgent);
       assertEquals(originalReleaseAgent.config.system, "FIRST");
+    });
+
+    it("respects configured custom discovery paths for request-time discovery", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext("/custom-paths-project", "custom-paths-project", "preview");
+      ctx.config = {
+        ai: {
+          tools: { discovery: { paths: ["tooling"] } },
+          agents: { discovery: { paths: ["crew"] } },
+          skills: { discovery: { paths: ["custom-skills"] } },
+        },
+      } as HandlerContext["config"];
+
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/tooling/get-weather.ts`,
+        [
+          'import { tool } from "veryfront/tool";',
+          'import { z } from "zod";',
+          "",
+          "export default tool({",
+          '  description: "Return a deterministic weather report",',
+          "  inputSchema: z.object({ city: z.string() }),",
+          '  execute: async ({ city }) => ({ city, forecast: "windy" }),',
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/crew/custom-assistant.ts`,
+        [
+          'import { agent } from "veryfront/agent";',
+          "",
+          "export default agent({",
+          '  id: "custom-assistant",',
+          '  system: "Custom discovery agent",',
+          '  skills: ["writer-helper"],',
+          "  tools: { getWeather: true },",
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/custom-skills/writer-helper/SKILL.md`,
+        [
+          "---",
+          "name: writer-helper",
+          "description: Custom skill path",
+          "---",
+          "Use custom skill discovery.",
+          "",
+        ].join("\n"),
+      );
+
+      await ensureProjectDiscovery(ctx);
+
+      const discoveredAgent = getAgent("custom-assistant");
+      assertExists(discoveredAgent);
+      assertEquals(toolRegistry.has("getWeather"), true);
+      assertExists(skillRegistry.get("writer-helper"));
     });
   },
 );

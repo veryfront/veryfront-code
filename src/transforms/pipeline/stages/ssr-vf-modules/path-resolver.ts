@@ -8,6 +8,7 @@
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { resolveRelativeFrameworkSourceImport } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { resolveInternalModuleTarget } from "../../../veryfront-module-urls.ts";
 import {
   EMBEDDED_SRC_DIR,
@@ -116,9 +117,9 @@ export async function resolveFrameworkFile(
  * Resolve a #veryfront/ import to the actual framework source file path.
  * Returns the resolved path if found, null otherwise.
  *
- * IMPORTANT: This function checks embedded sources FIRST (for compiled binaries),
- * then falls back to regular src/. This matches resolveFrameworkFile's behavior
- * and ensures consistent path resolution for cycle detection.
+ * IMPORTANT: This function prefers regular src/ when present, then falls back
+ * to embedded sources for compiled binaries. This matches resolveFrameworkFile's
+ * behavior and ensures consistent path resolution for cycle detection.
  */
 export async function resolveVeryfrontSourcePath(
   specifier: string,
@@ -132,13 +133,13 @@ export async function resolveVeryfrontSourcePath(
   const relativePath = mappedTarget.slice("./src/".length);
   const hasExtension = /\.(tsx?|jsx?|mjs)$/.test(relativePath);
 
-  // Check embedded sources first (for compiled binaries), then regular src/
+  // Prefer regular src/ when present, then fall back to embedded sources.
   // This order matches FRAMEWORK_LOOKUPS and resolveFrameworkFile to ensure
   // consistent path resolution across the codebase, which is critical for
   // cycle detection in transformingFiles.
   const lookupDirs = [
-    EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
     join(FRAMEWORK_ROOT, "src"), // Regular sources for dev mode
+    EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
   ];
 
   for (const dir of lookupDirs) {
@@ -201,71 +202,15 @@ export async function resolveVeryfrontSourcePath(
 export async function resolveRelativeFrameworkImport(
   specifier: string,
   fromSourcePath: string,
-  _fs: ReturnType<typeof createFileSystem>,
+  fs: ReturnType<typeof createFileSystem>,
   existsFn: (path: string) => Promise<boolean> = exists,
 ): Promise<string | null> {
-  const fromDir = fromSourcePath.substring(0, fromSourcePath.lastIndexOf("/"));
-  const parts = fromDir.split("/").filter(Boolean);
-  const importParts = specifier.split("/").filter(Boolean);
-
-  for (const part of importParts) {
-    if (part === "..") {
-      parts.pop();
-    } else if (part !== ".") {
-      parts.push(part);
-    }
-  }
-
-  const basePath = "/" + parts.join("/");
-
-  // If specifier already has extension (e.g., ./Head.tsx), we need to try:
-  // 1. The exact path (basePath)
-  // 2. The path with .src suffix (basePath.src) for embedded sources
-  // 3. Fall back to extension probing
-  if (/\.(tsx?|jsx?|mjs)$/.test(specifier)) {
-    // Try exact path first
-    try {
-      if (await existsFn(basePath)) return basePath;
-    } catch (_) {
-      /* expected: file may not exist at this path */
-    }
-
-    // Try with .src suffix for embedded sources
-    try {
-      const srcPath = basePath + ".src";
-      if (await existsFn(srcPath)) return srcPath;
-    } catch (_) {
-      /* expected: file may not exist at this path */
-    }
-
-    // Not found with explicit extension
-    return null;
-  }
-
-  // No extension provided - try all extensions (including .src for embedded sources)
-  const allExtensions = [
-    ...EXTENSIONS.map((ext) => ext + ".src"),
-    ...EXTENSIONS,
-  ];
-
-  for (const ext of allExtensions) {
-    const pathWithExt = basePath + ext;
-    try {
-      if (await existsFn(pathWithExt)) return pathWithExt;
-    } catch (_) {
-      /* expected: file may not exist at this path */
-    }
-  }
-
-  // Try index file
-  for (const ext of allExtensions) {
-    const indexPath = join(basePath, "index" + ext);
-    try {
-      if (await existsFn(indexPath)) return indexPath;
-    } catch (_) {
-      /* expected: file may not exist at this path */
-    }
-  }
-
-  return null;
+  return await resolveRelativeFrameworkSourceImport(specifier, fromSourcePath, {
+    fileSystem: fs,
+    exists: existsFn,
+    extensions: [
+      ...EXTENSIONS.map((ext) => `${ext}.src`),
+      ...EXTENSIONS,
+    ],
+  });
 }

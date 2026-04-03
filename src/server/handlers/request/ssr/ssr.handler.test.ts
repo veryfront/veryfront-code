@@ -230,6 +230,29 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(result.response!.status, 404);
     });
 
+    it("returns redirect responses for redirect error type", async () => {
+      const mockService = createMockSSRService({
+        renderPage: () =>
+          Promise.resolve({
+            status: 302,
+            isStreaming: false,
+            cacheStrategy: "no-cache" as const,
+            errorType: "redirect" as const,
+            redirectLocation: "/login",
+            slug: "redirect-source",
+          }),
+      });
+      const handler = new SSRHandler(mockService);
+      const req = new Request("http://localhost/redirect-source");
+      const ctx = makeCtx();
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, false);
+      assertEquals(result.response!.status, 302);
+      assertEquals(result.response!.headers.get("location"), "/login");
+      assertEquals(result.response!.body, null);
+    });
+
     it("returns 500 for server-error type", async () => {
       const mockService = createMockSSRService({
         renderPage: () =>
@@ -536,6 +559,28 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(result.response instanceof Response, true);
     });
 
+    it("keeps HEAD redirect responses bodyless", async () => {
+      const mockService = createMockSSRService({
+        renderPage: () =>
+          Promise.resolve({
+            status: 301,
+            isStreaming: false,
+            cacheStrategy: "no-cache" as const,
+            errorType: "redirect" as const,
+            redirectLocation: "/moved",
+            slug: "redirect-source",
+          }),
+      });
+      const handler = new SSRHandler(mockService);
+      const req = new Request("http://localhost/redirect-source", { method: "HEAD" });
+      const result = await handler.handle(req, makeCtx());
+
+      assertEquals(result.continue, false);
+      assertEquals(result.response!.status, 301);
+      assertEquals(result.response!.headers.get("location"), "/moved");
+      assertEquals(result.response!.body, null);
+    });
+
     it("continues for HEAD requests with file extension", async () => {
       const handler = new SSRHandler();
       const req = new Request("http://localhost/style.css", { method: "HEAD" });
@@ -610,6 +655,29 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       await handler.handle(new Request("http://localhost/page?noHmr=1"), makeCtx());
 
       assertEquals(capturedOptions!.noHmr, true);
+    });
+
+    it("passes forceProductionScripts when forceProductionScripts=1", async () => {
+      let capturedOptions: SSRRenderOptions | null = null;
+      const mockService = createMockSSRService({
+        renderPage: (_ctx: HandlerContext, options: SSRRenderOptions) => {
+          capturedOptions = options;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>ok</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "page",
+          });
+        },
+      });
+      const handler = new SSRHandler(mockService);
+      await handler.handle(
+        new Request("http://localhost/page?forceProductionScripts=1"),
+        makeCtx(),
+      );
+
+      assertEquals(capturedOptions!.forceProductionScripts, true);
     });
   });
 

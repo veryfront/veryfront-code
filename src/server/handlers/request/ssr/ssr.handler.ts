@@ -191,6 +191,8 @@ export class SSRHandler extends BaseHandler {
         const pageId = url.searchParams.get("page_id") || undefined;
         const noHmr = url.searchParams.get("noHmr") === "1" ||
           url.searchParams.get("no_hmr") === "1";
+        const forceProductionScripts = url.searchParams.get("forceProductionScripts") === "1" ||
+          url.searchParams.get("force_production_scripts") === "1";
         const useNoCache = shouldUseNoCacheHeadersFromHandler(ctx);
 
         const result = await this.ssrService.renderPage(ctx, {
@@ -202,10 +204,15 @@ export class SSRHandler extends BaseHandler {
           projectId,
           pageId,
           noHmr,
+          forceProductionScripts,
           useNoCache,
         });
 
         endRequest(requestId);
+
+        if (result.errorType === "redirect" && result.redirectLocation) {
+          return this.handleRedirect(req, ctx, result, nonce);
+        }
 
         if (result.errorType === "not-found") {
           return this.handleNotFound(req, ctx, slug, nonce);
@@ -220,6 +227,22 @@ export class SSRHandler extends BaseHandler {
       },
       { "ssr.slug": slug, "ssr.projectSlug": ctx.projectSlug || "unknown" },
     );
+  }
+
+  private handleRedirect(
+    req: Request,
+    ctx: HandlerContext,
+    result: SSRRenderResult,
+    nonce: string,
+  ): HandlerResult {
+    const response = this.createResponseBuilder(ctx, nonce)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
+      .withCache(result.cacheStrategy)
+      .withHeaders({ Location: result.redirectLocation ?? "/" })
+      .build(null, result.status);
+
+    return this.respond(response);
   }
 
   private async handleNotFound(

@@ -3,7 +3,7 @@ import { type Router, RouterProvider } from "veryfront/router";
 import { type PageContext, PageContextProvider } from "veryfront/context";
 import { type LayoutInfo, LayoutShell } from "./LayoutShell.tsx";
 import { getCachedComponent, loadComponent, preloadComponent } from "./component-loader.ts";
-import { PAGE_NOT_FOUND } from "#veryfront/errors";
+import { PAGE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
 
 export interface PageDataResponse {
   slug: string;
@@ -22,7 +22,7 @@ type PageComponentType = ComponentType<PageComponentProps>;
 
 interface ClientAppState {
   currentPath: string;
-  PageComponent: PageComponentType | null;
+  pageComponent: PageComponentType | null;
   layouts: LayoutInfo[];
   layoutProps: Record<string, Record<string, unknown>>;
   pageProps: Record<string, unknown>;
@@ -94,34 +94,46 @@ async function navigateViaRouter(url: string, push?: boolean): Promise<void> {
   );
 }
 
-export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
-  const [state, setState] = useState<ClientAppState>(() => {
-    const cachedComponent = getCachedComponent(initialData.pagePath);
+function createClientAppState(
+  data: PageDataResponse,
+  pageComponent: PageComponentType | null,
+): ClientAppState {
+  return {
+    currentPath: data.slug || "/",
+    pageComponent,
+    layouts: data.layouts ?? [],
+    layoutProps: data.layoutProps ?? {},
+    pageProps: data.props ?? {},
+    params: data.params ?? {},
+    frontmatter: data.frontmatter ?? {},
+    isNavigating: false,
+    error: null,
+  };
+}
 
-    return {
-      currentPath: initialData.slug || "/",
-      PageComponent: cachedComponent,
-      layouts: initialData.layouts || [],
-      layoutProps: initialData.layoutProps || {},
-      pageProps: initialData.props || {},
-      params: initialData.params || {},
-      frontmatter: initialData.frontmatter || {},
-      isNavigating: false,
-      error: null,
-    };
-  });
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
+  const [state, setState] = useState<ClientAppState>(() =>
+    createClientAppState(
+      initialData,
+      getCachedComponent(initialData.pagePath),
+    )
+  );
 
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
-    if (state.PageComponent || !initialData.pagePath) return;
+    if (state.pageComponent || !initialData.pagePath) return;
 
     (async () => {
       const Component = await loadComponent(initialData.pagePath);
       if (!Component) return;
-      setState((prev) => ({ ...prev, PageComponent: Component }));
+      setState((prev) => ({ ...prev, pageComponent: Component }));
     })();
-  }, [initialData.pagePath, state.PageComponent]);
+  }, [initialData.pagePath, state.pageComponent]);
 
   useEffect(() => {
     for (const layout of initialData.layouts || []) preloadComponent(layout.path);
@@ -144,23 +156,13 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
 
       if (data.frontmatter?.title) document.title = String(data.frontmatter.title);
 
-      setState({
-        currentPath: data.slug || "/",
-        PageComponent,
-        layouts: data.layouts || [],
-        layoutProps: data.layoutProps || {},
-        pageProps: data.props || {},
-        params: data.params || {},
-        frontmatter: data.frontmatter || {},
-        isNavigating: false,
-        error: null,
-      });
+      setState(createClientAppState(data, PageComponent));
     } catch (error) {
       console.error("[Veryfront SPA] Navigation failed:", error);
       setState((prev) => ({
         ...prev,
         isNavigating: false,
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: toError(error),
       }));
     }
   }, []);
@@ -213,9 +215,9 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
 
   function renderPageContent(): JSX.Element {
     if (state.error) return <PageError error={state.error} onRetry={handleRetry} />;
-    if (!state.PageComponent) return <PageLoading />;
+    if (!state.pageComponent) return <PageLoading />;
 
-    const { PageComponent, pageProps, params } = state;
+    const { pageComponent: PageComponent, pageProps, params } = state;
 
     return (
       <Suspense fallback={<PageLoading />}>

@@ -11,6 +11,10 @@ import type { RenderOptions } from "./types.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 import { getWorkerPool, isSSRIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
 import type { WorkerResponse } from "#veryfront/security/sandbox/worker-types.ts";
+import {
+  endRenderSession,
+  hasRenderSession,
+} from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 
 const logger = rendererLogger.component("ssr-orchestrator");
 
@@ -111,6 +115,10 @@ export class SSROrchestrator {
     );
 
     const { html, stream } = renderResult;
+
+    if (options?.renderSessionId && hasRenderSession(options.renderSessionId)) {
+      endRenderSession(options.renderSessionId);
+    }
 
     const mergedOptions = {
       ...generationContext.options,

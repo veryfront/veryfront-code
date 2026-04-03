@@ -32,6 +32,62 @@ export function isSafeNavigationUrl(url: string): boolean {
   }
 }
 
+function clearSelection(notifyStudio = false): void {
+  state.selectedNodeId = null;
+  hideOverlay(state.selectionOverlay);
+
+  if (notifyStudio) {
+    postToStudio({ action: "setSelectedNode", id: null });
+  }
+}
+
+function disableInspectMode(deselectElements = false): void {
+  state.inspectMode = false;
+  hideOverlay(state.hoverOverlay);
+  state.hoveredNodeId = null;
+
+  if (deselectElements) {
+    clearSelection();
+  }
+}
+
+function postScreenshotResult(
+  requestId: unknown,
+  result: Awaited<ReturnType<typeof captureScreenshot>>,
+): void {
+  postToStudio({
+    action: "screenshotResult",
+    requestId,
+    multiple: false,
+    ...result,
+  });
+}
+
+async function handleScreenshotRequest(message: {
+  requestId?: unknown;
+  multipleSections?: boolean;
+  sectionCount?: number;
+  options?: {
+    scrollTo?: number;
+    fullPage?: boolean;
+    quality?: number;
+  };
+}): Promise<void> {
+  if (message.multipleSections) {
+    const results = await captureMultipleSections(message.sectionCount);
+    postToStudio({
+      action: "screenshotResult",
+      requestId: message.requestId,
+      multiple: true,
+      results,
+    });
+    return;
+  }
+
+  const result = await captureScreenshot(message.options);
+  postScreenshotResult(message.requestId, result);
+}
+
 export function handleStudioMessage(event: MessageEvent): void {
   if (!isFromStudio(event)) return;
 
@@ -48,9 +104,7 @@ export function handleStudioMessage(event: MessageEvent): void {
           return;
         }
         if (state.selectedNodeId) {
-          state.selectedNodeId = null;
-          hideOverlay(state.selectionOverlay);
-          postToStudio({ action: "setSelectedNode", id: null });
+          clearSelection(true);
         }
         postToStudio({
           action: "onPageTransitionStart",
@@ -81,13 +135,7 @@ export function handleStudioMessage(event: MessageEvent): void {
       state.inspectMode = message.value;
       if (state.inspectMode) return;
 
-      hideOverlay(state.hoverOverlay);
-      state.hoveredNodeId = null;
-
-      if (!message.deselectElements) return;
-
-      hideOverlay(state.selectionOverlay);
-      state.selectedNodeId = null;
+      disableInspectMode(message.deselectElements);
       return;
 
     case "setSelectedNode":
@@ -101,26 +149,7 @@ export function handleStudioMessage(event: MessageEvent): void {
       return;
 
     case "screenshot":
-      (async function () {
-        if (message.multipleSections) {
-          const results = await captureMultipleSections(message.sectionCount);
-          postToStudio({
-            action: "screenshotResult",
-            requestId: message.requestId,
-            multiple: true,
-            results: results,
-          });
-          return;
-        }
-
-        const result = await captureScreenshot(message.options);
-        postToStudio({
-          action: "screenshotResult",
-          requestId: message.requestId,
-          multiple: false,
-          ...result,
-        });
-      })();
+      void handleScreenshotRequest(message);
       return;
 
     default:

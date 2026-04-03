@@ -1,3 +1,5 @@
+import type { ClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
+
 export interface HydrationLayout {
   kind: "mdx" | "tsx";
   path: string;
@@ -11,6 +13,7 @@ export interface HydrationDataStructure {
   appPath?: string;
   pagePath?: string;
   pageType?: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
+  clientModuleStrategy?: ClientModuleStrategy;
   frontmatter?: Record<string, unknown>;
   layoutProps?: Record<string, Record<string, unknown>>;
   /**

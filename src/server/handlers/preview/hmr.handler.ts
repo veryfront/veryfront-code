@@ -27,6 +27,7 @@ import {
 } from "./hmr-client-manager.ts";
 import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-ping-keepalive.ts";
 import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
+import { getEffectiveRequestHost } from "../../utils/request-host.ts";
 
 const logger = serverLogger.component("hmr-handler");
 
@@ -94,7 +95,7 @@ export class HMRHandler extends BaseHandler {
     const queryEnv = url.searchParams.get("x-environment");
     const isPreviewMode = ctx.requestContext?.mode === "preview" || queryEnv === "preview";
     const isLocal = !!ctx.isLocalProject;
-    const host = req.headers.get("host") ?? "";
+    const host = getEffectiveRequestHost(req, url);
     const isLocalhost = isLocalDevHost(host);
 
     if (!isPreviewMode && !isLocal && !isLocalhost) {

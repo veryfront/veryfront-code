@@ -42,6 +42,15 @@ describe("provider/veryfront-cloud", () => {
     assertExists(model.doStream);
   });
 
+  it("resolves veryfront-cloud moonshotai models through the model registry", () => {
+    setCloudBootstrap();
+
+    const model = resolveModel("veryfront-cloud/moonshotai/kimi-k2") as Record<string, unknown>;
+
+    assertExists(model.doGenerate);
+    assertExists(model.doStream);
+  });
+
   it("resolves veryfront-cloud embedding models through the embedding registry", () => {
     setCloudBootstrap();
 

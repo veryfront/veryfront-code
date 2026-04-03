@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetGlobalAgentRunSessionManagerForTesting,
@@ -141,5 +141,16 @@ describe("internal-agents/session-manager", () => {
     } finally {
       _resetGlobalAgentRunSessionManagerForTesting();
     }
+  });
+
+  it("rejects runs that exceed the configured concurrency limit", () => {
+    const sessionManager = new AgentRunSessionManager({ maxConcurrentSessions: 1 });
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    assertThrows(
+      () => sessionManager.startRun({ runId: "run_2", threadId: crypto.randomUUID() }),
+      Error,
+      "Maximum concurrent sessions (1) reached",
+    );
   });
 });

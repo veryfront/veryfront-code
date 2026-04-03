@@ -1,5 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { base64urlEncode } from "./base64url.ts";
 import {
   fromBase64Url,
   getDirectory,
@@ -231,8 +232,17 @@ describe("path-utils", () => {
       assertEquals(encoded.includes("="), false);
     });
 
+    it("should match the shared base64url encoder output", () => {
+      const input = "/path/to/file?query=1&other=2";
+      assertEquals(toBase64Url(input), base64urlEncode(input));
+    });
+
     it("should return empty string for invalid base64url", () => {
       assertEquals(fromBase64Url("!!!invalid!!!"), "");
+    });
+
+    it("should fail closed for impossible one-character base64url input", () => {
+      assertEquals(fromBase64Url("a"), "");
     });
   });
 });

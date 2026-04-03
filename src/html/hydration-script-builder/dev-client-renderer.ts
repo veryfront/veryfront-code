@@ -1,7 +1,8 @@
 import { getLoaderScript, getRendererScript, getRouterScript } from "./templates/index.ts";
+import { buildNonceAttribute } from "../html-escape.ts";
 
 export function generateDevClientRendererScript(nonce?: string): string {
-  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  const nonceAttr = buildNonceAttribute(nonce);
 
   return `
   <script type="module"${nonceAttr}>

@@ -196,7 +196,10 @@ describe("hydration-script-builder/templates/router", () => {
     });
 
     it("should inject CSS for SPA navigation in renderPageFromData", () => {
-      assertIncludes(getRouterScript(), "veryfront-spa-css");
+      const result = getRouterScript();
+      assertIncludes(result, "veryfront-spa-css");
+      assertIncludes(result, "function getDocumentNonce()");
+      assertIncludes(result, "styleEl.setAttribute('nonce', nonce)");
     });
 
     it("should update document title during SPA navigation", () => {

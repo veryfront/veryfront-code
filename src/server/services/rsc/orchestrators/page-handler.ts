@@ -1,15 +1,18 @@
+import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
+
 export class PageHandler {
-  handle(pathname: string, searchParams: URLSearchParams): Response {
-    const html = this.buildHtml(pathname, searchParams);
+  handle(pathname: string, searchParams: URLSearchParams, nonce?: string): Response {
+    const html = this.buildHtml(pathname, searchParams, nonce);
 
     return new Response(html, {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   }
 
-  private buildHtml(pathname: string, searchParams: URLSearchParams): string {
+  private buildHtml(pathname: string, searchParams: URLSearchParams, nonce?: string): string {
     const queryString = searchParams.toString();
     const renderUrl = `/_veryfront/rsc/render${pathname}${queryString ? `?${queryString}` : ""}`;
+    const nonceAttr = buildNonceAttribute(nonce);
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -17,11 +20,11 @@ export class PageHandler {
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Veryfront RSC</title>
-  <script>window.__VERYFRONT_DEV__ = true;</script>
+  <script${nonceAttr}>window.__VERYFRONT_DEV__ = true;</script>
 </head>
 <body>
   <div id="rsc-root"></div>
-  <script type="module">
+  <script type="module"${nonceAttr}>
     await import('/_veryfront/rsc/hydrate.js').catch(() => void 0);
 
     async function fetchPayload(url) {

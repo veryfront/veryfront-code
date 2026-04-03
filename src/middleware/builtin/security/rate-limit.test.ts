@@ -160,4 +160,20 @@ describe("rateLimit middleware", () => {
     );
     assertEquals(response2?.status, 200);
   });
+
+  it("should use the rightmost forwarded IP from a proxy chain", async () => {
+    const middleware = rateLimit({ maxRequests: 1, windowMs: 60000 });
+
+    await middleware(
+      createContext("198.51.100.1, 203.0.113.8"),
+      () => Promise.resolve(new Response("OK")),
+    );
+
+    const response = await middleware(
+      createContext("192.0.2.5, 203.0.113.8"),
+      () => Promise.resolve(new Response("OK")),
+    );
+
+    assertEquals(response?.status, 429);
+  });
 });

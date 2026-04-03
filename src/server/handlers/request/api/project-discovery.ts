@@ -16,6 +16,23 @@ const logger = serverLogger.component("api-wrapper");
  */
 const discoveredProjects = new Map<string, Promise<void>>();
 
+function buildDiscoveryConfig(ctx: HandlerContext) {
+  const ai = ctx.config?.ai;
+  const skillDiscoveryEnabled = ai?.skills?.discovery?.enabled ?? true;
+
+  return {
+    baseDir: ctx.projectDir,
+    toolDirs: ai?.tools?.discovery?.paths ?? ["tools"],
+    agentDirs: ai?.agents?.discovery?.paths ?? ["agents"],
+    skillDirs: skillDiscoveryEnabled ? (ai?.skills?.discovery?.paths ?? ["skills"]) : [],
+    resourceDirs: ["resources"],
+    promptDirs: ["prompts"],
+    workflowDirs: ["workflows"],
+    fsAdapter: ctx.adapter.fs,
+    verbose: false,
+  };
+}
+
 /** Build a discovery cache key that incorporates the release/version. */
 function discoveryKey(ctx: HandlerContext): string {
   const cacheContext = tryGetCacheKeyContext();
@@ -74,11 +91,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
     agentRegistry.clear();
     toolRegistry.clear();
 
-    const result = await discoverAll({
-      baseDir: ctx.projectDir,
-      fsAdapter: ctx.adapter.fs,
-      verbose: false,
-    });
+    const result = await discoverAll(buildDiscoveryConfig(ctx));
 
     const logData = {
       projectSlug: ctx.projectSlug,

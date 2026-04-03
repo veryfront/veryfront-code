@@ -152,6 +152,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
         "server",
       );
 
+      const responseBuilder = this.createResponseBuilder(ctx);
       const html = generateMarkdownHtml({
         rawHtml: bundle.rawHtml || "",
         title: frontmatter.title != null ? String(frontmatter.title) : filePath,
@@ -160,18 +161,20 @@ export class MarkdownPreviewHandler extends BaseHandler {
         url,
         projectId: ctx.projectSlug || ctx.projectId || "markdown-preview",
         filePath,
+        nonce: responseBuilder.nonce,
       });
 
-      const responseBuilder = this.createResponseBuilder(ctx)
+      responseBuilder
         .withCache("no-cache")
-        .withContentType("text/html; charset=utf-8", html, HTTP_OK);
+        .withSecurity(ctx.securityConfig ?? undefined, req);
+      const response = responseBuilder.withContentType("text/html; charset=utf-8", html, HTTP_OK);
 
       logger.debug("Serving markdown preview", {
         filePath,
         htmlLength: html.length,
       });
 
-      return this.respond(responseBuilder);
+      return this.respond(response);
     } catch (error) {
       logger.error("Error rendering markdown", {
         filePath,

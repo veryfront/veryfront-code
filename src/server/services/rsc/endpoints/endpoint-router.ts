@@ -9,6 +9,8 @@ import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import { isWithinDirectory, joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { bundleBrowserModule } from "#veryfront/server/shared/browser-module-bundler.ts";
 import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 import { handleActionRequest } from "./action-handler.ts";
 import { getRSCHandler } from "./handler-registry.ts";
@@ -24,7 +26,7 @@ const rscLog = serverLogger.component("rsc");
  * @returns Response or null if not an RSC endpoint
  */
 export async function handleRSCEndpoint(
-  { req, pathname, projectDir, projectId, adapter, config }: RSCEndpointParams,
+  { req, pathname, projectDir, projectId, adapter, config, nonce }: RSCEndpointParams,
 ): Promise<Response | null> {
   if (!pathname.startsWith("/_veryfront/rsc/")) {
     return null;
@@ -63,7 +65,7 @@ export async function handleRSCEndpoint(
     }
     if (sub.startsWith("page/")) {
       metrics.recordRSC("page");
-      return handler.handlePage(sub.replace("page/", ""), url.searchParams);
+      return handler.handlePage(sub.replace("page/", ""), url.searchParams, nonce);
     }
     if (sub.startsWith("stream/")) {
       metrics.recordRSC("stream");
@@ -109,12 +111,17 @@ export async function handleRSCEndpoint(
     }
 
     if (sub === "module") {
-      return handleModuleEndpoint({ searchParams: url.searchParams, projectDir, adapter });
+      return await handleModuleEndpoint({
+        searchParams: url.searchParams,
+        projectDir,
+        adapter,
+        config,
+      });
     }
 
     if (sub === "page") {
       metrics.recordRSC("page");
-      return handler.handlePage("/", url.searchParams);
+      return handler.handlePage("/", url.searchParams, nonce);
     }
 
     if (sub === "stream") {
@@ -147,10 +154,12 @@ async function handleModuleEndpoint({
   searchParams,
   projectDir,
   adapter,
+  config,
 }: {
   searchParams: URLSearchParams;
   projectDir: string;
   adapter: RuntimeAdapter;
+  config?: VeryfrontConfig;
 }): Promise<Response> {
   const relParam = searchParams.get("rel");
   if (!relParam) {
@@ -170,6 +179,35 @@ async function handleModuleEndpoint({
   }
 
   const rel = normalizedRel.startsWith("/") ? normalizedRel : `/${normalizedRel}`;
+  const modulePath = await resolveModuleEndpointPath(rel, projectDir, adapter);
+  if (!modulePath) {
+    return new Response("Not Found", { status: 404 });
+  }
+
+  try {
+    const source = await bundleBrowserModule(modulePath, {
+      adapter,
+      projectDir,
+      config,
+    });
+    return new Response(source, {
+      status: 200,
+      headers: {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public, max-age=0",
+      },
+    });
+  } catch (error) {
+    rscEndpointRouterLog.debug("module lookup failed", { modulePath, error });
+    return new Response("Internal Error", { status: HTTP_SERVER_ERROR });
+  }
+}
+
+async function resolveModuleEndpointPath(
+  rel: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<string | null> {
   const candidateRoots = [
     joinPath(projectDir, "app"),
     joinPath(projectDir, "components"),
@@ -187,22 +225,15 @@ async function handleModuleEndpoint({
       if (!(await adapter.fs.exists(modulePath))) {
         continue;
       }
-
-      const source = await adapter.fs.readFile(modulePath);
-      return new Response(source, {
-        status: 200,
-        headers: {
-          "content-type": "application/javascript; charset=utf-8",
-          "cache-control": "public, max-age=0",
-        },
-      });
     } catch (error) {
       rscEndpointRouterLog.debug("module lookup failed", { modulePath, error });
-      return new Response("Internal Error", { status: HTTP_SERVER_ERROR });
+      throw error;
     }
+
+    return modulePath;
   }
 
-  return new Response("Not Found", { status: 404 });
+  return null;
 }
 
 /** Extract name parameter with fallback to "World" */

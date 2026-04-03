@@ -1,6 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { collectHead, hasCollectedHead, runWithHeadCollector } from "./head-collector.ts";
+import {
+  collectHead,
+  hasCollectedHead,
+  HEAD_COLLECTOR_SYMBOL,
+  runWithHeadCollector,
+} from "./head-collector.ts";
 
 describe("head-collector", () => {
   describe("collectHead", () => {
@@ -168,6 +173,16 @@ describe("head-collector", () => {
   describe("collectHead outside context", () => {
     it("silently ignores calls outside context", () => {
       collectHead({ title: "Orphan" });
+    });
+  });
+
+  describe("global collector registration", () => {
+    it("registers collectHead on the shared global symbol", () => {
+      const globalCollector = (globalThis as typeof globalThis & {
+        [HEAD_COLLECTOR_SYMBOL]?: typeof collectHead;
+      })[HEAD_COLLECTOR_SYMBOL];
+
+      assertEquals(globalCollector, collectHead);
     });
   });
 });

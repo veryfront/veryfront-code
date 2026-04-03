@@ -160,5 +160,17 @@ describe("server/dev-server/error-overlay/html-template", () => {
       const scriptCloseCount = (html.match(/<\/script>/gi) || []).length;
       assertEquals(scriptCloseCount, 1);
     });
+
+    it("should add CSP nonces to inline style and script tags when provided", () => {
+      const html = generateErrorHTML(
+        { type: "runtime", error: new Error("nonce test") },
+        undefined,
+        undefined,
+        "nonce-123",
+      );
+
+      assertEquals(html.includes('<style nonce="nonce-123">'), true);
+      assertEquals(html.includes('<script nonce="nonce-123">'), true);
+    });
   });
 });

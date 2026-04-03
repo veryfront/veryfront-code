@@ -8,7 +8,7 @@
  */
 
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
-import { SECURITY_VIOLATION } from "#veryfront/errors";
+import { SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
 
 export { escapeHtml };
 

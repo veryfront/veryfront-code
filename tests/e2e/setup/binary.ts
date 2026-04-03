@@ -11,42 +11,113 @@ import { exists } from "#veryfront/platform/compat/fs.ts";
 
 export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? "/tmp/veryfront-e2e-bin";
 export const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
+const HASH_INPUTS = ["src", "cli", "scripts/build", "deno.json"] as const;
+
+function toHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(input: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", input as unknown as BufferSource);
+  return toHex(new Uint8Array(digest));
+}
+
+async function walkFiles(path: string): Promise<string[]> {
+  const stat = await Deno.stat(path);
+  if (stat.isFile) return [path];
+
+  const files: string[] = [];
+  for await (const entry of Deno.readDir(path)) {
+    if (entry.name === ".DS_Store") continue;
+    const childPath = `${path}/${entry.name}`;
+    if (entry.isDirectory) {
+      files.push(...await walkFiles(childPath));
+      continue;
+    }
+    if (entry.isFile) files.push(childPath);
+  }
+
+  return files.sort();
+}
+
+async function computeWorkingTreeHash(): Promise<string> {
+  const encoder = new TextEncoder();
+  const fileHashes: string[] = [];
+
+  for (const input of HASH_INPUTS) {
+    if (!await exists(input)) continue;
+    for (const file of await walkFiles(input)) {
+      const content = await Deno.readFile(file);
+      const contentHash = await sha256Hex(content);
+      fileHashes.push(`${file}\0${contentHash}`);
+    }
+  }
+
+  return `v3-${await sha256Hex(encoder.encode(fileHashes.join("\n")))}`;
+}
 
 /**
  * Compute a hash of the source directory to detect changes.
- * Uses git tree hash for accuracy, falls back to HEAD or timestamp.
+ * Hashes the working tree for binary build inputs so uncommitted edits
+ * also invalidate the cached compiled test binary.
  */
 export async function computeSourceHash(): Promise<string> {
   const decoder = new TextDecoder();
 
-  // Try tree hash of src directory (most accurate)
   try {
-    const result = await new Deno.Command("git", {
+    const statusResult = await new Deno.Command("git", {
+      args: ["status", "--porcelain", "--", ...HASH_INPUTS],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+
+    if (!statusResult.success) {
+      return await computeWorkingTreeHash();
+    }
+
+    const statusOutput = decoder.decode(statusResult.stdout).trim();
+    if (statusOutput.length > 0) {
+      return await computeWorkingTreeHash();
+    }
+  } catch {
+    return await computeWorkingTreeHash();
+  }
+
+  // Fast path for clean trees: use git object IDs.
+  try {
+    const srcResult = await new Deno.Command("git", {
       args: ["rev-parse", "HEAD:src"],
       stdout: "piped",
       stderr: "null",
     }).output();
-
-    if (result.success) return decoder.decode(result.stdout).trim();
-  } catch {
-    // fall through
-  }
-
-  // Fall back to HEAD commit
-  try {
-    const result = await new Deno.Command("git", {
-      args: ["rev-parse", "HEAD"],
+    const scriptsResult = await new Deno.Command("git", {
+      args: ["rev-parse", "HEAD:scripts/build"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    const cliResult = await new Deno.Command("git", {
+      args: ["rev-parse", "HEAD:cli"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    const denoJsonResult = await new Deno.Command("git", {
+      args: ["rev-parse", "HEAD:deno.json"],
       stdout: "piped",
       stderr: "null",
     }).output();
 
-    if (result.success) return decoder.decode(result.stdout).trim();
+    if (srcResult.success && scriptsResult.success && cliResult.success && denoJsonResult.success) {
+      const srcHash = decoder.decode(srcResult.stdout).trim();
+      const scriptsHash = decoder.decode(scriptsResult.stdout).trim();
+      const cliHash = decoder.decode(cliResult.stdout).trim();
+      const denoJsonHash = decoder.decode(denoJsonResult.stdout).trim();
+      return `v3-${srcHash}-${cliHash}-${scriptsHash}-${denoJsonHash}`;
+    }
   } catch {
     // fall through
   }
 
-  // Last resort: timestamp (always recompiles)
-  return Date.now().toString();
+  return await computeWorkingTreeHash();
 }
 
 /**
@@ -74,9 +145,24 @@ export async function ensureBinaryCompiled(): Promise<void> {
   if (forceFresh) console.log("🗑️  Force fresh build (VERYFRONT_BINARY_FRESH=1)");
   if (binaryExists) await Deno.remove(BINARY_PATH);
 
+  console.log("📦 Preparing build artifacts...");
+  const prepareResult = await new Deno.Command("deno", {
+    args: ["task", "build:prepare"],
+    stdout: "inherit",
+    stderr: "inherit",
+  }).output();
+
+  if (!prepareResult.success) throw new Error("Failed to prepare framework sources");
+
   console.log("📦 Compiling binary...");
   const result = await new Deno.Command("deno", {
-    args: ["compile", "--allow-all", "--unstable-net", "--output", BINARY_PATH, "cli/main.ts"],
+    args: [
+      "run",
+      "-A",
+      "scripts/build/compile-binary.ts",
+      "--output",
+      BINARY_PATH,
+    ],
     stdout: "inherit",
     stderr: "inherit",
   }).output();

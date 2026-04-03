@@ -76,6 +76,10 @@ export function endRenderSession(sessionId: string): void {
   renderSessions.delete(sessionId);
 }
 
+export function hasRenderSession(sessionId: string): boolean {
+  return renderSessions.has(sessionId);
+}
+
 /**
  * Get the current active render session (if any).
  * Used to record modules during fetch and for per-session in-flight deduplication.

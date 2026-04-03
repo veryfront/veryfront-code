@@ -3,10 +3,10 @@ import { createRoot, hydrateRoot } from "react-dom/client";
 import { rscLogger } from "../client/browser-logger.ts";
 import {
   COMPILATION_ERROR,
-  isVeryfrontError,
   MODULE_NOT_FOUND,
   NETWORK_ERROR,
-} from "#veryfront/errors/index.ts";
+} from "#veryfront/errors/error-registry.ts";
+import { isVeryfrontError } from "#veryfront/errors/http-error.ts";
 import { createErrorDisplay } from "#veryfront/security/client/html-sanitizer.ts";
 import type { RSCHydratorOptions } from "./types.ts";
 
