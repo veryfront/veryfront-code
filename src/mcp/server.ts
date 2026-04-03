@@ -158,15 +158,15 @@ export class MCPServer {
   ): Promise<unknown> {
     switch (method) {
       case "tools/list":
-        return this.listTools();
+        return this.listTools(params);
       case "tools/call":
         return this.callTool(params, context);
       case "resources/list":
-        return this.listResources();
+        return this.listResources(params);
       case "resources/read":
         return this.readResource(params);
       case "prompts/list":
-        return this.listPrompts();
+        return this.listPrompts(params);
       case "prompts/get":
         return this.getPrompt(params);
       case "initialize":
@@ -209,7 +209,7 @@ export class MCPServer {
     });
   }
 
-  private async listTools(): Promise<{ tools: ToolListEntry[] }> {
+  private async listTools(_params?: JSONRPCParams): Promise<{ tools: ToolListEntry[] }> {
     // Sync integration config to API on first tools/list call
     if (this.integrationLoader && !this.integrationsLoaded) {
       try {
@@ -286,7 +286,9 @@ export class MCPServer {
     );
   }
 
-  private listResources(): Promise<{ resources: Array<Record<string, unknown>> }> {
+  private listResources(
+    _params?: JSONRPCParams,
+  ): Promise<{ resources: Array<Record<string, unknown>> }> {
     const registry = getMCPRegistry();
     const resources: Array<Record<string, unknown>> = [];
 
@@ -347,7 +349,9 @@ export class MCPServer {
     );
   }
 
-  private listPrompts(): Promise<{ prompts: Array<Record<string, unknown>> }> {
+  private listPrompts(
+    _params?: JSONRPCParams,
+  ): Promise<{ prompts: Array<Record<string, unknown>> }> {
     const registry = getMCPRegistry();
     const prompts: Array<Record<string, unknown>> = [];
 

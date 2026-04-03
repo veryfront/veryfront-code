@@ -768,6 +768,71 @@ describe("mcp/server", () => {
     });
   });
 
+  describe("list endpoint pagination", () => {
+    it("tools/list accepts cursor param without erroring", async () => {
+      const server = createMCPServer({ enabled: true });
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: { cursor: "abc123" },
+      });
+
+      assertEquals(response.error, undefined);
+      assertExists(response.result);
+    });
+
+    it("tools/list does not include nextCursor when all results fit", async () => {
+      const server = createMCPServer({ enabled: true });
+
+      registerTool(
+        "test:pagination",
+        dynamicTool({
+          id: "test:pagination",
+          description: "Pagination test tool",
+          inputSchema: z.object({}),
+          execute: async () => ({ ok: true }),
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+
+      assertEquals(response.error, undefined);
+      const result = response.result as { tools: unknown[]; nextCursor?: string };
+      assertEquals(result.nextCursor, undefined);
+    });
+
+    it("resources/list accepts cursor param without erroring", async () => {
+      const server = createMCPServer({ enabled: true });
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/list",
+        params: { cursor: "abc123" },
+      });
+
+      assertEquals(response.error, undefined);
+      assertExists(response.result);
+    });
+
+    it("prompts/list accepts cursor param without erroring", async () => {
+      const server = createMCPServer({ enabled: true });
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/list",
+        params: { cursor: "abc123" },
+      });
+
+      assertEquals(response.error, undefined);
+      assertExists(response.result);
+    });
+  });
+
   it("syncs integration config to API on first tools/list call", async () => {
     const server = createMCPServer({ enabled: true });
     server.setIntegrationLoader({
