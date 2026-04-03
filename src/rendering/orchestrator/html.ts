@@ -127,9 +127,22 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
-    const html = isFullHTMLDocument(context.html)
-      ? await this.handleFullHTMLDocument(context)
-      : await this.wrapHTMLFragment(context);
+    let html: string;
+    if (isFullHTMLDocument(context.html)) {
+      let projectCSSPromise: Promise<ProjectCSSResult> | undefined;
+      if (this.config.mode === "production" && context.options?.environment === "production") {
+        const mergedFrontmatter = this.mergeFrontmatter(context);
+        const htmlOptions = await profilePhase(
+          "html.build_options",
+          () => this.buildHTMLOptions(context, mergedFrontmatter),
+        );
+        projectCSSPromise = this.startProjectCSSPreparation(context, htmlOptions);
+      }
+
+      html = await this.handleFullHTMLDocument(context, projectCSSPromise);
+    } else {
+      html = await this.wrapHTMLFragment(context);
+    }
     const finalHtml = context.options?.studioEmbed ? injectElementSelectors(html) : html;
 
     if (context.options?.studioEmbed) {
@@ -167,10 +180,13 @@ export class HTMLGenerator {
     if (isFullHTMLDocument(reactContent)) {
       const encoder = new TextEncoder();
       const fullHtml = addNonceToHtmlTags(
-        await this.handleFullHTMLDocument({
-          ...fullContext,
-          html: reactContent,
-        }),
+        await this.handleFullHTMLDocument(
+          {
+            ...fullContext,
+            html: reactContent,
+          },
+          projectCSSPromise,
+        ),
         context.options?.nonce,
       );
 
@@ -208,7 +224,10 @@ export class HTMLGenerator {
     });
   }
 
-  private async handleFullHTMLDocument(context: HTMLGenerationContext): Promise<string> {
+  private async handleFullHTMLDocument(
+    context: HTMLGenerationContext,
+    projectCSSPromise?: Promise<ProjectCSSResult>,
+  ): Promise<string> {
     const metadata = extractHTMLMetadata(
       (context.pageInfo.entity.frontmatter || {}) as MDXFrontmatter,
       (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
@@ -234,6 +253,11 @@ export class HTMLGenerator {
       context.options?.nonce,
     );
 
+    const projectStylesheetHref = await this.resolveProjectStylesheetHref(
+      context,
+      projectCSSPromise,
+    );
+
     const injectedHtml = injectHTMLContent(themedHtml, "", metadata, {
       mode: this.config.mode,
       slug: context.slug,
@@ -245,11 +269,29 @@ export class HTMLGenerator {
       isLocalProject: this.config.mode === "development",
       nonce: context.options?.nonce,
       importMapJson,
+      projectStylesheetHref,
     });
 
     if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) return injectedHtml;
 
     return `<!DOCTYPE html>\n${injectedHtml}`;
+  }
+
+  private async resolveProjectStylesheetHref(
+    context: HTMLGenerationContext,
+    projectCSSPromise?: Promise<ProjectCSSResult>,
+  ): Promise<string | undefined> {
+    if (!projectCSSPromise) return undefined;
+
+    const projectCSS = await profilePhase("html.project_css", () => projectCSSPromise);
+    const cssHash = projectCSS?.hash ?? "";
+    if (cssHash) return `/_vf/css/${cssHash}.css`;
+
+    logger.error("Project CSS hash is empty for full-document HTML", {
+      slug: context.slug,
+      environment: context.options?.environment,
+    });
+    return undefined;
   }
 
   private async detectUseClientDirective(pagePath: string): Promise<boolean> {

@@ -300,6 +300,52 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
 
+    it("injects production project stylesheet links into full HTML documents", async () => {
+      const mockAdapter = {
+        fs: {
+          readFile: async (path: string) => {
+            if (path.endsWith("/app/page.tsx")) return `'use client';`;
+            if (path.endsWith("/globals.css")) {
+              return "body { background: #0f172a; color: #f8fafc; }";
+            }
+            return "";
+          },
+          exists: async () => false,
+          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
+          readDir: async function* () {},
+          mkdir: async () => {},
+          writeFile: async () => {},
+        },
+      };
+
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: mockAdapter as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      const html = await generator.generateFullHTML({
+        html: "<!DOCTYPE html><html><head></head><body><main>Hello</main></body></html>",
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {},
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        options: { environment: "production" },
+      });
+
+      assertEquals(/<link rel="stylesheet" href="\/_vf\/css\/[^"]+\.css">/.test(html), true);
+      assertEquals(html.includes('id="vf-tailwind-css"'), false);
+    });
+
     it("preserves full-document layout head/body output for explicit dark-mode requests", async () => {
       const mockAdapter = {
         fs: {
@@ -651,6 +697,67 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes('data-theme="dark"'), true);
       assertEquals(html.includes('id="vf-tailwind-css"'), true);
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
+    });
+
+    it("keeps production project stylesheet links for streamed full-document pages", async () => {
+      const mockAdapter = {
+        fs: {
+          readFile: async (path: string) => {
+            if (path.endsWith("/app/page.tsx")) return `'use client';`;
+            if (path.endsWith("/globals.css")) {
+              return "body { background: #0f172a; color: #f8fafc; }";
+            }
+            return "";
+          },
+          exists: async () => false,
+          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
+          readDir: async function* () {},
+          mkdir: async () => {},
+          writeFile: async () => {},
+        },
+      };
+
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: mockAdapter as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              "<!DOCTYPE html><html><head><title>Prod Layout</title></head><body><main>Hello</main></body></html>",
+            ),
+          );
+          controller.close();
+        },
+      });
+
+      const responseStream = await generator.generateHTMLStream(stream, {
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {},
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        options: {
+          environment: "production",
+        },
+      });
+
+      const html = await new Response(responseStream).text();
+
+      assertEquals(/<link rel="stylesheet" href="\/_vf\/css\/[^"]+\.css">/.test(html), true);
+      assertEquals(html.includes('id="vf-tailwind-css"'), false);
+      assertEquals(html.includes("hydrate.js?slug=test-page"), true);
     });
   });
 
