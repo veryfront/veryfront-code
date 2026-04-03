@@ -209,6 +209,8 @@ const SCAFFOLD_CONFIGS: Record<ScaffoldType, ScaffoldConfig> = {
 
 export const vfScaffold: MCPTool<ScaffoldInput, ScaffoldResult> = {
   name: "vf_scaffold",
+  title: "Scaffold Code",
+  annotations: { destructiveHint: false, openWorldHint: false },
   description:
     "Generate new entities (pages, API routes, layouts, components, AI tools, agents, prompts) with proper conventions. This is the recommended way to create new files in a Veryfront project.",
   inputSchema: scaffoldInput,
@@ -400,6 +402,8 @@ const CONVENTIONS: Record<string, Convention> = {
 
 export const vfGetConventions: MCPTool<GetConventionsInput, Convention[]> = {
   name: "vf_get_conventions",
+  title: "Get Conventions",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Get Veryfront coding conventions and best practices. Use this as guardrails when writing code to ensure consistency with the project standards.",
   inputSchema: getConventionsInput,

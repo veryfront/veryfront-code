@@ -30,6 +30,8 @@ interface HotReloadResult {
 
 export const vfHotReload: MCPTool<HotReloadInput, HotReloadResult> = {
   name: "vf_hot_reload",
+  title: "Hot Reload",
+  annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   description:
     "Trigger a hot reload of the dev server. Use after making changes to see them instantly.",
   inputSchema: hotReloadInput,
@@ -70,6 +72,8 @@ interface DebugContextResult {
 
 export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult> = {
   name: "vf_get_debug_context",
+  title: "Debug Context",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Get the current server context including project info, environment, and mode. Useful for debugging server configuration issues.",
   inputSchema: getDebugContextInput,
@@ -127,6 +131,8 @@ interface TriggerHmrResult {
 
 export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
   name: "vf_trigger_hmr",
+  title: "Trigger HMR",
+  annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   description:
     "Trigger Hot Module Replacement for a specific file. The browser will update without a full reload.",
   inputSchema: triggerHmrInput,
@@ -180,6 +186,8 @@ interface PreviewRouteResult {
 
 export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
   name: "vf_preview_route",
+  title: "Preview Route",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Preview a route by making a request to the dev server. Returns the rendered output, HTTP status, and render time. Perfect for testing changes instantly.",
   inputSchema: previewRouteInput,
@@ -261,6 +269,8 @@ interface WaitForReadyResult {
 
 export const vfWaitForReady: MCPTool<WaitForReadyInput, WaitForReadyResult> = {
   name: "vf_wait_for_ready",
+  title: "Wait for Ready",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Wait for the server to be ready by polling the health endpoint. Use this after starting the server to ensure it's accepting requests.",
   inputSchema: waitForReadyInput,
@@ -349,6 +359,8 @@ interface FlywheelStatus {
 
 export const vfGetFlywheelStatus: MCPTool<GetFlywheelStatusInput, FlywheelStatus> = {
   name: "vf_get_flywheel_status",
+  title: "Flywheel Status",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Get aggregated status for the development flywheel. Shows server state, error counts, log summary, and HMR status in one view.",
   inputSchema: getFlywheelStatusInput,

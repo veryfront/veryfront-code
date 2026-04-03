@@ -45,6 +45,8 @@ type GetErrorsInput = z.infer<typeof getErrorsInput>;
 
 export const vfGetErrors: MCPTool<GetErrorsInput, DevError[]> = {
   name: "vf_get_errors",
+  title: "Get Errors",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Get compilation, runtime, and build errors from the dev server. Use this to debug issues with your code.",
   inputSchema: getErrorsInput,
@@ -73,6 +75,8 @@ type GetLogsInput = z.infer<typeof getLogsInput>;
 
 export const vfGetLogs: MCPTool<GetLogsInput, LogEntry[]> = {
   name: "vf_get_logs",
+  title: "Get Logs",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Get recent server logs. Use this to understand what the server is doing and debug runtime issues.",
   inputSchema: getLogsInput,
@@ -102,6 +106,8 @@ interface ClearCacheOutput {
 
 export const vfClearCache: MCPTool<ClearCacheInput, ClearCacheOutput> = {
   name: "vf_clear_cache",
+  title: "Clear Cache",
+  annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Clear module and build caches. Use this when changes aren't being reflected or to force a rebuild.",
   inputSchema: clearCacheInput,
@@ -143,6 +149,8 @@ export function createVfGetStatus(
 ): MCPTool<GetStatusInput, ServerStatus> {
   return {
     name: "vf_get_status",
+    title: "Server Status",
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     description: "Get the current status of the dev server including error counts and uptime.",
     inputSchema: getStatusInput,
     execute: async () => {
@@ -181,6 +189,8 @@ interface ClearErrorsOutput {
 
 export const vfClearErrors: MCPTool<ClearErrorsInput, ClearErrorsOutput> = {
   name: "vf_clear_errors",
+  title: "Clear Errors",
+  annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
   description: "Clear errors from the error collector. Useful after fixing issues.",
   inputSchema: clearErrorsInput,
   execute: async (input) => {

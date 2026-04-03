@@ -53,6 +53,8 @@ type IssuesCreateInput = z.infer<typeof issuesCreateInput>;
 
 const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
   name: "issues_create",
+  title: "Create Issue",
+  annotations: { destructiveHint: false, openWorldHint: false },
   description: "Create a new issue, task, or plan as a markdown file. " +
     "Use prefix 'TASK' for small work items, 'PLAN' for proposals/RFCs, 'ISSUE' for bugs/features.",
   inputSchema: issuesCreateInput,
@@ -81,6 +83,8 @@ type IssuesGetInput = z.infer<typeof issuesGetInput>;
 
 const issuesGet: MCPTool<IssuesGetInput, Issue | null> = {
   name: "issues_get",
+  title: "Get Issue",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description: "Get a specific issue by ID. Returns null if not found.",
   inputSchema: issuesGetInput,
   execute: async (input) => {
@@ -107,6 +111,8 @@ type IssuesUpdateInput = z.infer<typeof issuesUpdateInput>;
 
 const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
   name: "issues_update",
+  title: "Update Issue",
+  annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   description: "Update an existing issue. Only provided fields are updated. " +
     "Returns the updated issue or null if not found.",
   inputSchema: issuesUpdateInput,
@@ -153,6 +159,8 @@ interface IssuesListOutput {
 
 const issuesList: MCPTool<IssuesListInput, IssuesListOutput> = {
   name: "issues_list",
+  title: "List Issues",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description: "List issues with filtering and sorting. " +
     "Returns matching issues and total count.",
   inputSchema: issuesListInput,
@@ -183,6 +191,8 @@ type IssuesCloseInput = z.infer<typeof issuesCloseInput>;
 
 const issuesClose: MCPTool<IssuesCloseInput, Issue | null> = {
   name: "issues_close",
+  title: "Close Issue",
+  annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   description: "Close an issue. Returns the updated issue or null if not found.",
   inputSchema: issuesCloseInput,
   execute: async (input) => {
@@ -207,6 +217,8 @@ interface IssuesDeleteOutput {
 
 const issuesDelete: MCPTool<IssuesDeleteInput, IssuesDeleteOutput> = {
   name: "issues_delete",
+  title: "Delete Issue",
+  annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
   description: "Permanently delete an issue file. " +
     "Use with caution - this cannot be undone.",
   inputSchema: issuesDeleteInput,

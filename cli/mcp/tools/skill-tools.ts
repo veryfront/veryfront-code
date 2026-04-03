@@ -91,6 +91,8 @@ interface GetSkillsResult {
 
 export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
   name: "vf_get_skills",
+  title: "Get Skills",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Discover available Agent Skills for Veryfront development. Skills provide procedural knowledge for using MCP tools effectively. Call without name param to list all skills, or with name to get full skill content.",
   inputSchema: getSkillsInput,
@@ -168,6 +170,8 @@ interface GetSkillReferenceResult {
 
 export const vfGetSkillReference: MCPTool<GetSkillReferenceInput, GetSkillReferenceResult> = {
   name: "vf_get_skill_reference",
+  title: "Get Skill Reference",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Get a specific reference document from a skill. Use this to load detailed documentation on demand.",
   inputSchema: getSkillReferenceInput,

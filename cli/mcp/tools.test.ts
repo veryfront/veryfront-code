@@ -37,6 +37,19 @@ describe("mcp/tools", () => {
       const uniqueNames = new Set(names);
       assertEquals(names.length, uniqueNames.size, "Tool names must be unique");
     });
+
+    it("every tool has title and annotations", () => {
+      for (const tool of allTools) {
+        assertExists(tool.title, `Tool ${tool.name} missing title`);
+        assertEquals(typeof tool.title, "string", `Tool ${tool.name} title must be a string`);
+        assertExists(tool.annotations, `Tool ${tool.name} missing annotations`);
+        assertEquals(
+          typeof tool.annotations,
+          "object",
+          `Tool ${tool.name} annotations must be an object`,
+        );
+      }
+    });
   });
 
   describe("getTool", () => {

@@ -37,6 +37,8 @@ type ListRoutesInput = z.infer<typeof listRoutesInput>;
 
 export const vfListRoutes: MCPTool<ListRoutesInput, RouteInfo[]> = {
   name: "vf_list_routes",
+  title: "List Routes",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Discover all routes in the project. Returns pages, API routes, layouts, and special routes. Use this to understand the project structure before making changes.",
   inputSchema: listRoutesInput,
@@ -142,6 +144,8 @@ async function getProjectName(projectDir: string, fs: FileSystem): Promise<strin
 
 export const vfGetProjectContext: MCPTool<GetProjectContextInput, ProjectContext> = {
   name: "vf_get_project_context",
+  title: "Project Context",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Get deep understanding of the project structure, conventions, and capabilities. Use this at the start of any coding session to understand the project before making changes.",
   inputSchema: getProjectContextInput,
@@ -219,6 +223,8 @@ function toRelativePath(absolutePath: string, projectDir: string): string {
 
 export const vfGetComponentTree: MCPTool<GetComponentTreeInput, ComponentTreeResult> = {
   name: "vf_get_component_tree",
+  title: "Component Tree",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Analyze the component hierarchy for a route. Shows layouts, providers, and components that render on this route. Helps understand the rendering structure.",
   inputSchema: getComponentTreeInput,
@@ -375,6 +381,8 @@ async function scanForProjects(
 
 export const vfListLocalProjects: MCPTool<ListLocalProjectsInput, LocalProjectInfo[]> = {
   name: "vf_list_local_projects",
+  title: "List Local Projects",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Discover Veryfront projects on the local filesystem. Scans for veryfront.config.ts files and returns project info including template type and integrations.",
   inputSchema: listLocalProjectsInput,
