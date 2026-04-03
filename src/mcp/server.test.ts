@@ -566,6 +566,73 @@ describe("mcp/server", () => {
     });
   });
 
+  it("includes title and annotations in tools/list when configured", async () => {
+    const server = createMCPServer({ enabled: true });
+
+    registerTool(
+      "test:annotated",
+      dynamicTool({
+        id: "test:annotated",
+        description: "Tool with annotations",
+        inputSchema: z.object({}),
+        execute: async () => ({ ok: true }),
+        mcp: {
+          enabled: true,
+          title: "Annotated Tool",
+          annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+          },
+        },
+      }),
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+    });
+
+    const tools = (response.result as { tools: Array<Record<string, unknown>> }).tools;
+    const annotated = tools.find((t) => t.name === "test:annotated");
+    assertExists(annotated);
+    assertEquals(annotated.title, "Annotated Tool");
+    assertEquals(annotated.annotations, {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+  });
+
+  it("omits title and annotations from tools/list when not configured", async () => {
+    const server = createMCPServer({ enabled: true });
+
+    registerTool(
+      "test:plain",
+      dynamicTool({
+        id: "test:plain",
+        description: "Plain tool",
+        inputSchema: z.object({}),
+        execute: async () => ({ ok: true }),
+      }),
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+    });
+
+    const tools = (response.result as { tools: Array<Record<string, unknown>> }).tools;
+    const plain = tools.find((t) => t.name === "test:plain");
+    assertExists(plain);
+    assertEquals(plain.title, undefined);
+    assertEquals(plain.annotations, undefined);
+  });
+
   it("syncs integration config to API on first tools/list call", async () => {
     const server = createMCPServer({ enabled: true });
     server.setIntegrationLoader({

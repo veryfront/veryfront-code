@@ -204,11 +204,14 @@ export class MCPServer {
     for (const [id, tool] of registry.tools.entries()) {
       if (tool.mcp?.enabled === false) continue;
 
-      tools.push({
+      const entry: Record<string, unknown> = {
         name: id,
         description: tool.description,
         inputSchema: tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema),
-      });
+      };
+      if (tool.mcp?.title) entry.title = tool.mcp.title;
+      if (tool.mcp?.annotations) entry.annotations = tool.mcp.annotations;
+      tools.push(entry);
     }
 
     return { tools };
