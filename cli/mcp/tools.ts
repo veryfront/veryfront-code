@@ -35,10 +35,10 @@ export function setServerStartTime(time: number): void {
 
 const getErrorsInput = z.object({
   type: z.enum(["compile", "runtime", "bundle", "hmr", "module"]).optional().describe(
-    "Filter by error type",
+    "Filter by error type. Example: 'compile'. Omit to return all types.",
   ),
-  file: z.string().optional().describe("Filter by file path"),
-  limit: z.number().optional().default(50).describe("Maximum number of errors to return"),
+  file: z.string().optional().describe("Filter by file path. Example: 'app/page.tsx'. Omit to return errors from all files."),
+  limit: z.number().optional().default(50).describe("Maximum number of errors to return. Defaults to 50."),
 });
 
 type GetErrorsInput = z.infer<typeof getErrorsInput>;
@@ -46,7 +46,7 @@ type GetErrorsInput = z.infer<typeof getErrorsInput>;
 export const vfGetErrors: MCPTool<GetErrorsInput, DevError[]> = {
   name: "vf_get_errors",
   description:
-    "Get compilation, runtime, and build errors from the dev server. Use this to debug issues with your code.",
+    "Use this when you need to check for compilation, runtime, bundle, HMR, or module errors in the dev server. Returns error details including file path, line number, and message. Do not use for server logs — use vf_get_logs instead.",
   inputSchema: getErrorsInput,
   execute: async (input) => {
     const errors = getErrorCollector().getAll({
@@ -60,13 +60,13 @@ export const vfGetErrors: MCPTool<GetErrorsInput, DevError[]> = {
 };
 
 const getLogsInput = z.object({
-  level: z.enum(["debug", "info", "warn", "error"]).optional().describe("Filter by log level"),
+  level: z.enum(["debug", "info", "warn", "error"]).optional().describe("Filter by log level. Example: 'error'. Omit to return all levels."),
   source: z.string().optional().describe(
-    "Filter by log source (e.g., 'server', 'hmr', 'transform')",
+    "Filter by log source. Example: 'server', 'hmr', 'transform'. Omit to return all sources.",
   ),
-  pattern: z.string().optional().describe("Filter by pattern (case-insensitive substring match)"),
-  limit: z.number().optional().default(100).describe("Maximum number of log entries to return"),
-  since: z.number().optional().describe("Only return logs after this timestamp"),
+  pattern: z.string().optional().describe("Filter by pattern (case-insensitive substring match). Example: 'timeout'."),
+  limit: z.number().optional().default(100).describe("Maximum number of log entries to return. Defaults to 100."),
+  since: z.number().optional().describe("Only return logs after this Unix timestamp in milliseconds."),
 });
 
 type GetLogsInput = z.infer<typeof getLogsInput>;
@@ -74,7 +74,7 @@ type GetLogsInput = z.infer<typeof getLogsInput>;
 export const vfGetLogs: MCPTool<GetLogsInput, LogEntry[]> = {
   name: "vf_get_logs",
   description:
-    "Get recent server logs. Use this to understand what the server is doing and debug runtime issues.",
+    "Use this when you need to inspect server logs to understand runtime behavior or debug request handling. Returns log entries with timestamp, level, source, and message. Do not use for build/compile errors — use vf_get_errors instead.",
   inputSchema: getLogsInput,
   execute: async (input) => {
     return getLogBuffer().query({
@@ -89,7 +89,7 @@ export const vfGetLogs: MCPTool<GetLogsInput, LogEntry[]> = {
 
 const clearCacheInput = z.object({
   type: z.enum(["all", "modules", "mdx"]).optional().default("all").describe(
-    "Type of cache to clear",
+    "Type of cache to clear. Example: 'modules'. Defaults to 'all'.",
   ),
 });
 
@@ -103,7 +103,7 @@ interface ClearCacheOutput {
 export const vfClearCache: MCPTool<ClearCacheInput, ClearCacheOutput> = {
   name: "vf_clear_cache",
   description:
-    "Clear module and build caches. Use this when changes aren't being reflected or to force a rebuild.",
+    "Use this when the dev server shows stale modules or MDX content. Clears the specified cache directories. Do not use to fix code errors — those require code changes.",
   inputSchema: clearCacheInput,
   execute: async (input) => {
     const fs = createFileSystem();
@@ -143,7 +143,7 @@ export function createVfGetStatus(
 ): MCPTool<GetStatusInput, ServerStatus> {
   return {
     name: "vf_get_status",
-    description: "Get the current status of the dev server including error counts and uptime.",
+    description: "Use this when you need to check if the dev server is running, its uptime, or current error/warning counts. Do not use for detailed error info — use vf_get_errors instead.",
     inputSchema: getStatusInput,
     execute: async () => {
       const errors = getErrorCollector();
@@ -167,9 +167,9 @@ export function createVfGetStatus(
 export const vfGetStatus = createVfGetStatus();
 
 const clearErrorsInput = z.object({
-  file: z.string().optional().describe("Clear errors for a specific file only"),
+  file: z.string().optional().describe("Clear errors for a specific file only. Example: 'app/page.tsx'. Omit to clear all files."),
   type: z.enum(["compile", "runtime", "bundle", "hmr", "module"]).optional().describe(
-    "Clear errors of a specific type only",
+    "Clear errors of a specific type only. Example: 'compile'. Omit to clear all types.",
   ),
 });
 
@@ -181,7 +181,7 @@ interface ClearErrorsOutput {
 
 export const vfClearErrors: MCPTool<ClearErrorsInput, ClearErrorsOutput> = {
   name: "vf_clear_errors",
-  description: "Clear errors from the error collector. Useful after fixing issues.",
+  description: "Use this when you want to clear accumulated errors from the error collector, optionally filtering by file or type. Returns the number of cleared errors.",
   inputSchema: clearErrorsInput,
   execute: async (input) => {
     const collector = getErrorCollector();

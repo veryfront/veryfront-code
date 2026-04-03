@@ -53,8 +53,8 @@ type IssuesCreateInput = z.infer<typeof issuesCreateInput>;
 
 const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
   name: "issues_create",
-  description: "Create a new issue, task, or plan as a markdown file. " +
-    "Use prefix 'TASK' for small work items, 'PLAN' for proposals/RFCs, 'ISSUE' for bugs/features.",
+  description: "Use this when you need to create a new issue, task, or plan. " +
+    "Do not use for updating — use issues_update instead.",
   inputSchema: issuesCreateInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -81,7 +81,7 @@ type IssuesGetInput = z.infer<typeof issuesGetInput>;
 
 const issuesGet: MCPTool<IssuesGetInput, Issue | null> = {
   name: "issues_get",
-  description: "Get a specific issue by ID. Returns null if not found.",
+  description: "Use this when you need to retrieve a specific issue by its ID. Do not use for listing — use issues_list instead.",
   inputSchema: issuesGetInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -107,8 +107,8 @@ type IssuesUpdateInput = z.infer<typeof issuesUpdateInput>;
 
 const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
   name: "issues_update",
-  description: "Update an existing issue. Only provided fields are updated. " +
-    "Returns the updated issue or null if not found.",
+  description: "Use this when you need to modify an existing issue. Only provided fields are updated. " +
+    "Do not use to close — use issues_close instead.",
   inputSchema: issuesUpdateInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -153,8 +153,8 @@ interface IssuesListOutput {
 
 const issuesList: MCPTool<IssuesListInput, IssuesListOutput> = {
   name: "issues_list",
-  description: "List issues with filtering and sorting. " +
-    "Returns matching issues and total count.",
+  description: "Use this when you need to find issues matching criteria. " +
+    "Do not use to get a single known issue — use issues_get instead.",
   inputSchema: issuesListInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -183,7 +183,7 @@ type IssuesCloseInput = z.infer<typeof issuesCloseInput>;
 
 const issuesClose: MCPTool<IssuesCloseInput, Issue | null> = {
   name: "issues_close",
-  description: "Close an issue. Returns the updated issue or null if not found.",
+  description: "Use this when you need to close an issue. Do not use to delete — use issues_delete instead.",
   inputSchema: issuesCloseInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -207,8 +207,8 @@ interface IssuesDeleteOutput {
 
 const issuesDelete: MCPTool<IssuesDeleteInput, IssuesDeleteOutput> = {
   name: "issues_delete",
-  description: "Permanently delete an issue file. " +
-    "Use with caution - this cannot be undone.",
+  description: "Use this when you need to permanently delete an issue. Irreversible. " +
+    "Do not use to close — use issues_close instead.",
   inputSchema: issuesDeleteInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);

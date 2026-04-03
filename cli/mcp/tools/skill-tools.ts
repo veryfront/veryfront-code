@@ -92,7 +92,7 @@ interface GetSkillsResult {
 export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
   name: "vf_get_skills",
   description:
-    "Discover available Agent Skills for Veryfront development. Skills provide procedural knowledge for using MCP tools effectively. Call without name param to list all skills, or with name to get full skill content.",
+    "Use this when you need to discover available Agent Skills or load a specific skill's procedural knowledge. Call without name to list all skills, or with name to get full content. Do not use for skill reference docs — use vf_get_skill_reference instead.",
   inputSchema: getSkillsInput,
   execute: (input) =>
     withSpan(
@@ -169,7 +169,7 @@ interface GetSkillReferenceResult {
 export const vfGetSkillReference: MCPTool<GetSkillReferenceInput, GetSkillReferenceResult> = {
   name: "vf_get_skill_reference",
   description:
-    "Get a specific reference document from a skill. Use this to load detailed documentation on demand.",
+    "Use this when you need to load a specific reference document from a skill. Do not use for skill discovery — use vf_get_skills instead.",
   inputSchema: getSkillReferenceInput,
   execute: async (input) => {
     const fs = getFs();

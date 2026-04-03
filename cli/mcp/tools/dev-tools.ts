@@ -18,7 +18,7 @@ const hotReloadInput = z.object({
   file: z
     .string()
     .optional()
-    .describe("Specific file to trigger reload for (optional - reloads all if not specified)"),
+    .describe("Specific file to trigger reload for. Example: 'app/page.tsx'. Omit to reload all."),
 });
 
 type HotReloadInput = z.infer<typeof hotReloadInput>;
@@ -31,7 +31,7 @@ interface HotReloadResult {
 export const vfHotReload: MCPTool<HotReloadInput, HotReloadResult> = {
   name: "vf_hot_reload",
   description:
-    "Trigger a hot reload of the dev server. Use after making changes to see them instantly.",
+    "Use this when you need to trigger a hot module reload for a specific file or the entire project. Do not use for full server restart.",
   inputSchema: hotReloadInput,
   execute: () =>
     Promise.resolve({
@@ -71,7 +71,7 @@ interface DebugContextResult {
 export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult> = {
   name: "vf_get_debug_context",
   description:
-    "Get the current server context including project info, environment, and mode. Useful for debugging server configuration issues.",
+    "Use this when you need the dev server's debug context including configuration and active routes. Do not use for error details — use vf_get_errors instead.",
   inputSchema: getDebugContextInput,
   execute: (input) =>
     withSpan(
@@ -112,7 +112,7 @@ export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult
 // ============================================================================
 
 const triggerHmrInput = z.object({
-  path: z.string().describe("File path that changed (e.g., 'app/page.tsx')"),
+  path: z.string().describe("File path that changed. Example: 'app/page.tsx'."),
   port: z.number().int().min(1).max(65535).optional().default(8080).describe(
     "Dev server port (defaults to 8080)",
   ),
@@ -128,7 +128,7 @@ interface TriggerHmrResult {
 export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
   name: "vf_trigger_hmr",
   description:
-    "Trigger Hot Module Replacement for a specific file. The browser will update without a full reload.",
+    "Use this when you need to force an HMR update for a specific file path. Do not use for full page reload — use vf_hot_reload instead.",
   inputSchema: triggerHmrInput,
   execute: (input) => {
     const metrics = ReloadNotifier.getMetrics();
@@ -154,7 +154,7 @@ export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
 
 const previewRouteInput = z.object({
   route: z.string().startsWith("/", "Route must start with /").describe(
-    "Route path to preview (e.g., '/', '/dashboard', '/api/users')",
+    "Route path to preview. Example: '/', '/dashboard', '/api/users'.",
   ),
   port: z.number().int().min(1).max(65535).optional().default(8080).describe(
     "Dev server port (defaults to 8080)",
@@ -163,7 +163,7 @@ const previewRouteInput = z.object({
     .enum(["html", "json", "status"])
     .optional()
     .default("status")
-    .describe("Output format: html (full page), json (API response), status (just HTTP status)"),
+    .describe("Output format: 'html' for full page, 'json' for API response, 'status' for just HTTP status. Defaults to 'status'."),
 });
 
 type PreviewRouteInput = z.infer<typeof previewRouteInput>;
@@ -181,7 +181,7 @@ interface PreviewRouteResult {
 export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
   name: "vf_preview_route",
   description:
-    "Preview a route by making a request to the dev server. Returns the rendered output, HTTP status, and render time. Perfect for testing changes instantly.",
+    "Use this when you need to test-render a route and inspect the response. Do not use for listing routes — use vf_list_routes instead.",
   inputSchema: previewRouteInput,
   execute: (input) =>
     withSpan(
@@ -262,7 +262,7 @@ interface WaitForReadyResult {
 export const vfWaitForReady: MCPTool<WaitForReadyInput, WaitForReadyResult> = {
   name: "vf_wait_for_ready",
   description:
-    "Wait for the server to be ready by polling the health endpoint. Use this after starting the server to ensure it's accepting requests.",
+    "Use this when you need to wait for the dev server to become ready after restart. Do not use to check current status — use vf_get_status instead.",
   inputSchema: waitForReadyInput,
   execute: (input) =>
     withSpan(
@@ -350,7 +350,7 @@ interface FlywheelStatus {
 export const vfGetFlywheelStatus: MCPTool<GetFlywheelStatusInput, FlywheelStatus> = {
   name: "vf_get_flywheel_status",
   description:
-    "Get aggregated status for the development flywheel. Shows server state, error counts, log summary, and HMR status in one view.",
+    "Use this when you need a comprehensive status overview combining server health, error counts, and HMR statistics. Do not use for detailed error or log content — use vf_get_errors or vf_get_logs instead.",
   inputSchema: getFlywheelStatusInput,
   execute: (input) =>
     withSpan(
