@@ -53,6 +53,8 @@ export interface MCPServerConfig {
 }
 
 export class MCPDevServer {
+  private static SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
+
   private config: MCPServerConfig;
   private running = false;
   private stdinReader: StdinReader | null = null;
@@ -166,6 +168,8 @@ export class MCPDevServer {
     switch (method) {
       case "initialize":
         return Promise.resolve(this.handleInitialize(params));
+      case "notifications/initialized":
+        return Promise.resolve({});
       case "tools/list":
         return Promise.resolve(this.handleToolsList());
       case "tools/call":
@@ -183,18 +187,29 @@ export class MCPDevServer {
     }
   }
 
-  private handleInitialize(_params: unknown): unknown {
+  private handleInitialize(params: unknown): unknown {
+    const p = (params && typeof params === "object" && !Array.isArray(params))
+      ? params as Record<string, unknown>
+      : {};
+    const requested = typeof p.protocolVersion === "string" ? p.protocolVersion : undefined;
+    const negotiated = requested && MCPDevServer.SUPPORTED_VERSIONS.includes(requested)
+      ? requested
+      : MCPDevServer.SUPPORTED_VERSIONS[0];
+
     return {
-      protocolVersion: "2024-11-05",
+      protocolVersion: negotiated,
       capabilities: {
-        tools: {},
-        resources: {},
-        prompts: {},
+        tools: { listChanged: true },
+        resources: { listChanged: true },
+        prompts: { listChanged: true },
       },
       serverInfo: {
         name: this.config.serverName,
+        title: "Veryfront Dev MCP Server",
         version: this.config.serverVersion,
+        description: "Veryfront development server tools for real-time errors, logs, HMR, and scaffolding",
       },
+      instructions: "Veryfront dev MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, and vf_trigger_hmr for hot module reload.",
     };
   }
 

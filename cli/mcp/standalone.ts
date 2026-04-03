@@ -37,6 +37,8 @@ export interface StandaloneMCPConfig {
 }
 
 export class StandaloneMCPServer {
+  private static SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
+
   private client: DevServerClient;
   private tools: StandaloneTool[];
   private running = false;
@@ -78,12 +80,31 @@ export class StandaloneMCPServer {
 
   private dispatchMethod(method: string, params: unknown): Promise<unknown> {
     switch (method) {
-      case "initialize":
+      case "initialize": {
+        const p = (params && typeof params === "object" && !Array.isArray(params))
+          ? params as Record<string, unknown>
+          : {};
+        const requested = typeof p.protocolVersion === "string" ? p.protocolVersion : undefined;
+        const negotiated = requested && StandaloneMCPServer.SUPPORTED_VERSIONS.includes(requested)
+          ? requested
+          : StandaloneMCPServer.SUPPORTED_VERSIONS[0];
+
         return Promise.resolve({
-          protocolVersion: "2024-11-05",
-          capabilities: { tools: {}, resources: {}, prompts: {} },
-          serverInfo: { name: "veryfront-mcp", version: "1.0.0" },
+          protocolVersion: negotiated,
+          capabilities: {
+            tools: { listChanged: true },
+            resources: { listChanged: true },
+            prompts: { listChanged: true },
+          },
+          serverInfo: {
+            name: "veryfront-mcp",
+            title: "Veryfront Standalone MCP Server",
+            version: "1.0.0",
+            description: "Veryfront standalone MCP server for CLI-based development tools",
+          },
+          instructions: "Veryfront standalone MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, and vf_get_status for dev server health.",
         });
+      }
       case "notifications/initialized":
         return Promise.resolve({});
       case "tools/list":
