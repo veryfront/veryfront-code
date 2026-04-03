@@ -300,6 +300,59 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
 
+    it("preserves full-document layout head/body output for explicit dark-mode requests", async () => {
+      const mockAdapter = {
+        fs: {
+          readFile: async () => `'use client';`,
+          exists: async () => false,
+          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
+          readDir: async function* () {},
+          mkdir: async () => {},
+          writeFile: async () => {},
+        },
+      };
+
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: mockAdapter as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      const html = await generator.generateFullHTML({
+        html:
+          '<!DOCTYPE html><html lang="en"><head><title>Layout Title</title><style>body{background:#0f172a;color:#f8fafc}</style></head><body class="theme-dark" style="background:#0f172a;color:#f8fafc"><main>Hello</main></body></html>',
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {},
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        options: {
+          nonce: "nonce-123",
+          colorScheme: "dark",
+          colorSchemeFromParam: true,
+        },
+      });
+
+      assertEquals(html.includes("<title>Layout Title</title>"), true);
+      assertEquals(
+        html.includes(
+          '<body class="theme-dark" style="background:#0f172a;color:#f8fafc">',
+        ),
+        true,
+      );
+      assertEquals(html.includes('data-theme="dark"'), true);
+      assertEquals(html.includes("color-scheme: dark;"), true);
+      assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
+    });
+
     it("adds nonce to inline style and script tags in rendered HTML", async () => {
       const mockAdapter = {
         fs: {
@@ -531,6 +584,73 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
       assertEquals(html.includes('<script nonce="nonce-123">alert(1)'), false);
       assertEquals(html.includes('<style nonce="nonce-123">.x{color:red}'), false);
+    });
+  });
+
+  describe("generateHTMLStream", () => {
+    it("preserves full-document layout output when streaming app-router pages", async () => {
+      const mockAdapter = {
+        fs: {
+          readFile: async () => `'use client';`,
+          exists: async () => false,
+          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
+          readDir: async function* () {},
+          mkdir: async () => {},
+          writeFile: async () => {},
+        },
+      };
+
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: mockAdapter as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              '<!DOCTYPE html><html lang="en"><head><title>Stream Layout Title</title><style>body{background:#0f172a;color:#f8fafc}</style></head><body class="stream-dark" style="background:#0f172a;color:#f8fafc"><main>Hello</main></body></html>',
+            ),
+          );
+          controller.close();
+        },
+      });
+
+      const responseStream = await generator.generateHTMLStream(stream, {
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {},
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        options: {
+          nonce: "nonce-123",
+          colorScheme: "dark",
+          colorSchemeFromParam: true,
+          environment: "preview",
+        },
+      });
+
+      const html = await new Response(responseStream).text();
+
+      assertEquals(html.includes("<title>Stream Layout Title</title>"), true);
+      assertEquals(
+        html.includes(
+          '<body class="stream-dark" style="background:#0f172a;color:#f8fafc">',
+        ),
+        true,
+      );
+      assertEquals(html.includes('data-theme="dark"'), true);
+      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
     });
   });
 

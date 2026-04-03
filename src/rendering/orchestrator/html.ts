@@ -41,6 +41,62 @@ import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/ver
 const logger = rendererLogger.component("html-generator");
 type ProjectCSSResult = Awaited<ReturnType<typeof getProjectCSS>> | null;
 
+function applyExplicitThemeToDocument(
+  html: string,
+  colorScheme: "light" | "dark" | undefined,
+  enabled: boolean | undefined,
+): string {
+  if (!enabled || !colorScheme) return html;
+
+  return html.replace(/<html\b([^>]*)>/i, (_match, attrs: string) => {
+    let nextAttrs = attrs;
+
+    if (/\sdata-theme\s*=/i.test(nextAttrs)) {
+      nextAttrs = nextAttrs.replace(/\sdata-theme\s*=\s*(["']).*?\1/i, "");
+    }
+    nextAttrs += ` data-theme="${colorScheme}"`;
+
+    const styleMatch = nextAttrs.match(/\sstyle\s*=\s*(["'])(.*?)\1/i);
+    if (styleMatch) {
+      let styleValue = (styleMatch[2] ?? "").trim();
+
+      if (/color-scheme\s*:/i.test(styleValue)) {
+        styleValue = styleValue.replace(
+          /color-scheme\s*:\s*[^;]+/i,
+          `color-scheme: ${colorScheme}`,
+        );
+      } else {
+        styleValue = styleValue
+          ? `${styleValue.replace(/;?\s*$/, ";")} color-scheme: ${colorScheme};`
+          : `color-scheme: ${colorScheme};`;
+      }
+
+      nextAttrs = nextAttrs.replace(styleMatch[0], ` style="${styleValue}"`);
+    } else {
+      nextAttrs += ` style="color-scheme: ${colorScheme};"`;
+    }
+
+    return `<html${nextAttrs}>`;
+  });
+}
+
+function injectThemePersistenceScript(
+  html: string,
+  colorScheme: "light" | "dark" | undefined,
+  enabled: boolean | undefined,
+  nonce?: string,
+): string {
+  if (!enabled || !colorScheme || !/<\/head>/i.test(html)) return html;
+  if (html.includes(`localStorage.setItem('theme','${colorScheme}')`)) return html;
+
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  const script = `<script${nonceAttr}>
+(function(){try{localStorage.setItem('theme','${colorScheme}')}catch(e){/* SILENT: localStorage may be unavailable */}})();
+</script>`;
+
+  return html.replace(/<\/head>/i, `${script}\n</head>`);
+}
+
 export interface HTMLGeneratorConfig {
   projectDir: string;
   adapter: RuntimeAdapter;
@@ -108,6 +164,24 @@ export class HTMLGenerator {
       reactContent = error.partialContent.trim();
     }
 
+    if (isFullHTMLDocument(reactContent)) {
+      const encoder = new TextEncoder();
+      const fullHtml = addNonceToHtmlTags(
+        await this.handleFullHTMLDocument({
+          ...fullContext,
+          html: reactContent,
+        }),
+        context.options?.nonce,
+      );
+
+      return new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(fullHtml));
+          controller.close();
+        },
+      });
+    }
+
     const { start, end } = await profilePhase(
       "html.generate_shell_parts",
       () =>
@@ -149,7 +223,18 @@ export class HTMLGenerator {
       }),
     ]);
 
-    const injectedHtml = injectHTMLContent(context.html, "", metadata, {
+    const themedHtml = injectThemePersistenceScript(
+      applyExplicitThemeToDocument(
+        context.html,
+        context.options?.colorScheme,
+        context.options?.colorSchemeFromParam,
+      ),
+      context.options?.colorScheme,
+      context.options?.colorSchemeFromParam,
+      context.options?.nonce,
+    );
+
+    const injectedHtml = injectHTMLContent(themedHtml, "", metadata, {
       mode: this.config.mode,
       slug: context.slug,
       devPort: this.config.config?.dev?.port || DEFAULT_DASHBOARD_PORT,

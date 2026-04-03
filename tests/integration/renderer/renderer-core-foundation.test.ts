@@ -437,6 +437,58 @@ title: Stream Test
         });
       });
 
+      it("should preserve full-document root layout output during streaming app-router renders", async () => {
+        await withTestContext("renderer-core-stream-root-layout-document", async (context) => {
+          await remove(join(context.projectDir, "pages"), { recursive: true });
+          await mkdir(join(context.projectDir, "app"), { recursive: true });
+
+          await writeTextFile(
+            join(context.projectDir, "app", "layout.tsx"),
+            `export default function RootLayout({ children }) {
+              return (
+                <html lang="en">
+                  <head>
+                    <title>Stream Layout Title</title>
+                    <style>{\`body{background:#0f172a;color:#f8fafc}\`}</style>
+                  </head>
+                  <body className="stream-dark" style={{ background: '#0f172a', color: '#f8fafc' }}>
+                    {children}
+                  </body>
+                </html>
+              );
+            }`,
+          );
+
+          await writeTextFile(
+            join(context.projectDir, "app", "page.tsx"),
+            `export default function Page() { return <main>Streaming Layout Content</main>; }`,
+          );
+
+          const renderer = await createRenderer({
+            projectDir: context.projectDir,
+            mode: "production",
+          });
+
+          const result = await renderer.renderPage("/", {
+            delivery: "stream",
+            colorScheme: "dark",
+            colorSchemeFromParam: true,
+            environment: "preview",
+          });
+
+          const html = result.stream ? await new Response(result.stream).text() : result.html;
+
+          assertStringIncludes(html, "<title>Stream Layout Title</title>");
+          assertStringIncludes(
+            html,
+            '<body class="stream-dark" style="background:#0f172a;color:#f8fafc">',
+          );
+          assertStringIncludes(html, 'data-theme="dark"');
+          assertStringIncludes(html, "color-scheme: dark;");
+          assertStringIncludes(html, "Streaming Layout Content");
+        });
+      });
+
       it("should use streaming SSR in production mode", async () => {
         await withTestContext("renderer-core-ssr-production", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
