@@ -68,8 +68,10 @@ export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
     dryRun: opts.dryRun,
   });
 
-  const { getPostBuildTips } = await import("../../help/tips.ts");
-  console.log(getPostBuildTips());
+  if (!opts.dryRun) {
+    const { getPostBuildTips } = await import("../../help/tips.ts");
+    console.log(getPostBuildTips());
+  }
 
   // Build tools (esbuild) may leave hanging timers; force clean exit
   exitProcess(0);
