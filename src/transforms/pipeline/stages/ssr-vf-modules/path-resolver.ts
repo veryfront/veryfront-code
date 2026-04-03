@@ -51,13 +51,16 @@ export async function resolveFrameworkFile(
   fs: ReturnType<typeof createFileSystem>,
   existsFn: (path: string) => Promise<boolean> = exists,
 ): Promise<{ sourcePath: string; content: string } | null> {
-  const pathWithoutPrefix = vfModulePath
+  const normalizedVfModulePath = vfModulePath.replace(/^file:\/\/(?=\/_vf_modules\/)/, "");
+
+  const pathWithoutPrefix = normalizedVfModulePath
     .replace(/^\/_vf_modules\//, "")
     .replace(/\?.*$/, "")
     .replace(/\.js$/, "");
 
   logger.debug(`${LOG_PREFIX} resolveFrameworkFile`, {
     input: vfModulePath,
+    normalizedVfModulePath,
     pathWithoutPrefix,
     lookupDirs: FRAMEWORK_LOOKUPS.map(([p, d]) => ({ prefix: p, dir: d })),
   });

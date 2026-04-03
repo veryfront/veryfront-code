@@ -1,3 +1,4 @@
+import { join } from "#veryfront/compat/path/index.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -5,6 +6,7 @@ import {
   resolveRelativeFrameworkImport,
   tryReadWithExtensions,
 } from "./path-resolver.ts";
+import { FRAMEWORK_ROOT } from "./constants.ts";
 
 function createMockFs(files: Record<string, string>) {
   return {
@@ -63,6 +65,21 @@ describe("resolveFrameworkFile", () => {
       async () => false,
     );
     assertEquals(result, null);
+  });
+
+  it("normalizes file:///_vf_modules paths before resolving", async () => {
+    const sourcePath = join(FRAMEWORK_ROOT, "src", "react", "runtime", "core.ts");
+    const files: Record<string, string> = {
+      [sourcePath]: "export function usePageContext() {}",
+    };
+    const fs = createMockFs(files);
+    const result = await resolveFrameworkFile(
+      "file:///_vf_modules/_veryfront/react/runtime/core.js?ssr=true",
+      fs,
+      createExistsFn(files),
+    );
+    assertEquals(result?.sourcePath, sourcePath);
+    assertEquals(result?.content, "export function usePageContext() {}");
   });
 });
 

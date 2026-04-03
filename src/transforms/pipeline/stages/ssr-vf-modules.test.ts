@@ -79,6 +79,13 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(imports.length, 1);
     });
 
+    it("finds file:///_vf_modules imports", () => {
+      const code =
+        `import { usePageContext } from "file:///_vf_modules/_veryfront/react/runtime/core.js?ssr=true";`;
+      const imports = findVfModuleImports(code);
+      assertEquals(imports, ["file:///_vf_modules/_veryfront/react/runtime/core.js?ssr=true"]);
+    });
+
     it("ignores string literals without from keyword", () => {
       const code = `const path = "/_vf_modules/something";`;
       const imports = findVfModuleImports(code);
