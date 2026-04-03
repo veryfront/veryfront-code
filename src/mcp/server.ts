@@ -116,13 +116,16 @@ export class MCPServer {
           const result = await this.dispatch(request.method, request.params, context);
           return { jsonrpc: "2.0", id: request.id, result };
         } catch (error) {
+          const code = (error as { code?: number }).code ?? -32603;
+          const message = error instanceof Error
+            ? error.message
+            : typeof error === "object" && error !== null && "message" in error
+              ? String((error as { message: unknown }).message)
+              : String(error);
           return {
             jsonrpc: "2.0",
             id: request.id,
-            error: {
-              code: -32603,
-              message: error instanceof Error ? error.message : String(error),
-            },
+            error: { code, message },
           };
         }
       },
@@ -224,29 +227,32 @@ export class MCPServer {
     const { name, arguments: args } = toParamsRecord(params);
 
     if (!name) {
-      throw toError(
-        createError({
-          type: "agent",
-          message: "Tool name is required",
-        }),
-      );
+      throw toError(createError({ type: "agent", message: "Tool name is required" }));
     }
 
     const toolName = String(name);
 
+    const registry = getMCPRegistry();
+    if (!registry.tools.has(toolName)) {
+      return Promise.reject({ code: -32602, message: `Unknown tool: ${toolName}` });
+    }
+
     return withSpan(
       "mcp.callTool",
       async () => {
-        const result = await executeTool(toolName, args, context);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
+        try {
+          const result = await executeTool(toolName, args, context);
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            isError: false,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ type: "text", text: message }],
+            isError: true,
+          };
+        }
       },
       { "mcp.tool.name": toolName },
     );

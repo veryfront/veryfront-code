@@ -664,6 +664,78 @@ describe("mcp/server", () => {
     assertEquals(tool.annotations, { readOnlyHint: true });
   });
 
+  describe("callTool error handling", () => {
+    it("returns isError false on successful tool execution", async () => {
+      const server = createMCPServer({ enabled: true });
+
+      registerTool(
+        "test:echo",
+        dynamicTool({
+          id: "test:echo",
+          description: "Echo tool",
+          inputSchema: z.object({}),
+          execute: async () => ({ hello: "world" }),
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "test:echo", arguments: {} },
+      });
+
+      assertEquals(response.error, undefined);
+      const result = response.result as { content: { type: string; text: string }[]; isError: boolean };
+      assertEquals(result.isError, false);
+      assertEquals(result.content[0].type, "text");
+      assertEquals(JSON.parse(result.content[0].text).hello, "world");
+    });
+
+    it("returns isError true when tool execution throws", async () => {
+      const server = createMCPServer({ enabled: true });
+
+      registerTool(
+        "test:fail",
+        dynamicTool({
+          id: "test:fail",
+          description: "Failing tool",
+          inputSchema: z.object({}),
+          execute: async () => {
+            throw new Error("tool broke");
+          },
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "test:fail", arguments: {} },
+      });
+
+      assertEquals(response.error, undefined);
+      const result = response.result as { content: { type: string; text: string }[]; isError: boolean };
+      assertEquals(result.isError, true);
+      assertEquals(result.content[0].text, "tool broke");
+    });
+
+    it("returns JSON-RPC error with code -32602 for unknown tool", async () => {
+      const server = createMCPServer({ enabled: true });
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "nonexistent:tool", arguments: {} },
+      });
+
+      assertExists(response.error);
+      assertEquals(response.error.code, -32602);
+      assertStringIncludes(response.error.message, "Unknown tool");
+    });
+  });
+
   it("syncs integration config to API on first tools/list call", async () => {
     const server = createMCPServer({ enabled: true });
     server.setIntegrationLoader({
