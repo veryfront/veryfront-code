@@ -92,4 +92,7 @@ async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Prom
   });
 
   cliLogger.info(`\n${green("✓")}${bold(green(" Embedded bundle created!\n"))}`);
+
+  const { getPostBuildTips } = await import("../../help/tips.ts");
+  console.log(getPostBuildTips());
 }

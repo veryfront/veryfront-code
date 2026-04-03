@@ -199,6 +199,9 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   logSuccess(`Deployed ${release.version} to ${env}`);
   logInfo(`  Release: ${release.name} (${release.version})`);
   logInfo(`  Environment: ${env}`);
+
+  const { getPostDeployTips } = await import("../../help/tips.ts");
+  console.log(getPostDeployTips());
 }
 
 async function deployCommandJson(options: DeployOptions): Promise<void> {
