@@ -213,11 +213,16 @@ export class MCPDevServer {
 
   private handleToolsList(): unknown {
     return {
-      tools: allTools.map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: this.zodToJsonSchema(tool.inputSchema),
-      })),
+      tools: allTools.map((tool) => {
+        const entry: Record<string, unknown> = {
+          name: tool.name,
+          description: tool.description,
+          inputSchema: this.zodToJsonSchema(tool.inputSchema),
+        };
+        if (tool.title) entry.title = tool.title;
+        if (tool.annotations) entry.annotations = tool.annotations;
+        return entry;
+      }),
     };
   }
 
