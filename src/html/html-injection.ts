@@ -44,6 +44,8 @@ export interface InjectHTMLContentOptions {
   yjsGuid?: string;
   /** Pre-built import map JSON for ESM module resolution (injected into <head>) */
   importMapJson?: string;
+  /** Framework-generated project stylesheet for production shells */
+  projectStylesheetHref?: string;
 }
 
 function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
@@ -94,6 +96,11 @@ export function injectHTMLContent(
     const importMapTag =
       `<script type="importmap"${nonceAttr}>\n${options.importMapJson}\n</script>`;
     html = html.replace(/<\/head>/i, `${importMapTag}\n</head>`);
+  }
+
+  if (options.projectStylesheetHref && /<\/head>/i.test(html) && !hasProjectStylesheet(html)) {
+    const projectStylesheetTag = `<link rel="stylesheet" href="${options.projectStylesheetHref}">`;
+    html = html.replace(/<\/head>/i, `${projectStylesheetTag}\n</head>`);
   }
 
   const shouldUsePreviewStylesheet = options.mode === "development" ||

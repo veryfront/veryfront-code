@@ -228,5 +228,21 @@ describe("html/html-injection", () => {
       assertEquals(html.includes('id="vf-tailwind-css"'), true);
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
+
+    it("injects production project stylesheet links for full HTML documents", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          environment: "production",
+          slug: "test",
+          projectStylesheetHref: "/_vf/css/abc123.css",
+        },
+      );
+
+      assertEquals(html.includes('<link rel="stylesheet" href="/_vf/css/abc123.css">'), true);
+    });
   });
 });
