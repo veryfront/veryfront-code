@@ -175,6 +175,8 @@ export class MCPServer {
         return this.initialize(params);
       case "notifications/initialized":
         return Promise.resolve({});
+      case "completion/complete":
+        return this.complete(params);
       default:
         throw toError(
           createError({
@@ -205,6 +207,7 @@ export class MCPServer {
         tools: { listChanged: true },
         resources: { subscribe: true, listChanged: true },
         prompts: { listChanged: true },
+        completions: {},
       },
       instructions:
         "Veryfront MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, vf_scaffold for code generation, and vf_get_project_context for project structure.",
@@ -429,6 +432,26 @@ export class MCPServer {
       },
       { "mcp.prompt.name": promptName },
     );
+  }
+
+  private complete(
+    params: JSONRPCParams | undefined,
+  ): Promise<{ completion: { values: string[]; total?: number; hasMore: boolean } }> {
+    const p = toParamsRecord(params);
+    const ref = p.ref as { type: string; uri?: string; name?: string } | undefined;
+    const argument = p.argument as { name: string; value: string } | undefined;
+
+    if (!ref || !argument) {
+      return Promise.resolve({ completion: { values: [], hasMore: false } });
+    }
+
+    return Promise.resolve({
+      completion: {
+        values: [],
+        total: 0,
+        hasMore: false,
+      },
+    });
   }
 
   createHTTPHandler(): (request: Request) => Promise<Response> {

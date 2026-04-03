@@ -924,6 +924,42 @@ describe("mcp/server", () => {
     });
   });
 
+  it("declares completions capability in initialize", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "test", version: "1.0" },
+      },
+    });
+    const caps = (result.result as Record<string, unknown>)
+      .capabilities as Record<string, unknown>;
+    assertExists(caps.completions);
+  });
+
+  it("completion/complete returns empty values for unknown ref", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "completion/complete",
+      params: {
+        ref: { type: "ref/resource", uri: "unknown://template" },
+        argument: { name: "param", value: "" },
+      },
+    });
+    assertEquals(result.error, undefined);
+    const data = result.result as {
+      completion: { values: string[]; hasMore: boolean };
+    };
+    assertEquals(data.completion.values, []);
+    assertEquals(data.completion.hasMore, false);
+  });
+
   it("syncs integration config to API on first tools/list call", async () => {
     const server = createMCPServer({ enabled: true });
     server.setIntegrationLoader({
