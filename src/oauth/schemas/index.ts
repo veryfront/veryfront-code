@@ -1,5 +1,5 @@
 /**
- * Oauth Schemas
+ * OAuth Schemas
  *
  * @module oauth/schemas
  */

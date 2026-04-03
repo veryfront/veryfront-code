@@ -1,6 +1,7 @@
 import type { Agent } from "#veryfront/agent";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import {
@@ -25,6 +26,7 @@ async function sha256Base64url(body: string): Promise<string> {
 async function createControlPlaneSignature(
   body: string,
   overrides: Partial<{
+    algorithm: string;
     audience: string;
     projectId: string;
     requestId: string;
@@ -43,7 +45,10 @@ async function createControlPlaneSignature(
   const publicKeyPem = encodePem("PUBLIC KEY", publicKeyDer);
   const now = Math.floor(Date.now() / 1000);
 
-  const header = base64urlEncode(JSON.stringify({ alg: "EdDSA", typ: "JWT" }));
+  const header = base64urlEncode(JSON.stringify({
+    alg: overrides.algorithm ?? "EdDSA",
+    typ: "JWT",
+  }));
   const payload = base64urlEncode(JSON.stringify({
     iss: "veryfront-api",
     aud: overrides.audience ?? "demo-project",
@@ -85,6 +90,7 @@ function createAgent(overrides: {
   description?: string;
   model?: string;
   version?: string;
+  skills?: true | string[];
 } = {}): Agent {
   return {
     id: overrides.id ?? "agent-1",
@@ -94,6 +100,7 @@ function createAgent(overrides: {
       name: overrides.name ?? "Support",
       description: overrides.description ?? "Helps with support questions",
       version: overrides.version ?? "2.0.0",
+      skills: overrides.skills,
     } as unknown as Agent["config"],
     generate: async () => ({}) as never,
     stream: async () => ({ toDataStreamResponse: () => new Response() } as never),
@@ -142,6 +149,26 @@ describe("channels/control-plane", () => {
 
       await assertRejects(() =>
         verifyControlPlaneJws(jws, `${body} `, {
+          audience: "demo-project",
+          expectedProjectId: "proj-1",
+          publicKeyPem,
+          maxAgeSeconds: 60,
+        })
+      );
+    });
+
+    it("rejects a control-plane signature with an unsupported algorithm header", async () => {
+      const body = JSON.stringify({
+        requestId: "agents-1",
+        projectId: "proj-1",
+        surface: "studio",
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        algorithm: "HS256",
+      });
+
+      await assertRejects(() =>
+        verifyControlPlaneJws(jws, body, {
           audience: "demo-project",
           expectedProjectId: "proj-1",
           publicKeyPem,
@@ -209,6 +236,109 @@ describe("channels/control-plane", () => {
           ],
         }),
       );
+    });
+
+    it("filters missing agents and falls back to the runtime id when config metadata is absent", async () => {
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) =>
+          id === "assistant-z"
+            ? {
+              ...createAgent({ id }),
+              config: {
+                system: "You are helpful.",
+                name: "",
+              } as unknown as Agent["config"],
+            }
+            : undefined,
+        getAllAgentIds: () => ["assistant-z", "assistant-missing"],
+      });
+
+      assertEquals(
+        response,
+        RuntimeAgentListResponseSchema.parse({
+          agents: [{
+            id: "assistant-z",
+            name: "assistant-z",
+            description: null,
+            model: null,
+            version: null,
+            skills: [],
+          }],
+        }),
+      );
+    });
+
+    it("uses the registry id for discovered agents whose factory id was auto-generated", async () => {
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) =>
+          id === "researcher"
+            ? {
+              ...createAgent({ id: "agent_123" }),
+              config: {
+                system: "You are helpful.",
+                name: "",
+              } as unknown as Agent["config"],
+            }
+            : undefined,
+        getAllAgentIds: () => ["researcher"],
+      });
+
+      assertEquals(
+        response,
+        RuntimeAgentListResponseSchema.parse({
+          agents: [{
+            id: "researcher",
+            name: "researcher",
+            description: null,
+            model: null,
+            version: null,
+            skills: [],
+          }],
+        }),
+      );
+    });
+
+    it("includes resolved skill metadata for agents that enable discovered skills", async () => {
+      skillRegistry.clearAll();
+      registerSkill("writer-helper", {
+        id: "writer-helper",
+        metadata: {
+          name: "Writer Helper",
+          description: "Turns rough notes into polished copy",
+        },
+        rootPath: "/project/skills/writer-helper",
+      });
+
+      try {
+        const response = await listRuntimeAgents(createHandlerContext(), {
+          ensureProjectDiscovery: async () => {},
+          getAgent: (id) =>
+            id === "assistant" ? createAgent({ id, skills: ["writer-helper"] }) : undefined,
+          getAllAgentIds: () => ["assistant"],
+        });
+
+        assertEquals(
+          response,
+          RuntimeAgentListResponseSchema.parse({
+            agents: [{
+              id: "assistant",
+              name: "Support",
+              description: "Helps with support questions",
+              model: "anthropic/claude-sonnet-4-6",
+              version: "2.0.0",
+              skills: [{
+                id: "writer-helper",
+                name: "Writer Helper",
+                description: "Turns rough notes into polished copy",
+              }],
+            }],
+          }),
+        );
+      } finally {
+        skillRegistry.clearAll();
+      }
     });
   });
 });

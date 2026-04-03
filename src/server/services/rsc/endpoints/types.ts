@@ -19,4 +19,5 @@ export interface RSCEndpointParams {
   projectId?: string;
   adapter: RuntimeAdapter;
   config?: VeryfrontConfig;
+  nonce?: string;
 }

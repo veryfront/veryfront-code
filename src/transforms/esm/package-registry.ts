@@ -18,6 +18,14 @@ import {
 // Re-export constants from unified source
 export { CSSTYPE_VERSION, DEFAULT_REACT_VERSION, TAILWIND_VERSION };
 
+interface CachedDependencyVersions {
+  mtimeMs: number | null;
+  react?: string;
+  veryfront?: string;
+}
+
+const dependencyVersionCache = new Map<string, CachedDependencyVersions>();
+
 /**
  * Validate React version format (semver: X.Y.Z).
  */
@@ -88,8 +96,48 @@ export function stripSemverRange(version: string): string {
  * Compatibility no-op. Kept for tests and older call sites.
  */
 export function clearReactVersionCache(): void {
-  // Intentionally empty: resolveProjectReactVersion reads package.json per call
-  // to avoid stale version values in long-lived processes.
+  dependencyVersionCache.clear();
+}
+
+function getPackageJsonPath(projectDir: string): string {
+  return `${projectDir}/package.json`;
+}
+
+function getMtimeMs(mtime: Date | null | undefined): number | null {
+  return mtime instanceof Date ? mtime.getTime() : null;
+}
+
+export async function readProjectDependencyVersions(
+  projectDir: string,
+): Promise<{ react?: string; veryfront?: string }> {
+  const packageJsonPath = getPackageJsonPath(projectDir);
+
+  try {
+    const { createFileSystem } = await import("../../platform/compat/fs.ts");
+    const fs = createFileSystem();
+    const stat = await fs.stat(packageJsonPath);
+    const mtimeMs = getMtimeMs(stat.mtime);
+    const cached = dependencyVersionCache.get(packageJsonPath);
+
+    if (cached && cached.mtimeMs === mtimeMs) {
+      return { react: cached.react, veryfront: cached.veryfront };
+    }
+
+    const content = await fs.readTextFile(packageJsonPath);
+    const pkg = JSON.parse(content) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    const react = deps.react ? normalizeReactVersion(stripSemverRange(deps.react)) : undefined;
+    const veryfront = deps.veryfront ? stripSemverRange(deps.veryfront) : undefined;
+
+    dependencyVersionCache.set(packageJsonPath, { mtimeMs, react, veryfront });
+
+    return { react, veryfront };
+  } catch (_) {
+    return {};
+  }
 }
 
 /**
@@ -119,24 +167,8 @@ export async function resolveProjectReactVersion(options: {
 
   // 2. Detect from package.json
   if (projectDir) {
-    try {
-      const { createFileSystem } = await import("../../platform/compat/fs.ts");
-      const fs = createFileSystem();
-      const content = await fs.readTextFile(`${projectDir}/package.json`);
-      const pkg = JSON.parse(content) as {
-        dependencies?: Record<string, string>;
-        devDependencies?: Record<string, string>;
-      };
-
-      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-      const rawVersion = deps.react;
-      if (rawVersion) {
-        const stripped = stripSemverRange(rawVersion);
-        return normalizeReactVersion(stripped);
-      }
-    } catch (_) {
-      /* expected: package.json may not exist or be unreadable */
-    }
+    const detected = await readProjectDependencyVersions(projectDir);
+    if (detected.react) return detected.react;
   }
 
   // 3. Fallback to default

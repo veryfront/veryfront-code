@@ -43,8 +43,8 @@ export class RSCDevServerHandler {
     return this.streamHandler.handle(pathname, searchParams);
   }
 
-  handlePage(pathname: string, searchParams: URLSearchParams): Response {
-    return this.pageHandler.handle(pathname, searchParams);
+  handlePage(pathname: string, searchParams: URLSearchParams, nonce?: string): Response {
+    return this.pageHandler.handle(pathname, searchParams, nonce);
   }
 
   handleHydratorScript(): Promise<Response> {

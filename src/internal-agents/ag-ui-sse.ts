@@ -19,7 +19,6 @@ export interface RunFinishedMetadata {
 export interface StreamTransformState {
   messageId: string | null;
   textOpen: boolean;
-  stepIndex: number;
   sawTerminalError: boolean;
   metadata: RunFinishedMetadata;
 }
@@ -28,7 +27,6 @@ export function createStreamTransformState(): StreamTransformState {
   return {
     messageId: null,
     textOpen: false,
-    stepIndex: 0,
     sawTerminalError: false,
     metadata: {},
   };
@@ -66,12 +64,6 @@ const agUiEventPayloadSchemas = {
     toolCallId: z.string().min(1),
     result: z.unknown(),
     isError: z.boolean().optional(),
-  }),
-  StepStarted: z.object({
-    stepIndex: z.number().int().positive(),
-  }),
-  StepFinished: z.object({
-    stepIndex: z.number().int().positive(),
   }),
   RunError: z.object({
     code: z.string().min(1).optional(),
@@ -266,17 +258,10 @@ export function mapRuntimeEventToAgUi(
       }];
 
     case "step-start":
-      state.stepIndex += 1;
-      return [{
-        event: "StepStarted",
-        payload: { stepIndex: state.stepIndex },
-      }];
+      return [];
 
     case "step-end":
-      return [{
-        event: "StepFinished",
-        payload: { stepIndex: state.stepIndex },
-      }];
+      return [];
 
     case "data":
       applyDataMetadata(state, event);

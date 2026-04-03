@@ -58,6 +58,45 @@ describe("mcp/server", () => {
     assertEquals(capturedContext?.projectId, "proj-abc_123");
   });
 
+  it("ignores invalid identity headers when building tool context", async () => {
+    const server = createMCPServer({ enabled: true });
+    let capturedContext: { endUserId?: string; projectId?: string } | undefined;
+
+    registerTool(
+      "test:context",
+      dynamicTool({
+        id: "test:context",
+        description: "Echo tool context",
+        inputSchema: z.object({}),
+        execute: async (_input, context) => {
+          capturedContext = context as typeof capturedContext;
+          return { ok: true };
+        },
+      }),
+    );
+
+    const handler = server.createHTTPHandler();
+    const response = await handler(
+      new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-end-user-id": "user 123",
+          "x-project-id": "proj/abc",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "test:context", arguments: {} },
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(capturedContext, undefined);
+  });
+
   it("includes integration context headers in CORS preflight response", async () => {
     const server = createMCPServer({
       enabled: true,
@@ -217,6 +256,42 @@ describe("mcp/server", () => {
     });
   });
 
+  describe("request validation", () => {
+    it("rejects requests with invalid content type", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 400);
+      const body = await response.json();
+      assertEquals(body.error.message, "Invalid Content-Type: expected application/json");
+    });
+
+    it("rejects malformed JSON request bodies", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{invalid",
+        }),
+      );
+
+      assertEquals(response.status, 400);
+      const body = await response.json();
+      assertEquals(body.error.message, "Parse error");
+    });
+  });
+
   describe("CORS origin matching", () => {
     it("returns CORS headers when request Origin matches configured origins", async () => {
       const server = createMCPServer({
@@ -333,5 +408,31 @@ describe("mcp/server", () => {
 
     await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
     assertEquals(configSyncCalled, true);
+  });
+
+  it("syncs integration config only once", async () => {
+    const server = createMCPServer({ enabled: true });
+    server.setIntegrationLoader({
+      integrations: { github: {} },
+      apiBaseUrl: "https://api.example.com",
+      apiToken: "test-token",
+    });
+
+    let configSyncCalls = 0;
+    globalThis.fetch = async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "https://api.example.com/integrations/config") {
+        configSyncCalls += 1;
+        return new Response(JSON.stringify({ synced: 1 }), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("Not Found", { status: 404 });
+    };
+
+    await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    await server.handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+
+    assertEquals(configSyncCalls, 1);
   });
 });

@@ -206,12 +206,12 @@ export function normalizeConversationHistoryForRuntime(
 
 export function resolveChannelInvokeAgent(
   assistantId: string,
-  deps: Pick<ChannelInvokeDeps, "getAgent" | "getAllAgentIds">,
+  deps: Pick<ChannelInvokeDeps, "getAgent">,
 ): Agent | undefined {
   return deps.getAgent(assistantId);
 }
 
-function normalizeToolCallState(status: string): "pending" | "completed" | "error" {
+function toChannelToolCallState(status: string): "pending" | "completed" | "error" {
   switch (status) {
     case "completed":
       return "completed";
@@ -281,7 +281,7 @@ export function buildChannelResponseParts(response: AgentResponse): ChannelRespo
       id: toolCall.id,
       name: toolCall.name,
       input: toolCall.args,
-      state: normalizeToolCallState(toolCall.status),
+      state: toChannelToolCallState(toolCall.status),
     }));
 
     if (toolCall.status === "completed" || toolCall.status === "error") {
@@ -314,7 +314,7 @@ export function buildChannelResponseParts(response: AgentResponse): ChannelRespo
   return responseParts;
 }
 
-function classifyRuntimeError(error: unknown): ChannelInvokeResponse["error"] {
+function classifyChannelInvokeError(error: unknown): ChannelInvokeResponse["error"] {
   const veryfrontError = fromError(error);
 
   if (veryfrontError?.type === "no_ai_available") {
@@ -352,12 +352,12 @@ export async function executeChannelInvoke(
     };
   }
 
-  const messages = normalizeConversationHistoryForRuntime(payload.conversationHistory);
+  const normalizedHistory = normalizeConversationHistoryForRuntime(payload.conversationHistory);
   await agent.clearMemory();
 
   try {
     const result = await agent.generate({
-      input: messages,
+      input: normalizedHistory,
       context: {
         requestId: payload.dispatchId,
         dispatchId: payload.dispatchId,
@@ -395,7 +395,7 @@ export async function executeChannelInvoke(
 
     return {
       ignored: false,
-      error: classifyRuntimeError(error),
+      error: classifyChannelInvokeError(error),
     };
   }
 }

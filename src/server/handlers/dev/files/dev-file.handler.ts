@@ -12,24 +12,66 @@ import {
   HTTP_NOT_FOUND,
   PRIORITY_MEDIUM_DEV_FILES,
 } from "#veryfront/utils/constants/index.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 export class DevFileHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "DevFileHandler",
     priority: PRIORITY_MEDIUM_DEV_FILES as HandlerPriority,
     patterns: [{ pattern: "/_veryfront/fs/", prefix: true, method: "GET" }],
-    enabled: (ctx) => !!ctx.isLocalProject,
+    enabled: (ctx) => !!ctx.isLocalProject || ctx.requestContext?.mode === "preview",
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const { pathname } = new URL(req.url);
 
-    if (!ctx.isLocalProject) return this.continue();
+    const isPreviewMode = ctx.requestContext?.mode === "preview";
+    if (!ctx.isLocalProject && !isPreviewMode) return this.continue();
 
     if (req.method !== "GET" || !pathname.startsWith("/_veryfront/fs/")) {
       return this.continue();
     }
 
+    const fsAdapter = ctx.adapter.fs;
+    const isExtended = isExtendedFSAdapter(fsAdapter);
+
+    if (!ctx.isLocalProject && ctx.projectSlug && isExtended && fsAdapter.isMultiProjectMode()) {
+      const effectiveToken = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
+      const branch = ctx.parsedDomain?.branch ?? null;
+
+      return await fsAdapter.runWithContext(
+        ctx.projectSlug,
+        effectiveToken,
+        () => this.handleWithContext(req, pathname, ctx),
+        ctx.projectId,
+        {
+          productionMode: false,
+          releaseId: ctx.releaseId,
+          branch,
+          environmentName: ctx.environmentName,
+        },
+      );
+    }
+
+    if (isExtended && fsAdapter.isContextualMode()) {
+      try {
+        if (ctx.proxyToken) fsAdapter.setRequestToken(ctx.proxyToken);
+        fsAdapter.setRequestBranch(ctx.parsedDomain?.branch ?? null);
+        fsAdapter.setProductionMode(false, ctx.releaseId);
+      } catch (_) {
+        /* expected: some fs adapter operations may not be supported */
+      }
+    }
+
+    return await this.handleWithContext(req, pathname, ctx);
+  }
+
+  private async handleWithContext(
+    req: Request,
+    pathname: string,
+    ctx: HandlerContext,
+  ): Promise<HandlerResult> {
     const encoded = pathname.slice("/_veryfront/fs/".length).replace(/\.js$/, "");
     const absPath = await validateDevFilePath(encoded, ctx);
 

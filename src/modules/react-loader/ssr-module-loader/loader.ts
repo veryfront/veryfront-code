@@ -275,10 +275,10 @@ export class SSRModuleLoader {
     }
   }
 
-  loadModule(
+  loadRawModule(
     filePath: string,
     source: string,
-  ): Promise<React.ComponentType<Record<string, unknown>>> {
+  ): Promise<Record<string, unknown>> {
     const fileName = filePath.split("/").pop() || filePath;
 
     return withSpan(
@@ -311,7 +311,7 @@ export class SSRModuleLoader {
           const mod = await this.importModuleFromCacheEntry(filePath, fileName, cacheEntry);
 
           this.circuitBreaker.recordSuccess(circuitKey);
-          return extractComponent(mod, filePath);
+          return mod;
         } catch (error) {
           this.circuitBreaker.recordFailure(circuitKey);
           throw error;
@@ -323,6 +323,14 @@ export class SSRModuleLoader {
         "ssr.source_length": source.length,
       },
     );
+  }
+
+  async loadModule(
+    filePath: string,
+    source: string,
+  ): Promise<React.ComponentType<Record<string, unknown>>> {
+    const mod = await this.loadRawModule(filePath, source);
+    return extractComponent(mod, filePath);
   }
 
   private async transformCrossProjectImport(
@@ -460,6 +468,7 @@ export class SSRModuleLoader {
           projectId: this.options.projectId,
           contentSourceId: this.options.contentSourceId,
         },
+        this.options.reactVersion,
       );
 
       if (mdxCacheResult.status === "hit") {

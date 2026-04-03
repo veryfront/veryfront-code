@@ -15,6 +15,19 @@ function hasReactHook(hookName: string): boolean {
   return typeof (React as Record<string, unknown>)[hookName] === "function";
 }
 
+function createDefaultFormStatus(): FormStatus {
+  return { pending: false, data: null, method: null, action: null };
+}
+
+function supportsConcurrentHooks(): boolean {
+  const { isReact18, isReact19 } = getReactVersionInfo();
+  return isReact18 || isReact19;
+}
+
+function warnHookFallback(hookName: string, fallbackDescription: string): void {
+  logger.warn(`${hookName} not available, ${fallbackDescription}`);
+}
+
 export function createTransitionFallbackScheduler(
   onPendingChange: (pending: boolean) => void,
 ): {
@@ -44,14 +57,14 @@ export function createTransitionFallbackScheduler(
 
 export function useFormStatusCompat(): FormStatus {
   if (!hasFeature("useFormStatus") || !hasReactHook("useFormStatus")) {
-    return { pending: false, data: null, method: null, action: null };
+    return createDefaultFormStatus();
   }
 
   try {
     return (React as typeof React & { useFormStatus: () => FormStatus }).useFormStatus();
-  } catch (_) {
-    logger.warn("useFormStatus not available in current React version");
-    return { pending: false, data: null, method: null, action: null };
+  } catch {
+    warnHookFallback("useFormStatus", "falling back to the default idle state");
+    return createDefaultFormStatus();
   }
 }
 
@@ -69,8 +82,8 @@ export function useOptimisticCompat<State, OptimisticState = State>(
           ) => [S, (action: OptimisticStateAction<O>) => void];
         }
       ).useOptimistic(state, updateFn);
-    } catch (_) {
-      logger.warn("useOptimistic not available in current React version");
+    } catch {
+      warnHookFallback("useOptimistic", "falling back to React.useState");
     }
   }
 
@@ -106,13 +119,11 @@ export function useOptimisticCompat<State, OptimisticState = State>(
 }
 
 export function useTransitionCompat(): ReturnType<typeof React.useTransition> {
-  const versionInfo = getReactVersionInfo();
-
-  if (versionInfo.isReact18 || versionInfo.isReact19) {
+  if (supportsConcurrentHooks()) {
     try {
       return React.useTransition();
-    } catch (_) {
-      logger.warn("useTransition not available, falling back to mock");
+    } catch {
+      warnHookFallback("useTransition", "falling back to the timeout scheduler");
     }
   }
 
@@ -137,13 +148,11 @@ export function useTransitionCompat(): ReturnType<typeof React.useTransition> {
 }
 
 export function useDeferredValueCompat<T>(value: T): T {
-  const versionInfo = getReactVersionInfo();
-
-  if (versionInfo.isReact18 || versionInfo.isReact19) {
+  if (supportsConcurrentHooks()) {
     try {
       return React.useDeferredValue(value);
-    } catch (_) {
-      logger.warn("useDeferredValue not available, returning value directly");
+    } catch {
+      warnHookFallback("useDeferredValue", "returning the value directly");
     }
   }
 
@@ -153,13 +162,11 @@ export function useDeferredValueCompat<T>(value: T): T {
 let idCounter = 0;
 
 export function useIdCompat(): string {
-  const versionInfo = getReactVersionInfo();
-
-  if (versionInfo.isReact18 || versionInfo.isReact19) {
+  if (supportsConcurrentHooks()) {
     try {
       return React.useId();
-    } catch (_) {
-      logger.warn("useId not available, using fallback");
+    } catch {
+      warnHookFallback("useId", "using the incremental fallback id");
     }
   }
 
@@ -190,16 +197,18 @@ export interface CompatHooks {
   useId: typeof useIdCompat;
 }
 
+const defaultCompatHooks: CompatHooks = {
+  useFormStatus: useFormStatusCompat,
+  useOptimistic: useOptimisticCompat,
+  useTransition: useTransitionCompat,
+  useDeferredValue: useDeferredValueCompat,
+  useId: useIdCompat,
+};
+
 let compatHooksContext: React.Context<CompatHooks> | null = null;
 
 function getCompatHooksContext(): React.Context<CompatHooks> {
-  compatHooksContext ??= React.createContext<CompatHooks>({
-    useFormStatus: useFormStatusCompat,
-    useOptimistic: useOptimisticCompat,
-    useTransition: useTransitionCompat,
-    useDeferredValue: useDeferredValueCompat,
-    useId: useIdCompat,
-  });
+  compatHooksContext ??= React.createContext<CompatHooks>(defaultCompatHooks);
 
   return compatHooksContext;
 }
@@ -221,21 +230,11 @@ export function CompatHooksProvider({
 }: {
   children: React.ReactNode;
 }): React.ReactElement {
-  const hooks: CompatHooks = {
-    useFormStatus: useFormStatusCompat,
-    useOptimistic: useOptimisticCompat,
-    useTransition: useTransitionCompat,
-    useDeferredValue: useDeferredValueCompat,
-    useId: useIdCompat,
-  };
-
-  return React.createElement(getCompatHooksContext().Provider, { value: hooks }, children);
+  return React.createElement(
+    getCompatHooksContext().Provider,
+    { value: defaultCompatHooks },
+    children,
+  );
 }
 
-export const compatHooks = {
-  useFormStatus: useFormStatusCompat,
-  useOptimistic: useOptimisticCompat,
-  useTransition: useTransitionCompat,
-  useDeferredValue: useDeferredValueCompat,
-  useId: useIdCompat,
-} as const;
+export const compatHooks = defaultCompatHooks;

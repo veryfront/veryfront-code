@@ -79,6 +79,14 @@ describe("script-handlers", () => {
       // Should contain something (either bundled output or raw source)
       assertEquals(body.length > 0, true);
     });
+
+    it("does not embed unsafe eval in the compiled fallback bundle", async () => {
+      const adapter = createMockAdapter();
+      const response = await handleClientScript(adapter);
+      const body = await response.text();
+
+      assertEquals(body.includes('new Function("specifier"'), false);
+    });
   });
 
   describe("handleDomScript", () => {

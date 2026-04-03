@@ -19,6 +19,12 @@ import {
 } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { StaticFileService } from "../../services/static/index.ts";
+import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
+import { computeEtag } from "../utils/etag.ts";
+
+function isHtmlResponse(contentType: string): boolean {
+  return /\btext\/html\b/i.test(contentType);
+}
 
 export class StaticHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -57,6 +63,8 @@ export class StaticHandler extends BaseHandler {
         const isHead = method === "HEAD";
         const isLocal = !!ctx.isLocalProject;
         const isPreviewMode = ctx.requestContext?.mode === "preview" && !isLocal;
+        const builder = this.createResponseBuilder(ctx)
+          .withCORS(req, ctx.securityConfig?.cors);
 
         const result = await this.staticService.resolveFile(pathname, {
           projectDir: ctx.projectDir,
@@ -68,8 +76,7 @@ export class StaticHandler extends BaseHandler {
         if (!result) {
           if (!this.staticService.isAssetRequest(pathname)) return null;
 
-          return this.createResponseBuilder(ctx)
-            .withCORS(req, ctx.securityConfig?.cors)
+          return builder
             .withSecurity(ctx.securityConfig ?? undefined, req)
             .withCache("no-cache")
             .withContentType(
@@ -79,19 +86,24 @@ export class StaticHandler extends BaseHandler {
             );
         }
 
-        if (hasMatchingEtag(req, result.etag)) {
-          return this.createResponseBuilder(ctx)
-            .withCORS(req, ctx.securityConfig?.cors)
+        const responseData = isHtmlResponse(result.contentType)
+          ? new TextEncoder().encode(
+            addNonceToHtmlTags(new TextDecoder().decode(result.data), builder.nonce),
+          )
+          : result.data;
+        const etag = computeEtag(responseData);
+
+        if (hasMatchingEtag(req, etag)) {
+          return builder
             .withSecurity(ctx.securityConfig ?? undefined, req)
-            .notModified(result.etag);
+            .notModified(etag);
         }
 
-        const body: BodyInit | null = isHead ? null : result.data.slice();
-        const response = this.createResponseBuilder(ctx)
-          .withCORS(req, ctx.securityConfig?.cors)
+        const body: BodyInit | null = isHead ? null : responseData.slice();
+        const response = builder
           .withSecurity(ctx.securityConfig ?? undefined, req)
           .withCache(result.cacheStrategy)
-          .withETag(result.etag)
+          .withETag(etag)
           .withContentType(result.contentType, body, HTTP_OK);
 
         this.logDebug(

@@ -17,6 +17,14 @@ import {
   stopMemoryMonitoring,
 } from "#veryfront/utils/memory/index.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
+import { getConfig } from "#veryfront/config";
+import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
+import {
+  buildPreparedCSSArtifactFromFiles,
+  collectLocalProjectSourceFiles,
+  readLocalProjectStylesheet,
+} from "#veryfront/html/styles-builder/css-pregeneration.ts";
+import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.handler.ts";
 import {
   enableSSRClientOnlyFetching,
@@ -37,6 +45,74 @@ const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
 
 /** Default port when PORT / VERYFRONT_PORT env vars are not set */
 const DEFAULT_SERVER_PORT = 3_000;
+
+async function prewarmLocalProductionCSSArtifacts(
+  adapter: RuntimeAdapter,
+  options: Pick<
+    StartProductionServerOptions,
+    | "projectDir"
+    | "defaultProjectSlug"
+    | "defaultProjectId"
+    | "defaultEnvironment"
+    | "localProjects"
+  >,
+): Promise<void> {
+  if (options.defaultEnvironment !== "production") return;
+
+  const projectsToWarm = new Map<string, string>();
+
+  if (options.localProjects) {
+    for (const [projectSlug, projectDir] of Object.entries(options.localProjects)) {
+      projectsToWarm.set(projectSlug, projectDir);
+    }
+  }
+
+  if (options.defaultProjectSlug && options.projectDir) {
+    projectsToWarm.set(options.defaultProjectSlug, options.projectDir);
+  } else if (projectsToWarm.size === 0 && options.defaultProjectId && options.projectDir) {
+    projectsToWarm.set(options.defaultProjectId, options.projectDir);
+  }
+
+  if (projectsToWarm.size === 0) return;
+
+  await Promise.all([...projectsToWarm.entries()].map(async ([projectSlug, projectDir]) => {
+    try {
+      const config = await getConfig(projectDir, adapter, { cacheKey: projectSlug });
+      const styleProfile = createStyleScopeProfile(config);
+      const files = await collectLocalProjectSourceFiles({
+        projectDir,
+        styleProfile,
+      });
+      const stylesheet = await readLocalProjectStylesheet(projectDir, config?.tailwind?.stylesheet);
+
+      const result = await buildPreparedCSSArtifactFromFiles({
+        projectSlug,
+        projectVersion: resolveStyleContentVersion(null),
+        projectDir,
+        files,
+        styleProfile,
+        stylesheet,
+        stylesheetPath: config?.tailwind?.stylesheet,
+        minify: true,
+        environment: "preview",
+        buildMode: "production",
+      });
+
+      serverLog.debug("Prewarmed local production CSS artifact", {
+        projectSlug,
+        projectDir,
+        fileCount: files.length,
+        fromCache: result.fromCache,
+      });
+    } catch (error) {
+      serverLog.debug("Skipping local production CSS prewarm", {
+        projectSlug,
+        projectDir,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }));
+}
 
 /** Configuration for AI primitives discovery during server startup */
 export interface DiscoveryOptions {
@@ -115,6 +191,14 @@ export function startProductionServer(
       if (bootstrap.usingFSAdapter) {
         logger.debug("FSAdapter initialized", { type: bootstrap.fsAdapterType });
       }
+
+      await prewarmLocalProductionCSSArtifacts(bootstrap.adapter, {
+        projectDir,
+        defaultProjectSlug,
+        defaultProjectId,
+        defaultEnvironment,
+        localProjects,
+      });
 
       // Enable SSR fetch interception to handle relative URLs during SSR
       setSSRServerPort(port);

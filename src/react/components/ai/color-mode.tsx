@@ -7,7 +7,7 @@
  */
 
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors";
+import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 
 type ColorMode = "light" | "dark" | "system";
 type ResolvedColorMode = "light" | "dark";

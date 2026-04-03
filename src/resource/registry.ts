@@ -11,12 +11,12 @@ import type { Resource } from "./types.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
 import { ScopedRegistryFacade } from "#veryfront/ai/registry-facade.ts";
 
-const resourceManager = new ProjectScopedRegistryManager<Resource>("resource");
+const resourceRegistryManager = new ProjectScopedRegistryManager<Resource>("resource");
 
-class ResourceRegistryClass extends ScopedRegistryFacade<Resource> {
+class ResourceRegistry extends ScopedRegistryFacade<Resource> {
   findByPattern(uri: string): Resource | undefined {
     for (const resource of this.getAll().values()) {
-      if (this.matchesPattern(uri, resource.pattern)) return resource;
+      if (this.matchPattern(uri, resource.pattern)) return resource;
     }
     return undefined;
   }
@@ -25,12 +25,12 @@ class ResourceRegistryClass extends ScopedRegistryFacade<Resource> {
     return new RegExp(`^${pattern.replace(/:(\w+)/g, "(?<$1>[^/]+)")}$`);
   }
 
-  private matchesPattern(uri: string, pattern: string): boolean {
-    return this.patternToRegex(pattern).test(uri);
+  private matchPattern(uri: string, pattern: string): RegExpMatchArray | null {
+    return uri.match(this.patternToRegex(pattern));
   }
 
   extractParams(uri: string, pattern: string): Record<string, string> {
-    return uri.match(this.patternToRegex(pattern))?.groups ?? {};
+    return this.matchPattern(uri, pattern)?.groups ?? {};
   }
 
   list(): string[] {
@@ -38,4 +38,4 @@ class ResourceRegistryClass extends ScopedRegistryFacade<Resource> {
   }
 }
 
-export const resourceRegistry = new ResourceRegistryClass(resourceManager);
+export const resourceRegistry = new ResourceRegistry(resourceRegistryManager);

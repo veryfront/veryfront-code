@@ -680,4 +680,49 @@ describe("WebSocketManager", () => {
 
     manager.dispose();
   });
+
+  it("evicts the current adapter after successful selective invalidation", async () => {
+    let evicted = 0;
+
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: async () => [{
+          path: "pages/index.mdx",
+          type: "page",
+          size: 10,
+          updated_at: "2026-04-03T00:00:00.000Z",
+          content: "# Hello",
+        }],
+      },
+      invalidationCallbacks: {
+        evictCurrentAdapter: () => {
+          evicted++;
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: {
+            changedPaths: ["pages/index.mdx"],
+            branchName: "main",
+          },
+        }),
+      }),
+    );
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+
+    assertEquals(evicted, 1);
+
+    manager.dispose();
+  });
 });

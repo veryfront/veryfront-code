@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { injectHTMLContent } from "./html-injection.ts";
 import type { HTMLMetadata } from "#veryfront/transforms/mdx/types.ts";
@@ -8,6 +8,14 @@ const baseTemplate = `<!DOCTYPE html>
 <body>{{ content }}</body></html>`;
 
 const minMeta: HTMLMetadata = { title: "Test", description: "Desc" };
+
+function extractHydrationData(html: string): Record<string, unknown> {
+  const match = html.match(
+    /<script id="veryfront-hydration-data" type="application\/json"[^>]*>([\s\S]*?)<\/script>/i,
+  );
+  assertExists(match?.[1], "expected hydration data script in HTML");
+  return JSON.parse(match[1]);
+}
 
 describe("html/html-injection", () => {
   describe("injectHTMLContent", () => {
@@ -93,8 +101,48 @@ describe("html/html-injection", () => {
         },
       );
 
-      assertEquals(html.includes("veryfront-hydration-data"), true);
-      assertEquals(html.includes("/app/page.tsx"), true);
+      const hydrationData = extractHydrationData(html);
+      assertEquals(hydrationData.pagePath, "app/page.tsx");
+      assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
+    });
+
+    it("adds the provided nonce to client-page hydration data", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          pagePath: "/app/page.tsx",
+          isClientPage: true,
+          nonce: "nonce-123",
+        },
+      );
+
+      assertEquals(
+        html.includes(
+          '<script id="veryfront-hydration-data" type="application/json" nonce="nonce-123">',
+        ),
+        true,
+      );
+    });
+
+    it("should use fs hydration strategy for local development client pages", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "development",
+          slug: "test",
+          pagePath: "/app/page.tsx",
+          isClientPage: true,
+        },
+      );
+
+      const hydrationData = extractHydrationData(html);
+      assertEquals(hydrationData.clientModuleStrategy, "fs");
     });
 
     it("should inject studio scripts when studioEmbed is true", () => {
@@ -112,6 +160,73 @@ describe("html/html-injection", () => {
       );
 
       assertEquals(html.includes("studio-bridge.js"), true);
+    });
+
+    it("propagates the nonce to injected development styles and scripts", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "development",
+          slug: "test",
+          nonce: "nonce-123",
+        },
+      );
+
+      assertEquals(html.includes('<style nonce="nonce-123">'), true);
+      assertEquals(
+        html.includes(
+          '<script type="module" src="/_veryfront/rsc/client.js" nonce="nonce-123"></script>',
+        ),
+        true,
+      );
+      assertEquals(
+        html.includes('<script type="module" src="/_veryfront/hmr.js" nonce="nonce-123"></script>'),
+        true,
+      );
+    });
+
+    it("propagates the nonce to injected production scripts", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "my-slug",
+          nonce: "nonce-123",
+        },
+      );
+
+      assertEquals(
+        html.includes(
+          '<script type="module" src="/_veryfront/rsc/client.js" nonce="nonce-123"></script>',
+        ),
+        true,
+      );
+      assertEquals(
+        html.includes(
+          '<script type="module" src="/_veryfront/hydrate.js?slug=my-slug" nonce="nonce-123"></script>',
+        ),
+        true,
+      );
+    });
+
+    it("injects preview utility CSS for remote preview full HTML documents", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          environment: "preview",
+          slug: "test",
+        },
+      );
+
+      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
   });
 });

@@ -2,24 +2,27 @@ import type { Prompt, PromptConfig } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { COMMON_BLOCKED_PATTERNS } from "../agent/middleware/security/validator.ts";
 
+type PromptGenerateFn = (variables: Record<string, unknown>) => string | Promise<string>;
+
+const BLOCKED_PROMPT_PATTERNS = COMMON_BLOCKED_PATTERNS.promptInjection;
+
 export function prompt(config: PromptConfig): Prompt {
+  const { content, description, generate, suggestion } = config;
   const id = config.id ?? generatePromptId();
 
   return {
     id,
-    description: config.description,
-    suggestion: config.suggestion,
+    description,
+    suggestion,
     async getContent(variables?: Record<string, unknown>): Promise<string> {
-      const vars = variables ?? {};
+      const resolvedVariables = variables ?? {};
 
-      if (config.content) {
-        return interpolateVariables(config.content, vars);
+      if (content) {
+        return interpolateVariables(content, resolvedVariables);
       }
 
-      if (config.generate) {
-        // z.function() in v4 doesn't carry arg/return types — cast to expected signature
-        type GenerateFn = (vars: Record<string, unknown>) => string | Promise<string>;
-        return (config.generate as GenerateFn)(vars);
+      if (generate) {
+        return (generate as PromptGenerateFn)(resolvedVariables);
       }
 
       throw toError(
@@ -39,11 +42,10 @@ function generatePromptId(): string {
 }
 
 function sanitizeVariableValue(value: string): string {
-  let sanitized = value;
-  for (const pattern of COMMON_BLOCKED_PATTERNS.promptInjection) {
-    sanitized = sanitized.replace(pattern, "");
-  }
-  return sanitized;
+  return BLOCKED_PROMPT_PATTERNS.reduce(
+    (sanitizedValue, pattern) => sanitizedValue.replace(pattern, ""),
+    value,
+  );
 }
 
 function interpolateVariables(

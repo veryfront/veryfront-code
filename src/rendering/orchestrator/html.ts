@@ -19,22 +19,27 @@ import type {
   PageBundle,
 } from "#veryfront/types";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
+import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import type { RenderOptions } from "./types.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
 import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
+import { profilePhase, profileSyncPhase } from "#veryfront/observability/request-profiler.ts";
 import {
   normalizeCssModuleKey,
   rewriteCssModuleContent,
 } from "#veryfront/transforms/css-modules/naming.ts";
+import { getProjectCSS } from "#veryfront/html/styles-builder/index.ts";
+import { warmPreparedCSSArtifactFromFiles } from "#veryfront/html/styles-builder/css-pregeneration.ts";
 import { getRouteCandidates } from "./css-candidate-manifest.ts";
 import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 
 const logger = rendererLogger.component("html-generator");
+type ProjectCSSResult = Awaited<ReturnType<typeof getProjectCSS>> | null;
 
 export interface HTMLGeneratorConfig {
   projectDir: string;
@@ -69,11 +74,13 @@ export class HTMLGenerator {
     const html = isFullHTMLDocument(context.html)
       ? await this.handleFullHTMLDocument(context)
       : await this.wrapHTMLFragment(context);
+    const finalHtml = context.options?.studioEmbed ? injectElementSelectors(html) : html;
 
-    if (!context.options?.studioEmbed) return html;
+    if (context.options?.studioEmbed) {
+      logger.debug("Injected element selectors for Studio");
+    }
 
-    logger.debug("Injected element selectors for Studio");
-    return injectElementSelectors(html);
+    return addNonceToHtmlTags(finalHtml, context.options?.nonce);
   }
 
   async generateHTMLStream(
@@ -82,7 +89,12 @@ export class HTMLGenerator {
   ): Promise<ReadableStream> {
     const fullContext = context as HTMLGenerationContext;
     const mergedFrontmatter = this.mergeFrontmatter(fullContext);
-    const htmlOptions = await this.buildHTMLOptions(fullContext, mergedFrontmatter);
+    const htmlOptions = await profilePhase(
+      "html.build_options",
+      () => this.buildHTMLOptions(fullContext, mergedFrontmatter),
+    );
+    const projectCSSPromise = this.startProjectCSSPreparation(fullContext, htmlOptions);
+    this.startPreparedCSSWarmup(fullContext, htmlOptions);
 
     let reactContent: string;
     try {
@@ -96,15 +108,23 @@ export class HTMLGenerator {
       reactContent = error.partialContent.trim();
     }
 
-    const { start, end } = await this.generateShellParts(
-      fullContext,
-      mergedFrontmatter,
-      htmlOptions,
-      reactContent,
+    const { start, end } = await profilePhase(
+      "html.generate_shell_parts",
+      () =>
+        this.generateShellParts(
+          fullContext,
+          mergedFrontmatter,
+          htmlOptions,
+          reactContent,
+          projectCSSPromise,
+        ),
     );
 
     const encoder = new TextEncoder();
-    const fullHtml = `${start}${reactContent}${end}`;
+    const fullHtml = addNonceToHtmlTags(
+      `${start}${reactContent}${end}`,
+      context.options?.nonce,
+    );
 
     return new ReadableStream({
       start(controller) {
@@ -134,7 +154,11 @@ export class HTMLGenerator {
       slug: context.slug,
       devPort: this.config.config?.dev?.port || DEFAULT_DASHBOARD_PORT,
       pagePath,
+      projectDir: this.config.projectDir,
       isClientPage,
+      environment: context.options?.environment,
+      isLocalProject: this.config.mode === "development",
+      nonce: context.options?.nonce,
       importMapJson,
     });
 
@@ -164,14 +188,24 @@ export class HTMLGenerator {
 
   private async wrapHTMLFragment(context: HTMLGenerationContext): Promise<string> {
     const mergedFrontmatter = this.mergeFrontmatter(context);
-    const htmlOptions = await this.buildHTMLOptions(context, mergedFrontmatter);
+    const htmlOptions = await profilePhase(
+      "html.build_options",
+      () => this.buildHTMLOptions(context, mergedFrontmatter),
+    );
+    const projectCSSPromise = this.startProjectCSSPreparation(context, htmlOptions);
+    this.startPreparedCSSWarmup(context, htmlOptions);
     const reactContent = context.html.trim();
 
-    const { start, end } = await this.generateShellParts(
-      context,
-      mergedFrontmatter,
-      htmlOptions,
-      reactContent,
+    const { start, end } = await profilePhase(
+      "html.generate_shell_parts",
+      () =>
+        this.generateShellParts(
+          context,
+          mergedFrontmatter,
+          htmlOptions,
+          reactContent,
+          projectCSSPromise,
+        ),
     );
 
     return `${start}${reactContent}${end}`;
@@ -182,6 +216,7 @@ export class HTMLGenerator {
     mergedFrontmatter: MDXFrontmatter,
     htmlOptions: HTMLGenerationOptions,
     reactContent: string,
+    projectCSSPromise?: Promise<ProjectCSSResult>,
   ): Promise<{ start: string; end: string }> {
     const head = context.collectedHead;
     const effectiveTitle = head?.title || mergedFrontmatter.title || "Veryfront App";
@@ -205,6 +240,7 @@ export class HTMLGenerator {
       context.options?.params,
       context.options?.props,
       reactContent,
+      projectCSSPromise,
     );
 
     const { scripts, other } = this.buildHeadElements(head);
@@ -229,6 +265,76 @@ export class HTMLGenerator {
     }
 
     return { start: modifiedStart, end };
+  }
+
+  private startProjectCSSPreparation(
+    context: HTMLGenerationContext,
+    htmlOptions: HTMLGenerationOptions,
+  ): Promise<ProjectCSSResult> | undefined {
+    const isLocalProject = htmlOptions.isLocalProject ?? false;
+    if (isLocalProject || htmlOptions.environment !== "production") return undefined;
+
+    const projectScope = htmlOptions.projectSlug || htmlOptions.projectId || context.slug;
+    if (!projectScope || projectScope === "default") return undefined;
+
+    return getProjectCSS(
+      projectScope,
+      htmlOptions.globalCSS,
+      new Set([...(htmlOptions.projectClasses ?? [])]),
+      {
+        minify: true,
+        environment: htmlOptions.environment,
+        buildMode: htmlOptions.mode,
+      },
+    );
+  }
+
+  private startPreparedCSSWarmup(
+    context: HTMLGenerationContext,
+    htmlOptions: HTMLGenerationOptions,
+  ): void {
+    const isLocalProject = htmlOptions.isLocalProject ?? false;
+    const usesPreviewStylesheet = isLocalProject || htmlOptions.environment !== "production";
+    if (!usesPreviewStylesheet) return;
+
+    const wrappedFs = this.config.adapter.fs as unknown as {
+      getUnderlyingAdapter?: () => unknown;
+    };
+    if (typeof wrappedFs.getUnderlyingAdapter !== "function") return;
+
+    const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
+      getAllSourceFiles?: () =>
+        | Array<{ path: string; content?: string }>
+        | Promise<Array<{ path: string; content?: string }>>;
+    };
+    if (typeof fsAdapter.getAllSourceFiles !== "function") return;
+
+    const projectScope = htmlOptions.projectSlug || htmlOptions.projectId || context.slug;
+    if (!projectScope || projectScope === "default") return;
+
+    const projectVersion = this.getProjectContentVersion() ??
+      (this.config.mode === "development" ? "dev" : "unknown");
+    const styleProfile = createStyleScopeProfile(this.config.config);
+    const stylesheetPath = this.config.config?.tailwind?.stylesheet;
+
+    Promise.resolve(fsAdapter.getAllSourceFiles()).then((files) =>
+      warmPreparedCSSArtifactFromFiles({
+        projectSlug: projectScope,
+        projectVersion,
+        projectDir: this.config.projectDir,
+        files,
+        styleProfile,
+        stylesheetPath,
+        minify: true,
+        environment: "preview",
+        buildMode: "production",
+      })
+    ).catch((error) => {
+      logger.debug("Prepared CSS warmup skipped after source scan failure", {
+        projectScope,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   private buildHeadElements(head?: CollectedHead): { scripts: string; other: string } {
@@ -326,15 +432,21 @@ export class HTMLGenerator {
   ): Promise<HTMLGenerationOptions> {
     const stylesheetPath = this.config.config?.tailwind?.stylesheet || "globals.css";
     const [appComponentPathOrNull, globalCSS] = await Promise.all([
-      this.resolveAppPath(),
-      this.loadProjectFile(stylesheetPath),
+      profilePhase("html.resolve_app_path", () => this.resolveAppPath()),
+      profilePhase("html.load_global_css", () => this.loadProjectFile(stylesheetPath)),
     ]);
     const appComponentPath = appComponentPathOrNull ?? undefined;
-    const projectClasses = await this.extractProjectClassesForRoute(context, appComponentPath);
+    const projectClasses = await profilePhase(
+      "html.route_candidates",
+      () => this.extractProjectClassesForRoute(context, appComponentPath),
+    );
 
     // Load CSS imported by components and merge with globalCSS.
     // Deduplicate against the configured stylesheet to avoid double-loading.
-    const combinedCSS = await this.mergeImportedCSS(globalCSS, context.cssImports, stylesheetPath);
+    const combinedCSS = await profilePhase(
+      "html.merge_imported_css",
+      () => this.mergeImportedCSS(globalCSS, context.cssImports, stylesheetPath),
+    );
 
     logger.debug("App component resolution", {
       appComponentPath,
@@ -362,7 +474,7 @@ export class HTMLGenerator {
       ? computeSourceHash(context.pageInfo.entity.content)
       : undefined;
 
-    return {
+    return profileSyncPhase("html.build_options.finalize", () => ({
       mode: this.config.mode,
       config: this.config.config,
       projectDir: this.config.projectDir,
@@ -379,6 +491,7 @@ export class HTMLGenerator {
       frontmatter: mergedFrontmatter,
       studioEmbed: context.options?.studioEmbed,
       projectId: context.options?.projectId,
+      projectSlug: context.options?.projectSlug,
       pageId: context.options?.pageId,
       sourceHash,
       colorScheme: context.options?.colorScheme,
@@ -389,7 +502,8 @@ export class HTMLGenerator {
       projectClasses,
       isLocalProject: this.config.mode === "development",
       noHmr: context.options?.noHmr,
-    };
+      forceProductionScripts: context.options?.forceProductionScripts,
+    }));
   }
 
   /**

@@ -42,6 +42,13 @@ export const getRouterScript = () => `
     const log = DEBUG ? console.log.bind(console, '[Veryfront]') : () => {};
     const logError = console.error.bind(console, '[Veryfront]');
 
+    function getDocumentNonce() {
+      const element = document.querySelector('script[nonce], style[nonce], link[nonce]');
+      if (!element) return undefined;
+
+      return element.nonce || element.getAttribute('nonce') || undefined;
+    }
+
     // ============================================
     // Version tracking for cache invalidation
     // ============================================
@@ -417,6 +424,8 @@ export const getRouterScript = () => `
           existingStyle.textContent = pageData.css;
         } else {
           const styleEl = document.createElement('style');
+          const nonce = getDocumentNonce();
+          if (nonce) styleEl.setAttribute('nonce', nonce);
           styleEl.id = 'veryfront-spa-css';
           styleEl.textContent = pageData.css;
           document.head.appendChild(styleEl);

@@ -5,6 +5,7 @@
 import { assertEquals } from "@std/assert";
 import { setConfigForTest } from "./bridge-config.ts";
 import { handleStudioMessage, isSafeNavigationUrl } from "./bridge-message-handler.ts";
+import { state } from "./bridge-state.ts";
 
 // ---------------------------------------------------------------------------
 // Browser API polyfills for Deno test environment
@@ -40,6 +41,10 @@ function makeEvent(data: Record<string, unknown>): MessageEvent {
     source: fakeParentWindow,
     ports: [],
   } as unknown as MessageEvent;
+}
+
+function makeOverlay(): HTMLElement {
+  return { style: { display: "block" } } as unknown as HTMLElement;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,4 +134,65 @@ Deno.test("routeChange: blocks javascript: URL", () => {
     writable: true,
     configurable: true,
   });
+});
+
+Deno.test("routeChange: clears existing selection before navigating", () => {
+  resetState();
+  state.selectedNodeId = "node-123";
+  state.selectionOverlay = makeOverlay();
+
+  let navigatedTo = "";
+  Object.defineProperty(globalThis.location, "href", {
+    set(v: string) {
+      navigatedTo = v;
+    },
+    get() {
+      return "https://test.veryfront.com/test";
+    },
+    configurable: true,
+  });
+
+  handleStudioMessage(makeEvent({ action: "routeChange", url: "/new-page" }));
+
+  assertEquals(state.selectedNodeId, null);
+  assertEquals(state.selectionOverlay?.style.display, "none");
+  assertEquals(navigatedTo, "/new-page");
+
+  Object.defineProperty(globalThis.location, "href", {
+    value: "https://test.veryfront.com/test",
+    writable: true,
+    configurable: true,
+  });
+});
+
+Deno.test("toggleInspectMode: disabling inspect mode clears hover state only", () => {
+  resetState();
+  state.inspectMode = true;
+  state.hoveredNodeId = "hovered-node";
+  state.selectedNodeId = "selected-node";
+  state.hoverOverlay = makeOverlay();
+  state.selectionOverlay = makeOverlay();
+
+  handleStudioMessage(makeEvent({ action: "toggleInspectMode", value: false }));
+
+  assertEquals(state.inspectMode, false);
+  assertEquals(state.hoveredNodeId, null);
+  assertEquals(state.hoverOverlay?.style.display, "none");
+  assertEquals(state.selectedNodeId, "selected-node");
+  assertEquals(state.selectionOverlay?.style.display, "block");
+});
+
+Deno.test("toggleInspectMode: deselectElements also clears selection", () => {
+  resetState();
+  state.inspectMode = true;
+  state.selectedNodeId = "selected-node";
+  state.selectionOverlay = makeOverlay();
+
+  handleStudioMessage(
+    makeEvent({ action: "toggleInspectMode", value: false, deselectElements: true }),
+  );
+
+  assertEquals(state.inspectMode, false);
+  assertEquals(state.selectedNodeId, null);
+  assertEquals(state.selectionOverlay?.style.display, "none");
 });

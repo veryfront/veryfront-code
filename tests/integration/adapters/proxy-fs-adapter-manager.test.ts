@@ -49,7 +49,7 @@ describe("ProxyFSAdapterManager - Cache Isolation", () => {
       baseConfig: {
         type: "veryfront-api",
         veryfront: {
-          baseUrl: "http://localhost:4000/api",
+          apiBaseUrl: "http://localhost:4000/api",
           apiToken: "test-token",
           proxyMode: false,
         },
@@ -89,6 +89,39 @@ describe("ProxyFSAdapterManager - Cache Isolation", () => {
         manager.hasAdapter("my-project", false, null),
         manager.hasAdapter("my-project", false, "ignored-in-preview"),
       );
+    } finally {
+      manager.dispose();
+    }
+  });
+
+  it("evictAdapter removes and disposes a cached preview adapter", () => {
+    const manager = createLocalManager();
+    let disposed = false;
+
+    try {
+      (manager as unknown as {
+        adapters: Map<
+          string,
+          { adapter: { dispose: () => void; getCacheStats: () => unknown }; lastAccessed: number }
+        >;
+      }).adapters.set("proxy:my-project:preview:main", {
+        adapter: {
+          dispose: () => {
+            disposed = true;
+          },
+          getCacheStats: () => ({
+            cache: { size: 0, memoryUsed: 0, hits: 0, misses: 0, hitRate: 0 },
+          }),
+        },
+        lastAccessed: Date.now(),
+      });
+
+      assertEquals(manager.hasAdapter("my-project", false, null, "main"), true);
+
+      manager.evictAdapter("my-project", false, null, "main");
+
+      assertEquals(disposed, true);
+      assertEquals(manager.hasAdapter("my-project", false, null, "main"), false);
     } finally {
       manager.dispose();
     }

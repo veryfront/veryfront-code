@@ -234,6 +234,7 @@ export async function transformModuleWithDeps(
           contentSourceId,
         }
         : undefined,
+      config.reactVersion,
     );
     if (mdxCacheResult.status === "hit") {
       moduleCache.set(cacheKey, mdxCacheResult.path);
@@ -466,7 +467,7 @@ export async function transformModuleWithDeps(
 
   if (contentSourceId) {
     const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
-    const mdxCacheKey = buildMdxEsmPathCacheKey(normalizedPath);
+    const mdxCacheKey = buildMdxEsmPathCacheKey(normalizedPath, config.reactVersion);
     const cache = await getModulePathCache(tmpDir);
     cache.set(mdxCacheKey, tempFilePath);
 

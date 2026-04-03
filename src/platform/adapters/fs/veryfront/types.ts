@@ -137,4 +137,6 @@ export interface InvalidationCallbacks {
   clearProjectCSSCache?: (projectSlug: string) => void;
   /** Clear domain lookup cache to refresh release IDs after publishing */
   clearDomainCache?: () => void;
+  /** Evict the current shared proxy adapter after successful invalidation */
+  evictCurrentAdapter?: () => void;
 }

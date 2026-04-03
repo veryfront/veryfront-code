@@ -13,6 +13,7 @@ import {
   getHttpBundleCacheDir,
   getMdxEsmCacheDir,
 } from "#veryfront/utils/cache-dir.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import {
   createFileSystem,
   type FileSystem,
@@ -217,7 +218,7 @@ export function invalidateModulePaths(changedPaths: string[]): void {
 
     for (const [cacheDir, cache] of modulePathCaches.entries()) {
       for (const [cachedKey, cachedFilePath] of cache.entries()) {
-        const normalizedCached = cachedKey.replace(/^_vf_modules\//, "").replace(/\.js$/, "");
+        const normalizedCached = extractNormalizedCachedModulePath(cachedKey);
 
         if (
           normalizedCached === normalizedChanged ||
@@ -281,6 +282,11 @@ export function invalidateModulePaths(changedPaths: string[]): void {
   });
 }
 
+function extractNormalizedCachedModulePath(cachedKey: string): string {
+  const normalizedPath = cachedKey.match(/(?:^|:)(_vf_modules\/[^:]+)$/)?.[1] ?? cachedKey;
+  return normalizedPath.replace(/^_vf_modules\//, "").replace(/\.js$/, "");
+}
+
 export async function clearESMDiskCache(): Promise<void> {
   const cacheDir = getMdxEsmCacheDir();
   const fs = getLocalFs();
@@ -324,7 +330,11 @@ export async function clearAllLocalCaches(): Promise<void> {
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared all local caches`);
 }
 
-function toMdxEsmCacheKey(filePath: string, projectDir?: string): string {
+function toMdxEsmCacheKey(
+  filePath: string,
+  projectDir?: string,
+  reactVersion = REACT_DEFAULT_VERSION,
+): string {
   let relativePath = filePath;
 
   if (projectDir && filePath.startsWith(projectDir)) {
@@ -334,7 +344,7 @@ function toMdxEsmCacheKey(filePath: string, projectDir?: string): string {
   relativePath = relativePath.replace(/^\/+/, "");
   const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
 
-  return buildMdxEsmPathCacheKey(`_vf_modules/${jsPath}`);
+  return buildMdxEsmPathCacheKey(`_vf_modules/${jsPath}`, reactVersion);
 }
 
 export async function lookupMdxEsmCache(
@@ -343,9 +353,10 @@ export async function lookupMdxEsmCache(
   projectDir?: string,
   _contentHash?: string, // Intentionally unused - kept for API compatibility
   recoveryOptions?: { projectId: string; contentSourceId: string },
+  reactVersion = REACT_DEFAULT_VERSION,
 ): Promise<CacheLookupResult> {
   const cache = await getModulePathCache(cacheDir);
-  const cacheKey = toMdxEsmCacheKey(filePath, projectDir);
+  const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion);
 
   const cachedPath = cache.get(cacheKey);
   if (!cachedPath) return { status: "miss" };

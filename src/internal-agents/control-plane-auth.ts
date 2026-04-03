@@ -26,6 +26,13 @@ export function getControlPlaneVerificationPublicKey(ctx: HandlerContext): strin
     getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
 }
 
+function isControlPlaneVerificationError(error: unknown): boolean {
+  return error instanceof Error && (
+    error.message.includes("Control-plane") ||
+    error.message.includes("Unsupported")
+  );
+}
+
 export async function verifyControlPlaneRequest(
   req: Request,
   ctx: HandlerContext,
@@ -63,12 +70,7 @@ export async function verifyControlPlaneRequest(
       maxAgeSeconds: MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS,
     });
   } catch (error) {
-    const isAuthError = error instanceof Error && (
-      error.message.includes("Control-plane") ||
-      error.message.includes("Unsupported")
-    );
-
-    if (isAuthError) {
+    if (isControlPlaneVerificationError(error)) {
       logger.warn("Invalid control-plane signature", {
         error,
         projectSlug,

@@ -1,6 +1,14 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { findGlobalStylesheet, findStylesheetFromFiles } from "./css-pregeneration.ts";
+import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import { createStyleScopeProfile } from "./style-scope-profile.ts";
+import {
+  collectLocalProjectSourceFiles,
+  findGlobalStylesheet,
+  findStylesheetFromFiles,
+  readLocalProjectStylesheet,
+} from "./css-pregeneration.ts";
 
 describe("styles-builder/css-pregeneration", () => {
   describe("findGlobalStylesheet", () => {
@@ -197,6 +205,64 @@ describe("styles-builder/css-pregeneration", () => {
         ),
         "fallback",
       );
+    });
+  });
+
+  describe("local project helpers", () => {
+    it("collects local source files while skipping ignored roots", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+
+      try {
+        await mkdir(join(projectDir, "pages"), { recursive: true });
+        await mkdir(join(projectDir, "components"), { recursive: true });
+        await mkdir(join(projectDir, "dist"), { recursive: true });
+
+        await writeTextFile(
+          join(projectDir, "pages", "index.tsx"),
+          `export default function Page() {
+  return <div className="text-red-500" />;
+}`,
+        );
+        await writeTextFile(
+          join(projectDir, "components", "Button.tsx"),
+          `export function Button() {
+  return <button className="rounded-md" />;
+}`,
+        );
+        await writeTextFile(
+          join(projectDir, "dist", "ignored.tsx"),
+          `export default function Ignored() { return <div className="text-blue-500" />; }`,
+        );
+
+        const files = await collectLocalProjectSourceFiles({
+          projectDir,
+          styleProfile: createStyleScopeProfile(),
+        });
+
+        assertEquals(
+          files.map((file) => file.path.replace(`${projectDir}/`, "")).sort(),
+          ["components/Button.tsx", "pages/index.tsx"],
+        );
+      } finally {
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("reads the configured stylesheet path before default globals fallbacks", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+
+      try {
+        await mkdir(join(projectDir, "styles"), { recursive: true });
+        await writeTextFile(join(projectDir, "styles", "custom.css"), ".custom { color: red; }");
+        await writeTextFile(join(projectDir, "globals.css"), ".globals { color: blue; }");
+
+        assertEquals(
+          await readLocalProjectStylesheet(projectDir, "styles/custom.css"),
+          ".custom { color: red; }",
+        );
+      } finally {
+        await remove(projectDir, { recursive: true });
+      }
     });
   });
 });

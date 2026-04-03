@@ -8,17 +8,121 @@
  */
 
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
-import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import {
+  extractAllFilePaths,
+  extractAllFilePathsRecursive,
+  extractAllHttpBundlePathsRecursive,
+  visitImportedVfModules,
+} from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
+import {
+  getCacheBaseDir,
+  getHttpBundleCacheDir,
+  getMdxEsmCacheDir,
+} from "#veryfront/utils/cache-dir.ts";
 import { FRAMEWORK_ROOT, LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
-import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
-import { MDX_ESM_MJS_FILE_URL_PATTERN_SOURCE } from "../cache-format.ts";
 import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
 
 interface MdxRecoveryOptions {
   projectId: string;
   contentSourceId: string;
+}
+
+const INVALID_VFMOD_ESM_URL_PATTERN = /esm\.sh\/_?vf_modules\//;
+
+async function hasIncompatibleFrameworkPathsInCode(
+  code: string,
+  log: Logger,
+  options: {
+    localHttpCacheDir: string;
+    localMdxCacheDir: string;
+    localCacheBaseDir: string;
+    sourcePath?: string;
+  },
+): Promise<boolean> {
+  const localFs = getLocalFs();
+  const sourceContext = options.sourcePath ? { vfModulePath: options.sourcePath } : {};
+
+  if (INVALID_VFMOD_ESM_URL_PATTERN.test(code)) {
+    log.debug(
+      `${LOG_PREFIX_MDX_LOADER} Cached code has invalid esm.sh/_vf_modules URL`,
+      sourceContext,
+    );
+    return true;
+  }
+
+  const allPaths = extractAllFilePaths(code);
+
+  for (const path of allPaths) {
+    if (path.includes("veryfront-http-bundle")) {
+      if (!path.startsWith(options.localHttpCacheDir)) {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} HTTP bundle path from different environment`, {
+          path,
+          expectedDir: options.localHttpCacheDir,
+          ...sourceContext,
+        });
+        return true;
+      }
+      continue;
+    }
+
+    if (path.includes("veryfront-mdx-esm")) {
+      if (!path.startsWith(options.localMdxCacheDir)) {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} MDX cache path from different environment`, {
+          path,
+          expectedDir: options.localMdxCacheDir,
+          ...sourceContext,
+        });
+        return true;
+      }
+      continue;
+    }
+
+    // Legacy cache entries sometimes point directly at pod-local .cache source files
+    // like file:///app/.cache/markdown.tsx. These paths are not portable across pods.
+    // Allow local cache-base paths so valid local file:// dependencies under .cache
+    // are not evicted on every read.
+    if (path.includes(".cache/") && !path.startsWith(options.localCacheBaseDir)) {
+      log.debug(`${LOG_PREFIX_MDX_LOADER} Legacy cache path is not portable`, {
+        path,
+        expectedBaseDir: options.localCacheBaseDir,
+        ...sourceContext,
+      });
+      return true;
+    }
+
+    if (!path.includes("/src/") || path.includes(".cache")) continue;
+
+    if (!path.startsWith(FRAMEWORK_ROOT)) {
+      log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path from different environment`, {
+        path,
+        expectedRoot: FRAMEWORK_ROOT,
+        ...sourceContext,
+      });
+      return true;
+    }
+
+    try {
+      const stat = await localFs.stat(path);
+      if (!stat?.isFile) {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path does not exist`, {
+          path,
+          ...sourceContext,
+        });
+        return true;
+      }
+    } catch (_) {
+      /* expected: framework file may not exist in this environment */
+      log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path not accessible`, {
+        path,
+        ...sourceContext,
+      });
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -30,79 +134,31 @@ interface MdxRecoveryOptions {
  * 2. HTTP bundle cache paths (file:///app/.cache/veryfront-http-bundle/...) that don't match local cache dir
  * 3. MDX ESM cache paths (file:///app/.cache/veryfront-mdx-esm/...) that don't match local cache dir
  *
- * IMPORTANT: This function creates a new RegExp on each call to avoid race conditions
- * when multiple modules are processed concurrently. Using a shared global regex with
- * the 'g' flag would cause interleaved exec() calls to skip paths.
+ * This check also walks transitively imported VF modules so nested stale paths
+ * are rejected before import-time failures.
  */
 export async function hasIncompatibleFrameworkPaths(code: string, log: Logger): Promise<boolean> {
-  // Check for esm.sh URLs that reference /_vf_modules/ paths - these are invalid
-  // and indicate a cached transform from before the fix was deployed
-  if (/esm\.sh\/_?vf_modules\//.test(code)) {
-    log.debug(`${LOG_PREFIX_MDX_LOADER} Cached code has invalid esm.sh/_vf_modules URL`);
+  const options = {
+    localHttpCacheDir: getHttpBundleCacheDir(),
+    localMdxCacheDir: getMdxEsmCacheDir(),
+    localCacheBaseDir: getCacheBaseDir(),
+  };
+
+  if (await hasIncompatibleFrameworkPathsInCode(code, log, options)) {
     return true;
   }
 
-  const localHttpCacheDir = getHttpBundleCacheDir();
-  const localMdxCacheDir = getMdxEsmCacheDir();
-  const localFs = getLocalFs();
+  let incompatible = false;
+  await visitImportedVfModules(code, async (vfModuleCode, vfModulePath) => {
+    if (incompatible) return;
 
-  // Create a NEW regex for each call to avoid race conditions with concurrent calls.
-  // Global regexes maintain lastIndex state that can interleave between concurrent calls.
-  const allFilePathsPattern = /file:\/\/([^"'\s]+)/gi;
+    incompatible = await hasIncompatibleFrameworkPathsInCode(vfModuleCode, log, {
+      ...options,
+      sourcePath: vfModulePath,
+    });
+  });
 
-  const allPaths: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = allFilePathsPattern.exec(code)) !== null) {
-    if (match[1]) allPaths.push(match[1]);
-  }
-
-  for (const path of allPaths) {
-    if (path.includes("veryfront-http-bundle")) {
-      if (!path.startsWith(localHttpCacheDir)) {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} HTTP bundle path from different environment`, {
-          path,
-          expectedDir: localHttpCacheDir,
-        });
-        return true;
-      }
-      continue;
-    }
-
-    if (path.includes("veryfront-mdx-esm")) {
-      if (!path.startsWith(localMdxCacheDir)) {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} MDX cache path from different environment`, {
-          path,
-          expectedDir: localMdxCacheDir,
-        });
-        return true;
-      }
-      continue;
-    }
-
-    if (!path.includes("/src/") || path.includes(".cache")) continue;
-
-    if (!path.startsWith(FRAMEWORK_ROOT)) {
-      log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path from different environment`, {
-        path,
-        expectedRoot: FRAMEWORK_ROOT,
-      });
-      return true;
-    }
-
-    try {
-      const stat = await localFs.stat(path);
-      if (!stat?.isFile) {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path does not exist`, { path });
-        return true;
-      }
-    } catch (_) {
-      /* expected: framework file may not exist in this environment */
-      log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path not accessible`, { path });
-      return true;
-    }
-  }
-
-  return false;
+  return incompatible;
 }
 
 /**
@@ -117,19 +173,10 @@ export async function findMissingFileDependenciesInCode(
   log: Logger,
 ): Promise<string[]> {
   const localFs = getLocalFs();
-  const pattern = new RegExp(MDX_ESM_MJS_FILE_URL_PATTERN_SOURCE, "gi");
   const missing: string[] = [];
-  const checked = new Set<string>();
+  const allPaths = await extractAllFilePathsRecursive(code);
 
-  let match;
-  while ((match = pattern.exec(code)) !== null) {
-    const path = match[1] as string;
-    // Skip query parameters in paths
-    const cleanPath = path.replace(/\?.*$/, "");
-
-    if (checked.has(cleanPath)) continue;
-    checked.add(cleanPath);
-
+  for (const cleanPath of allPaths) {
     try {
       const stat = await localFs.stat(cleanPath);
       if (!stat?.isFile) {
@@ -184,7 +231,7 @@ export async function validateCachedModule(
     return false;
   }
 
-  const bundlePaths = extractHttpBundlePaths(cachedCode);
+  const bundlePaths = await extractAllHttpBundlePathsRecursive(cachedCode);
   if (bundlePaths.length > 0) {
     const cacheDir = getHttpBundleCacheDir();
     const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);

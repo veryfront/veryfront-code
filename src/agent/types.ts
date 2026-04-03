@@ -3,7 +3,7 @@
  **************************/
 
 import type { Tool } from "#veryfront/tool";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
 import type { Memory } from "./memory/memory-interface.ts";
 
 // Re-export schema-based types

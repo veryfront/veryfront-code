@@ -51,13 +51,10 @@ export class SecureFsRepository implements FileSystemRepository {
   }
 
   async writeFile(path: string, content: string | Uint8Array): Promise<void> {
-    if (typeof content === "string") {
-      await this.secureFs.writeFile(path, content);
-      return;
-    }
-
-    const text = new TextDecoder().decode(content);
-    await this.secureFs.writeFile(path, text);
+    await this.secureFs.writeFile(
+      path,
+      typeof content === "string" ? content : new TextDecoder().decode(content),
+    );
   }
 
   exists(path: string): Promise<boolean> {

@@ -1,9 +1,7 @@
 import denoConfig from "#deno-config" with { type: "json" };
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-
-// Keep in sync with deno.json version.
-// scripts/release.ts updates this constant during releases.
-export const VERSION = "0.1.111";
+import { VERSION } from "./version-constant.ts";
+export { VERSION } from "./version-constant.ts";
 
 export function normalizeVeryfrontVersion(version: string | undefined): string | undefined {
   if (!version) return undefined;
@@ -34,7 +32,6 @@ export const RUNTIME_VERSION = resolveRuntimeVersion({
   veryfrontVersion: getVersionEnv("VERYFRONT_VERSION"),
   releaseVersion: getVersionEnv("RELEASE_VERSION"),
   denoVersion: typeof denoConfig.version === "string" ? denoConfig.version : undefined,
-  fallbackVersion: VERSION,
 });
 
 export const SERVER_START_TIME: number = Date.now();

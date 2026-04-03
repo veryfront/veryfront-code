@@ -41,6 +41,19 @@ async function readSkillFile(skill: Skill, path: string): Promise<string> {
   return await readTextFile(path);
 }
 
+function buildSkillAvailabilityNote(references: string[], scripts: string[]): string | undefined {
+  if (scripts.length === 0 && references.length === 0) {
+    return "This skill has no scripts or reference files. Do NOT call execute-skill-script or load-skill-reference.";
+  }
+  if (scripts.length === 0) {
+    return "This skill has no scripts. Do NOT call execute-skill-script.";
+  }
+  if (references.length === 0) {
+    return "This skill has no reference files. Do NOT call load-skill-reference.";
+  }
+  return undefined;
+}
+
 /**
  * Create the load-skill tool.
  * Loads a skill's full instructions, available references, and scripts.
@@ -73,32 +86,26 @@ export function createLoadSkillTool(): Tool {
       const parsed = await parseSkillFrontmatter(content);
 
       // List available references and scripts
-      const references = await listSkillSubdir(
-        skill.rootPath,
-        SKILL_REFERENCES_DIR,
-        skill.fsAdapter,
-      );
-      const scripts = await listSkillSubdir(
-        skill.rootPath,
-        SKILL_SCRIPTS_DIR,
-        skill.fsAdapter,
-      );
+      const [references, scripts] = await Promise.all([
+        listSkillSubdir(
+          skill.rootPath,
+          SKILL_REFERENCES_DIR,
+          skill.fsAdapter,
+        ),
+        listSkillSubdir(
+          skill.rootPath,
+          SKILL_SCRIPTS_DIR,
+          skill.fsAdapter,
+        ),
+      ]);
+      const note = buildSkillAvailabilityNote(references, scripts);
 
       return {
         instructions: parsed.body,
         allowedTools: skill.metadata.allowedTools,
         references,
         scripts,
-        ...(scripts.length === 0 && references.length === 0
-          ? {
-            note:
-              "This skill has no scripts or reference files. Do NOT call execute-skill-script or load-skill-reference.",
-          }
-          : scripts.length === 0
-          ? { note: "This skill has no scripts. Do NOT call execute-skill-script." }
-          : references.length === 0
-          ? { note: "This skill has no reference files. Do NOT call load-skill-reference." }
-          : {}),
+        ...(note ? { note } : {}),
       };
     },
   });

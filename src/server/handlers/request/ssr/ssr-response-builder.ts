@@ -13,6 +13,15 @@ import { getContentType } from "../../utils/content-types.ts";
 import type { SSRRenderResult } from "../../../services/rendering/ssr.service.ts";
 import { ErrorPages } from "../../../utils/error-html.ts";
 import type { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
+import { escapeHtml } from "#veryfront/html/html-escape.ts";
+
+function addNonceToInlineTags(html: string, nonce: string): string {
+  const escapedNonce = escapeHtml(nonce);
+  return html.replace(
+    /<(script|style)\b(?![^>]*\bnonce\s*=)([^>]*)>/giu,
+    `<$1$2 nonce="${escapedNonce}">`,
+  );
+}
 
 /**
  * Build an HTTP response from an SSR render result.
@@ -54,8 +63,13 @@ export async function buildSSRResponse(
   }
 
   // Buffered response path
-  const content = result.html || result.stream || ErrorPages.serverError();
-  const body = isHeadRequest ? null : content;
+  const content = typeof result.html === "string"
+    ? result.html
+    : typeof result.stream === "string"
+    ? result.stream
+    : ErrorPages.serverError();
+  const html = addNonceToInlineTags(content, builder.nonce);
+  const body = isHeadRequest ? null : html;
 
   let response = builder
     .withCORS(req, ctx.securityConfig?.cors)
