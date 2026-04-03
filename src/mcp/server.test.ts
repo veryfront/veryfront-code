@@ -477,6 +477,70 @@ describe("mcp/server", () => {
     });
   });
 
+  describe("Origin validation (DNS rebinding protection)", () => {
+    it("returns 403 when Origin is not in allowed list", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://allowed.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Origin": "https://evil.com",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 403);
+      const body = await response.json();
+      assertEquals(body.error.message, "Forbidden: Origin not allowed");
+    });
+
+    it("returns 200 when Origin is in allowed list", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://allowed.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Origin": "https://allowed.com",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 200);
+    });
+
+    it("returns 200 when no Origin header is present", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://allowed.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 200);
+    });
+  });
+
   it("handles notifications/initialized without error", async () => {
     const server = createMCPServer({ enabled: true });
     const res = await server.handleRequest({

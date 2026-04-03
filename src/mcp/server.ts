@@ -368,6 +368,12 @@ export class MCPServer {
         return new Response(null, { status: 204, headers: this.getCORSHeaders(requestOrigin) });
       }
 
+      if (requestOrigin && this.config.cors?.enabled && this.config.cors.origins?.length) {
+        if (!this.config.cors.origins.includes(requestOrigin)) {
+          return createJSONRPCErrorResponse(403, -32600, "Forbidden: Origin not allowed");
+        }
+      }
+
       if (this.config.auth?.type && this.config.auth.type !== "none") {
         const authorized = await this.validateAuth(request);
         if (!authorized) return new Response("Unauthorized", { status: 401 });
