@@ -10,6 +10,7 @@ import {
   xOfY,
 } from "./progress.ts";
 import { stripAnsi } from "./ansi.ts";
+import { setAnimationDisabled } from "../shared/animation.ts";
 
 describe("cli/ui/progress", () => {
   describe("formatDuration", () => {
@@ -131,6 +132,49 @@ describe("cli/ui/progress", () => {
 
     it("should handle zero values", () => {
       assertEquals(xOfY(0, 0), "0 / 0");
+    });
+  });
+
+  describe("progressBar with animation disabled", () => {
+    it("should show text-only output without bar characters", () => {
+      setAnimationDisabled(true);
+      const result = progressBar(5, 10);
+      assertEquals(result.includes("50%"), true);
+      assertEquals(result.includes("(5/10)"), true);
+      assertEquals(result.includes("█"), false);
+      assertEquals(result.includes("░"), false);
+      setAnimationDisabled(false);
+    });
+
+    it("should include label in text-only mode", () => {
+      setAnimationDisabled(true);
+      const result = progressBar(3, 10, { label: "Loading" });
+      assertEquals(result.includes("Loading"), true);
+      assertEquals(result.includes("30%"), true);
+      setAnimationDisabled(false);
+    });
+
+    it("should hide percent in text-only mode when showPercent is false", () => {
+      setAnimationDisabled(true);
+      const result = progressBar(5, 10, { showPercent: false });
+      assertEquals(result.includes("%"), false);
+      assertEquals(result.includes("(5/10)"), true);
+      setAnimationDisabled(false);
+    });
+  });
+
+  describe("TaskList with animation disabled", () => {
+    it("should render once without starting interval", () => {
+      setAnimationDisabled(true);
+      const list = new TaskList();
+      list.add("Task");
+      const frames: string[] = [];
+      list.startAnimation((output) => frames.push(output));
+      // Should render exactly once (no interval)
+      assertEquals(frames.length, 1);
+      assertEquals(frames[0]!.includes("Task"), true);
+      list.stopAnimation();
+      setAnimationDisabled(false);
     });
   });
 

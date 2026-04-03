@@ -16,6 +16,7 @@ import {
   DURATION_SECONDS_THRESHOLD_MS,
   SPINNER_INTERVAL_MS,
 } from "./constants.ts";
+import { isAnimationDisabled } from "../shared/animation.ts";
 
 const write = writeStdout;
 
@@ -78,6 +79,15 @@ export function progressBar(
 
   const ratio = current / total;
   const percent = Math.round(ratio * 100);
+
+  if (isAnimationDisabled()) {
+    const parts: string[] = [];
+    if (label) parts.push(label);
+    if (showPercent) parts.push(`${percent}%`);
+    parts.push(`(${current}/${total})`);
+    return parts.join(" ");
+  }
+
   const filled = Math.round(ratio * width);
   const empty = width - filled;
 
@@ -116,7 +126,7 @@ export function createNoopSpinner(): SpinnerController {
 }
 
 export function createSpinner(text: string): SpinnerController {
-  if (!isTTY()) {
+  if (!isTTY() || isAnimationDisabled()) {
     const print = (prefix: string, msg: string): void => {
       console.log(`  ${prefix} ${msg}`);
     };
@@ -217,6 +227,8 @@ export class TaskList {
   startAnimation(onFrame: (output: string) => void): void {
     this.stopAnimation();
     onFrame(this.render());
+
+    if (isAnimationDisabled()) return;
 
     this.interval = setInterval(() => {
       this.frame++;

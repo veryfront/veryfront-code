@@ -14,5 +14,10 @@ export function setAnimationDisabled(disabled: boolean): void {
 }
 
 export function isAnimationDisabled(): boolean {
-  return _animationDisabled;
+  if (_animationDisabled) return true;
+  try {
+    return Deno.env.get("TERM") === "dumb";
+  } catch {
+    return false;
+  }
 }
