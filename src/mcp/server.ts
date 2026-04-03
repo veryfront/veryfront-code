@@ -316,12 +316,14 @@ export class MCPServer {
     const resources: Array<Record<string, unknown>> = [];
 
     for (const [id, resource] of registry.resources.entries()) {
-      resources.push({
+      const entry: Record<string, unknown> = {
         uri: resource.pattern,
         name: id,
         description: resource.description,
         mimeType: "application/json",
-      });
+      };
+      if (resource.title) entry.title = resource.title;
+      resources.push(entry);
     }
 
     return Promise.resolve({ resources });

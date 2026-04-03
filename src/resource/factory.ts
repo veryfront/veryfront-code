@@ -19,6 +19,7 @@ export function resource<TParams = unknown, TData = unknown>(
     id,
     pattern,
     description: config.description,
+    title: config.title,
     paramsSchema: config.paramsSchema,
     load: async (params: TParams): Promise<TData> => {
       try {
