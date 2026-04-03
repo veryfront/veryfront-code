@@ -28,6 +28,29 @@ export const RuntimeAgentSkillSchema = z.object({
   examples: z.array(z.string()).optional(),
 });
 
+export const RuntimeAgentSuggestionSchema = z.discriminatedUnion("type", [
+  z.object({
+    id: z.string().min(1),
+    type: z.literal("prompt"),
+    title: z.string().min(1),
+    description: z.string().optional(),
+    prompt: z.string().min(1),
+  }),
+  z.object({
+    id: z.string().min(1),
+    type: z.literal("task"),
+    title: z.string().min(1),
+    description: z.string().optional(),
+    task: z.string().min(1),
+    prompt: z.string().min(1).optional(),
+  }),
+]);
+
+export const RuntimeAgentSuggestionsSchema = z.object({
+  welcomeMessage: z.string().min(1).optional(),
+  suggestions: z.array(RuntimeAgentSuggestionSchema),
+});
+
 export const RuntimeAgentSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -35,6 +58,7 @@ export const RuntimeAgentSchema = z.object({
   model: z.string().nullable().optional(),
   version: z.string().nullable().optional(),
   skills: z.array(RuntimeAgentSkillSchema).optional(),
+  suggestions: RuntimeAgentSuggestionsSchema.optional(),
 });
 
 export const RuntimeAgentListResponseSchema = z.object({
@@ -66,6 +90,8 @@ const controlPlaneClaimsSchema = z.object({
 export type ControlPlaneSurface = z.infer<typeof ControlPlaneSurfaceSchema>;
 export type ControlPlaneAgentsListRequest = z.infer<typeof ControlPlaneAgentsListRequestSchema>;
 export type RuntimeAgentSkill = z.infer<typeof RuntimeAgentSkillSchema>;
+export type RuntimeAgentSuggestion = z.infer<typeof RuntimeAgentSuggestionSchema>;
+export type RuntimeAgentSuggestions = z.infer<typeof RuntimeAgentSuggestionsSchema>;
 export type RuntimeAgent = z.infer<typeof RuntimeAgentSchema>;
 export type RuntimeAgentListResponse = z.infer<typeof RuntimeAgentListResponseSchema>;
 export type DispatchClaims = z.infer<typeof dispatchClaimsSchema>;
@@ -234,6 +260,10 @@ function resolveAgentSkills(agent: Agent): RuntimeAgentSkill[] {
 
 function getRuntimeAgentMetadata(id: string, agent: Agent): RuntimeAgent {
   const rawConfig = agent.config as unknown as Record<string, unknown>;
+  const suggestionsParseResult = rawConfig.suggestions === undefined
+    ? null
+    : RuntimeAgentSuggestionsSchema.safeParse(rawConfig.suggestions);
+  const suggestions = suggestionsParseResult?.success ? suggestionsParseResult.data : undefined;
 
   return RuntimeAgentSchema.parse({
     id,
@@ -244,6 +274,7 @@ function getRuntimeAgentMetadata(id: string, agent: Agent): RuntimeAgent {
     model: agent.config.model ?? null,
     version: typeof rawConfig.version === "string" ? rawConfig.version : null,
     skills: resolveAgentSkills(agent),
+    ...(suggestions === undefined ? {} : { suggestions }),
   });
 }
 

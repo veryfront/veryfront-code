@@ -30,6 +30,7 @@ export class TokenStorageApiClient {
       }
 
       if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
         throw TOKEN_STORAGE_ERROR.create({
           detail: `Failed to get token: ${response.statusText}`,
           status: response.status,
@@ -57,6 +58,7 @@ export class TokenStorageApiClient {
       });
 
       if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
         throw TOKEN_STORAGE_ERROR.create({
           detail: `Failed to set token: ${response.statusText}`,
           status: response.status,
@@ -80,6 +82,7 @@ export class TokenStorageApiClient {
         return;
       }
 
+      await response.body?.cancel().catch(() => {});
       throw TOKEN_STORAGE_ERROR.create({
         detail: `Failed to delete token: ${response.statusText}`,
         status: response.status,
@@ -106,6 +109,7 @@ export class TokenStorageApiClient {
       });
 
       if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
         throw TOKEN_STORAGE_ERROR.create({
           detail: `Failed to list tokens: ${response.statusText}`,
           status: response.status,
