@@ -19,6 +19,7 @@ import {
   buildInitializeResult,
   errorResponse,
   type JSONRPCRequest,
+  JSONRPC_ERRORS,
   JSONRPCRequestSchema,
   type JSONRPCResponse,
   parseError,
@@ -168,7 +169,17 @@ export class MCPDevServer {
           const result = await this.dispatchMethod(method, params);
           return successResponse(id, result);
         } catch (e) {
-          return errorResponse(id, e);
+          const code = (e as { code?: number }).code ?? JSONRPC_ERRORS.INTERNAL_ERROR;
+          const message = e instanceof Error
+            ? e.message
+            : typeof e === "object" && e !== null && "message" in e
+              ? String((e as { message: unknown }).message)
+              : String(e);
+          return {
+            jsonrpc: "2.0" as const,
+            id,
+            error: { code, message },
+          };
         }
       },
       { "mcp.method": method },
@@ -228,27 +239,33 @@ export class MCPDevServer {
   }
 
   private handleToolsCall(params: unknown): Promise<unknown> {
-    const { name, arguments: args } = ToolsCallParamsSchema.parse(params);
+    const { name: toolName, arguments: args } = ToolsCallParamsSchema.parse(params);
+
+    const tool = getTool(toolName);
+    if (!tool) {
+      throw { code: -32602, message: `Unknown tool: ${toolName}` };
+    }
 
     return withSpan(
       "cli.mcp.handleToolsCall",
       async () => {
-        const tool = getTool(name);
-        if (!tool) throw new Error(`Unknown tool: ${name}`);
+        try {
+          const input = tool.inputSchema.parse(args ?? {});
+          const result = await tool.execute(input);
 
-        const input = tool.inputSchema.parse(args ?? {});
-        const result = await tool.execute(input);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            isError: false,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ type: "text", text: message }],
+            isError: true,
+          };
+        }
       },
-      { "mcp.tool.name": name },
+      { "mcp.tool.name": toolName },
     );
   }
 
