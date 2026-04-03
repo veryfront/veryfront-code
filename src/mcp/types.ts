@@ -13,6 +13,13 @@ export interface MCPTool<TInput = any, TOutput = any> {
   // deno-lint-ignore no-explicit-any -- ZodType Def/Input params require any for ZodDefault/ZodOptional compatibility
   inputSchema: z.ZodType<TInput, any, any>;
   execute: (input: TInput) => Promise<TOutput>;
+  title?: string;
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
 }
 
 export interface MCPRegistry {
