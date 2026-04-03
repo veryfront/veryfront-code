@@ -38,7 +38,7 @@ export function getPostDeployTips(): string {
 
 export function getPostInitTips(projectName: string): string {
   return `\n  ${dim("Next steps:")}\n` +
-    `    ${dim("•")} cd ${projectName}\n` +
+    `    ${dim("•")} cd ${cyan(projectName)}\n` +
     `    ${dim("•")} ${cyan("veryfront dev")}       Start development\n`;
 }
 

@@ -1,6 +1,14 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getBuildTips, getCommandTips, getDevTips, getInitTemplates } from "./tips.ts";
+import {
+  getBuildTips,
+  getCommandTips,
+  getDevTips,
+  getInitTemplates,
+  getPostBuildTips,
+  getPostDeployTips,
+  getPostInitTips,
+} from "./tips.ts";
 
 describe("cli/help/tips", () => {
   describe("getDevTips", () => {
@@ -51,6 +59,46 @@ describe("cli/help/tips", () => {
       ) {
         assertEquals(templates.includes(template), true);
       }
+    });
+  });
+
+  describe("getPostBuildTips", () => {
+    it("should mention veryfront serve", () => {
+      assertEquals(getPostBuildTips().includes("veryfront serve"), true);
+    });
+
+    it("should mention veryfront deploy", () => {
+      assertEquals(getPostBuildTips().includes("veryfront deploy"), true);
+    });
+
+    it("should contain Next steps header", () => {
+      assertEquals(getPostBuildTips().includes("Next steps"), true);
+    });
+  });
+
+  describe("getPostDeployTips", () => {
+    it("should mention veryfront open", () => {
+      assertEquals(getPostDeployTips().includes("veryfront open"), true);
+    });
+
+    it("should contain Next steps header", () => {
+      assertEquals(getPostDeployTips().includes("Next steps"), true);
+    });
+  });
+
+  describe("getPostInitTips", () => {
+    it("should include cd with project name", () => {
+      const tips = getPostInitTips("my-app");
+      assertEquals(tips.includes("cd"), true);
+      assertEquals(tips.includes("my-app"), true);
+    });
+
+    it("should mention veryfront dev", () => {
+      assertEquals(getPostInitTips("test-project").includes("veryfront dev"), true);
+    });
+
+    it("should contain Next steps header", () => {
+      assertEquals(getPostInitTips("foo").includes("Next steps"), true);
     });
   });
 

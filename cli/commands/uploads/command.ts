@@ -344,6 +344,7 @@ export async function uploadsCommand(args: ParsedArgs): Promise<void> {
 
         if (!uploads.length) {
           cliLogger.info("No uploads found.");
+          cliLogger.info("  Upload files with: veryfront uploads put <local-path> <remote-path>");
           return;
         }
 
