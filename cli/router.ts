@@ -163,6 +163,11 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
   if (args.yes || args.y || detectCI()) setNonInteractive(true);
 
+  if (args["no-animation"]) {
+    const { setAnimationDisabled } = await import("./shared/animation.ts");
+    setAnimationDisabled(true);
+  }
+
   // Start update check early so the network request runs during command execution
   const updateCheck = import("./shared/update-check.ts")
     .then(({ checkForUpdates }) => checkForUpdates(VERSION))
