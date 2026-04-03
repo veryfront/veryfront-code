@@ -387,6 +387,7 @@ describe("mcp/server", () => {
     });
   });
 
+<<<<<<< HEAD
   describe("initialize version negotiation", () => {
     it("echoes 2025-11-25 when client requests it", async () => {
       const server = createMCPServer({ enabled: true });
@@ -831,6 +832,20 @@ describe("mcp/server", () => {
       assertEquals(response.error, undefined);
       assertExists(response.result);
     });
+
+  it("resources/templates/list returns array without error", async () => {
+    const server = createMCPServer({ enabled: true });
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "resources/templates/list",
+    });
+
+    assertEquals(response.jsonrpc, "2.0");
+    assertEquals(response.id, 1);
+    assertEquals(response.error, undefined);
+    const result = response.result as { resourceTemplates: unknown[] };
+    assertEquals(Array.isArray(result.resourceTemplates), true);
   });
 
   it("syncs integration config to API on first tools/list call", async () => {
