@@ -82,6 +82,8 @@ export interface IntegrationLoaderConfig {
 }
 
 export class MCPServer {
+  private static SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
+
   private config: MCPServerConfig;
   private integrationLoader?: IntegrationLoaderConfig;
   private integrationsLoaded = false;
@@ -158,15 +160,27 @@ export class MCPServer {
     }
   }
 
-  private initialize(_params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+  private initialize(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+    const p = toParamsRecord(params);
+    const requested = typeof p.protocolVersion === "string" ? p.protocolVersion : undefined;
+    const negotiated = requested && MCPServer.SUPPORTED_VERSIONS.includes(requested)
+      ? requested
+      : MCPServer.SUPPORTED_VERSIONS[0];
+
     return Promise.resolve({
-      protocolVersion: "2024-11-05",
-      serverInfo: { name: "veryfront-mcp", version: VERSION },
-      capabilities: {
-        tools: {},
-        resources: { subscribe: true },
-        prompts: {},
+      protocolVersion: negotiated,
+      serverInfo: {
+        name: "veryfront-mcp",
+        title: "Veryfront MCP Server",
+        version: VERSION,
+        description: "Veryfront development server tools for real-time errors, route preview, HMR control, and scaffolding",
       },
+      capabilities: {
+        tools: { listChanged: true },
+        resources: { subscribe: true, listChanged: true },
+        prompts: { listChanged: true },
+      },
+      instructions: "Veryfront MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, vf_scaffold for code generation, and vf_get_project_context for project structure.",
     });
   }
 
