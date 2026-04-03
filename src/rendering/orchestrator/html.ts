@@ -41,6 +41,62 @@ import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/ver
 const logger = rendererLogger.component("html-generator");
 type ProjectCSSResult = Awaited<ReturnType<typeof getProjectCSS>> | null;
 
+function applyExplicitThemeToDocument(
+  html: string,
+  colorScheme: "light" | "dark" | undefined,
+  enabled: boolean | undefined,
+): string {
+  if (!enabled || !colorScheme) return html;
+
+  return html.replace(/<html\b([^>]*)>/i, (_match, attrs: string) => {
+    let nextAttrs = attrs;
+
+    if (/\sdata-theme\s*=/i.test(nextAttrs)) {
+      nextAttrs = nextAttrs.replace(/\sdata-theme\s*=\s*(["']).*?\1/i, "");
+    }
+    nextAttrs += ` data-theme="${colorScheme}"`;
+
+    const styleMatch = nextAttrs.match(/\sstyle\s*=\s*(["'])(.*?)\1/i);
+    if (styleMatch) {
+      let styleValue = (styleMatch[2] ?? "").trim();
+
+      if (/color-scheme\s*:/i.test(styleValue)) {
+        styleValue = styleValue.replace(
+          /color-scheme\s*:\s*[^;]+/i,
+          `color-scheme: ${colorScheme}`,
+        );
+      } else {
+        styleValue = styleValue
+          ? `${styleValue.replace(/;?\s*$/, ";")} color-scheme: ${colorScheme};`
+          : `color-scheme: ${colorScheme};`;
+      }
+
+      nextAttrs = nextAttrs.replace(styleMatch[0], ` style="${styleValue}"`);
+    } else {
+      nextAttrs += ` style="color-scheme: ${colorScheme};"`;
+    }
+
+    return `<html${nextAttrs}>`;
+  });
+}
+
+function injectThemePersistenceScript(
+  html: string,
+  colorScheme: "light" | "dark" | undefined,
+  enabled: boolean | undefined,
+  nonce?: string,
+): string {
+  if (!enabled || !colorScheme || !/<\/head>/i.test(html)) return html;
+  if (html.includes(`localStorage.setItem('theme','${colorScheme}')`)) return html;
+
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  const script = `<script${nonceAttr}>
+(function(){try{localStorage.setItem('theme','${colorScheme}')}catch(e){/* SILENT: localStorage may be unavailable */}})();
+</script>`;
+
+  return html.replace(/<\/head>/i, `${script}\n</head>`);
+}
+
 export interface HTMLGeneratorConfig {
   projectDir: string;
   adapter: RuntimeAdapter;
@@ -71,9 +127,22 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
-    const html = isFullHTMLDocument(context.html)
-      ? await this.handleFullHTMLDocument(context)
-      : await this.wrapHTMLFragment(context);
+    let html: string;
+    if (isFullHTMLDocument(context.html)) {
+      let projectCSSPromise: Promise<ProjectCSSResult> | undefined;
+      if (this.config.mode === "production" && context.options?.environment === "production") {
+        const mergedFrontmatter = this.mergeFrontmatter(context);
+        const htmlOptions = await profilePhase(
+          "html.build_options",
+          () => this.buildHTMLOptions(context, mergedFrontmatter),
+        );
+        projectCSSPromise = this.startProjectCSSPreparation(context, htmlOptions);
+      }
+
+      html = await this.handleFullHTMLDocument(context, projectCSSPromise);
+    } else {
+      html = await this.wrapHTMLFragment(context);
+    }
     const finalHtml = context.options?.studioEmbed ? injectElementSelectors(html) : html;
 
     if (context.options?.studioEmbed) {
@@ -108,6 +177,27 @@ export class HTMLGenerator {
       reactContent = error.partialContent.trim();
     }
 
+    if (isFullHTMLDocument(reactContent)) {
+      const encoder = new TextEncoder();
+      const fullHtml = addNonceToHtmlTags(
+        await this.handleFullHTMLDocument(
+          {
+            ...fullContext,
+            html: reactContent,
+          },
+          projectCSSPromise,
+        ),
+        context.options?.nonce,
+      );
+
+      return new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(fullHtml));
+          controller.close();
+        },
+      });
+    }
+
     const { start, end } = await profilePhase(
       "html.generate_shell_parts",
       () =>
@@ -134,7 +224,10 @@ export class HTMLGenerator {
     });
   }
 
-  private async handleFullHTMLDocument(context: HTMLGenerationContext): Promise<string> {
+  private async handleFullHTMLDocument(
+    context: HTMLGenerationContext,
+    projectCSSPromise?: Promise<ProjectCSSResult>,
+  ): Promise<string> {
     const metadata = extractHTMLMetadata(
       (context.pageInfo.entity.frontmatter || {}) as MDXFrontmatter,
       (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
@@ -149,7 +242,23 @@ export class HTMLGenerator {
       }),
     ]);
 
-    const injectedHtml = injectHTMLContent(context.html, "", metadata, {
+    const themedHtml = injectThemePersistenceScript(
+      applyExplicitThemeToDocument(
+        context.html,
+        context.options?.colorScheme,
+        context.options?.colorSchemeFromParam,
+      ),
+      context.options?.colorScheme,
+      context.options?.colorSchemeFromParam,
+      context.options?.nonce,
+    );
+
+    const projectStylesheetHref = await this.resolveProjectStylesheetHref(
+      context,
+      projectCSSPromise,
+    );
+
+    const injectedHtml = injectHTMLContent(themedHtml, "", metadata, {
       mode: this.config.mode,
       slug: context.slug,
       devPort: this.config.config?.dev?.port || DEFAULT_DASHBOARD_PORT,
@@ -160,11 +269,29 @@ export class HTMLGenerator {
       isLocalProject: this.config.mode === "development",
       nonce: context.options?.nonce,
       importMapJson,
+      projectStylesheetHref,
     });
 
     if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) return injectedHtml;
 
     return `<!DOCTYPE html>\n${injectedHtml}`;
+  }
+
+  private async resolveProjectStylesheetHref(
+    context: HTMLGenerationContext,
+    projectCSSPromise?: Promise<ProjectCSSResult>,
+  ): Promise<string | undefined> {
+    if (!projectCSSPromise) return undefined;
+
+    const projectCSS = await profilePhase("html.project_css", () => projectCSSPromise);
+    const cssHash = projectCSS?.hash ?? "";
+    if (cssHash) return `/_vf/css/${cssHash}.css`;
+
+    logger.error("Project CSS hash is empty for full-document HTML", {
+      slug: context.slug,
+      environment: context.options?.environment,
+    });
+    return undefined;
   }
 
   private async detectUseClientDirective(pagePath: string): Promise<boolean> {

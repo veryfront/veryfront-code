@@ -9,8 +9,10 @@
 export function findVfModuleImports(code: string): string[] {
   const imports: string[] = [];
   // Note: \s* allows zero whitespace (minified code: from"..." has no space)
-  // Only match _veryfront/ framework modules, not user project files
-  const pattern = /from\s*["'](\/\_vf\_modules\/_veryfront\/[^"']+)["']/g;
+  // Only match _veryfront/ framework modules, not user project files.
+  // Handle both raw "/_vf_modules/..." specifiers and malformed
+  // "file:///_vf_modules/..." variants that can leak out of stale caches.
+  const pattern = /from\s*["']((?:file:\/\/)?\/_vf_modules\/_veryfront\/[^"']+)["']/g;
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {
