@@ -150,6 +150,8 @@ export class MCPServer {
         return this.getPrompt(params);
       case "initialize":
         return this.initialize(params);
+      case "notifications/initialized":
+        return Promise.resolve({});
       default:
         throw toError(
           createError({

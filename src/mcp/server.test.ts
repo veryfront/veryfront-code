@@ -477,6 +477,17 @@ describe("mcp/server", () => {
     });
   });
 
+  it("handles notifications/initialized without error", async () => {
+    const server = createMCPServer({ enabled: true });
+    const res = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "notifications/initialized",
+    });
+    assertEquals(res.jsonrpc, "2.0");
+    assertEquals(res.error, undefined);
+  });
+
   it("syncs integration config to API on first tools/list call", async () => {
     const server = createMCPServer({ enabled: true });
     server.setIntegrationLoader({
