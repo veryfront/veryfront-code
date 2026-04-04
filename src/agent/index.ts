@@ -87,6 +87,8 @@ export type {
   AgentResponse,
   AgentStatus,
   AgentStreamResult,
+  AgentSuggestion,
+  AgentSuggestions,
   EdgeConfig,
   MemoryConfig,
   Message as AgentMessage,

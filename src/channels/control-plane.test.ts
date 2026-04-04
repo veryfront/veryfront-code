@@ -1,4 +1,4 @@
-import type { Agent } from "#veryfront/agent";
+import type { Agent, AgentSuggestions } from "#veryfront/agent";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
@@ -91,6 +91,7 @@ function createAgent(overrides: {
   model?: string;
   version?: string;
   skills?: true | string[];
+  suggestions?: AgentSuggestions;
 } = {}): Agent {
   return {
     id: overrides.id ?? "agent-1",
@@ -101,6 +102,7 @@ function createAgent(overrides: {
       description: overrides.description ?? "Helps with support questions",
       version: overrides.version ?? "2.0.0",
       skills: overrides.skills,
+      suggestions: overrides.suggestions,
     } as unknown as Agent["config"],
     generate: async () => ({}) as never,
     stream: async () => ({ toDataStreamResponse: () => new Response() } as never),
@@ -339,6 +341,106 @@ describe("channels/control-plane", () => {
       } finally {
         skillRegistry.clearAll();
       }
+    });
+
+    it("includes typed suggestions when an agent defines them", async () => {
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) =>
+          id === "assistant"
+            ? createAgent({
+              id,
+              suggestions: {
+                welcomeMessage: "How can I help you?",
+                suggestions: [
+                  {
+                    id: "plan-work",
+                    type: "prompt",
+                    title: "Plan work",
+                    description: "Turn an idea into clear next steps",
+                    prompt: "Help me turn this idea into a concrete plan.",
+                  },
+                  {
+                    id: "research-topic",
+                    type: "task",
+                    title: "Research a topic",
+                    description: "Compare sources and summarize what matters",
+                    task: "Research this topic and summarize the key findings",
+                    prompt: "Research this topic and summarize the key findings.",
+                  },
+                ],
+              },
+            })
+            : undefined,
+        getAllAgentIds: () => ["assistant"],
+      });
+
+      assertEquals(
+        response,
+        RuntimeAgentListResponseSchema.parse({
+          agents: [{
+            id: "assistant",
+            name: "Support",
+            description: "Helps with support questions",
+            model: "anthropic/claude-sonnet-4-6",
+            version: "2.0.0",
+            skills: [],
+            suggestions: {
+              welcomeMessage: "How can I help you?",
+              suggestions: [
+                {
+                  id: "plan-work",
+                  type: "prompt",
+                  title: "Plan work",
+                  description: "Turn an idea into clear next steps",
+                  prompt: "Help me turn this idea into a concrete plan.",
+                },
+                {
+                  id: "research-topic",
+                  type: "task",
+                  title: "Research a topic",
+                  description: "Compare sources and summarize what matters",
+                  task: "Research this topic and summarize the key findings",
+                  prompt: "Research this topic and summarize the key findings.",
+                },
+              ],
+            },
+          }],
+        }),
+      );
+    });
+
+    it("omits invalid suggestions instead of failing the whole agent list", async () => {
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) =>
+          id === "assistant"
+            ? {
+              ...createAgent({ id }),
+              config: {
+                ...createAgent({ id }).config,
+                suggestions: {
+                  welcomeMessage: "How can I help you?",
+                },
+              } as unknown as Agent["config"],
+            }
+            : undefined,
+        getAllAgentIds: () => ["assistant"],
+      });
+
+      assertEquals(
+        response,
+        RuntimeAgentListResponseSchema.parse({
+          agents: [{
+            id: "assistant",
+            name: "Support",
+            description: "Helps with support questions",
+            model: "anthropic/claude-sonnet-4-6",
+            version: "2.0.0",
+            skills: [],
+          }],
+        }),
+      );
     });
   });
 });
