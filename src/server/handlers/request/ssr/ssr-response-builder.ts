@@ -14,6 +14,7 @@ import type { SSRRenderResult } from "../../../services/rendering/ssr.service.ts
 import { ErrorPages } from "../../../utils/error-html.ts";
 import type { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
+import { streamToString } from "../../../../rendering/utils/stream-utils.ts";
 
 function addNonceToInlineTags(html: string, nonce: string): string {
   const escapedNonce = escapeHtml(nonce);
@@ -40,6 +41,20 @@ export async function buildSSRResponse(
 
   // Streaming response path
   if (result.isStreaming && result.stream) {
+    if (!isHeadRequest) {
+      const streamedHtml = addNonceToInlineTags(
+        await streamToString(result.stream),
+        builder.nonce,
+      );
+
+      return builder
+        .withCORS(req, ctx.securityConfig?.cors)
+        .withSecurity(ctx.securityConfig ?? undefined, req)
+        .withClientHints()
+        .withCache("no-cache")
+        .withContentType(getContentType(".html"), streamedHtml, result.status);
+    }
+
     const response = builder
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
