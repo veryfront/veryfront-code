@@ -138,6 +138,52 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       assertEquals(body, "<p>Streamed</p>");
     });
 
+    it("preserves streaming while adding nonces to inline tags", async () => {
+      let releaseSecondChunk: (() => void) | undefined;
+      const secondChunkReady = new Promise<void>((resolve) => {
+        releaseSecondChunk = resolve;
+      });
+
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          controller.enqueue(new TextEncoder().encode("<script>"));
+          await secondChunkReady;
+          controller.enqueue(new TextEncoder().encode("window.__vf = true;</script>"));
+          controller.close();
+        },
+      });
+      const req = new Request("http://localhost/");
+      const ctx = makeCtx();
+      const result = makeResult({ isStreaming: true, stream, html: undefined });
+      const builder = new ResponseBuilder({ nonce: "nonce-123" });
+
+      const response = await buildSSRResponse(req, ctx, result, builder);
+      const reader = response.body?.getReader();
+
+      if (!reader) throw new Error("Expected streaming response body");
+
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const firstChunk = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) =>
+          timeoutId = setTimeout(
+            () => reject(new Error("First streamed chunk did not arrive promptly")),
+            50,
+          )
+        ),
+      ]);
+      if (timeoutId) clearTimeout(timeoutId);
+
+      assertEquals(new TextDecoder().decode(firstChunk.value), '<script nonce="nonce-123">');
+
+      releaseSecondChunk?.();
+      const secondChunk = await reader.read();
+      const finalChunk = await reader.read();
+
+      assertEquals(new TextDecoder().decode(secondChunk.value), "window.__vf = true;</script>");
+      assertEquals(finalChunk.done, true);
+    });
+
     it("returns null body for HEAD request with streaming", async () => {
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {

@@ -13,16 +13,7 @@ import { getContentType } from "../../utils/content-types.ts";
 import type { SSRRenderResult } from "../../../services/rendering/ssr.service.ts";
 import { ErrorPages } from "../../../utils/error-html.ts";
 import type { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
-import { escapeHtml } from "#veryfront/html/html-escape.ts";
-import { streamToString } from "../../../../rendering/utils/stream-utils.ts";
-
-function addNonceToInlineTags(html: string, nonce: string): string {
-  const escapedNonce = escapeHtml(nonce);
-  return html.replace(
-    /<(script|style)\b(?![^>]*\bnonce\s*=)([^>]*)>/giu,
-    `<$1$2 nonce="${escapedNonce}">`,
-  );
-}
+import { addNonceToHtmlStream, addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 
 /**
  * Build an HTTP response from an SSR render result.
@@ -41,26 +32,16 @@ export async function buildSSRResponse(
 
   // Streaming response path
   if (result.isStreaming && result.stream) {
-    if (!isHeadRequest) {
-      const streamedHtml = addNonceToInlineTags(
-        await streamToString(result.stream),
-        builder.nonce,
-      );
-
-      return builder
-        .withCORS(req, ctx.securityConfig?.cors)
-        .withSecurity(ctx.securityConfig ?? undefined, req)
-        .withClientHints()
-        .withCache("no-cache")
-        .withContentType(getContentType(".html"), streamedHtml, result.status);
-    }
-
     const response = builder
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withClientHints()
       .withCache("no-cache")
-      .withContentType(getContentType(".html"), result.stream, result.status);
+      .withContentType(
+        getContentType(".html"),
+        addNonceToHtmlStream(result.stream, builder.nonce),
+        result.status,
+      );
 
     if (!isHeadRequest) return response;
 
@@ -83,7 +64,7 @@ export async function buildSSRResponse(
     : typeof result.stream === "string"
     ? result.stream
     : ErrorPages.serverError();
-  const html = addNonceToInlineTags(content, builder.nonce);
+  const html = addNonceToHtmlTags(content, builder.nonce);
   const body = isHeadRequest ? null : html;
 
   let response = builder
