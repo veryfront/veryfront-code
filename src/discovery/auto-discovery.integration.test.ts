@@ -100,6 +100,40 @@ describe(
       }
     });
 
+    it("preserves an explicit tool id instead of forcing the filename-derived id", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-explicit-tool-id-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/tools/write-report.ts`,
+          [
+            'import { tool } from "veryfront/tool";',
+            'import { z } from "zod";',
+            "",
+            "export default tool({",
+            '  id: "write-report",',
+            '  description: "Write a markdown report",',
+            "  inputSchema: z.object({ markdown: z.string() }),",
+            "  execute: async ({ markdown }) => ({ ok: true, markdown }),",
+            "});",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        assertEquals(result.tools.has("write-report"), true);
+        assertEquals(toolRegistry.has("write-report"), true);
+        assertEquals(result.tools.has("writeReport"), false);
+        assertEquals(toolRegistry.has("writeReport"), false);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
     it("should keep concrete tool files over index barrel re-exports", async () => {
       const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-barrel-" });
 
