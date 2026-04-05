@@ -127,3 +127,114 @@ export function addNonceToHtmlTags(html: string, nonce?: string): string {
 
   return result;
 }
+
+export function addNonceToHtmlStream(
+  stream: ReadableStream<Uint8Array>,
+  nonce?: string,
+): ReadableStream<Uint8Array> {
+  if (!nonce) return stream;
+
+  const escapedNonce = escapeHtml(nonce);
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+  let rawTextTag: "script" | "style" | null = null;
+
+  function transformBuffer(flush: boolean): string {
+    let result = "";
+    let index = 0;
+
+    while (index < buffer.length) {
+      const lowerBuffer = buffer.toLowerCase();
+
+      if (rawTextTag) {
+        const closingIndex = findRawTextClosingTagStart(lowerBuffer, rawTextTag, index);
+        if (closingIndex === -1) {
+          if (flush) {
+            result += buffer.slice(index);
+            index = buffer.length;
+            break;
+          }
+
+          const retainLength = `</${rawTextTag}`.length;
+          const safeEnd = Math.max(index, buffer.length - retainLength);
+          result += buffer.slice(index, safeEnd);
+          index = safeEnd;
+          break;
+        }
+
+        result += buffer.slice(index, closingIndex);
+        index = closingIndex;
+        rawTextTag = null;
+        continue;
+      }
+
+      if (buffer.startsWith("<!--", index)) {
+        const commentEnd = buffer.indexOf("-->", index + 4);
+        if (commentEnd === -1) {
+          if (flush) {
+            result += buffer.slice(index);
+            index = buffer.length;
+          }
+          break;
+        }
+
+        const endIndex = commentEnd + 3;
+        result += buffer.slice(index, endIndex);
+        index = endIndex;
+        continue;
+      }
+
+      if (buffer[index] !== "<") {
+        const nextTagIndex = buffer.indexOf("<", index);
+        const endIndex = nextTagIndex === -1 ? buffer.length : nextTagIndex;
+        result += buffer.slice(index, endIndex);
+        index = endIndex;
+        continue;
+      }
+
+      const tagEnd = findTagEnd(buffer, index);
+      if (tagEnd === -1) {
+        if (flush) {
+          result += buffer.slice(index);
+          index = buffer.length;
+        }
+        break;
+      }
+
+      const tag = buffer.slice(index, tagEnd + 1);
+      const tagName = getOpeningTagName(tag);
+
+      if (!tagName) {
+        result += tag;
+        index = tagEnd + 1;
+        continue;
+      }
+
+      result += injectNonceIntoOpeningTag(tag, escapedNonce);
+      index = tagEnd + 1;
+
+      if (!/\/\s*>$/u.test(tag)) {
+        rawTextTag = tagName;
+      }
+    }
+
+    buffer = buffer.slice(index);
+    return result;
+  }
+
+  return stream.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buffer += decoder.decode(chunk, { stream: true });
+        const transformed = transformBuffer(false);
+        if (transformed) controller.enqueue(encoder.encode(transformed));
+      },
+      flush(controller) {
+        buffer += decoder.decode();
+        const transformed = transformBuffer(true);
+        if (transformed) controller.enqueue(encoder.encode(transformed));
+      },
+    }),
+  );
+}
