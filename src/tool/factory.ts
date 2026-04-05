@@ -127,10 +127,18 @@ function generateToolId(): string {
   return `tool_${Date.now()}_${toolIdCounter++}`;
 }
 
+function markGeneratedToolId<TInput, TOutput>(tool: Tool<TInput, TOutput>): Tool<TInput, TOutput> {
+  return {
+    ...tool,
+    __veryfrontGeneratedId: tool.id,
+  };
+}
+
 export function tool<TInput = unknown, TOutput = unknown>(
   config: ToolConfig<TInput, TOutput>,
 ): Tool<TInput, TOutput> {
-  const id = config.id || generateToolId();
+  const explicitId = typeof config.id === "string" && config.id.length > 0 ? config.id : undefined;
+  const id = explicitId ?? generateToolId();
 
   const inputSchemaJson = convertSchemaToJson(
     config.inputSchema,
@@ -139,7 +147,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
     config.allowUnknownSchema ?? false,
   );
 
-  return {
+  const createdTool: Tool<TInput, TOutput> = {
     id,
     type: "function" as const,
     description: config.description,
@@ -163,6 +171,8 @@ export function tool<TInput = unknown, TOutput = unknown>(
     },
     mcp: config.mcp,
   };
+
+  return explicitId ? createdTool : markGeneratedToolId(createdTool);
 }
 
 export interface DynamicToolConfig {
@@ -179,11 +189,12 @@ export interface DynamicToolConfig {
 }
 
 export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
-  const id = config.id || generateToolId();
+  const explicitId = typeof config.id === "string" && config.id.length > 0 ? config.id : undefined;
+  const id = explicitId ?? generateToolId();
 
   const inputSchemaJson = convertSchemaToJson(config.inputSchema, id, "DYNAMIC_TOOL", true);
 
-  return {
+  const createdTool: Tool<unknown, unknown> = {
     id,
     type: "dynamic" as const,
     description: config.description,
@@ -202,4 +213,6 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
     },
     mcp: config.mcp,
   };
+
+  return explicitId ? createdTool : markGeneratedToolId(createdTool);
 }

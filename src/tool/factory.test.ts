@@ -29,6 +29,30 @@ describe("tool factory", () => {
         execute: async () => null,
       });
       assertStringIncludes(t.id, "tool_");
+      assertEquals(t.__veryfrontGeneratedId, t.id);
+    });
+
+    it("should not mark explicit ids that happen to match the generated-id pattern", () => {
+      const t = tool({
+        id: "tool_2024_01",
+        description: "explicit generated-looking id",
+        inputSchema: z.object({}),
+        execute: async () => null,
+      });
+      assertEquals(t.id, "tool_2024_01");
+      assertEquals(t.__veryfrontGeneratedId, undefined);
+    });
+
+    it("should preserve an explicit id assigned after creation", () => {
+      const generated = tool({
+        description: "auto-id",
+        inputSchema: z.object({}),
+        execute: async () => null,
+      });
+      const overridden = { ...generated, id: "my-tool" };
+      assertEquals(overridden.id, "my-tool");
+      assertStringIncludes(generated.id, "tool_");
+      assertEquals(overridden.__veryfrontGeneratedId, generated.id);
     });
 
     it("should convert zod schema to JSON schema", () => {

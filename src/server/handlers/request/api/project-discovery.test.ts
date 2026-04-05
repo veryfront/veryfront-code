@@ -270,5 +270,106 @@ describe(
       assertEquals(toolRegistry.has("writeReport"), false);
       assertEquals(discoveredAgent.config.tools, { "write-report": true });
     });
+
+    it("keeps explicit generated-looking tool ids available for request-time project-agent runs", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/explicit-generated-looking-tool-id-project",
+        "explicit-generated-looking-tool-id-project",
+        "preview",
+      );
+
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/tools/write-report.ts`,
+        [
+          'import { tool } from "veryfront/tool";',
+          'import { z } from "zod";',
+          "",
+          "export default tool({",
+          '  id: "tool_2024_01",',
+          '  description: "Persist a markdown report",',
+          "  inputSchema: z.object({ markdown: z.string() }),",
+          "  execute: async ({ markdown }) => ({ ok: true, markdown }),",
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/agents/demo-agent.ts`,
+        [
+          'import { agent } from "veryfront/agent";',
+          "",
+          "export default agent({",
+          '  id: "demo-agent",',
+          '  system: "Use the explicit tool id when asked.",',
+          '  tools: { "tool_2024_01": true },',
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      await ensureProjectDiscovery(ctx);
+
+      const discoveredAgent = getAgent("demo-agent");
+      assertExists(discoveredAgent);
+      assertEquals(toolRegistry.has("tool_2024_01"), true);
+      assertEquals(toolRegistry.has("writeReport"), false);
+      assertEquals(discoveredAgent.config.tools, { "tool_2024_01": true });
+    });
+
+    it("keeps object-spread overridden tool ids available for request-time project-agent runs", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/explicit-spread-tool-id-project",
+        "explicit-spread-tool-id-project",
+        "preview",
+      );
+
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/tools/write-report.ts`,
+        [
+          'import { tool } from "veryfront/tool";',
+          'import { z } from "zod";',
+          "",
+          "const generated = tool({",
+          '  description: "Persist a markdown report",',
+          "  inputSchema: z.object({ markdown: z.string() }),",
+          "  execute: async ({ markdown }) => ({ ok: true, markdown }),",
+          "});",
+          "",
+          'export default { ...generated, id: "my-tool" };',
+          "",
+        ].join("\n"),
+      );
+
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/agents/demo-agent.ts`,
+        [
+          'import { agent } from "veryfront/agent";',
+          "",
+          "export default agent({",
+          '  id: "demo-agent",',
+          '  system: "Use the explicit tool id when asked.",',
+          '  tools: { "my-tool": true },',
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      await ensureProjectDiscovery(ctx);
+
+      const discoveredAgent = getAgent("demo-agent");
+      assertExists(discoveredAgent);
+      assertEquals(toolRegistry.has("my-tool"), true);
+      assertEquals(toolRegistry.has("writeReport"), false);
+      assertEquals(discoveredAgent.config.tools, { "my-tool": true });
+    });
   },
 );
