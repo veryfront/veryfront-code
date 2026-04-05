@@ -56,7 +56,16 @@ function findRawTextClosingTagStart(
 }
 
 function injectNonceIntoOpeningTag(tag: string, escapedNonce: string): string {
-  if (/(?:\s|<)nonce\s*=/iu.test(tag)) return tag;
+  const existingNonce = /(\snonce\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s>]+))/iu.exec(tag);
+  if (existingNonce) {
+    const currentValue = existingNonce[2] ?? existingNonce[3] ?? existingNonce[4] ?? "";
+    if (currentValue.trim()) return tag;
+
+    const replacement = ` nonce="${escapedNonce}"`;
+    return `${tag.slice(0, existingNonce.index)}${replacement}${
+      tag.slice(existingNonce.index + existingNonce[0].length)
+    }`;
+  }
 
   const closeIndex = tag.lastIndexOf(">");
   if (closeIndex === -1) return tag;

@@ -23,6 +23,18 @@ describe("html/nonce-injection", () => {
     assertEquals(html.includes('nonce="nonce-123" nonce="existing"'), false);
   });
 
+  it("replaces an empty nonce attribute with the response nonce", () => {
+    const html = addNonceToHtmlTags(
+      `<script nonce="">window.__vf=1</script><style nonce='   '>.chat{color:red}</style>`,
+      "nonce-123",
+    );
+
+    assertEquals(html.includes('<script nonce="nonce-123">window.__vf=1</script>'), true);
+    assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
+    assertEquals(html.includes('nonce=""'), false);
+    assertEquals(html.includes("nonce='   '"), false);
+  });
+
   it("does not inject nonce markup into script or style literals inside scripts", () => {
     const html = addNonceToHtmlTags(
       `<script>window.tpl="<script>alert(1)";window.css="<style>.x{color:red}";</script><style>.chat{color:red}</style>`,
