@@ -948,6 +948,63 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("returns 404 for missing production project when token mint returns 404", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createNotFoundResponse();
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://missing-project.production.veryfront.com/page", {
+          headers: { host: "missing-project.production.veryfront.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(ctx.error?.message, "Project not found");
+        assertEquals(ctx.error?.slug, "project-not-found");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("returns 404 for missing production project after lookup with a valid token", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/")) return createNotFoundResponse();
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://missing-project.production.veryfront.com/page", {
+          headers: { host: "missing-project.production.veryfront.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(ctx.error?.message, "Project not found");
+        assertEquals(ctx.error?.slug, "project-not-found");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("allows access to protected preview domain with RS256 auth token verified via JWKS", async () => {
       const { token: memberToken, jwks } = await createRs256Jwt("user-123");
       let jwksRequestCount = 0;
