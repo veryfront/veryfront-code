@@ -79,4 +79,18 @@ describe("html/nonce-injection", () => {
       true,
     );
   });
+
+  it("ignores nonce-like text inside another attribute value", () => {
+    const html = addNonceToHtmlTags(
+      `<script data-info="prefix nonce='' suffix">window.__vf=1</script>`,
+      "nonce-123",
+    );
+
+    assertEquals(
+      html.includes(
+        '<script data-info="prefix nonce=\'\' suffix" nonce="nonce-123">window.__vf=1</script>',
+      ),
+      true,
+    );
+  });
 });

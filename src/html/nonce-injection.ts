@@ -55,15 +55,67 @@ function findRawTextClosingTagStart(
   return -1;
 }
 
-function injectNonceIntoOpeningTag(tag: string, escapedNonce: string): string {
-  const existingNonce = /(\snonce\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s>]+))/iu.exec(tag);
-  if (existingNonce) {
-    const currentValue = existingNonce[2] ?? existingNonce[3] ?? existingNonce[4] ?? "";
-    if (currentValue.trim()) return tag;
+interface ParsedAttribute {
+  name: string;
+  start: number;
+  end: number;
+  value: string | null;
+}
 
-    const replacement = ` nonce="${escapedNonce}"`;
-    return `${tag.slice(0, existingNonce.index)}${replacement}${
-      tag.slice(existingNonce.index + existingNonce[0].length)
+function findAttribute(tag: string, attributeName: string): ParsedAttribute | undefined {
+  const closeIndex = tag.lastIndexOf(">");
+  if (closeIndex <= 0) return undefined;
+
+  let index = 1;
+  while (index < closeIndex && !/\s|\/|>/u.test(tag[index] ?? "")) index++;
+
+  while (index < closeIndex) {
+    while (index < closeIndex && /\s/u.test(tag[index] ?? "")) index++;
+    if (index >= closeIndex) break;
+
+    const char = tag[index];
+    if (char === "/" || char === ">") break;
+
+    const start = index;
+    while (index < closeIndex && !/[\s=/>]/u.test(tag[index] ?? "")) index++;
+    const name = tag.slice(start, index);
+
+    while (index < closeIndex && /\s/u.test(tag[index] ?? "")) index++;
+
+    let value: string | null = null;
+    if (tag[index] === "=") {
+      index++;
+      while (index < closeIndex && /\s/u.test(tag[index] ?? "")) index++;
+
+      const quote = tag[index];
+      if (quote === '"' || quote === "'") {
+        index++;
+        const valueStart = index;
+        while (index < closeIndex && tag[index] !== quote) index++;
+        value = tag.slice(valueStart, index);
+        if (index < closeIndex) index++;
+      } else {
+        const valueStart = index;
+        while (index < closeIndex && !/[\s>]/u.test(tag[index] ?? "")) index++;
+        value = tag.slice(valueStart, index);
+      }
+    }
+
+    if (name.toLowerCase() === attributeName) {
+      return { name, start, end: index, value };
+    }
+  }
+
+  return undefined;
+}
+
+function injectNonceIntoOpeningTag(tag: string, escapedNonce: string): string {
+  const existingNonce = findAttribute(tag, "nonce");
+  if (existingNonce) {
+    if (existingNonce.value?.trim()) return tag;
+
+    return `${tag.slice(0, existingNonce.start)}nonce="${escapedNonce}"${
+      tag.slice(existingNonce.end)
     }`;
   }
 
