@@ -7,11 +7,18 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { Head } from "../Head.tsx";
 import { ChatStyleProvider } from "./chat-style-provider.tsx";
 import { ChatRoot } from "./chat/composition/chat-root.tsx";
+import { ColorModeScript } from "./color-mode.tsx";
 
 const TEST_NONCE = "nonce-123";
 
 function injectNonceIntoStyleTags(html: string, nonce: string): string {
   return html.replaceAll("<style", `<style nonce="${nonce}"`);
+}
+
+function injectNonceIntoInlineTags(html: string, nonce: string): string {
+  return html
+    .replaceAll("<style", `<style nonce="${nonce}"`)
+    .replaceAll("<script", `<script nonce="${nonce}"`);
 }
 
 function installDomGlobals(dom: JSDOM): () => void {
@@ -89,6 +96,30 @@ async function hydrateAndReadStyleNonce(element: React.ReactElement): Promise<st
 
     hydratedRoot.unmount();
     return style.getAttribute("nonce");
+  } finally {
+    restore();
+  }
+}
+
+async function hydrateAndReadScriptNonce(element: React.ReactElement): Promise<string | null> {
+  const serverMarkup = injectNonceIntoInlineTags(renderToString(element), TEST_NONCE);
+  const dom = new JSDOM(`<!doctype html><div id="root">${serverMarkup}</div>`, {
+    url: "https://example.com/",
+  });
+  const restore = installDomGlobals(dom);
+
+  try {
+    const root = document.getElementById("root");
+    assert(root, "Expected hydration root to exist");
+
+    const hydratedRoot = hydrateRoot(root, element);
+    await waitFor(() => document.querySelector('[data-hydrated="yes"]') !== null);
+
+    const script = root.querySelector("script");
+    assert(script, "Expected hydrated tree to contain an inline script tag");
+
+    hydratedRoot.unmount();
+    return script.getAttribute("nonce");
   } finally {
     restore();
   }
@@ -181,6 +212,20 @@ function HydratingHeadStyleFixture(): React.ReactElement {
   );
 }
 
+function HydratingColorModeScriptFixture(): React.ReactElement {
+  const [hydrated, setHydrated] = React.useState(false);
+
+  React.useEffect(() => {
+    setHydrated(true);
+  }, []);
+
+  return (
+    <div data-hydrated={hydrated ? "yes" : "no"}>
+      <ColorModeScript />
+    </div>
+  );
+}
+
 describe("getDocumentNonce hydration behavior", () => {
   it("preserves nonces on ChatStyleProvider style tags after hydration re-renders", async () => {
     const nonce = await hydrateAndReadStyleNonce(<HydratingChatStyleProviderFixture />);
@@ -194,6 +239,11 @@ describe("getDocumentNonce hydration behavior", () => {
 
   it("reuses the document nonce for Head-managed inline styles on the client", async () => {
     const nonce = await hydrateAndReadManagedHeadStyleNonce(<HydratingHeadStyleFixture />);
+    assertEquals(nonce, TEST_NONCE);
+  });
+
+  it("preserves nonces on ColorModeScript after hydration re-renders", async () => {
+    const nonce = await hydrateAndReadScriptNonce(<HydratingColorModeScriptFixture />);
     assertEquals(nonce, TEST_NONCE);
   });
 });

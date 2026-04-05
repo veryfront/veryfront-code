@@ -190,5 +190,28 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       assertEquals(body.includes('<style nonce="nonce-123">'), true);
       assertEquals(body.includes('<script nonce="nonce-123">'), true);
     });
+
+    it("adds the builder nonce to inline tags in streaming HTML responses", async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              `<div><style>.app{color:red}</style><script>window.__vf=1</script></div>`,
+            ),
+          );
+          controller.close();
+        },
+      });
+      const req = new Request("http://localhost/");
+      const ctx = makeCtx();
+      const result = makeResult({ isStreaming: true, stream, html: undefined });
+      const builder = new ResponseBuilder({ nonce: "nonce-123" });
+
+      const response = await buildSSRResponse(req, ctx, result, builder);
+      const body = await response.text();
+
+      assertEquals(body.includes('<style nonce="nonce-123">.app{color:red}</style>'), true);
+      assertEquals(body.includes('<script nonce="nonce-123">window.__vf=1</script>'), true);
+    });
   });
 });
