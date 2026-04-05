@@ -143,10 +143,9 @@ export function addNonceToHtmlStream(
   function transformBuffer(flush: boolean): string {
     let result = "";
     let index = 0;
+    const lowerBuffer = buffer.toLowerCase();
 
     while (index < buffer.length) {
-      const lowerBuffer = buffer.toLowerCase();
-
       if (rawTextTag) {
         const closingIndex = findRawTextClosingTagStart(lowerBuffer, rawTextTag, index);
         if (closingIndex === -1) {
