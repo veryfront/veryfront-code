@@ -409,6 +409,24 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     );
   }
 
+  function makeProjectNotFoundContext(
+    base: {
+      scope: TokenScope;
+      host: string;
+      parsedDomain: ParsedDomain;
+    },
+    token?: string,
+  ): ProxyContext {
+    return makeErrorContext(
+      base,
+      404,
+      "Project not found",
+      token,
+      undefined,
+      "project-not-found",
+    );
+  }
+
   async function resolveRequestToken(
     req: Request,
     scope: TokenScope,
@@ -606,20 +624,30 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         },
       ));
 
-      if (projectSlug && scope === "preview" && !token) {
+      if (projectSlug && !token) {
         const status = parseStatusFromError(tokenFetchError);
         if (status === 404) {
-          logger?.info("Preview project not found", { projectSlug, host });
-          return makePreviewProjectNotFoundContext(base);
+          if (scope === "preview") {
+            logger?.info("Preview project not found", { projectSlug, host });
+            return makePreviewProjectNotFoundContext(base);
+          }
+
+          logger?.info("Project not found", { projectSlug, host, scope });
+          return makeProjectNotFoundContext(base);
         }
 
-        logger?.warn("Preview request has no usable token", {
+        const message = scope === "preview"
+          ? "Failed to authenticate preview request"
+          : "Failed to authenticate project request";
+
+        logger?.warn("Project request has no usable token", {
           projectSlug,
           host,
+          scope,
           hadUserToken: !!userToken,
           hadTokenFetchError: !!tokenFetchError,
         });
-        return makeErrorContext(base, 502, "Failed to authenticate preview request");
+        return makeErrorContext(base, 502, message);
       }
 
       if (isCustomDomain && !projectSlug) {
@@ -689,6 +717,16 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             token,
             resolved.error.redirectUrl,
           );
+        }
+
+        if (!resolved.projectId) {
+          logger?.info("Project not found after lookup", {
+            projectSlug,
+            host,
+            scope,
+            targetEnvName: parsedDomain.environment,
+          });
+          return makeProjectNotFoundContext(base, token);
         }
 
         projectId = resolved.projectId;
