@@ -30,6 +30,7 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { serverLogger } from "#veryfront/utils";
 
 export interface AgentStreamHandlerDeps
   extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {
@@ -41,6 +42,7 @@ const defaultDeps: AgentStreamHandlerDeps = {
   sessionManager: agentRunSessionManager,
   resolveRuntimeOwnerInvokeUrl,
 };
+const logger = serverLogger.component("agent-stream-handler");
 
 type SourceContextFsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -164,6 +166,16 @@ export class AgentStreamHandler extends BaseHandler {
           expectedSubject: payload.runId,
           expectedSurface: "studio",
         });
+        logger.info("Accepted internal agent stream request", {
+          runId: payload.runId,
+          threadId: payload.threadId,
+          agentId: payload.agentId,
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+          messageCount: payload.messages.length,
+          toolCount: payload.tools.length,
+          hasAgentSource: Boolean(payload.agentSource),
+        });
 
         return await this.withAgentSourceContext(
           ctx,
@@ -173,6 +185,12 @@ export class AgentStreamHandler extends BaseHandler {
 
             const agent = this.deps.getAgent(payload.agentId);
             if (!agent) {
+              logger.warn("Internal agent stream request referenced unknown agent", {
+                runId: payload.runId,
+                agentId: payload.agentId,
+                projectId: ctx.projectId,
+                projectSlug: ctx.projectSlug,
+              });
               return this.respond(builder.json({ error: "Agent not found" }, 404));
             }
 
@@ -181,6 +199,13 @@ export class AgentStreamHandler extends BaseHandler {
               agent as Agent,
               this.deps,
             );
+            logger.info("Internal agent stream response created", {
+              runId: payload.runId,
+              threadId: payload.threadId,
+              agentId: payload.agentId,
+              projectId: ctx.projectId,
+              projectSlug: ctx.projectSlug,
+            });
             const runtimeOwnerInvokeUrl = await this.deps.resolveRuntimeOwnerInvokeUrl?.(req) ??
               null;
             const responseWithOwner = runtimeOwnerInvokeUrl
@@ -222,6 +247,11 @@ export class AgentStreamHandler extends BaseHandler {
           error: error instanceof Error ? error.message : String(error),
           projectId: ctx.projectId,
           projectSlug: ctx.projectSlug,
+        });
+        logger.error("Internal agent stream handler failed", {
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+          error: error instanceof Error ? error.message : String(error),
         });
         return this.respond(builder.json({ error: "Internal agent stream failed" }, 500));
       }
