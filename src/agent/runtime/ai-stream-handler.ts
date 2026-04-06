@@ -20,6 +20,8 @@ export interface StreamingToolCall {
   id: string;
   name: string;
   arguments: string;
+  providerExecuted?: boolean;
+  dynamic?: boolean;
 }
 
 export interface AIStreamState {
@@ -153,6 +155,8 @@ export function processStream(
             id: toolId,
             name: part.toolName,
             arguments: "",
+            providerExecuted: "providerExecuted" in part ? part.providerExecuted : undefined,
+            dynamic: "dynamic" in part ? part.dynamic : undefined,
           });
 
           const dynamic = isDynamicTool(part.toolName);
@@ -187,6 +191,8 @@ export function processStream(
             id: toolId,
             name: part.toolName,
             arguments: inputStr,
+            providerExecuted: "providerExecuted" in part ? part.providerExecuted : undefined,
+            dynamic: "dynamic" in part ? part.dynamic : undefined,
           });
 
           const dynamic = isDynamicTool(part.toolName);
@@ -196,6 +202,9 @@ export function processStream(
             toolCallId: toolId,
             toolName: part.toolName,
             input: inputObj,
+            ...("providerExecuted" in part && part.providerExecuted !== undefined
+              ? { providerExecuted: part.providerExecuted }
+              : {}),
             ...(dynamic ? { dynamic: true } : {}),
           });
           break;
@@ -207,7 +216,11 @@ export function processStream(
             sendSSE(controller, encoder, {
               type: "tool-output-error",
               toolCallId: part.toolCallId,
-              errorText: stringifyToolError(part.output),
+              errorText: stringifyToolError("output" in part ? part.output : undefined),
+              ...("providerExecuted" in part && part.providerExecuted !== undefined
+                ? { providerExecuted: part.providerExecuted }
+                : {}),
+              ...("dynamic" in part && part.dynamic ? { dynamic: true } : {}),
             });
             break;
           }
@@ -216,6 +229,26 @@ export function processStream(
             type: "tool-output-available",
             toolCallId: part.toolCallId,
             output: part.output,
+            ...("providerExecuted" in part && part.providerExecuted !== undefined
+              ? { providerExecuted: part.providerExecuted }
+              : {}),
+            ...("dynamic" in part && part.dynamic ? { dynamic: true } : {}),
+            ...("preliminary" in part && part.preliminary !== undefined
+              ? { preliminary: part.preliminary }
+              : {}),
+          });
+          break;
+        }
+
+        case "tool-error": {
+          sendSSE(controller, encoder, {
+            type: "tool-output-error",
+            toolCallId: part.toolCallId,
+            errorText: stringifyToolError(part.error),
+            ...("providerExecuted" in part && part.providerExecuted !== undefined
+              ? { providerExecuted: part.providerExecuted }
+              : {}),
+            ...("dynamic" in part && part.dynamic ? { dynamic: true } : {}),
           });
           break;
         }

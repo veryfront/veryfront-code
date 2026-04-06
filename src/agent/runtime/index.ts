@@ -768,6 +768,10 @@ export class AgentRuntime {
         const { args, error: argError } = parseToolArgs(tc.arguments);
         const toolCall: ToolCall = { id: tc.id, name: tc.name, args, status: "pending" };
 
+        if (tc.providerExecuted === true) {
+          continue;
+        }
+
         if (argError) {
           logger.warn("Invalid streamed tool arguments", {
             toolCallId: tc.id,
