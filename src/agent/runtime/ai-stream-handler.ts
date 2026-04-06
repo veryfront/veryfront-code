@@ -47,7 +47,7 @@ function normalizeToolInputString(input: unknown): string {
     return input;
   }
 
-  return JSON.stringify(input ?? {});
+  return JSON.stringify(input ?? null) ?? "null";
 }
 
 function normalizeToolInputObject(input: unknown): Record<string, unknown> {
