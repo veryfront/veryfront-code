@@ -34,6 +34,7 @@ import {
 import { convertToModelMessages } from "./model-message-converter.ts";
 import { convertToolsToAISDK } from "./model-tool-converter.ts";
 import { createStreamState, processStream } from "./ai-stream-handler.ts";
+import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { generateText, type LanguageModel, streamText } from "ai";
 import { AGENT_DEFAULTS } from "../ai-defaults.ts";
@@ -459,7 +460,11 @@ export class AgentRuntime {
             model: languageModel,
             system: systemPrompt,
             messages: convertToModelMessages(currentMessages),
-            tools: convertToolsToAISDK(tools),
+            tools: convertToolsToAISDK(tools, {
+              model: effectiveModel,
+              allowedToolNames: allowedRemoteToolNames,
+            }),
+            experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
             temperature: DEFAULT_TEMPERATURE,
           });
@@ -705,6 +710,7 @@ export class AgentRuntime {
           model: effectiveModel,
           allowedToolNames: allowedRemoteToolNames,
         }),
+        experimental_repairToolCall: repairToolCall,
         maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
         temperature: DEFAULT_TEMPERATURE,
         abortSignal,
