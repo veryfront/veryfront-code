@@ -55,6 +55,18 @@ function throwIfAborted(abortSignal?: AbortSignal): void {
   }
 }
 
+function stringifyToolError(output: unknown): string {
+  if (typeof output === "string" && output.length > 0) {
+    return output;
+  }
+
+  try {
+    return JSON.stringify(output);
+  } catch {
+    return String(output);
+  }
+}
+
 export function createStreamState(): AIStreamState {
   return {
     accumulatedText: "",
@@ -158,6 +170,25 @@ export function processStream(
             toolName: part.toolName,
             input: inputObj,
             ...(dynamic ? { dynamic: true } : {}),
+          });
+          break;
+        }
+
+        case "tool-result": {
+          const isError = "isError" in part && part.isError === true;
+          if (isError) {
+            sendSSE(controller, encoder, {
+              type: "tool-output-error",
+              toolCallId: part.toolCallId,
+              errorText: stringifyToolError(part.output),
+            });
+            break;
+          }
+
+          sendSSE(controller, encoder, {
+            type: "tool-output-available",
+            toolCallId: part.toolCallId,
+            output: part.output,
           });
           break;
         }

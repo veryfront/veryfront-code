@@ -43,7 +43,7 @@ cli/
    import type { CommandHelp } from "../../help/types.ts";
    export const fooHelp: CommandHelp = {
      name: "foo",
-     category: "development",  // development | deploy | project | files | ai | auth
+     category: "development", // development | deploy | project | files | ai | auth
      description: "...",
      usage: "veryfront foo [options]",
      options: [{ flag: "--bar", description: "..." }],
@@ -70,6 +70,7 @@ cli/
 ## Global Flags
 
 Handled in `routeCommand()` in `router.ts`:
+
 - `--json` / `-j` → `setJsonMode(true)` — enables structured JSON output
 - `--output` / `-o` → `setOutputPath(path)` — write JSON to file
 - `--yes` / `-y` → `setNonInteractive(true)` — skip prompts (auto-detected in CI)
@@ -78,8 +79,9 @@ Handled in `routeCommand()` in `router.ts`:
 ## JSON Output Pattern
 
 Commands that support `--json` use the envelope format:
+
 ```typescript
-import { isJsonMode, outputJson, createSuccessEnvelope } from "../../shared/json-output.ts";
+import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 
 if (isJsonMode()) {
   await outputJson(createSuccessEnvelope("command-name", { key: "value" }));

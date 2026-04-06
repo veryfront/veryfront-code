@@ -205,6 +205,55 @@ describe("ai-stream-handler", () => {
       assertEquals(events.length, 2);
     });
 
+    it("forwards tool results as tool-output-available SSE events", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-result",
+          toolCallId: "tc-web",
+          toolName: "web_search",
+          input: { query: "latest ai news" },
+          output: { results: [{ title: "AI" }] },
+        },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events[0], {
+        type: "tool-output-available",
+        toolCallId: "tc-web",
+        output: { results: [{ title: "AI" }] },
+      });
+    });
+
+    it("forwards errored tool results as tool-output-error SSE events", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-result",
+          toolCallId: "tc-web",
+          toolName: "web_search",
+          input: { query: "latest ai news" },
+          output: { error: "Search failed" },
+          isError: true,
+        },
+        { type: "finish", finishReason: "error", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events[0], {
+        type: "tool-output-error",
+        toolCallId: "tc-web",
+        errorText: '{"error":"Search failed"}',
+      });
+    });
+
     it("ignores tool-input-delta for unknown tool call IDs", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
@@ -264,7 +313,7 @@ describe("ai-stream-handler", () => {
 
       // Only text-delta should produce an event
       assertEquals(events.length, 1);
-      assertEquals(events[0].type, "text-delta");
+      assertEquals(events[0]?.type, "text-delta");
     });
   });
 });

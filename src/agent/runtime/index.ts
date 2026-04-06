@@ -701,7 +701,10 @@ export class AgentRuntime {
         model: languageModel,
         system: systemPrompt,
         messages: convertToModelMessages(currentMessages),
-        tools: convertToolsToAISDK(tools),
+        tools: convertToolsToAISDK(tools, {
+          model: effectiveModel,
+          allowedToolNames: allowedRemoteToolNames,
+        }),
         maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
         temperature: DEFAULT_TEMPERATURE,
         abortSignal,

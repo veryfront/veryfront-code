@@ -8,6 +8,10 @@
   },
   "inputs": {
     "name": { "type": "string", "description": "Project name" },
-    "provider": { "type": "string", "default": "anthropic", "description": "AI provider to configure" }
+    "provider": {
+      "type": "string",
+      "default": "anthropic",
+      "description": "AI provider to configure"
+    }
   }
 }
