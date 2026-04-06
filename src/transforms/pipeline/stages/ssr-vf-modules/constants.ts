@@ -39,6 +39,10 @@ export const FRAMEWORK_LOOKUPS: Array<[prefix: string, frameworkDir: string]> = 
 // Singleflight for framework module file writes to prevent race conditions
 export const frameworkWriteFlight = new Singleflight<string>();
 
+// Singleflight for top-level framework source transforms so concurrent user
+// modules importing the same veryfront/* module do not receive cycle placeholders.
+export const frameworkTransformFlight = new Singleflight<string>();
+
 // Cache for already-transformed #veryfront/ dependencies to avoid cycles and redundant work
 export const veryfrontTransformCache = new Map<string, string>();
 
