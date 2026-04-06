@@ -13,6 +13,8 @@ import { createLocalModel } from "./ai-sdk-adapter.ts";
 import { clearModelProviders, ensureModelReady } from "../model-registry.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
 
+const RUN_LOCAL_AI_TESTS = Deno.env.get("VERYFRONT_RUN_LOCAL_AI_TESTS") === "1";
+
 describe("model-catalog", () => {
   it("resolves known model IDs to HuggingFace IDs", () => {
     const info = resolveLocalModel("smollm2-135m");
@@ -127,7 +129,7 @@ describe("local-engine (requires model download)", {
 }, () => {
   // These tests actually download and run the model — skip in CI
   it("generateStream produces tokens", {
-    ignore: Deno.env.get("CI") === "true",
+    ignore: !RUN_LOCAL_AI_TESTS,
   }, async () => {
     const { generateStream } = await import("./local-engine.ts");
     const tokens: string[] = [];
@@ -143,5 +145,59 @@ describe("local-engine (requires model download)", {
     assertEquals(tokens.length > 0, true, "Should produce at least one token");
     const text = tokens.join("");
     assertEquals(text.length > 0, true, "Combined text should be non-empty");
+  });
+
+  it("agent runtime emits server-local inference mode with real ONNX inference", {
+    ignore: !RUN_LOCAL_AI_TESTS,
+  }, async () => {
+    const { AgentRuntime } = await import("../../agent/runtime/index.ts");
+
+    const runtime = new AgentRuntime("test-real-local-runtime", {
+      model: "local/smollm2-135m",
+      system: "Reply in one short sentence.",
+    });
+
+    const stream = await runtime.stream(
+      [{ id: "msg-1", role: "user", parts: [{ type: "text", text: "Say hello in two words." }] }],
+      undefined,
+      undefined,
+      "local/smollm2-135m",
+    );
+
+    const decoder = new TextDecoder();
+    const reader = stream.getReader();
+    const events: Array<Record<string, unknown>> = [];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const text = decoder.decode(value);
+      for (const line of text.split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          events.push(JSON.parse(line.slice(6)));
+        } catch {
+          // Ignore non-JSON SSE payloads
+        }
+      }
+    }
+
+    const dataEvent = events.find(
+      (event) => event.type === "data" && typeof event.data === "object",
+    );
+    assertExists(dataEvent, "Should emit an inferenceMode data event");
+
+    const dataPayload = dataEvent?.data as { inferenceMode: string; model: string };
+    assertEquals(dataPayload.inferenceMode, "server-local");
+    assertEquals(dataPayload.model, "local/smollm2-135m");
+
+    const textDelta = events.find(
+      (event) =>
+        event.type === "text-delta" &&
+        typeof event.delta === "string" &&
+        event.delta.length > 0,
+    );
+    assertExists(textDelta, "Should emit streamed assistant text");
   });
 });
