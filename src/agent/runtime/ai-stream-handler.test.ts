@@ -214,6 +214,34 @@ describe("ai-stream-handler", () => {
       });
     });
 
+    it("preserves provider-executed tool calls in stream state and SSE output", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-call",
+          toolCallId: "tc-provider",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          providerExecuted: true,
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      const tc = state.toolCalls.get("tc-provider")!;
+      assertEquals(tc.providerExecuted, true);
+      assertEquals(events[0], {
+        type: "tool-input-available",
+        toolCallId: "tc-provider",
+        toolName: "web_search",
+        input: { query: "Veryfront" },
+        providerExecuted: true,
+      });
+    });
+
     it("handles multiple tool calls in a single stream", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
@@ -279,6 +307,32 @@ describe("ai-stream-handler", () => {
         type: "tool-output-error",
         toolCallId: "tc-web",
         errorText: '{"error":"Search failed"}',
+      });
+    });
+
+    it("forwards tool-error parts as tool-output-error SSE events", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-error",
+          toolCallId: "tc-provider-error",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          error: "Expected object, received string",
+          providerExecuted: true,
+        },
+        { type: "finish", finishReason: "error", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events[0], {
+        type: "tool-output-error",
+        toolCallId: "tc-provider-error",
+        errorText: "Expected object, received string",
+        providerExecuted: true,
       });
     });
 
