@@ -110,8 +110,15 @@ describe("internal-agents/ag-ui-sse", () => {
       }],
     );
     assertEquals(
-      mapRuntimeEventToAgUi(state, { type: "tool-input-available", toolCallId: "tool-2" }),
-      [{ event: "ToolCallEnd", payload: { toolCallId: "tool-2" } }],
+      mapRuntimeEventToAgUi(state, {
+        type: "tool-input-available",
+        toolCallId: "tool-2",
+        input: { path: "app/page.tsx" },
+      }),
+      [{
+        event: "ToolCallEnd",
+        payload: { toolCallId: "tool-2", input: { path: "app/page.tsx" } },
+      }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, {

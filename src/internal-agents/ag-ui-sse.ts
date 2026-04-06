@@ -61,6 +61,7 @@ const agUiEventPayloadSchemas = {
   }),
   ToolCallEnd: z.object({
     toolCallId: z.string().min(1),
+    input: z.record(z.string(), z.unknown()).optional(),
   }),
   ToolCallResult: z.object({
     toolCallId: z.string().min(1),
@@ -242,7 +243,12 @@ export function mapRuntimeEventToAgUi(
       state.sawVisibleOutput = true;
       return [{
         event: "ToolCallEnd",
-        payload: { toolCallId: event.toolCallId },
+        payload: {
+          toolCallId: event.toolCallId,
+          ...(event.input && typeof event.input === "object" && !Array.isArray(event.input)
+            ? { input: event.input as Record<string, unknown> }
+            : {}),
+        },
       }];
 
     case "tool-output-available":
