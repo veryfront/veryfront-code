@@ -24,10 +24,21 @@ export interface StreamingToolCall {
   dynamic?: boolean;
 }
 
+export interface StreamingToolResult {
+  toolCallId: string;
+  toolName: string;
+  output?: unknown;
+  error?: unknown;
+  providerExecuted?: boolean;
+  dynamic?: boolean;
+  preliminary?: boolean;
+}
+
 export interface AIStreamState {
   accumulatedText: string;
   finishReason: string | null;
   toolCalls: Map<string, StreamingToolCall>;
+  toolResults: StreamingToolResult[];
   usage: { promptTokens: number; completionTokens: number; totalTokens: number };
 }
 
@@ -93,6 +104,10 @@ function stringifyToolError(output: unknown): string {
     return output;
   }
 
+  if (output instanceof Error && typeof output.message === "string" && output.message.length > 0) {
+    return output.message;
+  }
+
   try {
     return JSON.stringify(output);
   } catch {
@@ -105,6 +120,7 @@ export function createStreamState(): AIStreamState {
     accumulatedText: "",
     finishReason: null,
     toolCalls: new Map(),
+    toolResults: [],
     usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   };
 }
@@ -213,6 +229,15 @@ export function processStream(
         case "tool-result": {
           const isError = "isError" in part && part.isError === true;
           if (isError) {
+            state.toolResults.push({
+              toolCallId: part.toolCallId,
+              toolName: part.toolName,
+              error: "output" in part ? part.output : undefined,
+              ...("providerExecuted" in part && part.providerExecuted !== undefined
+                ? { providerExecuted: part.providerExecuted }
+                : {}),
+              ...("dynamic" in part && part.dynamic ? { dynamic: true } : {}),
+            });
             sendSSE(controller, encoder, {
               type: "tool-output-error",
               toolCallId: part.toolCallId,
@@ -225,6 +250,18 @@ export function processStream(
             break;
           }
 
+          state.toolResults.push({
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            output: part.output,
+            ...("providerExecuted" in part && part.providerExecuted !== undefined
+              ? { providerExecuted: part.providerExecuted }
+              : {}),
+            ...("dynamic" in part && part.dynamic ? { dynamic: true } : {}),
+            ...("preliminary" in part && part.preliminary !== undefined
+              ? { preliminary: part.preliminary }
+              : {}),
+          });
           sendSSE(controller, encoder, {
             type: "tool-output-available",
             toolCallId: part.toolCallId,
@@ -241,6 +278,15 @@ export function processStream(
         }
 
         case "tool-error": {
+          state.toolResults.push({
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            error: part.error,
+            ...("providerExecuted" in part && part.providerExecuted !== undefined
+              ? { providerExecuted: part.providerExecuted }
+              : {}),
+            ...("dynamic" in part && part.dynamic ? { dynamic: true } : {}),
+          });
           sendSSE(controller, encoder, {
             type: "tool-output-error",
             toolCallId: part.toolCallId,
