@@ -12,7 +12,9 @@ import type { StreamTextResult, ToolSet } from "ai";
 import { sendSSE } from "./sse-utils.ts";
 import { isDynamicTool } from "./tool-helpers.ts";
 import { serverLogger } from "#veryfront/utils";
+import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = serverLogger.component("agent");
 
@@ -113,6 +115,65 @@ function stringifyToolError(output: unknown): string {
   } catch {
     return String(output);
   }
+}
+
+function summarizeDebugValue(value: unknown): unknown {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+  }
+
+  if (typeof value === "string") {
+    return value.length > 500 ? `${value.slice(0, 500)}…` : value;
+  }
+
+  return value;
+}
+
+function logProviderToolPart(
+  partType: "tool-result" | "tool-error",
+  part: {
+    toolCallId: string;
+    toolName: string;
+    providerExecuted?: boolean;
+    dynamic?: boolean;
+    output?: unknown;
+    error?: unknown;
+    input?: unknown;
+    preliminary?: boolean;
+    isError?: boolean;
+  },
+): void {
+  if (!isAnyDebugEnabled({ get: getHostEnv })) {
+    return;
+  }
+
+  if (part.providerExecuted !== true) {
+    return;
+  }
+
+  if (part.toolName !== "web_search" && part.toolName !== "web_fetch") {
+    return;
+  }
+
+  logger.debug("Provider tool stream part observed", {
+    partType,
+    toolCallId: part.toolCallId,
+    toolName: part.toolName,
+    providerExecuted: part.providerExecuted,
+    dynamic: part.dynamic,
+    preliminary: part.preliminary,
+    isError: part.isError,
+    outputType: typeof part.output,
+    errorType: typeof part.error,
+    inputType: typeof part.input,
+    output: summarizeDebugValue(part.output),
+    error: summarizeDebugValue(part.error),
+    input: summarizeDebugValue(part.input),
+  });
 }
 
 export function createStreamState(): AIStreamState {
@@ -228,6 +289,16 @@ export function processStream(
 
         case "tool-result": {
           const isError = "isError" in part && part.isError === true;
+          logProviderToolPart("tool-result", {
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            providerExecuted: "providerExecuted" in part ? part.providerExecuted : undefined,
+            dynamic: "dynamic" in part ? part.dynamic : undefined,
+            output: part.output,
+            input: "input" in part ? part.input : undefined,
+            preliminary: "preliminary" in part ? part.preliminary : undefined,
+            isError,
+          });
           if (isError) {
             state.toolResults.push({
               toolCallId: part.toolCallId,
@@ -278,6 +349,14 @@ export function processStream(
         }
 
         case "tool-error": {
+          logProviderToolPart("tool-error", {
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            providerExecuted: "providerExecuted" in part ? part.providerExecuted : undefined,
+            dynamic: "dynamic" in part ? part.dynamic : undefined,
+            error: part.error,
+            input: "input" in part ? part.input : undefined,
+          });
           state.toolResults.push({
             toolCallId: part.toolCallId,
             toolName: part.toolName,
