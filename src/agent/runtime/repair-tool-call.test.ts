@@ -46,7 +46,7 @@ describe("repair-tool-call", () => {
 
   it("repairs JSON string literal web_search input into the expected object shape", async () => {
     const repaired = await repairToolCall({
-      error: buildInvalidToolInputError("web_search", "\"Veryfront\""),
+      error: buildInvalidToolInputError("web_search", '"Veryfront"'),
       inputSchema: async () => ({
         additionalProperties: false,
         properties: {
@@ -58,7 +58,7 @@ describe("repair-tool-call", () => {
       messages: [],
       system: undefined,
       toolCall: {
-        input: "\"Veryfront\"",
+        input: '"Veryfront"',
         providerExecuted: undefined,
         toolCallId: "tool-2",
         toolName: "web_search",
