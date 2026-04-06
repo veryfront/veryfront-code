@@ -31,6 +31,8 @@ import {
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { ssrVfModulesPlugin } from "#veryfront/transforms/pipeline/stages/ssr-vf-modules.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -181,6 +183,33 @@ async function resolveRelativeImport(
  */
 /** Pattern to detect unresolved /_vf_modules/ imports that will fail at runtime */
 const UNRESOLVED_VF_MODULES_RE = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/;
+
+export async function resolveRemainingVfModuleImports(
+  code: string,
+  filePath: string,
+  projectDir: string,
+  reactVersion?: string,
+): Promise<string> {
+  if (!UNRESOLVED_VF_MODULES_RE.test(code)) {
+    return code;
+  }
+
+  return await ssrVfModulesPlugin.transform({
+    code,
+    originalSource: code,
+    filePath,
+    projectDir,
+    projectId: projectDir,
+    reactVersion: reactVersion ?? REACT_DEFAULT_VERSION,
+    target: "ssr",
+    dev: false,
+    contentHash: hashCodeHex(code),
+    jsxImportSource: "react",
+    timing: new Map(),
+    debug: false,
+    metadata: new Map(),
+  });
+}
 
 export async function transformModuleWithDeps(
   filePath: string,
@@ -393,6 +422,13 @@ export async function transformModuleWithDeps(
     });
   }
 
+  transformedCode = await resolveRemainingVfModuleImports(
+    transformedCode,
+    filePath,
+    projectDir,
+    config.reactVersion,
+  );
+
   // CRITICAL: Validate that no unresolved /_vf_modules/ imports remain after transform.
   // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
   // If they're still present, retry the transform bypassing all caches.
@@ -418,6 +454,12 @@ export async function transformModuleWithDeps(
       reactVersion: config.reactVersion,
     });
     transformedCode = pipelineResult.code;
+    transformedCode = await resolveRemainingVfModuleImports(
+      transformedCode,
+      filePath,
+      projectDir,
+      config.reactVersion,
+    );
 
     // Check again after retry
     if (UNRESOLVED_VF_MODULES_RE.test(transformedCode)) {
