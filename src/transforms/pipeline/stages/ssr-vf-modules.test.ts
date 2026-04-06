@@ -21,7 +21,11 @@ import { ssrVfModulesPlugin } from "./ssr-vf-modules.ts";
 import {
   _testExports,
   cacheTransformedCode,
+  frameworkFileCache,
+  frameworkTransformFlight,
   transformFrameworkSource,
+  transformingFiles,
+  veryfrontTransformCache,
 } from "./ssr-vf-modules/index.ts";
 import type { TransformContext } from "../types.ts";
 
@@ -178,6 +182,40 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
 
       const result = await ssrVfModulesPlugin.transform(ctx);
       assertEquals(result, code);
+    });
+
+    it("rewrites shared framework imports correctly under concurrent SSR transforms", async () => {
+      frameworkFileCache.clear();
+      veryfrontTransformCache.clear();
+      transformingFiles.clear();
+
+      const code =
+        `import { usePageContext } from "file:///_vf_modules/_veryfront/react/runtime/core.js?ssr=true";`;
+
+      const createCtx = () =>
+        ({
+          code,
+          target: "ssr",
+          projectDir: "/tmp/test-project",
+          reactVersion: REACT_DEFAULT_VERSION,
+        }) as TransformContext;
+
+      const [left, right] = await Promise.all([
+        ssrVfModulesPlugin.transform(createCtx()),
+        ssrVfModulesPlugin.transform(createCtx()),
+      ]);
+
+      assertStringIncludes(left, "file://");
+      assertStringIncludes(right, "file://");
+      assertEquals(
+        left.includes("file:///_vf_modules/_veryfront/react/runtime/core.js?ssr=true"),
+        false,
+      );
+      assertEquals(
+        right.includes("file:///_vf_modules/_veryfront/react/runtime/core.js?ssr=true"),
+        false,
+      );
+      assertEquals(frameworkTransformFlight.size, 0);
     });
   });
 
