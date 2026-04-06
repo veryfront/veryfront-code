@@ -19,6 +19,7 @@ export interface RunFinishedMetadata {
 export interface StreamTransformState {
   messageId: string | null;
   textOpen: boolean;
+  sawVisibleOutput: boolean;
   sawTerminalError: boolean;
   metadata: RunFinishedMetadata;
 }
@@ -27,6 +28,7 @@ export function createStreamTransformState(): StreamTransformState {
   return {
     messageId: null,
     textOpen: false,
+    sawVisibleOutput: false,
     sawTerminalError: false,
     metadata: {},
   };
@@ -180,6 +182,7 @@ export function mapRuntimeEventToAgUi(
       if (state.textOpen) return [];
       const messageId = getMessageId(state, event);
       state.textOpen = true;
+      state.sawVisibleOutput = true;
       return [{
         event: "TextMessageStart",
         payload: { messageId, role: "assistant" },
@@ -188,6 +191,7 @@ export function mapRuntimeEventToAgUi(
 
     case "text-delta": {
       const messageId = getMessageId(state, event);
+      state.sawVisibleOutput = true;
       if (!state.textOpen) {
         state.textOpen = true;
         return [
@@ -215,6 +219,7 @@ export function mapRuntimeEventToAgUi(
     }
 
     case "tool-input-start":
+      state.sawVisibleOutput = true;
       return [{
         event: "ToolCallStart",
         payload: {
@@ -224,6 +229,7 @@ export function mapRuntimeEventToAgUi(
       }];
 
     case "tool-input-delta":
+      state.sawVisibleOutput = true;
       return [{
         event: "ToolCallArgs",
         payload: {
@@ -233,12 +239,14 @@ export function mapRuntimeEventToAgUi(
       }];
 
     case "tool-input-available":
+      state.sawVisibleOutput = true;
       return [{
         event: "ToolCallEnd",
         payload: { toolCallId: event.toolCallId },
       }];
 
     case "tool-output-available":
+      state.sawVisibleOutput = true;
       return [{
         event: "ToolCallResult",
         payload: {
@@ -248,6 +256,7 @@ export function mapRuntimeEventToAgUi(
       }];
 
     case "tool-output-error":
+      state.sawVisibleOutput = true;
       return [{
         event: "ToolCallResult",
         payload: {
@@ -289,6 +298,17 @@ export function finalizeRunEvents(
 
   if (state.sawTerminalError) {
     return [];
+  }
+
+  if (!state.sawVisibleOutput) {
+    state.sawTerminalError = true;
+    return [{
+      event: "RunError",
+      payload: {
+        code: "EMPTY_ASSISTANT_OUTPUT",
+        message: "Agent run produced no assistant-visible output",
+      },
+    }];
   }
 
   const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
