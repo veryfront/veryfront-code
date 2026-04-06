@@ -92,4 +92,51 @@ describe("model-tool-converter", () => {
     assertEquals(result !== undefined, true);
     assertEquals("create_file" in result!, true);
   });
+
+  it("adds provider-native web_search for anthropic models when explicitly allowed", () => {
+    const result = convertToolsToAISDK([], {
+      model: "anthropic/claude-sonnet-4-6",
+      allowedToolNames: ["web_search"],
+    });
+
+    assertEquals(result !== undefined, true);
+    assertEquals("web_search" in result!, true);
+  });
+
+  it("adds provider-native web_search for veryfront-cloud anthropic models when explicitly allowed", () => {
+    const result = convertToolsToAISDK([], {
+      model: "veryfront-cloud/anthropic/claude-sonnet-4-6",
+      allowedToolNames: ["web_search"],
+    });
+
+    assertEquals(result !== undefined, true);
+    assertEquals("web_search" in result!, true);
+  });
+
+  it("does not add provider-native web_search for non-anthropic models", () => {
+    const result = convertToolsToAISDK([], {
+      model: "openai/gpt-4o-mini",
+      allowedToolNames: ["web_search"],
+    });
+
+    assertEquals(result, undefined);
+  });
+
+  it("does not override an explicit local tool named web_search", () => {
+    const tools: ToolDefinition[] = [
+      {
+        name: "web_search",
+        description: "Project-owned search tool",
+        parameters: { type: "object", properties: {} },
+      },
+    ];
+
+    const result = convertToolsToAISDK(tools, {
+      model: "anthropic/claude-sonnet-4-6",
+      allowedToolNames: ["web_search"],
+    });
+
+    assertEquals(result !== undefined, true);
+    assertEquals(Object.keys(result!).filter((name) => name === "web_search").length, 1);
+  });
 });

@@ -7,7 +7,11 @@
     "mcp": ["vf_get_errors"]
   },
   "inputs": {
-    "environment": { "type": "string", "default": "production", "description": "Target environment" },
+    "environment": {
+      "type": "string",
+      "default": "production",
+      "description": "Target environment"
+    },
     "branch": { "type": "string", "default": "main", "description": "Branch to deploy" }
   }
 }
