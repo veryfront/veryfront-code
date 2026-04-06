@@ -38,6 +38,37 @@ export interface AIStreamCallbacks {
   }) => void;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeToolInputString(input: unknown): string {
+  if (typeof input === "string") {
+    return input;
+  }
+
+  return JSON.stringify(input ?? {});
+}
+
+function normalizeToolInputObject(input: unknown): Record<string, unknown> {
+  if (isRecord(input)) {
+    return input;
+  }
+
+  if (typeof input === "string") {
+    try {
+      const parsed = JSON.parse(input);
+      if (isRecord(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return {};
+    }
+  }
+
+  return {};
+}
+
 function createAbortError(reason?: unknown): Error {
   if (reason instanceof Error) {
     return reason;
@@ -151,7 +182,7 @@ export function processStream(
         case "tool-call": {
           // tool-call fires when the full tool call is available
           const toolId = part.toolCallId;
-          const inputStr = JSON.stringify(part.input);
+          const inputStr = normalizeToolInputString(part.input);
           state.toolCalls.set(toolId, {
             id: toolId,
             name: part.toolName,
@@ -159,11 +190,7 @@ export function processStream(
           });
 
           const dynamic = isDynamicTool(part.toolName);
-          // part.input is already a parsed object — pass directly to avoid double serialization
-          const inputObj =
-            (part.input && typeof part.input === "object" && !Array.isArray(part.input))
-              ? part.input as Record<string, unknown>
-              : {};
+          const inputObj = normalizeToolInputObject(part.input);
           sendSSE(controller, encoder, {
             type: "tool-input-available",
             toolCallId: toolId,

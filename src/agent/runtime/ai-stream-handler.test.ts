@@ -186,6 +186,34 @@ describe("ai-stream-handler", () => {
       });
     });
 
+    it("preserves tool-call input when the provider already emits a JSON string", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-call",
+          toolCallId: "tc-quoted",
+          toolName: "web_search",
+          input: '{"query":"Veryfront","maxUses":1}',
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(state.toolCalls.size, 1);
+      const tc = state.toolCalls.get("tc-quoted")!;
+      assertEquals(tc.arguments, '{"query":"Veryfront","maxUses":1}');
+
+      assertEquals(events[0], {
+        type: "tool-input-available",
+        toolCallId: "tc-quoted",
+        toolName: "web_search",
+        input: { query: "Veryfront", maxUses: 1 },
+      });
+    });
+
     it("handles multiple tool calls in a single stream", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
