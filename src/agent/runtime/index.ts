@@ -107,6 +107,22 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+function stringifyToolError(error: unknown): string {
+  if (typeof error === "string" && error.length > 0) {
+    return error;
+  }
+
+  if (error instanceof Error && typeof error.message === "string" && error.message.length > 0) {
+    return error.message;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 function getSkillActivationRequiredError(toolName: string): string {
   return `Tool "${toolName}" cannot run before load-skill succeeds in the same step. ` +
     `Call "${LOAD_SKILL_TOOL_ID}" first to establish the active skill context.`;
@@ -686,6 +702,7 @@ export class AgentRuntime {
     // Request-scoped skill policy (not class-level mutable state)
     let activeSkillPolicy: string[] | undefined;
     let finalFinishReason: string | undefined;
+    let latestAssistantText = "";
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
 
     for (let step = 0; step < maxSteps; step++) {
@@ -749,8 +766,31 @@ export class AgentRuntime {
         parts: streamParts,
         timestamp: Date.now(),
       };
+      latestAssistantText = getTextFromParts(assistantMessage.parts);
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
+
+      for (const tr of state.toolResults) {
+        if (tr.preliminary) {
+          continue;
+        }
+
+        const toolResultMessage: Message = {
+          id: `tool_${tr.toolCallId}`,
+          role: "tool",
+          parts: [
+            {
+              type: "tool-result",
+              toolCallId: tr.toolCallId,
+              toolName: tr.toolName,
+              result: tr.error === undefined ? tr.output : { error: stringifyToolError(tr.error) },
+            },
+          ],
+          timestamp: Date.now(),
+        };
+        currentMessages.push(toolResultMessage);
+        await this.memory.add(toolResultMessage);
+      }
 
       if (state.finishReason !== "tool-calls" || !state.toolCalls.size) {
         sendSSE(controller, encoder, { type: "step-end" });
@@ -769,6 +809,18 @@ export class AgentRuntime {
         const toolCall: ToolCall = { id: tc.id, name: tc.name, args, status: "pending" };
 
         if (tc.providerExecuted === true) {
+          const matchingResult = state.toolResults.find((result) =>
+            result.toolCallId === tc.id && result.preliminary !== true
+          );
+
+          if (matchingResult) {
+            toolCall.status = matchingResult.error === undefined ? "completed" : "error";
+            toolCall.result = matchingResult.output;
+            toolCall.error = matchingResult.error === undefined
+              ? undefined
+              : stringifyToolError(matchingResult.error);
+            toolCalls.push(toolCall);
+          }
           continue;
         }
 
@@ -881,9 +933,8 @@ export class AgentRuntime {
       this.status = "thinking";
     }
 
-    const lastMessage = currentMessages[currentMessages.length - 1];
     return {
-      text: lastMessage ? getTextFromParts(lastMessage.parts) : "",
+      text: latestAssistantText,
       messages: currentMessages,
       toolCalls,
       status: "completed",

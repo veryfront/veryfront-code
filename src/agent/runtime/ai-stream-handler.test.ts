@@ -46,6 +46,7 @@ describe("ai-stream-handler", () => {
       assertEquals(state.accumulatedText, "");
       assertEquals(state.finishReason, null);
       assertEquals(state.toolCalls.size, 0);
+      assertEquals(state.toolResults.length, 0);
       assertEquals(state.usage, { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
     });
   });
@@ -278,6 +279,11 @@ describe("ai-stream-handler", () => {
 
       await processStream(result, state, controller, encoder, "t", undefined);
 
+      assertEquals(state.toolResults, [{
+        toolCallId: "tc-web",
+        toolName: "web_search",
+        output: { results: [{ title: "AI" }] },
+      }]);
       assertEquals(events[0], {
         type: "tool-output-available",
         toolCallId: "tc-web",
@@ -303,6 +309,11 @@ describe("ai-stream-handler", () => {
 
       await processStream(result, state, controller, encoder, "t", undefined);
 
+      assertEquals(state.toolResults, [{
+        toolCallId: "tc-web",
+        toolName: "web_search",
+        error: { error: "Search failed" },
+      }]);
       assertEquals(events[0], {
         type: "tool-output-error",
         toolCallId: "tc-web",
@@ -328,10 +339,42 @@ describe("ai-stream-handler", () => {
 
       await processStream(result, state, controller, encoder, "t", undefined);
 
+      assertEquals(state.toolResults, [{
+        toolCallId: "tc-provider-error",
+        toolName: "web_search",
+        error: "Expected object, received string",
+        providerExecuted: true,
+      }]);
       assertEquals(events[0], {
         type: "tool-output-error",
         toolCallId: "tc-provider-error",
         errorText: "Expected object, received string",
+        providerExecuted: true,
+      });
+    });
+
+    it("uses Error.message for streamed tool-error SSE events", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-error",
+          toolCallId: "tc-provider-error-object",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          error: new Error("Provider timeout"),
+          providerExecuted: true,
+        },
+        { type: "finish", finishReason: "error", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events[0], {
+        type: "tool-output-error",
+        toolCallId: "tc-provider-error-object",
+        errorText: "Provider timeout",
         providerExecuted: true,
       });
     });
