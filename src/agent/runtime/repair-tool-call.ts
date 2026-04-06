@@ -19,6 +19,10 @@ export const repairToolCall: ToolCallRepairFunction<ToolSet> = async ({
     return null;
   }
 
+  if (toolCall.providerExecuted !== true) {
+    return null;
+  }
+
   if (!InvalidToolInputError.isInstance(error) || typeof toolCall.input !== "string") {
     return null;
   }
@@ -34,8 +38,6 @@ export const repairToolCall: ToolCallRepairFunction<ToolSet> = async ({
     const parsedInput = JSON.parse(trimmedInput) as unknown;
     if (typeof parsedInput === "string") {
       normalizedQuery = parsedInput.trim();
-    } else {
-      return null;
     }
   } catch {
     // Raw string input is also repairable for provider-native web_search.
