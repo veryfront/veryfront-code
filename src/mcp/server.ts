@@ -4,7 +4,7 @@ import type { ToolExecutionContext } from "#veryfront/tool";
 import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
-import type { MCPServerConfig } from "./types.ts";
+import type { MCPServerConfig, ToolListEntry } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
@@ -188,7 +188,7 @@ export class MCPServer {
     });
   }
 
-  private async listTools(): Promise<{ tools: Array<Record<string, unknown>> }> {
+  private async listTools(): Promise<{ tools: ToolListEntry[] }> {
     // Sync integration config to API on first tools/list call
     if (this.integrationLoader && !this.integrationsLoaded) {
       try {
@@ -199,16 +199,19 @@ export class MCPServer {
     }
 
     const registry = getMCPRegistry();
-    const tools: Array<Record<string, unknown>> = [];
+    const tools: ToolListEntry[] = [];
 
     for (const [id, tool] of registry.tools.entries()) {
       if (tool.mcp?.enabled === false) continue;
 
-      tools.push({
+      const entry: ToolListEntry = {
         name: id,
         description: tool.description,
         inputSchema: tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema),
-      });
+      };
+      if (tool.mcp?.title) entry.title = tool.mcp.title;
+      if (tool.mcp?.annotations) entry.annotations = tool.mcp.annotations;
+      tools.push(entry);
     }
 
     return { tools };

@@ -11,6 +11,7 @@ import { createHttpServer, type HttpServer } from "veryfront/platform/http";
 import type { StdinReader } from "veryfront/platform";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIssuesManager } from "veryfront/issues";
+import type { ToolListEntry } from "veryfront/mcp";
 import { getErrorCollector, getLogBuffer } from "veryfront/observability";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
@@ -211,13 +212,18 @@ export class MCPDevServer {
     );
   }
 
-  private handleToolsList(): unknown {
+  private handleToolsList(): { tools: ToolListEntry[] } {
     return {
-      tools: allTools.map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: this.zodToJsonSchema(tool.inputSchema),
-      })),
+      tools: allTools.map((tool) => {
+        const entry: ToolListEntry = {
+          name: tool.name,
+          description: tool.description,
+          inputSchema: this.zodToJsonSchema(tool.inputSchema),
+        };
+        if (tool.title) entry.title = tool.title;
+        if (tool.annotations) entry.annotations = tool.annotations;
+        return entry;
+      }),
     };
   }
 

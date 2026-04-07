@@ -11,6 +11,8 @@ const getSchemaInput = z.object({
 
 const vfGetSchema: MCPTool = {
   name: "vf_get_schema",
+  title: "Get CLI Schema",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Get the CLI command schema for discovering available commands, arguments, and flags.",
   inputSchema: getSchemaInput,
@@ -26,6 +28,8 @@ const getProjectInfoInput = z.object({});
 
 const vfGetProjectInfo: MCPTool = {
   name: "vf_get_project_info",
+  title: "Get Project Info",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description: "Get project metadata including project slug, version, and environment.",
   inputSchema: getProjectInfoInput,
   execute: async () => {
