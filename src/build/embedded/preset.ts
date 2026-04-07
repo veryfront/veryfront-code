@@ -58,7 +58,7 @@ export async function buildEmbeddedPreset(
         adapter,
       });
 
-      await fs.mkdir(dirname(r.filePath), { recursive: true });
+      await fs.mkdir(presetDirname(r.filePath), { recursive: true });
       await fs.writeTextFile(r.filePath, compiled.code);
 
       const fileRel = r.filePath.slice(embeddedDir.length + 1).replace(/\\/g, "/");
@@ -92,7 +92,7 @@ export async function buildEmbeddedPreset(
         target: "es2020",
         format: "esm",
       });
-      const name = basename(srcPath).replace(/\.tsx?$/, ".js");
+      const name = presetBasename(srcPath).replace(/\.tsx?$/, ".js");
       await fs.writeTextFile(join(embeddedDir, "rsc", name), res.code);
     } catch (e) {
       logger.warn("embedded: failed to process RSC file", { error: String(e) } as unknown);
@@ -140,12 +140,14 @@ export async function buildEmbeddedPreset(
   return { manifest };
 }
 
-function dirname(path: string): string {
+/** @internal — exported for testing */
+export function presetDirname(path: string): string {
   const idx = path.lastIndexOf("/");
   return idx === -1 ? "" : path.slice(0, idx);
 }
 
-function basename(path: string): string {
+/** @internal — exported for testing */
+export function presetBasename(path: string): string {
   const idx = path.lastIndexOf("/");
   return idx === -1 ? path : path.slice(idx + 1);
 }

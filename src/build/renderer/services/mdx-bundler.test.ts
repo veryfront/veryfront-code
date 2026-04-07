@@ -194,12 +194,9 @@ describe("build/renderer/services/mdx-bundler", () => {
         projectDir: "/tmp",
       });
 
-      // Either compiles with warnings or returns errors
-      assertEquals(
-        typeof result.code === "string" || (result.errors && result.errors.length > 0),
-        true,
-        "should return result or errors",
-      );
+      assertExists(result.errors, "should have errors array");
+      assertEquals(result.errors!.length > 0, true, "should contain at least one error");
+      assertEquals(result.code, "", "error path should return empty code");
     });
   });
 });
