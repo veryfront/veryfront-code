@@ -379,7 +379,7 @@ export const vfListIntegrations: MCPTool<ListIntegrationsInput, IntegrationInfo[
   title: "List Integrations",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to list available service integrations (Gmail, Slack, GitHub, etc.) that can be added to AI projects. Do not use for templates — use vf_list_templates instead.",
+    "Use this when you need to list available service integrations (Gmail, Slack, GitHub, etc.) that can be added to AI projects. Do not use for adding integrations to a project — use vf_create_project with the integrations parameter instead.",
   inputSchema: listIntegrationsInput,
   execute: (input) => {
     const { category } = input;

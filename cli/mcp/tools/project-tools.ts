@@ -40,7 +40,7 @@ export const vfListRoutes: MCPTool<ListRoutesInput, RouteInfo[]> = {
   title: "List Routes",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to discover all routes in the project including pages, API routes, and layouts. Do not use for rendering a route — use vf_preview_route instead.",
+    "Use this when you need to discover all routes in the project including pages, API routes, layouts, error, loading, and not-found routes. Do not use for rendering a route — use vf_preview_route instead.",
   inputSchema: listRoutesInput,
   execute: (input) =>
     withSpan(
