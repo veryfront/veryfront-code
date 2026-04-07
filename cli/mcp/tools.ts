@@ -126,7 +126,7 @@ export const vfClearCache: MCPTool<ClearCacheInput, ClearCacheOutput> = {
     openWorldHint: false,
   },
   description:
-    "Use this when the dev server shows stale modules or MDX content. Clears the specified cache directories. Do not use to fix code errors — those require code changes.",
+    "Use this when the dev server shows stale modules or MDX content. Returns the list of cleared cache directories. Do not use to fix code errors — those require code changes.",
   inputSchema: clearCacheInput,
   execute: async (input) => {
     const fs = createFileSystem();

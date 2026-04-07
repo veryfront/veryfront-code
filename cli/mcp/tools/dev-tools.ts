@@ -80,7 +80,7 @@ export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult
   title: "Debug Context",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need the dev server's debug context including project slug, environment, request context mode, and multi-project configuration. Do not use for error details — use vf_get_errors instead.",
+    "Use this when you need the dev server's debug context including project slug, environment, request context mode, and multi-project configuration. Returns project info and server mode. Do not use for error details — use vf_get_errors instead.",
   inputSchema: getDebugContextInput,
   execute: (input) =>
     withSpan(
@@ -144,7 +144,7 @@ export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
     openWorldHint: false,
   },
   description:
-    "Use this when you need to force an HMR update for a specific file path. Sends a WebSocket reload notification to connected browsers.",
+    "Use this when you need to force an HMR update for a specific file path. Sends a WebSocket reload notification to connected browsers. Returns success status and active listener count. Do not use if no browser is connected — check vf_get_flywheel_status first.",
   inputSchema: triggerHmrInput,
   execute: (input) => {
     const metrics = ReloadNotifier.getMetrics();
@@ -284,7 +284,7 @@ export const vfWaitForReady: MCPTool<WaitForReadyInput, WaitForReadyResult> = {
   title: "Wait for Ready",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to wait for the dev server to become ready after restart. Do not use to check current status — use vf_get_status instead.",
+    "Use this when you need to wait for the dev server to become ready after restart. Returns success status and elapsed time. Do not use to check current status — use vf_get_status instead.",
   inputSchema: waitForReadyInput,
   execute: (input) =>
     withSpan(
@@ -374,7 +374,7 @@ export const vfGetFlywheelStatus: MCPTool<GetFlywheelStatusInput, FlywheelStatus
   title: "Flywheel Status",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need a comprehensive status overview combining server health, error counts, and HMR statistics. Do not use for detailed error or log content — use vf_get_errors or vf_get_logs instead.",
+    "Use this when you need a comprehensive status overview combining server health, error counts, and HMR statistics. Returns server status, error/log counts, and HMR metrics in one response. Do not use for detailed error or log content — use vf_get_errors or vf_get_logs instead.",
   inputSchema: getFlywheelStatusInput,
   execute: (input) =>
     withSpan(

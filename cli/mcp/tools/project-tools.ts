@@ -40,7 +40,7 @@ export const vfListRoutes: MCPTool<ListRoutesInput, RouteInfo[]> = {
   title: "List Routes",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to discover all routes in the project including pages, API routes, layouts, error, loading, and not-found routes. Do not use for rendering a route — use vf_preview_route instead.",
+    "Use this when you need to discover all routes in the project including pages, API routes, layouts, error, loading, and not-found routes. Returns an array of route info with path, type, and file. Do not use for rendering a route — use vf_preview_route instead.",
   inputSchema: listRoutesInput,
   execute: (input) =>
     withSpan(
@@ -226,7 +226,7 @@ export const vfGetComponentTree: MCPTool<GetComponentTreeInput, ComponentTreeRes
   title: "Component Tree",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to analyze the component hierarchy for a specific route including layouts, providers, and nested components. Do not use for listing all routes — use vf_list_routes instead.",
+    "Use this when you need to analyze the component hierarchy for a specific route including layouts, providers, and nested components. Returns the component tree structure. Do not use for listing all routes — use vf_list_routes instead.",
   inputSchema: getComponentTreeInput,
   execute: (input) =>
     withSpan(
@@ -384,7 +384,7 @@ export const vfListLocalProjects: MCPTool<ListLocalProjectsInput, LocalProjectIn
   title: "List Local Projects",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to discover Veryfront projects on the local filesystem by scanning for veryfront.config.ts files. Do not use for project structure details — use vf_get_project_context instead.",
+    "Use this when you need to discover Veryfront projects on the local filesystem by scanning for veryfront.config.ts files. Returns project info including template type and integrations. Do not use for project structure details — use vf_get_project_context instead.",
   inputSchema: listLocalProjectsInput,
   execute: (input) =>
     withSpan(

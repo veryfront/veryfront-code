@@ -14,7 +14,7 @@ const vfGetSchema: MCPTool = {
   title: "Get CLI Schema",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to discover available CLI commands, their arguments, and flags. Do not use for project info — use vf_get_project_info instead.",
+    "Use this when you need to discover available CLI commands, their arguments, and flags. Returns the command schema as JSON. Do not use for project info — use vf_get_project_info instead.",
   inputSchema: getSchemaInput,
   execute: async (input: { command?: string; category?: string }) => {
     if (input.command) {
@@ -31,7 +31,7 @@ const vfGetProjectInfo: MCPTool = {
   title: "Get Project Info",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need project metadata including project slug, version, and environment. Do not use for CLI commands — use vf_get_schema instead.",
+    "Use this when you need project metadata including project slug, version, and environment. Returns slug, version, and environment config. Do not use for CLI commands — use vf_get_schema instead.",
   inputSchema: getProjectInfoInput,
   execute: async () => {
     const { getEnvironmentConfig } = await import("veryfront/config");
