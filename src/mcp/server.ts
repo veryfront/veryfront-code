@@ -297,12 +297,14 @@ export class MCPServer {
     for (const [id, resource] of registry.resources.entries()) {
       if (/:(\w+)/.test(resource.pattern)) {
         const uriTemplate = resource.pattern.replace(/:(\w+)/g, "{$1}");
-        templates.push({
+        const entry: Record<string, unknown> = {
           uriTemplate,
           name: id,
           description: resource.description,
           mimeType: "application/json",
-        });
+        };
+        if (resource.title) entry.title = resource.title;
+        templates.push(entry);
       }
     }
 
