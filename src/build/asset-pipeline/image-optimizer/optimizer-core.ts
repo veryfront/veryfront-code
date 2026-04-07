@@ -17,7 +17,8 @@ import type {
   SharpConstructor,
 } from "./types.ts";
 
-function chunkArray<T>(items: T[], chunkSize: number): T[][] {
+/** @internal — exported for testing */
+export function chunkArray<T>(items: T[], chunkSize: number): T[][] {
   if (chunkSize <= 0) return [items];
 
   const chunks: T[][] = [];

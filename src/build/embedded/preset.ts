@@ -152,6 +152,23 @@ export function presetBasename(path: string): string {
   return idx === -1 ? path : path.slice(idx + 1);
 }
 
+/** @internal — exported for testing */
+export function normalizeAppRoutePath(rel: string): string {
+  return rel === "" ? "/" : rel.startsWith("/") ? rel : `/${rel}`;
+}
+
+/** @internal — exported for testing */
+export function normalizePageRoutePath(relPath: string): string {
+  const withoutExt = relPath.replace(/\.(mdx|md)$/, "");
+  const norm = `/${withoutExt}`;
+  return norm.replace(/\/+/g, "/") || "/";
+}
+
+/** @internal — exported for testing */
+export function isPageFile(name: string): boolean {
+  return (name.endsWith(".mdx") || name.endsWith(".md")) && !name.startsWith("_");
+}
+
 async function findOrCreateEntryPath(
   fs: ReturnType<typeof createFileSystem>,
   projectDir: string,
@@ -261,7 +278,7 @@ async function discoverAppRoutes(
       if (!ent.isFile || (ent.name !== "page.mdx" && ent.name !== "page.md")) continue;
 
       const routePath = rel.replace(/\/page\.(mdx|md)$/, "").replace(/(^$)/, "/");
-      const norm = routePath === "" ? "/" : routePath.startsWith("/") ? routePath : `/${routePath}`;
+      const norm = normalizeAppRoutePath(routePath);
 
       const filePath = join(embeddedDir, routePath === "" ? "app.js" : `app${norm}.js`);
       results.push({ routePath: norm, filePath, sourcePath: abs });
@@ -296,12 +313,9 @@ async function discoverPagesRoutes(
       }
 
       if (!ent.isFile) continue;
-      if (!ent.name.endsWith(".mdx") && !ent.name.endsWith(".md")) continue;
-      if (ent.name.startsWith("_")) continue;
+      if (!isPageFile(ent.name)) continue;
 
-      const withoutExt = relNext.replace(/\.(mdx|md)$/, "");
-      const norm = `/${withoutExt}`;
-      const routePath = norm.replace(/\/+/g, "/") ? norm.replace(/\/+/g, "/") : "/";
+      const routePath = normalizePageRoutePath(relNext);
       const filePath = join(embeddedDir, `pages${routePath}.js`.replace(/\/+/g, "/"));
       results.push({ routePath, filePath, sourcePath: abs });
     }

@@ -1,6 +1,12 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { presetBasename, presetDirname } from "./preset.ts";
+import {
+  isPageFile,
+  normalizeAppRoutePath,
+  normalizePageRoutePath,
+  presetBasename,
+  presetDirname,
+} from "./preset.ts";
 
 describe("build/embedded/preset", () => {
   describe("presetDirname", () => {
@@ -51,69 +57,93 @@ describe("build/embedded/preset", () => {
     });
   });
 
-  describe("route path normalization", () => {
-    describe("app routes", () => {
-      it("should normalize empty relative path to /", () => {
-        const rel = "";
-        const norm = rel === "" ? "/" : rel.startsWith("/") ? rel : `/${rel}`;
-        assertEquals(norm, "/", "empty path should become /");
-      });
-
-      it("should preserve leading slash", () => {
-        const rel = "/about";
-        const norm = rel === "" ? "/" : rel.startsWith("/") ? rel : `/${rel}`;
-        assertEquals(norm, "/about", "should keep existing leading slash");
-      });
-
-      it("should add leading slash when missing", () => {
-        const rel = "about";
-        const norm = rel === "" ? "/" : rel.startsWith("/") ? rel : `/${rel}`;
-        assertEquals(norm, "/about", "should add leading slash");
-      });
-
-      it("should handle nested route paths", () => {
-        const rel = "blog/posts";
-        const norm = rel === "" ? "/" : rel.startsWith("/") ? rel : `/${rel}`;
-        assertEquals(norm, "/blog/posts", "should normalize nested path");
-      });
+  describe("normalizeAppRoutePath", () => {
+    it("should normalize empty string to /", () => {
+      assertEquals(normalizeAppRoutePath(""), "/", "empty path should become /");
     });
 
-    describe("pages routes", () => {
-      it("should strip .mdx extension from path", () => {
-        const relNext = "about.mdx";
-        const withoutExt = relNext.replace(/\.(mdx|md)$/, "");
-        assertEquals(withoutExt, "about", "should remove .mdx extension");
-      });
+    it("should preserve leading slash", () => {
+      assertEquals(normalizeAppRoutePath("/about"), "/about", "should keep existing leading slash");
+    });
 
-      it("should strip .md extension from path", () => {
-        const relNext = "about.md";
-        const withoutExt = relNext.replace(/\.(mdx|md)$/, "");
-        assertEquals(withoutExt, "about", "should remove .md extension");
-      });
+    it("should add leading slash when missing", () => {
+      assertEquals(normalizeAppRoutePath("about"), "/about", "should add leading slash");
+    });
 
-      it("should handle nested page paths", () => {
-        const relNext = "blog/post.mdx";
-        const withoutExt = relNext.replace(/\.(mdx|md)$/, "");
-        const norm = `/${withoutExt}`;
-        assertEquals(norm, "/blog/post", "should normalize nested page path");
-      });
+    it("should handle nested route paths", () => {
+      assertEquals(
+        normalizeAppRoutePath("blog/posts"),
+        "/blog/posts",
+        "should normalize nested path",
+      );
+    });
 
-      it("should normalize duplicate slashes", () => {
-        const routePath = "//blog//post";
-        const normalized = routePath.replace(/\/+/g, "/");
-        assertEquals(normalized, "/blog/post", "should collapse duplicate slashes");
-      });
+    it("should handle / input", () => {
+      assertEquals(normalizeAppRoutePath("/"), "/", "should preserve single slash");
+    });
+  });
 
-      it("should not match files starting with underscore", () => {
-        const name = "_layout.mdx";
-        assertEquals(name.startsWith("_"), true, "underscore files should be excluded");
-      });
+  describe("normalizePageRoutePath", () => {
+    it("should strip .mdx extension and add leading slash", () => {
+      assertEquals(normalizePageRoutePath("about.mdx"), "/about", "should normalize .mdx path");
+    });
 
-      it("should match .mdx files for inclusion", () => {
-        assertEquals("page.mdx".endsWith(".mdx"), true, "should match .mdx");
-        assertEquals("page.md".endsWith(".md"), true, "should match .md");
-        assertEquals("page.ts".endsWith(".mdx"), false, "should not match .ts");
-      });
+    it("should strip .md extension and add leading slash", () => {
+      assertEquals(normalizePageRoutePath("about.md"), "/about", "should normalize .md path");
+    });
+
+    it("should handle nested page paths", () => {
+      assertEquals(
+        normalizePageRoutePath("blog/post.mdx"),
+        "/blog/post",
+        "should normalize nested page path",
+      );
+    });
+
+    it("should collapse duplicate slashes", () => {
+      assertEquals(
+        normalizePageRoutePath("//blog//post.mdx"),
+        "/blog/post",
+        "should collapse duplicate slashes",
+      );
+    });
+
+    it("should handle index files", () => {
+      assertEquals(
+        normalizePageRoutePath("index.mdx"),
+        "/index",
+        "should normalize index page",
+      );
+    });
+  });
+
+  describe("isPageFile", () => {
+    it("should accept .mdx files", () => {
+      assertEquals(isPageFile("page.mdx"), true, "should accept .mdx");
+    });
+
+    it("should accept .md files", () => {
+      assertEquals(isPageFile("page.md"), true, "should accept .md");
+    });
+
+    it("should reject .ts files", () => {
+      assertEquals(isPageFile("page.ts"), false, "should reject .ts");
+    });
+
+    it("should reject .jsx files", () => {
+      assertEquals(isPageFile("page.jsx"), false, "should reject .jsx");
+    });
+
+    it("should reject underscore-prefixed .mdx files", () => {
+      assertEquals(isPageFile("_layout.mdx"), false, "should reject _-prefixed files");
+    });
+
+    it("should reject underscore-prefixed .md files", () => {
+      assertEquals(isPageFile("_draft.md"), false, "should reject _-prefixed .md files");
+    });
+
+    it("should accept nested filenames", () => {
+      assertEquals(isPageFile("about.mdx"), true, "should accept regular .mdx");
     });
   });
 });
