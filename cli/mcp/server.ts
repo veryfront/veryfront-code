@@ -204,7 +204,8 @@ export class MCPDevServer {
         name: this.config.serverName ?? "veryfront-dev",
         title: "Veryfront Dev MCP Server",
         version: this.config.serverVersion ?? "1.0.0",
-        description: "Veryfront development server tools for real-time errors, logs, HMR, and scaffolding",
+        description:
+          "Veryfront development server tools for real-time errors, logs, HMR, and scaffolding",
       },
       "Veryfront dev MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, and vf_trigger_hmr for hot module reload.",
     );

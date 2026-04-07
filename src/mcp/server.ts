@@ -175,14 +175,16 @@ export class MCPServer {
         name: "veryfront-mcp",
         title: "Veryfront MCP Server",
         version: VERSION,
-        description: "Veryfront development server tools for real-time errors, route preview, HMR control, and scaffolding",
+        description:
+          "Veryfront development server tools for real-time errors, route preview, HMR control, and scaffolding",
       },
       capabilities: {
         tools: { listChanged: true },
         resources: { subscribe: true, listChanged: true },
         prompts: { listChanged: true },
       },
-      instructions: "Veryfront MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, vf_scaffold for code generation, and vf_get_project_context for project structure.",
+      instructions:
+        "Veryfront MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, vf_scaffold for code generation, and vf_get_project_context for project structure.",
     });
   }
 
