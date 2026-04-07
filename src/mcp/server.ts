@@ -23,6 +23,30 @@ const PROJECT_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
 
 type JSONRPCParams = Record<string, unknown> | unknown[];
 
+class JsonRpcError extends Error {
+  readonly code: number;
+  constructor(code: number, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+function errorCode(error: unknown): number {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code: unknown }).code;
+    if (typeof code === "number") return code;
+  }
+  return -32603;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}
+
 function toParamsRecord(params: JSONRPCParams | undefined): Record<string, unknown> {
   if (!params || Array.isArray(params)) return {};
   return params;
@@ -119,10 +143,7 @@ export class MCPServer {
           return {
             jsonrpc: "2.0",
             id: request.id,
-            error: {
-              code: -32603,
-              message: error instanceof Error ? error.message : String(error),
-            },
+            error: { code: errorCode(error), message: errorMessage(error) },
           };
         }
       },
@@ -224,29 +245,42 @@ export class MCPServer {
     const { name, arguments: args } = toParamsRecord(params);
 
     if (!name) {
-      throw toError(
-        createError({
-          type: "agent",
-          message: "Tool name is required",
-        }),
-      );
+      throw toError(createError({ type: "agent", message: "Tool name is required" }));
     }
 
     const toolName = String(name);
 
+    const registry = getMCPRegistry();
+    const tool = registry.tools.get(toolName);
+    if (!tool) {
+      throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
+    }
+
+    if (tool.inputSchema && typeof tool.inputSchema.parse === "function") {
+      try {
+        tool.inputSchema.parse(args ?? {});
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new JsonRpcError(-32602, `Invalid arguments for tool ${toolName}: ${message}`);
+      }
+    }
+
     return withSpan(
       "mcp.callTool",
       async () => {
-        const result = await executeTool(toolName, args, context);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
+        try {
+          const result = await executeTool(toolName, args, context);
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            isError: false,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ type: "text", text: message }],
+            isError: true,
+          };
+        }
       },
       { "mcp.tool.name": toolName },
     );

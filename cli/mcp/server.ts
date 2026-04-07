@@ -18,6 +18,7 @@ import { startStdioJsonRpc } from "./stdio.ts";
 import {
   buildInitializeResult,
   errorResponse,
+  JsonRpcError,
   type JSONRPCRequest,
   JSONRPCRequestSchema,
   type JSONRPCResponse,
@@ -228,27 +229,40 @@ export class MCPDevServer {
   }
 
   private handleToolsCall(params: unknown): Promise<unknown> {
-    const { name, arguments: args } = ToolsCallParamsSchema.parse(params);
+    const { name: toolName, arguments: args } = ToolsCallParamsSchema.parse(params);
+
+    const tool = getTool(toolName);
+    if (!tool) {
+      throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
+    }
+
+    let input: unknown;
+    try {
+      input = tool.inputSchema.parse(args ?? {});
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new JsonRpcError(-32602, `Invalid arguments for tool ${toolName}: ${message}`);
+    }
 
     return withSpan(
       "cli.mcp.handleToolsCall",
       async () => {
-        const tool = getTool(name);
-        if (!tool) throw new Error(`Unknown tool: ${name}`);
+        try {
+          const result = await tool.execute(input);
 
-        const input = tool.inputSchema.parse(args ?? {});
-        const result = await tool.execute(input);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            isError: false,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ type: "text", text: message }],
+            isError: true,
+          };
+        }
       },
-      { "mcp.tool.name": name },
+      { "mcp.tool.name": toolName },
     );
   }
 
