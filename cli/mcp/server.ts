@@ -19,7 +19,7 @@ import {
   buildInitializeResult,
   errorResponse,
   type JSONRPCRequest,
-  JSONRPC_ERRORS,
+  JsonRpcError,
   JSONRPCRequestSchema,
   type JSONRPCResponse,
   parseError,
@@ -169,17 +169,7 @@ export class MCPDevServer {
           const result = await this.dispatchMethod(method, params);
           return successResponse(id, result);
         } catch (e) {
-          const code = (e as { code?: number }).code ?? JSONRPC_ERRORS.INTERNAL_ERROR;
-          const message = e instanceof Error
-            ? e.message
-            : typeof e === "object" && e !== null && "message" in e
-              ? String((e as { message: unknown }).message)
-              : String(e);
-          return {
-            jsonrpc: "2.0" as const,
-            id,
-            error: { code, message },
-          };
+          return errorResponse(id, e);
         }
       },
       { "mcp.method": method },
@@ -243,7 +233,7 @@ export class MCPDevServer {
 
     const tool = getTool(toolName);
     if (!tool) {
-      throw { code: -32602, message: `Unknown tool: ${toolName}` };
+      throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
     }
 
     return withSpan(

@@ -23,6 +23,26 @@ const PROJECT_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
 
 type JSONRPCParams = Record<string, unknown> | unknown[];
 
+class JsonRpcError extends Error {
+  readonly code: number;
+  constructor(code: number, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+function errorCode(error: unknown): number {
+  return (error as { code?: number }).code ?? -32603;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}
+
 function toParamsRecord(params: JSONRPCParams | undefined): Record<string, unknown> {
   if (!params || Array.isArray(params)) return {};
   return params;
@@ -116,16 +136,10 @@ export class MCPServer {
           const result = await this.dispatch(request.method, request.params, context);
           return { jsonrpc: "2.0", id: request.id, result };
         } catch (error) {
-          const code = (error as { code?: number }).code ?? -32603;
-          const message = error instanceof Error
-            ? error.message
-            : typeof error === "object" && error !== null && "message" in error
-              ? String((error as { message: unknown }).message)
-              : String(error);
           return {
             jsonrpc: "2.0",
             id: request.id,
-            error: { code, message },
+            error: { code: errorCode(error), message: errorMessage(error) },
           };
         }
       },
@@ -234,7 +248,7 @@ export class MCPServer {
 
     const registry = getMCPRegistry();
     if (!registry.tools.has(toolName)) {
-      return Promise.reject({ code: -32602, message: `Unknown tool: ${toolName}` });
+      throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
     }
 
     return withSpan(

@@ -44,6 +44,18 @@ export const JSONRPC_ERRORS = {
 } as const;
 
 /**
+ * Error with a JSON-RPC error code attached.
+ * Preserves stack traces unlike throwing plain objects.
+ */
+export class JsonRpcError extends Error {
+  readonly code: number;
+  constructor(code: number, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/**
  * Create a JSON-RPC parse error response
  */
 export function parseError(e: unknown): JSONRPCResponse {
@@ -70,15 +82,18 @@ export function successResponse(id: string | number | undefined, result: unknown
 export function errorResponse(
   id: string | number | undefined,
   e: unknown,
-  code = JSONRPC_ERRORS.INTERNAL_ERROR,
+  code?: number,
 ): JSONRPCResponse {
+  const resolvedCode = code ?? (e as { code?: number }).code ?? JSONRPC_ERRORS.INTERNAL_ERROR;
+  const message = e instanceof Error
+    ? e.message
+    : typeof e === "object" && e !== null && "message" in e
+      ? String((e as { message: unknown }).message)
+      : String(e);
   return {
     jsonrpc: "2.0",
     id,
-    error: {
-      code,
-      message: e instanceof Error ? e.message : String(e),
-    },
+    error: { code: resolvedCode, message },
   };
 }
 
