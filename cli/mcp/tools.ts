@@ -156,7 +156,7 @@ export function createVfGetStatus(
   return {
     name: "vf_get_status",
     description:
-      "Use this when you need to check if the dev server is running, its uptime, or current error/warning counts. Do not use for detailed error info — use vf_get_errors instead.",
+      "Use this when you need a quick summary of the dev server's uptime, error counts, and warning counts. Note: always reports running=true when the MCP server is reachable. Do not use for detailed error info — use vf_get_errors instead.",
     inputSchema: getStatusInput,
     execute: async () => {
       const errors = getErrorCollector();

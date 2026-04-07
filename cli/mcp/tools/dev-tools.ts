@@ -31,7 +31,7 @@ interface HotReloadResult {
 export const vfHotReload: MCPTool<HotReloadInput, HotReloadResult> = {
   name: "vf_hot_reload",
   description:
-    "Use this when you need to trigger a hot module reload for a specific file or the entire project. This is the right tool for full-page reloads. Do not use for single-file HMR — use vf_trigger_hmr instead.",
+    "Use this when you need to signal that a hot reload should occur. Note: currently a no-op stub that returns success without triggering an actual reload. For file-level HMR that sends a WebSocket update, use vf_trigger_hmr instead.",
   inputSchema: hotReloadInput,
   execute: () =>
     Promise.resolve({
@@ -128,7 +128,7 @@ interface TriggerHmrResult {
 export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
   name: "vf_trigger_hmr",
   description:
-    "Use this when you need to force an HMR update for a specific file path. Do not use for full page reload — use vf_hot_reload instead.",
+    "Use this when you need to force an HMR update for a specific file path. Sends a WebSocket reload notification to connected browsers.",
   inputSchema: triggerHmrInput,
   execute: (input) => {
     const metrics = ReloadNotifier.getMetrics();
