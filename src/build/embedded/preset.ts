@@ -58,7 +58,7 @@ export async function buildEmbeddedPreset(
         adapter,
       });
 
-      await fs.mkdir(dirname(r.filePath), { recursive: true });
+      await fs.mkdir(presetDirname(r.filePath), { recursive: true });
       await fs.writeTextFile(r.filePath, compiled.code);
 
       const fileRel = r.filePath.slice(embeddedDir.length + 1).replace(/\\/g, "/");
@@ -92,7 +92,7 @@ export async function buildEmbeddedPreset(
         target: "es2020",
         format: "esm",
       });
-      const name = basename(srcPath).replace(/\.tsx?$/, ".js");
+      const name = presetBasename(srcPath).replace(/\.tsx?$/, ".js");
       await fs.writeTextFile(join(embeddedDir, "rsc", name), res.code);
     } catch (e) {
       logger.warn("embedded: failed to process RSC file", { error: String(e) } as unknown);
@@ -140,14 +140,33 @@ export async function buildEmbeddedPreset(
   return { manifest };
 }
 
-function dirname(path: string): string {
+/** @internal — exported for testing */
+export function presetDirname(path: string): string {
   const idx = path.lastIndexOf("/");
   return idx === -1 ? "" : path.slice(0, idx);
 }
 
-function basename(path: string): string {
+/** @internal — exported for testing */
+export function presetBasename(path: string): string {
   const idx = path.lastIndexOf("/");
   return idx === -1 ? path : path.slice(idx + 1);
+}
+
+/** @internal — exported for testing */
+export function normalizeAppRoutePath(rel: string): string {
+  return rel === "" ? "/" : rel.startsWith("/") ? rel : `/${rel}`;
+}
+
+/** @internal — exported for testing */
+export function normalizePageRoutePath(relPath: string): string {
+  const withoutExt = relPath.replace(/\.(mdx|md)$/, "");
+  const norm = `/${withoutExt}`;
+  return norm.replace(/\/+/g, "/") || "/";
+}
+
+/** @internal — exported for testing */
+export function isPageFile(name: string): boolean {
+  return (name.endsWith(".mdx") || name.endsWith(".md")) && !name.startsWith("_");
 }
 
 async function findOrCreateEntryPath(
@@ -259,7 +278,7 @@ async function discoverAppRoutes(
       if (!ent.isFile || (ent.name !== "page.mdx" && ent.name !== "page.md")) continue;
 
       const routePath = rel.replace(/\/page\.(mdx|md)$/, "").replace(/(^$)/, "/");
-      const norm = routePath === "" ? "/" : routePath.startsWith("/") ? routePath : `/${routePath}`;
+      const norm = normalizeAppRoutePath(routePath);
 
       const filePath = join(embeddedDir, routePath === "" ? "app.js" : `app${norm}.js`);
       results.push({ routePath: norm, filePath, sourcePath: abs });
@@ -294,12 +313,9 @@ async function discoverPagesRoutes(
       }
 
       if (!ent.isFile) continue;
-      if (!ent.name.endsWith(".mdx") && !ent.name.endsWith(".md")) continue;
-      if (ent.name.startsWith("_")) continue;
+      if (!isPageFile(ent.name)) continue;
 
-      const withoutExt = relNext.replace(/\.(mdx|md)$/, "");
-      const norm = `/${withoutExt}`;
-      const routePath = norm.replace(/\/+/g, "/") ? norm.replace(/\/+/g, "/") : "/";
+      const routePath = normalizePageRoutePath(relNext);
       const filePath = join(embeddedDir, `pages${routePath}.js`.replace(/\/+/g, "/"));
       results.push({ routePath, filePath, sourcePath: abs });
     }
