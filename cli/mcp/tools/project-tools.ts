@@ -143,7 +143,7 @@ async function getProjectName(projectDir: string, fs: FileSystem): Promise<strin
 export const vfGetProjectContext: MCPTool<GetProjectContextInput, ProjectContext> = {
   name: "vf_get_project_context",
   description:
-    "Use this when you need to understand the project structure, conventions, and capabilities at the start of a coding session. Do not use for route listing — use vf_list_routes instead.",
+    "Use this when you need to understand the project structure, conventions, and capabilities at the start of a coding session. Also returns route information. Do not use for detailed per-route rendering — use vf_preview_route instead.",
   inputSchema: getProjectContextInput,
   execute: (input) =>
     withSpan(

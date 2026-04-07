@@ -181,7 +181,7 @@ interface ClearErrorsOutput {
 
 export const vfClearErrors: MCPTool<ClearErrorsInput, ClearErrorsOutput> = {
   name: "vf_clear_errors",
-  description: "Use this when you want to clear accumulated errors from the error collector, optionally filtering by file or type. Returns the number of cleared errors.",
+  description: "Use this when you need to clear accumulated errors from the error collector, optionally filtering by file or type. Returns the number of cleared errors. Do not use for viewing errors — use vf_get_errors instead.",
   inputSchema: clearErrorsInput,
   execute: async (input) => {
     const collector = getErrorCollector();

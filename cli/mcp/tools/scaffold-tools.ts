@@ -210,7 +210,7 @@ const SCAFFOLD_CONFIGS: Record<ScaffoldType, ScaffoldConfig> = {
 export const vfScaffold: MCPTool<ScaffoldInput, ScaffoldResult> = {
   name: "vf_scaffold",
   description:
-    "Use this when you need to generate new pages, API routes, layouts, components, AI tools, agents, or prompts with proper Veryfront conventions. Do not use for creating entire projects — use vf_create_project instead.",
+    "Use this when you need to generate new pages, API routes, layouts, components, AI tools, agents, or prompts with proper Veryfront conventions. May overwrite existing files at the target path. Do not use for creating entire projects — use vf_create_project instead.",
   inputSchema: scaffoldInput,
   execute: (input) =>
     withSpan(

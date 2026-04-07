@@ -31,7 +31,7 @@ interface HotReloadResult {
 export const vfHotReload: MCPTool<HotReloadInput, HotReloadResult> = {
   name: "vf_hot_reload",
   description:
-    "Use this when you need to trigger a hot module reload for a specific file or the entire project. Do not use for full server restart.",
+    "Use this when you need to trigger a hot module reload for a specific file or the entire project. This is the right tool for full-page reloads. Do not use for single-file HMR — use vf_trigger_hmr instead.",
   inputSchema: hotReloadInput,
   execute: () =>
     Promise.resolve({
@@ -71,7 +71,7 @@ interface DebugContextResult {
 export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult> = {
   name: "vf_get_debug_context",
   description:
-    "Use this when you need the dev server's debug context including configuration and active routes. Do not use for error details — use vf_get_errors instead.",
+    "Use this when you need the dev server's debug context including project slug, environment, request context mode, and multi-project configuration. Do not use for error details — use vf_get_errors instead.",
   inputSchema: getDebugContextInput,
   execute: (input) =>
     withSpan(
@@ -181,7 +181,7 @@ interface PreviewRouteResult {
 export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
   name: "vf_preview_route",
   description:
-    "Use this when you need to test-render a route and inspect the response. Do not use for listing routes — use vf_list_routes instead.",
+    "Use this when you need to test-render a route and inspect the response. Returns rendered output, HTTP status, and render time. Note: API routes may have side effects. Do not use for listing routes — use vf_list_routes instead.",
   inputSchema: previewRouteInput,
   execute: (input) =>
     withSpan(

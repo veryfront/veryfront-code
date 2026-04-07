@@ -53,7 +53,8 @@ type IssuesCreateInput = z.infer<typeof issuesCreateInput>;
 
 const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
   name: "issues_create",
-  description: "Use this when you need to create a new issue, task, or plan. " +
+  description: "Use this when you need to create a new issue, task, or plan as a markdown file. " +
+    "Use prefix 'TASK' for small work items, 'PLAN' for proposals/RFCs, 'ISSUE' for bugs/features. " +
     "Do not use for updating — use issues_update instead.",
   inputSchema: issuesCreateInput,
   execute: async (input) => {
@@ -207,7 +208,8 @@ interface IssuesDeleteOutput {
 
 const issuesDelete: MCPTool<IssuesDeleteInput, IssuesDeleteOutput> = {
   name: "issues_delete",
-  description: "Use this when you need to permanently delete an issue. Irreversible. " +
+  description: "Use this when you need to permanently delete an issue. " +
+    "WARNING: this is irreversible and cannot be undone. Prefer issues_close unless permanent deletion is explicitly requested. " +
     "Do not use to close — use issues_close instead.",
   inputSchema: issuesDeleteInput,
   execute: async (input) => {
