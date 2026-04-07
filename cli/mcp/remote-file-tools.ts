@@ -299,7 +299,12 @@ interface RemoteUpdateFileOutput {
 export const vfRemoteUpdateFile: MCPTool<RemoteUpdateFileInput, RemoteUpdateFileOutput> = {
   name: "vf_remote_update_file",
   title: "Update Remote File",
-  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   description:
     "Create or update a file in a remote Veryfront project. Always read the file first before updating to understand its current state.",
   inputSchema: remoteUpdateFileInput,
@@ -346,7 +351,12 @@ interface RemoteDeleteFileOutput {
 export const vfRemoteDeleteFile: MCPTool<RemoteDeleteFileInput, RemoteDeleteFileOutput> = {
   name: "vf_remote_delete_file",
   title: "Delete Remote File",
-  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   description: "Delete a file from a remote Veryfront project.",
   inputSchema: remoteDeleteFileInput,
   execute: async (input) => {
@@ -613,7 +623,12 @@ interface RemoteDeleteBranchOutput {
 export const vfRemoteDeleteBranch: MCPTool<RemoteDeleteBranchInput, RemoteDeleteBranchOutput> = {
   name: "vf_remote_delete_branch",
   title: "Delete Remote Branch",
-  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   description: "Delete a branch from a remote Veryfront project.",
   inputSchema: remoteDeleteBranchInput,
   execute: async (input) => {

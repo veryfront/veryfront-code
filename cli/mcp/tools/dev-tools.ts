@@ -31,7 +31,12 @@ interface HotReloadResult {
 export const vfHotReload: MCPTool<HotReloadInput, HotReloadResult> = {
   name: "vf_hot_reload",
   title: "Hot Reload",
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   description:
     "Trigger a hot reload of the dev server. Use after making changes to see them instantly.",
   inputSchema: hotReloadInput,
@@ -132,7 +137,12 @@ interface TriggerHmrResult {
 export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
   name: "vf_trigger_hmr",
   title: "Trigger HMR",
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   description:
     "Trigger Hot Module Replacement for a specific file. The browser will update without a full reload.",
   inputSchema: triggerHmrInput,

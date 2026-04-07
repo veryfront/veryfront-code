@@ -107,7 +107,12 @@ interface ClearCacheOutput {
 export const vfClearCache: MCPTool<ClearCacheInput, ClearCacheOutput> = {
   name: "vf_clear_cache",
   title: "Clear Cache",
-  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   description:
     "Clear module and build caches. Use this when changes aren't being reflected or to force a rebuild.",
   inputSchema: clearCacheInput,
@@ -190,7 +195,12 @@ interface ClearErrorsOutput {
 export const vfClearErrors: MCPTool<ClearErrorsInput, ClearErrorsOutput> = {
   name: "vf_clear_errors",
   title: "Clear Errors",
-  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   description: "Clear errors from the error collector. Useful after fixing issues.",
   inputSchema: clearErrorsInput,
   execute: async (input) => {
