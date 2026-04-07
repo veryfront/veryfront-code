@@ -406,7 +406,7 @@ export class AgentRuntime {
           logger.error("Agent stream error", { error });
           sendSSE(controller, encoder, {
             type: "error",
-            error: "An internal error occurred",
+            error: error instanceof Error ? error.message : String(error),
           });
           closeSSEStream(controller);
         } finally {

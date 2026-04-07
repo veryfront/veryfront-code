@@ -175,7 +175,34 @@ describe("tool-helpers", () => {
   });
 
   describe("getAvailableTools", () => {
+    it("fails loudly when an explicit configured tool name does not match a discovered tool id", async () => {
+      toolRegistry.clearAll();
+
+      toolRegistry.register(
+        "roll-dice",
+        tool({
+          id: "roll-dice",
+          description: "Roll a die",
+          inputSchema: z.object({}),
+          execute: async () => ({ total: 4 }),
+        }),
+      );
+
+      await assertRejects(
+        () =>
+          getAvailableTools(
+            {
+              rollDice: true,
+            },
+            { includeIntegrationTools: false },
+          ),
+        Error,
+        'Unknown tool reference: rollDice. Tool names must exactly match tool({ id: "..." }). Available tools: roll-dice',
+      );
+    });
+
     it("filters remote integration tool definitions by the runtime allowlist", async () => {
+      toolRegistry.clearAll();
       const originalFetch = globalThis.fetch;
       const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
       const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
@@ -205,6 +232,7 @@ describe("tool-helpers", () => {
 
         assertEquals(defs.map((def) => def.name), ["gmail:get-email"]);
       } finally {
+        toolRegistry.clearAll();
         if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
         else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
         if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
