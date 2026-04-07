@@ -18,8 +18,8 @@ import { startStdioJsonRpc } from "./stdio.ts";
 import {
   buildInitializeResult,
   errorResponse,
-  type JSONRPCRequest,
   JsonRpcError,
+  type JSONRPCRequest,
   JSONRPCRequestSchema,
   type JSONRPCResponse,
   parseError,

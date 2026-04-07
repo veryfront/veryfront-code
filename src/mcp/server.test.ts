@@ -686,7 +686,10 @@ describe("mcp/server", () => {
       });
 
       assertEquals(response.error, undefined);
-      const result = response.result as { content: { type: string; text: string }[]; isError: boolean };
+      const result = response.result as {
+        content: { type: string; text: string }[];
+        isError: boolean;
+      };
       assertEquals(result.isError, false);
       assertEquals(result.content[0].type, "text");
       assertEquals(JSON.parse(result.content[0].text).hello, "world");
@@ -715,7 +718,10 @@ describe("mcp/server", () => {
       });
 
       assertEquals(response.error, undefined);
-      const result = response.result as { content: { type: string; text: string }[]; isError: boolean };
+      const result = response.result as {
+        content: { type: string; text: string }[];
+        isError: boolean;
+      };
       assertEquals(result.isError, true);
       assertEquals(result.content[0].text, "tool broke");
     });

@@ -88,8 +88,8 @@ export function errorResponse(
   const message = e instanceof Error
     ? e.message
     : typeof e === "object" && e !== null && "message" in e
-      ? String((e as { message: unknown }).message)
-      : String(e);
+    ? String((e as { message: unknown }).message)
+    : String(e);
   return {
     jsonrpc: "2.0",
     id,
