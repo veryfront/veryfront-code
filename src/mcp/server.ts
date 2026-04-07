@@ -32,7 +32,11 @@ class JsonRpcError extends Error {
 }
 
 function errorCode(error: unknown): number {
-  return (error as { code?: number }).code ?? -32603;
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code: unknown }).code;
+    if (typeof code === "number") return code;
+  }
+  return -32603;
 }
 
 function errorMessage(error: unknown): string {

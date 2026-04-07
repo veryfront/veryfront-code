@@ -84,7 +84,11 @@ export function errorResponse(
   e: unknown,
   code?: number,
 ): JSONRPCResponse {
-  const resolvedCode = code ?? (e as { code?: number }).code ?? JSONRPC_ERRORS.INTERNAL_ERROR;
+  const errorCode = typeof e === "object" && e !== null && "code" in e
+    ? (e as { code: unknown }).code
+    : undefined;
+  const resolvedCode = code ??
+    (typeof errorCode === "number" ? errorCode : JSONRPC_ERRORS.INTERNAL_ERROR);
   const message = e instanceof Error
     ? e.message
     : typeof e === "object" && e !== null && "message" in e
