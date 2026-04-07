@@ -15,6 +15,7 @@ import { getErrorCollector, getLogBuffer } from "veryfront/observability";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
 import {
+  buildInitializeResult,
   errorResponse,
   type JSONRPCRequest,
   JSONRPCRequestSchema,
@@ -119,6 +120,17 @@ export class MCPDevServer {
 
       if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
 
+      if (origin && !isAllowedOrigin) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32600, message: "Forbidden: Origin not allowed" },
+          }),
+          { status: 403, headers },
+        );
+      }
+
       if (url.pathname !== "/mcp") {
         return new Response(JSON.stringify({ error: "Not found. MCP endpoint is at /mcp" }), {
           status: 404,
@@ -166,6 +178,8 @@ export class MCPDevServer {
     switch (method) {
       case "initialize":
         return Promise.resolve(this.handleInitialize(params));
+      case "notifications/initialized":
+        return Promise.resolve({});
       case "tools/list":
         return Promise.resolve(this.handleToolsList());
       case "tools/call":
@@ -183,19 +197,18 @@ export class MCPDevServer {
     }
   }
 
-  private handleInitialize(_params: unknown): unknown {
-    return {
-      protocolVersion: "2024-11-05",
-      capabilities: {
-        tools: {},
-        resources: {},
-        prompts: {},
+  private handleInitialize(params: unknown): unknown {
+    return buildInitializeResult(
+      params,
+      {
+        name: this.config.serverName ?? "veryfront-dev",
+        title: "Veryfront Dev MCP Server",
+        version: this.config.serverVersion ?? "1.0.0",
+        description:
+          "Veryfront development server tools for real-time errors, logs, HMR, and scaffolding",
       },
-      serverInfo: {
-        name: this.config.serverName,
-        version: this.config.serverVersion,
-      },
-    };
+      "Veryfront dev MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, and vf_trigger_hmr for hot module reload.",
+    );
   }
 
   private handleToolsList(): unknown {

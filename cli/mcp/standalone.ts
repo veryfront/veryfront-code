@@ -11,6 +11,7 @@ import type { StdinReader } from "veryfront/platform";
 import { DevServerClient } from "./dev-server-client.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
 import {
+  buildInitializeResult,
   errorResponse,
   type JSONRPCRequest,
   JSONRPCRequestSchema,
@@ -79,11 +80,16 @@ export class StandaloneMCPServer {
   private dispatchMethod(method: string, params: unknown): Promise<unknown> {
     switch (method) {
       case "initialize":
-        return Promise.resolve({
-          protocolVersion: "2024-11-05",
-          capabilities: { tools: {}, resources: {}, prompts: {} },
-          serverInfo: { name: "veryfront-mcp", version: "1.0.0" },
-        });
+        return Promise.resolve(buildInitializeResult(
+          params,
+          {
+            name: "veryfront-mcp",
+            title: "Veryfront Standalone MCP Server",
+            version: "1.0.0",
+            description: "Veryfront standalone MCP server for CLI-based development tools",
+          },
+          "Veryfront standalone MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, and vf_get_status for dev server health.",
+        ));
       case "notifications/initialized":
         return Promise.resolve({});
       case "tools/list":

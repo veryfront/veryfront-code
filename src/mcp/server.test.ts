@@ -386,6 +386,186 @@ describe("mcp/server", () => {
     });
   });
 
+  describe("initialize version negotiation", () => {
+    it("echoes 2025-11-25 when client requests it", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      });
+      const result = res.result as Record<string, unknown>;
+      assertEquals(result.protocolVersion, "2025-11-25");
+    });
+
+    it("echoes 2024-11-05 when client requests it", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2024-11-05" },
+      });
+      const result = res.result as Record<string, unknown>;
+      assertEquals(result.protocolVersion, "2024-11-05");
+    });
+
+    it("returns 2025-11-25 for unknown version", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "1999-01-01" },
+      });
+      const result = res.result as Record<string, unknown>;
+      assertEquals(result.protocolVersion, "2025-11-25");
+    });
+
+    it("returns 2025-11-25 when no version is provided", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+      });
+      const result = res.result as Record<string, unknown>;
+      assertEquals(result.protocolVersion, "2025-11-25");
+    });
+
+    it("serverInfo includes title and description", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      });
+      const result = res.result as Record<string, unknown>;
+      const serverInfo = result.serverInfo as Record<string, unknown>;
+      assertEquals(serverInfo.name, "veryfront-mcp");
+      assertExists(serverInfo.title);
+      assertExists(serverInfo.description);
+    });
+
+    it("includes instructions field", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      });
+      const result = res.result as Record<string, unknown>;
+      assertExists(result.instructions);
+    });
+
+    it("capabilities include listChanged", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      });
+      const result = res.result as Record<string, unknown>;
+      const caps = result.capabilities as Record<string, Record<string, unknown>>;
+      assertEquals(caps.tools.listChanged, true);
+      assertEquals(caps.resources.listChanged, true);
+      assertEquals(caps.prompts.listChanged, true);
+    });
+  });
+
+  describe("Origin validation (DNS rebinding protection)", () => {
+    it("returns 403 when Origin is not in allowed list", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://allowed.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Origin": "https://evil.com",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 403);
+      const body = await response.json();
+      assertEquals(body.error.message, "Forbidden: Origin not allowed");
+    });
+
+    it("returns 200 when Origin is in allowed list", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://allowed.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Origin": "https://allowed.com",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 200);
+    });
+
+    it("returns 200 when no Origin header is present", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://allowed.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 200);
+    });
+  });
+
+  describe("notifications/initialized", () => {
+    it("handles notifications/initialized with id", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "notifications/initialized",
+      });
+      assertEquals(res.jsonrpc, "2.0");
+      assertEquals(res.id, 1);
+      assertEquals(res.error, undefined);
+    });
+
+    it("handles notifications/initialized without id (proper notification)", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      });
+      assertEquals(res.jsonrpc, "2.0");
+      assertEquals(res.id, undefined);
+      assertEquals(res.error, undefined);
+    });
+  });
+
   it("syncs integration config to API on first tools/list call", async () => {
     const server = createMCPServer({ enabled: true });
     server.setIntegrationLoader({

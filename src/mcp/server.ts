@@ -81,6 +81,8 @@ export interface IntegrationLoaderConfig {
   apiToken?: string;
 }
 
+const MCP_SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
+
 export class MCPServer {
   private config: MCPServerConfig;
   private integrationLoader?: IntegrationLoaderConfig;
@@ -148,6 +150,8 @@ export class MCPServer {
         return this.getPrompt(params);
       case "initialize":
         return this.initialize(params);
+      case "notifications/initialized":
+        return Promise.resolve({});
       default:
         throw toError(
           createError({
@@ -158,15 +162,29 @@ export class MCPServer {
     }
   }
 
-  private initialize(_params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+  private initialize(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+    const p = toParamsRecord(params);
+    const requested = typeof p.protocolVersion === "string" ? p.protocolVersion : undefined;
+    const negotiated = requested && MCP_SUPPORTED_VERSIONS.includes(requested)
+      ? requested
+      : MCP_SUPPORTED_VERSIONS[0];
+
     return Promise.resolve({
-      protocolVersion: "2024-11-05",
-      serverInfo: { name: "veryfront-mcp", version: VERSION },
-      capabilities: {
-        tools: {},
-        resources: { subscribe: true },
-        prompts: {},
+      protocolVersion: negotiated,
+      serverInfo: {
+        name: "veryfront-mcp",
+        title: "Veryfront MCP Server",
+        version: VERSION,
+        description:
+          "Veryfront development server tools for real-time errors, route preview, HMR control, and scaffolding",
       },
+      capabilities: {
+        tools: { listChanged: true },
+        resources: { subscribe: true, listChanged: true },
+        prompts: { listChanged: true },
+      },
+      instructions:
+        "Veryfront MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, vf_scaffold for code generation, and vf_get_project_context for project structure.",
     });
   }
 
@@ -350,6 +368,12 @@ export class MCPServer {
       const requestOrigin = request.headers.get("Origin");
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: this.getCORSHeaders(requestOrigin) });
+      }
+
+      if (requestOrigin && this.config.cors?.enabled && this.config.cors.origins?.length) {
+        if (!this.config.cors.origins.includes(requestOrigin)) {
+          return createJSONRPCErrorResponse(403, -32600, "Forbidden: Origin not allowed");
+        }
       }
 
       if (this.config.auth?.type && this.config.auth.type !== "none") {
