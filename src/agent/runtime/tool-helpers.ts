@@ -11,6 +11,7 @@ import { executeTool, toolRegistry } from "#veryfront/tool";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import {
   executeRemoteIntegrationTool,
   isRemoteIntegrationTool,
@@ -70,6 +71,52 @@ export function isDynamicTool(name: string): boolean {
  */
 // deno-lint-ignore no-explicit-any -- generic erasure: accepts Tool with any input/output types
 export type ToolConfigEntry = Tool<any, any> | boolean;
+
+function formatAvailableToolNames(names: Iterable<string>): string {
+  const sorted = [...new Set(names)].sort();
+  return sorted.length > 0 ? sorted.join(", ") : "(none)";
+}
+
+function throwUnknownConfiguredToolsError(
+  unknownToolNames: string[],
+  availableLocalToolNames: Iterable<string>,
+  availableRemoteToolNames: Iterable<string>,
+): never {
+  const unknownList = unknownToolNames.sort().join(", ");
+  const availableNames = formatAvailableToolNames([
+    ...availableLocalToolNames,
+    ...availableRemoteToolNames,
+  ]);
+
+  throw toError(
+    createError({
+      type: "agent",
+      message:
+        `Unknown tool reference${unknownToolNames.length === 1 ? "" : "s"}: ${unknownList}. ` +
+        `Tool names must exactly match tool({ id: "..." }). Available tools: ${availableNames}`,
+    }),
+  );
+}
+
+async function getRemoteToolDefinitions(options?: {
+  includeIntegrationTools?: boolean;
+  allowedRemoteToolNames?: string[];
+}): Promise<ToolDefinition[]> {
+  if (options?.includeIntegrationTools === false) {
+    return [];
+  }
+
+  try {
+    const { getRemoteIntegrationToolDefinitions } = await import(
+      "#veryfront/integrations/remote-tools.ts"
+    );
+    return (await getRemoteIntegrationToolDefinitions()).filter((def) =>
+      !options?.allowedRemoteToolNames || options.allowedRemoteToolNames.includes(def.name)
+    );
+  } catch {
+    return [];
+  }
+}
 
 export function resolveConfiguredTool(
   toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
@@ -179,32 +226,35 @@ export async function getAvailableTools(
     });
 
     // Append remote integration tools (per-request, project-scoped)
-    if (options?.includeIntegrationTools !== false) {
-      try {
-        const { getRemoteIntegrationToolDefinitions } = await import(
-          "#veryfront/integrations/remote-tools.ts"
-        );
-        const remoteDefs = (await getRemoteIntegrationToolDefinitions()).filter((def) =>
-          !options?.allowedRemoteToolNames || options.allowedRemoteToolNames.includes(def.name)
-        );
-        for (const def of remoteDefs) {
-          logToolDefinition(def.name, def);
-        }
-        tools.push(...remoteDefs);
-      } catch {
-        // Integration tools unavailable — non-fatal
-      }
+    const remoteDefs = await getRemoteToolDefinitions(options);
+    for (const def of remoteDefs) {
+      logToolDefinition(def.name, def);
     }
+    tools.push(...remoteDefs);
 
     return tools;
   }
 
   const tools: ToolDefinition[] = [];
+  const remoteDefs = await getRemoteToolDefinitions(options);
+  const remoteToolNames = new Set(remoteDefs.map((def) => def.name));
+  const explicitlyRequestedRemoteToolNames = new Set<string>();
+  const unresolvedConfiguredToolNames: string[] = [];
 
   for (const [name, entry] of Object.entries(toolsConfig)) {
     if (entry === true) {
       const tool = toolRegistry.get(name);
-      if (tool) addToolDefinition(tools, name, tool);
+      if (tool) {
+        addToolDefinition(tools, name, tool);
+        continue;
+      }
+
+      if (remoteToolNames.has(name)) {
+        explicitlyRequestedRemoteToolNames.add(name);
+        continue;
+      }
+
+      unresolvedConfiguredToolNames.push(name);
       continue;
     }
 
@@ -213,27 +263,27 @@ export async function getAvailableTools(
     }
   }
 
-  // Also append remote integration tools for explicit-object configs.
-  // The internal streaming path converts `tools: true` to an explicit object
-  // from the local registry, so remote tools would be missed without this.
-  if (options?.includeIntegrationTools !== false) {
-    try {
-      const { getRemoteIntegrationToolDefinitions } = await import(
-        "#veryfront/integrations/remote-tools.ts"
-      );
-      const remoteDefs = (await getRemoteIntegrationToolDefinitions()).filter((def) =>
-        !options?.allowedRemoteToolNames || options.allowedRemoteToolNames.includes(def.name)
-      );
-      for (const def of remoteDefs) {
-        // Skip if already present (e.g., explicitly configured by name)
-        if (!tools.some((t) => t.name === def.name)) {
-          logToolDefinition(def.name, def);
-          tools.push(def);
-        }
-      }
-    } catch {
-      // Integration tools unavailable — non-fatal
+  // Explicit-object configs should only expose remote definitions that were
+  // explicitly requested, except for the internal runtime path that expands
+  // `tools: true` into an explicit local-tool map and passes the remote allowlist.
+  const remoteDefsToAppend = explicitlyRequestedRemoteToolNames.size > 0
+    ? remoteDefs.filter((def) => explicitlyRequestedRemoteToolNames.has(def.name))
+    : remoteDefs.filter((def) => options?.allowedRemoteToolNames?.includes(def.name));
+
+  for (const def of remoteDefsToAppend) {
+    // Skip if already present (e.g., explicitly configured by name)
+    if (!tools.some((t) => t.name === def.name)) {
+      logToolDefinition(def.name, def);
+      tools.push(def);
     }
+  }
+
+  if (unresolvedConfiguredToolNames.length > 0) {
+    throwUnknownConfiguredToolsError(
+      unresolvedConfiguredToolNames,
+      toolRegistry.getAll().keys(),
+      remoteToolNames,
+    );
   }
 
   return tools;
