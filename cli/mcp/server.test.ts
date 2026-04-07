@@ -272,6 +272,60 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       }
     });
 
+    it("tools/list accepts cursor param without erroring", async () => {
+      const portNum = 19889;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 11,
+        method: "tools/list",
+        params: { cursor: "abc123" },
+      });
+
+      const data = await response.json();
+      assertExists(data.result);
+      assertEquals(data.error, undefined);
+    });
+
+    it("resources/list accepts cursor param without erroring", async () => {
+      const portNum = 19890;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 12,
+        method: "resources/list",
+        params: { cursor: "abc123" },
+      });
+
+      const data = await response.json();
+      assertExists(data.result);
+      assertEquals(data.error, undefined);
+    });
+
+    it("prompts/list accepts cursor param without erroring", async () => {
+      const portNum = 19891;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 13,
+        method: "prompts/list",
+        params: { cursor: "abc123" },
+      });
+
+      const data = await response.json();
+      assertExists(data.result);
+      assertEquals(data.error, undefined);
+    });
+
     it("should return error for unknown method", async () => {
       const portNum = 19881;
       server = new MCPDevServer({ httpPort: portNum });

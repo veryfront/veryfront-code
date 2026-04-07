@@ -183,15 +183,15 @@ export class MCPDevServer {
       case "notifications/initialized":
         return Promise.resolve({});
       case "tools/list":
-        return Promise.resolve(this.handleToolsList());
+        return Promise.resolve(this.handleToolsList(params));
       case "tools/call":
         return this.handleToolsCall(params);
       case "resources/list":
-        return Promise.resolve(this.handleResourcesList());
+        return Promise.resolve(this.handleResourcesList(params));
       case "resources/read":
         return this.handleResourcesRead(params);
       case "prompts/list":
-        return Promise.resolve(this.handlePromptsList());
+        return Promise.resolve(this.handlePromptsList(params));
       case "prompts/get":
         return this.handlePromptsGet(params);
       default:
@@ -213,7 +213,7 @@ export class MCPDevServer {
     );
   }
 
-  private handleToolsList(): { tools: ToolListEntry[] } {
+  private handleToolsList(_params?: unknown): { tools: ToolListEntry[] } {
     return {
       tools: allTools.map((tool) => {
         const entry: ToolListEntry = {
@@ -266,7 +266,7 @@ export class MCPDevServer {
     );
   }
 
-  private handleResourcesList(): unknown {
+  private handleResourcesList(_params?: unknown): unknown {
     return {
       resources: [
         {
@@ -454,7 +454,7 @@ export class MCPDevServer {
     );
   }
 
-  private handlePromptsList(): unknown {
+  private handlePromptsList(_params?: unknown): unknown {
     return {
       prompts: [
         {

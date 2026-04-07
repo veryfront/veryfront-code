@@ -214,6 +214,27 @@ describe("mcp/standalone", () => {
       assertEquals(typeof info.version, "string");
     });
 
+    it("tools/list accepts cursor param without erroring", async () => {
+      const server = new StandaloneMCPServer();
+      const resp = await dispatch(server, "tools/list", { cursor: "abc123" });
+      assertExists(resp.result);
+      assertEquals(resp.error, undefined);
+    });
+
+    it("resources/list accepts cursor param without erroring", async () => {
+      const server = new StandaloneMCPServer();
+      const resp = await dispatch(server, "resources/list", { cursor: "abc123" });
+      assertExists(resp.result);
+      assertEquals(resp.error, undefined);
+    });
+
+    it("prompts/list accepts cursor param without erroring", async () => {
+      const server = new StandaloneMCPServer();
+      const resp = await dispatch(server, "prompts/list", { cursor: "abc123" });
+      assertExists(resp.result);
+      assertEquals(resp.error, undefined);
+    });
+
     it("unknown method returns error", async () => {
       const server = new StandaloneMCPServer();
       const resp = await dispatch(server, "nonexistent/method");

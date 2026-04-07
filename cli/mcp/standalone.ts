@@ -94,21 +94,15 @@ export class StandaloneMCPServer {
       case "notifications/initialized":
         return Promise.resolve({});
       case "tools/list":
-        return Promise.resolve({
-          tools: this.tools.map(({ name, description, inputSchema }) => ({
-            name,
-            description,
-            inputSchema,
-          })),
-        });
+        return Promise.resolve(this.handleToolsList(params));
       case "tools/call":
         return this.handleToolsCall(params);
       case "resources/list":
-        return Promise.resolve(this.handleResourcesList());
+        return Promise.resolve(this.handleResourcesList(params));
       case "resources/read":
         return this.handleResourcesRead(params);
       case "prompts/list":
-        return Promise.resolve(this.handlePromptsList());
+        return Promise.resolve(this.handlePromptsList(params));
       case "prompts/get":
         return this.handlePromptsGet(params);
       default:
@@ -137,7 +131,17 @@ export class StandaloneMCPServer {
     }
   }
 
-  private handleResourcesList(): unknown {
+  private handleToolsList(_params?: unknown): unknown {
+    return {
+      tools: this.tools.map(({ name, description, inputSchema }) => ({
+        name,
+        description,
+        inputSchema,
+      })),
+    };
+  }
+
+  private handleResourcesList(_params?: unknown): unknown {
     return {
       resources: [
         {
@@ -207,7 +211,7 @@ export class StandaloneMCPServer {
     throw new Error(`Unknown resource: ${uri}`);
   }
 
-  private handlePromptsList(): unknown {
+  private handlePromptsList(_params?: unknown): unknown {
     return {
       prompts: [
         {
