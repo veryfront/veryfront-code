@@ -284,7 +284,7 @@ export const vfWaitForReady: MCPTool<WaitForReadyInput, WaitForReadyResult> = {
   title: "Wait for Ready",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to wait for the dev server to become ready after restart. Returns success status and elapsed time. Do not use to check current status — use vf_get_status instead.",
+    "Use this when you need to wait for the dev server to become ready after restart. Polls the health endpoint until responsive. Returns success status and elapsed time. Do not use for error counts or uptime — use vf_get_status instead.",
   inputSchema: waitForReadyInput,
   execute: (input) =>
     withSpan(
