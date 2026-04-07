@@ -740,6 +740,32 @@ describe("mcp/server", () => {
       assertEquals(response.error.code, -32602);
       assertStringIncludes(response.error.message, "Unknown tool");
     });
+
+    it("returns JSON-RPC error with code -32602 for invalid arguments", async () => {
+      const server = createMCPServer({ enabled: true });
+
+      registerTool(
+        "test:strict",
+        dynamicTool({
+          id: "test:strict",
+          description: "Tool with required arg",
+          inputSchema: z.object({ required_field: z.string() }),
+          execute: async (input) => input,
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: { name: "test:strict", arguments: { wrong_field: 123 } },
+      });
+
+      assertExists(response.error);
+      assertEquals(response.error.code, -32602);
+      assertStringIncludes(response.error.message, "Invalid arguments");
+      assertEquals(response.result, undefined);
+    });
   });
 
   it("syncs integration config to API on first tools/list call", async () => {

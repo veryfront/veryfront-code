@@ -247,8 +247,18 @@ export class MCPServer {
     const toolName = String(name);
 
     const registry = getMCPRegistry();
-    if (!registry.tools.has(toolName)) {
+    const tool = registry.tools.get(toolName);
+    if (!tool) {
       throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
+    }
+
+    if (tool.inputSchema && typeof tool.inputSchema.parse === "function") {
+      try {
+        tool.inputSchema.parse(args ?? {});
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new JsonRpcError(-32602, `Invalid arguments for tool ${toolName}: ${message}`);
+      }
     }
 
     return withSpan(

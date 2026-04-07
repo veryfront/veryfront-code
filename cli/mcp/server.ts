@@ -236,11 +236,18 @@ export class MCPDevServer {
       throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
     }
 
+    let input: unknown;
+    try {
+      input = tool.inputSchema.parse(args ?? {});
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new JsonRpcError(-32602, `Invalid arguments for tool ${toolName}: ${message}`);
+    }
+
     return withSpan(
       "cli.mcp.handleToolsCall",
       async () => {
         try {
-          const input = tool.inputSchema.parse(args ?? {});
           const result = await tool.execute(input);
 
           return {
