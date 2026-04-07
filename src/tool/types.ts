@@ -5,6 +5,8 @@
 import type { z } from "zod";
 import type { JsonSchema } from "./schema/json-schema.ts";
 import type { BlobStorage } from "#veryfront/workflow/blob/types.ts";
+// type-only import — no runtime circular dependency (tool ↔ mcp)
+import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
 
 /**
  * Tool configuration options
@@ -45,12 +47,7 @@ export interface ToolConfig<TInput = any, TOutput = any> {
     /** Human-readable title for display */
     title?: string;
     /** Behavioral hints for clients (MCP 2025-11-25) */
-    annotations?: {
-      readOnlyHint?: boolean;
-      destructiveHint?: boolean;
-      idempotentHint?: boolean;
-      openWorldHint?: boolean;
-    };
+    annotations?: ToolAnnotations;
   };
 }
 

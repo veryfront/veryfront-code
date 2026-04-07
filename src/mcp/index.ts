@@ -22,7 +22,7 @@
  * ```
  */
 
-export type { MCPServerConfig, MCPStats, MCPTool } from "./types.ts";
+export type { MCPServerConfig, MCPStats, MCPTool, ToolAnnotations, ToolListEntry } from "./types.ts";
 
 export {
   clearMCPRegistry,

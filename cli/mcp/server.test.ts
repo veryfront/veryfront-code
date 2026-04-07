@@ -257,6 +257,18 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       for (const tool of data.result.tools) {
         assertExists(tool.title, `Tool ${tool.name} missing title in tools/list`);
         assertExists(tool.annotations, `Tool ${tool.name} missing annotations in tools/list`);
+        assertEquals(
+          typeof tool.annotations.readOnlyHint,
+          "boolean",
+          `Tool ${tool.name} must explicitly set readOnlyHint in tools/list`,
+        );
+        if (tool.annotations.readOnlyHint) {
+          assertEquals(
+            tool.annotations.destructiveHint ?? false,
+            false,
+            `Read-only tool ${tool.name} must not be destructive`,
+          );
+        }
       }
     });
 

@@ -50,6 +50,41 @@ describe("mcp/tools", () => {
         );
       }
     });
+
+    it("every tool explicitly sets readOnlyHint", () => {
+      for (const tool of allTools) {
+        assertExists(tool.annotations, `Tool ${tool.name} missing annotations`);
+        assertEquals(
+          typeof tool.annotations!.readOnlyHint,
+          "boolean",
+          `Tool ${tool.name} must explicitly set readOnlyHint`,
+        );
+      }
+    });
+
+    it("read-only tools are not marked destructive", () => {
+      for (const tool of allTools) {
+        if (tool.annotations?.readOnlyHint) {
+          assertEquals(
+            tool.annotations.destructiveHint ?? false,
+            false,
+            `Read-only tool ${tool.name} must not have destructiveHint: true`,
+          );
+        }
+      }
+    });
+
+    it("destructive tools are not marked read-only", () => {
+      for (const tool of allTools) {
+        if (tool.annotations?.destructiveHint) {
+          assertEquals(
+            tool.annotations.readOnlyHint,
+            false,
+            `Destructive tool ${tool.name} must have readOnlyHint: false`,
+          );
+        }
+      }
+    });
   });
 
   describe("getTool", () => {

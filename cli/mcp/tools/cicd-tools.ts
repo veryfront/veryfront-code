@@ -71,7 +71,7 @@ const triggerDeployInput = z.object({
 const vfTriggerDeploy: MCPTool = {
   name: "vf_trigger_deploy",
   title: "Trigger Deploy",
-  annotations: { destructiveHint: false, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description:
     "Trigger a deployment to an environment. Returns a deployment ID for status tracking.",
   inputSchema: triggerDeployInput,

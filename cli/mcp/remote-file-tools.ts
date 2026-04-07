@@ -299,7 +299,7 @@ interface RemoteUpdateFileOutput {
 export const vfRemoteUpdateFile: MCPTool<RemoteUpdateFileInput, RemoteUpdateFileOutput> = {
   name: "vf_remote_update_file",
   title: "Update Remote File",
-  annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Create or update a file in a remote Veryfront project. Always read the file first before updating to understand its current state.",
   inputSchema: remoteUpdateFileInput,
@@ -346,7 +346,7 @@ interface RemoteDeleteFileOutput {
 export const vfRemoteDeleteFile: MCPTool<RemoteDeleteFileInput, RemoteDeleteFileOutput> = {
   name: "vf_remote_delete_file",
   title: "Delete Remote File",
-  annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   description: "Delete a file from a remote Veryfront project.",
   inputSchema: remoteDeleteFileInput,
   execute: async (input) => {
@@ -439,7 +439,7 @@ interface RemoteMoveFileOutput {
 export const vfRemoteMoveFile: MCPTool<RemoteMoveFileInput, RemoteMoveFileOutput> = {
   name: "vf_remote_move_file",
   title: "Move Remote File",
-  annotations: { destructiveHint: false, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description: "Move or rename a file in a remote Veryfront project.",
   inputSchema: remoteMoveFileInput,
   execute: async (input) => {
@@ -527,7 +527,7 @@ interface RemoteCreateBranchOutput {
 export const vfRemoteCreateBranch: MCPTool<RemoteCreateBranchInput, RemoteCreateBranchOutput> = {
   name: "vf_remote_create_branch",
   title: "Create Remote Branch",
-  annotations: { destructiveHint: false, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description:
     "Create a new branch in a remote Veryfront project. Branch from main by default, or specify a base branch.",
   inputSchema: remoteCreateBranchInput,
@@ -567,7 +567,7 @@ interface RemoteMergeBranchOutput {
 export const vfRemoteMergeBranch: MCPTool<RemoteMergeBranchInput, RemoteMergeBranchOutput> = {
   name: "vf_remote_merge_branch",
   title: "Merge Remote Branch",
-  annotations: { destructiveHint: false, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   description: "Merge a branch into the target branch (or main if not specified).",
   inputSchema: remoteMergeBranchInput,
   execute: async (input) => {
@@ -613,7 +613,7 @@ interface RemoteDeleteBranchOutput {
 export const vfRemoteDeleteBranch: MCPTool<RemoteDeleteBranchInput, RemoteDeleteBranchOutput> = {
   name: "vf_remote_delete_branch",
   title: "Delete Remote Branch",
-  annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   description: "Delete a branch from a remote Veryfront project.",
   inputSchema: remoteDeleteBranchInput,
   execute: async (input) => {
@@ -652,7 +652,7 @@ interface RemoteCreateProjectOutput {
 export const vfRemoteCreateProject: MCPTool<RemoteCreateProjectInput, RemoteCreateProjectOutput> = {
   name: "vf_remote_create_project",
   title: "Create Remote Project",
-  annotations: { destructiveHint: false, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description: "Create a new Veryfront project. Returns the project details including ID and slug.",
   inputSchema: remoteCreateProjectInput,
   execute: async (input) => {
@@ -692,7 +692,7 @@ interface RemoteCloneProjectOutput {
 export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneProjectOutput> = {
   name: "vf_remote_clone_project",
   title: "Clone Remote Project",
-  annotations: { destructiveHint: false, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description:
     "Clone a Veryfront project by creating a new project and copying all files from the source.",
   inputSchema: remoteCloneProjectInput,

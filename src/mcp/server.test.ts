@@ -4,6 +4,7 @@ import { dynamicTool } from "#veryfront/tool";
 import { z } from "zod";
 import { clearMCPRegistry, registerTool } from "./registry.ts";
 import { createMCPServer } from "./server.ts";
+import type { ToolListEntry } from "./types.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -595,7 +596,7 @@ describe("mcp/server", () => {
       method: "tools/list",
     });
 
-    const tools = (response.result as { tools: Array<Record<string, unknown>> }).tools;
+    const tools = (response.result as { tools: ToolListEntry[] }).tools;
     const annotated = tools.find((t) => t.name === "test:annotated");
     assertExists(annotated);
     assertEquals(annotated.title, "Annotated Tool");
@@ -626,11 +627,41 @@ describe("mcp/server", () => {
       method: "tools/list",
     });
 
-    const tools = (response.result as { tools: Array<Record<string, unknown>> }).tools;
+    const tools = (response.result as { tools: ToolListEntry[] }).tools;
     const plain = tools.find((t) => t.name === "test:plain");
     assertExists(plain);
     assertEquals(plain.title, undefined);
     assertEquals(plain.annotations, undefined);
+  });
+
+  it("only includes valid annotation keys in tools/list", async () => {
+    const server = createMCPServer({ enabled: true });
+
+    registerTool(
+      "test:partial-annotations",
+      dynamicTool({
+        id: "test:partial-annotations",
+        description: "Partially annotated",
+        inputSchema: z.object({}),
+        execute: async () => ({ ok: true }),
+        mcp: {
+          enabled: true,
+          title: "Partial",
+          annotations: { readOnlyHint: true },
+        },
+      }),
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+    });
+
+    const tools = (response.result as { tools: ToolListEntry[] }).tools;
+    const tool = tools.find((t) => t.name === "test:partial-annotations");
+    assertExists(tool);
+    assertEquals(tool.annotations, { readOnlyHint: true });
   });
 
   it("syncs integration config to API on first tools/list call", async () => {

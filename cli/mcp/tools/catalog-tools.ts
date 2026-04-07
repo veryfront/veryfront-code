@@ -353,7 +353,7 @@ type ListTemplatesInput = z.infer<typeof listTemplatesInput>;
 export const vfListTemplates: MCPTool<ListTemplatesInput, TemplateInfo[]> = {
   name: "vf_list_templates",
   title: "List Templates",
-  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true }, // openWorldHint: templates come from remote catalog API
   description:
     "List available project templates. Use this to help users choose the right starting point for their project.",
   inputSchema: listTemplatesInput,
@@ -447,7 +447,7 @@ interface CreateProjectResult {
 export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> = {
   name: "vf_create_project",
   title: "Create Project",
-  annotations: { destructiveHint: false, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description:
     "Create a new Veryfront project from a template. This is the MCP equivalent of 'veryfront init'. Returns the project directory and next steps.",
   inputSchema: createProjectInput,

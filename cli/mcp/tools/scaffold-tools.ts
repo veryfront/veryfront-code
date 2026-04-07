@@ -210,7 +210,7 @@ const SCAFFOLD_CONFIGS: Record<ScaffoldType, ScaffoldConfig> = {
 export const vfScaffold: MCPTool<ScaffoldInput, ScaffoldResult> = {
   name: "vf_scaffold",
   title: "Scaffold Code",
-  annotations: { destructiveHint: false, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description:
     "Generate new entities (pages, API routes, layouts, components, AI tools, agents, prompts) with proper conventions. This is the recommended way to create new files in a Veryfront project.",
   inputSchema: scaffoldInput,
