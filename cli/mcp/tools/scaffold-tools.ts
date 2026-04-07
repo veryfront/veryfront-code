@@ -212,7 +212,7 @@ export const vfScaffold: MCPTool<ScaffoldInput, ScaffoldResult> = {
   title: "Scaffold Code",
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description:
-    "Generate new entities (pages, API routes, layouts, components, AI tools, agents, prompts) with proper conventions. This is the recommended way to create new files in a Veryfront project.",
+    "Use this when you need to generate new pages, API routes, layouts, components, AI tools, agents, or prompts with proper Veryfront conventions. Returns the created file path and content. May overwrite existing files at the target path. Do not use for creating entire projects — use vf_create_project instead.",
   inputSchema: scaffoldInput,
   execute: (input) =>
     withSpan(
@@ -405,7 +405,7 @@ export const vfGetConventions: MCPTool<GetConventionsInput, Convention[]> = {
   title: "Get Conventions",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Get Veryfront coding conventions and best practices. Use this as guardrails when writing code to ensure consistency with the project standards.",
+    "Use this when you need Veryfront coding conventions and best practices for routing, API, components, AI, or styling. Do not use for project structure — use vf_get_project_context instead.",
   inputSchema: getConventionsInput,
   execute: (input) => {
     if (input.topic === "all") return Promise.resolve(Object.values(CONVENTIONS));

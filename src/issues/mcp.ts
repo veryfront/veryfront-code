@@ -55,8 +55,9 @@ const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
   name: "issues_create",
   title: "Create Issue",
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-  description: "Create a new issue, task, or plan as a markdown file. " +
-    "Use prefix 'TASK' for small work items, 'PLAN' for proposals/RFCs, 'ISSUE' for bugs/features.",
+  description: "Use this when you need to create a new issue, task, or plan as a markdown file. " +
+    "Use prefix 'TASK' for small work items, 'PLAN' for proposals/RFCs, 'ISSUE' for bugs/features. " +
+    "Returns the created issue. Do not use for updating — use issues_update instead.",
   inputSchema: issuesCreateInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -85,7 +86,8 @@ const issuesGet: MCPTool<IssuesGetInput, Issue | null> = {
   name: "issues_get",
   title: "Get Issue",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-  description: "Get a specific issue by ID. Returns null if not found.",
+  description:
+    "Use this when you need to retrieve a specific issue by its ID. Returns the issue or null if not found. Do not use for listing — use issues_list instead.",
   inputSchema: issuesGetInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -118,8 +120,9 @@ const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
     idempotentHint: true,
     openWorldHint: false,
   },
-  description: "Update an existing issue. Only provided fields are updated. " +
-    "Returns the updated issue or null if not found.",
+  description:
+    "Use this when you need to modify an existing issue. Only provided fields are updated. " +
+    "Returns the updated issue or null if not found. Do not use to close — use issues_close instead.",
   inputSchema: issuesUpdateInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -166,8 +169,8 @@ const issuesList: MCPTool<IssuesListInput, IssuesListOutput> = {
   name: "issues_list",
   title: "List Issues",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-  description: "List issues with filtering and sorting. " +
-    "Returns matching issues and total count.",
+  description: "Use this when you need to find issues matching criteria. " +
+    "Returns matching issues and total count. Do not use to get a single known issue — use issues_get instead.",
   inputSchema: issuesListInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -203,7 +206,8 @@ const issuesClose: MCPTool<IssuesCloseInput, Issue | null> = {
     idempotentHint: true,
     openWorldHint: false,
   },
-  description: "Close an issue. Returns the updated issue or null if not found.",
+  description:
+    "Use this when you need to close an issue. Returns the updated issue or null if not found. Do not use to delete — use issues_delete instead.",
   inputSchema: issuesCloseInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -234,8 +238,10 @@ const issuesDelete: MCPTool<IssuesDeleteInput, IssuesDeleteOutput> = {
     idempotentHint: true,
     openWorldHint: false,
   },
-  description: "Permanently delete an issue file. " +
-    "Use with caution - this cannot be undone.",
+  description:
+    "Use this when you need to permanently delete an issue. Returns {deleted: true/false}. " +
+    "WARNING: this is irreversible and cannot be undone. Prefer issues_close unless permanent deletion is explicitly requested. " +
+    "Do not use to close — use issues_close instead.",
   inputSchema: issuesDeleteInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
