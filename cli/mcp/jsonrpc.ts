@@ -86,7 +86,7 @@ export function errorResponse(
  * Supported MCP protocol versions (newest first).
  * Shared across all CLI MCP servers so the version list is maintained in one place.
  */
-export const MCP_SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
+export const MCP_SUPPORTED_VERSIONS: [string, ...string[]] = ["2025-11-25", "2024-11-05"];
 
 /**
  * Safely extract a record from unknown params (mirrors src/mcp toParamsRecord).
