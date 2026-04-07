@@ -17,6 +17,7 @@ import type { McpConfig } from "./schemas/index.ts";
 export interface ResourceConfig<TParams = unknown, TData = unknown> {
   pattern?: string;
   description: string;
+  title?: string;
   paramsSchema: z.ZodSchema<TParams>;
   load: (params: TParams) => Promise<TData> | TData;
   subscribe?: (params: TParams) => AsyncIterable<TData>;
@@ -27,6 +28,7 @@ export interface Resource<TParams = unknown, TData = unknown> {
   id: string;
   pattern: string;
   description: string;
+  title?: string;
   paramsSchema: z.ZodSchema<TParams>;
   load: (params: TParams) => Promise<TData>;
   subscribe?: (params: TParams) => AsyncIterable<TData>;

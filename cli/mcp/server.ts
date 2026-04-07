@@ -188,6 +188,8 @@ export class MCPDevServer {
         return this.handleToolsCall(params);
       case "resources/list":
         return Promise.resolve(this.handleResourcesList(params));
+      case "resources/templates/list":
+        return Promise.resolve(this.handleResourceTemplatesList());
       case "resources/read":
         return this.handleResourcesRead(params);
       case "prompts/list":
@@ -264,6 +266,10 @@ export class MCPDevServer {
       },
       { "mcp.tool.name": toolName },
     );
+  }
+
+  private handleResourceTemplatesList(): { resourceTemplates: Array<Record<string, unknown>> } {
+    return { resourceTemplates: [] };
   }
 
   private handleResourcesList(_params?: unknown): unknown {

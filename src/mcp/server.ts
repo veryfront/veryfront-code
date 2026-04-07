@@ -165,6 +165,8 @@ export class MCPServer {
         return this.listResources(params);
       case "resources/read":
         return this.readResource(params);
+      case "resources/templates/list":
+        return this.listResourceTemplates(params);
       case "prompts/list":
         return this.listPrompts(params);
       case "prompts/get":
@@ -286,6 +288,29 @@ export class MCPServer {
     );
   }
 
+  private listResourceTemplates(
+    _params?: JSONRPCParams,
+  ): Promise<{ resourceTemplates: Array<Record<string, unknown>> }> {
+    const registry = getMCPRegistry();
+    const templates: Array<Record<string, unknown>> = [];
+
+    for (const [id, resource] of registry.resources.entries()) {
+      if (/:(\w+)/.test(resource.pattern)) {
+        const uriTemplate = resource.pattern.replace(/:(\w+)/g, "{$1}");
+        const entry: Record<string, unknown> = {
+          uriTemplate,
+          name: id,
+          description: resource.description,
+          mimeType: "application/json",
+        };
+        if (resource.title) entry.title = resource.title;
+        templates.push(entry);
+      }
+    }
+
+    return Promise.resolve({ resourceTemplates: templates });
+  }
+
   private listResources(
     _params?: JSONRPCParams,
   ): Promise<{ resources: Array<Record<string, unknown>> }> {
@@ -293,12 +318,14 @@ export class MCPServer {
     const resources: Array<Record<string, unknown>> = [];
 
     for (const [id, resource] of registry.resources.entries()) {
-      resources.push({
+      const entry: Record<string, unknown> = {
         uri: resource.pattern,
         name: id,
         description: resource.description,
         mimeType: "application/json",
-      });
+      };
+      if (resource.title) entry.title = resource.title;
+      resources.push(entry);
     }
 
     return Promise.resolve({ resources });

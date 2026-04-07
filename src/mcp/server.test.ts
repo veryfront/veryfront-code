@@ -2,7 +2,7 @@ import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/tes
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { dynamicTool } from "#veryfront/tool";
 import { z } from "zod";
-import { clearMCPRegistry, registerTool } from "./registry.ts";
+import { clearMCPRegistry, registerResource, registerTool } from "./registry.ts";
 import { createMCPServer } from "./server.ts";
 import type { ToolListEntry } from "./types.ts";
 
@@ -830,6 +830,97 @@ describe("mcp/server", () => {
 
       assertEquals(response.error, undefined);
       assertExists(response.result);
+    });
+  });
+
+  describe("resources/templates/list", () => {
+    it("returns array without error", async () => {
+      const server = createMCPServer({ enabled: true });
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/templates/list",
+      });
+
+      assertEquals(response.jsonrpc, "2.0");
+      assertEquals(response.id, 1);
+      assertEquals(response.error, undefined);
+      const result = response.result as { resourceTemplates: unknown[] };
+      assertEquals(Array.isArray(result.resourceTemplates), true);
+    });
+
+    it("includes parameterized resources as templates", async () => {
+      const server = createMCPServer({ enabled: true });
+      registerResource("test:users", {
+        id: "test:users",
+        pattern: "/users/:id",
+        description: "Get user by id",
+        paramsSchema: z.object({ id: z.string() }),
+        load: async () => ({}),
+      });
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/templates/list",
+      });
+
+      const result = response.result as {
+        resourceTemplates: Array<Record<string, unknown>>;
+      };
+      const tmpl = result.resourceTemplates.find((t) => t.name === "test:users");
+      assertExists(tmpl);
+      assertEquals(tmpl.uriTemplate, "/users/{id}");
+      assertEquals(tmpl.description, "Get user by id");
+    });
+
+    it("excludes scheme-only colons like openapi://spec", async () => {
+      const server = createMCPServer({ enabled: true });
+      registerResource("test:openapi", {
+        id: "test:openapi",
+        pattern: "openapi://spec",
+        description: "OpenAPI spec",
+        paramsSchema: z.object({}),
+        load: async () => ({}),
+      });
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/templates/list",
+      });
+
+      const result = response.result as {
+        resourceTemplates: Array<Record<string, unknown>>;
+      };
+      const tmpl = result.resourceTemplates.find((t) => t.name === "test:openapi");
+      assertEquals(tmpl, undefined);
+    });
+
+    it("includes title when set on resource", async () => {
+      const server = createMCPServer({ enabled: true });
+      registerResource("test:posts", {
+        id: "test:posts",
+        pattern: "/posts/:slug",
+        description: "Get post",
+        title: "Blog Post",
+        paramsSchema: z.object({ slug: z.string() }),
+        load: async () => ({}),
+      });
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/templates/list",
+      });
+
+      const result = response.result as {
+        resourceTemplates: Array<Record<string, unknown>>;
+      };
+      const tmpl = result.resourceTemplates.find((t) => t.name === "test:posts");
+      assertExists(tmpl);
+      assertEquals(tmpl.title, "Blog Post");
+      assertEquals(tmpl.uriTemplate, "/posts/{slug}");
     });
   });
 
