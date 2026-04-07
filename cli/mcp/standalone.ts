@@ -13,6 +13,7 @@ import { startStdioJsonRpc } from "./stdio.ts";
 import {
   buildInitializeResult,
   errorResponse,
+  JsonRpcError,
   type JSONRPCRequest,
   JSONRPCRequestSchema,
   type JSONRPCResponse,
@@ -116,13 +117,24 @@ export class StandaloneMCPServer {
   }
 
   private async handleToolsCall(params: unknown): Promise<unknown> {
-    const { name, arguments: args } = ToolsCallParamsSchema.parse(params);
+    const { name: toolName, arguments: args } = ToolsCallParamsSchema.parse(params);
 
-    const tool = this.tools.find((t) => t.name === name);
-    if (!tool) throw new Error(`Unknown tool: ${name}`);
+    const tool = this.tools.find((t) => t.name === toolName);
+    if (!tool) throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
 
-    const result = await tool.execute(args ?? {});
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    try {
+      const result = await tool.execute(args ?? {});
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        isError: false,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: "text", text: message }],
+        isError: true,
+      };
+    }
   }
 
   private handleResourcesList(): unknown {
