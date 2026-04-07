@@ -27,8 +27,7 @@ describe("build/renderer/services/mdx-bundler", () => {
       const source = { path: "/tmp/test-project/pages/test.mdx", content: "# Hello World" };
       const result = createBundleResult();
       const options = createOptions();
-      const compileFn = async (src: string, _opts: BundlerOptions) =>
-        `compiled: ${src}`;
+      const compileFn = async (src: string, _opts: BundlerOptions) => `compiled: ${src}`;
 
       await bundleMdx(source, options, result, compileFn);
 
@@ -44,8 +43,7 @@ describe("build/renderer/services/mdx-bundler", () => {
       };
       const result = createBundleResult();
       const options = createOptions();
-      const compileFn = async (src: string, _opts: BundlerOptions) =>
-        `compiled: ${src}`;
+      const compileFn = async (src: string, _opts: BundlerOptions) => `compiled: ${src}`;
 
       await bundleMdx(source, options, result, compileFn);
 
@@ -63,8 +61,7 @@ describe("build/renderer/services/mdx-bundler", () => {
       };
       const result = createBundleResult();
       const options = createOptions();
-      const compileFn = async (src: string, _opts: BundlerOptions) =>
-        `compiled: ${src}`;
+      const compileFn = async (src: string, _opts: BundlerOptions) => `compiled: ${src}`;
 
       await bundleMdx(source, options, result, compileFn);
 
@@ -79,8 +76,7 @@ describe("build/renderer/services/mdx-bundler", () => {
       };
       const result = createBundleResult();
       const options = createOptions();
-      const compileFn = async (src: string, _opts: BundlerOptions) =>
-        `compiled: ${src}`;
+      const compileFn = async (src: string, _opts: BundlerOptions) => `compiled: ${src}`;
 
       await bundleMdx(source, options, result, compileFn);
 
@@ -98,8 +94,7 @@ describe("build/renderer/services/mdx-bundler", () => {
       };
       const result = createBundleResult();
       const options = createOptions();
-      const compileFn = async (src: string, _opts: BundlerOptions) =>
-        `compiled: ${src}`;
+      const compileFn = async (src: string, _opts: BundlerOptions) => `compiled: ${src}`;
 
       await bundleMdx(source, options, result, compileFn);
 
@@ -117,8 +112,7 @@ describe("build/renderer/services/mdx-bundler", () => {
       };
       const result = createBundleResult();
       const options = createOptions();
-      const compileFn = async (src: string, _opts: BundlerOptions) =>
-        `compiled: ${src}`;
+      const compileFn = async (src: string, _opts: BundlerOptions) => `compiled: ${src}`;
 
       // bundleMdx catches errors internally
       await bundleMdx(source, options, result, compileFn);

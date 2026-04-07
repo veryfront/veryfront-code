@@ -61,8 +61,7 @@ describe("build/asset-pipeline/tailwind-processor/lightning-processor", () => {
     });
 
     it("should handle CSS with multiple Tailwind imports", async () => {
-      const css =
-        '@import "tailwindcss";\n@import "tailwindcss";\n.btn { color: red; }';
+      const css = '@import "tailwindcss";\n@import "tailwindcss";\n.btn { color: red; }';
       const result = await processWithLightningCSS(css, {
         filename: "test.css",
         minify: false,
