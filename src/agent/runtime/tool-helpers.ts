@@ -238,6 +238,7 @@ export async function getAvailableTools(
   const tools: ToolDefinition[] = [];
   const remoteDefs = await getRemoteToolDefinitions(options);
   const remoteToolNames = new Set(remoteDefs.map((def) => def.name));
+  const explicitlyRequestedRemoteToolNames = new Set<string>();
   const unresolvedConfiguredToolNames: string[] = [];
 
   for (const [name, entry] of Object.entries(toolsConfig)) {
@@ -248,9 +249,12 @@ export async function getAvailableTools(
         continue;
       }
 
-      if (!remoteToolNames.has(name) && !isRemoteIntegrationTool(name)) {
-        unresolvedConfiguredToolNames.push(name);
+      if (remoteToolNames.has(name)) {
+        explicitlyRequestedRemoteToolNames.add(name);
+        continue;
       }
+
+      unresolvedConfiguredToolNames.push(name);
       continue;
     }
 
@@ -259,10 +263,14 @@ export async function getAvailableTools(
     }
   }
 
-  // Also append remote integration tools for explicit-object configs.
-  // The internal streaming path converts `tools: true` to an explicit object
-  // from the local registry, so remote tools would be missed without this.
-  for (const def of remoteDefs) {
+  // Explicit-object configs should only expose remote definitions that were
+  // explicitly requested, except for the internal runtime path that expands
+  // `tools: true` into an explicit local-tool map and passes the remote allowlist.
+  const remoteDefsToAppend = explicitlyRequestedRemoteToolNames.size > 0
+    ? remoteDefs.filter((def) => explicitlyRequestedRemoteToolNames.has(def.name))
+    : remoteDefs.filter((def) => options?.allowedRemoteToolNames?.includes(def.name));
+
+  for (const def of remoteDefsToAppend) {
     // Skip if already present (e.g., explicitly configured by name)
     if (!tools.some((t) => t.name === def.name)) {
       logToolDefinition(def.name, def);

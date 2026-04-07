@@ -9,6 +9,35 @@ import {
   resolveConfiguredTool,
 } from "./tool-helpers.ts";
 
+async function withMockRemoteIntegrationTools<T>(
+  remoteToolNames: string[],
+  callback: () => Promise<T>,
+): Promise<T> {
+  const originalFetch = globalThis.fetch;
+  const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
+  const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  globalThis.fetch = async () =>
+    Response.json({
+      tools: remoteToolNames.map((name) => ({
+        name,
+        description: `${name} description`,
+        inputSchema: { type: "object", properties: {} },
+      })),
+    });
+
+  try {
+    Deno.env.set("VERYFRONT_API_URL", "https://api.test");
+    Deno.env.set("VERYFRONT_API_TOKEN", "token");
+    return await callback();
+  } finally {
+    if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+    else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
+    if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+    globalThis.fetch = originalFetch;
+  }
+}
+
 describe("tool-helpers", () => {
   describe("parseToolArgs", () => {
     it("parses a valid JSON string into args", () => {
@@ -203,41 +232,60 @@ describe("tool-helpers", () => {
 
     it("filters remote integration tool definitions by the runtime allowlist", async () => {
       toolRegistry.clearAll();
-      const originalFetch = globalThis.fetch;
-      const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
-      const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
-      globalThis.fetch = async () =>
-        Response.json({
-          tools: [
-            {
-              name: "gmail:list-emails",
-              description: "List emails",
-              inputSchema: { type: "object", properties: {} },
-            },
-            {
-              name: "gmail:get-email",
-              description: "Get email",
-              inputSchema: { type: "object", properties: {} },
-            },
-          ],
-        });
-
       try {
-        Deno.env.set("VERYFRONT_API_URL", "https://api.test");
-        Deno.env.set("VERYFRONT_API_TOKEN", "token");
-
-        const defs = await getAvailableTools(true, {
-          allowedRemoteToolNames: ["gmail:get-email"],
-        });
+        const defs = await withMockRemoteIntegrationTools([
+          "gmail:list-emails",
+          "gmail:get-email",
+        ], () =>
+          getAvailableTools(true, {
+            allowedRemoteToolNames: ["gmail:get-email"],
+          }));
 
         assertEquals(defs.map((def) => def.name), ["gmail:get-email"]);
       } finally {
         toolRegistry.clearAll();
-        if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
-        else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
-        if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
-        else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
-        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("fails loudly when an explicit remote tool is missing from the discovered allowlist", async () => {
+      toolRegistry.clearAll();
+
+      try {
+        await assertRejects(
+          () =>
+            withMockRemoteIntegrationTools(["gmail:list-emails"], () =>
+              getAvailableTools(
+                {
+                  "gmail:get-email": true,
+                },
+                { allowedRemoteToolNames: ["gmail:list-emails"] },
+              )),
+          Error,
+          'Unknown tool reference: gmail:get-email. Tool names must exactly match tool({ id: "..." }). Available tools: gmail:list-emails',
+        );
+      } finally {
+        toolRegistry.clearAll();
+      }
+    });
+
+    it("only appends explicitly requested remote definitions for explicit tool maps", async () => {
+      toolRegistry.clearAll();
+
+      try {
+        const defs = await withMockRemoteIntegrationTools([
+          "gmail:list-emails",
+          "gmail:get-email",
+        ], () =>
+          getAvailableTools(
+            {
+              "gmail:get-email": true,
+            },
+            { allowedRemoteToolNames: ["gmail:list-emails", "gmail:get-email"] },
+          ));
+
+        assertEquals(defs.map((def) => def.name), ["gmail:get-email"]);
+      } finally {
+        toolRegistry.clearAll();
       }
     });
   });
