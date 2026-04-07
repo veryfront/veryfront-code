@@ -55,8 +55,69 @@ function findRawTextClosingTagStart(
   return -1;
 }
 
+interface ParsedAttribute {
+  name: string;
+  start: number;
+  end: number;
+  value: string | null;
+}
+
+function findAttribute(tag: string, attributeName: string): ParsedAttribute | undefined {
+  const closeIndex = tag.lastIndexOf(">");
+  if (closeIndex <= 0) return undefined;
+
+  let index = 1;
+  while (index < closeIndex && !/\s|\/|>/u.test(tag[index] ?? "")) index++;
+
+  while (index < closeIndex) {
+    while (index < closeIndex && /\s/u.test(tag[index] ?? "")) index++;
+    if (index >= closeIndex) break;
+
+    const char = tag[index];
+    if (char === "/" || char === ">") break;
+
+    const start = index;
+    while (index < closeIndex && !/[\s=/>]/u.test(tag[index] ?? "")) index++;
+    const name = tag.slice(start, index);
+
+    while (index < closeIndex && /\s/u.test(tag[index] ?? "")) index++;
+
+    let value: string | null = null;
+    if (tag[index] === "=") {
+      index++;
+      while (index < closeIndex && /\s/u.test(tag[index] ?? "")) index++;
+
+      const quote = tag[index];
+      if (quote === '"' || quote === "'") {
+        index++;
+        const valueStart = index;
+        while (index < closeIndex && tag[index] !== quote) index++;
+        value = tag.slice(valueStart, index);
+        if (index < closeIndex) index++;
+      } else {
+        const valueStart = index;
+        while (index < closeIndex && !/[\s>]/u.test(tag[index] ?? "")) index++;
+        value = tag.slice(valueStart, index);
+      }
+    }
+
+    if (name.toLowerCase() === attributeName) {
+      return { name, start, end: index, value };
+    }
+  }
+
+  return undefined;
+}
+
 function injectNonceIntoOpeningTag(tag: string, escapedNonce: string): string {
-  if (/(?:\s|<)nonce\s*=/iu.test(tag)) return tag;
+  const existingNonce = findAttribute(tag, "nonce");
+  if (existingNonce) {
+    if (existingNonce.value?.trim()) return tag;
+
+    return `${tag.slice(0, existingNonce.start)}nonce="${escapedNonce}"${
+      tag.slice(existingNonce.end)
+    }`;
+  }
 
   const closeIndex = tag.lastIndexOf(">");
   if (closeIndex === -1) return tag;
@@ -126,4 +187,114 @@ export function addNonceToHtmlTags(html: string, nonce?: string): string {
   }
 
   return result;
+}
+
+export function addNonceToHtmlStream(
+  stream: ReadableStream<Uint8Array>,
+  nonce?: string,
+): ReadableStream<Uint8Array> {
+  if (!nonce) return stream;
+
+  const escapedNonce = escapeHtml(nonce);
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+  let rawTextTag: "script" | "style" | null = null;
+
+  function transformBuffer(flush: boolean): string {
+    let result = "";
+    let index = 0;
+    const lowerBuffer = buffer.toLowerCase();
+
+    while (index < buffer.length) {
+      if (rawTextTag) {
+        const closingIndex = findRawTextClosingTagStart(lowerBuffer, rawTextTag, index);
+        if (closingIndex === -1) {
+          if (flush) {
+            result += buffer.slice(index);
+            index = buffer.length;
+            break;
+          }
+
+          const retainLength = `</${rawTextTag}`.length;
+          const safeEnd = Math.max(index, buffer.length - retainLength);
+          result += buffer.slice(index, safeEnd);
+          index = safeEnd;
+          break;
+        }
+
+        result += buffer.slice(index, closingIndex);
+        index = closingIndex;
+        rawTextTag = null;
+        continue;
+      }
+
+      if (buffer.startsWith("<!--", index)) {
+        const commentEnd = buffer.indexOf("-->", index + 4);
+        if (commentEnd === -1) {
+          if (flush) {
+            result += buffer.slice(index);
+            index = buffer.length;
+          }
+          break;
+        }
+
+        const endIndex = commentEnd + 3;
+        result += buffer.slice(index, endIndex);
+        index = endIndex;
+        continue;
+      }
+
+      if (buffer[index] !== "<") {
+        const nextTagIndex = buffer.indexOf("<", index);
+        const endIndex = nextTagIndex === -1 ? buffer.length : nextTagIndex;
+        result += buffer.slice(index, endIndex);
+        index = endIndex;
+        continue;
+      }
+
+      const tagEnd = findTagEnd(buffer, index);
+      if (tagEnd === -1) {
+        if (flush) {
+          result += buffer.slice(index);
+          index = buffer.length;
+        }
+        break;
+      }
+
+      const tag = buffer.slice(index, tagEnd + 1);
+      const tagName = getOpeningTagName(tag);
+
+      if (!tagName) {
+        result += tag;
+        index = tagEnd + 1;
+        continue;
+      }
+
+      result += injectNonceIntoOpeningTag(tag, escapedNonce);
+      index = tagEnd + 1;
+
+      if (!/\/\s*>$/u.test(tag)) {
+        rawTextTag = tagName;
+      }
+    }
+
+    buffer = buffer.slice(index);
+    return result;
+  }
+
+  return stream.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buffer += decoder.decode(chunk, { stream: true });
+        const transformed = transformBuffer(false);
+        if (transformed) controller.enqueue(encoder.encode(transformed));
+      },
+      flush(controller) {
+        buffer += decoder.decode();
+        const transformed = transformBuffer(true);
+        if (transformed) controller.enqueue(encoder.encode(transformed));
+      },
+    }),
+  );
 }

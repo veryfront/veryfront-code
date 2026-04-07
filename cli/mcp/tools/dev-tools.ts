@@ -30,6 +30,13 @@ interface HotReloadResult {
 
 export const vfHotReload: MCPTool<HotReloadInput, HotReloadResult> = {
   name: "vf_hot_reload",
+  title: "Hot Reload",
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   description:
     "Use this when you need to signal that a hot reload should occur. Note: currently a no-op stub that returns success without triggering an actual reload. For file-level HMR that sends a WebSocket update, use vf_trigger_hmr instead.",
   inputSchema: hotReloadInput,
@@ -70,6 +77,8 @@ interface DebugContextResult {
 
 export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult> = {
   name: "vf_get_debug_context",
+  title: "Debug Context",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need the dev server's debug context including project slug, environment, request context mode, and multi-project configuration. Do not use for error details — use vf_get_errors instead.",
   inputSchema: getDebugContextInput,
@@ -127,6 +136,13 @@ interface TriggerHmrResult {
 
 export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
   name: "vf_trigger_hmr",
+  title: "Trigger HMR",
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   description:
     "Use this when you need to force an HMR update for a specific file path. Sends a WebSocket reload notification to connected browsers.",
   inputSchema: triggerHmrInput,
@@ -182,6 +198,8 @@ interface PreviewRouteResult {
 
 export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
   name: "vf_preview_route",
+  title: "Preview Route",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need to test-render a route and inspect the response. Returns rendered output, HTTP status, and render time. Note: API routes may have side effects. Do not use for listing routes — use vf_list_routes instead.",
   inputSchema: previewRouteInput,
@@ -263,6 +281,8 @@ interface WaitForReadyResult {
 
 export const vfWaitForReady: MCPTool<WaitForReadyInput, WaitForReadyResult> = {
   name: "vf_wait_for_ready",
+  title: "Wait for Ready",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need to wait for the dev server to become ready after restart. Do not use to check current status — use vf_get_status instead.",
   inputSchema: waitForReadyInput,
@@ -351,6 +371,8 @@ interface FlywheelStatus {
 
 export const vfGetFlywheelStatus: MCPTool<GetFlywheelStatusInput, FlywheelStatus> = {
   name: "vf_get_flywheel_status",
+  title: "Flywheel Status",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need a comprehensive status overview combining server health, error counts, and HMR statistics. Do not use for detailed error or log content — use vf_get_errors or vf_get_logs instead.",
   inputSchema: getFlywheelStatusInput,

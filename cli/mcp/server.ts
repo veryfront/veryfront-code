@@ -11,11 +11,14 @@ import { createHttpServer, type HttpServer } from "veryfront/platform/http";
 import type { StdinReader } from "veryfront/platform";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIssuesManager } from "veryfront/issues";
+import type { ToolListEntry } from "veryfront/mcp";
 import { getErrorCollector, getLogBuffer } from "veryfront/observability";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
 import {
+  buildInitializeResult,
   errorResponse,
+  JsonRpcError,
   type JSONRPCRequest,
   JSONRPCRequestSchema,
   type JSONRPCResponse,
@@ -119,6 +122,17 @@ export class MCPDevServer {
 
       if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
 
+      if (origin && !isAllowedOrigin) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32600, message: "Forbidden: Origin not allowed" },
+          }),
+          { status: 403, headers },
+        );
+      }
+
       if (url.pathname !== "/mcp") {
         return new Response(JSON.stringify({ error: "Not found. MCP endpoint is at /mcp" }), {
           status: 404,
@@ -166,6 +180,8 @@ export class MCPDevServer {
     switch (method) {
       case "initialize":
         return Promise.resolve(this.handleInitialize(params));
+      case "notifications/initialized":
+        return Promise.resolve({});
       case "tools/list":
         return Promise.resolve(this.handleToolsList());
       case "tools/call":
@@ -183,53 +199,70 @@ export class MCPDevServer {
     }
   }
 
-  private handleInitialize(_params: unknown): unknown {
-    return {
-      protocolVersion: "2024-11-05",
-      capabilities: {
-        tools: {},
-        resources: {},
-        prompts: {},
+  private handleInitialize(params: unknown): unknown {
+    return buildInitializeResult(
+      params,
+      {
+        name: this.config.serverName ?? "veryfront-dev",
+        title: "Veryfront Dev MCP Server",
+        version: this.config.serverVersion ?? "1.0.0",
+        description:
+          "Veryfront development server tools for real-time errors, logs, HMR, and scaffolding",
       },
-      serverInfo: {
-        name: this.config.serverName,
-        version: this.config.serverVersion,
-      },
-    };
+      "Veryfront dev MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, and vf_trigger_hmr for hot module reload.",
+    );
   }
 
-  private handleToolsList(): unknown {
+  private handleToolsList(): { tools: ToolListEntry[] } {
     return {
-      tools: allTools.map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: this.zodToJsonSchema(tool.inputSchema),
-      })),
+      tools: allTools.map((tool) => {
+        const entry: ToolListEntry = {
+          name: tool.name,
+          description: tool.description,
+          inputSchema: this.zodToJsonSchema(tool.inputSchema),
+        };
+        if (tool.title) entry.title = tool.title;
+        if (tool.annotations) entry.annotations = tool.annotations;
+        return entry;
+      }),
     };
   }
 
   private handleToolsCall(params: unknown): Promise<unknown> {
-    const { name, arguments: args } = ToolsCallParamsSchema.parse(params);
+    const { name: toolName, arguments: args } = ToolsCallParamsSchema.parse(params);
+
+    const tool = getTool(toolName);
+    if (!tool) {
+      throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
+    }
+
+    let input: unknown;
+    try {
+      input = tool.inputSchema.parse(args ?? {});
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new JsonRpcError(-32602, `Invalid arguments for tool ${toolName}: ${message}`);
+    }
 
     return withSpan(
       "cli.mcp.handleToolsCall",
       async () => {
-        const tool = getTool(name);
-        if (!tool) throw new Error(`Unknown tool: ${name}`);
+        try {
+          const result = await tool.execute(input);
 
-        const input = tool.inputSchema.parse(args ?? {});
-        const result = await tool.execute(input);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            isError: false,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ type: "text", text: message }],
+            isError: true,
+          };
+        }
       },
-      { "mcp.tool.name": name },
+      { "mcp.tool.name": toolName },
     );
   }
 

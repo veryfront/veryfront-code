@@ -53,6 +53,8 @@ type IssuesCreateInput = z.infer<typeof issuesCreateInput>;
 
 const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
   name: "issues_create",
+  title: "Create Issue",
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description: "Use this when you need to create a new issue, task, or plan as a markdown file. " +
     "Use prefix 'TASK' for small work items, 'PLAN' for proposals/RFCs, 'ISSUE' for bugs/features. " +
     "Do not use for updating — use issues_update instead.",
@@ -82,6 +84,8 @@ type IssuesGetInput = z.infer<typeof issuesGetInput>;
 
 const issuesGet: MCPTool<IssuesGetInput, Issue | null> = {
   name: "issues_get",
+  title: "Get Issue",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need to retrieve a specific issue by its ID. Do not use for listing — use issues_list instead.",
   inputSchema: issuesGetInput,
@@ -109,6 +113,13 @@ type IssuesUpdateInput = z.infer<typeof issuesUpdateInput>;
 
 const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
   name: "issues_update",
+  title: "Update Issue",
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   description:
     "Use this when you need to modify an existing issue. Only provided fields are updated. " +
     "Do not use to close — use issues_close instead.",
@@ -156,6 +167,8 @@ interface IssuesListOutput {
 
 const issuesList: MCPTool<IssuesListInput, IssuesListOutput> = {
   name: "issues_list",
+  title: "List Issues",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description: "Use this when you need to find issues matching criteria. " +
     "Do not use to get a single known issue — use issues_get instead.",
   inputSchema: issuesListInput,
@@ -186,6 +199,13 @@ type IssuesCloseInput = z.infer<typeof issuesCloseInput>;
 
 const issuesClose: MCPTool<IssuesCloseInput, Issue | null> = {
   name: "issues_close",
+  title: "Close Issue",
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   description:
     "Use this when you need to close an issue. Do not use to delete — use issues_delete instead.",
   inputSchema: issuesCloseInput,
@@ -211,6 +231,13 @@ interface IssuesDeleteOutput {
 
 const issuesDelete: MCPTool<IssuesDeleteInput, IssuesDeleteOutput> = {
   name: "issues_delete",
+  title: "Delete Issue",
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   description: "Use this when you need to permanently delete an issue. " +
     "WARNING: this is irreversible and cannot be undone. Prefer issues_close unless permanent deletion is explicitly requested. " +
     "Do not use to close — use issues_close instead.",

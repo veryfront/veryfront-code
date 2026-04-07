@@ -191,6 +191,36 @@ describe("internal-agents/ag-ui-sse", () => {
     );
   });
 
+  it("fails closed when the runtime completed without assistant-visible output", () => {
+    const state = createStreamTransformState();
+
+    assertEquals(
+      finalizeRunEvents(state, {
+        text: "",
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+        usage: {
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+        },
+        metadata: {
+          finishReason: "stop",
+        },
+      }),
+      [
+        {
+          event: "RunError",
+          payload: {
+            code: "EMPTY_ASSISTANT_OUTPUT",
+            message: "Agent run produced no assistant-visible output",
+          },
+        },
+      ],
+    );
+  });
+
   it("formats AG-UI events as SSE frames", () => {
     const payload = formatAgUiEvent("RunStarted", {
       runId: "run_1",

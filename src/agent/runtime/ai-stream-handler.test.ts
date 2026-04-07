@@ -46,6 +46,7 @@ describe("ai-stream-handler", () => {
       assertEquals(state.accumulatedText, "");
       assertEquals(state.finishReason, null);
       assertEquals(state.toolCalls.size, 0);
+      assertEquals(state.toolResults.length, 0);
       assertEquals(state.usage, { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
     });
   });
@@ -186,6 +187,62 @@ describe("ai-stream-handler", () => {
       });
     });
 
+    it("preserves tool-call input when the provider already emits a JSON string", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-call",
+          toolCallId: "tc-quoted",
+          toolName: "web_search",
+          input: '{"query":"Veryfront","maxUses":1}',
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(state.toolCalls.size, 1);
+      const tc = state.toolCalls.get("tc-quoted")!;
+      assertEquals(tc.arguments, '{"query":"Veryfront","maxUses":1}');
+
+      assertEquals(events[0], {
+        type: "tool-input-available",
+        toolCallId: "tc-quoted",
+        toolName: "web_search",
+        input: { query: "Veryfront", maxUses: 1 },
+      });
+    });
+
+    it("preserves provider-executed tool calls in stream state and SSE output", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-call",
+          toolCallId: "tc-provider",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          providerExecuted: true,
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      const tc = state.toolCalls.get("tc-provider")!;
+      assertEquals(tc.providerExecuted, true);
+      assertEquals(events[0], {
+        type: "tool-input-available",
+        toolCallId: "tc-provider",
+        toolName: "web_search",
+        input: { query: "Veryfront" },
+        providerExecuted: true,
+      });
+    });
+
     it("handles multiple tool calls in a single stream", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
@@ -203,6 +260,123 @@ describe("ai-stream-handler", () => {
       assertEquals(state.toolCalls.get("tc-b")!.name, "fetch");
       assertEquals(state.finishReason, "tool-calls");
       assertEquals(events.length, 2);
+    });
+
+    it("forwards tool results as tool-output-available SSE events", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-result",
+          toolCallId: "tc-web",
+          toolName: "web_search",
+          input: { query: "latest ai news" },
+          output: { results: [{ title: "AI" }] },
+        },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(state.toolResults, [{
+        toolCallId: "tc-web",
+        toolName: "web_search",
+        output: { results: [{ title: "AI" }] },
+      }]);
+      assertEquals(events[0], {
+        type: "tool-output-available",
+        toolCallId: "tc-web",
+        output: { results: [{ title: "AI" }] },
+      });
+    });
+
+    it("forwards errored tool results as tool-output-error SSE events", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-result",
+          toolCallId: "tc-web",
+          toolName: "web_search",
+          input: { query: "latest ai news" },
+          output: { error: "Search failed" },
+          isError: true,
+        },
+        { type: "finish", finishReason: "error", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(state.toolResults, [{
+        toolCallId: "tc-web",
+        toolName: "web_search",
+        error: { error: "Search failed" },
+      }]);
+      assertEquals(events[0], {
+        type: "tool-output-error",
+        toolCallId: "tc-web",
+        errorText: '{"error":"Search failed"}',
+      });
+    });
+
+    it("forwards tool-error parts as tool-output-error SSE events", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-error",
+          toolCallId: "tc-provider-error",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          error: "Expected object, received string",
+          providerExecuted: true,
+        },
+        { type: "finish", finishReason: "error", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(state.toolResults, [{
+        toolCallId: "tc-provider-error",
+        toolName: "web_search",
+        error: "Expected object, received string",
+        providerExecuted: true,
+      }]);
+      assertEquals(events[0], {
+        type: "tool-output-error",
+        toolCallId: "tc-provider-error",
+        errorText: "Expected object, received string",
+        providerExecuted: true,
+      });
+    });
+
+    it("uses Error.message for streamed tool-error SSE events", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-error",
+          toolCallId: "tc-provider-error-object",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          error: new Error("Provider timeout"),
+          providerExecuted: true,
+        },
+        { type: "finish", finishReason: "error", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events[0], {
+        type: "tool-output-error",
+        toolCallId: "tc-provider-error-object",
+        errorText: "Provider timeout",
+        providerExecuted: true,
+      });
     });
 
     it("ignores tool-input-delta for unknown tool call IDs", async () => {
@@ -264,7 +438,7 @@ describe("ai-stream-handler", () => {
 
       // Only text-delta should produce an event
       assertEquals(events.length, 1);
-      assertEquals(events[0].type, "text-delta");
+      assertEquals(events[0]?.type, "text-delta");
     });
   });
 });

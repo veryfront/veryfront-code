@@ -4,7 +4,7 @@ import type { ToolExecutionContext } from "#veryfront/tool";
 import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
-import type { MCPServerConfig } from "./types.ts";
+import type { MCPServerConfig, ToolListEntry } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
@@ -22,6 +22,30 @@ const END_USER_ID_PATTERN = /^[a-zA-Z0-9._@-]+$/;
 const PROJECT_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
 
 type JSONRPCParams = Record<string, unknown> | unknown[];
+
+class JsonRpcError extends Error {
+  readonly code: number;
+  constructor(code: number, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+function errorCode(error: unknown): number {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code: unknown }).code;
+    if (typeof code === "number") return code;
+  }
+  return -32603;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}
 
 function toParamsRecord(params: JSONRPCParams | undefined): Record<string, unknown> {
   if (!params || Array.isArray(params)) return {};
@@ -81,6 +105,8 @@ export interface IntegrationLoaderConfig {
   apiToken?: string;
 }
 
+const MCP_SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
+
 export class MCPServer {
   private config: MCPServerConfig;
   private integrationLoader?: IntegrationLoaderConfig;
@@ -117,10 +143,7 @@ export class MCPServer {
           return {
             jsonrpc: "2.0",
             id: request.id,
-            error: {
-              code: -32603,
-              message: error instanceof Error ? error.message : String(error),
-            },
+            error: { code: errorCode(error), message: errorMessage(error) },
           };
         }
       },
@@ -148,6 +171,8 @@ export class MCPServer {
         return this.getPrompt(params);
       case "initialize":
         return this.initialize(params);
+      case "notifications/initialized":
+        return Promise.resolve({});
       default:
         throw toError(
           createError({
@@ -158,19 +183,33 @@ export class MCPServer {
     }
   }
 
-  private initialize(_params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+  private initialize(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+    const p = toParamsRecord(params);
+    const requested = typeof p.protocolVersion === "string" ? p.protocolVersion : undefined;
+    const negotiated = requested && MCP_SUPPORTED_VERSIONS.includes(requested)
+      ? requested
+      : MCP_SUPPORTED_VERSIONS[0];
+
     return Promise.resolve({
-      protocolVersion: "2024-11-05",
-      serverInfo: { name: "veryfront-mcp", version: VERSION },
-      capabilities: {
-        tools: {},
-        resources: { subscribe: true },
-        prompts: {},
+      protocolVersion: negotiated,
+      serverInfo: {
+        name: "veryfront-mcp",
+        title: "Veryfront MCP Server",
+        version: VERSION,
+        description:
+          "Veryfront development server tools for real-time errors, route preview, HMR control, and scaffolding",
       },
+      capabilities: {
+        tools: { listChanged: true },
+        resources: { subscribe: true, listChanged: true },
+        prompts: { listChanged: true },
+      },
+      instructions:
+        "Veryfront MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, vf_scaffold for code generation, and vf_get_project_context for project structure.",
     });
   }
 
-  private async listTools(): Promise<{ tools: Array<Record<string, unknown>> }> {
+  private async listTools(): Promise<{ tools: ToolListEntry[] }> {
     // Sync integration config to API on first tools/list call
     if (this.integrationLoader && !this.integrationsLoaded) {
       try {
@@ -181,16 +220,19 @@ export class MCPServer {
     }
 
     const registry = getMCPRegistry();
-    const tools: Array<Record<string, unknown>> = [];
+    const tools: ToolListEntry[] = [];
 
     for (const [id, tool] of registry.tools.entries()) {
       if (tool.mcp?.enabled === false) continue;
 
-      tools.push({
+      const entry: ToolListEntry = {
         name: id,
         description: tool.description,
         inputSchema: tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema),
-      });
+      };
+      if (tool.mcp?.title) entry.title = tool.mcp.title;
+      if (tool.mcp?.annotations) entry.annotations = tool.mcp.annotations;
+      tools.push(entry);
     }
 
     return { tools };
@@ -203,29 +245,42 @@ export class MCPServer {
     const { name, arguments: args } = toParamsRecord(params);
 
     if (!name) {
-      throw toError(
-        createError({
-          type: "agent",
-          message: "Tool name is required",
-        }),
-      );
+      throw toError(createError({ type: "agent", message: "Tool name is required" }));
     }
 
     const toolName = String(name);
 
+    const registry = getMCPRegistry();
+    const tool = registry.tools.get(toolName);
+    if (!tool) {
+      throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
+    }
+
+    if (tool.inputSchema && typeof tool.inputSchema.parse === "function") {
+      try {
+        tool.inputSchema.parse(args ?? {});
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new JsonRpcError(-32602, `Invalid arguments for tool ${toolName}: ${message}`);
+      }
+    }
+
     return withSpan(
       "mcp.callTool",
       async () => {
-        const result = await executeTool(toolName, args, context);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
+        try {
+          const result = await executeTool(toolName, args, context);
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            isError: false,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ type: "text", text: message }],
+            isError: true,
+          };
+        }
       },
       { "mcp.tool.name": toolName },
     );
@@ -350,6 +405,12 @@ export class MCPServer {
       const requestOrigin = request.headers.get("Origin");
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: this.getCORSHeaders(requestOrigin) });
+      }
+
+      if (requestOrigin && this.config.cors?.enabled && this.config.cors.origins?.length) {
+        if (!this.config.cors.origins.includes(requestOrigin)) {
+          return createJSONRPCErrorResponse(403, -32600, "Forbidden: Origin not allowed");
+        }
       }
 
       if (this.config.auth?.type && this.config.auth.type !== "none") {

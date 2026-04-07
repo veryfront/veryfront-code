@@ -16,8 +16,10 @@ import {
 } from "./ag-ui-sse.ts";
 import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-manager.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
+import { serverLogger } from "#veryfront/utils";
 
 const anyObjectSchema = z.record(z.string(), z.unknown());
+const logger = serverLogger.component("internal-agent-run-stream");
 
 type RuntimeFilteredAgent = Agent & {
   config: Agent["config"] & {
@@ -229,6 +231,14 @@ export async function createRuntimeAgentStreamResponse(
   agent: Agent,
   deps: RuntimeAgentStreamExecutionDeps,
 ): Promise<Response> {
+  logger.info("Starting internal agent runtime stream", {
+    runId: input.runId,
+    threadId: input.threadId,
+    agentId: input.agentId,
+    messageCount: input.messages.length,
+    toolCount: input.tools.length,
+    contextCount: input.context.length,
+  });
   const abortSignal = deps.sessionManager.startRun({
     runId: input.runId,
     threadId: input.threadId,
@@ -271,8 +281,19 @@ export async function createRuntimeAgentStreamResponse(
       undefined,
       abortSignal,
     );
+    logger.info("Internal agent runtime stream attached", {
+      runId: input.runId,
+      threadId: input.threadId,
+      agentId: input.agentId,
+    });
   } catch (error) {
     deps.sessionManager.failRun(input.runId);
+    logger.error("Internal agent runtime stream setup failed", {
+      runId: input.runId,
+      threadId: input.threadId,
+      agentId: input.agentId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   }
 
@@ -305,6 +326,11 @@ export async function createRuntimeAgentStreamResponse(
 
       const abortHandler = () => {
         aborted = true;
+        logger.warn("Internal agent runtime stream aborted", {
+          runId: input.runId,
+          threadId: input.threadId,
+          agentId: input.agentId,
+        });
         reader.cancel(new AgentRunCancelledError()).catch(() => {});
       };
 
@@ -323,6 +349,11 @@ export async function createRuntimeAgentStreamResponse(
           throwIfAborted();
 
           if (done) {
+            logger.info("Internal agent runtime stream reader completed", {
+              runId: input.runId,
+              threadId: input.threadId,
+              agentId: input.agentId,
+            });
             break;
           }
 
@@ -352,15 +383,35 @@ export async function createRuntimeAgentStreamResponse(
           enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
         }
         deps.sessionManager.completeRun(input.runId);
+        logger.info("Internal agent runtime stream finalized", {
+          runId: input.runId,
+          threadId: input.threadId,
+          agentId: input.agentId,
+          sawVisibleOutput: state.sawVisibleOutput,
+          sawTerminalError: state.sawTerminalError,
+          finishReason: state.metadata.finishReason,
+        });
       } catch (error) {
         if (error instanceof AgentRunCancelledError) {
           deps.sessionManager.cancelRun(input.runId);
+          logger.warn("Internal agent runtime stream cancelled", {
+            runId: input.runId,
+            threadId: input.threadId,
+            agentId: input.agentId,
+            error: error.message,
+          });
           enqueueIfAttached("RunError", {
             code: "CANCELLED",
             message: error.message,
           });
         } else {
           deps.sessionManager.failRun(input.runId);
+          logger.error("Internal agent runtime stream failed", {
+            runId: input.runId,
+            threadId: input.threadId,
+            agentId: input.agentId,
+            error: error instanceof Error ? error.message : String(error),
+          });
           enqueueIfAttached("RunError", {
             code: "RUNTIME_ERROR",
             message: error instanceof Error ? error.message : String(error),
@@ -371,10 +422,21 @@ export async function createRuntimeAgentStreamResponse(
         if (clientAttached) {
           controller.close();
         }
+        logger.debug("Internal agent runtime stream response closed", {
+          runId: input.runId,
+          threadId: input.threadId,
+          agentId: input.agentId,
+          clientAttached,
+        });
       }
     },
     cancel() {
       clientAttached = false;
+      logger.info("Internal agent runtime client detached", {
+        runId: input.runId,
+        threadId: input.threadId,
+        agentId: input.agentId,
+      });
       return Promise.resolve();
     },
   });

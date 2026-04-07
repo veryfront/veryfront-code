@@ -37,6 +37,8 @@ type ListRoutesInput = z.infer<typeof listRoutesInput>;
 
 export const vfListRoutes: MCPTool<ListRoutesInput, RouteInfo[]> = {
   name: "vf_list_routes",
+  title: "List Routes",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need to discover all routes in the project including pages, API routes, and layouts. Do not use for rendering a route — use vf_preview_route instead.",
   inputSchema: listRoutesInput,
@@ -142,6 +144,8 @@ async function getProjectName(projectDir: string, fs: FileSystem): Promise<strin
 
 export const vfGetProjectContext: MCPTool<GetProjectContextInput, ProjectContext> = {
   name: "vf_get_project_context",
+  title: "Project Context",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need to understand the project structure, conventions, and capabilities at the start of a coding session. Also returns route information. Do not use for detailed per-route rendering — use vf_preview_route instead.",
   inputSchema: getProjectContextInput,
@@ -219,6 +223,8 @@ function toRelativePath(absolutePath: string, projectDir: string): string {
 
 export const vfGetComponentTree: MCPTool<GetComponentTreeInput, ComponentTreeResult> = {
   name: "vf_get_component_tree",
+  title: "Component Tree",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need to analyze the component hierarchy for a specific route including layouts, providers, and nested components. Do not use for listing all routes — use vf_list_routes instead.",
   inputSchema: getComponentTreeInput,
@@ -375,6 +381,8 @@ async function scanForProjects(
 
 export const vfListLocalProjects: MCPTool<ListLocalProjectsInput, LocalProjectInfo[]> = {
   name: "vf_list_local_projects",
+  title: "List Local Projects",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need to discover Veryfront projects on the local filesystem by scanning for veryfront.config.ts files. Do not use for project structure details — use vf_get_project_context instead.",
   inputSchema: listLocalProjectsInput,

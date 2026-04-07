@@ -127,7 +127,7 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(data.jsonrpc, "2.0");
       assertEquals(data.id, 1);
       assertExists(data.result);
-      assertEquals(data.result.protocolVersion, "2024-11-05");
+      assertEquals(data.result.protocolVersion, "2025-11-25");
       assertExists(data.result.capabilities);
       assertExists(data.result.capabilities.tools);
       assertExists(data.result.capabilities.resources);
@@ -237,6 +237,41 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(promptNames.includes("veryfront-components"), true);
     });
 
+    it("should include title and annotations in tools/list response", async () => {
+      const portNum = 19888;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 10,
+        method: "tools/list",
+      });
+
+      const data = await response.json();
+      assertExists(data.result);
+      assertExists(data.result.tools);
+
+      for (const tool of data.result.tools) {
+        assertExists(tool.title, `Tool ${tool.name} missing title in tools/list`);
+        assertExists(tool.annotations, `Tool ${tool.name} missing annotations in tools/list`);
+        assertEquals(
+          typeof tool.annotations.readOnlyHint,
+          "boolean",
+          `Tool ${tool.name} must explicitly set readOnlyHint in tools/list`,
+        );
+        if (tool.annotations.readOnlyHint) {
+          assertEquals(
+            tool.annotations.destructiveHint ?? false,
+            false,
+            `Read-only tool ${tool.name} must not be destructive`,
+          );
+        }
+      }
+    });
+
     it("should return error for unknown method", async () => {
       const portNum = 19881;
       server = new MCPDevServer({ httpPort: portNum });
@@ -344,6 +379,191 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       const data = await response.json();
       assertExists(data.error);
       assertEquals(data.error.code, -32700);
+    });
+
+    it("should negotiate protocol version 2025-11-25", async () => {
+      const portNum = 19890;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      });
+
+      const data = await response.json();
+      assertEquals(data.result.protocolVersion, "2025-11-25");
+    });
+
+    it("should negotiate protocol version 2024-11-05", async () => {
+      const portNum = 19891;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2024-11-05" },
+      });
+
+      const data = await response.json();
+      assertEquals(data.result.protocolVersion, "2024-11-05");
+    });
+
+    it("should fall back to newest version for unknown protocol version", async () => {
+      const portNum = 19892;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "1999-01-01" },
+      });
+
+      const data = await response.json();
+      assertEquals(data.result.protocolVersion, "2025-11-25");
+    });
+
+    it("should include serverInfo title and description", async () => {
+      const portNum = 19893;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      });
+
+      const data = await response.json();
+      assertExists(data.result.serverInfo.title);
+      assertExists(data.result.serverInfo.description);
+    });
+
+    it("should include instructions field", async () => {
+      const portNum = 19894;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      });
+
+      const data = await response.json();
+      assertExists(data.result.instructions);
+    });
+
+    it("should include listChanged in capabilities", async () => {
+      const portNum = 19895;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      });
+
+      const data = await response.json();
+      assertEquals(data.result.capabilities.tools.listChanged, true);
+      assertEquals(data.result.capabilities.resources.listChanged, true);
+      assertEquals(data.result.capabilities.prompts.listChanged, true);
+    });
+
+    it("should handle notifications/initialized", async () => {
+      const portNum = 19896;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "notifications/initialized",
+      });
+
+      assertEquals(response.status, 200);
+      const data = await response.json();
+      assertEquals(data.error, undefined);
+    });
+
+    it("should reject disallowed Origin with 403", async () => {
+      const portNum = 19897;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(
+        portNum,
+        { jsonrpc: "2.0", id: 1, method: "tools/list" },
+        {
+          "Content-Type": "application/json",
+          Origin: "https://evil.com",
+        },
+      );
+
+      assertEquals(response.status, 403);
+      const data = await response.json();
+      assertEquals(data.error.message, "Forbidden: Origin not allowed");
+    });
+
+    it("should allow request with no Origin header", async () => {
+      const portNum = 19898;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+
+      assertEquals(response.status, 200);
+    });
+
+    it("should allow localhost Origin", async () => {
+      const portNum = 19899;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(
+        portNum,
+        { jsonrpc: "2.0", id: 1, method: "tools/list" },
+        {
+          "Content-Type": "application/json",
+          Origin: "http://localhost:3000",
+        },
+      );
+
+      assertEquals(response.status, 200);
     });
 
     it("should return error for unknown tool call", async () => {

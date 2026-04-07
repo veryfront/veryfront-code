@@ -8,6 +8,8 @@ const getPipelineStatusInput = z.object({
 
 const vfGetPipelineStatus: MCPTool = {
   name: "vf_get_pipeline_status",
+  title: "Pipeline Status",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description: "Get the current build/deploy pipeline state for a project environment.",
   inputSchema: getPipelineStatusInput,
   execute: async (input: { projectSlug: string; environment: string }) => {
@@ -27,6 +29,8 @@ const getDeployHistoryInput = z.object({
 
 const vfGetDeployHistory: MCPTool = {
   name: "vf_get_deploy_history",
+  title: "Deploy History",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description: "List recent deployments with status, version, URL, and timestamp.",
   inputSchema: getDeployHistoryInput,
   execute: async (input: { projectSlug: string; limit: number }) => {
@@ -45,6 +49,8 @@ const getBuildLogsInput = z.object({
 
 const vfGetBuildLogs: MCPTool = {
   name: "vf_get_build_logs",
+  title: "Build Logs",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description: "Get build logs from an active or recent build/deployment.",
   inputSchema: getBuildLogsInput,
   execute: async (input: { projectSlug: string; deployId?: string }) => {
@@ -64,6 +70,8 @@ const triggerDeployInput = z.object({
 
 const vfTriggerDeploy: MCPTool = {
   name: "vf_trigger_deploy",
+  title: "Trigger Deploy",
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description:
     "Trigger a deployment to an environment. Returns a deployment ID for status tracking.",
   inputSchema: triggerDeployInput,

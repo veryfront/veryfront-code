@@ -334,6 +334,8 @@ type ListExamplesInput = z.infer<typeof listExamplesInput>;
 
 export const vfListExamples: MCPTool<ListExamplesInput, ExampleInfo[]> = {
   name: "vf_list_examples",
+  title: "List Examples",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need to browse example projects that demonstrate Veryfront features and integrations. Do not use for project templates — use vf_list_templates instead.",
   inputSchema: listExamplesInput,
@@ -350,6 +352,8 @@ type ListTemplatesInput = z.infer<typeof listTemplatesInput>;
 
 export const vfListTemplates: MCPTool<ListTemplatesInput, TemplateInfo[]> = {
   name: "vf_list_templates",
+  title: "List Templates",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true }, // openWorldHint: templates come from remote catalog API
   description:
     "Use this when you need to list available project templates for creating new projects. Do not use for example projects — use vf_list_examples instead.",
   inputSchema: listTemplatesInput,
@@ -372,6 +376,8 @@ type ListIntegrationsInput = z.infer<typeof listIntegrationsInput>;
 
 export const vfListIntegrations: MCPTool<ListIntegrationsInput, IntegrationInfo[]> = {
   name: "vf_list_integrations",
+  title: "List Integrations",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need to list available service integrations (Gmail, Slack, GitHub, etc.) that can be added to AI projects. Do not use for templates — use vf_list_templates instead.",
   inputSchema: listIntegrationsInput,
@@ -392,6 +398,8 @@ type ListUsecasesInput = z.infer<typeof listUsecasesInput>;
 
 export const vfListUsecases: MCPTool<ListUsecasesInput, UsecaseInfo[]> = {
   name: "vf_list_usecases",
+  title: "List Use Cases",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need to browse pre-configured use-case templates with recommended integrations and UI layouts. Do not use for raw templates — use vf_list_templates instead.",
   inputSchema: listUsecasesInput,
@@ -438,6 +446,8 @@ interface CreateProjectResult {
 
 export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> = {
   name: "vf_create_project",
+  title: "Create Project",
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description:
     "Use this when you need to create a new Veryfront project from a template. Returns the project directory and next steps. Do not use for scaffolding individual files — use vf_scaffold instead.",
   inputSchema: createProjectInput,

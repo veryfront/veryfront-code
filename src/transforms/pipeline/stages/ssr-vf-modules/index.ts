@@ -32,6 +32,7 @@ import {
   EXTENSIONS,
   FRAMEWORK_LOOKUPS,
   FRAMEWORK_ROOT,
+  frameworkTransformFlight,
   LOG_PREFIX,
 } from "./constants.ts";
 
@@ -56,6 +57,7 @@ export {
   FRAMEWORK_LOOKUPS,
   FRAMEWORK_ROOT,
   frameworkFileCache,
+  frameworkTransformFlight,
   frameworkWriteFlight,
   LOG_PREFIX,
   MAX_RELATIVE_IMPORT_DEPTH,
@@ -138,21 +140,22 @@ export const ssrVfModulesPlugin: TransformPlugin = {
           contentLength: resolved.content.length,
         });
 
-        const transformed = await transformFrameworkSource(
-          resolved.content,
-          resolved.sourcePath,
-          ctx.reactVersion ?? REACT_DEFAULT_VERSION,
-          ctx.projectDir,
-          fs,
-        );
+        const cachePath = await frameworkTransformFlight.do(resolved.sourcePath, async () => {
+          const transformed = await transformFrameworkSource(
+            resolved.content,
+            resolved.sourcePath,
+            ctx.reactVersion ?? REACT_DEFAULT_VERSION,
+            ctx.projectDir,
+            fs,
+          );
 
-        // Skip cycle placeholders - don't cache or use them
-        if (isCyclePlaceholder(transformed)) {
-          logger.warn(`${LOG_PREFIX} Cycle detected for ${vfModulePath}, skipping cache`);
-          continue;
-        }
+          // Skip cycle placeholders - don't cache or use them
+          if (isCyclePlaceholder(transformed)) {
+            throw new Error(`Cycle detected while transforming ${vfModulePath}`);
+          }
 
-        const cachePath = await cacheTransformedCode(transformed, vfModulePath, fs);
+          return await cacheTransformedCode(transformed, vfModulePath, fs);
+        });
         replacements.set(vfModulePath, `file://${cachePath}`);
 
         logger.debug(`${LOG_PREFIX} Transformed ${vfModulePath} -> file://${cachePath}`);

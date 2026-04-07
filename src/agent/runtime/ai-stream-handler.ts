@@ -12,7 +12,9 @@ import type { StreamTextResult, ToolSet } from "ai";
 import { sendSSE } from "./sse-utils.ts";
 import { isDynamicTool } from "./tool-helpers.ts";
 import { serverLogger } from "#veryfront/utils";
+import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = serverLogger.component("agent");
 
@@ -20,12 +22,25 @@ export interface StreamingToolCall {
   id: string;
   name: string;
   arguments: string;
+  providerExecuted?: boolean;
+  dynamic?: boolean;
+}
+
+export interface StreamingToolResult {
+  toolCallId: string;
+  toolName: string;
+  output?: unknown;
+  error?: unknown;
+  providerExecuted?: boolean;
+  dynamic?: boolean;
+  preliminary?: boolean;
 }
 
 export interface AIStreamState {
   accumulatedText: string;
   finishReason: string | null;
   toolCalls: Map<string, StreamingToolCall>;
+  toolResults: StreamingToolResult[];
   usage: { promptTokens: number; completionTokens: number; totalTokens: number };
 }
 
@@ -36,6 +51,37 @@ export interface AIStreamCallbacks {
     completionTokens?: number;
     totalTokens?: number;
   }) => void;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeToolInputString(input: unknown): string {
+  if (typeof input === "string") {
+    return input;
+  }
+
+  return JSON.stringify(input ?? null) ?? "null";
+}
+
+function normalizeToolInputObject(input: unknown): Record<string, unknown> {
+  if (isRecord(input)) {
+    return input;
+  }
+
+  if (typeof input === "string") {
+    try {
+      const parsed = JSON.parse(input);
+      if (isRecord(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return {};
+    }
+  }
+
+  return {};
 }
 
 function createAbortError(reason?: unknown): Error {
@@ -55,11 +101,87 @@ function throwIfAborted(abortSignal?: AbortSignal): void {
   }
 }
 
+function stringifyToolError(output: unknown): string {
+  if (typeof output === "string" && output.length > 0) {
+    return output;
+  }
+
+  if (output instanceof Error && typeof output.message === "string" && output.message.length > 0) {
+    return output.message;
+  }
+
+  try {
+    return JSON.stringify(output);
+  } catch {
+    return String(output);
+  }
+}
+
+function summarizeDebugValue(value: unknown): unknown {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+  }
+
+  if (typeof value === "string") {
+    return value.length > 500 ? `${value.slice(0, 500)}…` : value;
+  }
+
+  return value;
+}
+
+function logProviderToolPart(
+  partType: "tool-result" | "tool-error",
+  part: {
+    toolCallId: string;
+    toolName: string;
+    providerExecuted?: boolean;
+    dynamic?: boolean;
+    output?: unknown;
+    error?: unknown;
+    input?: unknown;
+    preliminary?: boolean;
+    isError?: boolean;
+  },
+): void {
+  if (!isAnyDebugEnabled({ get: getHostEnv })) {
+    return;
+  }
+
+  if (part.providerExecuted !== true) {
+    return;
+  }
+
+  if (part.toolName !== "web_search" && part.toolName !== "web_fetch") {
+    return;
+  }
+
+  logger.debug("Provider tool stream part observed", {
+    partType,
+    toolCallId: part.toolCallId,
+    toolName: part.toolName,
+    providerExecuted: part.providerExecuted,
+    dynamic: part.dynamic,
+    preliminary: part.preliminary,
+    isError: part.isError,
+    outputType: typeof part.output,
+    errorType: typeof part.error,
+    inputType: typeof part.input,
+    output: summarizeDebugValue(part.output),
+    error: summarizeDebugValue(part.error),
+    input: summarizeDebugValue(part.input),
+  });
+}
+
 export function createStreamState(): AIStreamState {
   return {
     accumulatedText: "",
     finishReason: null,
     toolCalls: new Map(),
+    toolResults: [],
     usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   };
 }
@@ -110,6 +232,8 @@ export function processStream(
             id: toolId,
             name: part.toolName,
             arguments: "",
+            providerExecuted: "providerExecuted" in part ? part.providerExecuted : undefined,
+            dynamic: "dynamic" in part ? part.dynamic : undefined,
           });
 
           const dynamic = isDynamicTool(part.toolName);
@@ -139,25 +263,117 @@ export function processStream(
         case "tool-call": {
           // tool-call fires when the full tool call is available
           const toolId = part.toolCallId;
-          const inputStr = JSON.stringify(part.input);
+          const inputStr = normalizeToolInputString(part.input);
           state.toolCalls.set(toolId, {
             id: toolId,
             name: part.toolName,
             arguments: inputStr,
+            providerExecuted: "providerExecuted" in part ? part.providerExecuted : undefined,
+            dynamic: "dynamic" in part ? part.dynamic : undefined,
           });
 
           const dynamic = isDynamicTool(part.toolName);
-          // part.input is already a parsed object — pass directly to avoid double serialization
-          const inputObj =
-            (part.input && typeof part.input === "object" && !Array.isArray(part.input))
-              ? part.input as Record<string, unknown>
-              : {};
+          const inputObj = normalizeToolInputObject(part.input);
           sendSSE(controller, encoder, {
             type: "tool-input-available",
             toolCallId: toolId,
             toolName: part.toolName,
             input: inputObj,
+            ...("providerExecuted" in part && part.providerExecuted !== undefined
+              ? { providerExecuted: part.providerExecuted }
+              : {}),
             ...(dynamic ? { dynamic: true } : {}),
+          });
+          break;
+        }
+
+        case "tool-result": {
+          const isError = "isError" in part && part.isError === true;
+          logProviderToolPart("tool-result", {
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            providerExecuted: "providerExecuted" in part ? part.providerExecuted : undefined,
+            dynamic: "dynamic" in part ? part.dynamic : undefined,
+            output: part.output,
+            input: "input" in part ? part.input : undefined,
+            preliminary: "preliminary" in part ? part.preliminary : undefined,
+            isError,
+          });
+          if (isError) {
+            state.toolResults.push({
+              toolCallId: part.toolCallId,
+              toolName: part.toolName,
+              error: "output" in part ? part.output : undefined,
+              ...("providerExecuted" in part && part.providerExecuted !== undefined
+                ? { providerExecuted: part.providerExecuted }
+                : {}),
+              ...("dynamic" in part && part.dynamic ? { dynamic: true } : {}),
+            });
+            sendSSE(controller, encoder, {
+              type: "tool-output-error",
+              toolCallId: part.toolCallId,
+              errorText: stringifyToolError("output" in part ? part.output : undefined),
+              ...("providerExecuted" in part && part.providerExecuted !== undefined
+                ? { providerExecuted: part.providerExecuted }
+                : {}),
+              ...("dynamic" in part && part.dynamic ? { dynamic: true } : {}),
+            });
+            break;
+          }
+
+          state.toolResults.push({
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            output: part.output,
+            ...("providerExecuted" in part && part.providerExecuted !== undefined
+              ? { providerExecuted: part.providerExecuted }
+              : {}),
+            ...("dynamic" in part && part.dynamic ? { dynamic: true } : {}),
+            ...("preliminary" in part && part.preliminary !== undefined
+              ? { preliminary: part.preliminary }
+              : {}),
+          });
+          sendSSE(controller, encoder, {
+            type: "tool-output-available",
+            toolCallId: part.toolCallId,
+            output: part.output,
+            ...("providerExecuted" in part && part.providerExecuted !== undefined
+              ? { providerExecuted: part.providerExecuted }
+              : {}),
+            ...("dynamic" in part && part.dynamic ? { dynamic: true } : {}),
+            ...("preliminary" in part && part.preliminary !== undefined
+              ? { preliminary: part.preliminary }
+              : {}),
+          });
+          break;
+        }
+
+        case "tool-error": {
+          logProviderToolPart("tool-error", {
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            providerExecuted: "providerExecuted" in part ? part.providerExecuted : undefined,
+            dynamic: "dynamic" in part ? part.dynamic : undefined,
+            error: part.error,
+            input: "input" in part ? part.input : undefined,
+          });
+          state.toolResults.push({
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            error: part.error,
+            ...("providerExecuted" in part && part.providerExecuted !== undefined
+              ? { providerExecuted: part.providerExecuted }
+              : {}),
+            ...("dynamic" in part && part.dynamic ? { dynamic: true } : {}),
+          });
+          sendSSE(controller, encoder, {
+            type: "tool-output-error",
+            toolCallId: part.toolCallId,
+            errorText: stringifyToolError(part.error),
+            ...("providerExecuted" in part && part.providerExecuted !== undefined
+              ? { providerExecuted: part.providerExecuted }
+              : {}),
+            ...("dynamic" in part && part.dynamic ? { dynamic: true } : {}),
           });
           break;
         }

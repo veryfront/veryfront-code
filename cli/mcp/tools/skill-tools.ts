@@ -91,6 +91,8 @@ interface GetSkillsResult {
 
 export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
   name: "vf_get_skills",
+  title: "Get Skills",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need to discover available Agent Skills or load a specific skill's procedural knowledge. Call without name to list all skills, or with name to get full content. Do not use for skill reference docs — use vf_get_skill_reference instead.",
   inputSchema: getSkillsInput,
@@ -168,6 +170,8 @@ interface GetSkillReferenceResult {
 
 export const vfGetSkillReference: MCPTool<GetSkillReferenceInput, GetSkillReferenceResult> = {
   name: "vf_get_skill_reference",
+  title: "Get Skill Reference",
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
     "Use this when you need to load a specific reference document from a skill. Do not use for skill discovery — use vf_get_skills instead.",
   inputSchema: getSkillReferenceInput,

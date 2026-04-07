@@ -34,6 +34,7 @@ import {
 import { convertToModelMessages } from "./model-message-converter.ts";
 import { convertToolsToAISDK } from "./model-tool-converter.ts";
 import { createStreamState, processStream } from "./ai-stream-handler.ts";
+import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { generateText, type LanguageModel, streamText } from "ai";
 import { AGENT_DEFAULTS } from "../ai-defaults.ts";
@@ -104,6 +105,22 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
   }
 
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+function stringifyToolError(error: unknown): string {
+  if (typeof error === "string" && error.length > 0) {
+    return error;
+  }
+
+  if (error instanceof Error && typeof error.message === "string" && error.message.length > 0) {
+    return error.message;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }
 
 function getSkillActivationRequiredError(toolName: string): string {
@@ -459,7 +476,11 @@ export class AgentRuntime {
             model: languageModel,
             system: systemPrompt,
             messages: convertToModelMessages(currentMessages),
-            tools: convertToolsToAISDK(tools),
+            tools: convertToolsToAISDK(tools, {
+              model: effectiveModel,
+              allowedToolNames: allowedRemoteToolNames,
+            }),
+            experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
             temperature: DEFAULT_TEMPERATURE,
           });
@@ -681,6 +702,7 @@ export class AgentRuntime {
     // Request-scoped skill policy (not class-level mutable state)
     let activeSkillPolicy: string[] | undefined;
     let finalFinishReason: string | undefined;
+    let latestAssistantText = "";
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
 
     for (let step = 0; step < maxSteps; step++) {
@@ -701,7 +723,11 @@ export class AgentRuntime {
         model: languageModel,
         system: systemPrompt,
         messages: convertToModelMessages(currentMessages),
-        tools: convertToolsToAISDK(tools),
+        tools: convertToolsToAISDK(tools, {
+          model: effectiveModel,
+          allowedToolNames: allowedRemoteToolNames,
+        }),
+        experimental_repairToolCall: repairToolCall,
         maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
         temperature: DEFAULT_TEMPERATURE,
         abortSignal,
@@ -740,8 +766,31 @@ export class AgentRuntime {
         parts: streamParts,
         timestamp: Date.now(),
       };
+      latestAssistantText = getTextFromParts(assistantMessage.parts);
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
+
+      for (const tr of state.toolResults) {
+        if (tr.preliminary) {
+          continue;
+        }
+
+        const toolResultMessage: Message = {
+          id: `tool_${tr.toolCallId}`,
+          role: "tool",
+          parts: [
+            {
+              type: "tool-result",
+              toolCallId: tr.toolCallId,
+              toolName: tr.toolName,
+              result: tr.error === undefined ? tr.output : { error: stringifyToolError(tr.error) },
+            },
+          ],
+          timestamp: Date.now(),
+        };
+        currentMessages.push(toolResultMessage);
+        await this.memory.add(toolResultMessage);
+      }
 
       if (state.finishReason !== "tool-calls" || !state.toolCalls.size) {
         sendSSE(controller, encoder, { type: "step-end" });
@@ -758,6 +807,22 @@ export class AgentRuntime {
         throwIfAborted(abortSignal);
         const { args, error: argError } = parseToolArgs(tc.arguments);
         const toolCall: ToolCall = { id: tc.id, name: tc.name, args, status: "pending" };
+
+        if (tc.providerExecuted === true) {
+          const matchingResult = state.toolResults.find((result) =>
+            result.toolCallId === tc.id && result.preliminary !== true
+          );
+
+          if (matchingResult) {
+            toolCall.status = matchingResult.error === undefined ? "completed" : "error";
+            toolCall.result = matchingResult.output;
+            toolCall.error = matchingResult.error === undefined
+              ? undefined
+              : stringifyToolError(matchingResult.error);
+            toolCalls.push(toolCall);
+          }
+          continue;
+        }
 
         if (argError) {
           logger.warn("Invalid streamed tool arguments", {
@@ -868,9 +933,8 @@ export class AgentRuntime {
       this.status = "thinking";
     }
 
-    const lastMessage = currentMessages[currentMessages.length - 1];
     return {
-      text: lastMessage ? getTextFromParts(lastMessage.parts) : "",
+      text: latestAssistantText,
       messages: currentMessages,
       toolCalls,
       status: "completed",

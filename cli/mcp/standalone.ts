@@ -11,7 +11,9 @@ import type { StdinReader } from "veryfront/platform";
 import { DevServerClient } from "./dev-server-client.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
 import {
+  buildInitializeResult,
   errorResponse,
+  JsonRpcError,
   type JSONRPCRequest,
   JSONRPCRequestSchema,
   type JSONRPCResponse,
@@ -79,11 +81,16 @@ export class StandaloneMCPServer {
   private dispatchMethod(method: string, params: unknown): Promise<unknown> {
     switch (method) {
       case "initialize":
-        return Promise.resolve({
-          protocolVersion: "2024-11-05",
-          capabilities: { tools: {}, resources: {}, prompts: {} },
-          serverInfo: { name: "veryfront-mcp", version: "1.0.0" },
-        });
+        return Promise.resolve(buildInitializeResult(
+          params,
+          {
+            name: "veryfront-mcp",
+            title: "Veryfront Standalone MCP Server",
+            version: "1.0.0",
+            description: "Veryfront standalone MCP server for CLI-based development tools",
+          },
+          "Veryfront standalone MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, and vf_get_status for dev server health.",
+        ));
       case "notifications/initialized":
         return Promise.resolve({});
       case "tools/list":
@@ -110,13 +117,24 @@ export class StandaloneMCPServer {
   }
 
   private async handleToolsCall(params: unknown): Promise<unknown> {
-    const { name, arguments: args } = ToolsCallParamsSchema.parse(params);
+    const { name: toolName, arguments: args } = ToolsCallParamsSchema.parse(params);
 
-    const tool = this.tools.find((t) => t.name === name);
-    if (!tool) throw new Error(`Unknown tool: ${name}`);
+    const tool = this.tools.find((t) => t.name === toolName);
+    if (!tool) throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
 
-    const result = await tool.execute(args ?? {});
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    try {
+      const result = await tool.execute(args ?? {});
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        isError: false,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: "text", text: message }],
+        isError: true,
+      };
+    }
   }
 
   private handleResourcesList(): unknown {

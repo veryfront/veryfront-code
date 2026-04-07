@@ -37,6 +37,54 @@ describe("mcp/tools", () => {
       const uniqueNames = new Set(names);
       assertEquals(names.length, uniqueNames.size, "Tool names must be unique");
     });
+
+    it("every tool has title and annotations", () => {
+      for (const tool of allTools) {
+        assertExists(tool.title, `Tool ${tool.name} missing title`);
+        assertEquals(typeof tool.title, "string", `Tool ${tool.name} title must be a string`);
+        assertExists(tool.annotations, `Tool ${tool.name} missing annotations`);
+        assertEquals(
+          typeof tool.annotations,
+          "object",
+          `Tool ${tool.name} annotations must be an object`,
+        );
+      }
+    });
+
+    it("every tool explicitly sets readOnlyHint", () => {
+      for (const tool of allTools) {
+        assertExists(tool.annotations, `Tool ${tool.name} missing annotations`);
+        assertEquals(
+          typeof tool.annotations!.readOnlyHint,
+          "boolean",
+          `Tool ${tool.name} must explicitly set readOnlyHint`,
+        );
+      }
+    });
+
+    it("read-only tools are not marked destructive", () => {
+      for (const tool of allTools) {
+        if (tool.annotations?.readOnlyHint) {
+          assertEquals(
+            tool.annotations.destructiveHint ?? false,
+            false,
+            `Read-only tool ${tool.name} must not have destructiveHint: true`,
+          );
+        }
+      }
+    });
+
+    it("destructive tools are not marked read-only", () => {
+      for (const tool of allTools) {
+        if (tool.annotations?.destructiveHint) {
+          assertEquals(
+            tool.annotations.readOnlyHint,
+            false,
+            `Destructive tool ${tool.name} must have readOnlyHint: false`,
+          );
+        }
+      }
+    });
   });
 
   describe("getTool", () => {

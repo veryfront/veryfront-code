@@ -4,6 +4,7 @@ import { dynamicTool } from "#veryfront/tool";
 import { z } from "zod";
 import { clearMCPRegistry, registerTool } from "./registry.ts";
 import { createMCPServer } from "./server.ts";
+import type { ToolListEntry } from "./types.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -383,6 +384,387 @@ describe("mcp/server", () => {
 
       assertEquals(response.status, 200);
       assertEquals(response.headers.get("Access-Control-Allow-Origin"), "https://example.com");
+    });
+  });
+
+  describe("initialize version negotiation", () => {
+    it("echoes 2025-11-25 when client requests it", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      });
+      const result = res.result as Record<string, unknown>;
+      assertEquals(result.protocolVersion, "2025-11-25");
+    });
+
+    it("echoes 2024-11-05 when client requests it", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2024-11-05" },
+      });
+      const result = res.result as Record<string, unknown>;
+      assertEquals(result.protocolVersion, "2024-11-05");
+    });
+
+    it("returns 2025-11-25 for unknown version", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "1999-01-01" },
+      });
+      const result = res.result as Record<string, unknown>;
+      assertEquals(result.protocolVersion, "2025-11-25");
+    });
+
+    it("returns 2025-11-25 when no version is provided", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+      });
+      const result = res.result as Record<string, unknown>;
+      assertEquals(result.protocolVersion, "2025-11-25");
+    });
+
+    it("serverInfo includes title and description", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      });
+      const result = res.result as Record<string, unknown>;
+      const serverInfo = result.serverInfo as Record<string, unknown>;
+      assertEquals(serverInfo.name, "veryfront-mcp");
+      assertExists(serverInfo.title);
+      assertExists(serverInfo.description);
+    });
+
+    it("includes instructions field", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      });
+      const result = res.result as Record<string, unknown>;
+      assertExists(result.instructions);
+    });
+
+    it("capabilities include listChanged", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      });
+      const result = res.result as Record<string, unknown>;
+      const caps = result.capabilities as Record<string, Record<string, unknown>>;
+      assertEquals(caps.tools.listChanged, true);
+      assertEquals(caps.resources.listChanged, true);
+      assertEquals(caps.prompts.listChanged, true);
+    });
+  });
+
+  describe("Origin validation (DNS rebinding protection)", () => {
+    it("returns 403 when Origin is not in allowed list", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://allowed.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Origin": "https://evil.com",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 403);
+      const body = await response.json();
+      assertEquals(body.error.message, "Forbidden: Origin not allowed");
+    });
+
+    it("returns 200 when Origin is in allowed list", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://allowed.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Origin": "https://allowed.com",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 200);
+    });
+
+    it("returns 200 when no Origin header is present", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://allowed.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+
+      assertEquals(response.status, 200);
+    });
+  });
+
+  describe("notifications/initialized", () => {
+    it("handles notifications/initialized with id", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "notifications/initialized",
+      });
+      assertEquals(res.jsonrpc, "2.0");
+      assertEquals(res.id, 1);
+      assertEquals(res.error, undefined);
+    });
+
+    it("handles notifications/initialized without id (proper notification)", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      });
+      assertEquals(res.jsonrpc, "2.0");
+      assertEquals(res.id, undefined);
+      assertEquals(res.error, undefined);
+    });
+  });
+
+  it("includes title and annotations in tools/list when configured", async () => {
+    const server = createMCPServer({ enabled: true });
+
+    registerTool(
+      "test:annotated",
+      dynamicTool({
+        id: "test:annotated",
+        description: "Tool with annotations",
+        inputSchema: z.object({}),
+        execute: async () => ({ ok: true }),
+        mcp: {
+          enabled: true,
+          title: "Annotated Tool",
+          annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+          },
+        },
+      }),
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+    });
+
+    const tools = (response.result as { tools: ToolListEntry[] }).tools;
+    const annotated = tools.find((t) => t.name === "test:annotated");
+    assertExists(annotated);
+    assertEquals(annotated.title, "Annotated Tool");
+    assertEquals(annotated.annotations, {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+  });
+
+  it("omits title and annotations from tools/list when not configured", async () => {
+    const server = createMCPServer({ enabled: true });
+
+    registerTool(
+      "test:plain",
+      dynamicTool({
+        id: "test:plain",
+        description: "Plain tool",
+        inputSchema: z.object({}),
+        execute: async () => ({ ok: true }),
+      }),
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+    });
+
+    const tools = (response.result as { tools: ToolListEntry[] }).tools;
+    const plain = tools.find((t) => t.name === "test:plain");
+    assertExists(plain);
+    assertEquals(plain.title, undefined);
+    assertEquals(plain.annotations, undefined);
+  });
+
+  it("only includes valid annotation keys in tools/list", async () => {
+    const server = createMCPServer({ enabled: true });
+
+    registerTool(
+      "test:partial-annotations",
+      dynamicTool({
+        id: "test:partial-annotations",
+        description: "Partially annotated",
+        inputSchema: z.object({}),
+        execute: async () => ({ ok: true }),
+        mcp: {
+          enabled: true,
+          title: "Partial",
+          annotations: { readOnlyHint: true },
+        },
+      }),
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+    });
+
+    const tools = (response.result as { tools: ToolListEntry[] }).tools;
+    const tool = tools.find((t) => t.name === "test:partial-annotations");
+    assertExists(tool);
+    assertEquals(tool.annotations, { readOnlyHint: true });
+  });
+
+  describe("callTool error handling", () => {
+    it("returns isError false on successful tool execution", async () => {
+      const server = createMCPServer({ enabled: true });
+
+      registerTool(
+        "test:echo",
+        dynamicTool({
+          id: "test:echo",
+          description: "Echo tool",
+          inputSchema: z.object({}),
+          execute: async () => ({ hello: "world" }),
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "test:echo", arguments: {} },
+      });
+
+      assertEquals(response.error, undefined);
+      const result = response.result as {
+        content: { type: string; text: string }[];
+        isError: boolean;
+      };
+      assertEquals(result.isError, false);
+      assertEquals(result.content[0].type, "text");
+      assertEquals(JSON.parse(result.content[0].text).hello, "world");
+    });
+
+    it("returns isError true when tool execution throws", async () => {
+      const server = createMCPServer({ enabled: true });
+
+      registerTool(
+        "test:fail",
+        dynamicTool({
+          id: "test:fail",
+          description: "Failing tool",
+          inputSchema: z.object({}),
+          execute: async () => {
+            throw new Error("tool broke");
+          },
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "test:fail", arguments: {} },
+      });
+
+      assertEquals(response.error, undefined);
+      const result = response.result as {
+        content: { type: string; text: string }[];
+        isError: boolean;
+      };
+      assertEquals(result.isError, true);
+      assertEquals(result.content[0].text, "tool broke");
+    });
+
+    it("returns JSON-RPC error with code -32602 for unknown tool", async () => {
+      const server = createMCPServer({ enabled: true });
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "nonexistent:tool", arguments: {} },
+      });
+
+      assertExists(response.error);
+      assertEquals(response.error.code, -32602);
+      assertStringIncludes(response.error.message, "Unknown tool");
+    });
+
+    it("returns JSON-RPC error with code -32602 for invalid arguments", async () => {
+      const server = createMCPServer({ enabled: true });
+
+      registerTool(
+        "test:strict",
+        dynamicTool({
+          id: "test:strict",
+          description: "Tool with required arg",
+          inputSchema: z.object({ required_field: z.string() }),
+          execute: async (input) => input,
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: { name: "test:strict", arguments: { wrong_field: 123 } },
+      });
+
+      assertExists(response.error);
+      assertEquals(response.error.code, -32602);
+      assertStringIncludes(response.error.message, "Invalid arguments");
+      assertEquals(response.result, undefined);
     });
   });
 
