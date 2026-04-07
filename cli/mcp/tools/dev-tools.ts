@@ -163,7 +163,9 @@ const previewRouteInput = z.object({
     .enum(["html", "json", "status"])
     .optional()
     .default("status")
-    .describe("Output format: 'html' for full page, 'json' for API response, 'status' for just HTTP status. Defaults to 'status'."),
+    .describe(
+      "Output format: 'html' for full page, 'json' for API response, 'status' for just HTTP status. Defaults to 'status'.",
+    ),
 });
 
 type PreviewRouteInput = z.infer<typeof previewRouteInput>;

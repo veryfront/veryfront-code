@@ -82,7 +82,8 @@ type IssuesGetInput = z.infer<typeof issuesGetInput>;
 
 const issuesGet: MCPTool<IssuesGetInput, Issue | null> = {
   name: "issues_get",
-  description: "Use this when you need to retrieve a specific issue by its ID. Do not use for listing — use issues_list instead.",
+  description:
+    "Use this when you need to retrieve a specific issue by its ID. Do not use for listing — use issues_list instead.",
   inputSchema: issuesGetInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -108,7 +109,8 @@ type IssuesUpdateInput = z.infer<typeof issuesUpdateInput>;
 
 const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
   name: "issues_update",
-  description: "Use this when you need to modify an existing issue. Only provided fields are updated. " +
+  description:
+    "Use this when you need to modify an existing issue. Only provided fields are updated. " +
     "Do not use to close — use issues_close instead.",
   inputSchema: issuesUpdateInput,
   execute: async (input) => {
@@ -184,7 +186,8 @@ type IssuesCloseInput = z.infer<typeof issuesCloseInput>;
 
 const issuesClose: MCPTool<IssuesCloseInput, Issue | null> = {
   name: "issues_close",
-  description: "Use this when you need to close an issue. Do not use to delete — use issues_delete instead.",
+  description:
+    "Use this when you need to close an issue. Do not use to delete — use issues_delete instead.",
   inputSchema: issuesCloseInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);

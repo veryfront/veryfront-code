@@ -37,8 +37,12 @@ const getErrorsInput = z.object({
   type: z.enum(["compile", "runtime", "bundle", "hmr", "module"]).optional().describe(
     "Filter by error type. Example: 'compile'. Omit to return all types.",
   ),
-  file: z.string().optional().describe("Filter by file path. Example: 'app/page.tsx'. Omit to return errors from all files."),
-  limit: z.number().optional().default(50).describe("Maximum number of errors to return. Defaults to 50."),
+  file: z.string().optional().describe(
+    "Filter by file path. Example: 'app/page.tsx'. Omit to return errors from all files.",
+  ),
+  limit: z.number().optional().default(50).describe(
+    "Maximum number of errors to return. Defaults to 50.",
+  ),
 });
 
 type GetErrorsInput = z.infer<typeof getErrorsInput>;
@@ -60,13 +64,21 @@ export const vfGetErrors: MCPTool<GetErrorsInput, DevError[]> = {
 };
 
 const getLogsInput = z.object({
-  level: z.enum(["debug", "info", "warn", "error"]).optional().describe("Filter by log level. Example: 'error'. Omit to return all levels."),
+  level: z.enum(["debug", "info", "warn", "error"]).optional().describe(
+    "Filter by log level. Example: 'error'. Omit to return all levels.",
+  ),
   source: z.string().optional().describe(
     "Filter by log source. Example: 'server', 'hmr', 'transform'. Omit to return all sources.",
   ),
-  pattern: z.string().optional().describe("Filter by pattern (case-insensitive substring match). Example: 'timeout'."),
-  limit: z.number().optional().default(100).describe("Maximum number of log entries to return. Defaults to 100."),
-  since: z.number().optional().describe("Only return logs after this Unix timestamp in milliseconds."),
+  pattern: z.string().optional().describe(
+    "Filter by pattern (case-insensitive substring match). Example: 'timeout'.",
+  ),
+  limit: z.number().optional().default(100).describe(
+    "Maximum number of log entries to return. Defaults to 100.",
+  ),
+  since: z.number().optional().describe(
+    "Only return logs after this Unix timestamp in milliseconds.",
+  ),
 });
 
 type GetLogsInput = z.infer<typeof getLogsInput>;
@@ -143,7 +155,8 @@ export function createVfGetStatus(
 ): MCPTool<GetStatusInput, ServerStatus> {
   return {
     name: "vf_get_status",
-    description: "Use this when you need to check if the dev server is running, its uptime, or current error/warning counts. Do not use for detailed error info — use vf_get_errors instead.",
+    description:
+      "Use this when you need to check if the dev server is running, its uptime, or current error/warning counts. Do not use for detailed error info — use vf_get_errors instead.",
     inputSchema: getStatusInput,
     execute: async () => {
       const errors = getErrorCollector();
@@ -167,7 +180,9 @@ export function createVfGetStatus(
 export const vfGetStatus = createVfGetStatus();
 
 const clearErrorsInput = z.object({
-  file: z.string().optional().describe("Clear errors for a specific file only. Example: 'app/page.tsx'. Omit to clear all files."),
+  file: z.string().optional().describe(
+    "Clear errors for a specific file only. Example: 'app/page.tsx'. Omit to clear all files.",
+  ),
   type: z.enum(["compile", "runtime", "bundle", "hmr", "module"]).optional().describe(
     "Clear errors of a specific type only. Example: 'compile'. Omit to clear all types.",
   ),
@@ -181,7 +196,8 @@ interface ClearErrorsOutput {
 
 export const vfClearErrors: MCPTool<ClearErrorsInput, ClearErrorsOutput> = {
   name: "vf_clear_errors",
-  description: "Use this when you need to clear accumulated errors from the error collector, optionally filtering by file or type. Returns the number of cleared errors. Do not use for viewing errors — use vf_get_errors instead.",
+  description:
+    "Use this when you need to clear accumulated errors from the error collector, optionally filtering by file or type. Returns the number of cleared errors. Do not use for viewing errors — use vf_get_errors instead.",
   inputSchema: clearErrorsInput,
   execute: async (input) => {
     const collector = getErrorCollector();

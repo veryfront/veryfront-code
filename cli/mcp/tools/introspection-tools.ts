@@ -26,7 +26,8 @@ const getProjectInfoInput = z.object({});
 
 const vfGetProjectInfo: MCPTool = {
   name: "vf_get_project_info",
-  description: "Use this when you need project metadata including project slug, version, and environment. Do not use for CLI commands — use vf_get_schema instead.",
+  description:
+    "Use this when you need project metadata including project slug, version, and environment. Do not use for CLI commands — use vf_get_schema instead.",
   inputSchema: getProjectInfoInput,
   execute: async () => {
     const { getEnvironmentConfig } = await import("veryfront/config");
