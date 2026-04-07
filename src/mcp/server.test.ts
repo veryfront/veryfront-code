@@ -960,6 +960,42 @@ describe("mcp/server", () => {
     assertEquals(data.completion.hasMore, false);
   });
 
+  it("completion/complete returns empty values when argument is missing", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "completion/complete",
+      params: {
+        ref: { type: "ref/resource", uri: "test://x" },
+      },
+    });
+    assertEquals(result.error, undefined);
+    const data = result.result as {
+      completion: { values: string[]; hasMore: boolean };
+    };
+    assertEquals(data.completion.values, []);
+    assertEquals(data.completion.hasMore, false);
+  });
+
+  it("completion/complete returns empty values when ref is missing", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "completion/complete",
+      params: {
+        argument: { name: "param", value: "test" },
+      },
+    });
+    assertEquals(result.error, undefined);
+    const data = result.result as {
+      completion: { values: string[]; hasMore: boolean };
+    };
+    assertEquals(data.completion.values, []);
+    assertEquals(data.completion.hasMore, false);
+  });
+
   it("syncs integration config to API on first tools/list call", async () => {
     const server = createMCPServer({ enabled: true });
     server.setIntegrationLoader({

@@ -435,22 +435,12 @@ export class MCPServer {
   }
 
   private complete(
-    params: JSONRPCParams | undefined,
+    _params: JSONRPCParams | undefined,
   ): Promise<{ completion: { values: string[]; total?: number; hasMore: boolean } }> {
-    const p = toParamsRecord(params);
-    const ref = p.ref as { type: string; uri?: string; name?: string } | undefined;
-    const argument = p.argument as { name: string; value: string } | undefined;
-
-    if (!ref || !argument) {
-      return Promise.resolve({ completion: { values: [], hasMore: false } });
-    }
-
+    // Stub: returns empty completions for all refs.
+    // Real logic will resolve values from resource templates and prompts.
     return Promise.resolve({
-      completion: {
-        values: [],
-        total: 0,
-        hasMore: false,
-      },
+      completion: { values: [], total: 0, hasMore: false },
     });
   }
 
