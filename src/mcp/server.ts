@@ -81,9 +81,9 @@ export interface IntegrationLoaderConfig {
   apiToken?: string;
 }
 
-export class MCPServer {
-  private static SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
+const MCP_SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
 
+export class MCPServer {
   private config: MCPServerConfig;
   private integrationLoader?: IntegrationLoaderConfig;
   private integrationsLoaded = false;
@@ -165,9 +165,9 @@ export class MCPServer {
   private initialize(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
     const p = toParamsRecord(params);
     const requested = typeof p.protocolVersion === "string" ? p.protocolVersion : undefined;
-    const negotiated = requested && MCPServer.SUPPORTED_VERSIONS.includes(requested)
+    const negotiated = requested && MCP_SUPPORTED_VERSIONS.includes(requested)
       ? requested
-      : MCPServer.SUPPORTED_VERSIONS[0];
+      : MCP_SUPPORTED_VERSIONS[0];
 
     return Promise.resolve({
       protocolVersion: negotiated,

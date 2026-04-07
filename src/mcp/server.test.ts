@@ -541,15 +541,29 @@ describe("mcp/server", () => {
     });
   });
 
-  it("handles notifications/initialized without error", async () => {
-    const server = createMCPServer({ enabled: true });
-    const res = await server.handleRequest({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "notifications/initialized",
+  describe("notifications/initialized", () => {
+    it("handles notifications/initialized with id", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "notifications/initialized",
+      });
+      assertEquals(res.jsonrpc, "2.0");
+      assertEquals(res.id, 1);
+      assertEquals(res.error, undefined);
     });
-    assertEquals(res.jsonrpc, "2.0");
-    assertEquals(res.error, undefined);
+
+    it("handles notifications/initialized without id (proper notification)", async () => {
+      const server = createMCPServer({ enabled: true });
+      const res = await server.handleRequest({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      });
+      assertEquals(res.jsonrpc, "2.0");
+      assertEquals(res.id, undefined);
+      assertEquals(res.error, undefined);
+    });
   });
 
   it("syncs integration config to API on first tools/list call", async () => {

@@ -83,6 +83,55 @@ export function errorResponse(
 }
 
 /**
+ * Supported MCP protocol versions (newest first).
+ * Shared across all CLI MCP servers so the version list is maintained in one place.
+ */
+export const MCP_SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
+
+/**
+ * Safely extract a record from unknown params (mirrors src/mcp toParamsRecord).
+ */
+export function toParamsRecord(params: unknown): Record<string, unknown> {
+  if (params && typeof params === "object" && !Array.isArray(params)) {
+    return params as Record<string, unknown>;
+  }
+  return {};
+}
+
+/**
+ * Negotiate MCP protocol version: echo the client's version if supported,
+ * otherwise fall back to the newest supported version.
+ */
+export function negotiateVersion(params: unknown): string {
+  const p = toParamsRecord(params);
+  const requested = typeof p.protocolVersion === "string" ? p.protocolVersion : undefined;
+  return requested && MCP_SUPPORTED_VERSIONS.includes(requested)
+    ? requested
+    : MCP_SUPPORTED_VERSIONS[0];
+}
+
+/**
+ * Build a complete MCP initialize result with negotiated version,
+ * capabilities, serverInfo, and instructions.
+ */
+export function buildInitializeResult(
+  params: unknown,
+  serverInfo: { name: string; title: string; version: string; description: string },
+  instructions: string,
+): Record<string, unknown> {
+  return {
+    protocolVersion: negotiateVersion(params),
+    capabilities: {
+      tools: { listChanged: true },
+      resources: { listChanged: true },
+      prompts: { listChanged: true },
+    },
+    serverInfo,
+    instructions,
+  };
+}
+
+/**
  * Validate and extract tools/call params
  */
 export const ToolsCallParamsSchema = z.object({

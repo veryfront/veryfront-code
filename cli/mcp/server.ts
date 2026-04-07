@@ -15,6 +15,7 @@ import { getErrorCollector, getLogBuffer } from "veryfront/observability";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
 import {
+  buildInitializeResult,
   errorResponse,
   type JSONRPCRequest,
   JSONRPCRequestSchema,
@@ -53,8 +54,6 @@ export interface MCPServerConfig {
 }
 
 export class MCPDevServer {
-  private static SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
-
   private config: MCPServerConfig;
   private running = false;
   private stdinReader: StdinReader | null = null;
@@ -120,6 +119,17 @@ export class MCPDevServer {
       if (isAllowedOrigin && origin) headers["Access-Control-Allow-Origin"] = origin;
 
       if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
+
+      if (origin && !isAllowedOrigin) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32600, message: "Forbidden: Origin not allowed" },
+          }),
+          { status: 403, headers },
+        );
+      }
 
       if (url.pathname !== "/mcp") {
         return new Response(JSON.stringify({ error: "Not found. MCP endpoint is at /mcp" }), {
@@ -188,29 +198,16 @@ export class MCPDevServer {
   }
 
   private handleInitialize(params: unknown): unknown {
-    const p = (params && typeof params === "object" && !Array.isArray(params))
-      ? params as Record<string, unknown>
-      : {};
-    const requested = typeof p.protocolVersion === "string" ? p.protocolVersion : undefined;
-    const negotiated = requested && MCPDevServer.SUPPORTED_VERSIONS.includes(requested)
-      ? requested
-      : MCPDevServer.SUPPORTED_VERSIONS[0];
-
-    return {
-      protocolVersion: negotiated,
-      capabilities: {
-        tools: { listChanged: true },
-        resources: { listChanged: true },
-        prompts: { listChanged: true },
-      },
-      serverInfo: {
-        name: this.config.serverName,
+    return buildInitializeResult(
+      params,
+      {
+        name: this.config.serverName ?? "veryfront-dev",
         title: "Veryfront Dev MCP Server",
-        version: this.config.serverVersion,
+        version: this.config.serverVersion ?? "1.0.0",
         description: "Veryfront development server tools for real-time errors, logs, HMR, and scaffolding",
       },
-      instructions: "Veryfront dev MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, and vf_trigger_hmr for hot module reload.",
-    };
+      "Veryfront dev MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, and vf_trigger_hmr for hot module reload.",
+    );
   }
 
   private handleToolsList(): unknown {
