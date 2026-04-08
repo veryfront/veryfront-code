@@ -56,7 +56,10 @@ describe("normalizeKnowledgeInputPath", () => {
 
 describe("normalizeProjectUploadPath", () => {
   it("preserves the uploads/ prefix for upload-store API calls", () => {
-    assertEquals(normalizeProjectUploadPath("uploads/contracts/q1.pdf"), "uploads/contracts/q1.pdf");
+    assertEquals(
+      normalizeProjectUploadPath("uploads/contracts/q1.pdf"),
+      "uploads/contracts/q1.pdf",
+    );
     assertEquals(normalizeProjectUploadPath("uploads/"), "uploads");
   });
 });
@@ -344,7 +347,11 @@ describe("collectKnowledgeSources", () => {
       },
     );
 
-    assertEquals(downloadCalls, [["uploads/contracts/a.pdf", "uploads/contracts/b.pdf", "uploads/contracts/c.pdf"]]);
+    assertEquals(downloadCalls, [[
+      "uploads/contracts/a.pdf",
+      "uploads/contracts/b.pdf",
+      "uploads/contracts/c.pdf",
+    ]]);
     assertEquals(
       collection.sources.map((source) =>
         source.kind === "upload" ? source.uploadPath : source.localPath
@@ -974,7 +981,8 @@ describe("buildSuggestedSlug", () => {
       {
         kind: "upload",
         input: "uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
-        uploadPath: "uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
+        uploadPath:
+          "uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
         localPath:
           "/workspace/uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
       },

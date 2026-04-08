@@ -201,7 +201,10 @@ function resolveExplicitUploadPath(inputPath: string): string {
   const normalizedInput = normalizeKnowledgeInputPath(inputPath);
   const displayInput = inputPath.replace(/\\/g, "/");
   const uploadPath = normalizeProjectUploadPath(inputPath);
-  if (!uploadPath || uploadPath === "uploads" || normalizedInput === "uploads" || normalizedInput.endsWith("/")) {
+  if (
+    !uploadPath || uploadPath === "uploads" || normalizedInput === "uploads" ||
+    normalizedInput.endsWith("/")
+  ) {
     throw new Error(
       `Directory upload references require --path <prefix> --all: ${displayInput}`,
     );
