@@ -17,7 +17,11 @@ async function initSession(handler: (req: Request) => Promise<Response>): Promis
         jsonrpc: "2.0",
         id: 0,
         method: "initialize",
-        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1.0" } },
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "test", version: "1.0" },
+        },
       }),
     }),
   );
@@ -1074,7 +1078,11 @@ describe("mcp/server", () => {
             jsonrpc: "2.0",
             id: 1,
             method: "initialize",
-            params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1.0" } },
+            params: {
+              protocolVersion: "2025-11-25",
+              capabilities: {},
+              clientInfo: { name: "test", version: "1.0" },
+            },
           }),
         }),
       );

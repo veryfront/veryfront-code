@@ -598,7 +598,8 @@ export class MCPServer {
     return {
       "Access-Control-Allow-Origin": matchedOrigin,
       "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, MCP-Session-Id, X-End-User-Id, X-Project-Id",
+      "Access-Control-Allow-Headers":
+        "Content-Type, Authorization, MCP-Session-Id, X-End-User-Id, X-Project-Id",
       "Vary": "Origin",
     };
   }
