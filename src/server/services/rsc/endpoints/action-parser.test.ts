@@ -83,5 +83,21 @@ describe("server/services/rsc/endpoints/action-parser", () => {
       const body = assertActionBody(result);
       assertEquals(body.id, "a/b/c/d/e");
     });
+
+    it("should reject ids with consecutive slashes", async () => {
+      const result = await parseActionBody({ id: "foo//bar", args: [] });
+      assertErrorResponse(result, 400);
+    });
+
+    it("should complete quickly on adversarial input (ReDoS resistance)", async () => {
+      // Crafted input that would cause catastrophic backtracking with the old
+      // regex where `/` appeared in the character classes AND the group separator.
+      const malicious = "a" + "/".repeat(50) + "!";
+      const start = performance.now();
+      const result = await parseActionBody({ id: malicious, args: [] });
+      const elapsed = performance.now() - start;
+      assertErrorResponse(result, 400);
+      assertEquals(elapsed < 100, true, `Regex took ${elapsed}ms, expected <100ms`);
+    });
   });
 });
