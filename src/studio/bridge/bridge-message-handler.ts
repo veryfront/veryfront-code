@@ -21,14 +21,36 @@ const SAFE_PROTOCOLS = new Set(["http:", "https:"]);
 
 /** Returns true if the URL is safe for navigation (relative or http/https only). */
 export function isSafeNavigationUrl(url: string): boolean {
-  // Relative URLs starting with / are always safe
-  if (url.startsWith("/")) return true;
+  return sanitizeNavigationUrl(url) !== null;
+}
+
+/**
+ * Return a sanitized URL safe for `window.location.href` assignment, or null
+ * if the URL must be blocked. Relative paths are returned as-is; absolute URLs
+ * must use http/https and target veryfront.com (or a subdomain) to prevent
+ * open-redirect. The browser-normalized `parsed.href` is returned instead of
+ * the raw input so tainted values never reach the DOM sink.
+ */
+export function sanitizeNavigationUrl(url: string): string | null {
+  if (typeof url !== "string" || url.length === 0) return null;
+
+  // Relative paths are same-origin by definition
+  if (url.startsWith("/")) return url;
 
   try {
     const parsed = new URL(url, window.location.origin);
-    return SAFE_PROTOCOLS.has(parsed.protocol);
+    if (!SAFE_PROTOCOLS.has(parsed.protocol)) return null;
+
+    // Allow same-origin navigation unconditionally
+    if (parsed.origin === window.location.origin) return parsed.href;
+
+    // For cross-origin, restrict to veryfront.com
+    const host = parsed.hostname;
+    if (host !== "veryfront.com" && !host.endsWith(".veryfront.com")) return null;
+
+    return parsed.href;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -97,23 +119,23 @@ export function handleStudioMessage(event: MessageEvent): void {
   const config = getConfig();
 
   switch (message.action) {
-    case "routeChange":
-      if (message.url) {
-        if (!isSafeNavigationUrl(message.url)) {
-          logger.warn("[StudioBridge] Blocked unsafe URL in routeChange", { url: message.url });
-          return;
-        }
-        if (state.selectedNodeId) {
-          clearSelection(true);
-        }
-        postToStudio({
-          action: "onPageTransitionStart",
-          url: message.url,
-          projectId: config.projectId,
-        });
-        window.location.href = message.url;
+    case "routeChange": {
+      const safeUrl = sanitizeNavigationUrl(message.url);
+      if (!safeUrl) {
+        logger.warn("[StudioBridge] Blocked unsafe URL in routeChange", { url: message.url });
+        return;
       }
+      if (state.selectedNodeId) {
+        clearSelection(true);
+      }
+      postToStudio({
+        action: "onPageTransitionStart",
+        url: safeUrl,
+        projectId: config.projectId,
+      });
+      window.location.href = safeUrl;
       return;
+    }
 
     case "reload":
       window.location.reload();
