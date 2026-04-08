@@ -187,8 +187,7 @@ export function normalizeKnowledgeInputPath(inputPath: string): string {
 }
 
 export function normalizeProjectUploadPath(inputPath: string): string {
-  const normalizedPath = normalizeKnowledgeInputPath(inputPath);
-  return normalizedPath === "uploads" ? "" : normalizedPath.replace(/^uploads\/+/, "");
+  return normalizeKnowledgeInputPath(inputPath);
 }
 
 export function formatKnowledgeUploadSource(uploadPath: string): string {
@@ -202,7 +201,10 @@ function resolveExplicitUploadPath(inputPath: string): string {
   const normalizedInput = normalizeKnowledgeInputPath(inputPath);
   const displayInput = inputPath.replace(/\\/g, "/");
   const uploadPath = normalizeProjectUploadPath(inputPath);
-  if (!uploadPath || normalizedInput.endsWith("/")) {
+  if (
+    !uploadPath || uploadPath === "uploads" || normalizedInput === "uploads" ||
+    normalizedInput.endsWith("/")
+  ) {
     throw new Error(
       `Directory upload references require --path <prefix> --all: ${displayInput}`,
     );

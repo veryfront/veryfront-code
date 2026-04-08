@@ -55,9 +55,12 @@ describe("normalizeKnowledgeInputPath", () => {
 });
 
 describe("normalizeProjectUploadPath", () => {
-  it("strips the uploads/ prefix before upload-store API calls", () => {
-    assertEquals(normalizeProjectUploadPath("uploads/contracts/q1.pdf"), "contracts/q1.pdf");
-    assertEquals(normalizeProjectUploadPath("uploads/"), "");
+  it("preserves the uploads/ prefix for upload-store API calls", () => {
+    assertEquals(
+      normalizeProjectUploadPath("uploads/contracts/q1.pdf"),
+      "uploads/contracts/q1.pdf",
+    );
+    assertEquals(normalizeProjectUploadPath("uploads/"), "uploads");
   });
 });
 
@@ -169,20 +172,20 @@ describe("collectKnowledgeSources", () => {
         downloadUploads: async (uploadPaths) => {
           calls.push(...uploadPaths);
           return [{
-            uploadPath: "contracts/q1.pdf",
+            uploadPath: "uploads/contracts/q1.pdf",
             localPath: "/workspace/uploads/contracts/q1.pdf",
           }];
         },
       },
     );
 
-    assertEquals(calls, ["contracts/q1.pdf"]);
+    assertEquals(calls, ["uploads/contracts/q1.pdf"]);
     assertEquals(collection, {
       sources: [
         {
           kind: "upload",
           input: "uploads/contracts/q1.pdf",
-          uploadPath: "contracts/q1.pdf",
+          uploadPath: "uploads/contracts/q1.pdf",
           localPath: "/workspace/uploads/contracts/q1.pdf",
         },
       ],
@@ -212,14 +215,14 @@ describe("collectKnowledgeSources", () => {
           downloadUploads: async (uploadPaths) => {
             calls.push(...uploadPaths);
             return [{
-              uploadPath: "contracts/q1.pdf",
+              uploadPath: "uploads/contracts/q1.pdf",
               localPath: "/workspace/uploads/contracts/q1.pdf",
             }];
           },
         },
       );
 
-      assertEquals(calls, ["contracts/q1.pdf"]);
+      assertEquals(calls, ["uploads/contracts/q1.pdf"]);
       assertEquals(collection.sources[0]?.kind, "upload");
       assertEquals(collection.skipped, []);
     } finally {
@@ -235,7 +238,7 @@ describe("collectKnowledgeSources", () => {
       get: (path, params) => {
         listCalls.push({ path, params });
         return Promise.resolve({
-          data: [{ path: "a.pdf" }, { path: "b.pdf" }],
+          data: [{ path: "uploads/a.pdf" }, { path: "uploads/b.pdf" }],
           page_info: { next: null },
         });
       },
@@ -262,8 +265,8 @@ describe("collectKnowledgeSources", () => {
     );
 
     assertEquals(listCalls.length, 1);
-    assertEquals(listCalls[0]?.params?.path, undefined);
-    assertEquals(downloadCalls, [["a.pdf", "b.pdf"]]);
+    assertEquals(listCalls[0]?.params?.path, "uploads");
+    assertEquals(downloadCalls, [["uploads/a.pdf", "uploads/b.pdf"]]);
     assertEquals(collection.sources.length, 2);
     assert(collection.sources.every((source) => source.kind === "upload"));
     assertEquals(collection.skipped, []);
@@ -275,14 +278,14 @@ describe("collectKnowledgeSources", () => {
     const client = createMockClient({
       get: (_path, params) => {
         listCalls.push({ path: _path, params });
-        if (params?.path === "contracts") {
+        if (params?.path === "uploads/contracts") {
           return Promise.resolve({
-            data: [{ type: "folder", path: "contracts/" }],
+            data: [{ type: "folder", path: "uploads/contracts/" }],
             page_info: { next: null },
           });
         }
         return Promise.resolve({
-          data: [{ type: "file", path: "contracts/q1.pdf" }],
+          data: [{ type: "file", path: "uploads/contracts/q1.pdf" }],
           page_info: { next: null },
         });
       },
@@ -309,10 +312,10 @@ describe("collectKnowledgeSources", () => {
     );
 
     assertEquals(listCalls.length, 2);
-    assertEquals(listCalls[0]?.params?.path, "contracts");
-    assertEquals(listCalls[1]?.params?.path, "contracts/");
+    assertEquals(listCalls[0]?.params?.path, "uploads/contracts");
+    assertEquals(listCalls[1]?.params?.path, "uploads/contracts/");
     assertEquals(listCalls[1]?.params?.recursive, "false");
-    assertEquals(downloadCalls, [["contracts/q1.pdf"]]);
+    assertEquals(downloadCalls, [["uploads/contracts/q1.pdf"]]);
     assertEquals(collection.sources.length, 1);
     assertEquals(collection.sources[0]?.kind, "upload");
     assertEquals(collection.skipped, []);
@@ -338,18 +341,22 @@ describe("collectKnowledgeSources", () => {
           downloadCalls.push(uploadPaths);
           return uploadPaths.map((uploadPath) => ({
             uploadPath,
-            localPath: `/workspace/uploads/${uploadPath}`,
+            localPath: `/workspace/${uploadPath}`,
           }));
         },
       },
     );
 
-    assertEquals(downloadCalls, [["contracts/a.pdf", "contracts/b.pdf", "contracts/c.pdf"]]);
+    assertEquals(downloadCalls, [[
+      "uploads/contracts/a.pdf",
+      "uploads/contracts/b.pdf",
+      "uploads/contracts/c.pdf",
+    ]]);
     assertEquals(
       collection.sources.map((source) =>
         source.kind === "upload" ? source.uploadPath : source.localPath
       ),
-      ["contracts/a.pdf", "contracts/b.pdf", "contracts/c.pdf"],
+      ["uploads/contracts/a.pdf", "uploads/contracts/b.pdf", "uploads/contracts/c.pdf"],
     );
     assertEquals(collection.skipped, []);
   });
@@ -375,11 +382,11 @@ describe("collectKnowledgeSources", () => {
             downloadCalls.push(uploadPaths);
             return [
               {
-                uploadPath: "contracts/b.pdf",
+                uploadPath: "uploads/contracts/b.pdf",
                 localPath: "/workspace/uploads/contracts/b.pdf",
               },
               {
-                uploadPath: "contracts/a.pdf",
+                uploadPath: "uploads/contracts/a.pdf",
                 localPath: "/workspace/uploads/contracts/a.pdf",
               },
             ];
@@ -387,13 +394,13 @@ describe("collectKnowledgeSources", () => {
         },
       );
 
-      assertEquals(downloadCalls, [["contracts/a.pdf", "contracts/b.pdf"]]);
+      assertEquals(downloadCalls, [["uploads/contracts/a.pdf", "uploads/contracts/b.pdf"]]);
       assertEquals(collection, {
         sources: [
           {
             kind: "upload",
             input: "uploads/contracts/a.pdf",
-            uploadPath: "contracts/a.pdf",
+            uploadPath: "uploads/contracts/a.pdf",
             localPath: "/workspace/uploads/contracts/a.pdf",
           },
           {
@@ -404,7 +411,7 @@ describe("collectKnowledgeSources", () => {
           {
             kind: "upload",
             input: "uploads/contracts/b.pdf",
-            uploadPath: "contracts/b.pdf",
+            uploadPath: "uploads/contracts/b.pdf",
             localPath: "/workspace/uploads/contracts/b.pdf",
           },
         ],
@@ -437,18 +444,18 @@ describe("collectKnowledgeSources", () => {
           downloadCalls.push(uploadPaths);
           return uploadPaths.map((uploadPath) => ({
             uploadPath,
-            localPath: `/workspace/uploads/${uploadPath}`,
+            localPath: `/workspace/${uploadPath}`,
           }));
         },
       },
     );
 
-    assertEquals(downloadCalls, [["contracts/spec.pdf", "tools/run_benchmark.py"]]);
+    assertEquals(downloadCalls, [["uploads/contracts/spec.pdf", "uploads/tools/run_benchmark.py"]]);
     assertEquals(
       collection.sources.map((source) =>
         source.kind === "upload" ? source.uploadPath : source.localPath
       ),
-      ["contracts/spec.pdf", "tools/run_benchmark.py"],
+      ["uploads/contracts/spec.pdf", "uploads/tools/run_benchmark.py"],
     );
     assertEquals(collection.skipped, [
       {
@@ -558,11 +565,11 @@ describe("collectKnowledgeSources", () => {
       get: () =>
         Promise.resolve({
           data: [
-            { type: "file", path: "docs/guide.md" },
-            { type: "file", path: "docs/.env" },
-            { type: "file", path: "docs/node_modules/react/index.js" },
-            { type: "file", path: "docs/archive.zip" },
-            { type: "file", path: "docs/run_benchmark.py" },
+            { type: "file", path: "uploads/docs/guide.md" },
+            { type: "file", path: "uploads/docs/.env" },
+            { type: "file", path: "uploads/docs/node_modules/react/index.js" },
+            { type: "file", path: "uploads/docs/archive.zip" },
+            { type: "file", path: "uploads/docs/run_benchmark.py" },
           ],
           page_info: { next: null },
         }),
@@ -589,12 +596,12 @@ describe("collectKnowledgeSources", () => {
       },
     );
 
-    assertEquals(downloadCalls, [["docs/guide.md", "docs/run_benchmark.py"]]);
+    assertEquals(downloadCalls, [["uploads/docs/guide.md", "uploads/docs/run_benchmark.py"]]);
     assertEquals(
       collection.sources.map((source) =>
         source.kind === "upload" ? source.uploadPath : source.localPath
       ),
-      ["docs/guide.md", "docs/run_benchmark.py"],
+      ["uploads/docs/guide.md", "uploads/docs/run_benchmark.py"],
     );
     assertEquals(collection.skipped.length, 3);
   });
@@ -606,7 +613,7 @@ describe("ingestResolvedSources", () => {
       [{
         kind: "upload",
         input: "uploads/contracts/q1.pdf",
-        uploadPath: "contracts/q1.pdf",
+        uploadPath: "uploads/contracts/q1.pdf",
         localPath: "/workspace/uploads/contracts/q1.pdf",
       }],
       {
@@ -974,7 +981,8 @@ describe("buildSuggestedSlug", () => {
       {
         kind: "upload",
         input: "uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
-        uploadPath: "chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
+        uploadPath:
+          "uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
         localPath:
           "/workspace/uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
       },
@@ -988,7 +996,7 @@ describe("buildSuggestedSlug", () => {
       {
         kind: "upload",
         input: "uploads/contracts/q1.pdf",
-        uploadPath: "contracts/q1.pdf",
+        uploadPath: "uploads/contracts/q1.pdf",
         localPath: "/workspace/uploads/contracts/q1.pdf",
       },
       0,
@@ -1002,7 +1010,8 @@ describe("buildSuggestedSlug", () => {
         kind: "upload",
         input:
           "uploads/docs/chat-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-1700000000000-abc12-readme.txt",
-        uploadPath: "docs/chat-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-1700000000000-abc12-readme.txt",
+        uploadPath:
+          "uploads/docs/chat-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-1700000000000-abc12-readme.txt",
         localPath:
           "/workspace/uploads/docs/chat-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-1700000000000-abc12-readme.txt",
       },
