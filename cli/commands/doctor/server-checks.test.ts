@@ -6,6 +6,17 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { checkRSCCounters, checkRSCEndpoints, checkRSCFlag } from "./server-checks.ts";
 
+async function withUnreachableFetch<T>(fn: () => Promise<T>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (() => Promise.reject(new Error("unreachable"))) as typeof fetch;
+
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 describe("doctor/server-checks", () => {
   describe("checkRSCFlag", () => {
     it("is a function", () => {
@@ -48,8 +59,7 @@ describe("doctor/server-checks", () => {
     });
 
     it("handles unreachable server gracefully", async () => {
-      // With no server running, should return warnings
-      const results = await checkRSCEndpoints();
+      const results = await withUnreachableFetch(() => checkRSCEndpoints());
       const hasWarning = results.some((r) => r.status === "warn");
       assertEquals(hasWarning, true);
     });
@@ -73,8 +83,7 @@ describe("doctor/server-checks", () => {
     });
 
     it("handles unreachable server gracefully", async () => {
-      const result = await checkRSCCounters();
-      // Should be warn when server is not running
+      const result = await withUnreachableFetch(() => checkRSCCounters());
       assertEquals(["pass", "warn"].includes(result.status), true);
     });
   });
