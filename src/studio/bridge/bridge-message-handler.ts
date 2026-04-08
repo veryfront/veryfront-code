@@ -34,8 +34,9 @@ export function isSafeNavigationUrl(url: string): boolean {
 export function sanitizeNavigationUrl(url: string): string | null {
   if (typeof url !== "string" || url.length === 0) return null;
 
-  // Relative paths are same-origin by definition
-  if (url.startsWith("/")) return url;
+  // Relative paths are same-origin by definition.
+  // Exclude protocol-relative URLs (//evil.com) which browsers resolve cross-origin.
+  if (url[0] === "/" && url[1] !== "/") return url;
 
   try {
     const parsed = new URL(url, window.location.origin);

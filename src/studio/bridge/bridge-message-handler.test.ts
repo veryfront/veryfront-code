@@ -69,6 +69,11 @@ Deno.test("isSafeNavigationUrl: allows veryfront.com URLs", () => {
   assertEquals(isSafeNavigationUrl("https://slug.preview.veryfront.com/page"), true);
 });
 
+Deno.test("isSafeNavigationUrl: blocks protocol-relative URLs", () => {
+  assertEquals(isSafeNavigationUrl("//evil.com/path"), false);
+  assertEquals(isSafeNavigationUrl("//evil.com"), false);
+});
+
 Deno.test("isSafeNavigationUrl: blocks non-veryfront URLs", () => {
   assertEquals(isSafeNavigationUrl("https://example.com/page"), false);
   assertEquals(isSafeNavigationUrl("http://evil.com/page"), false);
@@ -113,6 +118,30 @@ Deno.test("routeChange: navigates for safe relative URL", () => {
 
   handleStudioMessage(makeEvent({ action: "routeChange", url: "/new-page" }));
   assertEquals(navigatedTo, "/new-page");
+
+  // Restore
+  Object.defineProperty(globalThis.location, "href", {
+    value: "https://test.veryfront.com/test",
+    writable: true,
+    configurable: true,
+  });
+});
+
+Deno.test("routeChange: blocks protocol-relative URL", () => {
+  resetState();
+  let navigatedTo = "";
+  Object.defineProperty(globalThis.location, "href", {
+    set(v: string) {
+      navigatedTo = v;
+    },
+    get() {
+      return "https://test.veryfront.com/test";
+    },
+    configurable: true,
+  });
+
+  handleStudioMessage(makeEvent({ action: "routeChange", url: "//evil.com/path" }));
+  assertEquals(navigatedTo, ""); // Should NOT navigate
 
   // Restore
   Object.defineProperty(globalThis.location, "href", {
@@ -262,6 +291,11 @@ Deno.test("sanitizeNavigationUrl: allows veryfront.com subdomains", () => {
 Deno.test("sanitizeNavigationUrl: blocks non-veryfront domains", () => {
   assertEquals(sanitizeNavigationUrl("https://evil.com/page"), null);
   assertEquals(sanitizeNavigationUrl("https://notveryfront.com/page"), null);
+});
+
+Deno.test("sanitizeNavigationUrl: blocks protocol-relative URLs", () => {
+  assertEquals(sanitizeNavigationUrl("//evil.com/path"), null);
+  assertEquals(sanitizeNavigationUrl("//evil.com"), null);
 });
 
 Deno.test("sanitizeNavigationUrl: blocks javascript: protocol", () => {
