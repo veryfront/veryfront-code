@@ -8,6 +8,22 @@ import type { ToolListEntry } from "./types.ts";
 
 const originalFetch = globalThis.fetch;
 
+async function initSession(handler: (req: Request) => Promise<Response>): Promise<string> {
+  const response = await handler(
+    new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 0,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1.0" } },
+      }),
+    }),
+  );
+  return response.headers.get("MCP-Session-Id")!;
+}
+
 describe("mcp/server", () => {
   beforeEach(() => {
     clearMCPRegistry();
@@ -1044,5 +1060,184 @@ describe("mcp/server", () => {
     await server.handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
 
     assertEquals(configSyncCalls, 1);
+  });
+
+  describe("Streamable HTTP session management", () => {
+    it("returns MCP-Session-Id header on initialize response", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1.0" } },
+          }),
+        }),
+      );
+      assertEquals(response.status, 200);
+      const sessionId = response.headers.get("MCP-Session-Id");
+      assertExists(sessionId);
+      assertEquals(sessionId.length > 0, true);
+    });
+
+    it("returns 400 when MCP-Session-Id is missing on post-init request", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+
+      // First, initialize to create a session
+      await initSession(handler);
+
+      // Then make a request without session ID
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+        }),
+      );
+      assertEquals(response.status, 400);
+    });
+
+    it("returns 404 for expired/unknown session ID", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+
+      // Initialize to set the initialized flag
+      await initSession(handler);
+
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "MCP-Session-Id": "nonexistent-session",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+      assertEquals(response.status, 404);
+    });
+
+    it("accepts DELETE to terminate session", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+
+      // Initialize
+      const sessionId = await initSession(handler);
+
+      // DELETE to terminate
+      const deleteResponse = await handler(
+        new Request("http://localhost/mcp", {
+          method: "DELETE",
+          headers: { "MCP-Session-Id": sessionId },
+        }),
+      );
+      assertEquals(deleteResponse.status, 200);
+
+      // Subsequent request with that session ID returns 404
+      const postResponse = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "MCP-Session-Id": sessionId,
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+        }),
+      );
+      assertEquals(postResponse.status, 404);
+    });
+
+    it("returns 202 for JSON-RPC notifications", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+
+      // Initialize
+      const sessionId = await initSession(handler);
+
+      // Send notification (no id field = notification)
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "MCP-Session-Id": sessionId,
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+        }),
+      );
+      assertEquals(response.status, 202);
+    });
+
+    it("returns 405 for unsupported HTTP methods", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", { method: "PUT" }),
+      );
+      assertEquals(response.status, 405);
+    });
+
+    it("includes MCP-Session-Id in CORS allowed headers", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://example.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "OPTIONS",
+          headers: { "Origin": "https://example.com" },
+        }),
+      );
+
+      assertEquals(response.status, 204);
+      const allowHeaders = response.headers.get("Access-Control-Allow-Headers");
+      assertExists(allowHeaders);
+      assertStringIncludes(allowHeaders, "MCP-Session-Id");
+    });
+
+    it("includes DELETE in CORS allowed methods", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        cors: { enabled: true, origins: ["https://example.com"] },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "OPTIONS",
+          headers: { "Origin": "https://example.com" },
+        }),
+      );
+
+      const allowMethods = response.headers.get("Access-Control-Allow-Methods");
+      assertExists(allowMethods);
+      assertStringIncludes(allowMethods, "DELETE");
+    });
+
+    it("accepts valid session ID on post-init requests", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+
+      const sessionId = await initSession(handler);
+
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "MCP-Session-Id": sessionId,
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+        }),
+      );
+      assertEquals(response.status, 200);
+    });
   });
 });
