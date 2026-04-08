@@ -146,6 +146,33 @@ Deno.test("routeChange: blocks javascript: URL", () => {
   });
 });
 
+Deno.test("routeChange: assigns normalized URL, not raw input", () => {
+  resetState();
+  let navigatedTo = "";
+  Object.defineProperty(globalThis.location, "href", {
+    set(v: string) {
+      navigatedTo = v;
+    },
+    get() {
+      return "https://test.veryfront.com/test";
+    },
+    configurable: true,
+  });
+
+  // Path traversal gets normalized by new URL().href — proves the handler uses
+  // the sanitized value rather than the raw postMessage input.
+  handleStudioMessage(
+    makeEvent({ action: "routeChange", url: "https://test.veryfront.com/a/../b" }),
+  );
+  assertEquals(navigatedTo, "https://test.veryfront.com/b");
+
+  Object.defineProperty(globalThis.location, "href", {
+    value: "https://test.veryfront.com/test",
+    writable: true,
+    configurable: true,
+  });
+});
+
 Deno.test("routeChange: clears existing selection before navigating", () => {
   resetState();
   state.selectedNodeId = "node-123";
@@ -239,6 +266,11 @@ Deno.test("sanitizeNavigationUrl: blocks non-veryfront domains", () => {
 
 Deno.test("sanitizeNavigationUrl: blocks javascript: protocol", () => {
   assertEquals(sanitizeNavigationUrl("javascript:alert(1)"), null);
+});
+
+Deno.test("sanitizeNavigationUrl: blocks data: protocol", () => {
+  assertEquals(sanitizeNavigationUrl("data:text/html,<script>alert(1)</script>"), null);
+  assertEquals(sanitizeNavigationUrl("data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="), null);
 });
 
 Deno.test("sanitizeNavigationUrl: blocks empty and invalid input", () => {
