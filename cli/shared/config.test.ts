@@ -100,4 +100,64 @@ describe("resolveConfigWithAuth", () => {
 
     assertEquals(config.apiUrl, "https://api.veryfront.com");
   });
+
+  it("uses tenant project context when explicit project slug is absent", async () => {
+    const env = createMockEnv({
+      apiToken: "env-token",
+      projectSlug: undefined,
+    });
+    const previousTenantProjectSlug = Deno.env.get("TENANT_PROJECT_SLUG");
+    const previousTenantProjectId = Deno.env.get("TENANT_PROJECT_ID");
+
+    try {
+      Deno.env.set("TENANT_PROJECT_SLUG", "tenant-project");
+      Deno.env.set("TENANT_PROJECT_ID", "tenant-project-id");
+
+      const config = await resolveConfigWithAuth("/tmp/test-dir", env);
+
+      assertEquals(config.projectSlug, "tenant-project");
+    } finally {
+      if (previousTenantProjectSlug === undefined) {
+        Deno.env.delete("TENANT_PROJECT_SLUG");
+      } else {
+        Deno.env.set("TENANT_PROJECT_SLUG", previousTenantProjectSlug);
+      }
+
+      if (previousTenantProjectId === undefined) {
+        Deno.env.delete("TENANT_PROJECT_ID");
+      } else {
+        Deno.env.set("TENANT_PROJECT_ID", previousTenantProjectId);
+      }
+    }
+  });
+
+  it("uses tenant project id when no project slug is available", async () => {
+    const env = createMockEnv({
+      apiToken: "env-token",
+      projectSlug: undefined,
+    });
+    const previousTenantProjectSlug = Deno.env.get("TENANT_PROJECT_SLUG");
+    const previousTenantProjectId = Deno.env.get("TENANT_PROJECT_ID");
+
+    try {
+      Deno.env.delete("TENANT_PROJECT_SLUG");
+      Deno.env.set("TENANT_PROJECT_ID", "tenant-project-id");
+
+      const config = await resolveConfigWithAuth("/tmp/test-dir", env);
+
+      assertEquals(config.projectSlug, "tenant-project-id");
+    } finally {
+      if (previousTenantProjectSlug === undefined) {
+        Deno.env.delete("TENANT_PROJECT_SLUG");
+      } else {
+        Deno.env.set("TENANT_PROJECT_SLUG", previousTenantProjectSlug);
+      }
+
+      if (previousTenantProjectId === undefined) {
+        Deno.env.delete("TENANT_PROJECT_ID");
+      } else {
+        Deno.env.set("TENANT_PROJECT_ID", previousTenantProjectId);
+      }
+    }
+  });
 });

@@ -9,6 +9,7 @@ import { z } from "zod";
 import { join } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
@@ -100,6 +101,14 @@ async function inferProjectSlug(projectDir: string): Promise<string | null> {
   return dirName ? slugify(dirName) : null;
 }
 
+function resolveTenantProjectReference(): string | undefined {
+  return getEnv("VERYFRONT_PROJECT_SLUG") ||
+    getEnv("TENANT_PROJECT_SLUG") ||
+    getEnv("VERYFRONT_PROJECT_ID") ||
+    getEnv("TENANT_PROJECT_ID") ||
+    undefined;
+}
+
 async function resolveConfigBase(
   projectDir: string | undefined,
   env: EnvironmentConfig,
@@ -125,10 +134,13 @@ async function resolveConfigBase(
     );
   }
 
-  const projectSlug = env.projectSlug ?? configFile?.projectSlug ?? (await inferProjectSlug(dir));
+  const projectSlug = env.projectSlug ??
+    resolveTenantProjectReference() ??
+    configFile?.projectSlug ??
+    (await inferProjectSlug(dir));
   if (!projectSlug) {
     throw new Error(
-      "Could not determine project slug. Set VERYFRONT_PROJECT_SLUG environment variable or add projectSlug to veryfront.config.ts",
+      "Could not determine project reference. Set VERYFRONT_PROJECT_SLUG, TENANT_PROJECT_SLUG, VERYFRONT_PROJECT_ID, or add projectSlug to veryfront.config.ts",
     );
   }
 
