@@ -77,6 +77,10 @@ import { resolveConfiguredAgentModel, resolveRuntimeModel } from "./model-resolu
 
 const logger = serverLogger.component("agent");
 const LOAD_SKILL_TOOL_ID = "load-skill";
+const WEB_SEARCH_LOOP_GUARD_MESSAGE =
+  "Web search loop guard: you already have enough web search evidence. Do not call web_search again in this turn. Synthesize a final answer from the gathered results.";
+const MAX_WEB_SEARCH_CALLS_PER_TURN = 8;
+const MAX_DUPLICATE_WEB_SEARCH_QUERIES_PER_TURN = 3;
 
 type RuntimeToolFilterConfig = AgentConfig & {
   __vfAllowedRemoteTools?: string[];
@@ -218,6 +222,42 @@ function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined
     return [];
   }
   return raw.every((toolName) => typeof toolName === "string") ? raw : [];
+}
+
+export function normalizeWebSearchQuery(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[^\p{L}\p{N}]+/gu, " ")
+    .replaceAll(/\s+/g, " ")
+    .trim();
+}
+
+export function shouldGuardWebSearchLoop(queries: string[]): boolean {
+  if (queries.length >= MAX_WEB_SEARCH_CALLS_PER_TURN) {
+    return true;
+  }
+
+  const normalizedCounts = new Map<string, number>();
+  for (const query of queries) {
+    const normalized = normalizeWebSearchQuery(query);
+    if (!normalized) {
+      continue;
+    }
+    normalizedCounts.set(normalized, (normalizedCounts.get(normalized) ?? 0) + 1);
+  }
+
+  return [...normalizedCounts.values()].some((count) =>
+    count >= MAX_DUPLICATE_WEB_SEARCH_QUERIES_PER_TURN
+  );
+}
+
+function extractWebSearchQuery(input: unknown): string | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return null;
+  }
+  const query = (input as { query?: unknown }).query;
+  return typeof query === "string" && query.trim().length > 0 ? query : null;
 }
 
 export class AgentRuntime {
@@ -437,6 +477,7 @@ export class AgentRuntime {
       const toolCalls: ToolCall[] = [];
       const currentMessages = [...messages];
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      const webSearchQueries: string[] = [];
 
       // Local models can't reliably do function calling — skip tools gracefully.
       const isLocal = isLocalModel(languageModel);
@@ -467,6 +508,15 @@ export class AgentRuntime {
           tools = filterToolsForSkill(tools, activeSkillPolicy);
         }
 
+        const webSearchLoopGuardActive = shouldGuardWebSearchLoop(webSearchQueries);
+        if (webSearchLoopGuardActive) {
+          tools = tools.filter((tool) => tool.name !== "web_search");
+        }
+
+        const effectiveSystemPrompt = webSearchLoopGuardActive
+          ? `${systemPrompt}\n\n${WEB_SEARCH_LOOP_GUARD_MESSAGE}`
+          : systemPrompt;
+
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
@@ -474,7 +524,7 @@ export class AgentRuntime {
           });
           return generateText({
             model: languageModel,
-            system: systemPrompt,
+            system: effectiveSystemPrompt,
             messages: convertToModelMessages(currentMessages),
             tools: convertToolsToAISDK(tools, {
               model: effectiveModel,
@@ -501,6 +551,12 @@ export class AgentRuntime {
         if (response.text) assistantParts.push({ type: "text", text: response.text });
 
         for (const tc of response.toolCalls ?? []) {
+          const webSearchQuery = tc.toolName === "web_search"
+            ? extractWebSearchQuery(tc.input)
+            : null;
+          if (webSearchQuery) {
+            webSearchQueries.push(webSearchQuery);
+          }
           assistantParts.push({
             type: `tool-${tc.toolName}`,
             toolCallId: tc.toolCallId,
@@ -687,6 +743,7 @@ export class AgentRuntime {
     const toolCalls: ToolCall[] = [];
     const currentMessages = [...messages];
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const webSearchQueries: string[] = [];
 
     // Local models can't reliably do function calling — skip tools gracefully.
     const isLocalStreaming = isLocalModel(languageModel);
@@ -719,9 +776,18 @@ export class AgentRuntime {
         tools = filterToolsForSkill(tools, activeSkillPolicy);
       }
 
+      const webSearchLoopGuardActive = shouldGuardWebSearchLoop(webSearchQueries);
+      if (webSearchLoopGuardActive) {
+        tools = tools.filter((tool) => tool.name !== "web_search");
+      }
+
+      const effectiveSystemPrompt = webSearchLoopGuardActive
+        ? `${systemPrompt}\n\n${WEB_SEARCH_LOOP_GUARD_MESSAGE}`
+        : systemPrompt;
+
       const result = streamText({
         model: languageModel,
-        system: systemPrompt,
+        system: effectiveSystemPrompt,
         messages: convertToModelMessages(currentMessages),
         tools: convertToolsToAISDK(tools, {
           model: effectiveModel,
@@ -746,6 +812,12 @@ export class AgentRuntime {
 
       for (const tc of state.toolCalls.values()) {
         const { args, error } = parseToolArgs(tc.arguments);
+        if (tc.name === "web_search") {
+          const webSearchQuery = extractWebSearchQuery(args);
+          if (webSearchQuery) {
+            webSearchQueries.push(webSearchQuery);
+          }
+        }
         if (error) {
           logger.warn("Failed to parse streamed tool arguments", {
             toolCallId: tc.id,
