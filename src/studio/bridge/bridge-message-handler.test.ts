@@ -270,7 +270,10 @@ Deno.test("sanitizeNavigationUrl: blocks javascript: protocol", () => {
 
 Deno.test("sanitizeNavigationUrl: blocks data: protocol", () => {
   assertEquals(sanitizeNavigationUrl("data:text/html,<script>alert(1)</script>"), null);
-  assertEquals(sanitizeNavigationUrl("data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="), null);
+  assertEquals(
+    sanitizeNavigationUrl("data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="),
+    null,
+  );
 });
 
 Deno.test("sanitizeNavigationUrl: blocks empty and invalid input", () => {
