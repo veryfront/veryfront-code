@@ -3,7 +3,7 @@ import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import type { ActionBody } from "./types.ts";
 import { ActionPayloadSchema } from "../../../schemas/index.ts";
 
-const ACTION_ID_PATTERN = /^[A-Za-z0-9_/-]+(?:\/[A-Za-z0-9_/-]+)*$/;
+const ACTION_ID_PATTERN = /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/;
 
 function isValidActionId(id: string): boolean {
   return (
