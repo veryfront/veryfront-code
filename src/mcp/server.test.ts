@@ -1066,6 +1066,22 @@ describe("mcp/server", () => {
     assertEquals(server.clientSupportsElicitation("url"), false);
   });
 
+  it("handles malformed elicitation capability without crashing", async () => {
+    const server = createMCPServer({ enabled: true });
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: { elicitation: true },
+        clientInfo: { name: "test", version: "1.0" },
+      },
+    });
+    assertEquals(server.clientSupportsElicitation("form"), false);
+    assertEquals(server.clientSupportsElicitation("url"), false);
+  });
+
   it("syncs integration config to API on first tools/list call", async () => {
     const server = createMCPServer({ enabled: true });
     server.setIntegrationLoader({
