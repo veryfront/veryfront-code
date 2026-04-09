@@ -189,6 +189,7 @@ export class MCPServer {
       case "notifications/initialized":
         return Promise.resolve({});
       case "notifications/cancelled":
+        // TODO(#841): propagate cancellation to in-flight tool executions via AbortController
         return Promise.resolve({});
       case "completion/complete":
         return this.complete(params);
@@ -265,9 +266,13 @@ export class MCPServer {
     params: JSONRPCParams | undefined,
     context?: ToolExecutionContext,
   ): Promise<Record<string, unknown>> {
-    const { name, arguments: args } = toParamsRecord(params);
-    const meta = (toParamsRecord(params)._meta ?? {}) as Record<string, unknown>;
-    const progressToken = meta.progressToken as string | number | undefined;
+    const p = toParamsRecord(params);
+    const { name, arguments: args } = p;
+    const meta = (p._meta ?? {}) as Record<string, unknown>;
+    const rawToken = meta.progressToken;
+    const progressToken = (typeof rawToken === "string" || typeof rawToken === "number")
+      ? rawToken
+      : undefined;
 
     if (!name) {
       throw toError(createError({ type: "agent", message: "Tool name is required" }));
