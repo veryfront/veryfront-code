@@ -43,3 +43,5 @@ export { createMCPServer, type IntegrationLoaderConfig, MCPServer } from "./serv
 
 export { formatSSEEvent, formatSSEPrimingEvent, formatSSERetry } from "./sse.ts";
 export { SessionManager } from "./session.ts";
+export { TaskStore } from "./task-store.ts";
+export type { Task } from "./task-store.ts";

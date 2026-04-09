@@ -1392,7 +1392,7 @@ describe("mcp/server", () => {
     });
   });
 
-  it("declares logging capability in initialize", async () => {
+  it("declares tasks capability in initialize", async () => {
     const server = createMCPServer({ enabled: true });
     const result = await server.handleRequest({
       jsonrpc: "2.0",
@@ -1405,7 +1405,8 @@ describe("mcp/server", () => {
       },
     });
     const caps = (result.result as Record<string, unknown>)
-      .capabilities as Record<string, unknown>;
+      .capabilities as Record<string, Record<string, unknown>>;
+    assertExists(caps.tasks);
     assertExists(caps.logging);
   });
 
@@ -1470,5 +1471,215 @@ describe("mcp/server", () => {
     });
     assertExists(result.error);
     assertEquals(result.error.code, -32602);
+  });
+
+  it("tools/call with task field returns CreateTaskResult immediately", async () => {
+    const server = createMCPServer({ enabled: true });
+    registerTool(
+      "test:slow",
+      dynamicTool({
+        id: "test:slow",
+        description: "Slow tool",
+        inputSchema: z.object({}),
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 50));
+          return { done: true };
+        },
+      }),
+    );
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:slow", arguments: {}, task: { ttl: 60000 } },
+    });
+    const res = result.result as { task: Record<string, unknown> };
+    assertExists(res.task.taskId);
+    assertEquals(res.task.status, "working");
+    await server.waitForPendingTasks();
+  });
+
+  it("tasks/get returns task status", async () => {
+    const server = createMCPServer({ enabled: true });
+    registerTool(
+      "test:slow2",
+      dynamicTool({
+        id: "test:slow2",
+        description: "Slow tool",
+        inputSchema: z.object({}),
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return { done: true };
+        },
+      }),
+    );
+    const createResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:slow2", arguments: {}, task: { ttl: 60000 } },
+    });
+    const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
+    const getResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/get",
+      params: { taskId },
+    });
+    const task = getResult.result as Record<string, unknown>;
+    assertExists(task.taskId);
+    assertExists(task.status);
+    await server.waitForPendingTasks();
+  });
+
+  it("tasks/cancel cancels a working task", async () => {
+    const server = createMCPServer({ enabled: true });
+    registerTool(
+      "test:slow3",
+      dynamicTool({
+        id: "test:slow3",
+        description: "Slow tool",
+        inputSchema: z.object({}),
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 100));
+          return { done: true };
+        },
+      }),
+    );
+    const createResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:slow3", arguments: {}, task: { ttl: 60000 } },
+    });
+    const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
+    const cancelResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/cancel",
+      params: { taskId },
+    });
+    assertEquals(
+      (cancelResult.result as Record<string, unknown>).status,
+      "cancelled",
+    );
+    await server.waitForPendingTasks();
+  });
+
+  it("tasks/result returns completed task result", async () => {
+    const server = createMCPServer({ enabled: true });
+    registerTool(
+      "test:fast",
+      dynamicTool({
+        id: "test:fast",
+        description: "Fast tool",
+        inputSchema: z.object({}),
+        execute: async () => ({ answer: 42 }),
+      }),
+    );
+    const createResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:fast", arguments: {}, task: { ttl: 60000 } },
+    });
+    const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
+    await server.waitForPendingTasks();
+    const resultResp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/result",
+      params: { taskId },
+    });
+    const payload = resultResp.result as { content: { text: string }[]; isError: boolean };
+    assertEquals(payload.isError, false);
+    assertExists(payload.content);
+  });
+
+  it("tasks/result returns error when task is still working", async () => {
+    const server = createMCPServer({ enabled: true });
+    registerTool(
+      "test:slow4",
+      dynamicTool({
+        id: "test:slow4",
+        description: "Slow tool",
+        inputSchema: z.object({}),
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return { done: true };
+        },
+      }),
+    );
+    const createResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:slow4", arguments: {}, task: { ttl: 60000 } },
+    });
+    const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
+    const resultResp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/result",
+      params: { taskId },
+    });
+    assertExists(resultResp.error);
+    assertEquals(resultResp.error!.code, -32002);
+    await server.waitForPendingTasks();
+  });
+
+  it("async tool failure sets task status to failed", async () => {
+    const server = createMCPServer({ enabled: true });
+    registerTool(
+      "test:fail",
+      dynamicTool({
+        id: "test:fail",
+        description: "Failing tool",
+        inputSchema: z.object({}),
+        execute: async () => {
+          throw new Error("tool broke");
+        },
+      }),
+    );
+    const createResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:fail", arguments: {}, task: { ttl: 60000 } },
+    });
+    const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
+    await server.waitForPendingTasks();
+    const getResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/get",
+      params: { taskId },
+    });
+    const task = getResult.result as Record<string, unknown>;
+    assertEquals(task.status, "failed");
+    assertEquals(task.statusMessage, "tool broke");
+  });
+
+  it("tasks/get returns error for unknown taskId", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tasks/get",
+      params: { taskId: "nonexistent" },
+    });
+    assertExists(result.error);
+    assertEquals(result.error!.code, -32602);
+  });
+
+  it("tasks/cancel returns error for unknown taskId", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tasks/cancel",
+      params: { taskId: "nonexistent" },
+    });
+    assertExists(result.error);
   });
 });
