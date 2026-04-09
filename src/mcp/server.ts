@@ -127,6 +127,9 @@ export class MCPServer {
   private sessionManager = new SessionManager();
   private taskStore = new TaskStore();
   private pendingTasks = new Map<string, Promise<void>>();
+  // TODO(#842): capabilities should be stored per-session (keyed by MCP-Session-Id)
+  // so concurrent clients don't overwrite each other's capability flags.
+  private clientCapabilities: Record<string, unknown> = {};
 
   constructor(config: MCPServerConfig) {
     this.config = config;
@@ -146,6 +149,15 @@ export class MCPServer {
   setIntegrationLoader(config: IntegrationLoaderConfig): void {
     this.integrationLoader = config;
     this.integrationsLoaded = false;
+  }
+
+  clientSupportsElicitation(mode: "form" | "url"): boolean {
+    const raw = this.clientCapabilities.elicitation;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+    const elicitation = raw as Record<string, unknown>;
+    // Per MCP spec: empty elicitation object implies basic form support (backwards compat)
+    if (mode === "form" && Object.keys(elicitation).length === 0) return true;
+    return mode in elicitation;
   }
 
   handleRequest(request: JSONRPCRequest, context?: ToolExecutionContext): Promise<JSONRPCResponse> {
@@ -222,6 +234,9 @@ export class MCPServer {
     const negotiated = requested && MCP_SUPPORTED_VERSIONS.includes(requested)
       ? requested
       : MCP_SUPPORTED_VERSIONS[0];
+
+    const clientCaps = (p.capabilities ?? {}) as Record<string, unknown>;
+    this.clientCapabilities = clientCaps;
 
     return Promise.resolve({
       protocolVersion: negotiated,

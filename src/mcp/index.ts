@@ -41,6 +41,13 @@ export {
 
 export { createMCPServer, type IntegrationLoaderConfig, MCPServer } from "./server.ts";
 
+export {
+  buildFormElicitation,
+  buildUrlElicitation,
+  type ElicitationRequest,
+  type FormElicitationOptions,
+  type UrlElicitationOptions,
+} from "./elicitation.ts";
 export { formatSSEEvent, formatSSEPrimingEvent, formatSSERetry } from "./sse.ts";
 export { SessionManager } from "./session.ts";
 export { TaskStore } from "./task-store.ts";
