@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.147",
+  "version": "0.1.148",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "exclude": [
@@ -424,13 +424,7 @@
     "proseWrap": "preserve"
   },
   "allowScripts": {
-    "allow": [
-      "npm:sharp@0.33.5",
-      "npm:onnxruntime-node@1.21.0"
-    ],
-    "deny": [
-      "npm:esbuild@0.27.4",
-      "npm:protobufjs@7.5.4"
-    ]
+    "allow": ["npm:onnxruntime-node@1.21.0", "npm:sharp@0.33.5"],
+    "deny": ["npm:esbuild@0.27.4", "npm:onnxruntime-node@1.20.1", "npm:protobufjs@7.5.4"]
   }
 }
