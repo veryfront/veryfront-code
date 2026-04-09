@@ -22,7 +22,6 @@ export const repairToolCall: ToolCallRepairFunction<ToolSet> = async ({
   if (toolCall.providerExecuted !== true) {
     return null;
   }
-
   if (!InvalidToolInputError.isInstance(error) || typeof toolCall.input !== "string") {
     return null;
   }

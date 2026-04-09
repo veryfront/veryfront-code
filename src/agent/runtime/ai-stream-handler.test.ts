@@ -214,7 +214,6 @@ describe("ai-stream-handler", () => {
         input: { query: "Veryfront", maxUses: 1 },
       });
     });
-
     it("preserves provider-executed tool calls in stream state and SSE output", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
@@ -378,7 +377,6 @@ describe("ai-stream-handler", () => {
         providerExecuted: true,
       });
     });
-
     it("ignores tool-input-delta for unknown tool call IDs", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();

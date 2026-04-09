@@ -33,6 +33,8 @@ export interface SandboxOptions {
   apiUrl?: string;
   /** Explicit Veryfront auth token or API key override. */
   authToken?: string;
+  /** Optional project context for project-billed / project-scoped sandbox sessions. */
+  projectId?: string;
 }
 
 /** Result of a command execution: stdout, stderr, and exit code. */
@@ -142,6 +144,7 @@ export class Sandbox {
         Authorization: `Bearer ${authToken}`,
         "Content-Type": "application/json",
       },
+      body: JSON.stringify(options.projectId ? { project_id: options.projectId } : {}),
     });
 
     if (!res.ok) {

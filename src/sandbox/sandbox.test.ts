@@ -122,6 +122,24 @@ describe("Sandbox", () => {
       assertEquals(call(0).init?.method, "POST");
       assertEquals(headerValue(0, "Authorization"), "Bearer test-token");
       assertEquals(headerValue(0, "Content-Type"), "application/json");
+      assertEquals(call(0).init?.body, "{}");
+    });
+
+    it("should pass project_id when creating a project-scoped sandbox", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "session-project",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+
+      await Sandbox.create({
+        authToken: "test-token",
+        projectId: "project-123",
+      });
+
+      assertEquals(call(0).init?.body, JSON.stringify({ project_id: "project-123" }));
     });
 
     it("should use VERYFRONT_API_TOKEN when authToken is omitted", async () => {
