@@ -135,8 +135,8 @@ async function resolveConfigBase(
   }
 
   const projectSlug = env.projectSlug ??
-    resolveTenantProjectReference() ??
     configFile?.projectSlug ??
+    resolveTenantProjectReference() ??
     (await inferProjectSlug(dir));
   if (!projectSlug) {
     throw new Error(

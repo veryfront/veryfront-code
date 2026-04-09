@@ -7,6 +7,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { resolveConfig, resolveConfigWithAuth } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { join } from "veryfront/platform/path";
 
 function createMockEnv(overrides: Partial<EnvironmentConfig> = {}): EnvironmentConfig {
   return {
@@ -117,6 +118,43 @@ describe("resolveConfigWithAuth", () => {
 
       assertEquals(config.projectSlug, "tenant-project");
     } finally {
+      if (previousTenantProjectSlug === undefined) {
+        Deno.env.delete("TENANT_PROJECT_SLUG");
+      } else {
+        Deno.env.set("TENANT_PROJECT_SLUG", previousTenantProjectSlug);
+      }
+
+      if (previousTenantProjectId === undefined) {
+        Deno.env.delete("TENANT_PROJECT_ID");
+      } else {
+        Deno.env.set("TENANT_PROJECT_ID", previousTenantProjectId);
+      }
+    }
+  });
+
+  it("prefers repo config projectSlug over tenant fallback", async () => {
+    const env = createMockEnv({
+      apiToken: "env-token",
+      projectSlug: undefined,
+    });
+    const previousTenantProjectSlug = Deno.env.get("TENANT_PROJECT_SLUG");
+    const previousTenantProjectId = Deno.env.get("TENANT_PROJECT_ID");
+    const tempDir = await Deno.makeTempDir();
+
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({ projectSlug: "repo-config-project" }),
+      );
+      Deno.env.set("TENANT_PROJECT_SLUG", "tenant-project");
+      Deno.env.set("TENANT_PROJECT_ID", "tenant-project-id");
+
+      const config = await resolveConfigWithAuth(tempDir, env);
+
+      assertEquals(config.projectSlug, "repo-config-project");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+
       if (previousTenantProjectSlug === undefined) {
         Deno.env.delete("TENANT_PROJECT_SLUG");
       } else {
