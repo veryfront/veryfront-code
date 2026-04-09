@@ -61,6 +61,8 @@ export interface ToolExecutionContext {
   projectId?: string;
   /** End-user identity for per-user token resolution in integration tools */
   endUserId?: string;
+  /** Progress token for sending progress notifications (MCP 2025-11-25) */
+  progressToken?: string | number;
   /** Additional context */
   [key: string]: unknown;
   /** Blob storage access (if configured in workflow) */

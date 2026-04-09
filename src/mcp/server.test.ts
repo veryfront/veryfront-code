@@ -1421,6 +1421,45 @@ describe("mcp/server", () => {
     assertEquals(result.result, {});
   });
 
+  it("extracts progressToken from _meta and passes to tool context", async () => {
+    const server = createMCPServer({ enabled: true });
+    let capturedContext: Record<string, unknown> | undefined;
+
+    registerTool(
+      "test:progress",
+      dynamicTool({
+        id: "test:progress",
+        description: "Captures context",
+        inputSchema: z.object({}),
+        execute: async (_input, context) => {
+          capturedContext = context as Record<string, unknown>;
+          return { ok: true };
+        },
+      }),
+    );
+
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:progress", arguments: {}, _meta: { progressToken: "token-123" } },
+    });
+
+    assertExists(capturedContext);
+    assertEquals(capturedContext?.progressToken, "token-123");
+  });
+
+  it("accepts notifications/cancelled without error", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: 1, reason: "User cancelled" },
+    });
+    assertEquals(result.error, undefined);
+    assertEquals(result.result, {});
+  });
+
   it("logging/setLevel rejects invalid level", async () => {
     const server = createMCPServer({ enabled: true });
     const result = await server.handleRequest({
