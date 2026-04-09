@@ -800,7 +800,11 @@ export class MCPServer {
       };
     }
     await syncIntegrationConfig(apiBaseUrl, apiToken, integrationConfigs);
-    this.notifyToolsChanged();
+    try {
+      this.notifyToolsChanged();
+    } catch (_) {
+      // Notification delivery failure is non-fatal — sync already succeeded
+    }
     return true;
   }
 }
