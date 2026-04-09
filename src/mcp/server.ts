@@ -127,6 +127,7 @@ export class MCPServer {
   private sessionManager = new SessionManager();
   private taskStore = new TaskStore();
   private pendingTasks = new Map<string, Promise<void>>();
+  private clientCapabilities: Record<string, unknown> = {};
 
   constructor(config: MCPServerConfig) {
     this.config = config;
@@ -146,6 +147,15 @@ export class MCPServer {
   setIntegrationLoader(config: IntegrationLoaderConfig): void {
     this.integrationLoader = config;
     this.integrationsLoaded = false;
+  }
+
+  clientSupportsElicitation(mode: "form" | "url"): boolean {
+    const elicitation = this.clientCapabilities.elicitation as
+      | Record<string, unknown>
+      | undefined;
+    if (!elicitation) return false;
+    if (mode === "form" && Object.keys(elicitation).length === 0) return true;
+    return mode in elicitation;
   }
 
   handleRequest(request: JSONRPCRequest, context?: ToolExecutionContext): Promise<JSONRPCResponse> {
@@ -222,6 +232,9 @@ export class MCPServer {
     const negotiated = requested && MCP_SUPPORTED_VERSIONS.includes(requested)
       ? requested
       : MCP_SUPPORTED_VERSIONS[0];
+
+    const clientCaps = (p.capabilities ?? {}) as Record<string, unknown>;
+    this.clientCapabilities = clientCaps;
 
     return Promise.resolve({
       protocolVersion: negotiated,
