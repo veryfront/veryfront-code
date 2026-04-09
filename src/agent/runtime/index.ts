@@ -20,6 +20,7 @@ import {
   type Message,
   type MessagePart,
   type ToolCall,
+  type ToolResultPart,
 } from "../types.ts";
 import { ensureModelReady, resolveModel } from "#veryfront/provider";
 import { generateId } from "#veryfront/utils/id.ts";
@@ -33,7 +34,12 @@ import {
 } from "#veryfront/observability/tracing/index.ts";
 import { convertToModelMessages } from "./model-message-converter.ts";
 import { convertToolsToAISDK } from "./model-tool-converter.ts";
-import { createStreamState, processStream } from "./ai-stream-handler.ts";
+import {
+  type AIStreamState,
+  createStreamState,
+  processStream,
+  type StreamingToolResult,
+} from "./ai-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { generateText, type LanguageModel, streamText } from "ai";
@@ -137,9 +143,55 @@ function stringifyToolError(error: unknown): string {
   }
 }
 
+function getToolResultError(result: unknown): string | undefined {
+  if (!result || typeof result !== "object" || !("error" in result)) {
+    return undefined;
+  }
+
+  return stringifyToolError(result.error);
+}
+
 function getSkillActivationRequiredError(toolName: string): string {
   return `Tool "${toolName}" cannot run before load-skill succeeds in the same step. ` +
     `Call "${LOAD_SKILL_TOOL_ID}" first to establish the active skill context.`;
+}
+
+export function collectFinalStreamToolResults(
+  state: Pick<AIStreamState, "toolResults">,
+): Map<string, StreamingToolResult> {
+  const finalToolResults = new Map<string, StreamingToolResult>();
+
+  for (const toolResult of state.toolResults) {
+    if (toolResult.preliminary === true) {
+      continue;
+    }
+
+    finalToolResults.set(toolResult.toolCallId, toolResult);
+  }
+
+  return finalToolResults;
+}
+
+export function collectPersistedToolResults(
+  messages: Message[],
+): Map<string, ToolResultPart> {
+  const persistedToolResults = new Map<string, ToolResultPart>();
+
+  for (const message of messages) {
+    if (message.role !== "tool") {
+      continue;
+    }
+
+    for (const part of message.parts) {
+      if (part.type !== "tool-result") {
+        continue;
+      }
+
+      persistedToolResults.set(part.toolCallId, part);
+    }
+  }
+
+  return persistedToolResults;
 }
 
 /**
@@ -731,6 +783,7 @@ export class AgentRuntime {
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-start" });
+      const persistedToolResults = collectPersistedToolResults(currentMessages);
 
       let tools = isLocalStreaming ? [] : await getAvailableTools(this.config.tools, {
         includeSkillTools: Boolean(this.config.skills),
@@ -795,29 +848,40 @@ export class AgentRuntime {
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
 
-      for (const tr of state.toolResults) {
-        if (tr.preliminary) {
-          continue;
+      const finalToolResults = collectFinalStreamToolResults(state);
+
+      const persistToolResult = async (toolResult: StreamingToolResult): Promise<void> => {
+        if (persistedToolResults.has(toolResult.toolCallId)) {
+          return;
         }
 
         const toolResultMessage: Message = {
-          id: `tool_${tr.toolCallId}`,
+          id: `tool_${toolResult.toolCallId}`,
           role: "tool",
           parts: [
             {
               type: "tool-result",
-              toolCallId: tr.toolCallId,
-              toolName: tr.toolName,
-              result: tr.error === undefined ? tr.output : { error: stringifyToolError(tr.error) },
+              toolCallId: toolResult.toolCallId,
+              toolName: toolResult.toolName,
+              result: toolResult.error === undefined
+                ? toolResult.output
+                : { error: stringifyToolError(toolResult.error) },
             },
           ],
           timestamp: Date.now(),
         };
         currentMessages.push(toolResultMessage);
         await this.memory.add(toolResultMessage);
-      }
+        persistedToolResults.set(
+          toolResult.toolCallId,
+          toolResultMessage.parts[0] as ToolResultPart,
+        );
+      };
 
       if (state.finishReason !== "tool-calls" || !state.toolCalls.size) {
+        for (const toolResult of finalToolResults.values()) {
+          await persistToolResult(toolResult);
+        }
         sendSSE(controller, encoder, { type: "step-end" });
         break;
       }
@@ -832,20 +896,26 @@ export class AgentRuntime {
         throwIfAborted(abortSignal);
         const { args, error: argError } = parseToolArgs(tc.arguments);
         const toolCall: ToolCall = { id: tc.id, name: tc.name, args, status: "pending" };
+        const matchingResult = finalToolResults.get(tc.id);
+        const persistedResult = persistedToolResults.get(tc.id);
 
-        if (tc.providerExecuted === true) {
-          const matchingResult = state.toolResults.find((result) =>
-            result.toolCallId === tc.id && result.preliminary !== true
-          );
+        if (matchingResult) {
+          await persistToolResult(matchingResult);
+          toolCall.status = matchingResult.error === undefined ? "completed" : "error";
+          toolCall.result = matchingResult.output;
+          toolCall.error = matchingResult.error === undefined
+            ? undefined
+            : stringifyToolError(matchingResult.error);
+          toolCalls.push(toolCall);
+          continue;
+        }
 
-          if (matchingResult) {
-            toolCall.status = matchingResult.error === undefined ? "completed" : "error";
-            toolCall.result = matchingResult.output;
-            toolCall.error = matchingResult.error === undefined
-              ? undefined
-              : stringifyToolError(matchingResult.error);
-            toolCalls.push(toolCall);
-          }
+        if (persistedResult) {
+          const persistedError = getToolResultError(persistedResult.result);
+          toolCall.status = persistedError === undefined ? "completed" : "error";
+          toolCall.result = persistedResult.result;
+          toolCall.error = persistedError;
+          toolCalls.push(toolCall);
           continue;
         }
 
@@ -938,8 +1008,11 @@ export class AgentRuntime {
             ],
             timestamp: Date.now(),
           };
-          currentMessages.push(toolResultMessage);
-          await this.memory.add(toolResultMessage);
+          if (!persistedToolResults.has(tc.id)) {
+            currentMessages.push(toolResultMessage);
+            await this.memory.add(toolResultMessage);
+            persistedToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
+          }
         } catch (error) {
           const errorStr = error instanceof Error ? error.message : String(error);
           await this.recordToolError(
@@ -951,6 +1024,10 @@ export class AgentRuntime {
             toolCalls,
           );
         }
+      }
+
+      for (const toolResult of finalToolResults.values()) {
+        await persistToolResult(toolResult);
       }
 
       throwIfAborted(abortSignal);
