@@ -19,7 +19,7 @@ describe("cli/help/tips", () => {
     });
 
     it("should mention MCP server port", () => {
-      assertEquals(getDevTips().includes("9999"), true);
+      assertEquals(getDevTips().includes("3002"), true);
     });
 
     it("should mention Ctrl+C", () => {
