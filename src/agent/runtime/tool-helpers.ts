@@ -6,7 +6,7 @@
  * @module ai/agent/runtime/tool-helpers
  */
 
-import type { Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
+import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { executeTool, toolRegistry } from "#veryfront/tool";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
@@ -101,21 +101,90 @@ function throwUnknownConfiguredToolsError(
 async function getRemoteToolDefinitions(options?: {
   includeIntegrationTools?: boolean;
   allowedRemoteToolNames?: string[];
+  remoteToolSources?: RemoteToolSource[];
+  remoteToolContext?: ToolExecutionContext;
 }): Promise<ToolDefinition[]> {
+  const remoteToolContext = options?.remoteToolContext;
+  const definitions: ToolDefinition[] = [];
+  const seenToolNames = new Set<string>();
+
+  const addDefinition = (definition: ToolDefinition): void => {
+    if (seenToolNames.has(definition.name)) {
+      return;
+    }
+    if (
+      options?.allowedRemoteToolNames &&
+      !options.allowedRemoteToolNames.includes(definition.name)
+    ) {
+      return;
+    }
+    seenToolNames.add(definition.name);
+    definitions.push(definition);
+  };
+
+  for (const source of options?.remoteToolSources ?? []) {
+    try {
+      const sourceDefs = await source.listTools(remoteToolContext);
+      for (const def of sourceDefs) {
+        addDefinition(def);
+      }
+    } catch (error) {
+      logger.warn("Failed to fetch remote tool definitions from source", {
+        sourceId: source.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (options?.includeIntegrationTools === false) {
-    return [];
+    return definitions;
   }
 
   try {
     const { getRemoteIntegrationToolDefinitions } = await import(
       "#veryfront/integrations/remote-tools.ts"
     );
-    return (await getRemoteIntegrationToolDefinitions()).filter((def) =>
-      !options?.allowedRemoteToolNames || options.allowedRemoteToolNames.includes(def.name)
-    );
+    for (const def of await getRemoteIntegrationToolDefinitions()) {
+      addDefinition(def);
+    }
   } catch {
-    return [];
+    return definitions;
   }
+
+  return definitions;
+}
+
+async function sourceHasTool(
+  source: RemoteToolSource,
+  toolName: string,
+  context?: ToolExecutionContext,
+): Promise<boolean> {
+  return (await source.listTools(context)).some((definition) => definition.name === toolName);
+}
+
+async function executeRemoteToolFromSources(
+  toolName: string,
+  input: Record<string, unknown>,
+  context: ToolExecutionContext | undefined,
+  allowedRemoteToolNames: string[] | undefined,
+  remoteToolSources: RemoteToolSource[] | undefined,
+): Promise<{ handled: boolean; result?: unknown }> {
+  for (const source of remoteToolSources ?? []) {
+    if (!(await sourceHasTool(source, toolName, context))) {
+      continue;
+    }
+
+    if (allowedRemoteToolNames && !allowedRemoteToolNames.includes(toolName)) {
+      throw new Error(`Tool "${toolName}" is not allowed for this run`);
+    }
+
+    return {
+      handled: true,
+      result: await source.executeTool(toolName, input, context),
+    };
+  }
+
+  return { handled: false };
 }
 
 export function resolveConfiguredTool(
@@ -148,6 +217,7 @@ export async function executeConfiguredTool(
   toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
   context?: ToolExecutionContext,
   allowedRemoteToolNames?: string[],
+  remoteToolSources?: RemoteToolSource[],
 ): Promise<unknown> {
   const configuredTool = resolveConfiguredTool(toolsConfig, toolName);
   if (configuredTool) {
@@ -158,6 +228,17 @@ export async function executeConfiguredTool(
   const registryTool = toolRegistry.get(toolName);
   if (registryTool) {
     return await registryTool.execute(input, context);
+  }
+
+  const remoteSourceResult = await executeRemoteToolFromSources(
+    toolName,
+    input,
+    context,
+    allowedRemoteToolNames,
+    remoteToolSources,
+  );
+  if (remoteSourceResult.handled) {
+    return remoteSourceResult.result;
   }
 
   // Fall back to remote execution for integration tools (e.g., github:list-repos)
@@ -207,6 +288,8 @@ export async function getAvailableTools(
     includeSkillTools?: boolean;
     includeIntegrationTools?: boolean;
     allowedRemoteToolNames?: string[];
+    remoteToolSources?: RemoteToolSource[];
+    remoteToolContext?: ToolExecutionContext;
   },
 ): Promise<ToolDefinition[]> {
   if (!toolsConfig) return [];

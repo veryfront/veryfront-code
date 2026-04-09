@@ -1,7 +1,8 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { z } from "zod";
-import { tool, toolRegistry } from "#veryfront/tool";
+import { createRemoteMCPToolSource, tool, toolRegistry } from "#veryfront/tool";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   executeConfiguredTool,
   getAvailableTools,
@@ -201,6 +202,58 @@ describe("tool-helpers", () => {
         'Tool "gmail:list-emails" is not allowed for this run',
       );
     });
+
+    it("executes remote MCP tools from configured remote tool sources", async () => {
+      const remoteSource = createRemoteMCPToolSource({
+        id: "docs",
+        endpoint: "https://mcp.test",
+      });
+
+      const requestMethods: string[] = [];
+
+      const result = await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const body = await request.json();
+          const method = typeof body.method === "string" ? body.method : "";
+          requestMethods.push(method);
+
+          if (method === "tools/list") {
+            return Response.json({
+              jsonrpc: "2.0",
+              id: body.id,
+              result: {
+                tools: [{
+                  name: "search_docs",
+                  description: "Search documentation",
+                  inputSchema: { type: "object", properties: {} },
+                }],
+              },
+            });
+          }
+
+          return Response.json({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: {
+              structuredContent: { matches: ["architecture.md"] },
+            },
+          });
+        },
+        async () =>
+          await executeConfiguredTool(
+            "search_docs",
+            { query: "architecture" },
+            undefined,
+            { projectId: "proj_123" },
+            undefined,
+            [remoteSource],
+          ),
+      );
+
+      assertEquals(requestMethods, ["tools/list", "tools/call"]);
+      assertEquals(result, { matches: ["architecture.md"] });
+    });
   });
 
   describe("getAvailableTools", () => {
@@ -284,6 +337,42 @@ describe("tool-helpers", () => {
           ));
 
         assertEquals(defs.map((def) => def.name), ["gmail:get-email"]);
+      } finally {
+        toolRegistry.clearAll();
+      }
+    });
+
+    it("merges generic remote MCP tool sources into available tools", async () => {
+      toolRegistry.clearAll();
+
+      const remoteSource = createRemoteMCPToolSource({
+        id: "docs",
+        endpoint: (context) => `https://mcp.test/${context?.projectId ?? "default"}`,
+      });
+
+      try {
+        const defs = await withMockFetch(
+          async () =>
+            Response.json({
+              jsonrpc: "2.0",
+              id: "docs:tools:list",
+              result: {
+                tools: [{
+                  name: "search_docs",
+                  description: "Search documentation",
+                  inputSchema: {},
+                }],
+              },
+            }),
+          async () =>
+            await getAvailableTools(true, {
+              includeIntegrationTools: false,
+              remoteToolSources: [remoteSource],
+              remoteToolContext: { projectId: "proj_123" },
+            }),
+        );
+
+        assertEquals(defs.map((def) => def.name), ["search_docs"]);
       } finally {
         toolRegistry.clearAll();
       }

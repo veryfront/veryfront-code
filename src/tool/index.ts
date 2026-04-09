@@ -43,10 +43,18 @@
  * ```
  */
 
-export type { Tool, ToolConfig, ToolDefinition, ToolExecutionContext } from "./types.ts";
+export type {
+  RemoteToolSource,
+  Tool,
+  ToolConfig,
+  ToolDefinition,
+  ToolExecutionContext,
+} from "./types.ts";
 
 export { dynamicTool, tool } from "./factory.ts";
 export type { DynamicToolConfig } from "./factory.ts";
+export { createRemoteMCPToolSource } from "./remote-mcp.ts";
+export type { RemoteMCPToolSourceConfig } from "./remote-mcp.ts";
 
 export { toolRegistry } from "./registry.ts";
 

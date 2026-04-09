@@ -119,4 +119,21 @@ export interface ToolDefinition {
   name: string;
   description: string;
   parameters: JsonSchema;
+  title?: string;
+  annotations?: ToolAnnotations;
+}
+
+/**
+ * Remote tool source loaded dynamically at runtime.
+ * Hosts can provide these to expose tools from remote MCP-compatible systems
+ * without registering those tools globally inside the framework.
+ */
+export interface RemoteToolSource {
+  id: string;
+  listTools(context?: ToolExecutionContext): Promise<ToolDefinition[]>;
+  executeTool(
+    toolName: string,
+    args: Record<string, unknown>,
+    context?: ToolExecutionContext,
+  ): Promise<unknown>;
 }

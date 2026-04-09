@@ -56,6 +56,24 @@ const assistant = agent({
 });
 ```
 
+### Agent with remote MCP tools
+
+```ts
+import { agent } from "veryfront/agent";
+import { createRemoteMCPToolSource } from "veryfront/tool";
+
+const docsTools = createRemoteMCPToolSource({
+  id: "docs-mcp",
+  endpoint: "https://docs.example.com/mcp",
+  headers: { Authorization: `Bearer ${Deno.env.get("DOCS_TOKEN")}` },
+});
+
+const assistant = agent({
+  system: "Use the docs tools when the question needs external product docs.",
+  remoteTools: [docsTools],
+});
+```
+
 ### Agent with skills
 
 ```ts
@@ -136,6 +154,7 @@ when bootstrap credentials are present.
 | `model?`         | `ModelString`                                                                        | Provider/model override. Omit or use `"auto"` for runtime defaults. |
 | `system`         | <code>string &#124; (() =&gt; string) &#124; (() =&gt; Promise&lt;string&gt;)</code> | System prompt — string, function, or async function                 |
 | `tools?`         | <code>true &#124; Record&lt;string, Tool &#124; boolean&gt;</code>                   | Tools available to the agent                                        |
+| `remoteTools?`   | `RemoteToolSource[]`                                                                 | Remote tool sources queried per request (for example remote MCP)    |
 | `maxSteps?`      | `number`                                                                             | Max tool-call iterations per request                                |
 | `streaming?`     | `boolean`                                                                            | Enable streaming responses                                          |
 | `memory?`        | `MemoryConfig`                                                                       | Conversation memory settings                                        |
@@ -316,6 +335,7 @@ Clear all stored messages from memory.
 | `MessagePart`                    | Multi-part message segment                                                   |
 | `ModelProvider`                  | Model provider interface                                                     |
 | `ModelString`                    | Model configuration string format: "provider/model-name"                     |
+| `RemoteToolSource`               | Runtime-discovered remote tool source                                        |
 | `RedisClient`                    | Redis client interface (compatible with ioredis and node-redis)              |
 | `RedisMemoryConfig`              | Redis memory configuration                                                   |
 | `StreamToolCall`                 | Streaming tool call                                                          |
