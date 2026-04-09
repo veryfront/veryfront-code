@@ -151,4 +151,15 @@ export {
   type ChatHandlerOptions,
   createChatHandler,
 } from "./chat-handler.ts";
-export { AgentRuntime } from "./runtime/index.ts";
+export {
+  AgentRuntime,
+  RunAlreadyExistsError,
+  RunCancelledError,
+  RunNotActiveError,
+  RunResumeSessionManager,
+  type RunResumeSessionManagerOptions,
+  type RunSessionStatus,
+  type SubmitResumeValueOutcome,
+  WaitConflictError,
+  WaitNotPendingError,
+} from "./runtime/index.ts";

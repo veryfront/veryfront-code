@@ -1,3 +1,17 @@
+import {
+  RunAlreadyExistsError,
+  RunCancelledError,
+  RunNotActiveError,
+  RunResumeSessionManager,
+  type RunResumeSessionManagerOptions,
+  type RunSessionStatus,
+  type SubmitResumeValueOutcome,
+  WaitConflictError,
+  WaitNotPendingError,
+} from "#veryfront/agent/runtime/resume-session.ts";
+
+export { RunNotActiveError };
+
 function stableJsonStringify(value: unknown, depth = 0): string {
   if (depth > 64) {
     return JSON.stringify(value);
@@ -22,77 +36,48 @@ function createToolResultKey(result: unknown, isError: boolean): string {
   return `${isError ? "1" : "0"}:${stableJsonStringify(result)}`;
 }
 
-export class AgentRunCancelledError extends Error {
+export class AgentRunCancelledError extends RunCancelledError {
   constructor(message = "Run cancelled") {
     super(message);
     this.name = "AgentRunCancelledError";
   }
 }
 
-export class AgentRunAlreadyExistsError extends Error {
+export class AgentRunAlreadyExistsError extends RunAlreadyExistsError {
   constructor(runId: string) {
-    super(`Run "${runId}" is already active`);
+    super(runId);
     this.name = "AgentRunAlreadyExistsError";
   }
 }
 
-export class RunNotActiveError extends Error {
-  constructor(runId: string) {
-    super(`Run "${runId}" is not active`);
-    this.name = "RunNotActiveError";
-  }
-}
-
-export class ToolResultNotWaitingError extends Error {
+export class ToolResultNotWaitingError extends WaitNotPendingError {
   constructor(runId: string, toolCallId: string) {
-    super(`Run "${runId}" is not waiting for tool call "${toolCallId}"`);
+    super(runId, toolCallId);
     this.name = "ToolResultNotWaitingError";
   }
 }
 
-export class ToolResultConflictError extends Error {
+export class ToolResultConflictError extends WaitConflictError {
   constructor(runId: string, toolCallId: string) {
-    super(`Conflicting tool result for run "${runId}" and tool call "${toolCallId}"`);
+    super(runId, toolCallId);
     this.name = "ToolResultConflictError";
   }
 }
 
 const DEFAULT_WAITING_FOR_TOOL_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MS = 15 * 60 * 1000;
-const DEFAULT_MAX_CONCURRENT_SESSIONS = 100;
 const AGENT_RUN_SESSION_MANAGER_GLOBAL_KEY = "__veryfrontAgentRunSessionManager" as const;
-
-type SessionStatus = "running" | "waiting" | "completed" | "cancelled" | "failed";
 
 interface SubmittedToolResult {
   result: unknown;
   isError: boolean;
   key: string;
 }
-
-interface WaitingToolState {
-  toolCallId: string;
-  resolve: (value: SubmittedToolResult) => void;
-  reject: (reason?: unknown) => void;
-}
-
-interface AgentRunSession {
-  runId: string;
-  status: SessionStatus;
-  abortController: AbortController;
-  waitingTool: WaitingToolState | null;
-  submittedResults: Map<string, SubmittedToolResult>;
-  waitingTimeoutId: number | null;
-  sessionTimeoutId: number | null;
-}
-
-export interface SubmitToolResultOutcome {
-  accepted: true;
-  duplicate?: true;
-}
+export type SessionStatus = RunSessionStatus;
+export type SubmitToolResultOutcome = SubmitResumeValueOutcome;
 
 export class AgentRunSessionManager {
-  private readonly sessions = new Map<string, AgentRunSession>();
+  private readonly sessions: RunResumeSessionManager<SubmittedToolResult>;
 
   constructor(
     private readonly options: {
@@ -102,250 +87,91 @@ export class AgentRunSessionManager {
       setTimeoutFn?: typeof setTimeout;
       clearTimeoutFn?: typeof clearTimeout;
     } = {},
-  ) {}
-
-  private get waitingForToolTtlMs(): number {
-    return this.options.waitingForToolTtlMs ?? DEFAULT_WAITING_FOR_TOOL_TTL_MS;
-  }
-
-  private get sessionTtlMs(): number | null {
-    return this.options.sessionTtlMs ?? null;
-  }
-
-  private get setTimeoutFn(): typeof setTimeout {
-    return this.options.setTimeoutFn ?? globalThis.setTimeout.bind(globalThis);
-  }
-
-  private get clearTimeoutFn(): typeof clearTimeout {
-    return this.options.clearTimeoutFn ?? globalThis.clearTimeout.bind(globalThis);
-  }
-
-  private clearWaitingTimeout(session: AgentRunSession): void {
-    if (session.waitingTimeoutId === null) {
-      return;
-    }
-
-    this.clearTimeoutFn(session.waitingTimeoutId);
-    session.waitingTimeoutId = null;
-  }
-
-  private clearSessionTimeout(session: AgentRunSession): void {
-    if (session.sessionTimeoutId === null) {
-      return;
-    }
-
-    this.clearTimeoutFn(session.sessionTimeoutId);
-    session.sessionTimeoutId = null;
-  }
-
-  private scheduleSessionTimeout(session: AgentRunSession): void {
-    if (this.sessionTtlMs === null) {
-      return;
-    }
-
-    this.clearSessionTimeout(session);
-    session.sessionTimeoutId = this.setTimeoutFn(() => {
-      this.cancelRun(session.runId);
-    }, this.sessionTtlMs) as unknown as number;
-  }
-
-  private scheduleWaitingTimeout(session: AgentRunSession): void {
-    this.clearWaitingTimeout(session);
-    session.waitingTimeoutId = this.setTimeoutFn(() => {
-      this.cancelRun(session.runId);
-    }, this.waitingForToolTtlMs) as unknown as number;
-  }
-
-  private touchSession(session: AgentRunSession): void {
-    if (
-      session.status === "running" || session.status === "waiting"
-    ) {
-      this.scheduleSessionTimeout(session);
-    }
-  }
-
-  private finalizeSession(
-    session: AgentRunSession,
-    status: Exclude<SessionStatus, "running" | "waiting">,
-  ): void {
-    session.status = status;
-    this.clearWaitingTimeout(session);
-    this.clearSessionTimeout(session);
-    session.waitingTool = null;
-    this.sessions.delete(session.runId);
-  }
-
-  private get maxConcurrentSessions(): number {
-    return this.options.maxConcurrentSessions ?? DEFAULT_MAX_CONCURRENT_SESSIONS;
+  ) {
+    const managerOptions: RunResumeSessionManagerOptions<SubmittedToolResult> = {
+      waitingTtlMs: this.options.waitingForToolTtlMs ?? DEFAULT_WAITING_FOR_TOOL_TTL_MS,
+      sessionTtlMs: this.options.sessionTtlMs ?? null,
+      maxConcurrentSessions: this.options.maxConcurrentSessions,
+      setTimeoutFn: this.options.setTimeoutFn,
+      clearTimeoutFn: this.options.clearTimeoutFn,
+      getConflictKey: (value) => value.key,
+    };
+    this.sessions = new RunResumeSessionManager(managerOptions);
   }
 
   startRun(input: { runId: string; threadId: string }): AbortSignal {
-    const existing = this.sessions.get(input.runId);
-    if (existing && (existing.status === "running" || existing.status === "waiting")) {
-      throw new AgentRunAlreadyExistsError(input.runId);
+    try {
+      return this.sessions.startRun(input);
+    } catch (error) {
+      if (error instanceof RunAlreadyExistsError) {
+        throw new AgentRunAlreadyExistsError(input.runId);
+      }
+      throw error;
     }
-
-    if (this.sessions.size >= this.maxConcurrentSessions) {
-      throw new Error(
-        `Maximum concurrent sessions (${this.maxConcurrentSessions}) reached`,
-      );
-    }
-
-    const session: AgentRunSession = {
-      runId: input.runId,
-      status: "running",
-      abortController: new AbortController(),
-      waitingTool: null,
-      submittedResults: new Map(),
-      waitingTimeoutId: null,
-      sessionTimeoutId: null,
-    };
-
-    this.sessions.set(input.runId, session);
-    this.touchSession(session);
-    return session.abortController.signal;
   }
 
   async waitForToolResult(runId: string, toolCallId: string): Promise<{
     result: unknown;
     isError: boolean;
   }> {
-    const session = this.sessions.get(runId);
-    if (!session || session.status === "completed" || session.status === "failed") {
-      throw new RunNotActiveError(runId);
+    try {
+      const value = await this.sessions.waitForSignal(runId, toolCallId);
+      return { result: value.result, isError: value.isError };
+    } catch (error) {
+      if (error instanceof RunCancelledError) {
+        throw new AgentRunCancelledError();
+      }
+      if (error instanceof WaitNotPendingError) {
+        throw new ToolResultNotWaitingError(runId, toolCallId);
+      }
+      throw error;
     }
-
-    if (session.abortController.signal.aborted || session.status === "cancelled") {
-      throw new AgentRunCancelledError();
-    }
-
-    const existingResult = session.submittedResults.get(toolCallId);
-    if (existingResult) {
-      session.status = "running";
-      this.touchSession(session);
-      return { result: existingResult.result, isError: existingResult.isError };
-    }
-
-    if (session.waitingTool && session.waitingTool.toolCallId !== toolCallId) {
-      throw new ToolResultNotWaitingError(runId, toolCallId);
-    }
-
-    session.status = "waiting";
-    this.scheduleWaitingTimeout(session);
-    this.touchSession(session);
-
-    return await new Promise<{ result: unknown; isError: boolean }>((resolve, reject) => {
-      const abortHandler = () => {
-        this.clearWaitingTimeout(session);
-        session.waitingTool = null;
-        session.status = "cancelled";
-        reject(new AgentRunCancelledError());
-      };
-
-      session.abortController.signal.addEventListener("abort", abortHandler, { once: true });
-      session.waitingTool = {
-        toolCallId,
-        resolve: (value) => {
-          session.abortController.signal.removeEventListener("abort", abortHandler);
-          this.clearWaitingTimeout(session);
-          session.waitingTool = null;
-          session.status = "running";
-          this.touchSession(session);
-          resolve({ result: value.result, isError: value.isError });
-        },
-        reject: (reason) => {
-          session.abortController.signal.removeEventListener("abort", abortHandler);
-          this.clearWaitingTimeout(session);
-          session.waitingTool = null;
-          reject(reason);
-        },
-      };
-    });
   }
 
   submitToolResult(
     runId: string,
     input: { toolCallId: string; result: unknown; isError?: boolean },
   ): SubmitToolResultOutcome {
-    const session = this.sessions.get(runId);
-    if (!session) {
-      throw new RunNotActiveError(runId);
-    }
-
     const normalized: SubmittedToolResult = {
       result: input.result,
       isError: Boolean(input.isError),
       key: createToolResultKey(input.result, Boolean(input.isError)),
     };
 
-    const existingResult = session.submittedResults.get(input.toolCallId);
-    if (existingResult) {
-      if (existingResult.key === normalized.key) {
-        return { accepted: true, duplicate: true };
+    try {
+      return this.sessions.submitSignal(runId, {
+        waitKey: input.toolCallId,
+        value: normalized,
+      });
+    } catch (error) {
+      if (error instanceof WaitConflictError) {
+        throw new ToolResultConflictError(runId, input.toolCallId);
       }
-
-      throw new ToolResultConflictError(runId, input.toolCallId);
+      if (error instanceof WaitNotPendingError) {
+        throw new ToolResultNotWaitingError(runId, input.toolCallId);
+      }
+      throw error;
     }
-
-    if (
-      session.status === "completed" || session.status === "failed" ||
-      session.status === "cancelled"
-    ) {
-      throw new RunNotActiveError(runId);
-    }
-
-    if (!session.waitingTool || session.waitingTool.toolCallId !== input.toolCallId) {
-      throw new ToolResultNotWaitingError(runId, input.toolCallId);
-    }
-
-    session.submittedResults.set(input.toolCallId, normalized);
-    this.touchSession(session);
-    session.waitingTool.resolve(normalized);
-    return { accepted: true };
   }
 
   cancelRun(runId: string): boolean {
-    const session = this.sessions.get(runId);
-    if (!session) {
-      return false;
-    }
-
-    if (
-      session.status === "completed" || session.status === "failed" ||
-      session.status === "cancelled"
-    ) {
-      return false;
-    }
-
-    const waitingTool = session.waitingTool;
-    session.abortController.abort(new AgentRunCancelledError());
-    waitingTool?.reject(new AgentRunCancelledError());
-    this.finalizeSession(session, "cancelled");
-    return true;
+    return this.sessions.cancelRun(runId);
   }
 
   completeRun(runId: string): void {
-    const session = this.sessions.get(runId);
-    if (!session) return;
-    this.finalizeSession(session, "completed");
+    this.sessions.completeRun(runId);
   }
 
   failRun(runId: string): void {
-    const session = this.sessions.get(runId);
-    if (!session) return;
-    this.finalizeSession(session, "failed");
+    this.sessions.failRun(runId);
   }
 
   getRunStatus(runId: string): SessionStatus | null {
-    return this.sessions.get(runId)?.status ?? null;
+    return this.sessions.getRunStatus(runId);
   }
 
   reset(): void {
-    for (const session of this.sessions.values()) {
-      this.clearWaitingTimeout(session);
-      this.clearSessionTimeout(session);
-    }
-    this.sessions.clear();
+    this.sessions.reset();
   }
 }
 
