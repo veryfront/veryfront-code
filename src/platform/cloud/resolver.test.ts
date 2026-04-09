@@ -6,10 +6,12 @@ import {
   _setRuntimeConfigForTesting,
   createTestConfig,
 } from "#veryfront/config/runtime-config.ts";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider";
 import {
   getDefaultVeryfrontCloudEmbeddingModel,
   getDefaultVeryfrontCloudModel,
   getVeryfrontCloudAuthToken,
+  getVeryfrontCloudBootstrap,
   getVeryfrontCloudProjectSlug,
   isVeryfrontCloudEnabled,
 } from "./resolver.ts";
@@ -82,5 +84,34 @@ describe("platform/cloud/resolver", () => {
       getDefaultVeryfrontCloudEmbeddingModel(),
       "veryfront-cloud/openai/text-embedding-3-small",
     );
+  });
+
+  it("lets scoped cloud context override env bootstrap values", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_env_token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "env-project");
+
+    runWithVeryfrontCloudContext(
+      {
+        apiBaseUrl: "https://api.staging.veryfront.org",
+        apiToken: "vf_scoped_token",
+        projectSlug: "scoped-project",
+      },
+      () => {
+        assertEquals(isVeryfrontCloudEnabled(), true);
+        assertEquals(getVeryfrontCloudAuthToken(), "vf_scoped_token");
+        assertEquals(getVeryfrontCloudProjectSlug(), "scoped-project");
+        assertEquals(getVeryfrontCloudBootstrap().apiBaseUrl, "https://api.staging.veryfront.org");
+      },
+    );
+
+    assertEquals(getVeryfrontCloudAuthToken(), "vf_env_token");
+    assertEquals(getVeryfrontCloudProjectSlug(), "env-project");
+  });
+
+  it("treats scoped cloud context as sufficient runtime context even without projectSlug", () => {
+    runWithVeryfrontCloudContext({ apiToken: "vf_scoped_token" }, () => {
+      assertEquals(isVeryfrontCloudEnabled(), true);
+      assertEquals(getVeryfrontCloudAuthToken(), "vf_scoped_token");
+    });
   });
 });

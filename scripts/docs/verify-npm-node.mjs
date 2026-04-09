@@ -182,7 +182,13 @@ try {
   assertType(prov.hasModelProvider, "function", "hasModelProvider is function");
   assertType(prov.getRegisteredModelProviders, "function", "getRegisteredModelProviders is function");
   assertType(prov.clearModelProviders, "function", "clearModelProviders is function");
-  console.log("  OK    provider — 5 checks");
+  assertType(prov.runWithVeryfrontCloudContext, "function", "runWithVeryfrontCloudContext is function");
+  assertType(
+    prov.runWithVeryfrontCloudContextAsync,
+    "function",
+    "runWithVeryfrontCloudContextAsync is function",
+  );
+  console.log("  OK    provider — 7 checks");
 } catch (err) {
   failed++;
   errors.push(`provider: ${err.message}`);

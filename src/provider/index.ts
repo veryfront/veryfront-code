@@ -26,3 +26,8 @@ export {
   resolveModel,
 } from "./model-registry.ts";
 export type { ModelProviderFactory } from "./model-registry.ts";
+export {
+  runWithVeryfrontCloudContext,
+  runWithVeryfrontCloudContextAsync,
+} from "./veryfront-cloud/context.ts";
+export type { VeryfrontCloudContext } from "./veryfront-cloud/context.ts";
