@@ -142,7 +142,27 @@ async function resolveHeaders(
   const resolvedHeaders = headers ? await resolveValue(headers, context) : undefined;
   const finalHeaders = new Headers(resolvedHeaders);
   finalHeaders.set("Content-Type", "application/json");
+  finalHeaders.set("Accept", mergeAcceptHeader(finalHeaders.get("Accept")));
   return finalHeaders;
+}
+
+function mergeAcceptHeader(existingAccept: string | null): string {
+  const requiredTypes = ["application/json", "text/event-stream"];
+  const existingTypes = (existingAccept ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  const existingKeys = new Set(
+    existingTypes.map((entry) => entry.split(";")[0]?.trim().toLowerCase()).filter(Boolean),
+  );
+
+  for (const requiredType of requiredTypes) {
+    if (!existingKeys.has(requiredType)) {
+      existingTypes.push(requiredType);
+    }
+  }
+
+  return existingTypes.join(", ");
 }
 
 async function postJsonRpc(
