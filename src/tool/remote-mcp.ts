@@ -26,6 +26,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function isResolver<T>(
+  value: ResolvableValue<T>,
+): value is (context?: ToolExecutionContext) => T | Promise<T> {
+  return typeof value === "function";
+}
+
 function isToolAnnotations(value: unknown): value is ToolAnnotations {
   if (!isRecord(value)) return false;
 
@@ -123,7 +129,7 @@ async function resolveValue<T>(
   value: ResolvableValue<T>,
   context?: ToolExecutionContext,
 ): Promise<T> {
-  if (typeof value === "function") {
+  if (isResolver(value)) {
     return await value(context);
   }
   return value;

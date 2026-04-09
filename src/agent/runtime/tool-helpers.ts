@@ -104,6 +104,7 @@ async function getRemoteToolDefinitions(options?: {
   remoteToolSources?: RemoteToolSource[];
   remoteToolContext?: ToolExecutionContext;
 }): Promise<ToolDefinition[]> {
+  const remoteToolContext = options?.remoteToolContext;
   const definitions: ToolDefinition[] = [];
   const seenToolNames = new Set<string>();
 
@@ -123,7 +124,7 @@ async function getRemoteToolDefinitions(options?: {
 
   for (const source of options?.remoteToolSources ?? []) {
     try {
-      const sourceDefs = await source.listTools(options.remoteToolContext);
+      const sourceDefs = await source.listTools(remoteToolContext);
       for (const def of sourceDefs) {
         addDefinition(def);
       }
