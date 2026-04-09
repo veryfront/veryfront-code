@@ -1746,4 +1746,75 @@ describe("mcp/server", () => {
     });
     assertExists(result.error);
   });
+
+  describe("listChanged notifications", () => {
+    it("calls onNotification when tools list changes", () => {
+      const notifications: Array<{ method: string }> = [];
+      const server = createMCPServer({ enabled: true });
+      server.onNotification = (notification) => {
+        notifications.push(notification as { method: string });
+      };
+      server.notifyToolsChanged();
+      assertEquals(notifications.length, 1);
+      assertEquals(notifications[0].method, "notifications/tools/list_changed");
+    });
+
+    it("calls onNotification for resources list changes", () => {
+      const notifications: Array<{ method: string }> = [];
+      const server = createMCPServer({ enabled: true });
+      server.onNotification = (notification) => {
+        notifications.push(notification as { method: string });
+      };
+      server.notifyResourcesChanged();
+      assertEquals(notifications.length, 1);
+      assertEquals(notifications[0].method, "notifications/resources/list_changed");
+    });
+
+    it("calls onNotification for prompts list changes", () => {
+      const notifications: Array<{ method: string }> = [];
+      const server = createMCPServer({ enabled: true });
+      server.onNotification = (notification) => {
+        notifications.push(notification as { method: string });
+      };
+      server.notifyPromptsChanged();
+      assertEquals(notifications.length, 1);
+      assertEquals(notifications[0].method, "notifications/prompts/list_changed");
+    });
+
+    it("does not throw when onNotification is not set", () => {
+      const server = createMCPServer({ enabled: true });
+      server.notifyToolsChanged(); // should not throw
+    });
+
+    it("emits tools/list_changed when loadRemoteIntegrationTools succeeds", async () => {
+      const server = createMCPServer({ enabled: true });
+      server.setIntegrationLoader({
+        integrations: { github: {} },
+        apiBaseUrl: "https://api.example.com",
+        apiToken: "test-token",
+      });
+
+      const notifications: Array<{ method: string }> = [];
+      server.onNotification = (notification) => {
+        notifications.push(notification as { method: string });
+      };
+
+      globalThis.fetch = async (input: string | URL | Request) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://api.example.com/integrations/config") {
+          return new Response(JSON.stringify({ synced: 1 }), {
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response("Not Found", { status: 404 });
+      };
+
+      await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+
+      const toolsChanged = notifications.find(
+        (n) => n.method === "notifications/tools/list_changed",
+      );
+      assertExists(toolsChanged);
+    });
+  });
 });
