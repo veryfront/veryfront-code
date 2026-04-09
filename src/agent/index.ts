@@ -134,6 +134,15 @@ export {
 
 export { agent } from "./factory.ts";
 export {
+  type AgUiContextItem,
+  type AgUiHandlerConfigWithAgent,
+  type AgUiHandlerOptions,
+  type AgUiInjectedTool,
+  type AgUiRequest,
+  AgUiRequestSchema,
+  createAgUiHandler,
+} from "./ag-ui-handler.ts";
+export {
   type ChatHandlerBeforeStream,
   type ChatHandlerBeforeStreamContext,
   type ChatHandlerBeforeStreamResult,

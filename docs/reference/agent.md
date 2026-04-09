@@ -15,6 +15,8 @@ import {
   agent,
   agentAsTool,
   AgentRuntime,
+  AgUiRequestSchema,
+  createAgUiHandler,
   createMemory,
   getAgentsAsTools,
   registerAgent,
@@ -84,6 +86,21 @@ export async function POST(req: Request) {
   const result = await assistant.stream({ messages });
   return result.toDataStreamResponse();
 }
+```
+
+### AG-UI route
+
+```ts
+// app/api/ag-ui/route.ts
+import { agent, createAgUiHandler } from "veryfront/agent";
+
+const assistant = agent({
+  system: "You are a helpful assistant.",
+});
+
+export const POST = createAgUiHandler({
+  agent: assistant,
+});
 ```
 
 ### Multi-agent composition
@@ -182,6 +199,43 @@ Create a POST chat route handler with built-in request validation, UI-message no
 | `context`      | <code>Record&lt;string, unknown&gt;</code> | Resolved context (default `{ userId: "current-user" }`)          |
 | `lastUserText` | `string`                                   | Text extracted from the last user message (empty string if none) |
 
+### `createAgUiHandler(agentIdOrConfig, options?)`
+
+Create a POST route handler for AG-UI requests. The package default convention
+is `/api/ag-ui`, but the host application owns the actual path.
+
+The handler:
+
+- validates the AG-UI runtime request body
+- clears server memory before each run
+- converts the package data-stream output into AG-UI SSE events
+- passes AG-UI request metadata into `agent.stream()` context as:
+
+```ts
+{
+  threadId,
+  runId,
+  agUi: {
+    context,
+    forwardedProps,
+  }
+}
+```
+
+Current limitation:
+
+- injected client tools in `tools` are rejected with `501` until the package
+  exposes generic wait/resume primitives for them
+
+| Property           | Type                                                                                                                                                           | Description                                         |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `agentIdOrConfig`  | `string \| { agent: Agent, context?: ... }`                                                                                                                    | Agent registry id or direct agent instance          |
+| `options?.context` | <code>Record&lt;string, unknown&gt; &#124; ((request: Request) =&gt; Record&lt;string, unknown&gt; &#124; Promise&lt;Record&lt;string, unknown&gt;&gt;)</code> | Extra context merged into the AG-UI runtime context |
+
+### `AgUiRequestSchema`
+
+Validate AG-UI runtime requests for `createAgUiHandler()`.
+
 ### `agent.getMemory()`
 
 Get the agent's memory instance.
@@ -208,6 +262,7 @@ Clear all stored messages from memory.
 | ------------------- | --------------------------------------------- |
 | `agent`             | Create an agent                               |
 | `agentAsTool`       | Wrap agent as callable tool                   |
+| `createAgUiHandler` | Create a POST handler for an AG-UI route      |
 | `createChatHandler` | Create a POST handler for a chat API route.   |
 | `createMemory`      | Create memory (buffer, conversation, summary) |
 | `createRedisMemory` | Create Redis-backed memory                    |
@@ -242,6 +297,11 @@ Clear all stored messages from memory.
 | `AgentResponse`                  | Agent execution response                                                     |
 | `AgentStatus`                    | Agent status (idle, running, etc.)                                           |
 | `AgentStreamResult`              | Streaming result (`.toDataStreamResponse()`)                                 |
+| `AgUiContextItem`                | AG-UI runtime context item                                                   |
+| `AgUiHandlerConfigWithAgent`     | Direct-agent form for `createAgUiHandler`                                    |
+| `AgUiHandlerOptions`             | Options for `createAgUiHandler`                                              |
+| `AgUiInjectedTool`               | AG-UI client-injected tool descriptor                                        |
+| `AgUiRequest`                    | Validated AG-UI runtime request body                                         |
 | `ChatHandlerBeforeStream`        | Hook signature for `createChatHandler` customization before streaming.       |
 | `ChatHandlerBeforeStreamContext` | Input passed to `beforeStream` hook.                                         |
 | `ChatHandlerBeforeStreamResult`  | Message/context mutations returned from `beforeStream`.                      |
