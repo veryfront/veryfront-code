@@ -1,15 +1,15 @@
-interface FormElicitationOptions {
+export interface FormElicitationOptions {
   message: string;
   schema: Record<string, unknown>;
 }
 
-interface UrlElicitationOptions {
+export interface UrlElicitationOptions {
   message: string;
   url: string;
   elicitationId: string;
 }
 
-interface ElicitationRequest {
+export interface ElicitationRequest {
   method: "elicitation/create";
   params: Record<string, unknown>;
 }

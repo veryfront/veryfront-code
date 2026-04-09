@@ -154,6 +154,7 @@ export class MCPServer {
       | Record<string, unknown>
       | undefined;
     if (!elicitation) return false;
+    // Per MCP spec: empty elicitation object implies basic form support (backwards compat)
     if (mode === "form" && Object.keys(elicitation).length === 0) return true;
     return mode in elicitation;
   }
