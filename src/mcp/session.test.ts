@@ -29,6 +29,26 @@ describe("mcp/session", () => {
     assertEquals(manager.isValid(id), false);
   });
 
+  it("reports size of active sessions", () => {
+    const manager = new SessionManager();
+    assertEquals(manager.size, 0);
+    const id1 = manager.create();
+    assertEquals(manager.size, 1);
+    manager.create();
+    assertEquals(manager.size, 2);
+    manager.terminate(id1);
+    assertEquals(manager.size, 1);
+  });
+
+  it("clears all sessions", () => {
+    const manager = new SessionManager();
+    manager.create();
+    manager.create();
+    assertEquals(manager.size, 2);
+    manager.clear();
+    assertEquals(manager.size, 0);
+  });
+
   it("session IDs contain only visible ASCII", () => {
     const manager = new SessionManager();
     const id = manager.create();
