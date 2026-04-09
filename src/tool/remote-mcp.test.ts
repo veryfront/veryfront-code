@@ -8,6 +8,7 @@ describe("tool/remote-mcp", () => {
     let requestUrl = "";
     let requestMethod = "";
     let projectHeader = "";
+    let acceptHeader = "";
     let requestBody: Record<string, unknown> | undefined;
 
     const source = createRemoteMCPToolSource({
@@ -25,6 +26,7 @@ describe("tool/remote-mcp", () => {
         requestUrl = request.url;
         requestMethod = request.method;
         projectHeader = request.headers.get("x-project-id") ?? "";
+        acceptHeader = request.headers.get("accept") ?? "";
         requestBody = await request.json();
 
         return Response.json({
@@ -47,6 +49,7 @@ describe("tool/remote-mcp", () => {
     assertEquals(requestUrl, "https://mcp.test/proj_123");
     assertEquals(requestMethod, "POST");
     assertEquals(projectHeader, "proj_123");
+    assertEquals(acceptHeader, "application/json, text/event-stream");
     assertEquals(requestBody, {
       jsonrpc: "2.0",
       id: "docs:tools:list",
@@ -87,6 +90,70 @@ describe("tool/remote-mcp", () => {
       error: "authentication_required",
       connectUrl: "/oauth/docs",
     });
+  });
+
+  it("preserves caller accept types while adding the MCP-required media types", async () => {
+    let acceptHeader = "";
+
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+      headers: {
+        Accept: "application/vnd.custom+json",
+      },
+    });
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        acceptHeader = request.headers.get("accept") ?? "";
+
+        return Response.json({
+          jsonrpc: "2.0",
+          id: "docs:tools:list",
+          result: {
+            tools: [],
+          },
+        });
+      },
+      async () => await source.listTools(),
+    );
+
+    assertEquals(
+      acceptHeader,
+      "application/vnd.custom+json, application/json, text/event-stream",
+    );
+  });
+
+  it("parses JSON-RPC results from SSE responses when the MCP server negotiates text/event-stream", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    const tools = await withMockFetch(
+      async () =>
+        new Response(
+          [
+            "event: message",
+            'data: {"jsonrpc":"2.0","id":"docs:tools:list","result":{"tools":[{"name":"search_docs","description":"Search documentation","inputSchema":{}}]}}',
+            "",
+            "",
+          ].join("\n"),
+          {
+            headers: {
+              "Content-Type": "text/event-stream; charset=utf-8",
+            },
+          },
+        ),
+      async () => await source.listTools(),
+    );
+
+    assertEquals(tools, [{
+      name: "search_docs",
+      description: "Search documentation",
+      parameters: { type: "object", properties: {} },
+    }]);
   });
 
   it("throws when the remote MCP server responds with a JSON-RPC error", async () => {
