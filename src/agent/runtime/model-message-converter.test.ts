@@ -133,30 +133,6 @@ describe("model-message-converter", () => {
       assertEquals(content[0].toolName, "unknown");
     });
 
-    it("handles multiple tool results in one tool message", () => {
-      const msg: Message = {
-        id: "t3",
-        role: "tool",
-        parts: [
-          {
-            type: "tool-result",
-            toolCallId: "tc1",
-            toolName: "a",
-            result: "r1",
-          },
-          {
-            type: "tool-result",
-            toolCallId: "tc2",
-            toolName: "b",
-            result: "r2",
-          },
-        ],
-      };
-      const result = convertToModelMessage(msg);
-      const content = result.content as Array<Record<string, unknown>>;
-      assertEquals(content.length, 2);
-    });
-
     it("falls back to user role for unknown message roles", () => {
       const msg = {
         id: "x1",
@@ -222,6 +198,87 @@ describe("model-message-converter", () => {
 
     it("returns empty array for empty input", () => {
       assertEquals(convertToModelMessages([]), []);
+    });
+
+    it("splits multiple tool results into one provider message per tool call", () => {
+      const messages: Message[] = [{
+        id: "tool_batch",
+        role: "tool",
+        parts: [
+          {
+            type: "tool-result",
+            toolCallId: "tc1",
+            toolName: "a",
+            result: "r1",
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tc2",
+            toolName: "b",
+            result: "r2",
+          },
+        ],
+      }];
+
+      const result = convertToModelMessages(messages);
+
+      assertEquals(result.length, 2);
+      assertEquals(result[0], {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "tc1",
+          toolName: "a",
+          output: { type: "json", value: "r1" },
+        }],
+      });
+      assertEquals(result[1], {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "tc2",
+          toolName: "b",
+          output: { type: "json", value: "r2" },
+        }],
+      });
+    });
+
+    it("keeps only the latest tool result for a repeated tool call id", () => {
+      const messages: Message[] = [
+        {
+          id: "tool_1",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "tc1",
+            toolName: "search",
+            result: { files: ["old.ts"] },
+          }],
+        },
+        {
+          id: "tool_2",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "tc1",
+            toolName: "search",
+            result: { files: ["new.ts"] },
+          }],
+        },
+      ];
+
+      const result = convertToModelMessages(messages);
+
+      assertEquals(result.length, 1);
+      assertEquals(result[0], {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "tc1",
+          toolName: "search",
+          output: { type: "json", value: { files: ["new.ts"] } },
+        }],
+      });
     });
   });
 });

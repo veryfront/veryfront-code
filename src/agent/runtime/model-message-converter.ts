@@ -108,9 +108,55 @@ export function convertToModelMessage(msg: Message): ModelMessage {
   }
 }
 
+function convertToolResultPart(
+  part: ToolResultPart,
+): ModelMessage {
+  return {
+    role: "tool",
+    content: [{
+      type: "tool-result",
+      toolCallId: part.toolCallId,
+      toolName: part.toolName ?? "unknown",
+      output: { type: "json", value: part.result },
+    }],
+  } as ModelMessage;
+}
+
 /**
  * Convert an array of veryfront Messages to AI SDK ModelMessage format.
  */
 export function convertToModelMessages(messages: Message[]): ModelMessage[] {
-  return messages.map(convertToModelMessage);
+  const modelMessages: ModelMessage[] = [];
+  const toolResultMessageIndexes = new Map<string, number>();
+
+  for (const message of messages) {
+    if (message.role !== "tool") {
+      modelMessages.push(convertToModelMessage(message));
+      continue;
+    }
+
+    const toolResultParts = message.parts.filter((part): part is ToolResultPart =>
+      part.type === "tool-result"
+    );
+
+    if (toolResultParts.length === 0) {
+      modelMessages.push(convertToModelMessage(message));
+      continue;
+    }
+
+    for (const toolResultPart of toolResultParts) {
+      const toolResultMessage = convertToolResultPart(toolResultPart);
+      const existingIndex = toolResultMessageIndexes.get(toolResultPart.toolCallId);
+
+      if (existingIndex === undefined) {
+        toolResultMessageIndexes.set(toolResultPart.toolCallId, modelMessages.length);
+        modelMessages.push(toolResultMessage);
+        continue;
+      }
+
+      modelMessages[existingIndex] = toolResultMessage;
+    }
+  }
+
+  return modelMessages;
 }
