@@ -10,7 +10,7 @@
  *   (run after `deno task build:npm`)
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,12 +21,17 @@ const NPM_DIR = resolve(ROOT, "npm");
 // Read deno.json to get export paths
 const denoConfig = JSON.parse(readFileSync(resolve(ROOT, "deno.json"), "utf8"));
 const exports = denoConfig.exports ?? {};
+const npmPackage = JSON.parse(readFileSync(resolve(NPM_DIR, "package.json"), "utf8"));
+const npmExports = npmPackage.exports ?? {};
 
-// Top-level export paths only (no sub-paths like ./workflow/worker)
-const topLevelExports = Object.keys(exports).filter((p) => {
+// Top-level module export paths only (no sub-paths like ./workflow/worker)
+// Skip executable/assets surfaces that are verified separately.
+const moduleExports = Object.keys(exports).filter((p) => {
   const parts = p.split("/");
-  return parts.length <= 2;
+  return parts.length <= 2 && p !== "./cli" && p !== "./tsconfig.json";
 });
+
+const CLI_EXPORT = "./cli";
 
 // Key named exports per module that MUST exist (subset — the most important ones)
 const REQUIRED_EXPORTS = {
@@ -38,8 +43,17 @@ const REQUIRED_EXPORTS = {
   "./chat": ["Chat", "useChat", "useAgent", "AgentCard", "Message", "AIErrorBoundary"],
   "./markdown": ["Markdown"],
   "./mdx": ["MDXProvider", "useMDXComponents"],
-  "./agent": ["agent", "AgentRuntime", "registerAgent", "getAgentsAsTools", "agentAsTool", "createMemory"],
-  "./tool": ["tool", "dynamicTool", "executeTool", "toolRegistry"],
+  "./agent": [
+    "agent",
+    "AgentRuntime",
+    "RunResumeSessionManager",
+    "createAgUiHandler",
+    "registerAgent",
+    "getAgentsAsTools",
+    "agentAsTool",
+    "createMemory",
+  ],
+  "./tool": ["tool", "dynamicTool", "executeTool", "toolRegistry", "createRemoteMCPToolSource"],
   "./workflow": ["workflow", "step", "parallel", "branch", "dag", "waitForApproval", "createWorkflowClient"],
   "./prompt": ["prompt", "promptRegistry"],
   "./resource": ["resource", "resourceRegistry"],
@@ -54,7 +68,7 @@ let passed = 0;
 let failed = 0;
 const errors = [];
 
-for (const exportPath of topLevelExports) {
+for (const exportPath of moduleExports) {
   const importPath = resolve(NPM_DIR, "esm", exports[exportPath].replace(/\.tsx?$/, ".js"));
   const label = exportPath === "." ? "veryfront" : `veryfront/${exportPath.replace("./", "")}`;
 
@@ -82,11 +96,38 @@ for (const exportPath of topLevelExports) {
   }
 }
 
+const cliEntry = npmExports[CLI_EXPORT];
+if (!cliEntry) {
+  failed++;
+  const label = "veryfront/cli";
+  errors.push(`  ${label}: missing export map entry`);
+  console.log(`  FAIL  ${label} — missing export map entry`);
+} else {
+  const cliImportTarget = typeof cliEntry === "string" ? cliEntry : cliEntry.import;
+  const cliImportPath = resolve(NPM_DIR, cliImportTarget);
+  const cliBinPath = resolve(NPM_DIR, "bin/veryfront.js");
+
+  if (!existsSync(cliImportPath)) {
+    failed++;
+    errors.push(`  veryfront/cli: missing import target ${cliImportTarget}`);
+    console.log(`  FAIL  veryfront/cli — missing import target ${cliImportTarget}`);
+  } else if (!existsSync(cliBinPath)) {
+    failed++;
+    errors.push("  veryfront/cli: missing npm bin/veryfront.js");
+    console.log("  FAIL  veryfront/cli — missing npm bin/veryfront.js");
+  } else {
+    passed++;
+    console.log("  OK    veryfront/cli (entrypoints exist)");
+  }
+}
+
 console.log();
-console.log(`${passed} passed, ${failed} failed out of ${topLevelExports.length} export paths`);
+console.log(`${passed} passed, ${failed} failed out of ${moduleExports.length + 1} export paths`);
 
 if (errors.length > 0) {
   console.log("\nErrors:");
   for (const e of errors) console.log(e);
   process.exit(1);
 }
+
+process.exit(0);
