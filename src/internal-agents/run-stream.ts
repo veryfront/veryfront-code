@@ -119,95 +119,60 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function normalizeToolArgs(part: Record<string, unknown>): Record<string, unknown> {
-  if (isRecord(part.args)) {
-    return part.args;
+function parseToolArguments(serializedArguments: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(serializedArguments);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
   }
-
-  if (isRecord(part.input)) {
-    return part.input;
-  }
-
-  return {};
-}
-
-function normalizeMessagePart(part: Record<string, unknown>): Message["parts"][number] | null {
-  if (part.type === "text" && typeof part.text === "string") {
-    return { type: "text", text: part.text };
-  }
-
-  if (
-    part.type === "tool_call" &&
-    typeof part.id === "string" &&
-    typeof part.name === "string"
-  ) {
-    return {
-      type: "tool-call",
-      toolCallId: part.id,
-      toolName: part.name,
-      args: normalizeToolArgs(part),
-    };
-  }
-
-  if (
-    part.type === "tool-call" &&
-    typeof part.toolCallId === "string" &&
-    typeof part.toolName === "string"
-  ) {
-    return {
-      type: "tool-call",
-      toolCallId: part.toolCallId,
-      toolName: part.toolName,
-      args: normalizeToolArgs(part),
-    };
-  }
-
-  if (
-    typeof part.type === "string" &&
-    part.type.startsWith("tool-") &&
-    part.type !== "tool-result" &&
-    typeof part.toolCallId === "string" &&
-    typeof part.toolName === "string"
-  ) {
-    return {
-      type: part.type,
-      toolCallId: part.toolCallId,
-      toolName: part.toolName,
-      args: normalizeToolArgs(part),
-    };
-  }
-
-  if (part.type === "tool_result" && typeof part.tool_call_id === "string") {
-    return {
-      type: "tool-result",
-      toolCallId: part.tool_call_id,
-      toolName: typeof part.tool_name === "string" ? part.tool_name : "unknown",
-      result: "output" in part ? part.output : undefined,
-    };
-  }
-
-  if (part.type === "tool-result" && typeof part.toolCallId === "string") {
-    return {
-      type: "tool-result",
-      toolCallId: part.toolCallId,
-      toolName: typeof part.toolName === "string" ? part.toolName : "unknown",
-      result: "result" in part ? part.result : undefined,
-    };
-  }
-
-  return null;
 }
 
 function normalizeRuntimeMessages(messages: RuntimeRunAgentInput["messages"]): Message[] {
-  return messages.map((message) => ({
-    id: message.id,
-    role: message.role,
-    parts: message.parts
-      .map((part) => isRecord(part) ? normalizeMessagePart(part) : null)
-      .filter((part): part is Message["parts"][number] => part !== null),
-    ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
-    ...(message.metadata ? { metadata: message.metadata } : {}),
-  }));
+  return messages.map((message) => {
+    const parts: Message["parts"] = [];
+
+    switch (message.role) {
+      case "system":
+      case "user":
+        parts.push({ type: "text", text: message.content });
+        break;
+      case "assistant":
+        if (typeof message.content === "string" && message.content.length > 0) {
+          parts.push({ type: "text", text: message.content });
+        }
+        for (const toolCall of message.toolCalls ?? []) {
+          parts.push({
+            type: "tool-call",
+            toolCallId: toolCall.id,
+            toolName: toolCall.function.name,
+            args: parseToolArguments(toolCall.function.arguments),
+          });
+        }
+        break;
+      case "tool":
+        parts.push({
+          type: "tool-result",
+          toolCallId: message.toolCallId,
+          toolName: "unknown",
+          result: message.error
+            ? {
+              content: message.content,
+              error: message.error,
+            }
+            : message.content,
+        });
+        break;
+    }
+
+    return {
+      id: message.id,
+      role: message.role,
+      parts,
+      ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
+      ...(message.metadata ? { metadata: message.metadata } : {}),
+    };
+  });
 }
 
 function getAllowedRemoteToolNames(
@@ -234,7 +199,7 @@ export async function createRuntimeAgentStreamResponse(
   logger.info("Starting internal agent runtime stream", {
     runId: input.runId,
     threadId: input.threadId,
-    agentId: input.agentId,
+    agentId: agent.id,
     messageCount: input.messages.length,
     toolCount: input.tools.length,
     contextCount: input.context.length,
@@ -269,6 +234,8 @@ export async function createRuntimeAgentStreamResponse(
       {
         threadId: input.threadId,
         runId: input.runId,
+        ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
+        ...(input.state !== undefined ? { state: input.state } : {}),
         context: input.context,
         forwardedProps: input.forwardedProps,
       },
@@ -284,14 +251,14 @@ export async function createRuntimeAgentStreamResponse(
     logger.info("Internal agent runtime stream attached", {
       runId: input.runId,
       threadId: input.threadId,
-      agentId: input.agentId,
+      agentId: agent.id,
     });
   } catch (error) {
     deps.sessionManager.failRun(input.runId);
     logger.error("Internal agent runtime stream setup failed", {
       runId: input.runId,
       threadId: input.threadId,
-      agentId: input.agentId,
+      agentId: agent.id,
       error: error instanceof Error ? error.message : String(error),
     });
     throw error;
@@ -329,7 +296,7 @@ export async function createRuntimeAgentStreamResponse(
         logger.warn("Internal agent runtime stream aborted", {
           runId: input.runId,
           threadId: input.threadId,
-          agentId: input.agentId,
+          agentId: agent.id,
         });
         reader.cancel(new AgentRunCancelledError()).catch(() => {});
       };
@@ -338,7 +305,7 @@ export async function createRuntimeAgentStreamResponse(
       enqueueIfAttached("RunStarted", {
         runId: input.runId,
         threadId: input.threadId,
-        agentId: input.agentId,
+        agentId: agent.id,
       });
 
       try {
@@ -352,7 +319,7 @@ export async function createRuntimeAgentStreamResponse(
             logger.info("Internal agent runtime stream reader completed", {
               runId: input.runId,
               threadId: input.threadId,
-              agentId: input.agentId,
+              agentId: agent.id,
             });
             break;
           }
@@ -386,7 +353,7 @@ export async function createRuntimeAgentStreamResponse(
         logger.info("Internal agent runtime stream finalized", {
           runId: input.runId,
           threadId: input.threadId,
-          agentId: input.agentId,
+          agentId: agent.id,
           sawVisibleOutput: state.sawVisibleOutput,
           sawTerminalError: state.sawTerminalError,
           finishReason: state.metadata.finishReason,
@@ -397,7 +364,7 @@ export async function createRuntimeAgentStreamResponse(
           logger.warn("Internal agent runtime stream cancelled", {
             runId: input.runId,
             threadId: input.threadId,
-            agentId: input.agentId,
+            agentId: agent.id,
             error: error.message,
           });
           enqueueIfAttached("RunError", {
@@ -409,7 +376,7 @@ export async function createRuntimeAgentStreamResponse(
           logger.error("Internal agent runtime stream failed", {
             runId: input.runId,
             threadId: input.threadId,
-            agentId: input.agentId,
+            agentId: agent.id,
             error: error instanceof Error ? error.message : String(error),
           });
           enqueueIfAttached("RunError", {
@@ -425,7 +392,7 @@ export async function createRuntimeAgentStreamResponse(
         logger.debug("Internal agent runtime stream response closed", {
           runId: input.runId,
           threadId: input.threadId,
-          agentId: input.agentId,
+          agentId: agent.id,
           clientAttached,
         });
       }
@@ -435,7 +402,7 @@ export async function createRuntimeAgentStreamResponse(
       logger.info("Internal agent runtime client detached", {
         runId: input.runId,
         threadId: input.threadId,
-        agentId: input.agentId,
+        agentId: agent.id,
       });
       return Promise.resolve();
     },

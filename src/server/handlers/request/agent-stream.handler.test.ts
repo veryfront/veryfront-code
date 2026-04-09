@@ -221,6 +221,105 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(text.includes("event: ReasoningEnd"), false);
   });
 
+  it("accepts the canonical runtime AG-UI request shape on the existing internal stream route", async () => {
+    let streamContext: Record<string, unknown> | undefined;
+
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => ({
+        stream: async (_messages, context, callbacks) => {
+          streamContext = context;
+          callbacks?.onFinish?.({
+            text: "hello from runtime",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: {
+              promptTokens: 2,
+              completionTokens: 3,
+              totalTokens: 5,
+            },
+            metadata: {
+              finishReason: "stop",
+            },
+          });
+
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+              );
+              controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+              controller.enqueue(
+                encodeDataStreamEvent({
+                  type: "text-delta",
+                  id: "text-1",
+                  delta: "hello from runtime",
+                }),
+              );
+              controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    const body = JSON.stringify({
+      agentId: "assistant-1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      parentRunId: "run_parent",
+      state: { phase: "draft" },
+      messages: [
+        {
+          id: "sys_1",
+          role: "system",
+          content: "You are helpful",
+        },
+        {
+          id: "user_1",
+          role: "user",
+          content: "hello",
+        },
+      ],
+      context: [{
+        description: "Current file",
+        value: "src/main.ts",
+      }],
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(streamContext, {
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      parentRunId: "run_parent",
+      state: { phase: "draft" },
+      context: [{
+        description: "Current file",
+        value: "src/main.ts",
+      }],
+      forwardedProps: undefined,
+    });
+  });
+
   it("passes runtime integration tool allowlists from forwarded props into the runtime agent config", async () => {
     let capturedAllowedTools: string[] | undefined;
 
