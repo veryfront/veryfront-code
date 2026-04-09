@@ -14,6 +14,10 @@ Complete API reference for the Veryfront framework.
 npm install veryfront
 ```
 
+## Additional References
+
+- [Agent runtime AG-UI contract](./agent-runtime-ag-ui-contract.md) - Canonical runtime-facing request contract, compatibility wrapper, and endpoint conventions for AG-UI execution.
+
 ## Modules
 
 | Import | Description |
