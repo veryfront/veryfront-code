@@ -209,7 +209,7 @@ describe("tool-helpers", () => {
         endpoint: "https://mcp.test",
       });
 
-      let requestMethods: string[] = [];
+      const requestMethods: string[] = [];
 
       const result = await withMockFetch(
         async (input: string | URL | Request, init?: RequestInit) => {
