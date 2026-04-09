@@ -182,11 +182,11 @@ export function collectPersistedToolResults(
       continue;
     }
 
-    for (const part of message.parts) {
-      if (part.type !== "tool-result") {
-        continue;
-      }
-
+    for (
+      const part of message.parts.filter((messagePart): messagePart is ToolResultPart =>
+        messagePart.type === "tool-result"
+      )
+    ) {
       persistedToolResults.set(part.toolCallId, part);
     }
   }
