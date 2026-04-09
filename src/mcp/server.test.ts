@@ -1746,4 +1746,42 @@ describe("mcp/server", () => {
     });
     assertExists(result.error);
   });
+
+  it("calls onNotification when tools list changes", () => {
+    const notifications: Array<{ method: string }> = [];
+    const server = createMCPServer({ enabled: true });
+    server.onNotification = (notification) => {
+      notifications.push(notification as { method: string });
+    };
+    server.notifyToolsChanged();
+    assertEquals(notifications.length, 1);
+    assertEquals(notifications[0].method, "notifications/tools/list_changed");
+  });
+
+  it("calls onNotification for resources list changes", () => {
+    const notifications: Array<{ method: string }> = [];
+    const server = createMCPServer({ enabled: true });
+    server.onNotification = (notification) => {
+      notifications.push(notification as { method: string });
+    };
+    server.notifyResourcesChanged();
+    assertEquals(notifications.length, 1);
+    assertEquals(notifications[0].method, "notifications/resources/list_changed");
+  });
+
+  it("calls onNotification for prompts list changes", () => {
+    const notifications: Array<{ method: string }> = [];
+    const server = createMCPServer({ enabled: true });
+    server.onNotification = (notification) => {
+      notifications.push(notification as { method: string });
+    };
+    server.notifyPromptsChanged();
+    assertEquals(notifications.length, 1);
+    assertEquals(notifications[0].method, "notifications/prompts/list_changed");
+  });
+
+  it("does not throw when onNotification is not set", () => {
+    const server = createMCPServer({ enabled: true });
+    server.notifyToolsChanged(); // should not throw
+  });
 });

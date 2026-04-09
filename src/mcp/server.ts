@@ -131,12 +131,27 @@ export class MCPServer {
   // so concurrent clients don't overwrite each other's capability flags.
   private clientCapabilities: Record<string, unknown> = {};
 
+  /** Callback for server-initiated notifications. Set by transport layer. */
+  onNotification?: (notification: { jsonrpc: "2.0"; method: string; params?: unknown }) => void;
+
   constructor(config: MCPServerConfig) {
     this.config = config;
 
     if (!config.auth || config.auth.type === "none") {
       logger.warn("MCP server has no authentication configured — all requests will be accepted");
     }
+  }
+
+  notifyToolsChanged(): void {
+    this.onNotification?.({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+  }
+
+  notifyResourcesChanged(): void {
+    this.onNotification?.({ jsonrpc: "2.0", method: "notifications/resources/list_changed" });
+  }
+
+  notifyPromptsChanged(): void {
+    this.onNotification?.({ jsonrpc: "2.0", method: "notifications/prompts/list_changed" });
   }
 
   /**
@@ -785,6 +800,7 @@ export class MCPServer {
       };
     }
     await syncIntegrationConfig(apiBaseUrl, apiToken, integrationConfigs);
+    this.notifyToolsChanged();
     return true;
   }
 }
