@@ -109,6 +109,17 @@ export interface IntegrationLoaderConfig {
 const MCP_SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
 
 export class MCPServer {
+  private static LOG_LEVELS = [
+    "debug",
+    "info",
+    "notice",
+    "warning",
+    "error",
+    "critical",
+    "alert",
+    "emergency",
+  ] as const;
+  private logLevel: typeof MCPServer.LOG_LEVELS[number] = "warning";
   private config: MCPServerConfig;
   private integrationLoader?: IntegrationLoaderConfig;
   private integrationsLoaded = false;
@@ -179,6 +190,8 @@ export class MCPServer {
         return Promise.resolve({});
       case "completion/complete":
         return this.complete(params);
+      case "logging/setLevel":
+        return this.setLogLevel(params);
       default:
         throw toError(
           createError({
@@ -210,6 +223,7 @@ export class MCPServer {
         resources: { subscribe: true, listChanged: true },
         prompts: { listChanged: true },
         completions: {},
+        logging: {},
       },
       instructions:
         "Veryfront MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, vf_scaffold for code generation, and vf_get_project_context for project structure.",
@@ -444,6 +458,25 @@ export class MCPServer {
     return Promise.resolve({
       completion: { values: [], total: 0, hasMore: false },
     });
+  }
+
+  private setLogLevel(
+    params: JSONRPCParams | undefined,
+  ): Promise<Record<string, unknown>> {
+    const p = toParamsRecord(params);
+    const level = p.level as string;
+    if (
+      !MCPServer.LOG_LEVELS.includes(
+        level as typeof MCPServer.LOG_LEVELS[number],
+      )
+    ) {
+      return Promise.reject({
+        code: -32602,
+        message: `Invalid log level: ${level}. Valid levels: ${MCPServer.LOG_LEVELS.join(", ")}`,
+      });
+    }
+    this.logLevel = level as typeof MCPServer.LOG_LEVELS[number];
+    return Promise.resolve({});
   }
 
   createHTTPHandler(): (request: Request) => Promise<Response> {

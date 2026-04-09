@@ -476,6 +476,7 @@ layout: true
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
+            projectId: context.projectId,
             mode: "development",
           });
 
