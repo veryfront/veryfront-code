@@ -1,20 +1,19 @@
 /**
- * Utility for formatting Server-Sent Events per the SSE standard.
+ * Stateless SSE formatting utilities per the Server-Sent Events standard.
  * Used by the Streamable HTTP transport for MCP.
  */
-export class SSEWriter {
-  formatEvent(data: unknown, id?: string): string {
-    let event = "";
-    if (id) event += `id: ${id}\n`;
-    event += `data: ${JSON.stringify(data)}\n\n`;
-    return event;
-  }
 
-  formatRetry(ms: number): string {
-    return `retry: ${ms}\n\n`;
-  }
+export function formatSSEEvent(data: unknown, id?: string): string {
+  let event = "";
+  if (id) event += `id: ${id}\n`;
+  event += `data: ${JSON.stringify(data)}\n\n`;
+  return event;
+}
 
-  formatPrimingEvent(id: string): string {
-    return `id: ${id}\ndata: \n\n`;
-  }
+export function formatSSERetry(ms: number): string {
+  return `retry: ${ms}\n\n`;
+}
+
+export function formatSSEPrimingEvent(id: string): string {
+  return `id: ${id}\ndata: \n\n`;
 }

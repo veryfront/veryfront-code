@@ -113,7 +113,6 @@ export class MCPServer {
   private integrationLoader?: IntegrationLoaderConfig;
   private integrationsLoaded = false;
   private sessionManager = new SessionManager();
-  private initialized = false;
 
   constructor(config: MCPServerConfig) {
     this.config = config;
@@ -463,17 +462,17 @@ export class MCPServer {
         }
       }
 
+      // Auth check (applies to all methods including DELETE)
+      if (this.config.auth?.type && this.config.auth.type !== "none") {
+        const authorized = await this.validateAuth(request);
+        if (!authorized) return new Response("Unauthorized", { status: 401 });
+      }
+
       // DELETE = terminate session
       if (request.method === "DELETE") {
         const sessionId = request.headers.get("MCP-Session-Id");
         if (sessionId) this.sessionManager.terminate(sessionId);
         return new Response(null, { status: 200, headers: this.getCORSHeaders(requestOrigin) });
-      }
-
-      // Auth check
-      if (this.config.auth?.type && this.config.auth.type !== "none") {
-        const authorized = await this.validateAuth(request);
-        if (!authorized) return new Response("Unauthorized", { status: 401 });
       }
 
       // Only POST allowed for JSON-RPC messages
@@ -515,13 +514,12 @@ export class MCPServer {
         const context = this.extractRequestContext(request);
         const rpcResponse = await this.handleRequest(rpcRequest, context);
         const sessionId = this.sessionManager.create();
-        this.initialized = true;
         responseHeaders["MCP-Session-Id"] = sessionId;
         return createJSONResponse(rpcResponse, { headers: responseHeaders });
       }
 
-      // Post-init: require session ID
-      if (this.initialized) {
+      // Post-init: require session ID when sessions are active
+      if (this.sessionManager.size > 0) {
         const sessionId = request.headers.get("MCP-Session-Id");
         if (!sessionId) {
           return createJSONRPCErrorResponse(400, -32600, "Missing MCP-Session-Id header");

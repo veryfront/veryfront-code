@@ -41,5 +41,5 @@ export {
 
 export { createMCPServer, type IntegrationLoaderConfig, MCPServer } from "./server.ts";
 
-export { SSEWriter } from "./sse.ts";
+export { formatSSEEvent, formatSSEPrimingEvent, formatSSERetry } from "./sse.ts";
 export { SessionManager } from "./session.ts";

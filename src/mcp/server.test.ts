@@ -25,7 +25,9 @@ async function initSession(handler: (req: Request) => Promise<Response>): Promis
       }),
     }),
   );
-  return response.headers.get("MCP-Session-Id")!;
+  const sessionId = response.headers.get("MCP-Session-Id");
+  if (!sessionId) throw new Error("initSession: no MCP-Session-Id in response");
+  return sessionId;
 }
 
 describe("mcp/server", () => {
@@ -1134,30 +1136,44 @@ describe("mcp/server", () => {
       const server = createMCPServer({ enabled: true });
       const handler = server.createHTTPHandler();
 
-      // Initialize
-      const sessionId = await initSession(handler);
+      // Initialize two sessions so one remains active after DELETE
+      const sessionA = await initSession(handler);
+      const sessionB = await initSession(handler);
 
-      // DELETE to terminate
+      // DELETE session A
       const deleteResponse = await handler(
         new Request("http://localhost/mcp", {
           method: "DELETE",
-          headers: { "MCP-Session-Id": sessionId },
+          headers: { "MCP-Session-Id": sessionA },
         }),
       );
       assertEquals(deleteResponse.status, 200);
 
-      // Subsequent request with that session ID returns 404
+      // Terminated session returns 404 (session B still active, so check is enforced)
       const postResponse = await handler(
         new Request("http://localhost/mcp", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "MCP-Session-Id": sessionId,
+            "MCP-Session-Id": sessionA,
           },
           body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
         }),
       );
       assertEquals(postResponse.status, 404);
+
+      // Session B still works
+      const okResponse = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "MCP-Session-Id": sessionB,
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" }),
+        }),
+      );
+      assertEquals(okResponse.status, 200);
     });
 
     it("returns 202 for JSON-RPC notifications", async () => {
@@ -1179,6 +1195,25 @@ describe("mcp/server", () => {
         }),
       );
       assertEquals(response.status, 202);
+    });
+
+    it("rejects unauthenticated DELETE when bearer auth is configured", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: {
+          type: "bearer",
+          validate: async (token: string) => token === "valid-token",
+        },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "DELETE",
+          headers: { "MCP-Session-Id": "some-session" },
+        }),
+      );
+      assertEquals(response.status, 401);
     });
 
     it("returns 405 for unsupported HTTP methods", async () => {
@@ -1227,6 +1262,93 @@ describe("mcp/server", () => {
       const allowMethods = response.headers.get("Access-Control-Allow-Methods");
       assertExists(allowMethods);
       assertStringIncludes(allowMethods, "DELETE");
+    });
+
+    it("resets session requirement after all sessions are terminated", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+
+      // Client initializes, creating a session
+      const sessionId = await initSession(handler);
+
+      // Terminate that session
+      await handler(
+        new Request("http://localhost/mcp", {
+          method: "DELETE",
+          headers: { "MCP-Session-Id": sessionId },
+        }),
+      );
+
+      // After all sessions terminated, server should not require MCP-Session-Id
+      // (no active sessions = pre-init state)
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+      assertEquals(response.status, 200);
+    });
+
+    it("isolates concurrent sessions independently", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+
+      // Two clients initialize
+      const sessionA = await initSession(handler);
+      const sessionB = await initSession(handler);
+
+      // Both sessions are distinct
+      assertEquals(sessionA !== sessionB, true);
+
+      // Both can make requests
+      for (const sid of [sessionA, sessionB]) {
+        const res = await handler(
+          new Request("http://localhost/mcp", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "MCP-Session-Id": sid,
+            },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+          }),
+        );
+        assertEquals(res.status, 200);
+      }
+
+      // Terminate A — B still valid
+      await handler(
+        new Request("http://localhost/mcp", {
+          method: "DELETE",
+          headers: { "MCP-Session-Id": sessionA },
+        }),
+      );
+
+      const resB = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "MCP-Session-Id": sessionB,
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+        }),
+      );
+      assertEquals(resB.status, 200);
+
+      // A is rejected
+      const resA = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "MCP-Session-Id": sessionA,
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" }),
+        }),
+      );
+      assertEquals(resA.status, 404);
     });
 
     it("accepts valid session ID on post-init requests", async () => {

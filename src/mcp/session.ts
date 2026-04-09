@@ -19,6 +19,10 @@ export class SessionManager {
     this.sessions.delete(id);
   }
 
+  get size(): number {
+    return this.sessions.size;
+  }
+
   clear(): void {
     this.sessions.clear();
   }
