@@ -315,7 +315,10 @@ export class MCPServer {
     // and run the tool in the background, returning the task immediately.
     const taskParam = p.task as { ttl?: number } | undefined;
     if (taskParam) {
-      const ttl = typeof taskParam.ttl === "number" ? taskParam.ttl : 60000;
+      const MIN_TTL = 1000;
+      const MAX_TTL = 3_600_000; // 1 hour
+      const rawTtl = typeof taskParam.ttl === "number" ? taskParam.ttl : 60000;
+      const ttl = Math.max(MIN_TTL, Math.min(MAX_TTL, rawTtl));
       const task = this.taskStore.create(ttl);
 
       // Run tool in background, update task on completion
@@ -331,6 +334,11 @@ export class MCPServer {
             });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
+            logger.warn("Async tool execution failed", {
+              tool: toolName,
+              taskId: task.taskId,
+              error: message,
+            });
             this.taskStore.fail(task.taskId, message);
           }
         },

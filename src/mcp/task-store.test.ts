@@ -87,4 +87,31 @@ describe("mcp/task-store", () => {
     const task = store.create(60000);
     assertEquals(store.getResult(task.taskId), undefined);
   });
+
+  it("evicts expired tasks on get", () => {
+    const store = new TaskStore();
+    // Create with 1ms TTL so it expires immediately
+    const task = store.create(1);
+    // Small delay to ensure expiry
+    const start = Date.now();
+    while (Date.now() - start < 5) { /* spin */ }
+    assertEquals(store.get(task.taskId), undefined);
+  });
+
+  it("returns undefined for expired task via get", () => {
+    const store = new TaskStore();
+    const expired = store.create(1);
+    const alive = store.create(60000);
+    const start = Date.now();
+    while (Date.now() - start < 5) { /* spin */ }
+    assertEquals(store.get(expired.taskId), undefined);
+    assertExists(store.get(alive.taskId));
+  });
+
+  it("clears all tasks and results", () => {
+    const store = new TaskStore();
+    store.create(60000);
+    store.clear();
+    assertEquals(store.list().length, 0);
+  });
 });

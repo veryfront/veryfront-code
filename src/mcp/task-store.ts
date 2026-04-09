@@ -10,12 +10,20 @@ export interface Task {
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const DEFAULT_POLL_INTERVAL = 2000;
+const SWEEP_INTERVAL_MS = 30_000;
+const MAX_TASKS = 1000;
 
 export class TaskStore {
   private tasks = new Map<string, Task>();
   private results = new Map<string, unknown>();
+  private lastSweep = 0;
 
   create(ttl: number): Task {
+    this.lazySweep();
+    if (this.tasks.size >= MAX_TASKS) {
+      this.evictOldest();
+    }
+
     const now = new Date().toISOString();
     const task: Task = {
       taskId: crypto.randomUUID(),
@@ -30,7 +38,13 @@ export class TaskStore {
   }
 
   get(taskId: string): Task | undefined {
-    return this.tasks.get(taskId);
+    const task = this.tasks.get(taskId);
+    if (task && this.isExpired(task)) {
+      this.tasks.delete(taskId);
+      this.results.delete(taskId);
+      return undefined;
+    }
+    return task;
   }
 
   complete(taskId: string, result: unknown): void {
@@ -59,17 +73,64 @@ export class TaskStore {
   }
 
   getResult(taskId: string): unknown | undefined {
-    const task = this.tasks.get(taskId);
+    const task = this.get(taskId);
     if (!task || !TERMINAL_STATUSES.has(task.status)) return undefined;
     return this.results.get(taskId);
   }
 
   list(): Task[] {
+    this.lazySweep();
     return Array.from(this.tasks.values());
   }
 
   clear(): void {
     this.tasks.clear();
     this.results.clear();
+  }
+
+  private isExpired(task: Task): boolean {
+    return Date.now() - new Date(task.createdAt).getTime() > task.ttl;
+  }
+
+  private lazySweep(): void {
+    const now = Date.now();
+    if (now - this.lastSweep < SWEEP_INTERVAL_MS) return;
+    this.lastSweep = now;
+    this.sweep();
+  }
+
+  private sweep(): void {
+    for (const [id, task] of this.tasks) {
+      if (this.isExpired(task)) {
+        this.tasks.delete(id);
+        this.results.delete(id);
+      }
+    }
+  }
+
+  private evictOldest(): void {
+    // Evict the oldest terminal task, or the oldest task overall
+    let oldestTerminal: string | undefined;
+    let oldestAny: string | undefined;
+    let oldestTerminalTime = Infinity;
+    let oldestAnyTime = Infinity;
+
+    for (const [id, task] of this.tasks) {
+      const created = new Date(task.createdAt).getTime();
+      if (created < oldestAnyTime) {
+        oldestAnyTime = created;
+        oldestAny = id;
+      }
+      if (TERMINAL_STATUSES.has(task.status) && created < oldestTerminalTime) {
+        oldestTerminalTime = created;
+        oldestTerminal = id;
+      }
+    }
+
+    const toEvict = oldestTerminal ?? oldestAny;
+    if (toEvict) {
+      this.tasks.delete(toEvict);
+      this.results.delete(toEvict);
+    }
   }
 }
