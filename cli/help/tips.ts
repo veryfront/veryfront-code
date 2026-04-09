@@ -1,9 +1,10 @@
 import { cyan, dim, green, yellow } from "#cli/ui";
+import { DEFAULT_DEV_MCP_PORT } from "#cli/shared/constants";
 
 export function getDevTips(): string {
   return `${yellow("Tips:")}\n` +
     "  • HMR is enabled by default - saves reload the browser\n" +
-    "  • MCP server runs on devPort + 2 (default 3002) for coding agents\n" +
+    `  • MCP server runs on --port + 2 (default ${DEFAULT_DEV_MCP_PORT}) for coding agents\n` +
     `  • Press ${cyan("Ctrl+C")} to stop the server\n`;
 }
 

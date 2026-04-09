@@ -71,7 +71,7 @@ veryfront mcp
 ```
 
 **HTTP (remote access):**
-MCP auto-starts on devPort + 2 (default: 3002) with `veryfront dev`. With `veryfront start`, MCP defaults to port 9999.
+MCP auto-starts on `--port` + 2 (default: 3002) with `veryfront dev`. With `veryfront start`, MCP defaults to port 9999.
 
 **Key tools:** `vf_list_templates`, `vf_create_project`, `vf_scaffold`, `vf_get_errors`, `vf_get_project_context`, `vf_list_routes`, `vf_get_conventions`, `vf_get_component_tree`, `vf_hot_reload`
 

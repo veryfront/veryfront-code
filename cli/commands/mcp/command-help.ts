@@ -1,4 +1,5 @@
 import type { CommandHelp } from "../../help/types.ts";
+import { DEFAULT_DEV_MCP_PORT, DEFAULT_MCP_PORT } from "../../shared/constants.ts";
 
 export const mcpHelp: CommandHelp = {
   name: "mcp",
@@ -8,18 +9,18 @@ export const mcpHelp: CommandHelp = {
   options: [],
   examples: [
     "veryfront mcp                                  # Start stdio MCP server",
-    "veryfront dev                                  # HTTP MCP auto-starts on devPort + 2 (default 3002)",
-    "deno task start                                # HTTP MCP auto-starts on port 9999",
+    `veryfront dev                                  # HTTP MCP on --port + 2 (default ${DEFAULT_DEV_MCP_PORT})`,
+    `deno task start                                # HTTP MCP on port ${DEFAULT_MCP_PORT}`,
   ],
   notes: [
     "Used by Claude Code, Cursor, and other AI coding assistants",
     "Two transport modes:",
-    "  • HTTP: Auto-starts with 'veryfront dev' (devPort + 2, default 3002)",
-    "         or 'veryfront start' (default 9999)",
+    `  • HTTP: Auto-starts with 'veryfront dev' (--port + 2, default ${DEFAULT_DEV_MCP_PORT})`,
+    `          or 'veryfront start' (default ${DEFAULT_MCP_PORT})`,
     "  • stdio: Run 'veryfront mcp' for stdin/stdout communication",
     "",
     "Claude Code setup (~/.claude.json):",
-    '  "mcpServers": { "veryfront": { "url": "http://veryfront.me:<port>/mcp" } }',
+    `  "mcpServers": { "veryfront": { "url": "http://veryfront.me:${DEFAULT_DEV_MCP_PORT}/mcp" } }`,
     "",
     "Available tools:",
     "  • vf_list_local_projects  - Discover projects on filesystem",
