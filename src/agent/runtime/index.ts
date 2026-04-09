@@ -44,6 +44,19 @@ import type { ToolExecutionContext } from "#veryfront/tool";
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
 export {
+  RunAlreadyExistsError,
+  RunCancelledError,
+  RunNotActiveError,
+  RunResumeSessionManager,
+  WaitConflictError,
+  WaitNotPendingError,
+} from "./resume-session.ts";
+export type {
+  RunResumeSessionManagerOptions,
+  RunSessionStatus,
+  SubmitResumeValueOutcome,
+} from "./resume-session.ts";
+export {
   executeConfiguredTool,
   getAvailableTools,
   isDynamicTool,

@@ -20,6 +20,7 @@ import {
   createMemory,
   getAgentsAsTools,
   registerAgent,
+  RunResumeSessionManager,
 } from "veryfront/agent";
 ```
 
@@ -255,6 +256,14 @@ Current limitation:
 
 Validate AG-UI runtime requests for `createAgUiHandler()`.
 
+### `RunResumeSessionManager`
+
+Coordinate resumable waits for hosted agent runs without depending on any
+product-specific control plane.
+
+Use this when a host runtime needs to start a resumable run-local session,
+pause on an external signal, and later submit a resume value for that run.
+
 ### `agent.getMemory()`
 
 Get the agent's memory instance.
@@ -297,13 +306,14 @@ Clear all stored messages from memory.
 
 ### Classes
 
-| Name                 | Description                            |
-| -------------------- | -------------------------------------- |
-| `AgentRuntime`       | Agent execution runtime                |
-| `BufferMemory`       | In-memory message buffer               |
-| `ConversationMemory` | Full conversation history              |
-| `RedisMemory`        | Redis-backed persistent memory         |
-| `SummaryMemory`      | Compresses old messages into summaries |
+| Name                      | Description                                       |
+| ------------------------- | ------------------------------------------------- |
+| `AgentRuntime`            | Agent execution runtime                           |
+| `BufferMemory`            | In-memory message buffer                          |
+| `ConversationMemory`      | Full conversation history                         |
+| `RedisMemory`             | Redis-backed persistent memory                    |
+| `RunResumeSessionManager` | Generic wait/resume manager for hosted agent runs |
+| `SummaryMemory`           | Compresses old messages into summaries            |
 
 ### Types
 
@@ -321,6 +331,9 @@ Clear all stored messages from memory.
 | `AgUiHandlerOptions`             | Options for `createAgUiHandler`                                              |
 | `AgUiInjectedTool`               | AG-UI client-injected tool descriptor                                        |
 | `AgUiRequest`                    | Validated AG-UI runtime request body                                         |
+| `RunResumeSessionManagerOptions` | Options for `RunResumeSessionManager`                                        |
+| `RunSessionStatus`               | Status of a resumable run session                                            |
+| `SubmitResumeValueOutcome`       | Result of submitting an accepted or duplicate resume value                   |
 | `ChatHandlerBeforeStream`        | Hook signature for `createChatHandler` customization before streaming.       |
 | `ChatHandlerBeforeStreamContext` | Input passed to `beforeStream` hook.                                         |
 | `ChatHandlerBeforeStreamResult`  | Message/context mutations returned from `beforeStream`.                      |
