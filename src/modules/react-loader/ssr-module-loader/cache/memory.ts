@@ -72,10 +72,12 @@ const RATE_LIMIT_BYPASS_PROJECTS = new Set(["__single__"]);
 
 /**
  * Project ID prefixes that bypass per-project rate limiting.
- * - "local-": Used for compiled binary CLI, local filesystem projects, and tests
+ * - "local-": Used for compiled binary CLI, local filesystem projects
  *   where there's no multi-tenancy and noisy-neighbor protection isn't needed.
+ * - "test_": Used by integration tests (TestContext.projectId) where there's
+ *   no multi-tenancy concern and rate limiting causes flaky failures under CI load.
  */
-const RATE_LIMIT_BYPASS_PREFIXES = ["local-"];
+const RATE_LIMIT_BYPASS_PREFIXES = ["local-", "test_"];
 
 /**
  * Attempt to acquire a project-level transform slot immediately.
