@@ -9,8 +9,9 @@
  *   (run after `deno task build:npm`)
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -93,12 +94,14 @@ console.log("veryfront/agent:");
 try {
   const agentMod = await imp("./agent");
   assertType(agentMod.agent, "function", "agent() is function");
+  assertType(agentMod.createAgUiHandler, "function", "createAgUiHandler is function");
   assertType(agentMod.registerAgent, "function", "registerAgent is function");
   assertType(agentMod.getAgentsAsTools, "function", "getAgentsAsTools is function");
   assertType(agentMod.agentAsTool, "function", "agentAsTool is function");
   assertType(agentMod.createMemory, "function", "createMemory is function");
   assert(agentMod.AgentRuntime !== undefined, "AgentRuntime exists");
-  console.log("  OK    agent — 6 checks");
+  assert(agentMod.RunResumeSessionManager !== undefined, "RunResumeSessionManager exists");
+  console.log("  OK    agent — 8 checks");
 } catch (err) {
   failed++;
   errors.push(`agent: ${err.message}`);
@@ -112,6 +115,7 @@ try {
   assertType(toolMod.tool, "function", "tool() is function");
   assertType(toolMod.dynamicTool, "function", "dynamicTool is function");
   assertType(toolMod.executeTool, "function", "executeTool is function");
+  assertType(toolMod.createRemoteMCPToolSource, "function", "createRemoteMCPToolSource is function");
   assert(toolMod.toolRegistry !== undefined, "toolRegistry exists");
 
   // Sanity: create a tool and verify it has the right shape
@@ -129,7 +133,7 @@ try {
   // Execute the tool
   const result = await testTool.execute({ query: "hello" });
   assert(result.result === "hello", "tool execute returns correct result");
-  console.log("  OK    tool — 8 checks");
+  console.log("  OK    tool — 9 checks");
 } catch (err) {
   failed++;
   errors.push(`tool: ${err.message}`);
@@ -234,6 +238,34 @@ try {
   failed++;
   errors.push(`oauth: ${err.message}`);
   console.log(`  FAIL  oauth — ${err.message}`);
+}
+
+// --- CLI ---
+console.log("veryfront/cli:");
+try {
+  const cliExport = npmExports["./cli"];
+  assert(cliExport !== undefined, "cli export map entry exists");
+
+  const cliImportTarget = typeof cliExport === "string" ? cliExport : cliExport.import;
+  const cliImportPath = resolve(NPM, cliImportTarget);
+  const cliBinPath = resolve(NPM, "bin/veryfront.js");
+
+  assert(existsSync(cliImportPath), "cli import target exists");
+  assert(existsSync(cliBinPath), "cli bin entry exists");
+
+  const help = spawnSync(process.execPath, [cliImportPath, "--help"], {
+    cwd: ROOT,
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+
+  assert(help.status === 0, `cli --help exits cleanly (status ${help.status ?? "null"})`);
+  assert(help.stdout.includes("Usage:") || help.stdout.includes("veryfront <command>"), "cli --help prints usage");
+  console.log("  OK    cli — 5 checks");
+} catch (err) {
+  failed++;
+  errors.push(`cli: ${err.message}`);
+  console.log(`  FAIL  cli — ${err.message}`);
 }
 
 // --- FS ---
@@ -347,10 +379,12 @@ try {
 
 // --- Summary ---
 console.log(`\n${"=".repeat(50)}`);
-console.log(`${passed} passed, ${failed} failed (${passed + failed} total checks across 18 modules)`);
+console.log(`${passed} passed, ${failed} failed (${passed + failed} total checks across 19 modules)`);
 
 if (errors.length > 0) {
   console.log("\nFailures:");
   for (const e of errors) console.log(`  ${e}`);
   process.exit(1);
 }
+
+process.exit(0);
