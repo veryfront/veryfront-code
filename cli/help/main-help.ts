@@ -83,7 +83,7 @@ export function showMainHelp(): void {
 
   console.log();
   console.log(`  ${formatSectionHeader("Coding Agents (MCP)")}`);
-  console.log(`    ${dim("HTTP:")}   MCP auto-starts on port 9999 with dev server`);
+  console.log(`    ${dim("HTTP:")}   MCP auto-starts with dev server (default port 3002)`);
   console.log(`    ${dim("stdio:")}  veryfront mcp`);
   console.log(`    ${dim("Schema:")} veryfront schema --json`);
 
