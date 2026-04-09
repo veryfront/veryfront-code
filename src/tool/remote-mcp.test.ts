@@ -125,6 +125,37 @@ describe("tool/remote-mcp", () => {
     );
   });
 
+  it("parses JSON-RPC results from SSE responses when the MCP server negotiates text/event-stream", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    const tools = await withMockFetch(
+      async () =>
+        new Response(
+          [
+            "event: message",
+            'data: {"jsonrpc":"2.0","id":"docs:tools:list","result":{"tools":[{"name":"search_docs","description":"Search documentation","inputSchema":{}}]}}',
+            "",
+            "",
+          ].join("\n"),
+          {
+            headers: {
+              "Content-Type": "text/event-stream; charset=utf-8",
+            },
+          },
+        ),
+      async () => await source.listTools(),
+    );
+
+    assertEquals(tools, [{
+      name: "search_docs",
+      description: "Search documentation",
+      parameters: { type: "object", properties: {} },
+    }]);
+  });
+
   it("throws when the remote MCP server responds with a JSON-RPC error", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
