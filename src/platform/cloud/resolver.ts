@@ -2,6 +2,7 @@ import { getRuntimeConfig, isRuntimeConfigInitialized } from "#veryfront/config"
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 
 export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/anthropic/claude-sonnet-4-6";
 export const DEFAULT_VERYFRONT_CLOUD_EMBEDDING_MODEL =
@@ -39,19 +40,28 @@ function normalizeCloudModelString(value: string | undefined, fallback: string):
   return resolved.startsWith("veryfront-cloud/") ? resolved : `veryfront-cloud/${resolved}`;
 }
 
+function normalizeServiceLayer(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized?.length ? normalized : undefined;
+}
+
 function getResolvedVeryfrontCloudContext(): Omit<VeryfrontCloudBootstrap, "apiBaseUrl"> {
   const requestContext = getCurrentRequestContext();
+  const scopedContext = getCurrentVeryfrontCloudContext();
   const runtimeBootstrap = getRuntimeBootstrap();
 
   return {
     apiToken: requestContext?.token ??
+      scopedContext?.apiToken ??
       getEnv("VERYFRONT_API_TOKEN") ??
       runtimeBootstrap.apiToken,
     projectSlug: requestContext?.projectSlug ??
+      scopedContext?.projectSlug ??
       getEnv("VERYFRONT_PROJECT_SLUG") ??
       runtimeBootstrap.projectSlug,
-    serviceLayer: getEnv("VERYFRONT_SERVICE_LAYER")?.trim().toLowerCase(),
-    hasRequestContext: requestContext !== null,
+    serviceLayer: normalizeServiceLayer(scopedContext?.serviceLayer) ??
+      normalizeServiceLayer(getEnv("VERYFRONT_SERVICE_LAYER")),
+    hasRequestContext: requestContext !== null || scopedContext !== undefined,
     usesVeryfrontFs: runtimeBootstrap.usesVeryfrontFs,
   };
 }
@@ -65,8 +75,10 @@ export function getVeryfrontCloudProjectSlug(): string | undefined {
 }
 
 export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
+  const scopedContext = getCurrentVeryfrontCloudContext();
+
   return {
-    apiBaseUrl: getApiBaseUrlEnv(),
+    apiBaseUrl: scopedContext?.apiBaseUrl?.trim() || getApiBaseUrlEnv(),
     ...getResolvedVeryfrontCloudContext(),
   };
 }
