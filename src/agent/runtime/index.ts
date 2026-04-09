@@ -39,6 +39,7 @@ import { MiddlewareChain } from "../middleware/chain.ts";
 import { generateText, type LanguageModel, streamText } from "ai";
 import { AGENT_DEFAULTS } from "../ai-defaults.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import type { ToolExecutionContext } from "#veryfront/tool";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -279,6 +280,11 @@ export class AgentRuntime {
           this.executeAgentLoop(
             systemPrompt,
             messages,
+            {
+              agentId: this.id,
+              projectId: tryGetCacheKeyContext()?.projectId,
+              ...context,
+            },
             resolvedModelString,
             maxOutputTokensOverride,
           ),
@@ -425,6 +431,7 @@ export class AgentRuntime {
   private async executeAgentLoop(
     systemPrompt: string,
     messages: Message[],
+    toolContext?: ToolExecutionContext,
     modelString?: string,
     maxOutputTokensOverride?: number,
   ): Promise<AgentResponse> {
@@ -460,6 +467,8 @@ export class AgentRuntime {
         let tools = isLocal ? [] : await getAvailableTools(this.config.tools, {
           includeSkillTools: Boolean(this.config.skills),
           allowedRemoteToolNames,
+          remoteToolSources: this.config.remoteTools,
+          remoteToolContext: toolContext,
         });
 
         // Layer 1: Filter tools based on active skill policy (planning-time)
@@ -583,11 +592,12 @@ export class AgentRuntime {
                 toolCall.args,
                 this.config.tools,
                 {
-                  agentId: this.id,
                   toolCallId: tc.toolCallId,
-                  projectId: cacheCtx?.projectId,
+                  ...toolContext,
+                  projectId: cacheCtx?.projectId ?? toolContext?.projectId,
                 },
                 allowedRemoteToolNames,
+                this.config.remoteTools,
               );
 
               toolCall.status = "completed";
@@ -712,6 +722,8 @@ export class AgentRuntime {
       let tools = isLocalStreaming ? [] : await getAvailableTools(this.config.tools, {
         includeSkillTools: Boolean(this.config.skills),
         allowedRemoteToolNames,
+        remoteToolSources: this.config.remoteTools,
+        remoteToolContext: toolContext,
       });
 
       // Layer 1: Filter tools based on active skill policy (planning-time)
@@ -873,11 +885,11 @@ export class AgentRuntime {
             toolCall.args,
             this.config.tools,
             {
-              agentId: this.id,
               toolCallId: tc.id,
               ...toolContext,
             },
             allowedRemoteToolNames,
+            this.config.remoteTools,
           );
           throwIfAborted(abortSignal);
 

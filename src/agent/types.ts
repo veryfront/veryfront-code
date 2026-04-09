@@ -2,7 +2,7 @@
  * Agent type definitions
  **************************/
 
-import type { Tool } from "#veryfront/tool";
+import type { RemoteToolSource, Tool } from "#veryfront/tool";
 import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
 import type { Memory } from "./memory/memory-interface.ts";
 
@@ -77,6 +77,7 @@ export interface AgentConfig {
   model?: ModelString;
   system: string | (() => string) | (() => Promise<string>);
   tools?: true | Record<string, Tool | boolean>;
+  remoteTools?: RemoteToolSource[];
   maxSteps?: number;
   streaming?: boolean;
   memory?: MemoryConfig;

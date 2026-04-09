@@ -12,10 +12,11 @@ Define tools with Zod schemas for agents and MCP.
 
 ```ts
 import {
-  tool,
+  createRemoteMCPToolSource,
   dynamicTool,
-  toolRegistry,
   executeTool,
+  tool,
+  toolRegistry,
 } from "veryfront/tool";
 ```
 
@@ -61,48 +62,78 @@ const assistant = agent({
 });
 ```
 
+### Remote MCP tool source
+
+```ts
+import { createRemoteMCPToolSource } from "veryfront/tool";
+
+const docsTools = createRemoteMCPToolSource({
+  id: "docs-mcp",
+  endpoint: "https://docs.example.com/mcp",
+  headers: { Authorization: `Bearer ${Deno.env.get("DOCS_TOKEN")}` },
+});
+```
+
 ## API
 
 ### `tool(config)`
 
 Create typed tool (Zod-validated)
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `id?` | `string` | Tool identifier (optional, inferred from filename) |
-| `description` | `string` | Tool description for the AI model |
-| `inputSchema` | <code>z.ZodSchema&lt;TInput&gt;</code> | Input schema (Zod schema) |
-| `allowUnknownSchema?` | `boolean` | Allow unknown/non-Zod schemas to fall back to a permissive JSON schema. |
-| `execute` | <code>(input: TInput, context?: ToolExecutionContext) =&gt; Promise&lt;TOutput&gt; &#124; TOutput</code> | Tool execution function |
-| `mcp?` | <code>&#123; enabled?: boolean; requiresAuth?: boolean; cachePolicy?: "no-cache" &#124; "cache" &#124; "cache-first" &#125;</code> | MCP configuration |
+| Property              | Type                                                                                                                               | Description                                                             |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `id?`                 | `string`                                                                                                                           | Tool identifier (optional, inferred from filename)                      |
+| `description`         | `string`                                                                                                                           | Tool description for the AI model                                       |
+| `inputSchema`         | <code>z.ZodSchema&lt;TInput&gt;</code>                                                                                             | Input schema (Zod schema)                                               |
+| `allowUnknownSchema?` | `boolean`                                                                                                                          | Allow unknown/non-Zod schemas to fall back to a permissive JSON schema. |
+| `execute`             | <code>(input: TInput, context?: ToolExecutionContext) =&gt; Promise&lt;TOutput&gt; &#124; TOutput</code>                           | Tool execution function                                                 |
+| `mcp?`                | <code>&#123; enabled?: boolean; requiresAuth?: boolean; cachePolicy?: "no-cache" &#124; "cache" &#124; "cache-first" &#125;</code> | MCP configuration                                                       |
 
 **Returns:** <code>Tool&lt;TInput, TOutput&gt;</code>
+
+### `createRemoteMCPToolSource(config)`
+
+Create a per-request remote tool source backed by an MCP `tools/list` + `tools/call` endpoint.
+
+| Property      | Type                                                                                                                   | Description                                              |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `id?`         | `string`                                                                                                               | Stable source identifier for logs/debugging              |
+| `endpoint`    | <code>string &#124; ((context?: ToolExecutionContext) =&gt; string &#124; Promise&lt;string&gt;)</code>                | Remote MCP endpoint                                      |
+| `headers?`    | <code>HeadersInit &#124; ((context?: ToolExecutionContext) =&gt; HeadersInit &#124; Promise&lt;HeadersInit&gt;)</code> | Optional dynamic headers                                 |
+| `fetch?`      | `typeof fetch`                                                                                                         | Override fetch implementation for custom runtimes/tests  |
+| `listMethod?` | `string`                                                                                                               | JSON-RPC method for discovery (defaults to `tools/list`) |
+| `callMethod?` | `string`                                                                                                               | JSON-RPC method for execution (defaults to `tools/call`) |
+
+**Returns:** `RemoteToolSource`
 
 ## Exports
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
-| `dynamicTool` | Create tool with runtime schema |
-| `executeTool` | Execute tool by ID |
-| `tool` | Create typed tool (Zod-validated) |
+| Name                        | Description                            |
+| --------------------------- | -------------------------------------- |
+| `dynamicTool`               | Create tool with runtime schema        |
+| `createRemoteMCPToolSource` | Create a remote MCP-backed tool source |
+| `executeTool`               | Execute tool by ID                     |
+| `tool`                      | Create typed tool (Zod-validated)      |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `DynamicToolConfig` | `dynamicTool()` config |
-| `JsonSchema` | JSON Schema for tool input |
-| `Tool` | Tool instance (returned by tool() function) |
-| `ToolConfig` | Tool configuration options |
-| `ToolDefinition` | Provider-facing tool definition used for model/tool registration. |
-| `ToolExecutionContext` | Context passed to tool execution |
+| Name                        | Description                                                       |
+| --------------------------- | ----------------------------------------------------------------- |
+| `DynamicToolConfig`         | `dynamicTool()` config                                            |
+| `JsonSchema`                | JSON Schema for tool input                                        |
+| `RemoteMCPToolSourceConfig` | `createRemoteMCPToolSource()` config                              |
+| `RemoteToolSource`          | Runtime-discovered remote tool source                             |
+| `Tool`                      | Tool instance (returned by tool() function)                       |
+| `ToolConfig`                | Tool configuration options                                        |
+| `ToolDefinition`            | Provider-facing tool definition used for model/tool registration. |
+| `ToolExecutionContext`      | Context passed to tool execution                                  |
 
 ### Constants
 
-| Name | Description |
-|------|-------------|
+| Name           | Description          |
+| -------------- | -------------------- |
 | `toolRegistry` | Global tool registry |
 
 ## Related
