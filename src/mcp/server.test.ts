@@ -1391,4 +1391,45 @@ describe("mcp/server", () => {
       assertEquals(response.status, 200);
     });
   });
+
+  it("declares logging capability in initialize", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "test", version: "1.0" },
+      },
+    });
+    const caps = (result.result as Record<string, unknown>)
+      .capabilities as Record<string, unknown>;
+    assertExists(caps.logging);
+  });
+
+  it("logging/setLevel stores the level and returns empty result", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "logging/setLevel",
+      params: { level: "warning" },
+    });
+    assertEquals(result.error, undefined);
+    assertEquals(result.result, {});
+  });
+
+  it("logging/setLevel rejects invalid level", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "logging/setLevel",
+      params: { level: "invalid_level" },
+    });
+    assertExists(result.error);
+    assertEquals(result.error.code, -32602);
+  });
 });
