@@ -529,8 +529,9 @@ export class MCPServer {
         }
       }
 
-      // Notifications have no id — return 202 Accepted
-      if (!rpcRequest.id) {
+      // Notifications have no id member — return 202 Accepted
+      // Note: id:0 is a valid request ID per JSON-RPC 2.0, so check for undefined
+      if (rpcRequest.id === undefined) {
         const context = this.extractRequestContext(request);
         await this.handleRequest(rpcRequest, context);
         return new Response(null, { status: 202, headers: responseHeaders });

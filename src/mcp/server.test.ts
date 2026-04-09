@@ -1197,6 +1197,27 @@ describe("mcp/server", () => {
       assertEquals(response.status, 202);
     });
 
+    it("returns 200 with JSON-RPC response for request with id: 0", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+      const sessionId = await initSession(handler);
+
+      const response = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "MCP-Session-Id": sessionId,
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "tools/list" }),
+        }),
+      );
+      assertEquals(response.status, 200);
+      const body = await response.json();
+      assertEquals(body.id, 0);
+      assertExists(body.result);
+    });
+
     it("rejects unauthenticated DELETE when bearer auth is configured", async () => {
       const server = createMCPServer({
         enabled: true,
