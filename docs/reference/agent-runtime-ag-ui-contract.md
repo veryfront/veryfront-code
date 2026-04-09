@@ -6,7 +6,7 @@ The goal is to make downstream consumers target one explicit AG-UI-aligned input
 
 ## Canonical Contract
 
-The canonical runtime contract is defined in [`src/internal-agents/schema.ts`](/Users/kojiwakayama/Documents/CODE/veryfront-platform/veryfront-code/src/internal-agents/schema.ts) by [`RuntimeRunAgentInputSchema`](/Users/kojiwakayama/Documents/CODE/veryfront-platform/veryfront-code/src/internal-agents/schema.ts).
+The canonical runtime contract is defined in [`src/internal-agents/schema.ts`](../../src/internal-agents/schema.ts) by [`RuntimeRunAgentInputSchema`](../../src/internal-agents/schema.ts).
 
 It is based on the AG-UI `RunAgentInput` shape:
 
@@ -65,7 +65,7 @@ That wrapper currently adds transport-only fields:
 
 It also accepts the legacy message shape based on `parts`.
 
-The wrapper is defined by [`InternalAgentStreamRequestSchema`](/Users/kojiwakayama/Documents/CODE/veryfront-platform/veryfront-code/src/internal-agents/schema.ts) and normalized into the canonical runtime input with [`toRuntimeRunAgentInput()`](/Users/kojiwakayama/Documents/CODE/veryfront-platform/veryfront-code/src/internal-agents/schema.ts).
+The wrapper is defined by [`InternalAgentStreamRequestSchema`](../../src/internal-agents/schema.ts) and normalized into the canonical runtime input with [`toRuntimeRunAgentInput()`](../../src/internal-agents/schema.ts).
 
 ## Endpoint Convention
 

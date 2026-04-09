@@ -88,27 +88,27 @@ const RuntimeMessageExtensionFieldsSchema = {
 export const RuntimeToolFunctionCallSchema = z.object({
   name: ClientToolNameSchema,
   arguments: z.string().max(MAX_TOOL_PARAMETERS_BYTES),
-});
+}).strict();
 
 export const RuntimeToolCallSchema = z.object({
   id: z.string().min(1).max(128),
   type: z.literal("function"),
   function: RuntimeToolFunctionCallSchema,
-});
+}).strict();
 
 export const RuntimeSystemMessageSchema = z.object({
   id: z.string().min(1),
   role: z.literal("system"),
   content: z.string(),
   ...RuntimeMessageExtensionFieldsSchema,
-});
+}).strict();
 
 export const RuntimeUserMessageSchema = z.object({
   id: z.string().min(1),
   role: z.literal("user"),
   content: z.string(),
   ...RuntimeMessageExtensionFieldsSchema,
-});
+}).strict();
 
 export const RuntimeAssistantMessageSchema = z.object({
   id: z.string().min(1),
@@ -116,7 +116,7 @@ export const RuntimeAssistantMessageSchema = z.object({
   content: z.string().optional(),
   toolCalls: z.array(RuntimeToolCallSchema).optional(),
   ...RuntimeMessageExtensionFieldsSchema,
-});
+}).strict();
 
 export const RuntimeToolMessageSchema = z.object({
   id: z.string().min(1),
@@ -125,7 +125,7 @@ export const RuntimeToolMessageSchema = z.object({
   content: z.string(),
   error: z.string().optional(),
   ...RuntimeMessageExtensionFieldsSchema,
-});
+}).strict();
 
 export const RuntimeMessageSchema = z.discriminatedUnion("role", [
   RuntimeSystemMessageSchema,
@@ -173,7 +173,7 @@ export const InternalAgentStreamRequestSchema = z.object({
   runId: RunIdSchema,
   parentRunId: RunIdSchema.optional(),
   state: z.unknown().optional(),
-  messages: z.array(z.union([InternalAgentCompatibilityMessageSchema, RuntimeMessageSchema])).max(
+  messages: z.array(z.union([RuntimeMessageSchema, InternalAgentCompatibilityMessageSchema])).max(
     MAX_RUNTIME_MESSAGES,
   ),
   tools: z.array(RuntimeInjectedToolSchema).max(50).default([]),
@@ -213,6 +213,57 @@ function serializeToolArguments(args: Record<string, unknown>): string {
   } catch {
     return "{}";
   }
+}
+
+function getPartString(
+  part: Record<string, unknown>,
+  ...keys: string[]
+): string | null {
+  for (const key of keys) {
+    const value = part[key];
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function isLegacyToolCallPart(part: Record<string, unknown>): boolean {
+  return getPartString(part, "type") === "tool_call";
+}
+
+function isCanonicalToolCallPart(part: Record<string, unknown>): boolean {
+  const type = getPartString(part, "type");
+
+  return type === "tool-call" ||
+    (typeof type === "string" && type.startsWith("tool-") && type !== "tool-result" &&
+      type !== "tool_result");
+}
+
+function getToolCallShape(
+  part: Record<string, unknown>,
+): z.infer<typeof RuntimeToolCallSchema> | null {
+  const id = getPartString(part, "toolCallId", "tool_call_id", "id");
+  const name = getPartString(part, "toolName", "tool_name", "name");
+
+  if (!id || !name) {
+    return null;
+  }
+
+  return {
+    id,
+    type: "function",
+    function: {
+      name,
+      arguments: serializeToolArguments(extractToolArgs(part)),
+    },
+  };
+}
+
+function isToolResultPart(part: Record<string, unknown>): boolean {
+  const type = getPartString(part, "type");
+  return type === "tool-result" || type === "tool_result";
 }
 
 function stringifyToolResult(result: unknown): string {
@@ -261,24 +312,12 @@ function toRuntimeMessage(
       };
     case "assistant": {
       const toolCalls = message.parts.flatMap((part) => {
-        const isToolCallPart = part.type === "tool-call" ||
-          (part.type.startsWith("tool-") && part.type !== "tool-result");
-        if (
-          !isToolCallPart ||
-          typeof part.toolCallId !== "string" ||
-          typeof part.toolName !== "string"
-        ) {
+        if (!isCanonicalToolCallPart(part) && !isLegacyToolCallPart(part)) {
           return [];
         }
 
-        return [{
-          id: part.toolCallId,
-          type: "function" as const,
-          function: {
-            name: part.toolName,
-            arguments: serializeToolArguments(extractToolArgs(part)),
-          },
-        }];
+        const toolCall = getToolCallShape(part);
+        return toolCall ? [toolCall] : [];
       });
 
       return {
@@ -291,21 +330,25 @@ function toRuntimeMessage(
     }
     case "tool": {
       const toolResultPart = message.parts.find(
-        (part) => part.type === "tool-result" && typeof part.toolCallId === "string",
+        (part) =>
+          isToolResultPart(part) && getPartString(part, "toolCallId", "tool_call_id") !== null,
       );
+      const toolCallId = toolResultPart
+        ? getPartString(toolResultPart, "toolCallId", "tool_call_id")
+        : null;
+      const toolResult = toolResultPart && "result" in toolResultPart
+        ? toolResultPart.result
+        : toolResultPart && "output" in toolResultPart
+        ? toolResultPart.output
+        : undefined;
+      const toolError = toolResultPart ? getPartString(toolResultPart, "error") : null;
 
       return {
         id: message.id,
         role: "tool",
-        toolCallId: toolResultPart && typeof toolResultPart.toolCallId === "string"
-          ? toolResultPart.toolCallId
-          : message.id,
-        content: toolResultPart && "result" in toolResultPart
-          ? stringifyToolResult(toolResultPart.result)
-          : textContent,
-        ...(toolResultPart && typeof toolResultPart.error === "string"
-          ? { error: toolResultPart.error }
-          : {}),
+        toolCallId: toolCallId ?? message.id,
+        content: toolResult !== undefined ? stringifyToolResult(toolResult) : textContent,
+        ...(toolError ? { error: toolError } : {}),
         ...sharedFields,
       };
     }
