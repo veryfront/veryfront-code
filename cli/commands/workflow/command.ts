@@ -104,7 +104,7 @@ export async function workflowCommand(options: WorkflowOptions): Promise<void> {
       ? `branch ${proxyContext.branchRef}`
       : proxyContext
       ? "main"
-      : `${Deno.cwd()}/app/workflows/...`;
+      : `${Deno.cwd()}/workflows/...`;
 
     cliLogger.info(`Discovering workflows in ${sourceLabel}`);
 
@@ -130,7 +130,7 @@ export async function workflowCommand(options: WorkflowOptions): Promise<void> {
           cliLogger.info(`  - ${candidate.id}`);
         }
       } else {
-        cliLogger.info("No workflows found. Create a workflow file in app/workflows/.");
+        cliLogger.info("No workflows found. Create a workflow file in workflows/.");
       }
       exitProcess(1);
       return;

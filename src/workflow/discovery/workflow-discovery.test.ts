@@ -113,7 +113,7 @@ describe(
 
     it("discovers workflow DSL exports through the discovery module loader", async () => {
       const adapter = createRuntimeAdapter({
-        "/project/app/workflows/ping.ts": [
+        "/project/workflows/ping.ts": [
           'import { workflow } from "veryfront/workflow";',
           "export default workflow({",
           '  id: "ping",',
@@ -136,7 +136,7 @@ describe(
 
     it("finds workflows by id through the discovery module loader", async () => {
       const adapter = createRuntimeAdapter({
-        "/project/app/workflows/ping.ts": [
+        "/project/workflows/ping.ts": [
           'import { workflow } from "veryfront/workflow";',
           "export const pingWorkflow = workflow({",
           '  id: "ping",',
@@ -153,6 +153,27 @@ describe(
 
       assertEquals(workflow?.id, "ping");
       assertEquals(workflow?.exportName, "pingWorkflow");
+    });
+
+    it("does not discover legacy app/workflows files by default", async () => {
+      const adapter = createRuntimeAdapter({
+        "/project/app/workflows/legacy-ping.ts": [
+          'import { workflow } from "veryfront/workflow";',
+          "export default workflow({",
+          '  id: "legacy-ping",',
+          "  steps: [],",
+          "});",
+        ].join("\n"),
+      });
+
+      const result = await discoverWorkflows({
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(result.errors, []);
+      assertEquals(result.workflows, []);
     });
   },
 );
