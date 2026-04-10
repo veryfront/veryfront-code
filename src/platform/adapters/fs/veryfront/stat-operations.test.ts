@@ -2,7 +2,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
-import type { ContentContextProvider } from "./read-operations.ts";
+import type { ContentContextProvider } from "./file-list-access.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { StatOperations } from "./stat-operations.ts";
 

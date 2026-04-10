@@ -4,12 +4,7 @@ import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
 import { VeryfrontOperationsBase } from "./base-operations.ts";
 import { createError, toError } from "#veryfront/errors";
-import {
-  buildFileCacheKeyPrefix,
-  buildFileListCacheKey,
-  buildStatCacheKeyPrefix,
-} from "./cache-keys.ts";
-import { withRetryOnTransient } from "./retry.ts";
+import { buildStatCacheKeyPrefix } from "./cache-keys.ts";
 import { STAT_OPERATION_EXTENSION_PRIORITY as EXTENSION_PRIORITY } from "./extension-priority.ts";
 import {
   collectParentDirectories,
@@ -21,6 +16,7 @@ import {
 } from "./stat-operations-helpers.ts";
 import { ApiSearchCircuitBreaker } from "./api-search-circuit-breaker.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { loadAllProjectFiles } from "./file-list-access.ts";
 
 const logger = baseLogger.component("stat-operations");
 
@@ -258,72 +254,13 @@ export class StatOperations extends VeryfrontOperationsBase {
   }
 
   private async getAllFilesRaw(): Promise<ProjectFile[]> {
-    const cacheStart = performance.now();
-    const ctx = this.contextProvider?.getContentContext();
-    const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
-    const skipPersistentCache =
-      this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
-
-    if (!skipPersistentCache) {
-      const files = await this.contextProvider?.getFileList?.();
-      if (files) {
-        const cacheMs = Math.round(performance.now() - cacheStart);
-        logger.debug("getAllFilesRaw - from adapter cache", {
-          cacheMs,
-          fileCount: files.length,
-        });
-        return files as ProjectFile[];
-      }
-    }
-
-    const cacheKey = buildFileListCacheKey(ctx);
-
-    if (skipPersistentCache) {
-      logger.debug("getAllFilesRaw - skipping persistent cache (invalidation)", {
-        cacheKey,
-        cacheKeyPrefix,
-      });
-    }
-
-    const cached = skipPersistentCache
-      ? undefined
-      : await this.cache.getAsync<ProjectFile[]>(cacheKey);
-    const cacheMs = Math.round(performance.now() - cacheStart);
-
-    if (cached) {
-      logger.debug("getAllFilesRaw - fallback cache HIT", {
-        cacheKey,
-        cacheMs,
-        fileCount: cached.length,
-      });
-      return cached;
-    }
-
-    logger.warn("getAllFilesRaw - cache MISS, fetching from API", {
-      cacheKey,
-      cacheMs,
+    return await loadAllProjectFiles({
+      client: this.client,
+      cache: this.cache,
+      contextProvider: this.contextProvider,
+      logger,
+      operationLabel: "stat",
     });
-
-    const isPublished = ctx?.sourceType !== "branch";
-    logger.debug("Fetching files from API", {
-      sourceType: ctx?.sourceType,
-      cacheKey,
-    });
-
-    const files = await withRetryOnTransient(
-      () =>
-        isPublished
-          ? this.client.listPublishedFiles(
-            undefined,
-            ctx?.releaseId ?? undefined,
-            ctx?.environmentName ?? undefined,
-          )
-          : this.client.listAllFiles(),
-      "getAllFilesRaw (stat)",
-    );
-
-    this.cache.set(cacheKey, files);
-    return files;
   }
 
   private buildResolveSearchPatterns(

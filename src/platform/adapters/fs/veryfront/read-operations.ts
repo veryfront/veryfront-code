@@ -7,6 +7,7 @@ import { FileListIndex, type FileListMatchResult } from "./file-list-index.ts";
 import { InFlightRequestDeduper } from "./in-flight-dedupe.ts";
 import { getRequestScopedFile, setRequestScopedFile } from "./multi-project-adapter.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
+import type { ContentContextProvider } from "./file-list-access.ts";
 import {
   assertProjectSourcePath,
   buildExtensionCandidatePaths,
@@ -27,28 +28,6 @@ export {
 } from "./content-metrics.ts";
 
 const logger = baseLogger.component("read-operations");
-
-export interface ContentContextProvider {
-  isProductionMode: () => boolean;
-  getReleaseId: () => string | null;
-  getContentContext: () => ResolvedContentContext | null;
-  /** Cached file list from adapter initialization (single source of truth) */
-  getFileList?: () => Promise<
-    Array<{
-      id?: string;
-      path: string;
-      content?: string;
-      type?: string;
-      size?: number;
-      updated_at?: string;
-    }> | undefined
-  >;
-  hasCachedFileList?: () => Promise<boolean>;
-  /** True if cache prefix is being deleted - skip persistent cache reads */
-  isPersistentCacheInvalidated?: (prefix: string) => boolean;
-  /** Back-compat: release-scoped invalidation */
-  isReleaseBeingInvalidated?: (releaseId: string) => boolean;
-}
 
 const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_IN_FLIGHT_REQUESTS = 100;
