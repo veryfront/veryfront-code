@@ -1176,6 +1176,15 @@ describe("mcp/server", () => {
       const sessionId = response.headers.get("MCP-Session-Id");
       assertExists(sessionId);
       assertEquals(sessionId.length > 0, true);
+
+      const body = await response.json() as {
+        result: {
+          protocolVersion: string;
+          serverInfo: { name: string };
+        };
+      };
+      assertEquals(body.result.protocolVersion, "2025-11-25");
+      assertEquals(body.result.serverInfo.name, "veryfront-mcp");
     });
 
     it("returns 400 when MCP-Session-Id is missing on post-init request", async () => {
@@ -1258,6 +1267,23 @@ describe("mcp/server", () => {
         }),
       );
       assertEquals(okResponse.status, 200);
+    });
+
+    it("clears session-scoped elicitation capabilities after DELETE", async () => {
+      const server = createMCPServer({ enabled: true });
+      const handler = server.createHTTPHandler();
+
+      const sessionId = await initSessionWithCapabilities(handler, { elicitation: { form: {} } });
+      assertEquals(server.clientSupportsElicitation("form", sessionId), true);
+
+      const deleteResponse = await handler(
+        new Request("http://localhost/mcp", {
+          method: "DELETE",
+          headers: { "MCP-Session-Id": sessionId },
+        }),
+      );
+      assertEquals(deleteResponse.status, 200);
+      assertEquals(server.clientSupportsElicitation("form", sessionId), false);
     });
 
     it("returns 202 for JSON-RPC notifications", async () => {

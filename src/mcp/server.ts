@@ -8,18 +8,14 @@ import type { MCPServerConfig, ToolListEntry } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { validateContentType } from "#veryfront/security/input-validation/limits.ts";
-import { VeryfrontError } from "#veryfront/security/input-validation/errors.ts";
 import type { IntegrationRuntimeConfig } from "../integrations/types.ts";
 import { logger as baseLogger } from "#veryfront/utils";
+import { createMCPHTTPHandler } from "./http-transport.ts";
 import { SessionManager } from "./session.ts";
 import { TaskStore } from "./task-store.ts";
 
 const logger = baseLogger.component("mcp-server");
-
-const MAX_REQUEST_BODY_SIZE = 1_048_576; // 1 MB
 const MAX_CONTEXT_HEADER_LENGTH = 255;
-const JSON_CONTENT_TYPE = "application/json";
 const END_USER_ID_PATTERN = /^[a-zA-Z0-9._@-]+$/;
 const PROJECT_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
 
@@ -52,23 +48,6 @@ function errorMessage(error: unknown): string {
 function toParamsRecord(params: JSONRPCParams | undefined): Record<string, unknown> {
   if (!params || Array.isArray(params)) return {};
   return params;
-}
-
-function createJSONResponse(body: unknown, init?: ResponseInit): Response {
-  const headers = new Headers(init?.headers);
-  headers.set("Content-Type", JSON_CONTENT_TYPE);
-  return new Response(JSON.stringify(body), { ...init, headers });
-}
-
-function createJSONRPCErrorResponse(status: number, code: number, message: string): Response {
-  return createJSONResponse(
-    {
-      jsonrpc: "2.0",
-      id: null,
-      error: { code, message },
-    },
-    { status },
-  );
 }
 
 function readAllowedHeader(
@@ -627,107 +606,20 @@ export class MCPServer {
   }
 
   createHTTPHandler(): (request: Request) => Promise<Response> {
-    return async (request: Request) => {
-      const requestOrigin = request.headers.get("Origin");
-
-      // CORS preflight
-      if (request.method === "OPTIONS") {
-        return new Response(null, { status: 204, headers: this.getCORSHeaders(requestOrigin) });
-      }
-
-      // Origin validation (DNS rebinding protection)
-      if (requestOrigin && this.config.cors?.enabled && this.config.cors.origins?.length) {
-        if (!this.config.cors.origins.includes(requestOrigin)) {
-          return createJSONRPCErrorResponse(403, -32600, "Forbidden: Origin not allowed");
-        }
-      }
-
-      // Auth check (applies to all methods including DELETE)
-      if (this.config.auth?.type && this.config.auth.type !== "none") {
-        const authorized = await this.validateAuth(request);
-        if (!authorized) return new Response("Unauthorized", { status: 401 });
-      }
-
-      // DELETE = terminate session
-      if (request.method === "DELETE") {
-        const sessionId = request.headers.get("MCP-Session-Id");
-        if (sessionId) {
-          this.sessionManager.terminate(sessionId);
-          this.sessionCapabilities.delete(sessionId);
-        }
-        return new Response(null, { status: 200, headers: this.getCORSHeaders(requestOrigin) });
-      }
-
-      // Only POST allowed for JSON-RPC messages
-      if (request.method !== "POST") {
-        return new Response("Method Not Allowed", { status: 405 });
-      }
-
-      // Enforce request body size limit (fast path via Content-Length header)
-      const contentLength = request.headers.get("content-length");
-      if (contentLength && Number(contentLength) > MAX_REQUEST_BODY_SIZE) {
-        return createJSONRPCErrorResponse(413, -32600, "Request body too large");
-      }
-
-      try {
-        validateContentType(request, JSON_CONTENT_TYPE);
-      } catch (error) {
-        const message = error instanceof VeryfrontError ? error.message : "Invalid Content-Type";
-        return createJSONRPCErrorResponse(400, -32700, message);
-      }
-
-      let rpcRequest: JSONRPCRequest;
-      try {
-        const bodyText = await request.text();
-        if (bodyText.length > MAX_REQUEST_BODY_SIZE) {
-          return createJSONRPCErrorResponse(413, -32600, "Request body too large");
-        }
-        rpcRequest = JSON.parse(bodyText) as JSONRPCRequest;
-      } catch (_) {
-        // expected: malformed JSON in request body
-        return createJSONRPCErrorResponse(400, -32700, "Parse error");
-      }
-
-      // Session management: initialize creates session, everything else requires it
-      const responseHeaders: Record<string, string> = {
-        ...this.getCORSHeaders(requestOrigin),
-      };
-
-      if (rpcRequest.method === "initialize") {
-        const context = this.extractRequestContext(request);
-        const rpcResponse = await this.handleRequest(rpcRequest, context);
-        const clientCaps =
-          toParamsRecord(rpcRequest.params).capabilities as Record<string, unknown> ??
-            {};
-        const sessionId = this.sessionManager.create();
-        this.sessionCapabilities.set(sessionId, clientCaps);
-        responseHeaders["MCP-Session-Id"] = sessionId;
-        return createJSONResponse(rpcResponse, { headers: responseHeaders });
-      }
-
-      // Post-init: require session ID when sessions are active
-      if (this.sessionManager.size > 0) {
-        const sessionId = request.headers.get("MCP-Session-Id");
-        if (!sessionId) {
-          return createJSONRPCErrorResponse(400, -32600, "Missing MCP-Session-Id header");
-        }
-        if (!this.sessionManager.isValid(sessionId)) {
-          return createJSONRPCErrorResponse(404, -32600, "Session not found or expired");
-        }
-      }
-
-      // Notifications have no id member — return 202 Accepted
-      // Note: id:0 is a valid request ID per JSON-RPC 2.0, so check for undefined
-      if (rpcRequest.id === undefined) {
-        const context = this.extractRequestContext(request);
-        await this.handleRequest(rpcRequest, context);
-        return new Response(null, { status: 202, headers: responseHeaders });
-      }
-
-      const context = this.extractRequestContext(request);
-      const rpcResponse = await this.handleRequest(rpcRequest, context);
-      return createJSONResponse(rpcResponse, { headers: responseHeaders });
-    };
+    return createMCPHTTPHandler({
+      authEnabled: Boolean(this.config.auth?.type && this.config.auth.type !== "none"),
+      getCORSHeaders: (requestOrigin) => this.getCORSHeaders(requestOrigin),
+      validateAuth: (request) => this.validateAuth(request),
+      handleRequest: (request, context) => this.handleRequest(request, context),
+      extractRequestContext: (request) => this.extractRequestContext(request),
+      isOriginAllowed: (requestOrigin) =>
+        !requestOrigin ||
+        !this.config.cors?.enabled ||
+        !this.config.cors.origins?.length ||
+        this.config.cors.origins.includes(requestOrigin),
+      sessionCapabilities: this.sessionCapabilities,
+      sessionManager: this.sessionManager,
+    });
   }
 
   private extractRequestContext(request: Request): ToolExecutionContext | undefined {
