@@ -139,6 +139,19 @@ export function createInjectedToolRuntime(toolName: string, toolCallId: string, 
               inferenceMode: "cloud",
             },
           }));
+          controller.enqueue(
+            encodeDataStreamEvent({ type: "reasoning-start", id: "reasoning-1" }),
+          );
+          controller.enqueue(
+            encodeDataStreamEvent({
+              type: "reasoning-delta",
+              id: "reasoning-1",
+              delta: "Thinking through the change.",
+            }),
+          );
+          controller.enqueue(
+            encodeDataStreamEvent({ type: "reasoning-end", id: "reasoning-1" }),
+          );
           controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "assistant-1" }));
           controller.enqueue(encodeDataStreamEvent({ type: "step-start" }));
           controller.enqueue(encodeDataStreamEvent({

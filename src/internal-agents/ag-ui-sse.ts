@@ -19,6 +19,7 @@ export interface RunFinishedMetadata {
 export interface StreamTransformState {
   messageId: string | null;
   textOpen: boolean;
+  reasoningMessageId: string | null;
   sawVisibleOutput: boolean;
   sawTerminalError: boolean;
   metadata: RunFinishedMetadata;
@@ -28,6 +29,7 @@ export function createStreamTransformState(): StreamTransformState {
   return {
     messageId: null,
     textOpen: false,
+    reasoningMessageId: null,
     sawVisibleOutput: false,
     sawTerminalError: false,
     metadata: {},
@@ -61,6 +63,17 @@ const agUiEventPayloadSchemas = {
     delta: z.string(),
   }),
   TextMessageEnd: z.object({
+    messageId: z.string().min(1),
+  }),
+  ReasoningMessageStart: z.object({
+    messageId: z.string().min(1),
+    role: z.literal("reasoning"),
+  }),
+  ReasoningMessageContent: z.object({
+    messageId: z.string().min(1),
+    delta: z.string(),
+  }),
+  ReasoningMessageEnd: z.object({
     messageId: z.string().min(1),
   }),
   ToolCallStart: z.object({
@@ -150,6 +163,23 @@ function getMessageId(state: StreamTransformState, event: RuntimeDataEvent): str
   return state.messageId;
 }
 
+function getReasoningMessageId(state: StreamTransformState, event: RuntimeDataEvent): string {
+  if (typeof event.id === "string" && event.id.length > 0) {
+    state.reasoningMessageId = state.messageId
+      ? `${state.messageId}:reasoning:${event.id}`
+      : event.id;
+    return state.reasoningMessageId;
+  }
+
+  if (!state.reasoningMessageId) {
+    state.reasoningMessageId = state.messageId
+      ? `${state.messageId}:reasoning:${crypto.randomUUID()}`
+      : crypto.randomUUID();
+  }
+
+  return state.reasoningMessageId;
+}
+
 function applyDataMetadata(state: StreamTransformState, event: RuntimeDataEvent): void {
   const data = event.data && typeof event.data === "object" && !Array.isArray(event.data)
     ? event.data as Record<string, unknown>
@@ -227,6 +257,32 @@ export function mapRuntimeEventToAgUi(
       return [{
         event: "TextMessageEnd",
         payload: { messageId: getMessageId(state, event) },
+      }];
+    }
+
+    case "reasoning-start":
+      state.sawVisibleOutput = true;
+      return [{
+        event: "ReasoningMessageStart",
+        payload: { messageId: getReasoningMessageId(state, event), role: "reasoning" },
+      }];
+
+    case "reasoning-delta":
+      state.sawVisibleOutput = true;
+      return [{
+        event: "ReasoningMessageContent",
+        payload: {
+          messageId: getReasoningMessageId(state, event),
+          delta: typeof event.delta === "string" ? event.delta : "",
+        },
+      }];
+
+    case "reasoning-end": {
+      const messageId = getReasoningMessageId(state, event);
+      state.reasoningMessageId = null;
+      return [{
+        event: "ReasoningMessageEnd",
+        payload: { messageId },
       }];
     }
 
