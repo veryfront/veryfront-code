@@ -9,6 +9,11 @@ import {
 } from "./ag-ui-sse.ts";
 
 describe("internal-agents/ag-ui-sse", () => {
+  const CANONICAL_TOOL_CALL_ID = "tool-call-1";
+  const CANONICAL_TOOL_NAME = "web_search";
+  const CANONICAL_TOOL_ARGS = '{"query":"Veryfront"}';
+  const CANONICAL_TOOL_RESULT = { ok: true, result: "Veryfront search result" };
+
   it("parses complete SSE data frames and preserves incomplete remainder", () => {
     const parsed = parseSseJsonEvents(
       'data: {"type":"text-delta","id":"text-1","delta":"hello"}\n\n' +
@@ -232,5 +237,101 @@ describe("internal-agents/ag-ui-sse", () => {
       new TextDecoder().decode(payload),
       'event: RunStarted\ndata: {"runId":"run_1","threadId":"thread-1","agentId":"assistant-1"}\n\n',
     );
+  });
+
+  it("matches the canonical assistant text and tool trace used across repos", () => {
+    const state = createStreamTransformState();
+
+    const mappedEvents = [
+      { type: "message-start", messageId: "assistant-msg-1" },
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "Let me check." },
+      { type: "text-end", id: "text-1" },
+      {
+        type: "tool-input-start",
+        toolCallId: CANONICAL_TOOL_CALL_ID,
+        toolName: CANONICAL_TOOL_NAME,
+      },
+      {
+        type: "tool-input-delta",
+        toolCallId: CANONICAL_TOOL_CALL_ID,
+        inputTextDelta: CANONICAL_TOOL_ARGS,
+      },
+      {
+        type: "tool-input-available",
+        toolCallId: CANONICAL_TOOL_CALL_ID,
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: CANONICAL_TOOL_CALL_ID,
+        output: CANONICAL_TOOL_RESULT,
+      },
+    ].flatMap((event) => mapRuntimeEventToAgUi(state, event));
+
+    const finalizedEvents = finalizeRunEvents(state, {
+      text: "Let me check.",
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+      usage: {
+        promptTokens: 3,
+        completionTokens: 5,
+        totalTokens: 8,
+      },
+      metadata: {
+        finishReason: "stop",
+      },
+    });
+
+    assertEquals([...mappedEvents, ...finalizedEvents], [
+      {
+        event: "TextMessageStart",
+        payload: { messageId: "assistant-msg-1", role: "assistant" },
+      },
+      {
+        event: "TextMessageContent",
+        payload: { messageId: "assistant-msg-1", delta: "Let me check." },
+      },
+      {
+        event: "TextMessageEnd",
+        payload: { messageId: "assistant-msg-1" },
+      },
+      {
+        event: "ToolCallStart",
+        payload: {
+          toolCallId: CANONICAL_TOOL_CALL_ID,
+          toolCallName: CANONICAL_TOOL_NAME,
+        },
+      },
+      {
+        event: "ToolCallArgs",
+        payload: {
+          toolCallId: CANONICAL_TOOL_CALL_ID,
+          delta: CANONICAL_TOOL_ARGS,
+        },
+      },
+      {
+        event: "ToolCallEnd",
+        payload: { toolCallId: CANONICAL_TOOL_CALL_ID },
+      },
+      {
+        event: "ToolCallResult",
+        payload: {
+          toolCallId: CANONICAL_TOOL_CALL_ID,
+          result: CANONICAL_TOOL_RESULT,
+        },
+      },
+      {
+        event: "RunFinished",
+        payload: {
+          metadata: {
+            inputTokens: 3,
+            outputTokens: 5,
+            totalTokens: 8,
+            finishReason: "stop",
+          },
+        },
+      },
+    ]);
   });
 });
