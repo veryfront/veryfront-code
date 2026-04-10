@@ -822,6 +822,63 @@ export function rewriteCompiledBinaryVeryfrontImports(code: string): string {
   return transformed;
 }
 
+export function rewriteCompiledBinaryUserDependencyImports(
+  code: string,
+  userDeps: Map<string, string>,
+): string {
+  let transformed = code;
+
+  for (const name of userDeps.keys()) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    transformed = transformed.replace(
+      new RegExp(`import\\s+(\\w+)\\s+from\\s+["']${escaped}["']`, "g"),
+      (_, localName) => `const ${localName} = __vf_interopDefault(require("${name}"))`,
+    );
+    transformed = transformed.replace(
+      new RegExp(`import\\s+(\\{[^}]+\\})\\s+from\\s+["']${escaped}["']`, "g"),
+      (_, bindings) => `const ${toCjsDestructureBindings(bindings)} = require("${name}")`,
+    );
+    transformed = transformed.replace(
+      new RegExp(`import\\s+\\*\\s+as\\s+(\\w+)\\s+from\\s+["']${escaped}["']`, "g"),
+      (_, localName) => `const ${localName} = require("${name}")`,
+    );
+    transformed = transformed.replace(
+      new RegExp(
+        `import\\s+(\\w+)\\s*,\\s*(\\{[^}]+\\})\\s+from\\s+["']${escaped}["']`,
+        "g",
+      ),
+      (_, defaultName, bindings) => {
+        const tmp = `__vf_tmp_${defaultName}`;
+        return `const ${tmp} = require("${name}"); const ${defaultName} = __vf_interopDefault(${tmp}); const ${
+          toCjsDestructureBindings(bindings)
+        } = ${tmp}`;
+      },
+    );
+    transformed = transformed.replace(
+      new RegExp(
+        `import\\s+(\\w+|\\*\\s+as\\s+\\w+|\\{[^}]+\\})\\s+from\\s+["']${escaped}(/[^"']+)["']`,
+        "g",
+      ),
+      (_, binding, subpath) => {
+        const trimmedBinding = String(binding).trim();
+        if (trimmedBinding.startsWith("{")) {
+          return `const ${toCjsDestructureBindings(trimmedBinding)} = require("${name}${subpath}")`;
+        }
+        const name_ = trimmedBinding.startsWith("*")
+          ? trimmedBinding.replace(/\*\s+as\s+/, "")
+          : trimmedBinding;
+        return `const ${name_} = require("${name}${subpath}")`;
+      },
+    );
+    transformed = transformed.replace(
+      new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']*)?["']\\s*\\)`, "g"),
+      (_, subpath) => `Promise.resolve(require("${name}${subpath || ""}"))`,
+    );
+  }
+
+  return transformed;
+}
+
 async function rewriteExternalImports(
   code: string,
   projectDir: string,
@@ -861,62 +918,7 @@ async function rewriteExternalImports(
     // injected by the esbuild banner) to load CJS packages from node_modules,
     // since npm: specifiers only work for packages embedded at compile time.
     if (isCompiledBinary()) {
-      for (const name of userDeps.keys()) {
-        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        // Default imports: import foo from "pkg" → const foo = __vf_interopDefault(require("pkg"))
-        // interopDefault unwraps .default for ESM packages transpiled to CJS
-        transformed = transformed.replace(
-          new RegExp(`import\\s+(\\w+)\\s+from\\s+["']${escaped}["']`, "g"),
-          (_, localName) => `const ${localName} = __vf_interopDefault(require("${name}"))`,
-        );
-        // Named imports: import { a, b } from "pkg" → const { a, b } = require("pkg")
-        transformed = transformed.replace(
-          new RegExp(`import\\s+(\\{[^}]+\\})\\s+from\\s+["']${escaped}["']`, "g"),
-          (_, bindings) => `const ${toCjsDestructureBindings(bindings)} = require("${name}")`,
-        );
-        // Namespace imports: import * as foo from "pkg" → const foo = require("pkg")
-        transformed = transformed.replace(
-          new RegExp(`import\\s+\\*\\s+as\\s+(\\w+)\\s+from\\s+["']${escaped}["']`, "g"),
-          (_, localName) => `const ${localName} = require("${name}")`,
-        );
-        // Mixed imports: import foo, { bar } from "pkg"
-        transformed = transformed.replace(
-          new RegExp(
-            `import\\s+(\\w+)\\s*,\\s*(\\{[^}]+\\})\\s+from\\s+["']${escaped}["']`,
-            "g",
-          ),
-          (_, defaultName, bindings) => {
-            const tmp = `__vf_tmp_${defaultName}`;
-            return `const ${tmp} = require("${name}"); const ${defaultName} = __vf_interopDefault(${tmp}); const ${
-              toCjsDestructureBindings(bindings)
-            } = ${tmp}`;
-          },
-        );
-        // Subpath static imports: from "pkg/sub" → require("pkg/sub")
-        transformed = transformed.replace(
-          new RegExp(
-            `import\\s+(\\w+|\\*\\s+as\\s+\\w+|\\{[^}]+\\})\\s+from\\s+["']${escaped}(/[^"']+)["']`,
-            "g",
-          ),
-          (_, binding, subpath) => {
-            const trimmedBinding = String(binding).trim();
-            if (trimmedBinding.startsWith("{")) {
-              return `const ${
-                toCjsDestructureBindings(trimmedBinding)
-              } = require("${name}${subpath}")`;
-            }
-            const name_ = trimmedBinding.startsWith("*")
-              ? trimmedBinding.replace(/\*\s+as\s+/, "")
-              : trimmedBinding;
-            return `const ${name_} = require("${name}${subpath}")`;
-          },
-        );
-        // Dynamic imports: import("pkg") → Promise.resolve(require("pkg"))
-        transformed = transformed.replace(
-          new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']*)?["']\\s*\\)`, "g"),
-          (_, subpath) => `Promise.resolve(require("${name}${subpath || ""}"))`,
-        );
-      }
+      transformed = rewriteCompiledBinaryUserDependencyImports(transformed, userDeps);
     } else {
       for (const [name, version] of userDeps) {
         const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
