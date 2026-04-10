@@ -55,6 +55,11 @@ export { dynamicTool, tool } from "./factory.ts";
 export type { DynamicToolConfig } from "./factory.ts";
 export { createRemoteMCPToolSource } from "./remote-mcp.ts";
 export type { RemoteMCPToolSourceConfig } from "./remote-mcp.ts";
+export {
+  createToolsFromRemoteDefinitions,
+  loadRemoteToolsFromSource,
+} from "./remote-source-tools.ts";
+export type { RemoteToolMaterializationOptions } from "./remote-source-tools.ts";
 
 export { toolRegistry } from "./registry.ts";
 
