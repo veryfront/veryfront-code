@@ -19,6 +19,7 @@ import {
   getTextFromParts,
   type Message,
   type MessagePart,
+  type ResolvedRuntimeState,
   type ToolCall,
   type ToolResultPart,
 } from "../types.ts";
@@ -272,6 +273,11 @@ type ResolvedModelTransport = {
   providerOptions?: Record<string, unknown>;
 };
 
+type RuntimeStepState = {
+  systemPrompt: string;
+  context?: Record<string, unknown>;
+};
+
 export class AgentRuntime {
   private id: string;
   private config: AgentConfig;
@@ -308,6 +314,28 @@ export class AgentRuntime {
       languageModel: transport?.model ?? resolveModel(resolvedModelString),
       headers: transport?.headers,
       providerOptions: transport?.providerOptions,
+    };
+  }
+
+  private async resolveRuntimeState(
+    messages: Message[],
+    context: Record<string, unknown> | undefined,
+    mode: "generate" | "stream",
+    step: number,
+    systemPrompt: string,
+  ): Promise<RuntimeStepState> {
+    const refreshed: ResolvedRuntimeState | undefined = await this.config.resolveRuntimeState?.({
+      agentId: this.id,
+      mode,
+      step,
+      system: systemPrompt,
+      messages: [...messages],
+      context,
+    });
+
+    return {
+      systemPrompt: refreshed?.system ?? systemPrompt,
+      context: refreshed?.context ?? context,
     };
   }
 
@@ -359,8 +387,8 @@ export class AgentRuntime {
             {
               agentId: this.id,
               projectId: tryGetCacheKeyContext()?.projectId,
-              ...context,
             },
+            context,
             resolvedModelString,
             transport.languageModel,
             transport.headers,
@@ -470,6 +498,7 @@ export class AgentRuntime {
             callbacks,
             textPartId,
             toolContext,
+            context,
             resolvedModelString,
             languageModel,
             transport.headers,
@@ -513,7 +542,8 @@ export class AgentRuntime {
   private async executeAgentLoop(
     systemPrompt: string,
     messages: Message[],
-    toolContext?: ToolExecutionContext,
+    toolContextBase?: ToolExecutionContext,
+    runtimeContext?: Record<string, unknown>,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -544,10 +574,23 @@ export class AgentRuntime {
       // Request-scoped skill policy (not class-level mutable state)
       let activeSkillPolicy: string[] | undefined;
       const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
+      let currentSystemPrompt = systemPrompt;
+      let currentRuntimeContext = runtimeContext;
 
       for (let step = 0; step < maxSteps; step++) {
         this.status = "thinking";
         addSpanEvent(loopSpan, "step_start", { step });
+
+        const runtimeState = await this.resolveRuntimeState(
+          currentMessages,
+          currentRuntimeContext,
+          "generate",
+          step,
+          currentSystemPrompt,
+        );
+        currentSystemPrompt = runtimeState.systemPrompt;
+        currentRuntimeContext = runtimeState.context;
+        const toolContext = { ...toolContextBase, ...currentRuntimeContext };
 
         let tools = isLocal ? [] : await getAvailableTools(this.config.tools, {
           includeSkillTools: Boolean(this.config.skills),
@@ -568,7 +611,7 @@ export class AgentRuntime {
           });
           return generateText({
             model: languageModel,
-            system: systemPrompt,
+            system: currentSystemPrompt,
             messages: convertToModelMessages(currentMessages),
             tools: convertToolsToRuntimeTools(tools, {
               model: effectiveModel,
@@ -808,7 +851,8 @@ export class AgentRuntime {
       onFinish?: (response: AgentResponse) => void;
     },
     textPartId?: string,
-    toolContext?: Record<string, unknown>,
+    toolContextBase?: Record<string, unknown>,
+    runtimeContext?: Record<string, unknown>,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -841,11 +885,24 @@ export class AgentRuntime {
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
+    let currentSystemPrompt = systemPrompt;
+    let currentRuntimeContext = runtimeContext;
 
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-start" });
       const currentStepToolResults = new Map<string, ToolResultPart>();
+
+      const runtimeState = await this.resolveRuntimeState(
+        currentMessages,
+        currentRuntimeContext,
+        "stream",
+        step,
+        currentSystemPrompt,
+      );
+      currentSystemPrompt = runtimeState.systemPrompt;
+      currentRuntimeContext = runtimeState.context;
+      const toolContext = { ...toolContextBase, ...currentRuntimeContext };
 
       let tools = isLocalStreaming ? [] : await getAvailableTools(this.config.tools, {
         includeSkillTools: Boolean(this.config.skills),
@@ -861,7 +918,7 @@ export class AgentRuntime {
 
       const result = streamText({
         model: languageModel,
-        system: systemPrompt,
+        system: currentSystemPrompt,
         messages: convertToModelMessages(currentMessages),
         tools: convertToolsToRuntimeTools(tools, {
           model: effectiveModel,

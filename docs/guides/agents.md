@@ -147,20 +147,24 @@ export default agent({
 });
 ```
 
+For step-boundary refresh during a long-lived hosted run, use
+`resolveRuntimeState` instead of relying on `system()` to re-run mid-turn.
+
 ## Agent configuration
 
-| Property        | Type                                        | Description                                                                           |
-| --------------- | ------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `id`            | `string`                                    | Unique identifier used with `getAgent()`                                              |
-| `model`         | `string`                                    | Optional provider/model override. Omit or use `"auto"` for runtime defaults. |
-| `system`        | `string \| () => string \| Promise<string>` | System prompt                                                                         |
-| `tools`         | `Record<string, boolean \| Tool>`           | Tools the agent can use                                                               |
-| `maxSteps`      | `number`                                    | Max tool-call iterations per request                                                  |
-| `memory`        | `MemoryConfig`                              | Conversation memory settings                                                          |
-| `streaming`     | `boolean`                                   | Enable streaming (default: `true`)                                                    |
-| `middleware`    | `AgentMiddleware[]`                         | Execution middleware                                                                  |
-| `allowedModels` | `string[]`                                  | Restrict runtime model overrides to these `provider/model` strings                    |
-| `skills`        | `true \| string[]`                          | Enable all skills (`true`) or only specific skill IDs                                 |
+| Property              | Type                                                                                                   | Description                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `id`                  | `string`                                                                                               | Unique identifier used with `getAgent()`                                     |
+| `model`               | `string`                                                                                               | Optional provider/model override. Omit or use `"auto"` for runtime defaults. |
+| `system`              | `string \| () => string \| Promise<string>`                                                            | System prompt                                                                |
+| `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run              |
+| `tools`               | `Record<string, boolean \| Tool>`                                                                      | Tools the agent can use                                                      |
+| `maxSteps`            | `number`                                                                                               | Max tool-call iterations per request                                         |
+| `memory`              | `MemoryConfig`                                                                                         | Conversation memory settings                                                 |
+| `streaming`           | `boolean`                                                                                              | Enable streaming (default: `true`)                                           |
+| `middleware`          | `AgentMiddleware[]`                                                                                    | Execution middleware                                                         |
+| `allowedModels`       | `string[]`                                                                                             | Restrict runtime model overrides to these `provider/model` strings           |
+| `skills`              | `true \| string[]`                                                                                     | Enable all skills (`true`) or only specific skill IDs                        |
 
 ## Next
 
