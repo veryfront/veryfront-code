@@ -234,6 +234,8 @@ The handler:
 - clears server memory before each run
 - converts the package data-stream output into AG-UI SSE events
 - normalizes the wrapper request into the canonical hosted runtime contract
+- supports injected client tools in `tools` when `options.sessionManager` is
+  provided
 - passes AG-UI request metadata into `agent.stream()` context as:
 
 ```ts
@@ -247,15 +249,18 @@ The handler:
 }
 ```
 
-Current limitation:
+Injected client tools:
 
-- injected client tools in `tools` are rejected with `501` until the package
-  exposes generic wait/resume primitives for them
+- accepted when `options.sessionManager` is a public
+  `RunResumeSessionManager<{ result: unknown; isError: boolean }>`
+- rejected with `501` when `tools` are present but `options.sessionManager` is
+  omitted
 
-| Property           | Type                                                                                                                                                           | Description                                         |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `agentIdOrConfig`  | `string \| { agent: Agent, context?: ... }`                                                                                                                    | Agent registry id or direct agent instance          |
-| `options?.context` | <code>Record&lt;string, unknown&gt; &#124; ((request: Request) =&gt; Record&lt;string, unknown&gt; &#124; Promise&lt;Record&lt;string, unknown&gt;&gt;)</code> | Extra context merged into the AG-UI runtime context |
+| Property                  | Type                                                                                                                                                           | Description                                                   |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `agentIdOrConfig`         | `string \| { agent: Agent, context?: ..., sessionManager?: ... }`                                                                                              | Agent registry id or direct agent instance                    |
+| `options?.context`        | <code>Record&lt;string, unknown&gt; &#124; ((request: Request) =&gt; Record&lt;string, unknown&gt; &#124; Promise&lt;Record&lt;string, unknown&gt;&gt;)</code> | Extra context merged into the AG-UI runtime context           |
+| `options?.sessionManager` | `RunResumeSessionManager<{ result: unknown; isError: boolean }>`                                                                                               | Required when the request can include injected client `tools` |
 
 ### `AgUiRequestSchema`
 

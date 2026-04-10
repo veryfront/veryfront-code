@@ -1,7 +1,14 @@
 import { z } from "zod";
 import { getAgent } from "./composition/index.ts";
 import type { Agent, Message } from "./types.ts";
+import {
+  AgentRuntime,
+  RunAlreadyExistsError,
+  type RunResumeSessionManager,
+} from "./runtime/index.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
+import { type Tool, toolRegistry } from "#veryfront/tool";
 import {
   createStreamTransformState,
   finalizeRunEvents,
@@ -100,6 +107,7 @@ export type AgUiContextItem = z.infer<typeof AgUiContextItemSchema>;
 export type AgUiRequest = z.infer<typeof AgUiRequestSchema>;
 
 type AgUiRuntimePart = Record<string, unknown> & { type: string };
+type AgUiResumeValue = { result: unknown; isError: boolean };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -258,24 +266,29 @@ function enqueueEvent(
 }
 
 async function createAgUiStreamResponse(
-  agent: Agent,
-  request: AgUiRequest,
-  baseContext: Record<string, unknown>,
+  options: {
+    agentId: string;
+    request: AgUiRequest;
+    runId: string;
+    threadId: string;
+    upstreamBody: ReadableStream<Uint8Array> | null;
+    upstreamStatus: number;
+    upstreamStatusText?: string;
+    onFinish?: () => void;
+    onError?: (error: unknown) => void;
+  },
 ): Promise<Response> {
-  const threadId = request.threadId ?? crypto.randomUUID();
-  const runId = request.runId ?? generateRunId();
-
-  await agent.clearMemory();
-
-  const result = await agent.stream({
-    messages: normalizeMessages(request.messages),
-    context: buildStreamContext(request, baseContext, threadId, runId),
-    ...(request.model ? { model: request.model } : {}),
-    ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
-  });
-
-  const upstream = result.toDataStreamResponse();
-  const upstreamBody = upstream.body;
+  const {
+    agentId,
+    request,
+    runId,
+    threadId,
+    upstreamBody,
+    upstreamStatus,
+    upstreamStatusText,
+    onFinish,
+    onError,
+  } = options;
 
   const stream = new ReadableStream<Uint8Array>({
     start: async (controller) => {
@@ -284,7 +297,7 @@ async function createAgUiStreamResponse(
       let remainder = "";
       const decoder = new TextDecoder();
 
-      if (!enqueueEvent(controller, "RunStarted", { runId, threadId, agentId: agent.id })) {
+      if (!enqueueEvent(controller, "RunStarted", { runId, threadId, agentId })) {
         return;
       }
       if (!enqueueEvent(controller, "StateSnapshot", { snapshot: {} })) {
@@ -301,6 +314,7 @@ async function createAgUiStreamResponse(
               return;
             }
           }
+          onFinish?.();
           closeController(controller);
           return;
         }
@@ -339,7 +353,9 @@ async function createAgUiStreamResponse(
             return;
           }
         }
+        onFinish?.();
       } catch (error) {
+        onError?.(error);
         enqueueEvent(controller, "RunError", {
           message: error instanceof Error ? error.message : "Agent run failed",
         });
@@ -351,9 +367,139 @@ async function createAgUiStreamResponse(
   });
 
   return new Response(stream, {
-    status: upstream.status,
-    statusText: upstream.statusText,
+    status: upstreamStatus,
+    statusText: upstreamStatusText,
     headers: { ...AG_UI_HEADERS },
+  });
+}
+
+async function createAgUiDirectStreamResponse(
+  agent: Agent,
+  request: AgUiRequest,
+  baseContext: Record<string, unknown>,
+): Promise<Response> {
+  const threadId = request.threadId ?? crypto.randomUUID();
+  const runId = request.runId ?? generateRunId();
+
+  await agent.clearMemory();
+
+  const result = await agent.stream({
+    messages: normalizeMessages(request.messages),
+    context: buildStreamContext(request, baseContext, threadId, runId),
+    ...(request.model ? { model: request.model } : {}),
+    ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
+  });
+
+  const upstream = result.toDataStreamResponse();
+  return await createAgUiStreamResponse({
+    agentId: agent.id,
+    request,
+    runId,
+    threadId,
+    upstreamBody: upstream.body,
+    upstreamStatus: upstream.status,
+    upstreamStatusText: upstream.statusText,
+  });
+}
+
+function createInjectedAgUiTool(
+  runId: string,
+  tool: AgUiInjectedTool,
+  sessionManager: RunResumeSessionManager<AgUiResumeValue>,
+): Tool {
+  return {
+    id: tool.name,
+    type: "function",
+    description: tool.description ?? tool.name,
+    inputSchema: z.record(z.string(), z.unknown()),
+    inputSchemaJson: (tool.parameters ??
+      { type: "object", properties: {}, additionalProperties: true }) as Tool["inputSchemaJson"],
+    execute: async (_input, context) => {
+      const toolCallId = typeof context?.toolCallId === "string" ? context.toolCallId : null;
+      if (!toolCallId) {
+        throw new Error(`Missing toolCallId for injected tool "${tool.name}"`);
+      }
+
+      const submitted = await sessionManager.waitForSignal(runId, toolCallId);
+      if (submitted.isError) {
+        throw new Error(
+          typeof submitted.result === "string"
+            ? submitted.result
+            : JSON.stringify(submitted.result),
+        );
+      }
+      return submitted.result;
+    },
+  };
+}
+
+async function createAgUiInjectedToolsStreamResponse(
+  agent: Agent,
+  request: AgUiRequest,
+  baseContext: Record<string, unknown>,
+  sessionManager: RunResumeSessionManager<AgUiResumeValue>,
+): Promise<Response> {
+  const threadId = request.threadId ?? crypto.randomUUID();
+  const runId = request.runId ?? generateRunId();
+
+  try {
+    sessionManager.startRun({ runId, threadId });
+  } catch (error) {
+    if (error instanceof RunAlreadyExistsError) {
+      return Response.json({ error: "Run already active" }, { status: 409 });
+    }
+    throw error;
+  }
+
+  const injectedTools = Object.fromEntries(
+    request.tools.map((tool) => [tool.name, createInjectedAgUiTool(runId, tool, sessionManager)]),
+  );
+
+  const mergedTools: Agent["config"]["tools"] = !agent.config.tools
+    ? injectedTools
+    : agent.config.tools === true
+    ? {
+      ...Object.fromEntries(
+        [...toolRegistry.getAll()]
+          .filter(([toolId]) => agent.config.skills || !SKILL_TOOL_IDS.has(toolId))
+          .map(([toolId]) => [toolId, true]),
+      ),
+      ...injectedTools,
+    }
+    : { ...agent.config.tools, ...injectedTools };
+
+  const runtime = new AgentRuntime(agent.id, {
+    ...agent.config,
+    tools: mergedTools,
+  });
+
+  let upstreamBody: ReadableStream<Uint8Array>;
+  try {
+    upstreamBody = await runtime.stream(
+      normalizeMessages(request.messages),
+      buildStreamContext(request, baseContext, threadId, runId),
+      undefined,
+      request.model,
+      request.maxOutputTokens,
+    );
+  } catch (error) {
+    sessionManager.failRun(runId);
+    throw error;
+  }
+
+  return await createAgUiStreamResponse({
+    agentId: agent.id,
+    request,
+    runId,
+    threadId,
+    upstreamBody,
+    upstreamStatus: 200,
+    onFinish: () => {
+      sessionManager.completeRun(runId);
+    },
+    onError: () => {
+      sessionManager.failRun(runId);
+    },
   });
 }
 
@@ -361,6 +507,7 @@ export interface AgUiHandlerOptions {
   context?:
     | Record<string, unknown>
     | ((request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>);
+  sessionManager?: RunResumeSessionManager<AgUiResumeValue>;
 }
 
 export interface AgUiHandlerConfigWithAgent extends AgUiHandlerOptions {
@@ -417,12 +564,25 @@ export function createAgUiHandler(
       const parsed = AgUiRequestSchema.parse(await request.json());
 
       if (parsed.tools.length > 0) {
-        return Response.json(
-          {
-            error:
-              "Injected AG-UI tools are not supported by createAgUiHandler yet. Use package-level wait/resume runtime primitives instead.",
-          },
-          { status: 501 },
+        if (!options?.sessionManager) {
+          return Response.json(
+            {
+              error:
+                "Injected AG-UI tools require a public RunResumeSessionManager on createAgUiHandler().",
+            },
+            { status: 501 },
+          );
+        }
+
+        const context = typeof options?.context === "function"
+          ? await options.context(request)
+          : options?.context ?? {};
+
+        return await createAgUiInjectedToolsStreamResponse(
+          agent,
+          parsed,
+          context,
+          options.sessionManager,
         );
       }
 
@@ -430,7 +590,7 @@ export function createAgUiHandler(
         ? await options.context(request)
         : options?.context ?? {};
 
-      return await createAgUiStreamResponse(agent, parsed, context);
+      return await createAgUiDirectStreamResponse(agent, parsed, context);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return Response.json(

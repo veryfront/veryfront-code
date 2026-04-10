@@ -26,19 +26,37 @@ Use `createAgUiHandler()` as a convenience wrapper when you want a direct
 route handler:
 
 ```ts
-import { agent, createAgUiHandler } from "veryfront/agent";
+import {
+  agent,
+  createAgUiCancelHandler,
+  createAgUiHandler,
+  createAgUiResumeHandler,
+  RunResumeSessionManager,
+} from "veryfront/agent";
 
 const assistant = agent({
   system: "You are a helpful assistant.",
 });
 
+const sessionManager = new RunResumeSessionManager<{
+  result: unknown;
+  isError: boolean;
+}>();
+
 export const POST = createAgUiHandler({
   agent: assistant,
+  sessionManager,
 });
+
+// Mount the hosted run-control routes with the same session manager:
+const resumeHandler = createAgUiResumeHandler({ sessionManager });
+const cancelHandler = createAgUiCancelHandler({ sessionManager });
 ```
 
 `createAgUiHandler()` validates the higher-level `AgUiRequestSchema` convenience
-shape and normalizes it into the canonical hosted runtime contract.
+shape and normalizes it into the canonical hosted runtime contract. When a host
+accepts injected client tools in `tools`, pass the same public
+`RunResumeSessionManager` used by the hosted resume/cancel handlers.
 
 For resumable hosted runs, the package also exposes:
 
@@ -98,8 +116,10 @@ export const DELETE = createAgUiCancelHandler({ sessionManager });
 These handlers are generic package surfaces. They do not include Veryfront
 control-plane auth/signature requirements.
 
-## Current Limitation
+## Injected Client Tools
 
-Injected client tools in `tools` are not supported yet by the package AG-UI
-handler. Requests that include them receive `501` until the package exposes
-generic wait/resume primitives for client-mediated tool execution.
+Injected client tools in `tools` are supported when the host wires
+`createAgUiHandler()` to a public `RunResumeSessionManager`.
+
+If `tools` are present and no `sessionManager` is configured, the handler
+returns `501` with guidance to provide the public run-control seam.
