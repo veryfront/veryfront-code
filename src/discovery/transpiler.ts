@@ -190,9 +190,6 @@ export async function importModule(
     resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
     plugins,
     external: [
-      "ai",
-      "ai/*",
-      "@ai-sdk/*",
       "zod",
       "node:*",
       "veryfront",

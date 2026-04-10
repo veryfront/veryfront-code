@@ -15,4 +15,4 @@ export {
   type CodeBlockProps,
   Markdown,
   type MarkdownProps,
-} from "#veryfront/react/components/ai/markdown.tsx";
+} from "#veryfront/react/components/chat/markdown.tsx";

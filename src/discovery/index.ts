@@ -26,5 +26,5 @@ export { clearTrackedAgents, filenameToId, filePathToPattern } from "./discovery
 // Re-export transpiler utilities
 export { clearTranspileCache } from "./transpiler.ts";
 
-// Re-export config validation (pure logic — no ANSI colors)
-export { validateAIConfig, type ValidationResult } from "./config-validator.ts";
+// Re-export provider config validation (pure logic — no ANSI colors)
+export { validateProviderConfig, type ValidationResult } from "./provider-config-validator.ts";

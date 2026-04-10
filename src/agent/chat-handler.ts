@@ -12,7 +12,7 @@ const MAX_TEXT_PART_LENGTH = 10_000;
 const MAX_MESSAGES_PER_REQUEST = 100;
 
 // ---------------------------------------------------------------------------
-// Zod schemas for validating AI SDK v5 chat UI messages
+// Zod schemas for validating parts-based chat UI messages
 // ---------------------------------------------------------------------------
 
 const textPartSchema = z.object({

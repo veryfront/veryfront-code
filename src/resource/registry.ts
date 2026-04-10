@@ -8,8 +8,8 @@
  */
 
 import type { Resource } from "./types.ts";
-import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
-import { ScopedRegistryFacade } from "#veryfront/ai/registry-facade.ts";
+import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
+import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
 const resourceRegistryManager = new ProjectScopedRegistryManager<Resource>("resource");
 

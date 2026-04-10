@@ -13,8 +13,6 @@ Chat UI components and streaming hooks.
 ```ts
 import {
   AgentCard,
-  // Error
-  AIErrorBoundary,
   AttachmentPill,
   BranchPicker,
   // Preset
@@ -22,6 +20,8 @@ import {
   ChatComponents,
   ChatComposer,
   ChatEmpty,
+  // Error
+  ChatErrorBoundary,
   ChatIf,
   ChatMessageList,
   // Composition
@@ -47,11 +47,11 @@ import {
   ToolCallCard,
   UploadsPanel,
   useAgent,
-  useAIErrorHandler,
   // Hooks
   useChat,
   // Contexts
   useChatContext,
+  useChatErrorHandler,
   useCompletion,
   useComposerContext,
   useMessageContext,
@@ -68,55 +68,55 @@ import {
 
 Full-featured chat UI. Composes `ChatRoot`, `ChatMessageList`, `ChatComposer`, `ChatEmpty`, and `ErrorBanner` with sensible defaults.
 
-| Prop                 | Type                              | Default               | Description                         |
-| -------------------- | --------------------------------- | --------------------- | ----------------------------------- |
-| `messages`           | `UIMessage[]`                     | —                     | **Required.** Message array.        |
-| `input`              | `string`                          | —                     | **Required.** Current input value.  |
-| `onChange`           | `(e: ChangeEvent) => void`        | —                     | **Required.** Input change handler. |
-| `onSubmit`           | `(e?: FormEvent) => void`         | —                     | Form submit handler.                |
-| `stop`               | `() => void`                      | —                     | Abort current request.              |
-| `reload`             | `() => void`                      | —                     | Re-send last user message.          |
-| `setInput`           | `(value: string) => void`         | —                     | Set input value programmatically.   |
-| `isLoading`          | `boolean`                         | `false`               | Loading state.                      |
-| `error`              | `Error \| null`                   | `null`                | Error to display.                   |
-| `placeholder`        | `string`                          | `"Type a message..."` | Input placeholder.                  |
-| `maxHeight`          | `string`                          | `"100%"`              | Container max height.               |
-| `className`          | `string`                          | —                     | Container class.                    |
-| `theme`              | `Partial<ChatTheme>`              | —                     | Theme overrides.                    |
-| `renderMessage`      | `(msg: UIMessage) => ReactNode`   | —                     | Custom message renderer.            |
-| `renderTool`         | `(tool: ToolUIPart) => ReactNode` | —                     | Custom tool call renderer.          |
-| `suggestions`        | `string[]`                        | —                     | Suggestion chips in empty state.    |
-| `onSuggestionClick`  | `(suggestion: string) => void`    | —                     | Suggestion click handler.           |
-| `emptyState`         | `{ icon?, title?, description? }` | —                     | Empty state overrides.              |
-| `showScrollButton`   | `boolean`                         | `false`               | Show scroll-to-bottom button.       |
-| `showMessageActions` | `boolean`                         | `true`                | Show copy/edit on messages.         |
-| `models`             | `ModelOption[]`                   | —                     | Available models for selector.      |
-| `model`              | `string`                          | —                     | Current model.                      |
-| `onModelChange`      | `(model: string) => void`         | —                     | Model change handler.               |
-| `inferenceMode`      | `InferenceMode`                   | —                     | Where inference runs.               |
-| `browserStatus`      | `BrowserInferenceStatus`          | —                     | Browser model status.               |
-| `showSources`        | `boolean`                         | `false`               | Show source citations.              |
-| `onSourceClick`      | `(source, index) => void`         | —                     | Source click handler.               |
-| `onAttach`           | `(files: FileList) => void`       | —                     | File attach handler.                |
-| `onDrop`             | `(files: FileList) => void`       | —                     | File drop handler.                  |
-| `attachAccept`       | `string`                          | —                     | Accepted file types.                |
-| `attachments`        | `AttachmentInfo[]`                | —                     | Attached files.                     |
-| `onRemoveAttachment` | `(id: string) => void`            | —                     | Remove attachment.                  |
-| `showExport`         | `boolean`                         | `false`               | Show export button.                 |
-| `onFeedback`         | `(messageId, feedback) => void`   | —                     | Message feedback handler.           |
-| `editMessage`        | `(messageId, text) => Promise`    | —                     | Edit and resubmit.                  |
-| `getBranches`        | `(messageId) => BranchInfo`       | —                     | Get branch info.                    |
-| `switchBranch`       | `(messageId, index) => void`      | —                     | Switch branch.                      |
-| `showSteps`          | `boolean`                         | `false`               | Show step indicators.               |
-| `showTabs`           | `boolean`                         | `false`               | Show Chat/Uploads tabs.             |
-| `activeTab`          | `ChatTab`                         | —                     | Controlled tab.                     |
-| `onTabChange`        | `(tab: ChatTab) => void`          | —                     | Tab change handler.                 |
-| `uploads`            | `UploadedFile[]`                  | —                     | Uploads tab content.                |
-| `onRemoveUpload`     | `(id: string) => void`            | —                     | Remove upload.                      |
-| `quickActions`       | `QuickAction[]`                   | —                     | Quick action cards.                 |
-| `onQuickAction`      | `(action) => void`                | —                     | Quick action handler.               |
-| `enableVoice`        | `boolean`                         | `false`               | Enable voice input.                 |
-| `onVoice`            | `() => void`                      | —                     | Custom voice handler.               |
+| Prop                 | Type                                                       | Default               | Description                         |
+| -------------------- | ---------------------------------------------------------- | --------------------- | ----------------------------------- |
+| `messages`           | `ChatMessage[]`                                            | —                     | **Required.** Message array.        |
+| `input`              | `string`                                                   | —                     | **Required.** Current input value.  |
+| `onChange`           | `(e: ChangeEvent) => void`                                 | —                     | **Required.** Input change handler. |
+| `onSubmit`           | `(e?: FormEvent) => void`                                  | —                     | Form submit handler.                |
+| `stop`               | `() => void`                                               | —                     | Abort current request.              |
+| `reload`             | `() => void`                                               | —                     | Re-send last user message.          |
+| `setInput`           | `(value: string) => void`                                  | —                     | Set input value programmatically.   |
+| `isLoading`          | `boolean`                                                  | `false`               | Loading state.                      |
+| `error`              | `Error \| null`                                            | `null`                | Error to display.                   |
+| `placeholder`        | `string`                                                   | `"Type a message..."` | Input placeholder.                  |
+| `maxHeight`          | `string`                                                   | `"100%"`              | Container max height.               |
+| `className`          | `string`                                                   | —                     | Container class.                    |
+| `theme`              | `Partial<ChatTheme>`                                       | —                     | Theme overrides.                    |
+| `renderMessage`      | `(msg: ChatMessage) => ReactNode`                          | —                     | Custom message renderer.            |
+| `renderTool`         | `(tool: ChatToolPart \| ChatDynamicToolPart) => ReactNode` | —                     | Custom tool call renderer.          |
+| `suggestions`        | `string[]`                                                 | —                     | Suggestion chips in empty state.    |
+| `onSuggestionClick`  | `(suggestion: string) => void`                             | —                     | Suggestion click handler.           |
+| `emptyState`         | `{ icon?, title?, description? }`                          | —                     | Empty state overrides.              |
+| `showScrollButton`   | `boolean`                                                  | `false`               | Show scroll-to-bottom button.       |
+| `showMessageActions` | `boolean`                                                  | `true`                | Show copy/edit on messages.         |
+| `models`             | `ModelOption[]`                                            | —                     | Available models for selector.      |
+| `model`              | `string`                                                   | —                     | Current model.                      |
+| `onModelChange`      | `(model: string) => void`                                  | —                     | Model change handler.               |
+| `inferenceMode`      | `InferenceMode`                                            | —                     | Where inference runs.               |
+| `browserStatus`      | `BrowserInferenceStatus`                                   | —                     | Browser model status.               |
+| `showSources`        | `boolean`                                                  | `false`               | Show source citations.              |
+| `onSourceClick`      | `(source, index) => void`                                  | —                     | Source click handler.               |
+| `onAttach`           | `(files: FileList) => void`                                | —                     | File attach handler.                |
+| `onDrop`             | `(files: FileList) => void`                                | —                     | File drop handler.                  |
+| `attachAccept`       | `string`                                                   | —                     | Accepted file types.                |
+| `attachments`        | `AttachmentInfo[]`                                         | —                     | Attached files.                     |
+| `onRemoveAttachment` | `(id: string) => void`                                     | —                     | Remove attachment.                  |
+| `showExport`         | `boolean`                                                  | `false`               | Show export button.                 |
+| `onFeedback`         | `(messageId, feedback) => void`                            | —                     | Message feedback handler.           |
+| `editMessage`        | `(messageId, text) => Promise`                             | —                     | Edit and resubmit.                  |
+| `getBranches`        | `(messageId) => BranchInfo`                                | —                     | Get branch info.                    |
+| `switchBranch`       | `(messageId, index) => void`                               | —                     | Switch branch.                      |
+| `showSteps`          | `boolean`                                                  | `false`               | Show step indicators.               |
+| `showTabs`           | `boolean`                                                  | `false`               | Show Chat/Uploads tabs.             |
+| `activeTab`          | `ChatTab`                                                  | —                     | Controlled tab.                     |
+| `onTabChange`        | `(tab: ChatTab) => void`                                   | —                     | Tab change handler.                 |
+| `uploads`            | `UploadedFile[]`                                           | —                     | Uploads tab content.                |
+| `onRemoveUpload`     | `(id: string) => void`                                     | —                     | Remove upload.                      |
+| `quickActions`       | `QuickAction[]`                                            | —                     | Quick action cards.                 |
+| `onQuickAction`      | `(action) => void`                                         | —                     | Quick action handler.               |
+| `enableVoice`        | `boolean`                                                  | `false`               | Enable voice input.                 |
+| `onVoice`            | `() => void`                                               | —                     | Custom voice handler.               |
 
 ### `ChatWithSidebar`
 
@@ -171,12 +171,12 @@ Context provider and container. Wraps all descendant chat components and provide
 
 Extends `React.HTMLAttributes<HTMLDivElement>` — extra props (e.g. drag handlers) are forwarded to the container element.
 
-| Prop                 | Type          | Description                           |
-| -------------------- | ------------- | ------------------------------------- |
-| `children`           | `ReactNode`   | **Required.**                         |
-| `messages`           | `UIMessage[]` | **Required.**                         |
-| `input`              | `string`      | **Required.**                         |
-| All Chat state props | —             | Same as `Chat` minus rendering props. |
+| Prop                 | Type            | Description                           |
+| -------------------- | --------------- | ------------------------------------- |
+| `children`           | `ReactNode`     | **Required.**                         |
+| `messages`           | `ChatMessage[]` | **Required.**                         |
+| `input`              | `string`        | **Required.**                         |
+| All Chat state props | —               | Same as `Chat` minus rendering props. |
 
 ### `ChatMessageList`
 
@@ -184,7 +184,7 @@ Message rendering loop with editing, branching, feedback, sources, reasoning, to
 
 | Prop                 | Type                    | Default | Description             |
 | -------------------- | ----------------------- | ------- | ----------------------- |
-| `messages`           | `UIMessage[]`           | —       | **Required.**           |
+| `messages`           | `ChatMessage[]`         | —       | **Required.**           |
 | `isLoading`          | `boolean`               | `false` | Show loading indicator. |
 | `theme`              | `ChatTheme`             | —       | Theme.                  |
 | `renderMessage`      | `(msg) => ReactNode`    | —       | Custom renderer.        |
@@ -279,7 +279,7 @@ Compound component for per-message rendering. Use inside `Chat.Root` for automat
 
 | Prop           | Type                    | Description                             |
 | -------------- | ----------------------- | --------------------------------------- |
-| `message`      | `UIMessage`             | **Required.** The message to render.    |
+| `message`      | `ChatMessage`           | **Required.** The message to render.    |
 | `isStreaming`  | `boolean`               | Whether the message is still streaming. |
 | `editMessage`  | `(id, text) => Promise` | Override edit handler.                  |
 | `getBranches`  | `(id) => BranchInfo`    | Override branch getter.                 |
@@ -329,7 +329,7 @@ Root-level shared state. Provided by `ChatRoot` / `Chat`.
 
 | Field            | Type              | Description       |
 | ---------------- | ----------------- | ----------------- |
-| `messages`       | `UIMessage[]`     | All messages.     |
+| `messages`       | `ChatMessage[]`   | All messages.     |
 | `isLoading`      | `boolean`         | Loading state.    |
 | `error`          | `Error \| null`   | Current error.    |
 | `input`          | `string`          | Input value.      |
@@ -350,7 +350,7 @@ Per-message state. Provided by `Message.Root`.
 
 | Field         | Type                    | Description       |
 | ------------- | ----------------------- | ----------------- |
-| `message`     | `UIMessage`             | The message.      |
+| `message`     | `ChatMessage`           | The message.      |
 | `role`        | `string`                | Message role.     |
 | `isStreaming` | `boolean`               | Streaming state.  |
 | `parts`       | `PartGroup[]`           | Grouped parts.    |
@@ -419,14 +419,14 @@ Main chat hook. Returns:
 
 | Property            | Type                          | Description                                          |
 | ------------------- | ----------------------------- | ---------------------------------------------------- |
-| `messages`          | `UIMessage[]`                 | Current message list.                                |
+| `messages`          | `ChatMessage[]`               | Current message list.                                |
 | `input`             | `string`                      | Current input value.                                 |
 | `isLoading`         | `boolean`                     | Whether a response is streaming.                     |
 | `error`             | `Error \| null`               | Last error, if any.                                  |
 | `model`             | `string \| undefined`         | Current model ID.                                    |
 | `setInput`          | `(value: string) => void`     | Update input.                                        |
 | `setModel`          | `(model: string) => void`     | Switch model.                                        |
-| `setMessages`       | `SetState<UIMessage[]>`       | Replace message list.                                |
+| `setMessages`       | `SetState<ChatMessage[]>`     | Replace message list.                                |
 | `sendMessage`       | `(msg) => Promise<void>`      | Send a message.                                      |
 | `editMessage`       | `(id, text) => Promise<void>` | Edit and resubmit.                                   |
 | `getBranches`       | `(id) => BranchInfo`          | Get branch info for a message.                       |
@@ -480,32 +480,33 @@ Multi-conversation thread management with localStorage persistence.
 
 ## Types
 
-| Type                     | Description                  |
-| ------------------------ | ---------------------------- |
-| `ChatProps`              | `<Chat>` props.              |
-| `ChatRootProps`          | `<ChatRoot>` props.          |
-| `ChatMessageListProps`   | `<ChatMessageList>` props.   |
-| `ChatComposerProps`      | `<ChatComposer>` props.      |
-| `ChatEmptyProps`         | `<ChatEmpty>` props.         |
-| `MessageRootProps`       | `<Message.Root>` props.      |
-| `ErrorBannerProps`       | `<ErrorBanner>` props.       |
-| `ChatContextValue`       | Chat context shape.          |
-| `MessageContextValue`    | Message context shape.       |
-| `ComposerContextValue`   | Composer context shape.      |
-| `ThreadListContextValue` | Thread list context shape.   |
-| `UIMessage`              | Normalized UI message.       |
-| `UIMessagePart`          | Message segment.             |
-| `PartGroup`              | Grouped parts for rendering. |
-| `BranchInfo`             | Branch navigation info.      |
-| `FeedbackValue`          | `"positive" \| "negative"`.  |
-| `AttachmentInfo`         | Attached file metadata.      |
-| `Source`                 | Source citation.             |
-| `ModelOption`            | Model selector option.       |
-| `ChatTheme`              | Theme configuration.         |
-| `ChatTab`                | `"chat" \| "uploads"`.       |
-| `QuickAction`            | Quick action definition.     |
-| `UploadedFile`           | Uploaded file info.          |
-| `Thread`                 | Conversation thread.         |
+| Type                     | Description                         |
+| ------------------------ | ----------------------------------- |
+| `ChatProps`              | `<Chat>` props.                     |
+| `ChatRootProps`          | `<ChatRoot>` props.                 |
+| `ChatMessageListProps`   | `<ChatMessageList>` props.          |
+| `ChatComposerProps`      | `<ChatComposer>` props.             |
+| `ChatEmptyProps`         | `<ChatEmpty>` props.                |
+| `MessageRootProps`       | `<Message.Root>` props.             |
+| `ErrorBannerProps`       | `<ErrorBanner>` props.              |
+| `ChatContextValue`       | Chat context shape.                 |
+| `MessageContextValue`    | Message context shape.              |
+| `ComposerContextValue`   | Composer context shape.             |
+| `ThreadListContextValue` | Thread list context shape.          |
+| `ChatMessage`            | Canonical parts-based chat message. |
+| `ChatMessagePart`        | Canonical message segment.          |
+| `ChatStreamEvent`        | Canonical chat stream event.        |
+| `PartGroup`              | Grouped parts for rendering.        |
+| `BranchInfo`             | Branch navigation info.             |
+| `FeedbackValue`          | `"positive" \| "negative"`.         |
+| `AttachmentInfo`         | Attached file metadata.             |
+| `Source`                 | Source citation.                    |
+| `ModelOption`            | Model selector option.              |
+| `ChatTheme`              | Theme configuration.                |
+| `ChatTab`                | `"chat" \| "uploads"`.              |
+| `QuickAction`            | Quick action definition.            |
+| `UploadedFile`           | Uploaded file info.                 |
+| `Thread`                 | Conversation thread.                |
 
 ## Related
 

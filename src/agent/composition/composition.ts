@@ -10,8 +10,8 @@
 import type { Agent } from "../types.ts";
 import type { Tool } from "#veryfront/tool";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
-import { ScopedRegistryFacade } from "#veryfront/ai/registry-facade.ts";
+import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
+import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { AgentToolInputSchema } from "../schemas/index.ts";
 
 export function agentAsTool(agent: Agent, description: string): Tool {

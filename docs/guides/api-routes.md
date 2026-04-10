@@ -129,7 +129,7 @@ export function GET() {
 }
 ```
 
-## AI chat endpoint
+## Chat endpoint
 
 The most common API route pattern in Veryfront connects a chat UI to an agent:
 
@@ -146,7 +146,7 @@ export async function POST(request: Request) {
 }
 ```
 
-Messages use the AI SDK v5 format: `{ id, role, parts: [{ type: "text", text }] }`. This pairs with `useChat({ api: "/api/chat" })` on the client, which handles the format automatically. See the [Chat UI](./chat-ui.md) guide.
+Messages use Veryfront's parts-based chat message format: `{ id, role, parts: [{ type: "text", text }] }`. This pairs with `useChat({ api: "/api/chat" })` on the client, which handles the format automatically. See the [Chat UI](./chat-ui.md) guide.
 
 ## Next
 

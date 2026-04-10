@@ -47,8 +47,6 @@ interface ScriptPageOptions {
 }
 
 const ESBUILD_EXTERNALS = [
-  "ai",
-  "ai/*",
   "zod",
   "node:*",
   "veryfront",

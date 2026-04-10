@@ -1,11 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { convertToolsToAISDK } from "./model-tool-converter.ts";
 import type { ToolDefinition } from "#veryfront/tool";
+import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 
 describe("model-tool-converter", () => {
   it("returns undefined for empty tools array", () => {
-    assertEquals(convertToolsToAISDK([]), undefined);
+    assertEquals(convertToolsToRuntimeTools([]), undefined);
   });
 
   it("converts a single tool definition", () => {
@@ -23,7 +23,7 @@ describe("model-tool-converter", () => {
       },
     ];
 
-    const result = convertToolsToAISDK(tools)!;
+    const result = convertToolsToRuntimeTools(tools)!;
     assertEquals(typeof result, "object");
     assertEquals("search" in result, true);
     assertEquals(typeof result.search, "object");
@@ -47,7 +47,7 @@ describe("model-tool-converter", () => {
       },
     ];
 
-    const result = convertToolsToAISDK(tools)!;
+    const result = convertToolsToRuntimeTools(tools)!;
     assertEquals(Object.keys(result).sort(), ["calculate", "search"]);
   });
 
@@ -60,8 +60,8 @@ describe("model-tool-converter", () => {
       },
     ];
 
-    const result = convertToolsToAISDK(tools)!;
-    // The AI SDK tool() wraps the definition; check it exists
+    const result = convertToolsToRuntimeTools(tools)!;
+    // The runtime tool entry should preserve the execute handler.
     assertEquals("weather" in result, true);
   });
 
@@ -88,13 +88,13 @@ describe("model-tool-converter", () => {
       },
     ];
 
-    const result = convertToolsToAISDK(tools);
+    const result = convertToolsToRuntimeTools(tools);
     assertEquals(result !== undefined, true);
     assertEquals("create_file" in result!, true);
   });
 
   it("adds provider-native web_search for anthropic models when explicitly allowed", () => {
-    const result = convertToolsToAISDK([], {
+    const result = convertToolsToRuntimeTools([], {
       model: "anthropic/claude-sonnet-4-6",
       allowedToolNames: ["web_search"],
     });
@@ -104,7 +104,7 @@ describe("model-tool-converter", () => {
   });
 
   it("adds provider-native web_search for veryfront-cloud anthropic models when explicitly allowed", () => {
-    const result = convertToolsToAISDK([], {
+    const result = convertToolsToRuntimeTools([], {
       model: "veryfront-cloud/anthropic/claude-sonnet-4-6",
       allowedToolNames: ["web_search"],
     });
@@ -114,7 +114,7 @@ describe("model-tool-converter", () => {
   });
 
   it("does not add provider-native web_search for non-anthropic models", () => {
-    const result = convertToolsToAISDK([], {
+    const result = convertToolsToRuntimeTools([], {
       model: "openai/gpt-4o-mini",
       allowedToolNames: ["web_search"],
     });
@@ -131,7 +131,7 @@ describe("model-tool-converter", () => {
       },
     ];
 
-    const result = convertToolsToAISDK(tools, {
+    const result = convertToolsToRuntimeTools(tools, {
       model: "anthropic/claude-sonnet-4-6",
       allowedToolNames: ["web_search"],
     });

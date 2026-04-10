@@ -299,9 +299,6 @@ function createImportMapPlugin(
       build.onResolve({ filter: /.*/ }, (args) => {
         if (args.path.startsWith("http://") || args.path.startsWith("https://")) return undefined;
         if (args.path.startsWith("node:")) return { path: args.path, external: true };
-        if (args.path === "ai/react" || args.path.startsWith("ai/react/")) {
-          return { path: args.path, external: true };
-        }
 
         if (
           args.path.includes("bundle-manifest-kv") || args.path.includes("bundle-manifest-redis")
@@ -483,8 +480,8 @@ function loadAndTranspileModule(
       // Filter out framework-managed packages from user deps. These are already
       // handled by the framework's own external/rewrite logic and should not be
       // treated as user npm packages.
-      const frameworkPackages = new Set(["ai", "zod", "veryfront", "react", "react-dom", "path"]);
-      const frameworkPrefixes = ["@ai-sdk/", "@opentelemetry/", "node:", "veryfront/"];
+      const frameworkPackages = new Set(["zod", "veryfront", "react", "react-dom", "path"]);
+      const frameworkPrefixes = ["@opentelemetry/", "node:", "veryfront/"];
       const userDeps = new Map<string, string>();
       for (const [name, version] of allDeps) {
         if (frameworkPackages.has(name)) continue;
@@ -529,10 +526,6 @@ function loadAndTranspileModule(
         resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
         banner: { js: requireShim },
         external: [
-          "ai",
-          "ai/*",
-          "ai/react",
-          "@ai-sdk/*",
           "zod",
           "node:*",
           ...NODE_BUILTINS,
@@ -704,16 +697,7 @@ async function rewriteExternalImports(
         }
       };
 
-      const externalPackagesToResolve = [
-        "zod",
-        "ai",
-        "@ai-sdk/anthropic",
-        "@ai-sdk/openai",
-        "@ai-sdk/google",
-        "@ai-sdk/mistral",
-        "@ai-sdk/provider",
-        "@ai-sdk/provider-utils",
-      ];
+      const externalPackagesToResolve = ["zod"];
 
       for (const name of userDeps.keys()) {
         if (!externalPackagesToResolve.includes(name)) {

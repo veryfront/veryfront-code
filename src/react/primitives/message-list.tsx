@@ -1,5 +1,5 @@
 import * as React from "react";
-import type { UIMessage } from "#veryfront/agent/react";
+import type { ChatMessage } from "#veryfront/agent/react";
 
 export interface MessageListProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
@@ -25,7 +25,7 @@ export const MessageList = React.forwardRef<HTMLDivElement, MessageListProps>(
 MessageList.displayName = "MessageList";
 
 export interface MessageItemProps extends React.HTMLAttributes<HTMLDivElement> {
-  role: UIMessage["role"];
+  role: ChatMessage["role"];
   /** Message content (can be children or prop) - deprecated, use children with parts */
   content?: string;
   children?: React.ReactNode;

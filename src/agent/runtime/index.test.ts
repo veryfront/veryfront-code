@@ -1,12 +1,16 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { collectFinalStreamToolResults, collectPersistedToolResults } from "./index.ts";
-import type { AIStreamState } from "./ai-stream-handler.ts";
+import {
+  collectFinalStreamToolResults,
+  collectGeneratedToolResults,
+  collectPersistedToolResults,
+} from "./index.ts";
+import type { ChatStreamState } from "./chat-stream-handler.ts";
 import type { Message } from "../types.ts";
 
 function createState(
-  toolResults: AIStreamState["toolResults"],
-): Pick<AIStreamState, "toolResults"> {
+  toolResults: ChatStreamState["toolResults"],
+): Pick<ChatStreamState, "toolResults"> {
   return { toolResults };
 }
 
@@ -88,5 +92,23 @@ describe("agent runtime streamed tool result collection", () => {
 
     assertEquals(persistedToolResults.size, 1);
     assertEquals(persistedToolResults.get("tool-3")?.result, { submitted: true });
+  });
+
+  it("collects the latest generated tool result from direct model output", () => {
+    const generatedToolResults = collectGeneratedToolResults([
+      {
+        toolCallId: "tool-4",
+        toolName: "web_search",
+        result: { ok: false },
+      },
+      {
+        toolCallId: "tool-4",
+        toolName: "web_search",
+        result: { ok: true },
+      },
+    ]);
+
+    assertEquals(generatedToolResults.size, 1);
+    assertEquals(generatedToolResults.get("tool-4")?.result, { ok: true });
   });
 });

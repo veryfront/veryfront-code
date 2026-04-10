@@ -43,8 +43,8 @@ export type { Font, GoogleFontsProps } from "./fonts/index.ts";
 // ---------------------------------------------------------------------------
 // Markdown (veryfront/markdown)
 // ---------------------------------------------------------------------------
-export { Markdown } from "./components/ai/markdown.tsx";
-export type { CodeBlockProps, MarkdownProps } from "./components/ai/markdown.tsx";
+export { Markdown } from "./components/chat/markdown.tsx";
+export type { CodeBlockProps, MarkdownProps } from "./components/chat/markdown.tsx";
 
 // ---------------------------------------------------------------------------
 // MDX (veryfront/mdx)
@@ -55,8 +55,8 @@ export type { MDXProviderProps } from "./components/MDXProvider.tsx";
 // ---------------------------------------------------------------------------
 // Chat — Core preset + compound
 // ---------------------------------------------------------------------------
-export { Chat, ChatComponents } from "./components/ai/chat.tsx";
-export type { ChatProps } from "./components/ai/chat.tsx";
+export { Chat, ChatComponents } from "./components/chat/chat.tsx";
+export type { ChatProps } from "./components/chat/chat.tsx";
 
 // Chat — Composition building blocks
 export {
@@ -68,7 +68,7 @@ export {
   ErrorBanner,
   Message,
   ModelAvatar,
-} from "./components/ai/chat.tsx";
+} from "./components/chat/chat.tsx";
 export type {
   ChatComposerProps,
   ChatEmptyProps,
@@ -78,7 +78,7 @@ export type {
   ErrorBannerProps,
   MessageRootProps,
   ModelAvatarProps,
-} from "./components/ai/chat.tsx";
+} from "./components/chat/chat.tsx";
 
 // Chat — Contexts
 export {
@@ -94,13 +94,13 @@ export {
   useMessageContextOptional,
   useThreadListContext,
   useThreadListContextOptional,
-} from "./components/ai/chat.tsx";
+} from "./components/chat/chat.tsx";
 export type {
   ChatContextValue,
   ComposerContextValue,
   MessageContextValue,
   ThreadListContextValue,
-} from "./components/ai/chat.tsx";
+} from "./components/chat/chat.tsx";
 
 // Chat — Sub-components
 export {
@@ -140,7 +140,7 @@ export {
   UpgradeCTA,
   UploadsPanel,
   useThreads,
-} from "./components/ai/chat.tsx";
+} from "./components/chat/chat.tsx";
 export type {
   AttachmentInfo,
   AttachmentPillProps,
@@ -184,20 +184,20 @@ export type {
   UploadsPanelProps,
   UseThreadsOptions,
   UseThreadsResult,
-} from "./components/ai/chat.tsx";
+} from "./components/chat/chat.tsx";
 
 // Standalone message components
-export { Message as StandaloneMessage, StreamingMessage } from "./components/ai/message.tsx";
-export type { MessageProps, StreamingMessageProps } from "./components/ai/message.tsx";
+export { Message as StandaloneMessage, StreamingMessage } from "./components/chat/message.tsx";
+export type { MessageProps, StreamingMessageProps } from "./components/chat/message.tsx";
 
-export { AgentCard } from "./components/ai/agent-card.tsx";
-export type { AgentCardProps } from "./components/ai/agent-card.tsx";
+export { AgentCard } from "./components/chat/agent-card.tsx";
+export type { AgentCardProps } from "./components/chat/agent-card.tsx";
 
-export { AIErrorBoundary, useAIErrorHandler } from "./components/ai/error-boundary.tsx";
-export type { AIErrorBoundaryProps } from "./components/ai/error-boundary.tsx";
+export { ChatErrorBoundary, useChatErrorHandler } from "./components/chat/error-boundary.tsx";
+export type { ChatErrorBoundaryProps } from "./components/chat/error-boundary.tsx";
 
 // Theme utilities
-export type { AgentTheme, ChatTheme } from "./components/ai/theme.ts";
+export type { AgentTheme, ChatTheme } from "./components/chat/theme.ts";
 export {
   chatButtonVariants,
   chatContainerVariants,
@@ -208,21 +208,21 @@ export {
   mergeThemes,
   messageVariants,
   type VariantProps,
-} from "./components/ai/theme.ts";
+} from "./components/chat/theme.ts";
 export {
   ColorModeProvider,
   type ColorModeProviderProps,
   ColorModeScript,
   ColorModeToggle,
   useColorMode,
-} from "./components/ai/color-mode.tsx";
+} from "./components/chat/color-mode.tsx";
 
 // Design tokens
-export { chatTokens, getChatTokensCSS } from "./components/ai/chat-tokens.ts";
+export { chatTokens, getChatTokensCSS } from "./components/chat/chat-tokens.ts";
 export {
   ChatStyleProvider,
   type ChatStyleProviderProps,
-} from "./components/ai/chat-style-provider.tsx";
+} from "./components/chat/chat-style-provider.tsx";
 
 // ---------------------------------------------------------------------------
 // Chat — hooks (veryfront/chat)
@@ -231,21 +231,22 @@ export { useChat } from "#veryfront/agent/react/use-chat/index.ts";
 export type {
   BranchInfo,
   BrowserInferenceStatus,
-  DynamicToolUIPart,
+  ChatDynamicToolPart,
+  ChatMessage,
+  ChatMessagePart,
+  ChatReasoningPart,
+  ChatStepPart,
+  ChatTextPart,
+  ChatToolPart,
+  ChatToolResultPart,
+  ChatToolState,
   InferenceMode,
   OnToolCallArg,
-  ReasoningUIPart,
-  StepUIPart,
-  TextUIPart,
   ToolOutput,
-  ToolResultUIPart,
-  ToolState,
-  ToolUIPart,
-  UIMessage,
-  UIMessagePart,
   UseChatOptions,
   UseChatResult,
 } from "#veryfront/agent/react/use-chat/index.ts";
+export type { ChatFinishReason, ChatStreamEvent } from "#veryfront/agent/react/use-chat/index.ts";
 
 export { useAgent } from "#veryfront/agent/react/use-agent.ts";
 export type { UseAgentOptions, UseAgentResult } from "#veryfront/agent/react/use-agent.ts";

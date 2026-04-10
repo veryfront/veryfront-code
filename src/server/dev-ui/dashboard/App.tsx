@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Header } from "./components/Header.tsx";
 import { TabNav } from "./components/TabNav.tsx";
-import { AITab } from "./components/AITab.tsx";
+import { AgentTab } from "./components/AgentTab.tsx";
 import { ServerTab } from "./components/ServerTab.tsx";
 import { RuntimeTab } from "./components/RuntimeTab.tsx";
 import { FilesTab } from "./components/FilesTab.tsx";
@@ -53,10 +53,10 @@ export interface Handler {
   enabled: string;
 }
 
-export type TabId = "ai" | "server" | "runtime" | "files" | "errors" | "config" | "api";
+export type TabId = "agent" | "server" | "runtime" | "files" | "errors" | "config" | "api";
 
 const TABS: Array<{ id: TabId; label: string }> = [
-  { id: "ai", label: "AI" },
+  { id: "agent", label: "Agent" },
   { id: "server", label: "Server" },
   { id: "runtime", label: "Runtime" },
   { id: "files", label: "Files" },
@@ -71,7 +71,7 @@ async function fetchJson(url: string): Promise<unknown> {
 }
 
 export function App(): JSX.Element {
-  const [currentTab, setCurrentTab] = useState<TabId>("ai");
+  const [currentTab, setCurrentTab] = useState<TabId>("agent");
   const [tools, setTools] = useState<Tool[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
   const [prompts, setPrompts] = useState<Prompt[]>([]);
@@ -107,8 +107,8 @@ export function App(): JSX.Element {
       <TabNav tabs={TABS} currentTab={currentTab} onTabChange={setCurrentTab} />
 
       <div className="tab-content">
-        {currentTab === "ai" && (
-          <AITab tools={tools} resources={resources} prompts={prompts} agents={agents} />
+        {currentTab === "agent" && (
+          <AgentTab tools={tools} resources={resources} prompts={prompts} agents={agents} />
         )}
         {currentTab === "server" && <ServerTab />}
         {currentTab === "runtime" && <RuntimeTab />}

@@ -210,7 +210,7 @@ export function startProductionServer(
       // the actual data client-side after hydration.
       enableSSRClientOnlyFetching();
 
-      // Run AI discovery before serving (registries must be populated before first request)
+      // Run primitive discovery before serving (registries must be populated before first request)
       if (discoveryConfig) {
         try {
           const { discoverAll } = await import("#veryfront/discovery");
@@ -242,7 +242,7 @@ export function startProductionServer(
             });
           }
         } catch (error) {
-          serverLog.error("AI discovery failed", {
+          serverLog.error("Primitive discovery failed", {
             error: error instanceof Error ? error.message : String(error),
           });
         }

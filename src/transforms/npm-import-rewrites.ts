@@ -1,9 +1,8 @@
 /**
  * NPM Import Rewrites for Deno
  *
- * Generates regex rewrite rules from deno.json's import map so that bare
- * specifiers in user code (e.g. `from "ai"`) are rewritten to pinned npm:
- * specifiers (e.g. `from "npm:ai@6.0.33"`).
+ * Generates regex rewrite rules from deno.json's import map for the small set
+ * of framework-managed bare specifiers that still need pinning in Deno.
  *
  * Single source of truth: versions come from deno.json — no hardcoded strings.
  *
@@ -18,13 +17,6 @@ import { join } from "#veryfront/compat/path/index.ts";
  * Each must have a corresponding entry in deno.json's import map.
  */
 const REWRITABLE_PACKAGES = [
-  "ai",
-  "@ai-sdk/anthropic",
-  "@ai-sdk/openai",
-  "@ai-sdk/google",
-  "@ai-sdk/mistral",
-  "@ai-sdk/provider",
-  "@ai-sdk/provider-utils",
   "zod",
 ] as const;
 
@@ -46,16 +38,16 @@ function buildRules(importMap: Record<string, string>): RewriteRule[] {
     const mapped = importMap[pkg];
     if (!mapped) continue;
 
-    // deno.json values look like "npm:ai@6.0.33" — use as-is
+    // deno.json values look like "npm:zod@4.3.6" — use as-is
     const escaped = escapeForRegex(pkg);
 
-    // Static imports: from "ai"
+    // Static imports
     rules.push({
       pattern: new RegExp(`from\\s+["']${escaped}["']`, "g"),
       replacement: `from "${mapped}"`,
     });
 
-    // Dynamic imports: import("ai")
+    // Dynamic imports
     rules.push({
       pattern: new RegExp(`import\\s*\\(\\s*["']${escaped}["']\\s*\\)`, "g"),
       replacement: `import("${mapped}")`,

@@ -47,19 +47,18 @@
 | **`build/`** | `#veryfront/build` | Production builds, SSG, asset optimization      |
 | **`cli/`**   | `veryfront/cli`    | Command-line interface (`dev`, `build`, `init`) |
 
-### AI System
+### Agent System
 
-| Module            | Export Alias         | Purpose                                        |
-| ----------------- | -------------------- | ---------------------------------------------- |
-| **`agent/`**      | `veryfront/agent`    | AI agent runtime, memory, composition          |
-| **`tool/`**       | `veryfront/tool`     | Tool definitions and registry                  |
-| **`workflow/`**   | `veryfront/workflow` | Durable DAG-based workflow engine              |
-| **`prompt/`**     | `veryfront/prompt`   | Prompt templates and registry                  |
-| **`resource/`**   | `veryfront/resource` | Resource definitions (MCP protocol)            |
-| **`mcp/`**        | `veryfront/mcp`      | Model Context Protocol server                  |
-| **`provider/`**   | `veryfront/provider` | AI model providers (OpenAI, Anthropic, Google) |
-| **`ai/`**         | -                    | AI utilities                                   |
-| **`embeddings/`** | -                    | Vector embeddings for semantic search          |
+| Module           | Export Alias          | Purpose                                        |
+| ---------------- | --------------------- | ---------------------------------------------- |
+| **`agent/`**     | `veryfront/agent`     | AI agent runtime, memory, composition          |
+| **`tool/`**      | `veryfront/tool`      | Tool definitions and registry                  |
+| **`workflow/`**  | `veryfront/workflow`  | Durable DAG-based workflow engine              |
+| **`prompt/`**    | `veryfront/prompt`    | Prompt templates and registry                  |
+| **`resource/`**  | `veryfront/resource`  | Resource definitions (MCP protocol)            |
+| **`mcp/`**       | `veryfront/mcp`       | Model Context Protocol server                  |
+| **`provider/`**  | `veryfront/provider`  | AI model providers (OpenAI, Anthropic, Google) |
+| **`embedding/`** | `veryfront/embedding` | Vector embeddings for semantic search          |
 
 ### Supporting Modules
 
@@ -327,7 +326,7 @@
 **Directories**:
 
 - `components/` - Framework components
-  - `ai/` - AI-related components
+  - `chat/` - Chat-related components
 - `compat/` - React version compatibility
 - `primitives/` - Low-level React primitives
 
@@ -467,7 +466,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 ---
 
-### AI Modules
+### Agent Modules
 
 #### `agent/` - Agent Runtime
 
@@ -514,19 +513,16 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 - Model Context Protocol server
 - Aggregates tools, prompts, resources
 
-#### `provider/` - AI Providers
+#### `provider/` - Model Providers
 
 **Exports**: `veryfront/provider`
 
 - Provider adapters (OpenAI, Anthropic, Google)
 - Provider initialization and management
 
-#### `ai/` - AI Utilities
+#### `embedding/` - Vector Embeddings
 
-- Shared AI utilities
-- Model helpers
-
-#### `embeddings/` - Vector Embeddings
+**Exports**: `veryfront/embedding`
 
 - Vector embedding generation
 - Semantic search support

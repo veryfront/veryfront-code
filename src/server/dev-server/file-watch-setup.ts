@@ -13,8 +13,8 @@ const fileWatchSetupLog = logger.component("file-watch-setup");
 
 const METRICS_LOG_INTERVAL = 10;
 
-/** Default AI primitive directories (used when no custom paths configured) */
-const DEFAULT_AI_DIRS = ["tools", "agents", "workflows", "prompts", "resources"];
+/** Default agent/chat primitive directories (used when no custom paths configured) */
+const DEFAULT_PRIMITIVE_DIRS = ["tools", "agents", "workflows", "prompts", "resources"];
 
 /**
  * Patterns for paths that should NOT trigger HMR updates.
@@ -51,7 +51,7 @@ export class FileWatchSetup {
   private watcherController?: AbortController;
   private optimizedWatcher?: OptimizedFileWatcher;
   private batchCount = 0;
-  private aiDirs: Set<string>;
+  private primitiveDirs: Set<string>;
   /** Content hashes to skip re-renders when file content is unchanged */
   private contentHashes = new Map<string, number>();
 
@@ -62,9 +62,9 @@ export class FileWatchSetup {
     private debounceMs: number,
     private invalidateHandler: () => void = () => {},
     private devServer?: DevServer,
-    aiDirNames?: string[],
+    primitiveDirNames?: string[],
   ) {
-    this.aiDirs = new Set(aiDirNames ?? DEFAULT_AI_DIRS);
+    this.primitiveDirs = new Set(primitiveDirNames ?? DEFAULT_PRIMITIVE_DIRS);
   }
 
   async setup(): Promise<void> {
@@ -105,8 +105,8 @@ export class FileWatchSetup {
       join(this.projectDir, "styles"),
       join(this.projectDir, "public"),
       join(this.projectDir, "app"),
-      // AI primitive directories (from config or defaults)
-      ...Array.from(this.aiDirs).map((dir) => join(this.projectDir, dir)),
+      // Agent/chat primitive directories (from config or defaults)
+      ...Array.from(this.primitiveDirs).map((dir) => join(this.projectDir, dir)),
     ];
 
     const watchPaths: string[] = [];
@@ -175,13 +175,13 @@ export class FileWatchSetup {
   }
 
   /**
-   * Check if a path is inside an AI primitive directory (tools/, agents/, etc.)
+   * Check if a path is inside a configured primitive directory (tools/, agents/, etc.)
    * Uses path segment matching to avoid false positives from substrings.
    */
-  private isAIPath(fullPath: string): boolean {
+  private isPrimitivePath(fullPath: string): boolean {
     const rel = relative(this.projectDir, fullPath);
     const firstSegment = rel.split(sep)[0] ?? "";
-    return this.aiDirs.has(firstSegment);
+    return this.primitiveDirs.has(firstSegment);
   }
 
   /**
@@ -233,10 +233,10 @@ export class FileWatchSetup {
       return;
     }
 
-    // Check for AI file changes and trigger re-discovery
-    const hasAIChanges = actualChanges.some((p) => this.isAIPath(p));
-    if (hasAIChanges && this.devServer) {
-      await this.devServer.rediscoverAI();
+    // Check for primitive file changes and trigger re-discovery
+    const hasPrimitiveChanges = actualChanges.some((p) => this.isPrimitivePath(p));
+    if (hasPrimitiveChanges && this.devServer) {
+      await this.devServer.rediscoverPrimitives();
     }
 
     await this.refreshAndReload(actualChanges, "");

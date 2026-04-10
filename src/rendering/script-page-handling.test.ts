@@ -75,7 +75,6 @@ function createFileUrl(path: string): string {
 
 function rewriteNpmImports(code: string): string {
   const rewrites: Array<{ pattern: RegExp; replacement: string }> = [
-    { pattern: /from\s+["']ai["']/g, replacement: 'from "npm:ai@latest"' },
     { pattern: /from\s+["']zod["']/g, replacement: 'from "npm:zod@latest"' },
   ];
 
@@ -236,12 +235,6 @@ describe("script-page-handling helpers", () => {
   });
 
   describe("rewriteNpmImports", () => {
-    it("should rewrite bare 'ai' import", () => {
-      const code = `import { generateText } from "ai"`;
-      const result = rewriteNpmImports(code);
-      assertEquals(result, `import { generateText } from "npm:ai@latest"`);
-    });
-
     it("should rewrite bare 'zod' import", () => {
       const code = `import { z } from "zod"`;
       const result = rewriteNpmImports(code);
@@ -249,10 +242,10 @@ describe("script-page-handling helpers", () => {
     });
 
     it("should rewrite multiple imports", () => {
-      const code = `import { z } from "zod"\nimport { generateText } from "ai"`;
+      const code = `import { z } from "zod"\nimport { foo } from "other-package"`;
       const result = rewriteNpmImports(code);
       assertEquals(result.includes('from "npm:zod@latest"'), true);
-      assertEquals(result.includes('from "npm:ai@latest"'), true);
+      assertEquals(result.includes('from "other-package"'), true);
     });
 
     it("should not modify other imports", () => {

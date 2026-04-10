@@ -1,7 +1,9 @@
-import type { EmbeddingModel } from "ai";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createOpenAI } from "@ai-sdk/openai";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import {
+  createGoogleEmbeddingRuntime,
+  createOpenAIEmbeddingRuntime,
+} from "#veryfront/provider/runtime-loader.ts";
+import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
@@ -9,7 +11,7 @@ import {
   requireVeryfrontCloudBootstrap,
 } from "#veryfront/provider/veryfront-cloud/shared.ts";
 
-export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingModel {
+export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "embedding");
   const { apiBaseUrl, apiToken } = requireVeryfrontCloudBootstrap();
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
@@ -17,20 +19,20 @@ export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingMo
 
   switch (provider) {
     case "openai":
-      return createOpenAI({
+      return createOpenAIEmbeddingRuntime({
         apiKey: apiToken,
         baseURL,
         name: "veryfront-cloud",
         fetch,
-      }).embedding(upstreamModelId);
+      }, upstreamModelId);
 
     case "google":
-      return createGoogleGenerativeAI({
+      return createGoogleEmbeddingRuntime({
         apiKey: apiToken,
         baseURL,
         name: "veryfront-cloud",
         fetch,
-      }).textEmbeddingModel(upstreamModelId);
+      }, upstreamModelId);
   }
 
   throw toError(

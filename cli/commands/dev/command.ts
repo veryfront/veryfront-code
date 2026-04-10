@@ -9,7 +9,7 @@ import { runtime } from "veryfront/platform";
 import { getConfig } from "veryfront/config";
 import { getEnvironmentConfig } from "veryfront/config";
 import { startDevServer } from "veryfront/server";
-import { validateAIConfig } from "veryfront/discovery";
+import { validateProviderConfig } from "veryfront/discovery";
 import { yellow } from "#cli/ui";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { banner, brand, dim, error as errorColor, success } from "#cli/ui";
@@ -74,8 +74,8 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
       const projectSlug = config?.fs?.veryfront?.projectSlug ?? env.projectSlug;
 
-      // Validate AI config and print warnings (framework returns plain text, CLI adds colors)
-      const aiValidation = validateAIConfig(config);
+      // Validate provider config and print warnings (framework returns plain text, CLI adds colors)
+      const aiValidation = validateProviderConfig(config);
       if (aiValidation.warnings.length > 0) {
         console.log("");
         for (const warning of aiValidation.warnings) {

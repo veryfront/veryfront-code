@@ -4,17 +4,21 @@
  */
 
 import { resolveModel } from "../model-registry.ts";
-import { streamText } from "ai";
+import { getModelRuntimeId, getModelRuntimeProvider } from "../runtime-inspection.ts";
+import { streamText } from "#veryfront/runtime/runtime-bridge.ts";
 
-// Suppress AI SDK warnings for cleaner output
-globalThis.AI_SDK_LOG_WARNINGS = false;
+// Suppress provider adapter warnings for cleaner output.
+Object.defineProperty(globalThis, "AI_SDK_LOG_WARNINGS", {
+  value: false,
+  configurable: true,
+  writable: true,
+});
 
 console.log('1. Resolving "openai/gpt-4o" (no API key set)...');
 const model = resolveModel("openai/gpt-4o");
-const m = model as Record<string, unknown>;
-console.log(`   → Got model: ${m.modelId ?? m.provider}`);
+console.log(`   → Got model: ${getModelRuntimeId(model) ?? getModelRuntimeProvider(model)}`);
 
-console.log("\n2. Streaming response via AI SDK...");
+console.log("\n2. Streaming response via the framework runtime bridge...");
 const result = streamText({
   model,
   messages: [{ role: "user", content: "What is 2+2? Answer in one word." }],

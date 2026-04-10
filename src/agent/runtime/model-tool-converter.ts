@@ -1,18 +1,21 @@
 /**
  * Model Tool Converter
  *
- * Converts veryfront ToolDefinition[] to AI SDK ToolSet format.
- * Uses jsonSchema() to pass JSON Schema parameters directly to the AI SDK.
+ * Converts veryfront ToolDefinition[] to the current model-runtime ToolSet
+ * format using framework-owned plain tool/schema objects.
  *
- * @module ai/agent/runtime/model-tool-converter
+ * @module agent/runtime/model-tool-converter
  */
-
-import { jsonSchema, tool } from "ai";
-import type { ToolSet } from "ai";
 import type { ToolDefinition } from "#veryfront/tool";
-import { anthropic } from "@ai-sdk/anthropic";
+import type { RuntimeToolSet } from "./runtime-tool-types.ts";
+import {
+  addRuntimeTool,
+  createRuntimeJsonSchema,
+  createRuntimeTool,
+} from "./runtime-tool-builder.ts";
+import { createAnthropicWebSearchToolSet } from "./provider-native-tools.ts";
 
-export interface ConvertToolsToAISDKOptions {
+export interface ConvertToolsToRuntimeToolsOptions {
   model?: string;
   allowedToolNames?: string[];
 }
@@ -30,8 +33,8 @@ function resolveHostedProvider(model?: string): string | undefined {
 }
 
 function resolveProviderNativeTools(
-  options?: ConvertToolsToAISDKOptions,
-): ToolSet | undefined {
+  options?: ConvertToolsToRuntimeToolsOptions,
+): RuntimeToolSet | undefined {
   if (!options?.allowedToolNames?.includes("web_search")) {
     return undefined;
   }
@@ -40,30 +43,30 @@ function resolveProviderNativeTools(
     return undefined;
   }
 
-  return {
-    web_search: anthropic.tools.webSearch_20250305({
-      maxUses: 5,
-    }),
-  };
+  return createAnthropicWebSearchToolSet();
 }
 
 /**
- * Convert veryfront tool definitions to AI SDK ToolSet.
+ * Convert veryfront tool definitions to the current model-runtime ToolSet.
  *
- * The AI SDK tool() function wraps each tool with its schema.
- * We don't provide `execute` — the agent runtime handles execution.
+ * We only provide the schema/metadata the runtime substrate needs here.
+ * Tool execution remains owned by the agent runtime.
  */
-export function convertToolsToAISDK(
+export function convertToolsToRuntimeTools(
   tools: ToolDefinition[],
-  options?: ConvertToolsToAISDKOptions,
-): ToolSet | undefined {
-  const toolSet: ToolSet = {};
+  options?: ConvertToolsToRuntimeToolsOptions,
+): RuntimeToolSet | undefined {
+  const toolSet: RuntimeToolSet = {};
 
   for (const def of tools) {
-    toolSet[def.name] = tool({
-      description: def.description,
-      inputSchema: jsonSchema(def.parameters),
-    });
+    addRuntimeTool(
+      toolSet,
+      def.name,
+      createRuntimeTool({
+        description: def.description,
+        inputSchema: createRuntimeJsonSchema(def.parameters),
+      }),
+    );
   }
 
   const providerNativeTools = resolveProviderNativeTools(options);

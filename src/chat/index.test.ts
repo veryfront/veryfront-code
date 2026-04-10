@@ -1,10 +1,10 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as chatModule from "./index.ts";
-import * as chatUI from "#veryfront/react/components/ai/chat.tsx";
-import * as messageModule from "#veryfront/react/components/ai/message.tsx";
-import * as agentCardModule from "#veryfront/react/components/ai/agent-card.tsx";
-import * as errorBoundaryModule from "#veryfront/react/components/ai/error-boundary.tsx";
+import * as chatUI from "#veryfront/react/components/chat/chat.tsx";
+import * as messageModule from "#veryfront/react/components/chat/message.tsx";
+import * as agentCardModule from "#veryfront/react/components/chat/agent-card.tsx";
+import * as errorBoundaryModule from "#veryfront/react/components/chat/error-boundary.tsx";
 import * as useChatModule from "#veryfront/agent/react/use-chat/index.ts";
 import * as useAgentModule from "#veryfront/agent/react/use-agent.ts";
 import * as useCompletionModule from "#veryfront/agent/react/use-completion.ts";
@@ -12,11 +12,11 @@ import * as useStreamingModule from "#veryfront/agent/react/use-streaming.ts";
 import * as useVoiceInputModule from "#veryfront/agent/react/use-voice-input.ts";
 
 const expectedRuntimeExports = [
-  "AIErrorBoundary",
   "AgentCard",
   "AttachmentPill",
   "BranchPicker",
   "Chat",
+  "ChatErrorBoundary",
   "ChatComponents",
   "ChatComposer",
   "ChatContextProvider",
@@ -67,9 +67,9 @@ const expectedRuntimeExports = [
   "isReasoningPart",
   "isSkillToolPart",
   "isToolPart",
-  "useAIErrorHandler",
   "useAgent",
   "useChat",
+  "useChatErrorHandler",
   "useChatContext",
   "useChatContextOptional",
   "useCompletion",
@@ -98,7 +98,7 @@ describe("chat/index.ts exports", () => {
     assertEquals(chatModule.useStreaming, useStreamingModule.useStreaming);
     assertEquals(chatModule.useVoiceInput, useVoiceInputModule.useVoiceInput);
     assertEquals(chatModule.AgentCard, agentCardModule.AgentCard);
-    assertEquals(chatModule.AIErrorBoundary, errorBoundaryModule.AIErrorBoundary);
+    assertEquals(chatModule.ChatErrorBoundary, errorBoundaryModule.ChatErrorBoundary);
   });
 
   it("keeps standalone message aliases separate from the chat compound export", () => {

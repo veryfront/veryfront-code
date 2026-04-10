@@ -1,12 +1,11 @@
 /**
  * Bridge between BrowserInferenceClient (Worker) and useChat's streaming interface.
  *
- * Converts UIMessage[] to simple {role, content}[] for the Worker,
+ * Converts ChatMessage[] to simple {role, content}[] for the Worker,
  * and synthesizes the same streaming updates that handleStreamingResponse produces.
  */
 
-import type { BrowserInferenceStatus } from "../types.ts";
-import type { UIMessage, UIMessagePart } from "../types.ts";
+import type { BrowserInferenceStatus, ChatMessage, ChatMessagePart } from "../types.ts";
 import { generateClientId } from "../utils.ts";
 import { BrowserInferenceClient } from "./worker-client.ts";
 
@@ -16,15 +15,15 @@ const DEFAULT_BROWSER_MAX_TOKENS = 512;
 const DEFAULT_BROWSER_TEMPERATURE = 0.7;
 
 interface BrowserInferenceCallbacks {
-  onUpdate: (parts: UIMessagePart[], messageId: string) => void;
-  onMessage: (message: UIMessage) => void;
+  onUpdate: (parts: ChatMessagePart[], messageId: string) => void;
+  onMessage: (message: ChatMessage) => void;
   onStatusChange: (status: BrowserInferenceStatus) => void;
   onDownloadProgress?: (progress: number) => void;
   onError: (error: Error) => void;
 }
 
 function extractTextFromMessages(
-  messages: UIMessage[],
+  messages: ChatMessage[],
 ): Array<{ role: string; content: string }> {
   return messages
     .filter((m) => m.role === "user" || m.role === "assistant")
@@ -37,7 +36,7 @@ function extractTextFromMessages(
 }
 
 export function runBrowserInference(
-  messages: UIMessage[],
+  messages: ChatMessage[],
   systemPrompt: string,
   callbacks: BrowserInferenceCallbacks,
 ): void {
@@ -60,16 +59,16 @@ export function runBrowserInference(
       onDownloadProgress: (progress) => callbacks.onDownloadProgress?.(progress),
       onToken: (token) => {
         accumulated = token; // transformers.js callback_function sends full text each time
-        const parts: UIMessagePart[] = [
+        const parts: ChatMessagePart[] = [
           { type: "text", text: accumulated, state: "streaming" },
         ];
         callbacks.onUpdate(parts, messageId);
       },
       onDone: (text) => {
-        const finalParts: UIMessagePart[] = [
+        const finalParts: ChatMessagePart[] = [
           { type: "text", text: text || accumulated, state: "done" },
         ];
-        const assistantMessage: UIMessage = {
+        const assistantMessage: ChatMessage = {
           id: messageId,
           role: "assistant",
           parts: finalParts,

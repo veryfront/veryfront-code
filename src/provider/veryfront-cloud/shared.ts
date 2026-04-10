@@ -113,7 +113,7 @@ export function getVeryfrontCloudGatewayBaseUrl(
  * Creates a fetch wrapper that replaces all SDK-injected auth headers with
  * a single `Authorization: Bearer` header for the Veryfront Cloud gateway.
  *
- * AI SDK providers set their own native auth headers (`x-api-key` for
+ * Provider runtimes set their own native auth headers (`x-api-key` for
  * Anthropic, `x-goog-api-key` for Google, `Authorization` for OpenAI).
  * The gateway expects only Bearer auth, so we strip all provider-specific
  * headers to prevent credential leakage to the wrong auth path.

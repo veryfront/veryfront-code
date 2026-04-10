@@ -1,13 +1,19 @@
 /**
  * Model Message Converter
  *
- * Converts between veryfront's internal Message format and AI SDK ModelMessage format.
- * Used when calling streamText() / generateText() from the AI SDK.
+ * Converts between veryfront's internal Message format and the current
+ * model-runtime message format.
  *
  * @module ai/agent/runtime/model-message-converter
  */
 
-import type { ModelMessage } from "ai";
+import type {
+  ModelRuntimeAssistantMessage,
+  ModelRuntimeMessage,
+  ModelRuntimeTextPart,
+  ModelRuntimeToolCallPart,
+  ModelRuntimeToolMessage,
+} from "./model-runtime-types.ts";
 import {
   getTextFromParts,
   getToolArguments,
@@ -16,24 +22,10 @@ import {
   type ToolResultPart,
 } from "../types.ts";
 
-interface TextContent {
-  type: "text";
-  text: string;
-}
-
-interface ToolCallContent {
-  type: "tool-call";
-  toolCallId: string;
-  toolName: string;
-  input: Record<string, unknown>;
-}
-
-type AssistantContent = TextContent | ToolCallContent;
-
 /**
- * Convert a veryfront Message to AI SDK ModelMessage format.
+ * Convert a veryfront Message to the current model-runtime message format.
  */
-export function convertToModelMessage(msg: Message): ModelMessage {
+export function convertToModelMessage(msg: Message): ModelRuntimeMessage {
   switch (msg.role) {
     case "system": {
       const text = getTextFromParts(msg.parts);
@@ -46,7 +38,7 @@ export function convertToModelMessage(msg: Message): ModelMessage {
     }
 
     case "assistant": {
-      const content: AssistantContent[] = [];
+      const content: Array<ModelRuntimeTextPart | ModelRuntimeToolCallPart> = [];
 
       for (const part of msg.parts) {
         if (part.type === "text" && "text" in part) {
@@ -74,16 +66,12 @@ export function convertToModelMessage(msg: Message): ModelMessage {
         content.push({ type: "text", text: "" });
       }
 
-      return { role: "assistant", content } as ModelMessage;
+      const assistantMessage: ModelRuntimeAssistantMessage = { role: "assistant", content };
+      return assistantMessage;
     }
 
     case "tool": {
-      const content: Array<{
-        type: "tool-result";
-        toolCallId: string;
-        toolName: string;
-        output: { type: "json"; value: unknown };
-      }> = [];
+      const content: ModelRuntimeToolMessage["content"] = [];
 
       for (const part of msg.parts) {
         if (part.type !== "tool-result") continue;
@@ -97,7 +85,8 @@ export function convertToModelMessage(msg: Message): ModelMessage {
         });
       }
 
-      return { role: "tool", content } as ModelMessage;
+      const toolMessage: ModelRuntimeToolMessage = { role: "tool", content };
+      return toolMessage;
     }
 
     default: {
@@ -110,7 +99,7 @@ export function convertToModelMessage(msg: Message): ModelMessage {
 
 function convertToolResultPart(
   part: ToolResultPart,
-): ModelMessage {
+): ModelRuntimeToolMessage {
   return {
     role: "tool",
     content: [{
@@ -119,14 +108,14 @@ function convertToolResultPart(
       toolName: part.toolName ?? "unknown",
       output: { type: "json", value: part.result },
     }],
-  } as ModelMessage;
+  };
 }
 
 /**
- * Convert an array of veryfront Messages to AI SDK ModelMessage format.
+ * Convert an array of veryfront Messages to the current model-runtime message format.
  */
-export function convertToModelMessages(messages: Message[]): ModelMessage[] {
-  const modelMessages: ModelMessage[] = [];
+export function convertToModelMessages(messages: Message[]): ModelRuntimeMessage[] {
+  const modelMessages: ModelRuntimeMessage[] = [];
   const toolResultMessageIndexes = new Map<string, number>();
 
   for (const message of messages) {

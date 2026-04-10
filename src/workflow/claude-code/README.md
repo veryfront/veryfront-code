@@ -892,7 +892,7 @@ worker:
     tag: ""
 
   # Worker runs same image, different entrypoint
-  command: ["deno", "run", "-A", "src/ai/workflow/worker/main.ts"]
+  command: ["deno", "run", "-A", "src/workflow/worker/job-entrypoint.ts"]
 
   resources:
     requests:
@@ -940,7 +940,7 @@ worker:
 ### Worker Implementation
 
 ```typescript
-// src/ai/workflow/worker/main.ts
+// src/workflow/worker/job-entrypoint.ts
 import { JobExecutor } from "../executor/job-executor.ts";
 import { createRedisBackend } from "../backends/redis.ts";
 import { RedisEventPublisher, streamingClaudeCodeAgent } from "../claude-code/index.ts";

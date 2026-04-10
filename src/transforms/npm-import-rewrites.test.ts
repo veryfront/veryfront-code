@@ -37,41 +37,33 @@ describe("npm-import-rewrites", () => {
   describe("buildRules", () => {
     it("generates static and dynamic import rules for each package", () => {
       const importMap = {
-        ai: "npm:ai@6.0.33",
         zod: "npm:zod@3.25.76",
       };
 
       const rules = buildRules(importMap);
 
-      // 2 packages × 2 rules (static + dynamic) = 4 rules
-      assertEquals(rules.length, 4);
+      // 1 package × 2 rules (static + dynamic) = 2 rules
+      assertEquals(rules.length, 2);
     });
 
     it("skips packages not in the import map", () => {
-      const rules = buildRules({ ai: "npm:ai@6.0.33" });
-      // Only "ai" is present — 2 rules (static + dynamic)
-      assertEquals(rules.length, 2);
+      const rules = buildRules({});
+      assertEquals(rules.length, 0);
     });
   });
 
   describe("rewriteNpmImports", () => {
-    it("rewrites static imports to pinned versions", () => {
-      const input = 'import { generateText } from "ai"';
+    it("rewrites static zod imports to pinned versions", () => {
+      const input = 'import { z } from "zod"';
       const result = rewriteNpmImports(input);
-      assertEquals(result.includes("npm:ai@"), true);
+      assertEquals(result.includes("npm:zod@"), true);
       assertEquals(result.includes("@latest"), false);
     });
 
-    it("rewrites dynamic imports to pinned versions", () => {
-      const input = 'const mod = await import("ai")';
+    it("rewrites dynamic zod imports to pinned versions", () => {
+      const input = 'const mod = await import("zod")';
       const result = rewriteNpmImports(input);
-      assertEquals(result.includes("npm:ai@"), true);
-    });
-
-    it("rewrites scoped packages", () => {
-      const input = 'import { anthropic } from "@ai-sdk/anthropic"';
-      const result = rewriteNpmImports(input);
-      assertEquals(result.includes("npm:@ai-sdk/anthropic@"), true);
+      assertEquals(result.includes("npm:zod@"), true);
     });
 
     it("does not rewrite unrelated imports", () => {
@@ -94,7 +86,7 @@ describe("npm-import-rewrites", () => {
         assertEquals(rules.length, 0);
 
         // rewriteNpmImports should be a no-op
-        const input = 'import { generateText } from "ai"';
+        const input = 'import { z } from "zod"';
         assertEquals(rewriteNpmImports(input), input);
       } finally {
         Deno.chdir(originalCwd);

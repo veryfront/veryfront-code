@@ -112,10 +112,10 @@ async function writePreviewChatApp(
     projectDir,
     configSource,
     `"use client";
-import type { UIMessage } from "veryfront/agent/react";
+import type { ChatMessage } from "veryfront/agent/react";
 import { Chat } from "veryfront/chat";
 
-const initialMessages: UIMessage[] = [
+const initialMessages: ChatMessage[] = [
   {
     id: "assistant-1",
     role: "assistant",
@@ -236,6 +236,21 @@ async function assertPreviewChatStyling(
     state: "attached",
   });
   await page.waitForSelector('svg path[d^="M17.3041"]');
+  await page.waitForFunction(() => {
+    const stylesheet = document.querySelector("link#vf-tailwind-css") as HTMLLinkElement | null;
+    const avatarPath = document.querySelector('svg path[d^="M17.3041"]');
+    const avatarSvg = avatarPath?.closest("svg");
+    const avatarBox = avatarSvg?.getBoundingClientRect();
+
+    return Boolean(
+      stylesheet?.sheet &&
+        avatarBox &&
+        avatarBox.width > 0 &&
+        avatarBox.width <= 24 &&
+        avatarBox.height > 0 &&
+        avatarBox.height <= 24,
+    );
+  });
 
   const previewState = await page.evaluate(() => {
     const stylesheet = document.querySelector("link#vf-tailwind-css") as HTMLLinkElement | null;

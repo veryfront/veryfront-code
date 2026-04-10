@@ -27,7 +27,7 @@ export const INTERNAL_PATH_PREFIXES = {
   PAGES: `${INTERNAL_PREFIX}/pages/`,
   /** Data JSON endpoints */
   DATA: `${INTERNAL_PREFIX}/data/`,
-  /** Library modules (AI SDK, etc.) */
+  /** Library modules and large vendor surfaces */
   LIB: `${INTERNAL_PREFIX}/lib/`,
   /** Chunk assets */
   CHUNKS: `${INTERNAL_PREFIX}/chunks/`,
@@ -68,9 +68,9 @@ export const INTERNAL_ENDPOINTS = {
   RSC_HYDRATE_CLIENT: `${INTERNAL_PREFIX}/rsc/hydrate-client.js`,
 
   // Library module endpoints
-  LIB_AI_REACT: `${INTERNAL_PREFIX}/lib/ai/react.js`,
-  LIB_AI_COMPONENTS: `${INTERNAL_PREFIX}/lib/ai/components.js`,
-  LIB_AI_PRIMITIVES: `${INTERNAL_PREFIX}/lib/ai/primitives.js`,
+  LIB_CHAT_REACT: `${INTERNAL_PREFIX}/lib/chat/react.js`,
+  LIB_CHAT_COMPONENTS: `${INTERNAL_PREFIX}/lib/chat/components.js`,
+  LIB_CHAT_PRIMITIVES: `${INTERNAL_PREFIX}/lib/chat/primitives.js`,
 } as const;
 
 /**

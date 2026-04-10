@@ -1,8 +1,8 @@
 /**
  * Embedding — RAG primitives for chunking, embedding, and similarity search.
  *
- * Provides a facade over AI SDK (embeddings, similarity) and LangChain
- * (text splitting) behind veryfront's own API.
+ * Provides a facade over the framework's current embedding runtime and
+ * LangChain text splitting behind veryfront's own API.
  *
  * @module embedding
  *
@@ -17,7 +17,7 @@
 
 export { embedding } from "./embedding.ts";
 export { chunk } from "./chunk.ts";
-export { cosineSimilarity as similarity } from "ai";
+export { cosineSimilarity as similarity } from "#veryfront/runtime/runtime-bridge.ts";
 export { vectorStore } from "./vector-store.ts";
 export { ragStore } from "./rag-store.ts";
 export { createUploadHandler } from "./upload-handler.ts";

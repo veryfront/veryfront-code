@@ -1,10 +1,10 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { InvalidToolInputError } from "ai";
 import { repairToolCall } from "./repair-tool-call.ts";
+import { createInvalidToolInputErrorForTest } from "./runtime-tool-errors.ts";
 
-function buildInvalidToolInputError(toolName: string, toolInput: string): InvalidToolInputError {
-  return new InvalidToolInputError({
+function buildInvalidToolInputError(toolName: string, toolInput: string): unknown {
+  return createInvalidToolInputErrorForTest({
     cause: new Error("Expected object, received string"),
     toolInput,
     toolName,

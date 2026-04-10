@@ -1,0 +1,114 @@
+/**
+ * Runtime Tool Types
+ *
+ * Framework-owned types for the current tool-calling and streaming runtime
+ * boundary. These cover only the shapes the framework consumes today.
+ */
+
+import type { ModelRuntimeMessage } from "./model-runtime-types.ts";
+
+export type RuntimeToolSet = Record<string, unknown>;
+
+export interface RuntimeGenerateToolCall {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+}
+
+export interface RuntimeGenerateToolResult {
+  toolCallId: string;
+  toolName: string;
+  result: unknown;
+  isError?: boolean;
+}
+
+export interface RuntimeGenerateUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
+
+export interface RuntimeGenerateTextResult {
+  text: string;
+  toolCalls?: RuntimeGenerateToolCall[];
+  toolResults?: RuntimeGenerateToolResult[];
+  usage?: RuntimeGenerateUsage;
+  finishReason?: string | null;
+}
+
+export interface RuntimeRepairToolCall {
+  type: "tool-call";
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  providerExecuted?: boolean;
+}
+
+export interface RuntimeToolCallRepairContext {
+  error: unknown;
+  inputSchema: (...args: unknown[]) => unknown;
+  messages: ModelRuntimeMessage[];
+  system?: string;
+  toolCall: RuntimeRepairToolCall;
+  tools: RuntimeToolSet;
+}
+
+export type RuntimeToolCallRepairFunction = (
+  context: RuntimeToolCallRepairContext,
+) => Promise<RuntimeRepairToolCall | null> | RuntimeRepairToolCall | null;
+
+export type RuntimeStreamPart =
+  | { type: "text-delta"; text: string }
+  | {
+    type: "tool-input-start";
+    id: string;
+    toolName: string;
+    providerExecuted?: boolean;
+    dynamic?: boolean;
+  }
+  | { type: "tool-input-delta"; id: string; delta: string }
+  | {
+    type: "tool-call";
+    toolCallId: string;
+    toolName: string;
+    input: unknown;
+    providerExecuted?: boolean;
+    dynamic?: boolean;
+  }
+  | {
+    type: "tool-result";
+    toolCallId: string;
+    toolName: string;
+    output?: unknown;
+    error?: unknown;
+    input?: unknown;
+    providerExecuted?: boolean;
+    dynamic?: boolean;
+    preliminary?: boolean;
+    isError?: boolean;
+  }
+  | {
+    type: "tool-error";
+    toolCallId: string;
+    toolName: string;
+    error?: unknown;
+    input?: unknown;
+    providerExecuted?: boolean;
+    dynamic?: boolean;
+    preliminary?: boolean;
+    isError?: boolean;
+  }
+  | {
+    type: "finish";
+    finishReason?: string | null;
+    totalUsage?: {
+      inputTokens?: number;
+      outputTokens?: number;
+    } | null;
+  }
+  | { type: "error"; error: unknown };
+
+export interface RuntimeStreamResult {
+  fullStream: AsyncIterable<unknown>;
+  textStream: AsyncIterable<string>;
+}

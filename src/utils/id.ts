@@ -1,4 +1,4 @@
-/** ID generation utilities (AI SDK compatible: 16-char alphanumeric with optional prefix) */
+/** ID generation utilities (16-char alphanumeric with optional prefix) */
 
 const ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 

@@ -68,8 +68,10 @@ const bunRunner = resolve(scriptDir, "bun", "run-tests.mjs");
 const nodeRunner = resolve(scriptDir, "node", "run-tests.mjs");
 
 const availableCores = getAvailableCores();
-const totalConcurrency =
-  resolveConcurrency(["VF_TEST_CONCURRENCY_TOTAL", "VF_TEST_TOTAL_CONCURRENCY"]);
+const totalConcurrency = resolveConcurrency([
+  "VF_TEST_CONCURRENCY_TOTAL",
+  "VF_TEST_TOTAL_CONCURRENCY",
+]);
 const fallbackPerRunner = Math.max(1, Math.floor((totalConcurrency ?? availableCores) / 2));
 const autoShards = Math.min(4, Math.max(1, Math.floor(fallbackPerRunner / 2)));
 
@@ -81,7 +83,8 @@ if (!bunEnv.BUN_TEST_SHARDS && !bunEnv.VF_TEST_SHARDS && autoShards > 1) {
   bunEnv.BUN_TEST_SHARDS = String(autoShards);
 }
 if (profile === "fast" && !bunEnv.VF_TEST_EXCLUDE && !bunEnv.BUN_TEST_EXCLUDE) {
-  bunEnv.VF_TEST_EXCLUDE = "tests/integration/**,tests/ai/**,tests/rendering/**";
+  bunEnv.VF_TEST_EXCLUDE =
+    "tests/integration/**,tests/chat/**,tests/embedding/**,tests/rendering/**";
 }
 if (profile === "fast" && !bunEnv.VF_TEST_TIME_SCALE) {
   bunEnv.VF_TEST_TIME_SCALE = "0.25";
@@ -103,7 +106,8 @@ if (!nodeEnv.VF_TEST_EXCLUDE && !nodeEnv.NODE_TEST_EXCLUDE) {
   nodeEnv.VF_TEST_EXCLUDE = existing ? `${existing},${denoOnlyTests}` : denoOnlyTests;
 }
 if (profile === "fast" && !nodeEnv.VF_TEST_EXCLUDE) {
-  nodeEnv.VF_TEST_EXCLUDE = `${denoOnlyTests},tests/integration/**,tests/ai/**,tests/rendering/**`;
+  nodeEnv.VF_TEST_EXCLUDE =
+    `${denoOnlyTests},tests/integration/**,tests/chat/**,tests/embedding/**,tests/rendering/**`;
 }
 if (profile === "fast" && !nodeEnv.VF_TEST_TIME_SCALE) {
   nodeEnv.VF_TEST_TIME_SCALE = "0.25";

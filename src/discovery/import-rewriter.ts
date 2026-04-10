@@ -17,11 +17,7 @@ import * as pathHelper from "#veryfront/compat/path";
  */
 export function rewriteForDeno(code: string, fileDir: string): string {
   const npmReplacements: Array<[RegExp, string]> = [
-    [/from\s+["']ai["']/g, 'from "npm:ai"'],
-    [/from\s+["']ai\/([^"']+)["']/g, 'from "npm:ai/$1"'],
-    [/from\s+["']@ai-sdk\/([^"']+)["']/g, 'from "npm:@ai-sdk/$1"'],
     [/from\s+["']zod["']/g, 'from "npm:zod"'],
-    [/import\s*\(\s*["']ai["']\s*\)/g, 'import("npm:ai")'],
     [/import\s*\(\s*["']zod["']\s*\)/g, 'import("npm:zod")'],
   ];
 
@@ -142,16 +138,7 @@ export async function rewriteDiscoveryImports(
     };
 
     // Rewrite external package imports
-    const externalPackages = [
-      "zod",
-      "ai",
-      "@ai-sdk/anthropic",
-      "@ai-sdk/openai",
-      "@ai-sdk/google",
-      "@ai-sdk/mistral",
-      "@ai-sdk/provider",
-      "@ai-sdk/provider-utils",
-    ];
+    const externalPackages = ["zod"];
 
     for (const pkg of externalPackages) {
       transformed = await rewritePackageImports(transformed, pkg);

@@ -1,8 +1,8 @@
 import type { Workflow, WorkflowDefinition, WorkflowNode } from "./types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema";
 import { agentLogger as logger } from "#veryfront/utils";
-import { ProjectScopedRegistryManager } from "#veryfront/ai/registry-manager.ts";
-import { ScopedRegistryFacade } from "#veryfront/ai/registry-facade.ts";
+import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
+import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
 export interface NodeInfo {
   id: string;

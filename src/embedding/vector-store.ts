@@ -1,4 +1,3 @@
-import { cosineSimilarity } from "ai";
 import type {
   Embedding,
   SearchOptions,
@@ -6,6 +5,7 @@ import type {
   VectorStore,
   VectorStoreConfig,
 } from "./types.ts";
+import { cosineSimilarity } from "#veryfront/runtime/runtime-bridge.ts";
 
 interface VectorEntry {
   text: string;
