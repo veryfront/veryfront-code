@@ -391,36 +391,19 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnPath)}`;
   }
 
-  function makePreviewProjectNotFoundContext(
-    base: {
-      scope: TokenScope;
-      host: string;
-      parsedDomain: ParsedDomain;
-    },
-    token?: string,
-  ): ProxyContext {
-    return makeErrorContext(
-      base,
-      404,
-      "Preview project not found",
-      token,
-      undefined,
-      "project-not-found",
-    );
-  }
-
   function makeProjectNotFoundContext(
     base: {
       scope: TokenScope;
       host: string;
       parsedDomain: ParsedDomain;
     },
+    message: "Preview project not found" | "Project not found",
     token?: string,
   ): ProxyContext {
     return makeErrorContext(
       base,
       404,
-      "Project not found",
+      message,
       token,
       undefined,
       "project-not-found",
@@ -629,11 +612,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         if (status === 404) {
           if (scope === "preview") {
             logger?.info("Preview project not found", { projectSlug, host });
-            return makePreviewProjectNotFoundContext(base);
+            return makeProjectNotFoundContext(base, "Preview project not found");
           }
 
           logger?.info("Project not found", { projectSlug, host, scope });
-          return makeProjectNotFoundContext(base);
+          return makeProjectNotFoundContext(base, "Project not found");
         }
 
         const message = scope === "preview"
@@ -726,7 +709,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             scope,
             targetEnvName: parsedDomain.environment,
           });
-          return makeProjectNotFoundContext(base, token);
+          return makeProjectNotFoundContext(base, "Project not found", token);
         }
 
         projectId = resolved.projectId;
@@ -764,7 +747,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         if (!resolved.projectId) {
           logger?.info("Preview project not found after lookup", { projectSlug, host });
-          return makePreviewProjectNotFoundContext(base, token);
+          return makeProjectNotFoundContext(base, "Preview project not found", token);
         }
 
         projectId = resolved.projectId;
