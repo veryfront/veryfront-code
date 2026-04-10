@@ -4,6 +4,7 @@ import { join } from "#veryfront/compat/path";
 import {
   getNodeExternalPackagesToResolve,
   loadHandlerModule,
+  rewriteCompiledBinaryVeryfrontImports,
   rewriteNodeExternalImports,
   toCjsDestructureBindings,
 } from "./loader.ts";
@@ -341,6 +342,22 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
 
     assertMatch(rewritten, /from "file:\/\/.*node_modules\/my-lib\/dist\/index\.js"/);
+  });
+
+  it("rewrites compiled-binary veryfront root and subpath imports to local shims", () => {
+    const source = [
+      'import { defineConfig } from "veryfront";',
+      'const runtime = import("veryfront");',
+      'import { createAgent } from "veryfront/agent";',
+      'const tool = import("veryfront/tool");',
+    ].join("\n");
+
+    const rewritten = rewriteCompiledBinaryVeryfrontImports(source);
+
+    assertMatch(rewritten, /from "\.\/_vf_runtime\.mjs"/);
+    assertMatch(rewritten, /import\("\.\/_vf_runtime\.mjs"\)/);
+    assertMatch(rewritten, /from "\.\/_vf_agent\.mjs"/);
+    assertMatch(rewritten, /import\("\.\/_vf_tool\.mjs"\)/);
   });
 
   it("rejects module path that escapes project directory via traversal", async () => {
