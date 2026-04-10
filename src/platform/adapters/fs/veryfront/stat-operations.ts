@@ -25,6 +25,9 @@ const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
 const API_SEARCH_CIRCUIT_BREAKER_THRESHOLD = 5;
 const API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS = 30_000;
 
+type IndexedResolutionKind = "exact" | "extension" | "pages-prefix" | "index";
+type IndexedResolution = { kind: IndexedResolutionKind; path: string };
+
 export class StatOperations extends VeryfrontOperationsBase {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
@@ -390,6 +393,41 @@ export class StatOperations extends VeryfrontOperationsBase {
     return Array.isArray(files) && files.length > 0;
   }
 
+  private findIndexedResolution(
+    fileIdx: Map<string, ProjectFile>,
+    normalizedPath: string,
+    options?: ResolveFileOptions,
+  ): IndexedResolution | null {
+    if (fileIdx.has(normalizedPath)) {
+      return { kind: "exact", path: normalizedPath };
+    }
+
+    const pathWithoutExt = stripKnownExtension(normalizedPath, EXTENSION_PRIORITY);
+
+    const resolvedDirect = resolveByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
+    if (resolvedDirect) {
+      return { kind: "extension", path: resolvedDirect };
+    }
+
+    if (options?.allowPagesPrefix !== false && !pathWithoutExt.startsWith("pages/")) {
+      const resolvedPages = resolveByExtensionPriority(
+        fileIdx,
+        `pages/${pathWithoutExt}`,
+        EXTENSION_PRIORITY,
+      );
+      if (resolvedPages) {
+        return { kind: "pages-prefix", path: resolvedPages };
+      }
+    }
+
+    const indexPath = resolveIndexByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
+    if (indexPath) {
+      return { kind: "index", path: indexPath };
+    }
+
+    return null;
+  }
+
   async exists(path: string): Promise<boolean> {
     const normalizedPath = this.normalizer.normalize(path);
     try {
@@ -453,55 +491,34 @@ export class StatOperations extends VeryfrontOperationsBase {
       return null;
     }
 
-    if (fileIdx.has(normalizedPath)) {
+    const indexedResolution = this.findIndexedResolution(fileIdx, normalizedPath, options);
+    if (indexedResolution) {
       const totalMs = Math.round(performance.now() - resolveStart);
-      logger.debug("resolveFile exact match found", {
-        normalizedPath,
-        indexMs,
-        totalMs,
-      });
-      return normalizedPath;
-    }
-
-    const pathWithoutExt = stripKnownExtension(normalizedPath, EXTENSION_PRIORITY);
-
-    const resolvedDirect = resolveByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
-    if (resolvedDirect) {
-      const totalMs = Math.round(performance.now() - resolveStart);
-      logger.debug("resolveFile found with extension", {
-        pathWithExt: resolvedDirect,
-        indexMs,
-        totalMs,
-      });
-      return resolvedDirect;
-    }
-
-    if (options?.allowPagesPrefix !== false && !pathWithoutExt.startsWith("pages/")) {
-      const resolvedPages = resolveByExtensionPriority(
-        fileIdx,
-        `pages/${pathWithoutExt}`,
-        EXTENSION_PRIORITY,
-      );
-      if (resolvedPages) {
-        const totalMs = Math.round(performance.now() - resolveStart);
-        logger.debug("resolveFile found with pages prefix", {
-          pathWithExt: resolvedPages,
+      if (indexedResolution.kind === "exact") {
+        logger.debug("resolveFile exact match found", {
+          normalizedPath,
           indexMs,
           totalMs,
         });
-        return resolvedPages;
+      } else if (indexedResolution.kind === "index") {
+        logger.debug("resolveFile found index file", {
+          indexPath: indexedResolution.path,
+          indexMs,
+          totalMs,
+        });
+      } else {
+        logger.debug(
+          indexedResolution.kind === "pages-prefix"
+            ? "resolveFile found with pages prefix"
+            : "resolveFile found with extension",
+          {
+            pathWithExt: indexedResolution.path,
+            indexMs,
+            totalMs,
+          },
+        );
       }
-    }
-
-    const indexPath = resolveIndexByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
-    if (indexPath) {
-      const totalMs = Math.round(performance.now() - resolveStart);
-      logger.debug("resolveFile found index file", {
-        indexPath,
-        indexMs,
-        totalMs,
-      });
-      return indexPath;
+      return indexedResolution.path;
     }
 
     if (attemptedApiResolve) {

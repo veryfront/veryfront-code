@@ -287,6 +287,19 @@ describe("StatOperations", () => {
       assertEquals(await statOps.resolveFile("components"), "components/index.tsx");
     });
 
+    it("should prefer direct extension matches before directory index files", async () => {
+      const statOps = createStatOps(
+        createMockClient(),
+        new PathNormalizer(),
+        createBranchContextWithFiles([
+          makeFile("components.tsx"),
+          makeFile("components/index.tsx"),
+        ]),
+      );
+
+      assertEquals(await statOps.resolveFile("components"), "components.tsx");
+    });
+
     it("should return null for non-existent file with complete index", async () => {
       const statOps = createStatOps(
         createMockClient(),
