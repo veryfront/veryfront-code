@@ -144,6 +144,14 @@ export {
   AgUiRuntimeRequestSchema,
 } from "./runtime-ag-ui-contract.ts";
 export {
+  type AgUiCancelHandlerOptions,
+  type AgUiResumeHandlerOptions,
+  type AgUiResumeSignal,
+  AgUiResumeSignalSchema,
+  createAgUiCancelHandler,
+  createAgUiResumeHandler,
+} from "./ag-ui-run-control.ts";
+export {
   type AgUiContextItem,
   type AgUiHandlerConfigWithAgent,
   type AgUiHandlerOptions,
