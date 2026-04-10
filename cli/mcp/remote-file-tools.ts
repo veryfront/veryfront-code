@@ -85,6 +85,15 @@ function getBranchParam(branch?: string): string {
   return branch ? `?branch_id=${branch}` : "";
 }
 
+function buildProjectApiPath(project: string, resource: string, branch?: string): string {
+  const normalizedResource = resource.startsWith("/") ? resource.slice(1) : resource;
+  return `/${project}${getBranchPath(branch)}/${normalizedResource}`;
+}
+
+function buildProjectFilePath(project: string, filePath: string, branch?: string): string {
+  return buildProjectApiPath(project, `files/${encodeFilePath(filePath)}`, branch);
+}
+
 interface RemoteFile {
   id?: string;
   path: string;
@@ -212,9 +221,9 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
         params.set("limit", String(input.limit));
         params.set("fields", "(path,type,size)");
 
-        const apiPath = `/${input.project}${
-          getBranchPath(input.branch)
-        }/files?${params.toString()}`;
+        const apiPath = `${
+          buildProjectApiPath(input.project, "files", input.branch)
+        }?${params.toString()}`;
         const result = await apiRequest<FileListResponse>("GET", apiPath);
         if (!result.ok) return { success: false, error: result.error };
 
@@ -258,9 +267,7 @@ export const vfRemoteGetFile: MCPTool<RemoteGetFileInput, RemoteGetFileOutput> =
     withSpan(
       "cli.mcp.tool.vf_remote_get_file",
       async () => {
-        const apiPath = `/${input.project}${getBranchPath(input.branch)}/files/${
-          encodeFilePath(input.path)
-        }`;
+        const apiPath = buildProjectFilePath(input.project, input.path, input.branch);
         const result = await apiRequest<RemoteFile>("GET", apiPath);
         if (!result.ok) return { success: false, error: result.error };
 
@@ -312,7 +319,7 @@ export const vfRemoteUpdateFile: MCPTool<RemoteUpdateFileInput, RemoteUpdateFile
     withSpan(
       "cli.mcp.tool.vf_remote_update_file",
       async () => {
-        const apiPath = `/${input.project}/files/${encodeFilePath(input.path)}${
+        const apiPath = `${buildProjectFilePath(input.project, input.path)}${
           getBranchParam(input.branch)
         }`;
         const result = await apiRequest<{ id: string; path: string }>("PUT", apiPath, {
@@ -360,7 +367,7 @@ export const vfRemoteDeleteFile: MCPTool<RemoteDeleteFileInput, RemoteDeleteFile
   description: "Delete a file from a remote Veryfront project.",
   inputSchema: remoteDeleteFileInput,
   execute: async (input) => {
-    const apiPath = `/${input.project}/files/${encodeFilePath(input.path)}${
+    const apiPath = `${buildProjectFilePath(input.project, input.path)}${
       getBranchParam(input.branch)
     }`;
     const result = await apiRequest<void>("DELETE", apiPath);
@@ -403,7 +410,7 @@ export const vfRemoteSearchFiles: MCPTool<RemoteSearchFilesInput, RemoteSearchFi
     withSpan(
       "cli.mcp.tool.vf_remote_search_files",
       async () => {
-        const apiPath = `/${input.project}${getBranchPath(input.branch)}/files/search`;
+        const apiPath = buildProjectApiPath(input.project, "files/search", input.branch);
         const result = await apiRequest<SearchResponse>("POST", apiPath, {
           body: {
             query: input.query,
@@ -453,7 +460,11 @@ export const vfRemoteMoveFile: MCPTool<RemoteMoveFileInput, RemoteMoveFileOutput
   description: "Move or rename a file in a remote Veryfront project.",
   inputSchema: remoteMoveFileInput,
   execute: async (input) => {
-    const apiPath = `/${input.project}/files/move${getBranchParam(input.branch)}`;
+    const apiPath = `${buildProjectApiPath(input.project, "files/move")}${
+      getBranchParam(
+        input.branch,
+      )
+    }`;
     const result = await apiRequest<{ source_path: string; destination_path: string }>(
       "POST",
       apiPath,
@@ -730,7 +741,7 @@ export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneP
 
         const listResult = await apiRequest<FileListResponse>(
           "GET",
-          `/${input.source_project}/files?${params.toString()}`,
+          `${buildProjectApiPath(input.source_project, "files")}?${params.toString()}`,
         );
 
         if (!listResult.ok) {
@@ -748,7 +759,7 @@ export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneP
         for (const file of sourceFiles) {
           const getResult = await apiRequest<RemoteFile>(
             "GET",
-            `/${input.source_project}/files/${encodeFilePath(file.path)}`,
+            buildProjectFilePath(input.source_project, file.path),
           );
 
           if (!getResult.ok || !getResult.data) {
@@ -758,7 +769,7 @@ export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneP
 
           const createFileResult = await apiRequest<{ id: string; path: string }>(
             "PUT",
-            `/${createResult.slug}/files/${encodeFilePath(file.path)}`,
+            buildProjectFilePath(createResult.slug, file.path),
             { body: { content: getResult.data.content } },
           );
 

@@ -127,9 +127,8 @@ export class MCPServer {
   private sessionManager = new SessionManager();
   private taskStore = new TaskStore();
   private pendingTasks = new Map<string, Promise<void>>();
-  // TODO(#842): capabilities should be stored per-session (keyed by MCP-Session-Id)
-  // so concurrent clients don't overwrite each other's capability flags.
   private clientCapabilities: Record<string, unknown> = {};
+  private sessionCapabilities = new Map<string, Record<string, unknown>>();
 
   /** Callback for server-initiated notifications. Set by transport layer. */
   onNotification?: (notification: { jsonrpc: "2.0"; method: string; params?: unknown }) => void;
@@ -166,8 +165,11 @@ export class MCPServer {
     this.integrationsLoaded = false;
   }
 
-  clientSupportsElicitation(mode: "form" | "url"): boolean {
-    const raw = this.clientCapabilities.elicitation;
+  clientSupportsElicitation(mode: "form" | "url", sessionId?: string): boolean {
+    const capabilities = sessionId
+      ? this.sessionCapabilities.get(sessionId) ?? {}
+      : this.clientCapabilities;
+    const raw = capabilities.elicitation;
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
     const elicitation = raw as Record<string, unknown>;
     // Per MCP spec: empty elicitation object implies basic form support (backwards compat)
@@ -649,7 +651,10 @@ export class MCPServer {
       // DELETE = terminate session
       if (request.method === "DELETE") {
         const sessionId = request.headers.get("MCP-Session-Id");
-        if (sessionId) this.sessionManager.terminate(sessionId);
+        if (sessionId) {
+          this.sessionManager.terminate(sessionId);
+          this.sessionCapabilities.delete(sessionId);
+        }
         return new Response(null, { status: 200, headers: this.getCORSHeaders(requestOrigin) });
       }
 
@@ -691,7 +696,11 @@ export class MCPServer {
       if (rpcRequest.method === "initialize") {
         const context = this.extractRequestContext(request);
         const rpcResponse = await this.handleRequest(rpcRequest, context);
+        const clientCaps =
+          toParamsRecord(rpcRequest.params).capabilities as Record<string, unknown> ??
+            {};
         const sessionId = this.sessionManager.create();
+        this.sessionCapabilities.set(sessionId, clientCaps);
         responseHeaders["MCP-Session-Id"] = sessionId;
         return createJSONResponse(rpcResponse, { headers: responseHeaders });
       }

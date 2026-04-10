@@ -9,6 +9,13 @@ import type { ToolListEntry } from "./types.ts";
 const originalFetch = globalThis.fetch;
 
 async function initSession(handler: (req: Request) => Promise<Response>): Promise<string> {
+  return initSessionWithCapabilities(handler, {});
+}
+
+async function initSessionWithCapabilities(
+  handler: (req: Request) => Promise<Response>,
+  capabilities: Record<string, unknown>,
+): Promise<string> {
   const response = await handler(
     new Request("http://localhost/mcp", {
       method: "POST",
@@ -19,7 +26,7 @@ async function initSession(handler: (req: Request) => Promise<Response>): Promis
         method: "initialize",
         params: {
           protocolVersion: "2025-11-25",
-          capabilities: {},
+          capabilities,
           clientInfo: { name: "test", version: "1.0" },
         },
       }),
@@ -1080,6 +1087,19 @@ describe("mcp/server", () => {
     });
     assertEquals(server.clientSupportsElicitation("form"), false);
     assertEquals(server.clientSupportsElicitation("url"), false);
+  });
+
+  it("keeps elicitation capabilities isolated per HTTP session", async () => {
+    const server = createMCPServer({ enabled: true });
+    const handler = server.createHTTPHandler();
+
+    const sessionA = await initSessionWithCapabilities(handler, { elicitation: { form: {} } });
+    const sessionB = await initSessionWithCapabilities(handler, { elicitation: { url: {} } });
+
+    assertEquals(server.clientSupportsElicitation("form", sessionA), true);
+    assertEquals(server.clientSupportsElicitation("url", sessionA), false);
+    assertEquals(server.clientSupportsElicitation("form", sessionB), false);
+    assertEquals(server.clientSupportsElicitation("url", sessionB), true);
   });
 
   it("syncs integration config to API on first tools/list call", async () => {
