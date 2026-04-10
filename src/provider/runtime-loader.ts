@@ -731,14 +731,14 @@ function buildAnthropicGenerateResult(payload: unknown): {
   };
 }
 
-function parseAnthropicSseChunk(chunk: string): {
+function parseSseChunk(chunk: string): {
   events: Array<unknown | "[DONE]">;
   remainder: string;
 } {
-  const blocks = chunk.split("\n\n");
+  const blocks = chunk.split(/\r?\n\r?\n/);
   const remainder = blocks.pop() ?? "";
   const events = blocks.flatMap((block) => {
-    const dataLines = block.split("\n")
+    const dataLines = block.split(/\r?\n/)
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trimStart());
 
@@ -772,7 +772,7 @@ async function* streamAnthropicCompatibleParts(
 
   for await (const chunk of stream) {
     buffer += decoder.decode(chunk, { stream: true });
-    const parsed = parseAnthropicSseChunk(buffer);
+    const parsed = parseSseChunk(buffer);
     buffer = parsed.remainder;
 
     for (const event of parsed.events) {
@@ -911,7 +911,7 @@ async function* streamAnthropicCompatibleParts(
   }
 
   if (buffer.trim().length > 0) {
-    const parsed = parseAnthropicSseChunk(`${buffer}\n\n`);
+    const parsed = parseSseChunk(`${buffer}\n\n`);
     for (const event of parsed.events) {
       if (event === "[DONE]") {
         continue;
@@ -1312,7 +1312,7 @@ async function* streamGoogleCompatibleParts(
 
   for await (const chunk of stream) {
     buffer += decoder.decode(chunk, { stream: true });
-    const parsed = parseOpenAISseChunk(buffer);
+    const parsed = parseSseChunk(buffer);
     buffer = parsed.remainder;
 
     for (const event of parsed.events) {
@@ -1366,7 +1366,7 @@ async function* streamGoogleCompatibleParts(
   }
 
   if (buffer.trim().length > 0) {
-    const parsed = parseOpenAISseChunk(`${buffer}\n\n`);
+    const parsed = parseSseChunk(`${buffer}\n\n`);
     for (const event of parsed.events) {
       if (event === "[DONE]") {
         continue;
@@ -1429,36 +1429,6 @@ function buildOpenAIGenerateResult(payload: unknown): {
   };
 }
 
-function parseOpenAISseChunk(chunk: string): {
-  events: Array<unknown | "[DONE]">;
-  remainder: string;
-} {
-  const blocks = chunk.split("\n\n");
-  const remainder = blocks.pop() ?? "";
-  const events = blocks.flatMap((block) => {
-    const dataLines = block.split("\n")
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart());
-
-    if (!dataLines.length) {
-      return [];
-    }
-
-    const payload = dataLines.join("\n").trim();
-    if (payload === "[DONE]") {
-      return ["[DONE]" as const];
-    }
-
-    try {
-      return [JSON.parse(payload) as unknown];
-    } catch {
-      return [];
-    }
-  });
-
-  return { events, remainder };
-}
-
 async function* streamOpenAICompatibleParts(
   stream: ReadableStream<Uint8Array>,
 ): AsyncIterable<unknown> {
@@ -1470,7 +1440,7 @@ async function* streamOpenAICompatibleParts(
 
   for await (const chunk of stream) {
     buffer += decoder.decode(chunk, { stream: true });
-    const parsed = parseOpenAISseChunk(buffer);
+    const parsed = parseSseChunk(buffer);
     buffer = parsed.remainder;
 
     for (const event of parsed.events) {
@@ -1544,7 +1514,7 @@ async function* streamOpenAICompatibleParts(
   }
 
   if (buffer.trim().length > 0) {
-    const parsed = parseOpenAISseChunk(`${buffer}\n\n`);
+    const parsed = parseSseChunk(`${buffer}\n\n`);
     for (const event of parsed.events) {
       if (event === "[DONE]") {
         continue;

@@ -234,6 +234,56 @@ describe("provider/runtime-loader", () => {
     ]);
   });
 
+  it("parses OpenAI-compatible SSE streams when events use CRLF delimiters", async () => {
+    const encoder = new TextEncoder();
+    const runtime = createOpenAIModelRuntime({
+      apiKey: "test-openai-key",
+      baseURL: "https://example.openai.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            ReadableStream.from([
+              encoder.encode(
+                'data: {"choices":[{"delta":{"content":"Hello"}}]}\r\n\r\n',
+              ),
+              encoder.encode(
+                'data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}\r\n\r\n',
+              ),
+              encoder.encode("data: [DONE]\r\n\r\n"),
+            ]),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        ),
+    }, "gpt-4o-mini");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Say hello" }],
+      }],
+    });
+
+    const parts = await collectAsync(result.stream);
+    assertEquals(parts, [
+      {
+        type: "text-delta",
+        delta: "Hello",
+      },
+      {
+        type: "finish",
+        finishReason: "stop",
+        usage: {
+          inputTokens: 8,
+          outputTokens: 2,
+          totalTokens: 10,
+        },
+      },
+    ]);
+  });
+
   it("keeps OpenAI providerOptions scoped to the active provider and alias", async () => {
     let requestedInit: RequestInit | undefined;
 
@@ -501,6 +551,62 @@ describe("provider/runtime-loader", () => {
           encryptedContent: "opaque",
         }],
         providerExecuted: true,
+      },
+      {
+        type: "finish",
+        finishReason: { unified: "stop", raw: "end_turn" },
+        usage: {
+          inputTokens: 8,
+          outputTokens: 5,
+          totalTokens: 13,
+        },
+      },
+    ]);
+  });
+
+  it("parses Anthropic-compatible SSE streams when events use CRLF delimiters", async () => {
+    const encoder = new TextEncoder();
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            ReadableStream.from([
+              encoder.encode(
+                'event: message_start\r\ndata: {"type":"message_start","message":{"usage":{"input_tokens":8}}}\r\n\r\n',
+              ),
+              encoder.encode(
+                'event: content_block_delta\r\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}\r\n\r\n',
+              ),
+              encoder.encode(
+                'event: message_delta\r\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}\r\n\r\n',
+              ),
+              encoder.encode(
+                'event: message_stop\r\ndata: {"type":"message_stop"}\r\n\r\n',
+              ),
+            ]),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        ),
+    }, "claude-sonnet-4-20250514");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Say hello" }],
+      }],
+      maxOutputTokens: 64,
+    });
+
+    const parts = await collectAsync(result.stream);
+    assertEquals(parts, [
+      {
+        type: "text-delta",
+        delta: "Hello",
       },
       {
         type: "finish",
