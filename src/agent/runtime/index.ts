@@ -264,6 +264,14 @@ function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined
   return raw.every((toolName) => typeof toolName === "string") ? raw : [];
 }
 
+type ResolvedModelTransport = {
+  requestedModel: string;
+  resolvedModelString: string;
+  languageModel: ModelRuntime;
+  headers?: HeadersInit;
+  providerOptions?: Record<string, unknown>;
+};
+
 export class AgentRuntime {
   private id: string;
   private config: AgentConfig;
@@ -279,6 +287,30 @@ export class AgentRuntime {
     this.memory = createMemory<Message>(memoryConfig);
   }
 
+  private async resolveModelTransport(
+    context: Record<string, unknown> | undefined,
+    modelOverride: string | undefined,
+    mode: "generate" | "stream",
+  ): Promise<ResolvedModelTransport> {
+    const requestedModel = resolveConfiguredAgentModel(modelOverride || this.config.model);
+    const resolvedModelString = resolveRuntimeModel(modelOverride || this.config.model);
+    const transport = await this.config.resolveModelTransport?.({
+      agentId: this.id,
+      requestedModel,
+      resolvedModel: resolvedModelString,
+      context,
+      mode,
+    });
+
+    return {
+      requestedModel,
+      resolvedModelString,
+      languageModel: transport?.model ?? resolveModel(resolvedModelString),
+      headers: transport?.headers,
+      providerOptions: transport?.providerOptions,
+    };
+  }
+
   /**
    * Generate a response (non-streaming)
    */
@@ -288,8 +320,9 @@ export class AgentRuntime {
     modelOverride?: string,
     maxOutputTokensOverride?: number,
   ): Promise<AgentResponse> {
-    const requestedModel = resolveConfiguredAgentModel(modelOverride || this.config.model);
-    const resolvedModelString = resolveRuntimeModel(modelOverride || this.config.model);
+    const transport = await this.resolveModelTransport(context, modelOverride, "generate");
+    const requestedModel = transport.requestedModel;
+    const resolvedModelString = transport.resolvedModelString;
     if (resolvedModelString !== requestedModel) {
       logger.info(
         `⚡ Using runtime model "${resolvedModelString}" instead of "${requestedModel}".`,
@@ -329,6 +362,9 @@ export class AgentRuntime {
               ...context,
             },
             resolvedModelString,
+            transport.languageModel,
+            transport.headers,
+            transport.providerOptions,
             maxOutputTokensOverride,
           ),
       );
@@ -351,8 +387,9 @@ export class AgentRuntime {
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>> {
-    const requestedModel = resolveConfiguredAgentModel(modelOverride || this.config.model);
-    const resolvedModelString = resolveRuntimeModel(modelOverride || this.config.model);
+    const transport = await this.resolveModelTransport(context, modelOverride, "stream");
+    const requestedModel = transport.requestedModel;
+    const resolvedModelString = transport.resolvedModelString;
     if (resolvedModelString !== requestedModel) {
       logger.info(
         `⚡ Using runtime model "${resolvedModelString}" instead of "${requestedModel}".`,
@@ -389,7 +426,7 @@ export class AgentRuntime {
     // Resolve model BEFORE creating the ReadableStream — if this throws
     // (e.g., no_ai_available), the error propagates to the caller who can
     // return a proper error response (503) instead of a 200 with an error event.
-    const languageModel = resolveModel(resolvedModelString);
+    const languageModel = transport.languageModel;
 
     // Determine inference mode from the resolved model object (not the string),
     // because resolveModel may internally fall back from cloud to local.
@@ -435,6 +472,8 @@ export class AgentRuntime {
             toolContext,
             resolvedModelString,
             languageModel,
+            transport.headers,
+            transport.providerOptions,
             maxOutputTokensOverride,
             streamAbortSignal,
           );
@@ -476,13 +515,16 @@ export class AgentRuntime {
     messages: Message[],
     toolContext?: ToolExecutionContext,
     modelString?: string,
+    resolvedModel?: ModelRuntime,
+    headers?: HeadersInit,
+    providerOptions?: Record<string, unknown>,
     maxOutputTokensOverride?: number,
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
       const maxSteps = this.computeMaxSteps(maxAgentSteps);
       const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
-      const languageModel = resolveModel(effectiveModel);
+      const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
       const toolCalls: ToolCall[] = [];
       const currentMessages = [...messages];
@@ -535,6 +577,8 @@ export class AgentRuntime {
             experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
             temperature: DEFAULT_TEMPERATURE,
+            ...(headers ? { headers } : {}),
+            ...(providerOptions ? { providerOptions } : {}),
           });
         });
 
@@ -767,6 +811,8 @@ export class AgentRuntime {
     toolContext?: Record<string, unknown>,
     modelString?: string,
     resolvedModel?: ModelRuntime,
+    headers?: HeadersInit,
+    providerOptions?: Record<string, unknown>,
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
   ): Promise<AgentResponse> {
@@ -824,6 +870,8 @@ export class AgentRuntime {
         experimental_repairToolCall: repairToolCall,
         maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
         temperature: DEFAULT_TEMPERATURE,
+        ...(headers ? { headers } : {}),
+        ...(providerOptions ? { providerOptions } : {}),
         abortSignal,
       });
 

@@ -205,9 +205,36 @@ when bootstrap credentials are present.
 | `edge?`          | `EdgeConfig`                                                                         | Edge runtime configuration                                          |
 | `multimodal?`    | <code>&#123; vision?: boolean; audio?: boolean &#125;</code>                         | Enable vision and/or audio                                          |
 | `allowedModels?` | `ModelString[]`                                                                      | Restrict runtime model overrides to these "provider/model" strings. |
+| `resolveModelTransport?` | <code>(request: ModelTransportRequest) =&gt; ResolvedModelTransport &#124; Promise&lt;ResolvedModelTransport&gt;</code> | Inject request-aware model runtime, headers, or provider options. |
 | `skills?`        | `true \| string[]`                                                                   | Enable skills for this agent.                                       |
 
 **Returns:** `Agent`
+
+### Request-aware model transport
+
+Hosts that need request-scoped provider transport behavior can use
+`resolveModelTransport` to inject a model runtime override, request headers,
+and provider options without forking the runtime loop.
+
+```ts
+import { agent } from "veryfront/agent";
+
+const assistant = agent({
+  model: "openai/gpt-5.4-mini",
+  system: "You are a helpful assistant.",
+  resolveModelTransport: async ({ context, resolvedModel }) => ({
+    headers: {
+      Authorization: `Bearer ${String(context?.apiToken ?? "")}`,
+      "x-veryfront-model": resolvedModel,
+    },
+    providerOptions: {
+      gateway: {
+        projectSlug: context?.projectSlug,
+      },
+    },
+  }),
+});
+```
 
 ### `agent.generate(input)`
 
@@ -469,11 +496,14 @@ Clear all stored messages from memory.
 | `MemoryStats`                    | Memory usage stats                                                           |
 | `Message`                        | Chat message (user, assistant, system, tool)                                 |
 | `MessagePart`                    | Multi-part message segment                                                   |
+| `ModelTransportRequest`          | Request-aware model transport hook input                                     |
+| `ModelTransportResolver`         | Hook that resolves request-aware model runtime/transport behavior            |
 | `ModelProvider`                  | Model provider interface                                                     |
 | `ModelString`                    | Model configuration string format: "provider/model-name"                     |
 | `RemoteToolSource`               | Runtime-discovered remote tool source                                        |
 | `RedisClient`                    | Redis client interface (compatible with ioredis and node-redis)              |
 | `RedisMemoryConfig`              | Redis memory configuration                                                   |
+| `ResolvedModelTransport`         | Request-aware model runtime / headers / providerOptions resolution           |
 | `StreamToolCall`                 | Streaming tool call                                                          |
 | `ToolCall`                       | Completed tool call                                                          |
 | `ToolCallPart`                   | Tool call message segment                                                    |
