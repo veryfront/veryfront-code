@@ -111,6 +111,13 @@ interface DataResolutionResult {
   layoutProps: Map<string, Record<string, unknown>>;
 }
 
+interface FetchedDataResult {
+  type: "page" | "layout";
+  id: string;
+  result: Awaited<ReturnType<RenderPipeline["dataFetcher"]["fetchData"]>> | null;
+  error: Error | null;
+}
+
 export class RenderPipeline {
   private config: RenderPipelineConfig;
   private dataFetcher: DataFetcher;
@@ -322,6 +329,17 @@ export class RenderPipeline {
       { "render.data_job_count": dataJobs.length },
     );
 
+    this.applyFetchedDataResults(slug, dataResults, pageProps, layoutProps);
+
+    return { params, pageProps, layoutProps };
+  }
+
+  private applyFetchedDataResults(
+    slug: string,
+    dataResults: FetchedDataResult[],
+    pageProps: Record<string, unknown>,
+    layoutProps: Map<string, Record<string, unknown>>,
+  ): void {
     for (const { type, id, result, error } of dataResults) {
       if (error) throw error;
       if (!result) continue;
@@ -348,8 +366,6 @@ export class RenderPipeline {
         layoutProps.set(id, result.props as Record<string, unknown>);
       }
     }
-
-    return { params, pageProps, layoutProps };
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
