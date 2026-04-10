@@ -159,6 +159,10 @@ describe("agent/ag-ui-handler", () => {
 
     const body = await response.text();
     assertStringIncludes(body, "event: RunStarted");
+    assertStringIncludes(body, "event: StateSnapshot");
+    assertStringIncludes(body, 'data: {"snapshot":{}');
+    assertStringIncludes(body, "event: MessagesSnapshot");
+    assertStringIncludes(body, '"messages":[{"id":"msg-1","role":"user"');
     assertStringIncludes(body, "event: TextMessageStart");
     assertStringIncludes(body, "event: TextMessageContent");
     assertStringIncludes(body, "event: TextMessageEnd");

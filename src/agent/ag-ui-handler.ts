@@ -287,6 +287,12 @@ async function createAgUiStreamResponse(
       if (!enqueueEvent(controller, "RunStarted", { runId, threadId, agentId: agent.id })) {
         return;
       }
+      if (!enqueueEvent(controller, "StateSnapshot", { snapshot: {} })) {
+        return;
+      }
+      if (!enqueueEvent(controller, "MessagesSnapshot", { messages: request.messages })) {
+        return;
+      }
 
       try {
         if (!upstreamBody) {

@@ -40,6 +40,18 @@ const agUiEventPayloadSchemas = {
     threadId: z.string().min(1),
     agentId: z.string().min(1),
   }),
+  StateSnapshot: z.object({
+    snapshot: z.record(z.string(), z.unknown()),
+  }),
+  MessagesSnapshot: z.object({
+    messages: z.array(z.object({
+      id: z.string().min(1),
+      role: z.enum(["user", "assistant", "system", "tool"]),
+      parts: z.array(z.record(z.string(), z.unknown())),
+      metadata: z.record(z.string(), z.unknown()).optional(),
+      createdAt: z.string().optional(),
+    })),
+  }),
   TextMessageStart: z.object({
     messageId: z.string().min(1),
     role: z.literal("assistant"),
