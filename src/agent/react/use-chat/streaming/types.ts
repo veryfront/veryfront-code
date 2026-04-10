@@ -1,9 +1,9 @@
-import type { OnToolCallArg, ToolState, UIMessage, UIMessagePart } from "../types.ts";
+import type { ChatMessage, ChatMessagePart, ChatToolState, OnToolCallArg } from "../types.ts";
 
 export interface StreamingCallbacks {
-  onMessage: (message: UIMessage) => void;
+  onMessage: (message: ChatMessage) => void;
   onData: (data: unknown) => void;
-  onUpdate?: (parts: UIMessagePart[], messageId: string) => void;
+  onUpdate?: (parts: ChatMessagePart[], messageId: string) => void;
   onToolCall?: (arg: OnToolCallArg) => void;
 }
 
@@ -14,7 +14,7 @@ export interface StreamingToolCall {
   input?: unknown;
   output?: unknown;
   error?: string;
-  state: ToolState;
+  state: ChatToolState;
   /** Whether this is a dynamic tool (MCP, user-defined, etc.) */
   dynamic?: boolean;
 }

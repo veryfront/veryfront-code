@@ -1,9 +1,6 @@
 {
   "name": "ai",
   "description": "Add AI capabilities with chat API and agent support",
-  "dependencies": {
-    "ai": "^4.0.0"
-  },
   "configMerge": {
     "ai": {
       "enabled": true

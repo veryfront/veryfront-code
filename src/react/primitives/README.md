@@ -1,4 +1,4 @@
-# Veryfront AI Primitives
+# Veryfront Chat Primitives
 
 **Status**: Phase 5 Complete (Unstyled Primitives)
 **Module**: `veryfront/react/primitives`

@@ -114,7 +114,7 @@ export function agent(config: AgentConfig): Agent {
       const basePrompt = typeof originalSystem === "function"
         ? await originalSystem()
         : originalSystem;
-      if (!currentSkills.size) return basePrompt ?? "You are a helpful AI assistant.";
+      if (!currentSkills.size) return basePrompt ?? "You are a helpful assistant.";
       return `${basePrompt}\n\n${buildSkillManifestPrompt(currentSkills)}`;
     }
     : originalSystem;

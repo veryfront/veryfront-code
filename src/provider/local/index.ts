@@ -7,18 +7,18 @@
  *
  * @module provider/local
  *
- * @example Create a local model for AI SDK
+ * @example Create a local model runtime
  * ```ts
  * import { createLocalModel } from "./local/index.ts";
  *
  * const model = createLocalModel("smollm2-135m");
- * // Use with streamText(), generateText(), useChat(), etc.
+ * // Use with the framework runtime, streamText(), generateText(), etc.
  * ```
  */
 
-export { createLocalModel } from "./ai-sdk-adapter.ts";
+export { createLocalModel } from "./model-runtime-adapter.ts";
 export { isLocalAIDisabled } from "./env.ts";
-export { createLocalEmbeddingModel } from "./local-embedding-adapter.ts";
+export { createLocalEmbeddingModel } from "./embedding-runtime-adapter.ts";
 export { embedTexts } from "./local-embedding-engine.ts";
 export {
   generate,

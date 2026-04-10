@@ -1,12 +1,12 @@
 ---
 title: "Chat UI"
-description: "Pre-built chat components and React hooks for AI interfaces."
+description: "Pre-built chat components and React hooks for chat interfaces."
 order: 9
 ---
 
 # Chat UI
 
-Pre-built chat components and React hooks for AI interfaces. Three levels of control:
+Pre-built chat components and React hooks for chat interfaces. Three levels of control:
 
 1. **Preset** — `<Chat>` renders a complete chat UI with one component
 2. **Composition** — `<Chat.Root>`, `<Chat.MessageList>`, `<Chat.Composer>` for custom layouts
@@ -34,7 +34,7 @@ import { createChatHandler } from "veryfront/agent";
 export const POST = createChatHandler("assistant");
 ```
 
-`createChatHandler` handles request validation, message transformation, and automatic browser fallback when no AI provider is available. The `Chat` component renders a full chat interface with input, message list, loading indicators, and scroll management.
+`createChatHandler` handles request validation, message transformation, and automatic browser fallback when no provider is available. The `Chat` component renders a full chat interface with input, message list, loading indicators, and scroll management.
 
 When you need RAG/auth preprocessing, use `beforeStream` without re-implementing the route internals:
 
@@ -72,7 +72,7 @@ export default function CustomLayout() {
     <Chat.Root {...chat}>
       {/* Custom header */}
       <header className="border-b p-4">
-        <h1>AI Assistant</h1>
+        <h1>Chat Assistant</h1>
       </header>
 
       {/* Message area */}
@@ -139,7 +139,7 @@ When `Message.Root` is nested inside `Chat.Root`, it automatically picks up call
 
 | Sub-component          | Description                                                          |
 | ---------------------- | -------------------------------------------------------------------- |
-| `Message.Root`         | Wraps a `UIMessage` and provides `MessageContext`.                   |
+| `Message.Root`         | Wraps a `ChatMessage` and provides `MessageContext`.                 |
 | `Message.Avatar`       | Model avatar (Claude, OpenAI, or default). Hidden for user messages. |
 | `Message.Content`      | Renders text (markdown), reasoning, tool calls, steps, sources.      |
 | `Message.Actions`      | Copy and edit buttons (appears on hover).                            |
@@ -192,18 +192,18 @@ export default function CustomChat() {
 
 ### useChat options
 
-| Property          | Type                      | Description                                                            |
-| ----------------- | ------------------------- | ---------------------------------------------------------------------- |
-| `api`             | `string`                  | URL of the chat API route                                              |
-| `initialMessages` | `UIMessage[]`             | Pre-populate the conversation                                          |
-| `body`            | `Record<string, unknown>` | Extra data sent with each request                                      |
-| `headers`         | `Record<string, string>`  | Custom request headers                                                 |
-| `model`           | `string`                  | Override model at runtime                                              |
-| `systemPrompt`    | `string`                  | System prompt for browser-side inference                               |
-| `browserFallback` | `boolean`                 | Enable browser fallback when server can't provide AI (default: `true`) |
-| `onFinish`        | `(message) => void`       | Called when the assistant finishes responding                          |
-| `onError`         | `(error) => void`         | Called on stream errors                                                |
-| `onToolCall`      | `(toolCall) => void`      | Called when the agent calls a tool                                     |
+| Property          | Type                      | Description                                                                   |
+| ----------------- | ------------------------- | ----------------------------------------------------------------------------- |
+| `api`             | `string`                  | URL of the chat API route                                                     |
+| `initialMessages` | `ChatMessage[]`           | Pre-populate the conversation                                                 |
+| `body`            | `Record<string, unknown>` | Extra data sent with each request                                             |
+| `headers`         | `Record<string, string>`  | Custom request headers                                                        |
+| `model`           | `string`                  | Override model at runtime                                                     |
+| `systemPrompt`    | `string`                  | System prompt for browser-side inference                                      |
+| `browserFallback` | `boolean`                 | Enable browser fallback when server can't provide a runtime (default: `true`) |
+| `onFinish`        | `(message) => void`       | Called when the assistant finishes responding                                 |
+| `onError`         | `(error) => void`         | Called on stream errors                                                       |
+| `onToolCall`      | `(toolCall) => void`      | Called when the agent calls a tool                                            |
 
 ## Rendering tool calls
 

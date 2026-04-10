@@ -112,10 +112,10 @@ async function writePreviewChatApp(
     projectDir,
     configSource,
     `"use client";
-import type { UIMessage } from "veryfront/agent/react";
+import type { ChatMessage } from "veryfront/agent/react";
 import { Chat } from "veryfront/chat";
 
-const initialMessages: UIMessage[] = [
+const initialMessages: ChatMessage[] = [
   {
     id: "assistant-1",
     role: "assistant",

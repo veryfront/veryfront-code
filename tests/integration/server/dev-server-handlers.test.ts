@@ -88,13 +88,13 @@ const BROWSER_SAFE_ERROR_MODULES = new Set([
 
 const BROWSER_CSP_SAFE_MODULE_PATHS = [
   "/_vf_modules/_veryfront/chat/index.js",
-  "/_vf_modules/_veryfront/react/components/ai/color-mode.js",
-  "/_vf_modules/_veryfront/react/components/ai/chat.js",
-  "/_vf_modules/_veryfront/react/components/ai/chat/contexts/chat-context.js",
-  "/_vf_modules/_veryfront/react/components/ai/chat/contexts/composer-context.js",
-  "/_vf_modules/_veryfront/react/components/ai/chat/contexts/message-context.js",
-  "/_vf_modules/_veryfront/react/components/ai/chat/contexts/thread-list-context.js",
-  "/_vf_modules/_veryfront/react/components/ai/markdown.js",
+  "/_vf_modules/_veryfront/react/components/chat/color-mode.js",
+  "/_vf_modules/_veryfront/react/components/chat/chat.js",
+  "/_vf_modules/_veryfront/react/components/chat/chat/contexts/chat-context.js",
+  "/_vf_modules/_veryfront/react/components/chat/chat/contexts/composer-context.js",
+  "/_vf_modules/_veryfront/react/components/chat/chat/contexts/message-context.js",
+  "/_vf_modules/_veryfront/react/components/chat/chat/contexts/thread-list-context.js",
+  "/_vf_modules/_veryfront/react/components/chat/markdown.js",
   "/_vf_modules/_veryfront/security/client/html-sanitizer.js",
   "/_vf_modules/_veryfront/rendering/rsc/client-boot.js",
   "/_vf_modules/_veryfront/rendering/rsc/client-dom.js",
@@ -428,7 +428,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
     it("serves framework markdown module without unsafe-eval helpers", async () => {
       await withTestContext("dev-server-framework-markdown-csp", async (context) => {
         const { server, port } = await createTestDevServer(context);
-        const modulePath = "/_vf_modules/_veryfront/react/components/ai/markdown.js";
+        const modulePath = "/_vf_modules/_veryfront/react/components/chat/markdown.js";
         const { body, specifiers } = await fetchServedFrameworkModule(port, modulePath);
         assertBrowserSafeFrameworkModule(modulePath, body, specifiers);
 

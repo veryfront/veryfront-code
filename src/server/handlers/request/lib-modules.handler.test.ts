@@ -47,7 +47,7 @@ describe("LibModulesHandler", () => {
       const pattern = getPattern(createHandler(), "GET");
 
       assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
-      assertEquals(pattern.test("/_veryfront/lib/components/ai.js"), true);
+      assertEquals(pattern.test("/_veryfront/lib/components/chat.js"), true);
       assertEquals(pattern.test("/_veryfront/lib/primitives.js"), true);
     });
 
@@ -60,7 +60,7 @@ describe("LibModulesHandler", () => {
       const pattern = getPattern(createHandler(), "GET");
 
       assertEquals(pattern.test("/api/users"), false);
-      assertEquals(pattern.test("/veryfront/lib/ai/react.js"), false);
+      assertEquals(pattern.test("/veryfront/lib/chat/react.js"), false);
       assertEquals(pattern.test("/"), false);
     });
   });
@@ -71,9 +71,9 @@ describe("LibModulesHandler", () => {
       assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
     });
 
-    it("should allow components/ai.js path pattern", () => {
+    it("should allow components/chat.js path pattern", () => {
       const pattern = getPattern(createHandler(), "GET");
-      assertEquals(pattern.test("/_veryfront/lib/components/ai.js"), true);
+      assertEquals(pattern.test("/_veryfront/lib/components/chat.js"), true);
     });
 
     it("should allow primitives.js path pattern", () => {

@@ -31,7 +31,7 @@ Learn Veryfront from the ground up — pages, routing, AI agents, and production
 | [CLI Knowledge Ingestion](./cli-knowledge-ingestion.md) | Turn uploads and local documents into project knowledge files with one CLI command. |
 | [Tools](./tools.md)                                     | Define tools with Zod schemas that agents can call.                                 |
 | [Memory & Streaming](./memory-and-streaming.md)         | Conversation memory strategies and streaming responses.                             |
-| [Chat UI](./chat-ui.md)                                 | Pre-built chat components and React hooks for AI interfaces.                        |
+| [Chat UI](./chat-ui.md)                                 | Pre-built chat components and React hooks for chat interfaces.                      |
 | [Workflows](./workflows.md)                             | DAG-based multi-step workflows with branching and parallelism.                      |
 | [Multi-Agent](./multi-agent.md)                         | Agent composition, delegation, and agent-as-tool patterns.                          |
 

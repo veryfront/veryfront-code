@@ -1,17 +1,13 @@
-import {
-  InvalidToolInputError,
-  NoSuchToolError,
-  type ToolCallRepairFunction,
-  type ToolSet,
-} from "ai";
+import { isInvalidToolInputError, isNoSuchToolError } from "./runtime-tool-errors.ts";
+import type { RuntimeToolCallRepairFunction } from "./runtime-tool-types.ts";
 
 const REPAIRABLE_PROVIDER_TOOL_NAMES = new Set(["web_search"]);
 
-export const repairToolCall: ToolCallRepairFunction<ToolSet> = async ({
+export const repairToolCall: RuntimeToolCallRepairFunction = async ({
   toolCall,
   error,
 }) => {
-  if (NoSuchToolError.isInstance(error)) {
+  if (isNoSuchToolError(error)) {
     return null;
   }
 
@@ -23,7 +19,7 @@ export const repairToolCall: ToolCallRepairFunction<ToolSet> = async ({
     return null;
   }
 
-  if (!InvalidToolInputError.isInstance(error) || typeof toolCall.input !== "string") {
+  if (!isInvalidToolInputError(error) || typeof toolCall.input !== "string") {
     return null;
   }
 

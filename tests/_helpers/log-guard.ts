@@ -140,7 +140,6 @@ const allowedWarnings: string[] = [
   "Render failed unexpectedly",
   "Test error",
 
-
   // Bundle manifest errors (expected when manifest is missing)
   "[bundle-manifest]",
 
@@ -191,9 +190,9 @@ const allowedWarnings: string[] = [
   "loading.tsx",
   "error.tsx",
 
-  // AI discovery warnings (expected when test projects have no agents/tools)
-  "AI discovery found 0 agents and 0 tools",
-  "AI discovery failed",
+  // Primitive discovery warnings (expected when test projects have no agents/tools)
+  "Primitive discovery found 0 agents and 0 tools",
+  "Primitive discovery failed",
 
   // ReloadNotifier errors (expected in tests that verify error handling)
   "Listener error",

@@ -20,8 +20,9 @@ import {
   type Message,
   type MessagePart,
   type ToolCall,
+  type ToolResultPart,
 } from "../types.ts";
-import { ensureModelReady, resolveModel } from "#veryfront/provider";
+import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
 import { createMemory, type Memory } from "../memory/index.ts";
@@ -32,14 +33,20 @@ import {
   withSpan,
 } from "#veryfront/observability/tracing/index.ts";
 import { convertToModelMessages } from "./model-message-converter.ts";
-import { convertToolsToAISDK } from "./model-tool-converter.ts";
-import { createStreamState, processStream } from "./ai-stream-handler.ts";
+import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
+import {
+  type ChatStreamState,
+  createStreamState,
+  processStream,
+  type StreamingToolResult,
+} from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
-import { generateText, type LanguageModel, streamText } from "ai";
-import { AGENT_DEFAULTS } from "../ai-defaults.ts";
+import { AGENT_DEFAULTS } from "../defaults.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
+import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
+import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -64,8 +71,12 @@ export {
 } from "./tool-helpers.ts";
 export type { ParsedToolArgs, ToolConfigEntry } from "./tool-helpers.ts";
 export { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
-export { createStreamState, processStream } from "./ai-stream-handler.ts";
-export type { AIStreamCallbacks, AIStreamState, StreamingToolCall } from "./ai-stream-handler.ts";
+export { createStreamState, processStream } from "./chat-stream-handler.ts";
+export type {
+  ChatStreamCallbacks,
+  ChatStreamState,
+  StreamingToolCall,
+} from "./chat-stream-handler.ts";
 export {
   DEFAULT_MAX_STEPS,
   DEFAULT_MAX_TOKENS,
@@ -88,6 +99,7 @@ import {
   validateAllowedToolPatterns,
 } from "#veryfront/skill/allowed-tools.ts";
 import { resolveConfiguredAgentModel, resolveRuntimeModel } from "./model-resolution.ts";
+import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 
 const logger = serverLogger.component("agent");
 const LOAD_SKILL_TOOL_ID = "load-skill";
@@ -137,9 +149,71 @@ function stringifyToolError(error: unknown): string {
   }
 }
 
+function getToolResultError(result: unknown): string | undefined {
+  if (!result || typeof result !== "object" || !("error" in result)) {
+    return undefined;
+  }
+
+  return stringifyToolError(result.error);
+}
+
 function getSkillActivationRequiredError(toolName: string): string {
   return `Tool "${toolName}" cannot run before load-skill succeeds in the same step. ` +
     `Call "${LOAD_SKILL_TOOL_ID}" first to establish the active skill context.`;
+}
+
+export function collectFinalStreamToolResults(
+  state: Pick<ChatStreamState, "toolResults">,
+): Map<string, StreamingToolResult> {
+  const finalToolResults = new Map<string, StreamingToolResult>();
+
+  for (const toolResult of state.toolResults) {
+    if (toolResult.preliminary === true) {
+      continue;
+    }
+
+    finalToolResults.set(toolResult.toolCallId, toolResult);
+  }
+
+  return finalToolResults;
+}
+
+export function collectPersistedToolResults(
+  messages: Message[],
+): Map<string, ToolResultPart> {
+  const persistedToolResults = new Map<string, ToolResultPart>();
+
+  for (const message of messages) {
+    if (message.role !== "tool") {
+      continue;
+    }
+
+    for (const part of message.parts) {
+      if (!isToolResultPart(part)) {
+        continue;
+      }
+
+      persistedToolResults.set(part.toolCallId, part);
+    }
+  }
+
+  return persistedToolResults;
+}
+
+export function collectGeneratedToolResults(
+  toolResults: RuntimeGenerateToolResult[] | undefined,
+): Map<string, RuntimeGenerateToolResult> {
+  const generatedToolResults = new Map<string, RuntimeGenerateToolResult>();
+
+  for (const toolResult of toolResults ?? []) {
+    generatedToolResults.set(toolResult.toolCallId, toolResult);
+  }
+
+  return generatedToolResults;
+}
+
+function isToolResultPart(part: MessagePart): part is ToolResultPart {
+  return part.type === "tool-result" && "result" in part;
 }
 
 /**
@@ -208,18 +282,6 @@ export function enforceSkillPolicy(
   }
 
   return { allowed: true };
-}
-
-/**
- * Check whether a resolved LanguageModel is a local inference model.
- * Checks the model object properties rather than the requested string,
- * because resolveModel may internally fall back from cloud to local.
- */
-function isLocalModel(model: LanguageModel): boolean {
-  const m = model as Record<string, unknown>;
-  return !!m._isVfLocalModel ||
-    m.provider === "local" ||
-    (typeof m.modelId === "string" && m.modelId.startsWith("local/"));
 }
 
 function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {
@@ -363,7 +425,7 @@ export class AgentRuntime {
 
     // Determine inference mode from the resolved model object (not the string),
     // because resolveModel may internally fall back from cloud to local.
-    const isLocal = isLocalModel(languageModel);
+    const isLocal = isLocalModelRuntime(languageModel);
 
     // Eagerly verify the model runtime is available. For local models this
     // checks that @huggingface/transformers can be imported. Must happen
@@ -459,7 +521,7 @@ export class AgentRuntime {
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
       // Local models can't reliably do function calling — skip tools gracefully.
-      const isLocal = isLocalModel(languageModel);
+      const isLocal = isLocalModelRuntime(languageModel);
       if (isLocal && this.config.tools) {
         logger.warn(
           `Agent "${this.id}" has tools configured but is using local model "${effectiveModel}". ` +
@@ -498,7 +560,7 @@ export class AgentRuntime {
             model: languageModel,
             system: systemPrompt,
             messages: convertToModelMessages(currentMessages),
-            tools: convertToolsToAISDK(tools, {
+            tools: convertToolsToRuntimeTools(tools, {
               model: effectiveModel,
               allowedToolNames: allowedRemoteToolNames,
             }),
@@ -539,8 +601,34 @@ export class AgentRuntime {
         };
         currentMessages.push(assistantMessage);
         await this.memory.add(assistantMessage);
+        const generatedToolResults = collectGeneratedToolResults(response.toolResults);
+
+        const persistGeneratedToolResult = async (
+          generatedToolResult: RuntimeGenerateToolResult,
+        ): Promise<void> => {
+          const toolResultMessage: Message = {
+            id: `tool_${generatedToolResult.toolCallId}`,
+            role: "tool",
+            parts: [
+              {
+                type: "tool-result",
+                toolCallId: generatedToolResult.toolCallId,
+                toolName: generatedToolResult.toolName,
+                result: generatedToolResult.isError === true
+                  ? { error: stringifyToolError(generatedToolResult.result) }
+                  : generatedToolResult.result,
+              },
+            ],
+            timestamp: Date.now(),
+          };
+          currentMessages.push(toolResultMessage);
+          await this.memory.add(toolResultMessage);
+        };
 
         if (!response.toolCalls?.length) {
+          for (const generatedToolResult of generatedToolResults.values()) {
+            await persistGeneratedToolResult(generatedToolResult);
+          }
           this.status = "completed";
           addSpanEvent(loopSpan, "loop_complete");
           return {
@@ -565,9 +653,21 @@ export class AgentRuntime {
             args: tc.input as Record<string, unknown>,
             status: "pending",
           };
+          const generatedToolResult = generatedToolResults.get(tc.toolCallId);
 
           await withSpan("agent.tool_execute", async (toolSpan) => {
             setSpanAttributes(toolSpan, { "tool.name": tc.toolName, "tool.id": tc.toolCallId });
+
+            if (generatedToolResult) {
+              await persistGeneratedToolResult(generatedToolResult);
+              toolCall.status = generatedToolResult.isError === true ? "error" : "completed";
+              toolCall.result = generatedToolResult.result;
+              toolCall.error = generatedToolResult.isError === true
+                ? stringifyToolError(generatedToolResult.result)
+                : undefined;
+              toolCalls.push(toolCall);
+              return;
+            }
 
             const policyCheck = enforceSkillPolicy(
               tc.toolName,
@@ -683,7 +783,7 @@ export class AgentRuntime {
   /**
    * Execute agent loop with streaming
    * Emits veryfront stream events (message-start/message-finish + step-start/step-end)
-   * while consuming AI SDK `streamText()` parts internally.
+   * while consuming model-runtime `streamText()` parts internally.
    */
   private async executeAgentLoopStreaming(
     systemPrompt: string,
@@ -698,7 +798,7 @@ export class AgentRuntime {
     textPartId?: string,
     toolContext?: Record<string, unknown>,
     modelString?: string,
-    resolvedModel?: LanguageModel,
+    resolvedModel?: ModelRuntime,
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
   ): Promise<AgentResponse> {
@@ -712,7 +812,7 @@ export class AgentRuntime {
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     // Local models can't reliably do function calling — skip tools gracefully.
-    const isLocalStreaming = isLocalModel(languageModel);
+    const isLocalStreaming = isLocalModelRuntime(languageModel);
     if (isLocalStreaming && this.config.tools) {
       logger.warn(
         `Agent "${this.id}" has tools configured but is using local model "${effectiveModel}". ` +
@@ -731,6 +831,7 @@ export class AgentRuntime {
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-start" });
+      const persistedToolResults = collectPersistedToolResults(currentMessages);
 
       let tools = isLocalStreaming ? [] : await getAvailableTools(this.config.tools, {
         includeSkillTools: Boolean(this.config.skills),
@@ -748,7 +849,7 @@ export class AgentRuntime {
         model: languageModel,
         system: systemPrompt,
         messages: convertToModelMessages(currentMessages),
-        tools: convertToolsToAISDK(tools, {
+        tools: convertToolsToRuntimeTools(tools, {
           model: effectiveModel,
           allowedToolNames: allowedRemoteToolNames,
         }),
@@ -795,29 +896,40 @@ export class AgentRuntime {
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
 
-      for (const tr of state.toolResults) {
-        if (tr.preliminary) {
-          continue;
+      const finalToolResults = collectFinalStreamToolResults(state);
+
+      const persistToolResult = async (toolResult: StreamingToolResult): Promise<void> => {
+        if (persistedToolResults.has(toolResult.toolCallId)) {
+          return;
         }
 
         const toolResultMessage: Message = {
-          id: `tool_${tr.toolCallId}`,
+          id: `tool_${toolResult.toolCallId}`,
           role: "tool",
           parts: [
             {
               type: "tool-result",
-              toolCallId: tr.toolCallId,
-              toolName: tr.toolName,
-              result: tr.error === undefined ? tr.output : { error: stringifyToolError(tr.error) },
+              toolCallId: toolResult.toolCallId,
+              toolName: toolResult.toolName,
+              result: toolResult.error === undefined
+                ? toolResult.output
+                : { error: stringifyToolError(toolResult.error) },
             },
           ],
           timestamp: Date.now(),
         };
         currentMessages.push(toolResultMessage);
         await this.memory.add(toolResultMessage);
-      }
+        persistedToolResults.set(
+          toolResult.toolCallId,
+          toolResultMessage.parts[0] as ToolResultPart,
+        );
+      };
 
       if (state.finishReason !== "tool-calls" || !state.toolCalls.size) {
+        for (const toolResult of finalToolResults.values()) {
+          await persistToolResult(toolResult);
+        }
         sendSSE(controller, encoder, { type: "step-end" });
         break;
       }
@@ -832,20 +944,26 @@ export class AgentRuntime {
         throwIfAborted(abortSignal);
         const { args, error: argError } = parseToolArgs(tc.arguments);
         const toolCall: ToolCall = { id: tc.id, name: tc.name, args, status: "pending" };
+        const matchingResult = finalToolResults.get(tc.id);
+        const persistedResult = persistedToolResults.get(tc.id);
 
-        if (tc.providerExecuted === true) {
-          const matchingResult = state.toolResults.find((result) =>
-            result.toolCallId === tc.id && result.preliminary !== true
-          );
+        if (matchingResult) {
+          await persistToolResult(matchingResult);
+          toolCall.status = matchingResult.error === undefined ? "completed" : "error";
+          toolCall.result = matchingResult.output;
+          toolCall.error = matchingResult.error === undefined
+            ? undefined
+            : stringifyToolError(matchingResult.error);
+          toolCalls.push(toolCall);
+          continue;
+        }
 
-          if (matchingResult) {
-            toolCall.status = matchingResult.error === undefined ? "completed" : "error";
-            toolCall.result = matchingResult.output;
-            toolCall.error = matchingResult.error === undefined
-              ? undefined
-              : stringifyToolError(matchingResult.error);
-            toolCalls.push(toolCall);
-          }
+        if (persistedResult) {
+          const persistedError = getToolResultError(persistedResult.result);
+          toolCall.status = persistedError === undefined ? "completed" : "error";
+          toolCall.result = persistedResult.result;
+          toolCall.error = persistedError;
+          toolCalls.push(toolCall);
           continue;
         }
 
@@ -938,8 +1056,11 @@ export class AgentRuntime {
             ],
             timestamp: Date.now(),
           };
-          currentMessages.push(toolResultMessage);
-          await this.memory.add(toolResultMessage);
+          if (!persistedToolResults.has(tc.id)) {
+            currentMessages.push(toolResultMessage);
+            await this.memory.add(toolResultMessage);
+            persistedToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
+          }
         } catch (error) {
           const errorStr = error instanceof Error ? error.message : String(error);
           await this.recordToolError(
@@ -951,6 +1072,10 @@ export class AgentRuntime {
             toolCalls,
           );
         }
+      }
+
+      for (const toolResult of finalToolResults.values()) {
+        await persistToolResult(toolResult);
       }
 
       throwIfAborted(abortSignal);
@@ -1015,7 +1140,7 @@ export class AgentRuntime {
     const { system } = this.config;
     if (typeof system === "string") return system;
     if (typeof system === "function") return system();
-    return "You are a helpful AI assistant.";
+    return "You are a helpful assistant.";
   }
 
   /**

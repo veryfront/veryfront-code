@@ -143,8 +143,8 @@ export class DevServer {
       });
     }
 
-    // Auto-discover AI primitives (tools, agents, workflows, prompts, resources)
-    await this.runAIDiscovery();
+    // Auto-discover runtime primitives (tools, agents, workflows, prompts, resources)
+    await this.runPrimitiveDiscovery();
 
     if (this.options.enableHMR) {
       await this.setupFileWatchers();
@@ -273,13 +273,15 @@ export class DevServer {
   }
 
   private buildDiscoveryConfig(): DiscoveryConfig {
-    const ai = this.appConfig?.ai;
-    const skillDiscoveryEnabled = ai?.skills?.discovery?.enabled ?? true;
+    const discoveryConfig = this.appConfig?.ai;
+    const skillDiscoveryEnabled = discoveryConfig?.skills?.discovery?.enabled ?? true;
     return {
       baseDir: this.options.projectDir,
-      toolDirs: ai?.tools?.discovery?.paths ?? ["tools"],
-      agentDirs: ai?.agents?.discovery?.paths ?? ["agents"],
-      skillDirs: skillDiscoveryEnabled ? (ai?.skills?.discovery?.paths ?? ["skills"]) : [],
+      toolDirs: discoveryConfig?.tools?.discovery?.paths ?? ["tools"],
+      agentDirs: discoveryConfig?.agents?.discovery?.paths ?? ["agents"],
+      skillDirs: skillDiscoveryEnabled
+        ? (discoveryConfig?.skills?.discovery?.paths ?? ["skills"])
+        : [],
       resourceDirs: ["resources"],
       promptDirs: ["prompts"],
       workflowDirs: ["workflows"],
@@ -288,7 +290,7 @@ export class DevServer {
     };
   }
 
-  private async runAIDiscovery(): Promise<void> {
+  private async runPrimitiveDiscovery(): Promise<void> {
     try {
       const config = this.buildDiscoveryConfig();
       const result = await discoverAll(config);
@@ -302,7 +304,7 @@ export class DevServer {
         );
       }
     } catch (error) {
-      devServerLog.debug("AI discovery skipped:", error);
+      devServerLog.debug("Primitive discovery skipped:", error);
     }
   }
 
@@ -396,7 +398,7 @@ export class DevServer {
     );
   }
 
-  async rediscoverAI(): Promise<void> {
+  async rediscoverPrimitives(): Promise<void> {
     try {
       clearTranspileCache();
       const config = this.buildDiscoveryConfig();
@@ -407,7 +409,7 @@ export class DevServer {
           `${result.prompts.size} prompts, ${result.resources.size} resources`,
       );
     } catch (error) {
-      hmrLog.warn("AI re-discovery failed:", error);
+      hmrLog.warn("Primitive re-discovery failed:", error);
     }
   }
 
@@ -426,12 +428,12 @@ export class DevServer {
     );
 
     const debounceMs = this.options.fileWatcherDebounceMs ?? 100;
-    const ai = this.appConfig?.ai;
-    const skillDiscoveryEnabled = ai?.skills?.discovery?.enabled ?? true;
-    const aiDirNames = [
-      ...(ai?.tools?.discovery?.paths ?? ["tools"]),
-      ...(ai?.agents?.discovery?.paths ?? ["agents"]),
-      ...(skillDiscoveryEnabled ? (ai?.skills?.discovery?.paths ?? ["skills"]) : []),
+    const discoveryConfig = this.appConfig?.ai;
+    const skillDiscoveryEnabled = discoveryConfig?.skills?.discovery?.enabled ?? true;
+    const primitiveDirNames = [
+      ...(discoveryConfig?.tools?.discovery?.paths ?? ["tools"]),
+      ...(discoveryConfig?.agents?.discovery?.paths ?? ["agents"]),
+      ...(skillDiscoveryEnabled ? (discoveryConfig?.skills?.discovery?.paths ?? ["skills"]) : []),
       "resources",
       "prompts",
       "workflows",
@@ -443,7 +445,7 @@ export class DevServer {
       debounceMs,
       () => this.requestHandler?.invalidateRuntimeHandler(),
       this,
-      aiDirNames,
+      primitiveDirNames,
     );
 
     await this.fileWatchSetup.setup();

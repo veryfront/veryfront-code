@@ -1,7 +1,7 @@
 /**
  * Local Provider Tests
  *
- * Tests for the model catalog, AI SDK adapter, and model registry integration.
+ * Tests for the model catalog, local runtime adapter, and model registry integration.
  * Engine tests require @huggingface/transformers and are marked with `ignore`
  * for fast CI — run manually with `--filter "local-engine"`.
  */
@@ -9,7 +9,7 @@
 import { assertEquals, assertExists, assertRejects } from "#std/assert";
 import { afterEach, describe, it } from "#std/testing/bdd";
 import { DEFAULT_LOCAL_MODEL, getLocalModelIds, resolveLocalModel } from "./model-catalog.ts";
-import { createLocalModel } from "./ai-sdk-adapter.ts";
+import { createLocalModel } from "./model-runtime-adapter.ts";
 import { clearModelProviders, ensureModelReady } from "../model-registry.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
 
@@ -40,8 +40,8 @@ describe("model-catalog", () => {
   });
 });
 
-describe("ai-sdk-adapter", () => {
-  it("creates a LanguageModelV2-compatible object", () => {
+describe("model-runtime-adapter", () => {
+  it("creates a framework model runtime", () => {
     const model = createLocalModel("smollm2-135m");
     // deno-lint-ignore no-explicit-any
     const m = model as any;

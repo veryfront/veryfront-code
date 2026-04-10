@@ -1,5 +1,5 @@
 import * as React from "react";
-import type { DynamicToolUIPart, ToolState, ToolUIPart } from "#veryfront/agent/react";
+import type { ChatDynamicToolPart, ChatToolPart, ChatToolState } from "#veryfront/agent/react";
 
 export interface ToolInvocationProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Tool name */
@@ -12,7 +12,7 @@ export interface ToolInvocationProps extends React.HTMLAttributes<HTMLDivElement
   output?: unknown;
 
   /** Tool state (v5 format) */
-  state?: ToolState;
+  state?: ChatToolState;
 
   /** Error text if tool failed */
   errorText?: string;
@@ -78,7 +78,7 @@ export const ToolResult = React.forwardRef<HTMLDivElement, ToolResultProps>(
 ToolResult.displayName = "ToolResult";
 
 /** Union type for both tool types from v5 parts */
-type ToolPart = ToolUIPart | DynamicToolUIPart;
+type ToolPart = ChatToolPart | ChatDynamicToolPart;
 
 export interface ToolListProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Tool parts to display (v5 format) */
@@ -88,7 +88,7 @@ export interface ToolListProps extends React.HTMLAttributes<HTMLDivElement> {
   renderTool?: (tool: ToolPart) => React.ReactNode;
 }
 
-function isDynamicTool(tool: ToolPart): tool is DynamicToolUIPart {
+function isDynamicTool(tool: ToolPart): tool is ChatDynamicToolPart {
   return tool.type === "dynamic-tool";
 }
 

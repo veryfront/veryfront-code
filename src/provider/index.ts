@@ -1,18 +1,16 @@
 /**
- * AI SDK model provider registry.
+ * Provider registry.
  *
- * Maps "provider/model" strings to AI SDK LanguageModel instances.
- * Auto-initializes providers from environment variables on first use.
+ * Maps "provider/model" strings to framework-compatible model runtimes.
+ * Auto-initializes built-in providers from environment variables on first use.
  *
  * @module provider
  *
- * @example Register and resolve a model
+ * @example Resolve a model
  * ```ts
- * import { registerModelProvider, resolveModel } from "veryfront/provider";
- * import { createOpenAI } from "@ai-sdk/openai";
+ * import { resolveModel } from "veryfront/provider";
  *
- * registerModelProvider("openai", (id) => createOpenAI({ apiKey })(id));
- * const model = resolveModel("openai/gpt-4o");
+ * const model = resolveModel("veryfront-cloud/openai/gpt-5.2");
  * ```
  */
 
@@ -26,6 +24,7 @@ export {
   resolveModel,
 } from "./model-registry.ts";
 export type { ModelProviderFactory } from "./model-registry.ts";
+export type { ModelRuntime } from "./types.ts";
 export {
   runWithVeryfrontCloudContext,
   runWithVeryfrontCloudContextAsync,

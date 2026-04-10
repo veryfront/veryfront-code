@@ -48,7 +48,7 @@
  * ```
  */
 
-export { Chat, ChatComponents, type ChatProps } from "#veryfront/react/components/ai/chat.tsx";
+export { Chat, ChatComponents, type ChatProps } from "#veryfront/react/components/chat/chat.tsx";
 
 export {
   ChatComposer,
@@ -67,7 +67,7 @@ export {
   type MessageRootProps,
   ModelAvatar,
   type ModelAvatarProps,
-} from "#veryfront/react/components/ai/chat.tsx";
+} from "#veryfront/react/components/chat/chat.tsx";
 
 export {
   ChatContextProvider,
@@ -86,7 +86,7 @@ export {
   useMessageContextOptional,
   useThreadListContext,
   useThreadListContextOptional,
-} from "#veryfront/react/components/ai/chat.tsx";
+} from "#veryfront/react/components/chat/chat.tsx";
 
 export {
   type AttachmentInfo,
@@ -171,38 +171,40 @@ export {
   useThreads,
   type UseThreadsOptions,
   type UseThreadsResult,
-} from "#veryfront/react/components/ai/chat.tsx";
+} from "#veryfront/react/components/chat/chat.tsx";
 
 export {
   Message as StandaloneMessage,
   type MessageProps,
   StreamingMessage,
   type StreamingMessageProps,
-} from "#veryfront/react/components/ai/message.tsx";
+} from "#veryfront/react/components/chat/message.tsx";
 
-export { AgentCard, type AgentCardProps } from "#veryfront/react/components/ai/agent-card.tsx";
+export { AgentCard, type AgentCardProps } from "#veryfront/react/components/chat/agent-card.tsx";
 export {
-  AIErrorBoundary,
-  type AIErrorBoundaryProps,
-  useAIErrorHandler,
-} from "#veryfront/react/components/ai/error-boundary.tsx";
-export type { AgentTheme, ChatTheme } from "#veryfront/react/components/ai/theme.ts";
+  ChatErrorBoundary,
+  type ChatErrorBoundaryProps,
+  useChatErrorHandler,
+} from "#veryfront/react/components/chat/error-boundary.tsx";
+export type { AgentTheme, ChatTheme } from "#veryfront/react/components/chat/theme.ts";
 
 export {
   type BranchInfo,
   type BrowserInferenceStatus,
-  type DynamicToolUIPart,
+  type ChatDynamicToolPart,
+  type ChatFinishReason,
+  type ChatMessage,
+  type ChatMessagePart,
+  type ChatReasoningPart,
+  type ChatStepPart,
+  type ChatStreamEvent,
+  type ChatTextPart,
+  type ChatToolPart,
+  type ChatToolResultPart,
+  type ChatToolState,
   type InferenceMode,
   type OnToolCallArg,
-  type ReasoningUIPart,
-  type StepUIPart,
-  type TextUIPart,
   type ToolOutput,
-  type ToolResultUIPart,
-  type ToolState,
-  type ToolUIPart,
-  type UIMessage,
-  type UIMessagePart,
   useChat,
   type UseChatOptions,
   type UseChatResult,

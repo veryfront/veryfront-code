@@ -1,9 +1,9 @@
-import type { ToolUIPart, UIMessagePart } from "../types.ts";
+import type { ChatMessagePart, ChatToolPart } from "../types.ts";
 import type { OrderedReasoning, OrderedStep, OrderedToolCall, TextBlock } from "./types.ts";
 
 interface OrderedPart {
   order: number;
-  part: UIMessagePart;
+  part: ChatMessagePart;
 }
 
 export function buildCurrentParts(
@@ -11,7 +11,7 @@ export function buildCurrentParts(
   reasoningBlocks: Map<string, OrderedReasoning>,
   toolCalls: Map<string, OrderedToolCall>,
   steps?: Map<number, OrderedStep>,
-): UIMessagePart[] {
+): ChatMessagePart[] {
   const orderedParts: OrderedPart[] = [];
 
   addTextParts(orderedParts, textBlocks);
@@ -67,9 +67,9 @@ function addToolParts(
       errorText: tool.error,
     };
 
-    const part: UIMessagePart = tool.dynamic
+    const part: ChatMessagePart = tool.dynamic
       ? { type: "dynamic-tool", ...base }
-      : ({ type: `tool-${tool.toolName}`, ...base } as ToolUIPart);
+      : ({ type: `tool-${tool.toolName}`, ...base } as ChatToolPart);
 
     orderedParts.push({ order: tool.order, part });
   }

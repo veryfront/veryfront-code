@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { UIMessage } from "./types.ts";
+import type { ChatMessage } from "./types.ts";
 import { findBranchUserMessageIndex, isLatestRequest, resolveBranchKey } from "./use-chat.ts";
 
 describe("use-chat internal state helpers", () => {
@@ -16,7 +16,7 @@ describe("use-chat internal state helpers", () => {
         {
           branches: [],
           currentIndex: 0,
-          baseMessages: [] as UIMessage[],
+          baseMessages: [] as ChatMessage[],
         },
       ],
     ]);
@@ -32,7 +32,7 @@ describe("use-chat internal state helpers", () => {
         {
           branches: [],
           currentIndex: 0,
-          baseMessages: [] as UIMessage[],
+          baseMessages: [] as ChatMessage[],
         },
       ],
     ]);
@@ -43,7 +43,7 @@ describe("use-chat internal state helpers", () => {
   });
 
   it("findBranchUserMessageIndex locates the active user branch by mapped key", () => {
-    const messages: UIMessage[] = [
+    const messages: ChatMessage[] = [
       { id: "sys", role: "system", parts: [{ type: "text", text: "S" }] },
       { id: "u1", role: "user", parts: [{ type: "text", text: "old branch" }] },
       { id: "a1", role: "assistant", parts: [{ type: "text", text: "A" }] },

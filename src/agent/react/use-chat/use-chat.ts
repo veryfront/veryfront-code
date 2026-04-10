@@ -18,10 +18,10 @@ import { handleStreamingResponse } from "./streaming/index.ts";
 import type {
   BranchInfo,
   BrowserInferenceStatus,
+  ChatMessage,
+  ChatMessagePart,
   InferenceMode,
   ToolOutput,
-  UIMessage,
-  UIMessagePart,
   UseChatOptions,
   UseChatResult,
 } from "./types.ts";
@@ -29,14 +29,14 @@ import { generateClientId } from "./utils.ts";
 
 /** A snapshot of messages from a branch point onward */
 interface Branch {
-  messages: UIMessage[];
+  messages: ChatMessage[];
 }
 
 /** Tracks branches keyed by the message ID where the edit occurred */
 interface BranchState {
   branches: Branch[];
   currentIndex: number;
-  baseMessages: UIMessage[];
+  baseMessages: ChatMessage[];
 }
 
 export function isLatestRequest(activeRequestId: number, requestId: number): boolean {
@@ -53,7 +53,7 @@ export function resolveBranchKey(
 }
 
 export function findBranchUserMessageIndex(
-  messages: UIMessage[],
+  messages: ChatMessage[],
   branchKey: string,
   branchKeyByMessageId: Map<string, string>,
 ): number {
@@ -66,7 +66,7 @@ export function findBranchUserMessageIndex(
  * useChat hook for managing chat state with veryfront stream events.
  */
 export function useChat(options: UseChatOptions): UseChatResult {
-  const [messages, setMessages] = useState<UIMessage[]>(options.initialMessages ?? []);
+  const [messages, setMessages] = useState<ChatMessage[]>(options.initialMessages ?? []);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
   const [input, setInput] = useState("");
@@ -88,7 +88,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
   // System prompt for browser fallback (from 503 response or options)
   const systemPromptRef = useRef<string>(
-    options.systemPrompt ?? "You are a helpful AI assistant.",
+    options.systemPrompt ?? "You are a helpful assistant.",
   );
 
   // Track pending tool outputs for addToolOutput
@@ -134,7 +134,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
    * when server-side inference works fine.
    */
   const doBrowserInference = useCallback(
-    async (allMessages: UIMessage[]) => {
+    async (allMessages: ChatMessage[]) => {
       browserInferenceActiveRef.current = true;
 
       try {
@@ -147,7 +147,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
           let hasAddedMessage = false;
 
           runBrowserInference(allMessages, systemPromptRef.current, {
-            onUpdate: (parts: UIMessagePart[], messageId: string) => {
+            onUpdate: (parts: ChatMessagePart[], messageId: string) => {
               if (!hasAddedMessage) {
                 hasAddedMessage = true;
                 setMessages((prev) => [
@@ -163,7 +163,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
               }
               setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, parts } : m)));
             },
-            onMessage: (assistantMessage: UIMessage) => {
+            onMessage: (assistantMessage: ChatMessage) => {
               const withMeta = {
                 ...assistantMessage,
                 metadata: { ...assistantMessage.metadata, model: model ?? "browser" },
@@ -203,13 +203,13 @@ export function useChat(options: UseChatOptions): UseChatResult {
    * Send a message and stream assistant updates.
    */
   const sendMessage = useCallback(
-    async (message: { text: string; baseMessages?: UIMessage[]; userMessageId?: string }) => {
+    async (message: { text: string; baseMessages?: ChatMessage[]; userMessageId?: string }) => {
       // Abort any in-flight request before starting a new one
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
       const requestId = ++requestIdRef.current;
 
-      const userMessage: UIMessage = {
+      const userMessage: ChatMessage = {
         id: message.userMessageId ?? generateClientId("msg"),
         role: "user",
         parts: [{ type: "text", text: message.text }],
@@ -247,7 +247,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
           signal: abortController.signal,
         });
 
-        // Handle 503 — server can't provide AI, fall back to browser
+        // Handle 503 — server can't provide a runtime, fall back to browser
         if (response.status === 503 && (options.browserFallback ?? true)) {
           try {
             const body = await response.json();

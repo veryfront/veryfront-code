@@ -1,12 +1,12 @@
 ---
 title: "Providers"
-description: "AI SDK model provider registry with runtime conventions and explicit overrides."
+description: "Provider registry with runtime conventions and explicit overrides."
 order: 12
 ---
 
 # Providers
 
-AI SDK model provider registry. Maps "provider/model" strings to AI SDK `LanguageModel` instances.
+Provider registry. Maps "provider/model" strings to framework-compatible model runtimes.
 
 ## Runtime conventions (recommended)
 
@@ -32,12 +32,12 @@ By convention:
 
 ## Explicit provider environment variables
 
-| Variable | Provider |
-|----------|----------|
-| `OPENAI_API_KEY` | OpenAI |
-| `ANTHROPIC_API_KEY` | Anthropic |
-| `GOOGLE_API_KEY` | Google |
-| `OPENAI_BASE_URL` | Custom OpenAI-compatible endpoint |
+| Variable            | Provider                          |
+| ------------------- | --------------------------------- |
+| `OPENAI_API_KEY`    | OpenAI                            |
+| `ANTHROPIC_API_KEY` | Anthropic                         |
+| `GOOGLE_API_KEY`    | Google                            |
+| `OPENAI_BASE_URL`   | Custom OpenAI-compatible endpoint |
 
 Explicit provider env vars still work when you want to pin a provider directly:
 
@@ -45,7 +45,7 @@ Explicit provider env vars still work when you want to pin a provider directly:
 import { agent } from "veryfront/agent";
 
 export default agent({
-  model: "openai/gpt-5.2",       // OpenAI
+  model: "openai/gpt-5.2", // OpenAI
   // model: "anthropic/claude-sonnet-4-6", // Anthropic
   // model: "google/gemini-2.5-flash",     // Google
   system: "You are a helpful assistant.",
@@ -72,7 +72,7 @@ The fallback is transparent — `useChat` exposes `inferenceMode` (`"cloud"`, `"
 To explicitly use a local model:
 
 ```ts
-agent({ model: "local/smollm2-135m" })
+agent({ model: "local/smollm2-135m" });
 // Also available: "local/smollm2-360m", "local/smollm2-1.7b"
 ```
 
@@ -88,13 +88,13 @@ Agents reference models as `"provider/model"`. The framework splits on the first
 
 ```ts
 // Veryfront Cloud explicit override
-agent({ model: "veryfront-cloud/openai/gpt-5.2" })
+agent({ model: "veryfront-cloud/openai/gpt-5.2" });
 
 // Direct provider override
-agent({ model: "openai/gpt-5.2" })
+agent({ model: "openai/gpt-5.2" });
 
 // Nested model ID (e.g. OpenRouter)
-agent({ model: "openai/meta-llama/llama-3.1-405b" })
+agent({ model: "openai/meta-llama/llama-3.1-405b" });
 ```
 
 ## OpenAI-compatible services
@@ -114,20 +114,23 @@ For providers not covered by env vars, use `registerModelProvider()`:
 
 ```ts
 import { registerModelProvider } from "veryfront/provider";
-import { createOpenAI } from "@ai-sdk/openai";
 
-registerModelProvider("ollama", (id) =>
-  createOpenAI({
-    apiKey: "ollama",
-    baseURL: "http://localhost:11434/v1",
-  })(id)
-);
+registerModelProvider("ollama", (id) => {
+  // Return a framework-compatible model runtime for this model ID.
+  // Prefer built-in providers when possible; custom registration is an
+  // advanced interop surface for non-standard backends. The runtime must
+  // implement the framework's generation hooks, including doGenerate()
+  // and doStream().
+  return createOllamaRuntime(id);
+});
 
 // Then use it
 agent({ model: "ollama/llama3.2" });
 ```
 
-The factory receives the model ID and must return an AI SDK `LanguageModel` instance.
+The factory receives the model ID and must return a framework-compatible model
+runtime with the generation surface the framework expects, including
+`doGenerate()` and `doStream()`.
 
 ## Direct model resolution
 

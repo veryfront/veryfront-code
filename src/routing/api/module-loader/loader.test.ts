@@ -191,20 +191,18 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(typeof route?.POST, "function");
   });
 
-  it("loads handler when package.json has framework-only dependencies", async () => {
+  it("loads handler when package.json has framework-managed dependencies", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "handler.ts");
 
-    // Only framework packages — should all be filtered out from user deps
+    // Framework-managed packages should be filtered out from user deps.
     await fs.writeTextFile(
       join(tmpDir, "package.json"),
       JSON.stringify({
         dependencies: {
-          ai: "^3.0.0",
           zod: "^3.22.0",
           veryfront: "^0.1.26",
           "react": "^18.0.0",
-          "@ai-sdk/openai": "^1.0.0",
         },
       }),
     );

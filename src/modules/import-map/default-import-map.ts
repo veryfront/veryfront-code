@@ -33,8 +33,8 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
   const react = `${base}/react/public.js${ssr}`;
 
   // Map veryfront/embedding to the React hooks submodule for SSR.
-  // The full embedding/index.ts imports heavy server-side code (vectorStore, ragStore,
-  // AI SDK) that fails to transform. SSR only needs the React hook (useUploads).
+  // The full embedding/index.ts imports heavy server-side code (vectorStore, ragStore)
+  // that fails to transform. SSR only needs the React hook (useUploads).
   const embedding = `${base}/embedding/react/index.js${ssr}`;
 
   return {

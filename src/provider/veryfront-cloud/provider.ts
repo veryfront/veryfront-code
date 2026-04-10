@@ -1,8 +1,10 @@
-import type { LanguageModel } from "ai";
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createOpenAI } from "@ai-sdk/openai";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import {
+  createAnthropicModelRuntime,
+  createGoogleModelRuntime,
+  createOpenAIModelRuntime,
+} from "../runtime-loader.ts";
+import type { ModelRuntime } from "../types.ts";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
@@ -10,7 +12,7 @@ import {
   requireVeryfrontCloudBootstrap,
 } from "./shared.ts";
 
-export function createVeryfrontCloudModel(modelId: string): LanguageModel {
+export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
   const { apiBaseUrl, apiToken } = requireVeryfrontCloudBootstrap();
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
@@ -18,29 +20,29 @@ export function createVeryfrontCloudModel(modelId: string): LanguageModel {
 
   switch (provider) {
     case "anthropic":
-      return createAnthropic({
+      return createAnthropicModelRuntime({
         authToken: apiToken,
         baseURL,
         name: "veryfront-cloud",
         fetch,
-      })(upstreamModelId);
+      }, upstreamModelId);
 
     case "google":
-      return createGoogleGenerativeAI({
+      return createGoogleModelRuntime({
         apiKey: apiToken,
         baseURL,
         name: "veryfront-cloud",
         fetch,
-      })(upstreamModelId);
+      }, upstreamModelId);
 
     case "openai":
     case "moonshotai":
-      return createOpenAI({
+      return createOpenAIModelRuntime({
         apiKey: apiToken,
         baseURL,
         name: "veryfront-cloud",
         fetch,
-      })(upstreamModelId);
+      }, upstreamModelId);
 
     default: {
       const _exhaustive: never = provider;

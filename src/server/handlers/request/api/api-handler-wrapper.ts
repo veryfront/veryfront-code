@@ -105,7 +105,7 @@ export class ApiHandlerWrapper extends BaseHandler {
       "api.handleWithContext",
       async () => {
         try {
-          // Lazy per-project AI discovery (agents, tools) on first access.
+          // Lazy per-project primitive discovery (agents, tools) on first access.
           // Must run within runWithContext so VFS and registry scope are correct.
           await ensureProjectDiscovery(ctx);
 

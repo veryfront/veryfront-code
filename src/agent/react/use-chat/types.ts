@@ -1,4 +1,14 @@
-type StreamState = "streaming" | "done";
+import type {
+  ChatDynamicToolPart,
+  ChatMessage,
+  ChatMessagePart,
+  ChatReasoningPart,
+  ChatStepPart,
+  ChatTextPart,
+  ChatToolPart,
+  ChatToolResultPart,
+  ChatToolState,
+} from "../../../chat/protocol.ts";
 
 /** Where inference is happening */
 export type InferenceMode = "cloud" | "server-local" | "browser";
@@ -12,73 +22,17 @@ export type BrowserInferenceStatus =
   | "generating"
   | "error";
 
-export interface TextUIPart {
-  type: "text";
-  text: string;
-  state?: StreamState;
-}
-
-export interface ReasoningUIPart {
-  type: "reasoning";
-  text: string;
-  state?: StreamState;
-}
-
-export type ToolState =
-  | "input-streaming"
-  | "input-available"
-  | "output-streaming"
-  | "output-available"
-  | "output-error";
-
-export interface ToolUIPart<NAME extends string = string, INPUT = unknown, OUTPUT = unknown> {
-  type: `tool-${NAME}`;
-  toolCallId: string;
-  toolName: NAME;
-  state: ToolState;
-  input?: INPUT;
-  output?: OUTPUT;
-  errorText?: string;
-}
-
-export interface ToolResultUIPart<RESULT = unknown> {
-  type: "tool-result";
-  toolCallId: string;
-  toolName: string;
-  result: RESULT;
-  isError?: boolean;
-}
-
-export interface DynamicToolUIPart {
-  type: "dynamic-tool";
-  toolCallId: string;
-  toolName: string;
-  state: ToolState;
-  input?: unknown;
-  output?: unknown;
-  errorText?: string;
-}
-
-export interface StepUIPart {
-  type: "step-start" | "step-end";
-  stepIndex: number;
-}
-
-export type UIMessagePart =
-  | TextUIPart
-  | ReasoningUIPart
-  | ToolUIPart
-  | ToolResultUIPart
-  | DynamicToolUIPart
-  | StepUIPart;
-
-export interface UIMessage {
-  id: string;
-  role: "system" | "user" | "assistant";
-  parts: UIMessagePart[];
-  metadata?: Record<string, unknown>;
-  createdAt?: Date | string;
-}
+export type {
+  ChatDynamicToolPart,
+  ChatMessage,
+  ChatMessagePart,
+  ChatReasoningPart,
+  ChatStepPart,
+  ChatTextPart,
+  ChatToolPart,
+  ChatToolResultPart,
+  ChatToolState,
+};
 
 type ToolOutputState = "output-available" | "output-error";
 
@@ -101,7 +55,7 @@ export interface OnToolCallArg {
 
 export interface UseChatOptions {
   api: string;
-  initialMessages?: UIMessage[];
+  initialMessages?: ChatMessage[];
   body?: Record<string, unknown>;
   headers?: Record<string, string>;
   credentials?: RequestCredentials;
@@ -109,10 +63,10 @@ export interface UseChatOptions {
   model?: string;
   /** System prompt for browser-side inference (server uses agent config) */
   systemPrompt?: string;
-  /** Enable/disable browser fallback when server can't provide AI. Default: true */
+  /** Enable/disable browser fallback when server can't provide a runtime. Default: true */
   browserFallback?: boolean;
   onResponse?: (response: Response) => void;
-  onFinish?: (message: UIMessage) => void;
+  onFinish?: (message: ChatMessage) => void;
   onError?: (error: Error) => void;
   onToolCall?: (arg: OnToolCallArg) => void | Promise<void>;
 }
@@ -123,7 +77,7 @@ export interface BranchInfo {
 }
 
 export interface UseChatResult {
-  messages: UIMessage[];
+  messages: ChatMessage[];
   input: string;
   isLoading: boolean;
   error: Error | null;
@@ -147,7 +101,7 @@ export interface UseChatResult {
   switchBranch: (messageId: string, branchIndex: number) => void;
   reload: () => Promise<void>;
   stop: () => void;
-  setMessages: (messages: UIMessage[]) => void;
+  setMessages: (messages: ChatMessage[]) => void;
   addToolOutput: (output: ToolOutput) => void;
   data?: unknown;
   handleInputChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;

@@ -2,7 +2,7 @@ import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as markdownModule from "./index.ts";
 import * as publicMarkdownModule from "veryfront/markdown";
-import * as markdownComponentModule from "#veryfront/react/components/ai/markdown.tsx";
+import * as markdownComponentModule from "#veryfront/react/components/chat/markdown.tsx";
 
 const expectedRuntimeExports = ["Markdown"];
 

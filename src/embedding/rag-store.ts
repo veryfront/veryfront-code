@@ -1,4 +1,3 @@
-import { cosineSimilarity } from "ai";
 import {
   isNotFoundError,
   mkdir,
@@ -24,6 +23,7 @@ import type {
   RagStoreConfig,
   RagStoreData,
 } from "./types.ts";
+import { cosineSimilarity } from "#veryfront/runtime/runtime-bridge.ts";
 
 // Legacy data shapes used only for migrating old upload-store JSON files.
 interface LegacyStoredChunk {

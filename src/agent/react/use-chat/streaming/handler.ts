@@ -1,4 +1,4 @@
-import type { ToolUIPart, UIMessagePart } from "../types.ts";
+import type { ChatMessagePart, ChatToolPart } from "../types.ts";
 import { createAssistantMessage, generateClientId } from "../utils.ts";
 import { buildCurrentParts } from "./parts-builder.ts";
 import type {
@@ -14,7 +14,7 @@ interface StreamingState {
   toolCalls: Map<string, OrderedToolCall>;
   reasoningBlocks: Map<string, OrderedReasoning>;
   steps: Map<number, OrderedStep>;
-  messageParts: UIMessagePart[];
+  messageParts: ChatMessagePart[];
   currentTextId: string;
   messageId: string;
   partOrderCounter: number;
@@ -43,7 +43,7 @@ export async function handleStreamingResponse(
   const decoder = new TextDecoder();
   const state = createStreamingState();
 
-  const getBuildParts = (): UIMessagePart[] =>
+  const getBuildParts = (): ChatMessagePart[] =>
     buildCurrentParts(state.textBlocks, state.reasoningBlocks, state.toolCalls, state.steps);
 
   let buffer = "";
@@ -89,7 +89,7 @@ function processEvent(
   parsed: Record<string, unknown>,
   state: StreamingState,
   callbacks: StreamingCallbacks,
-  getBuildParts: () => UIMessagePart[],
+  getBuildParts: () => ChatMessagePart[],
 ): void {
   const { onMessage, onData, onUpdate, onToolCall } = callbacks;
 
@@ -181,7 +181,7 @@ function handleTextDelta(
   parsed: Record<string, unknown>,
   state: StreamingState,
   onUpdate: StreamingCallbacks["onUpdate"],
-  getBuildParts: () => UIMessagePart[],
+  getBuildParts: () => ChatMessagePart[],
 ): void {
   const textId = (parsed.id as string) || state.currentTextId || "default";
   const delta = (parsed.textDelta ?? parsed.delta ?? "") as string;
@@ -217,7 +217,7 @@ function handleToolInputStart(
   parsed: Record<string, unknown>,
   state: StreamingState,
   onUpdate: StreamingCallbacks["onUpdate"],
-  getBuildParts: () => UIMessagePart[],
+  getBuildParts: () => ChatMessagePart[],
 ): void {
   const toolCallId = (parsed.toolCallId as string) || generateClientId("tool");
   const toolCall: OrderedToolCall = {
@@ -237,7 +237,7 @@ function handleToolInputDelta(
   parsed: Record<string, unknown>,
   state: StreamingState,
   onUpdate: StreamingCallbacks["onUpdate"],
-  getBuildParts: () => UIMessagePart[],
+  getBuildParts: () => ChatMessagePart[],
 ): void {
   const toolCallId = parsed.toolCallId as string;
   const toolCall = state.toolCalls.get(toolCallId);
@@ -252,7 +252,7 @@ function handleToolInputAvailable(
   state: StreamingState,
   onUpdate: StreamingCallbacks["onUpdate"],
   onToolCall: StreamingCallbacks["onToolCall"],
-  getBuildParts: () => UIMessagePart[],
+  getBuildParts: () => ChatMessagePart[],
 ): void {
   const toolCallId = parsed.toolCallId as string;
   const toolCall = state.toolCalls.get(toolCallId);
@@ -287,7 +287,7 @@ function handleToolInputAvailable(
       toolName: toolCall.toolName,
       state: "input-available",
       input: toolCall.input,
-    } as ToolUIPart);
+    } as ChatToolPart);
   }
 
   onUpdate?.(getBuildParts(), state.messageId);
@@ -297,7 +297,7 @@ function handleToolOutputAvailable(
   parsed: Record<string, unknown>,
   state: StreamingState,
   onUpdate: StreamingCallbacks["onUpdate"],
-  getBuildParts: () => UIMessagePart[],
+  getBuildParts: () => ChatMessagePart[],
 ): void {
   const toolCallId = parsed.toolCallId as string;
   const toolCall = state.toolCalls.get(toolCallId);
@@ -320,7 +320,7 @@ function handleToolError(
   parsed: Record<string, unknown>,
   state: StreamingState,
   onUpdate: StreamingCallbacks["onUpdate"],
-  getBuildParts: () => UIMessagePart[],
+  getBuildParts: () => ChatMessagePart[],
 ): void {
   const toolCallId = parsed.toolCallId as string;
   const toolCall = state.toolCalls.get(toolCallId);
@@ -337,7 +337,7 @@ function handleReasoningStart(
   parsed: Record<string, unknown>,
   state: StreamingState,
   onUpdate: StreamingCallbacks["onUpdate"],
-  getBuildParts: () => UIMessagePart[],
+  getBuildParts: () => ChatMessagePart[],
 ): void {
   const reasoningId = (parsed.id as string) || generateClientId("reasoning");
   const reasoning: OrderedReasoning = {
@@ -355,7 +355,7 @@ function handleReasoningDelta(
   parsed: Record<string, unknown>,
   state: StreamingState,
   onUpdate: StreamingCallbacks["onUpdate"],
-  getBuildParts: () => UIMessagePart[],
+  getBuildParts: () => ChatMessagePart[],
 ): void {
   const reasoningId = parsed.id as string;
   const reasoning = state.reasoningBlocks.get(reasoningId);
@@ -369,7 +369,7 @@ function handleReasoningEnd(
   parsed: Record<string, unknown>,
   state: StreamingState,
   onUpdate: StreamingCallbacks["onUpdate"],
-  getBuildParts: () => UIMessagePart[],
+  getBuildParts: () => ChatMessagePart[],
 ): void {
   const reasoningId = parsed.id as string;
   const reasoning = state.reasoningBlocks.get(reasoningId);
@@ -389,7 +389,7 @@ function handleStepStart(
   _parsed: Record<string, unknown>,
   state: StreamingState,
   onUpdate: StreamingCallbacks["onUpdate"],
-  getBuildParts: () => UIMessagePart[],
+  getBuildParts: () => ChatMessagePart[],
 ): void {
   const stepIndex = state.currentStep;
   const step: OrderedStep = {
@@ -405,7 +405,7 @@ function handleStepEnd(
   _parsed: Record<string, unknown>,
   state: StreamingState,
   onUpdate: StreamingCallbacks["onUpdate"],
-  getBuildParts: () => UIMessagePart[],
+  getBuildParts: () => ChatMessagePart[],
 ): void {
   const step = state.steps.get(state.currentStep);
   if (step) {
@@ -420,7 +420,7 @@ function handleStepEnd(
 function handleFinish(
   state: StreamingState,
   onMessage: StreamingCallbacks["onMessage"],
-  getBuildParts: () => UIMessagePart[],
+  getBuildParts: () => ChatMessagePart[],
 ): void {
   const finalParts = getBuildParts();
   if (finalParts.length > 0) {

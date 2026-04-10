@@ -1,9 +1,9 @@
 /**
- * Model Registry - AI SDK Provider Adapter Layer
+ * Model Registry - Provider Adapter Layer
  *
- * Maps "provider/model" strings to AI SDK LanguageModel instances.
- * Thin abstraction that delegates to AI SDK provider packages
- * while maintaining control over the API surface.
+ * Maps "provider/model" strings to framework-compatible model runtimes.
+ * The current implementation delegates to provider adapters while maintaining
+ * control over the public API surface.
  *
  * Project-scoped: each project gets its own provider namespace.
  * Auto-initialized providers from env vars are shared across all projects
@@ -13,31 +13,34 @@
  * @module
  */
 
-import type { LanguageModel } from "ai";
 import { createError, fromError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import {
   getAnthropicEnvConfig,
   getGoogleGenAIEnvConfig,
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
-import { ProjectScopedRegistryManager } from "../ai/registry-manager.ts";
+import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEFAULT_LOCAL_MODEL } from "./local/model-catalog.ts";
-import { createLocalModel } from "./local/ai-sdk-adapter.ts";
+import { createLocalModel } from "./local/model-runtime-adapter.ts";
 import { throwIfLocalAIDisabled } from "./local/env.ts";
 import { verifyLocalRuntime } from "./local/local-engine.ts";
 import {
   getDefaultVeryfrontCloudModel,
   isVeryfrontCloudEnabled,
 } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  createAnthropicModelRuntime,
+  createGoogleModelRuntime,
+  createOpenAIModelRuntime,
+} from "./runtime-loader.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
+import { getModelRuntimeId, hasLocalModelRuntimeMarker } from "./runtime-inspection.ts";
+import type { ModelRuntime } from "./types.ts";
 
 const localLogger = serverLogger.component("local-llm");
 
-export type ModelProviderFactory = (modelId: string) => LanguageModel;
+export type ModelProviderFactory = (modelId: string) => ModelRuntime;
 
 const manager = new ProjectScopedRegistryManager<ModelProviderFactory>(
   "model-provider",
@@ -45,12 +48,11 @@ const manager = new ProjectScopedRegistryManager<ModelProviderFactory>(
 let autoInitialized = false;
 
 /**
- * Register an AI SDK model provider factory for the current project.
+ * Register a custom model provider factory for the current project.
  *
  * @example
  * ```ts
- * import { createOpenAI } from "@ai-sdk/openai";
- * registerModelProvider("openai", (id) => createOpenAI({ apiKey })(id));
+ * registerModelProvider("custom", (id) => createCustomRuntime(id));
  * ```
  */
 export function registerModelProvider(
@@ -90,7 +92,8 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      return createOpenAI({ apiKey: config.apiKey, baseURL: config.baseURL })(
+      return createOpenAIModelRuntime(
+        { apiKey: config.apiKey, baseURL: config.baseURL },
         id,
       );
     });
@@ -108,10 +111,13 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      return createAnthropic({
-        apiKey: config.apiKey,
-        baseURL: config.baseURL,
-      })(id);
+      return createAnthropicModelRuntime(
+        {
+          apiKey: config.apiKey,
+          baseURL: config.baseURL,
+        },
+        id,
+      );
     });
   }
 
@@ -127,7 +133,7 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      return createGoogleGenerativeAI({ apiKey: config.apiKey })(id);
+      return createGoogleModelRuntime({ apiKey: config.apiKey }, id);
     });
   }
 
@@ -211,7 +217,7 @@ export function findAvailableCloudModel(): string | null {
 }
 
 /**
- * Resolve a "provider/model" string to an AI SDK LanguageModel instance.
+ * Resolve a "provider/model" string to a framework-compatible model runtime.
  *
  * Auto-initializes providers from environment on first call.
  *
@@ -220,7 +226,7 @@ export function findAvailableCloudModel(): string | null {
  * const model = resolveModel("openai/gpt-4o");
  * ```
  */
-export function resolveModel(modelString: string): LanguageModel {
+export function resolveModel(modelString: string): ModelRuntime {
   autoInitializeFromEnv();
 
   const slashIndex = modelString.indexOf("/");
@@ -313,12 +319,11 @@ export function getRegisteredModelProviders(): string[] {
  * happen to use `provider: "local"`.
  */
 export async function ensureModelReady(
-  model: LanguageModel,
+  model: ModelRuntime,
 ): Promise<void> {
-  const m = model as Record<string, unknown>;
-  if (!m._isVfLocalModel) return;
+  if (!hasLocalModelRuntimeMarker(model)) return;
   // modelId is "local/<id>" — strip the prefix to get the catalog id.
-  const catalogId = typeof m.modelId === "string" ? m.modelId.replace(/^local\//, "") : undefined;
+  const catalogId = getModelRuntimeId(model)?.replace(/^local\//, "");
   await verifyLocalRuntime(catalogId);
 }
 

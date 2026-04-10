@@ -6,7 +6,7 @@ import type { HandlerContext } from "../../types.ts";
 const logger = serverLogger.component("api-wrapper");
 
 /**
- * Tracks in-flight and completed AI discovery per project+release.
+ * Tracks in-flight and completed primitive discovery per project+release.
  *
  * Key: `{projectSlug}:{releaseId}` for production, `{projectSlug}:preview` for preview.
  * This ensures a new deployment triggers re-discovery of agents/tools.
@@ -17,14 +17,16 @@ const logger = serverLogger.component("api-wrapper");
 const discoveredProjects = new Map<string, Promise<void>>();
 
 function buildDiscoveryConfig(ctx: HandlerContext) {
-  const ai = ctx.config?.ai;
-  const skillDiscoveryEnabled = ai?.skills?.discovery?.enabled ?? true;
+  const discoveryConfig = ctx.config?.ai;
+  const skillDiscoveryEnabled = discoveryConfig?.skills?.discovery?.enabled ?? true;
 
   return {
     baseDir: ctx.projectDir,
-    toolDirs: ai?.tools?.discovery?.paths ?? ["tools"],
-    agentDirs: ai?.agents?.discovery?.paths ?? ["agents"],
-    skillDirs: skillDiscoveryEnabled ? (ai?.skills?.discovery?.paths ?? ["skills"]) : [],
+    toolDirs: discoveryConfig?.tools?.discovery?.paths ?? ["tools"],
+    agentDirs: discoveryConfig?.agents?.discovery?.paths ?? ["agents"],
+    skillDirs: skillDiscoveryEnabled
+      ? (discoveryConfig?.skills?.discovery?.paths ?? ["skills"])
+      : [],
     resourceDirs: ["resources"],
     promptDirs: ["prompts"],
     workflowDirs: ["workflows"],
@@ -65,7 +67,7 @@ function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
 }
 
 /**
- * Run AI discovery (agents, tools) for a project if not already done.
+ * Run primitive discovery (agents, tools) for a project if not already done.
  * Must be called within a runWithContext scope so the VFS can resolve
  * the correct remote project files and the agent registry uses the
  * correct project scope.
@@ -102,13 +104,13 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
     };
 
     if (result.agents.size === 0 && result.tools.size === 0) {
-      logger.warn("AI discovery found 0 agents and 0 tools", {
+      logger.warn("Primitive discovery found 0 agents and 0 tools", {
         ...logData,
         errorMessages: result.errors.map((e) => e.error.message).slice(0, 5),
         baseDir: ctx.projectDir,
       });
     } else {
-      logger.info("AI discovery completed", logData);
+      logger.info("Primitive discovery completed", logData);
     }
   })();
 
@@ -119,7 +121,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
   } catch (error) {
     // Allow retry on next request
     discoveredProjects.delete(key);
-    logger.warn("AI discovery failed (will retry)", {
+    logger.warn("Primitive discovery failed (will retry)", {
       projectSlug: ctx.projectSlug,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,

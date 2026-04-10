@@ -1,12 +1,14 @@
-import type { EmbeddingModel } from "ai";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { getGoogleGenAIEnvConfig, getOpenAIEnvConfig } from "#veryfront/config/env.ts";
-import { createLocalEmbeddingModel } from "#veryfront/provider/local/local-embedding-adapter.ts";
+import { createLocalEmbeddingModel } from "#veryfront/provider/local/embedding-runtime-adapter.ts";
+import {
+  createGoogleEmbeddingRuntime,
+  createOpenAIEmbeddingRuntime,
+} from "#veryfront/provider/runtime-loader.ts";
+import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import { createVeryfrontCloudEmbeddingModel } from "./veryfront-cloud/provider.ts";
 
-type EmbeddingProviderFactory = (modelId: string) => EmbeddingModel;
+type EmbeddingProviderFactory = (modelId: string) => EmbeddingRuntime;
 
 const providers = new Map<string, EmbeddingProviderFactory>();
 let autoInitialized = false;
@@ -16,9 +18,7 @@ let autoInitialized = false;
  *
  * @example
  * ```ts
- * registerEmbeddingProvider("openai", (id) =>
- *   createOpenAI({ apiKey })().embedding(id)
- * );
+ * registerEmbeddingProvider("openai", (id) => createOpenAIEmbeddingRuntime({ apiKey }, id));
  * ```
  */
 export function registerEmbeddingProvider(
@@ -44,7 +44,10 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      return createOpenAI({ apiKey: config.apiKey, baseURL: config.baseURL }).embedding(id);
+      return createOpenAIEmbeddingRuntime(
+        { apiKey: config.apiKey, baseURL: config.baseURL },
+        id,
+      );
     });
   }
 
@@ -60,7 +63,7 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      return createGoogleGenerativeAI({ apiKey: config.apiKey }).textEmbeddingModel(id);
+      return createGoogleEmbeddingRuntime({ apiKey: config.apiKey }, id);
     });
   }
 
@@ -74,14 +77,14 @@ function autoInitializeFromEnv(): void {
 }
 
 /**
- * Resolve a "provider/model" string to an AI SDK EmbeddingModel instance.
+ * Resolve a "provider/model" string to an embedding runtime instance.
  *
  * @example
  * ```ts
  * const model = resolveEmbeddingModel("openai/text-embedding-3-small");
  * ```
  */
-export function resolveEmbeddingModel(modelString: string): EmbeddingModel {
+export function resolveEmbeddingModel(modelString: string): EmbeddingRuntime {
   autoInitializeFromEnv();
 
   const slashIndex = modelString.indexOf("/");

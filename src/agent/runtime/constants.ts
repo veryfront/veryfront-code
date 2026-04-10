@@ -1,4 +1,4 @@
-import { AGENT_DEFAULTS, STREAMING_DEFAULTS } from "../../agent/ai-defaults.ts";
+import { AGENT_DEFAULTS, STREAMING_DEFAULTS } from "../../agent/defaults.ts";
 
 export const DEFAULT_MAX_TOKENS = AGENT_DEFAULTS.maxTokens;
 export const DEFAULT_TEMPERATURE = AGENT_DEFAULTS.temperature;
