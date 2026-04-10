@@ -136,6 +136,30 @@ describe("RenderPipeline behavior", () => {
     );
   });
 
+  it("resolvePageData includes mdx frontmatter and headings from prepared bundles", async () => {
+    const slug = "/behavior-mdx-metadata";
+    const projectId = "proj-mdx-metadata";
+    const pipeline = createPipeline("/project/pages/behavior-mdx-metadata.mdx");
+    primeCssCache(slug, projectId);
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).config.pageRenderer.preparePageBundles = async () => ({
+      pageBundle: {
+        frontmatter: { title: "MDX Title", author: "Veryfront" },
+        headings: [{ id: "intro", text: "Intro", level: 2 }],
+      },
+    });
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+    });
+
+    assertEquals(pageData.frontmatter, { title: "MDX Title", author: "Veryfront" });
+    assertEquals(pageData.headings, [{ id: "intro", text: "Intro", level: 2 }]);
+  });
+
   it("resolvePageData reuses the SSR hashed stylesheet for SPA CSS", async () => {
     const slug = "/behavior-ssr-css";
     const projectId = "proj-ssr-css";

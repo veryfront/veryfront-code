@@ -111,6 +111,11 @@ interface DataResolutionResult {
   layoutProps: Map<string, Record<string, unknown>>;
 }
 
+interface MdxMetadataResult {
+  frontmatter: Record<string, unknown>;
+  headings: Array<{ id: string; text: string; level: number }>;
+}
+
 interface FetchedDataResult {
   type: "page" | "layout";
   id: string;
@@ -660,39 +665,13 @@ export class RenderPipeline {
       layoutProps[layoutId] = props;
     }
 
-    let frontmatter: Record<string, unknown> = {};
-    let headings: Array<{ id: string; text: string; level: number }> = [];
-    if (pageType === "mdx") {
-      try {
-        const bundleResult = await this.config.pageRenderer.preparePageBundles(
-          pageInfo,
-          slug,
-          undefined,
-          {
-            ...options,
-            ...(Object.keys(params).length > 0 ? { params } : {}),
-          },
-        );
-
-        if (bundleResult.pageBundle && "frontmatter" in bundleResult.pageBundle) {
-          frontmatter =
-            (bundleResult.pageBundle as { frontmatter?: Record<string, unknown> }).frontmatter ||
-            {};
-        }
-
-        if (bundleResult.pageBundle && "headings" in bundleResult.pageBundle) {
-          headings = (bundleResult.pageBundle as {
-            headings?: Array<{ id: string; text: string; level: number }>;
-          }).headings || [];
-        }
-      } catch (error) {
-        renderPipelineLog.error("Frontmatter/headings extraction failed", {
-          slug,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
-      }
-    }
+    const { frontmatter, headings } = await this.extractMdxMetadata(
+      pageType,
+      pageInfo,
+      slug,
+      options,
+      params,
+    );
 
     const layouts = layoutResult.nestedLayouts
       .filter((l: LayoutItem) => l.componentPath || l.path)
@@ -814,6 +793,49 @@ export class RenderPipeline {
       css,
       cssError,
     };
+  }
+
+  private async extractMdxMetadata(
+    pageType: PageDataResponse["pageType"],
+    pageInfo: Awaited<ReturnType<PageResolver["resolvePage"]>>,
+    slug: string,
+    options: RenderOptions | undefined,
+    params: Record<string, string | string[]>,
+  ): Promise<MdxMetadataResult> {
+    if (pageType !== "mdx") {
+      return { frontmatter: {}, headings: [] };
+    }
+
+    try {
+      const bundleResult = await this.config.pageRenderer.preparePageBundles(
+        pageInfo,
+        slug,
+        undefined,
+        {
+          ...options,
+          ...(Object.keys(params).length > 0 ? { params } : {}),
+        },
+      );
+
+      const pageBundle = bundleResult.pageBundle;
+      return {
+        frontmatter: pageBundle && "frontmatter" in pageBundle
+          ? (pageBundle as { frontmatter?: Record<string, unknown> }).frontmatter || {}
+          : {},
+        headings: pageBundle && "headings" in pageBundle
+          ? (pageBundle as {
+            headings?: Array<{ id: string; text: string; level: number }>;
+          }).headings || []
+          : [],
+      };
+    } catch (error) {
+      renderPipelineLog.error("Frontmatter/headings extraction failed", {
+        slug,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      return { frontmatter: {}, headings: [] };
+    }
   }
 
   /**
