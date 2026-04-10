@@ -660,6 +660,145 @@ async function loadModuleFromCode(
   }
 }
 
+export function getNodeExternalPackagesToResolve(userDeps: Map<string, string>): string[] {
+  const externalPackagesToResolve = ["zod"];
+
+  for (const name of userDeps.keys()) {
+    if (!externalPackagesToResolve.includes(name)) {
+      externalPackagesToResolve.push(name);
+    }
+  }
+
+  return externalPackagesToResolve;
+}
+
+export async function resolveNodePackageToFileUrl(
+  projectDir: string,
+  packageName: string,
+  fs: FileSystem,
+  pathToFileURL: typeof import("node:url").pathToFileURL,
+): Promise<string | null> {
+  const packagePath = pathHelper.join(projectDir, "node_modules", packageName);
+  const packageJsonPath = pathHelper.join(packagePath, "package.json");
+
+  try {
+    const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
+    let entryPoint: string | undefined;
+
+    if (pkgJson.exports) {
+      entryPoint = resolveExportEntry(pkgJson.exports["."]);
+    }
+
+    entryPoint ||= pkgJson.module || pkgJson.main || "index.js";
+    if (!entryPoint) return null;
+
+    return pathToFileURL(pathHelper.join(packagePath, entryPoint)).href;
+  } catch (_) {
+    /* expected: package.json may not exist or be invalid */
+    return null;
+  }
+}
+
+export async function loadVeryfrontExportsMap(
+  projectDir: string,
+  fs: FileSystem,
+): Promise<Record<string, { import?: string }>> {
+  const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
+  const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
+
+  try {
+    const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
+    return pkgJson.exports || {};
+  } catch (_error) {
+    logger.debug("Could not read veryfront package.json");
+    return {};
+  }
+}
+
+export async function rewriteNodeExternalImports(
+  code: string,
+  projectDir: string,
+  fs: FileSystem,
+  userDeps: Map<string, string>,
+): Promise<string> {
+  const { pathToFileURL } = await import("node:url");
+  let transformed = code;
+
+  logger.debug(`Rewriting external imports for Node.js, projectDir: ${projectDir}`);
+
+  for (const pkg of getNodeExternalPackagesToResolve(userDeps)) {
+    const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const staticImportRegex = new RegExp(`from\\s*["']${escapedPkg}(/[^"']*)?["']`, "g");
+    const dynamicImportRegex = new RegExp(
+      `import\\s*\\(\\s*["']${escapedPkg}(/[^"']*)?["']\\s*\\)`,
+      "g",
+    );
+
+    const needsStatic = staticImportRegex.test(transformed);
+    staticImportRegex.lastIndex = 0;
+    const needsDynamic = dynamicImportRegex.test(transformed);
+    dynamicImportRegex.lastIndex = 0;
+    if (!needsStatic && !needsDynamic) continue;
+
+    const packageDir = pathToFileURL(pathHelper.join(projectDir, "node_modules", pkg)).href;
+    const resolvedUrl = await resolveNodePackageToFileUrl(projectDir, pkg, fs, pathToFileURL);
+
+    if (needsStatic) {
+      transformed = transformed.replace(staticImportRegex, (_, subpath) => {
+        if (subpath) {
+          const subUrl = `${packageDir}${subpath}`;
+          logger.debug(`Resolved ${pkg}${subpath} -> ${subUrl}`);
+          return `from "${subUrl}"`;
+        }
+        if (!resolvedUrl) return `from "${pkg}"`;
+        logger.debug(`Resolved ${pkg} -> ${resolvedUrl}`);
+        return `from "${resolvedUrl}"`;
+      });
+    }
+
+    if (needsDynamic) {
+      transformed = transformed.replace(dynamicImportRegex, (_, subpath) => {
+        if (subpath) {
+          return `import("${packageDir}${subpath}")`;
+        }
+        if (!resolvedUrl) return `import("${pkg}")`;
+        return `import("${resolvedUrl}")`;
+      });
+    }
+  }
+
+  const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
+  const exportsMap = await loadVeryfrontExportsMap(projectDir, fs);
+
+  transformed = transformed.replace(
+    /from\s+["'](veryfront\/[^"']+)["']/g,
+    (match, fullSpecifier: string) => {
+      const subpath = "./" + fullSpecifier.replace("veryfront/", "");
+      const exportEntry = exportsMap[subpath];
+      if (!exportEntry?.import) {
+        logger.warn(`No export found for ${subpath}`);
+        return match;
+      }
+
+      const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
+      logger.debug(`Resolved ${fullSpecifier} -> ${resolvedPath}`);
+      return `from "${pathToFileURL(resolvedPath).href}"`;
+    },
+  );
+
+  transformed = transformed.replace(/from\s+["']veryfront["']/g, () => {
+    const exportEntry = exportsMap["."];
+    if (!exportEntry?.import) return 'from "veryfront"';
+
+    const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
+    logger.debug(`Resolved veryfront -> ${resolvedPath}`);
+    return `from "${pathToFileURL(resolvedPath).href}"`;
+  });
+
+  return transformed;
+}
+
 async function rewriteExternalImports(
   code: string,
   projectDir: string,
@@ -670,119 +809,7 @@ async function rewriteExternalImports(
 
   if (isNode) {
     try {
-      const { pathToFileURL } = await import("node:url");
-
-      logger.debug(`Rewriting external imports for Node.js, projectDir: ${projectDir}`);
-
-      const resolvePackageToFileUrl = async (packageName: string): Promise<string | null> => {
-        const packagePath = pathHelper.join(projectDir, "node_modules", packageName);
-        const packageJsonPath = pathHelper.join(packagePath, "package.json");
-
-        try {
-          const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
-          let entryPoint: string | undefined;
-
-          if (pkgJson.exports) {
-            entryPoint = resolveExportEntry(pkgJson.exports["."]);
-          }
-
-          entryPoint ||= pkgJson.module || pkgJson.main || "index.js";
-          if (!entryPoint) return null;
-
-          return pathToFileURL(pathHelper.join(packagePath, entryPoint)).href;
-        } catch (_) {
-          /* expected: package.json may not exist or be invalid */
-          return null;
-        }
-      };
-
-      const externalPackagesToResolve = ["zod"];
-
-      for (const name of userDeps.keys()) {
-        if (!externalPackagesToResolve.includes(name)) {
-          externalPackagesToResolve.push(name);
-        }
-      }
-
-      for (const pkg of externalPackagesToResolve) {
-        const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-        // Match both exact imports (from "pkg") and subpath imports (from "pkg/sub")
-        const staticImportRegex = new RegExp(`from\\s*["']${escapedPkg}(/[^"']*)?["']`, "g");
-        const dynamicImportRegex = new RegExp(
-          `import\\s*\\(\\s*["']${escapedPkg}(/[^"']*)?["']\\s*\\)`,
-          "g",
-        );
-
-        const needsStatic = staticImportRegex.test(transformed);
-        staticImportRegex.lastIndex = 0;
-        const needsDynamic = dynamicImportRegex.test(transformed);
-        dynamicImportRegex.lastIndex = 0;
-        if (!needsStatic && !needsDynamic) continue;
-
-        const packageDir = pathToFileURL(pathHelper.join(projectDir, "node_modules", pkg)).href;
-        const resolvedUrl = await resolvePackageToFileUrl(pkg);
-
-        if (needsStatic) {
-          transformed = transformed.replace(staticImportRegex, (_, subpath) => {
-            if (subpath) {
-              const subUrl = `${packageDir}${subpath}`;
-              logger.debug(`Resolved ${pkg}${subpath} -> ${subUrl}`);
-              return `from "${subUrl}"`;
-            }
-            if (!resolvedUrl) return `from "${pkg}"`;
-            logger.debug(`Resolved ${pkg} -> ${resolvedUrl}`);
-            return `from "${resolvedUrl}"`;
-          });
-        }
-
-        if (needsDynamic) {
-          transformed = transformed.replace(dynamicImportRegex, (_, subpath) => {
-            if (subpath) {
-              const subUrl = `${packageDir}${subpath}`;
-              return `import("${subUrl}")`;
-            }
-            if (!resolvedUrl) return `import("${pkg}")`;
-            return `import("${resolvedUrl}")`;
-          });
-        }
-      }
-
-      const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
-      const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
-
-      let exportsMap: Record<string, { import?: string }> = {};
-      try {
-        const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
-        exportsMap = pkgJson.exports || {};
-      } catch (_error) {
-        logger.debug(`Could not read veryfront package.json: `);
-      }
-
-      transformed = transformed.replace(
-        /from\s+["'](veryfront\/[^"']+)["']/g,
-        (match, fullSpecifier: string) => {
-          const subpath = "./" + fullSpecifier.replace("veryfront/", "");
-          const exportEntry = exportsMap[subpath];
-          if (!exportEntry?.import) {
-            logger.warn(`No export found for ${subpath}`);
-            return match;
-          }
-
-          const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
-          logger.debug(`Resolved ${fullSpecifier} -> ${resolvedPath}`);
-          return `from "${pathToFileURL(resolvedPath).href}"`;
-        },
-      );
-
-      transformed = transformed.replace(/from\s+["']veryfront["']/g, () => {
-        const exportEntry = exportsMap["."];
-        if (!exportEntry?.import) return 'from "veryfront"';
-
-        const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
-        logger.debug(`Resolved veryfront -> ${resolvedPath}`);
-        return `from "${pathToFileURL(resolvedPath).href}"`;
-      });
+      transformed = await rewriteNodeExternalImports(transformed, projectDir, fs, userDeps);
     } catch (e) {
       logger.warn(`Failed to import node:module: ${e}`);
     }
