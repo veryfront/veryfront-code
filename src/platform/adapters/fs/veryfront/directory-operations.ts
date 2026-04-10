@@ -2,13 +2,9 @@ import { logger as baseLogger } from "#veryfront/utils";
 import type { DirectoryEntry } from "./types.ts";
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
 import { VeryfrontOperationsBase } from "./base-operations.ts";
-import {
-  buildDirCacheKeyPrefix,
-  buildFileCacheKeyPrefix,
-  buildFileListCacheKey,
-} from "./cache-keys.ts";
+import { buildDirCacheKeyPrefix } from "./cache-keys.ts";
+import { loadAllProjectFiles } from "./file-list-access.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { withRetryOnTransient } from "./retry.ts";
 
 const logger = baseLogger.component("directory-operations");
 
@@ -154,74 +150,13 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
   }
 
   private getAllFilesRaw(): Promise<ProjectFile[]> {
-    return withSpan("fs.veryfront.getAllFilesRaw", async () => {
-      const cacheStart = performance.now();
-      const ctx = this.contextProvider?.getContentContext();
-      const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
-      const skipPersistentCache =
-        this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
-
-      const adapterFiles = !skipPersistentCache
-        ? await this.contextProvider?.getFileList?.()
-        : undefined;
-
-      if (adapterFiles) {
-        const cacheMs = Math.round(performance.now() - cacheStart);
-        logger.debug("getAllFilesRaw - from adapter cache", {
-          cacheMs,
-          fileCount: adapterFiles.length,
-        });
-        return adapterFiles as ProjectFile[];
-      }
-
-      const cacheKey = buildFileListCacheKey(ctx);
-
-      if (skipPersistentCache) {
-        logger.debug("getAllFilesRaw - skipping persistent cache", {
-          cacheKey,
-          cacheKeyPrefix,
-        });
-      }
-
-      const cached = skipPersistentCache
-        ? undefined
-        : await this.cache.getAsync<ProjectFile[]>(cacheKey);
-
-      const cacheMs = Math.round(performance.now() - cacheStart);
-      if (cached) {
-        logger.debug("getAllFilesRaw - fallback cache HIT", {
-          cacheKey,
-          cacheMs,
-          fileCount: cached.length,
-        });
-        return cached;
-      }
-
-      logger.warn("getAllFilesRaw - cache MISS, fetching from API", {
-        cacheKey,
-        cacheMs,
-      });
-
-      const isPublished = ctx?.sourceType !== "branch";
-      logger.debug("Fetching files from API", {
-        sourceType: ctx?.sourceType,
-        cacheKey,
-      });
-
-      const files = await withRetryOnTransient(
-        () =>
-          isPublished
-            ? this.client.listPublishedFiles(
-              undefined,
-              ctx?.releaseId ?? undefined,
-              ctx?.environmentName ?? undefined,
-            )
-            : this.client.listAllFiles(),
-        "getAllFilesRaw (dir)",
-      );
-
-      this.cache.set(cacheKey, files);
-      return files;
-    });
+    return withSpan("fs.veryfront.getAllFilesRaw", () =>
+      loadAllProjectFiles({
+        client: this.client,
+        cache: this.cache,
+        contextProvider: this.contextProvider,
+        logger,
+        operationLabel: "dir",
+      }));
   }
 }

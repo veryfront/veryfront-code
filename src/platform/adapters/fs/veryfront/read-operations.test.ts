@@ -2,10 +2,10 @@ import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
+import type { ContentContextProvider } from "./file-list-access.ts";
 import { runWithRequestContext } from "./multi-project-adapter.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
-import type { ContentContextProvider } from "./read-operations.ts";
 
 function createMockClient(
   overrides: Record<string, unknown> = {},
