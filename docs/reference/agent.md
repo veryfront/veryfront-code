@@ -16,6 +16,7 @@ import {
   agentAsTool,
   AgentRuntime,
   AgUiRequestSchema,
+  AgUiRuntimeRequestSchema,
   createAgUiHandler,
   createMemory,
   getAgentsAsTools,
@@ -256,6 +257,13 @@ Current limitation:
 
 Validate AG-UI runtime requests for `createAgUiHandler()`.
 
+### `AgUiRuntimeRequestSchema`
+
+Validate the canonical open-source AG-UI runtime request contract for hosted
+agent execution. This is the package-facing schema downstream runtimes should
+target; the older internal compatibility route remains a wrapper around this
+contract.
+
 ### `RunResumeSessionManager`
 
 Coordinate resumable waits for hosted agent runs without depending on any
@@ -314,6 +322,13 @@ Clear all stored messages from memory.
 | `RedisMemory`             | Redis-backed persistent memory                    |
 | `RunResumeSessionManager` | Generic wait/resume manager for hosted agent runs |
 | `SummaryMemory`           | Compresses old messages into summaries            |
+
+### Schemas
+
+| Name                       | Description                                                          |
+| -------------------------- | -------------------------------------------------------------------- |
+| `AgUiRequestSchema`        | Convenience request schema for `createAgUiHandler()`                 |
+| `AgUiRuntimeRequestSchema` | Canonical open-source AG-UI runtime request contract for hosted runs |
 
 ### Types
 

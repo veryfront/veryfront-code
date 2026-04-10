@@ -134,6 +134,16 @@ export {
 
 export { agent } from "./factory.ts";
 export {
+  type AgUiRuntimeContextItem,
+  AgUiRuntimeContextItemSchema,
+  type AgUiRuntimeInjectedTool,
+  AgUiRuntimeInjectedToolSchema,
+  type AgUiRuntimeMessage,
+  AgUiRuntimeMessageSchema,
+  type AgUiRuntimeRequest,
+  AgUiRuntimeRequestSchema,
+} from "./runtime-ag-ui-contract.ts";
+export {
   type AgUiContextItem,
   type AgUiHandlerConfigWithAgent,
   type AgUiHandlerOptions,
