@@ -14,6 +14,8 @@ agent runtimes.
 - canonical hosted runtime request contract: `AgUiRuntimeRequestSchema`
 - response body: AG-UI SSE
 - default endpoint convention: `/api/ag-ui`
+- default hosted resume endpoint: `POST /api/ag-ui/runs/:runId/resume`
+- default hosted cancel endpoint: `DELETE /api/ag-ui/runs/:runId`
 - host path: overrideable by the application
 
 The package defines the runtime contract. The host chooses where to mount it.
@@ -37,6 +39,12 @@ export const POST = createAgUiHandler({
 
 `createAgUiHandler()` validates the higher-level `AgUiRequestSchema` convenience
 shape and normalizes it into the canonical hosted runtime contract.
+
+For resumable hosted runs, the package also exposes:
+
+- `createAgUiResumeHandler()`
+- `createAgUiCancelHandler()`
+- `AgUiResumeSignalSchema`
 
 ## Convenience Request Shape
 
@@ -65,6 +73,30 @@ The handler forwards AG-UI metadata into `agent.stream()` context as:
   }
 }
 ```
+
+## Hosted Run Control
+
+Package-hosted resumable runs can expose generic control endpoints using the
+same `RunResumeSessionManager` that the runtime uses internally:
+
+```ts
+import {
+  createAgUiCancelHandler,
+  createAgUiResumeHandler,
+  RunResumeSessionManager,
+} from "veryfront/agent";
+
+const sessionManager = new RunResumeSessionManager<{
+  result: unknown;
+  isError: boolean;
+}>();
+
+export const POST = createAgUiResumeHandler({ sessionManager });
+export const DELETE = createAgUiCancelHandler({ sessionManager });
+```
+
+These handlers are generic package surfaces. They do not include Veryfront
+control-plane auth/signature requirements.
 
 ## Current Limitation
 

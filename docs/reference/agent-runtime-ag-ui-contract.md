@@ -74,12 +74,23 @@ The package should standardize the runtime contract, not force one hardcoded rou
 Recommended default convention:
 
 - `POST /api/ag-ui`
+- `POST /api/ag-ui/runs/:runId/resume`
+- `DELETE /api/ag-ui/runs/:runId`
 
 Hosts may override the route when needed.
 
 Current internal compatibility route:
 
 - `POST /internal/agents/stream`
+
+Current internal signed control-plane wrappers:
+
+- `POST /internal/agents/runs/:runId/resume`
+- `DELETE /internal/agents/runs/:runId`
+
+Those internal handlers are Veryfront-specific wrappers around the generic
+package-hosted run-control surface. Downstream package consumers should target
+the public `veryfront/agent` handlers instead of these internal routes.
 
 ## What Downstream Consumers Should Target
 

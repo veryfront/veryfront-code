@@ -16,8 +16,11 @@ import {
   agentAsTool,
   AgentRuntime,
   AgUiRequestSchema,
+  AgUiResumeSignalSchema,
   AgUiRuntimeRequestSchema,
+  createAgUiCancelHandler,
   createAgUiHandler,
+  createAgUiResumeHandler,
   createMemory,
   getAgentsAsTools,
   registerAgent,
@@ -265,6 +268,27 @@ agent execution. This is the package-facing schema downstream runtimes should
 target; the older internal compatibility route remains a wrapper around this
 contract.
 
+### `AgUiResumeSignalSchema`
+
+Validate the canonical hosted-run resume payload for AG-UI tool-result
+continuations.
+
+### `createAgUiResumeHandler(options)`
+
+Create a generic POST handler for hosted resumable AG-UI runs.
+
+Default route convention:
+
+- `POST /api/ag-ui/runs/:runId/resume`
+
+### `createAgUiCancelHandler(options)`
+
+Create a generic DELETE handler for cancelling hosted resumable AG-UI runs.
+
+Default route convention:
+
+- `DELETE /api/ag-ui/runs/:runId`
+
 ### `RunResumeSessionManager`
 
 Coordinate resumable waits for hosted agent runs without depending on any
@@ -295,23 +319,25 @@ Clear all stored messages from memory.
 
 ### Functions
 
-| Name                | Description                                   |
-| ------------------- | --------------------------------------------- |
-| `agent`             | Create an agent                               |
-| `agentAsTool`       | Wrap agent as callable tool                   |
-| `createAgUiHandler` | Create a POST handler for an AG-UI route      |
-| `createChatHandler` | Create a POST handler for a chat API route.   |
-| `createMemory`      | Create memory (buffer, conversation, summary) |
-| `createRedisMemory` | Create Redis-backed memory                    |
-| `createWorkflow`    | Create sequential agent workflow              |
-| `getAgent`          | Get agent by ID                               |
-| `getAgentsAsTools`  | Get agents as tools (multi-agent)             |
-| `getAllAgentIds`    | List registered agent IDs                     |
-| `getTextFromParts`  | Extract text from multi-part message          |
-| `getToolArguments`  | Extract parsed tool call args                 |
-| `hasArgs`           | Check for parsed args on tool call            |
-| `hasInput`          | Check for raw input on tool call              |
-| `registerAgent`     | Register agent for discovery                  |
+| Name                      | Description                                               |
+| ------------------------- | --------------------------------------------------------- |
+| `agent`                   | Create an agent                                           |
+| `agentAsTool`             | Wrap agent as callable tool                               |
+| `createAgUiCancelHandler` | Create a DELETE handler for hosted AG-UI run cancellation |
+| `createAgUiHandler`       | Create a POST handler for an AG-UI route                  |
+| `createAgUiResumeHandler` | Create a POST handler for hosted AG-UI run resume values  |
+| `createChatHandler`       | Create a POST handler for a chat API route.               |
+| `createMemory`            | Create memory (buffer, conversation, summary)             |
+| `createRedisMemory`       | Create Redis-backed memory                                |
+| `createWorkflow`          | Create sequential agent workflow                          |
+| `getAgent`                | Get agent by ID                                           |
+| `getAgentsAsTools`        | Get agents as tools (multi-agent)                         |
+| `getAllAgentIds`          | List registered agent IDs                                 |
+| `getTextFromParts`        | Extract text from multi-part message                      |
+| `getToolArguments`        | Extract parsed tool call args                             |
+| `hasArgs`                 | Check for parsed args on tool call                        |
+| `hasInput`                | Check for raw input on tool call                          |
+| `registerAgent`           | Register agent for discovery                              |
 
 ### Classes
 
@@ -326,10 +352,11 @@ Clear all stored messages from memory.
 
 ### Schemas
 
-| Name                       | Description                                                          |
-| -------------------------- | -------------------------------------------------------------------- |
-| `AgUiRequestSchema`        | Convenience request schema for `createAgUiHandler()`                 |
-| `AgUiRuntimeRequestSchema` | Canonical open-source AG-UI runtime request contract for hosted runs |
+| Name                       | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| `AgUiRequestSchema`        | Convenience request schema for `createAgUiHandler()`                   |
+| `AgUiRuntimeRequestSchema` | Canonical open-source AG-UI runtime request contract for hosted runs   |
+| `AgUiResumeSignalSchema`   | Canonical hosted-run resume payload for AG-UI tool-result continuation |
 
 ### Types
 
@@ -345,8 +372,11 @@ Clear all stored messages from memory.
 | `AgUiContextItem`                | AG-UI runtime context item                                                   |
 | `AgUiHandlerConfigWithAgent`     | Direct-agent form for `createAgUiHandler`                                    |
 | `AgUiHandlerOptions`             | Options for `createAgUiHandler`                                              |
+| `AgUiCancelHandlerOptions`       | Options for `createAgUiCancelHandler`                                        |
 | `AgUiInjectedTool`               | AG-UI client-injected tool descriptor                                        |
 | `AgUiRequest`                    | Validated AG-UI runtime request body                                         |
+| `AgUiResumeHandlerOptions`       | Options for `createAgUiResumeHandler`                                        |
+| `AgUiResumeSignal`               | Validated hosted-run resume payload                                          |
 | `RunResumeSessionManagerOptions` | Options for `RunResumeSessionManager`                                        |
 | `RunSessionStatus`               | Status of a resumable run session                                            |
 | `SubmitResumeValueOutcome`       | Result of submitting an accepted or duplicate resume value                   |
