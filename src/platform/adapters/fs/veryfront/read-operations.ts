@@ -428,6 +428,18 @@ export class ReadOperations {
     return content;
   }
 
+  private fetchPublishedVariant(
+    apiPath: string,
+    releaseId: string | null,
+    environmentName?: string | null,
+  ): Promise<string> {
+    return this.client.getPublishedFileContent(
+      apiPath,
+      releaseId ?? undefined,
+      environmentName ?? undefined,
+    );
+  }
+
   private async fetchContent(normalizedPath: string): Promise<string> {
     // Framework paths should NEVER be fetched from API - they must be read from local filesystem.
     // If we reach here for a framework path, the module server's local resolution failed.
@@ -601,11 +613,7 @@ export class ReadOperations {
     });
 
     try {
-      const content = await this.client.getPublishedFileContent(
-        apiPath,
-        releaseId ?? undefined,
-        environmentName ?? undefined,
-      );
+      const content = await this.fetchPublishedVariant(apiPath, releaseId, environmentName);
 
       logger.debug("Fetched published content", {
         path: normalizedPath,
@@ -708,11 +716,7 @@ export class ReadOperations {
     const startTime = performance.now();
 
     const promises = candidates.map(async (ext) => {
-      const content = await this.client.getPublishedFileContent(
-        basePath + ext,
-        releaseId ?? undefined,
-        environmentName ?? undefined,
-      );
+      const content = await this.fetchPublishedVariant(basePath + ext, releaseId, environmentName);
       return { ext, content };
     });
 
