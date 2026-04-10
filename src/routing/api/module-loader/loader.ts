@@ -912,6 +912,24 @@ export async function rewriteDenoNpmDependencyImports(
   return transformed;
 }
 
+export function rewriteDenoNodeBuiltinImports(code: string): string {
+  let transformed = code;
+
+  for (const mod of NODE_BUILTINS) {
+    const escaped = mod.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    transformed = transformed.replace(
+      new RegExp(`from\\s+["']${escaped}["']`, "g"),
+      `from "node:${mod}"`,
+    );
+    transformed = transformed.replace(
+      new RegExp(`import\\s*\\(\\s*["']${escaped}["']\\s*\\)`, "g"),
+      `import("node:${mod}")`,
+    );
+  }
+
+  return transformed;
+}
+
 async function rewriteExternalImports(
   code: string,
   projectDir: string,
@@ -930,20 +948,7 @@ async function rewriteExternalImports(
 
   if (isDeno) {
     transformed = rewriteNpmImports(transformed);
-
-    // Rewrite bare Node.js built-in imports to node: prefix for Deno compatibility.
-    // npm packages often use require('fs') / from "fs" without the node: prefix.
-    for (const mod of NODE_BUILTINS) {
-      const escaped = mod.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      transformed = transformed.replace(
-        new RegExp(`from\\s+["']${escaped}["']`, "g"),
-        `from "node:${mod}"`,
-      );
-      transformed = transformed.replace(
-        new RegExp(`import\\s*\\(\\s*["']${escaped}["']\\s*\\)`, "g"),
-        `import("node:${mod}")`,
-      );
-    }
+    transformed = rewriteDenoNodeBuiltinImports(transformed);
 
     // Rewrite user-installed npm dependencies.
     // In non-compiled Deno: use npm: specifiers (resolved by Deno's npm support).

@@ -6,6 +6,7 @@ import {
   loadHandlerModule,
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
+  rewriteDenoNodeBuiltinImports,
   rewriteDenoNpmDependencyImports,
   rewriteNodeExternalImports,
   toCjsDestructureBindings,
@@ -428,6 +429,20 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
 
     assertMatch(rewritten, /from "npm:my-lib@\^1\.0\.0"/);
+  });
+
+  it("rewrites bare node builtins to node:-prefixed specifiers for deno compatibility", () => {
+    const source = [
+      'import { readFile } from "fs";',
+      'const path = import("path");',
+      'import { join } from "node:path";',
+    ].join("\n");
+
+    const rewritten = rewriteDenoNodeBuiltinImports(source);
+
+    assertMatch(rewritten, /from "node:fs"/);
+    assertMatch(rewritten, /import\("node:path"\)/);
+    assertMatch(rewritten, /from "node:path"/);
   });
 
   it("rejects module path that escapes project directory via traversal", async () => {
