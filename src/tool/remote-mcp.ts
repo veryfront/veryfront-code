@@ -22,6 +22,10 @@ interface JsonRpcCallToolContentItem {
   text?: unknown;
 }
 
+interface SseEvent {
+  data: string[];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -125,6 +129,67 @@ function extractJsonRpcErrorMessage(payload: Record<string, unknown>): string {
   return "Remote MCP server returned an error";
 }
 
+function parseSseEvents(text: string): SseEvent[] {
+  const events: SseEvent[] = [];
+  let currentEvent: SseEvent = { data: [] };
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+
+    if (line.length === 0) {
+      if (currentEvent.data.length > 0) {
+        events.push(currentEvent);
+      }
+      currentEvent = { data: [] };
+      continue;
+    }
+
+    if (line.startsWith(":")) {
+      continue;
+    }
+
+    if (line.startsWith("data:")) {
+      currentEvent.data.push(line.slice(5).trimStart());
+    }
+  }
+
+  if (currentEvent.data.length > 0) {
+    events.push(currentEvent);
+  }
+
+  return events;
+}
+
+function parseJsonRpcSsePayload(text: string): unknown {
+  const parsedPayloads = parseSseEvents(text)
+    .map((event) => parseJsonText(event.data.join("\n")))
+    .filter((payload): payload is unknown => payload !== undefined);
+
+  const jsonRpcPayload = parsedPayloads.find(
+    (payload) => isRecord(payload) && ("result" in payload || "error" in payload),
+  );
+
+  if (jsonRpcPayload !== undefined) {
+    return jsonRpcPayload;
+  }
+
+  if (parsedPayloads.length > 0) {
+    return parsedPayloads[0];
+  }
+
+  throw new Error("Remote MCP SSE response did not include a JSON-RPC payload");
+}
+
+async function parseJsonRpcResponse(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+
+  if (contentType.includes("text/event-stream")) {
+    return parseJsonRpcSsePayload(await response.text());
+  }
+
+  return await response.json();
+}
+
 async function resolveValue<T>(
   value: ResolvableValue<T>,
   context?: ToolExecutionContext,
@@ -142,7 +207,27 @@ async function resolveHeaders(
   const resolvedHeaders = headers ? await resolveValue(headers, context) : undefined;
   const finalHeaders = new Headers(resolvedHeaders);
   finalHeaders.set("Content-Type", "application/json");
+  finalHeaders.set("Accept", mergeAcceptHeader(finalHeaders.get("Accept")));
   return finalHeaders;
+}
+
+function mergeAcceptHeader(existingAccept: string | null): string {
+  const requiredTypes = ["application/json", "text/event-stream"];
+  const existingTypes = (existingAccept ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  const existingKeys = new Set(
+    existingTypes.map((entry) => entry.split(";")[0]?.trim().toLowerCase()).filter(Boolean),
+  );
+
+  for (const requiredType of requiredTypes) {
+    if (!existingKeys.has(requiredType)) {
+      existingTypes.push(requiredType);
+    }
+  }
+
+  return existingTypes.join(", ");
 }
 
 async function postJsonRpc(
@@ -164,7 +249,7 @@ async function postJsonRpc(
     );
   }
 
-  return await response.json();
+  return await parseJsonRpcResponse(response);
 }
 
 function getJsonRpcResult(payload: unknown): unknown {

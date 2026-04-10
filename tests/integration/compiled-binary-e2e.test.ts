@@ -35,7 +35,7 @@ import {
   getBrowserDiagnosticMessages,
   launchChromium,
 } from "../_helpers/playwright.ts";
-import { withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
+import { withoutHostBinaryInfraEnv, withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
 
 // Load .env file for test configuration (VERYFRONT_BINARY_FRESH, etc.)
 try {
@@ -225,7 +225,7 @@ async function startBinaryServer(
       args: ["serve", "--mode=production", "-p", String(port)],
       cwd: projectDir,
       env: withProxyModeControlPlaneKey({
-        ...Deno.env.toObject(),
+        ...withoutHostBinaryInfraEnv(Deno.env.toObject()),
         NODE_ENV: nodeEnv,
         LOG_FORMAT: "text",
         VERYFRONT_CACHE_DIR: cacheDir,

@@ -5,8 +5,8 @@
  * Uses the same patterns as API route discovery.
  *
  * Scans:
- * - app/workflows/*.ts - workflow definition files
- * - app/workflows/**\/*.ts - nested workflow files
+ * - workflows/*.ts - workflow definition files
+ * - workflows/**\/*.ts - nested workflow files
  *
  * Workflow files should export a workflow definition:
  * ```typescript
@@ -62,7 +62,7 @@ export interface WorkflowDiscoveryOptions {
   /** Veryfront config (for import maps, etc.) */
   config?: VeryfrontConfig;
 
-  /** Base directory for workflows (default: "app/workflows") */
+  /** Base directory for workflows (default: "workflows") */
   workflowsDir?: string;
 
   /** Enable debug logging */
@@ -125,7 +125,7 @@ export async function discoverWorkflows(
     projectDir,
     adapter,
     config,
-    workflowsDir = "app/workflows",
+    workflowsDir = "workflows",
     debug = false,
   } = options;
 

@@ -13,6 +13,7 @@ import { VeryfrontError } from "#veryfront/security/input-validation/errors.ts";
 import type { IntegrationRuntimeConfig } from "../integrations/types.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { SessionManager } from "./session.ts";
+import { TaskStore } from "./task-store.ts";
 
 const logger = baseLogger.component("mcp-server");
 
@@ -109,10 +110,29 @@ export interface IntegrationLoaderConfig {
 const MCP_SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
 
 export class MCPServer {
+  private static LOG_LEVELS = [
+    "debug",
+    "info",
+    "notice",
+    "warning",
+    "error",
+    "critical",
+    "alert",
+    "emergency",
+  ] as const;
+  private logLevel: typeof MCPServer.LOG_LEVELS[number] = "warning";
   private config: MCPServerConfig;
   private integrationLoader?: IntegrationLoaderConfig;
   private integrationsLoaded = false;
   private sessionManager = new SessionManager();
+  private taskStore = new TaskStore();
+  private pendingTasks = new Map<string, Promise<void>>();
+  // TODO(#842): capabilities should be stored per-session (keyed by MCP-Session-Id)
+  // so concurrent clients don't overwrite each other's capability flags.
+  private clientCapabilities: Record<string, unknown> = {};
+
+  /** Callback for server-initiated notifications. Set by transport layer. */
+  onNotification?: (notification: { jsonrpc: "2.0"; method: string; params?: unknown }) => void;
 
   constructor(config: MCPServerConfig) {
     this.config = config;
@@ -120,6 +140,18 @@ export class MCPServer {
     if (!config.auth || config.auth.type === "none") {
       logger.warn("MCP server has no authentication configured — all requests will be accepted");
     }
+  }
+
+  notifyToolsChanged(): void {
+    this.onNotification?.({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+  }
+
+  notifyResourcesChanged(): void {
+    this.onNotification?.({ jsonrpc: "2.0", method: "notifications/resources/list_changed" });
+  }
+
+  notifyPromptsChanged(): void {
+    this.onNotification?.({ jsonrpc: "2.0", method: "notifications/prompts/list_changed" });
   }
 
   /**
@@ -132,6 +164,15 @@ export class MCPServer {
   setIntegrationLoader(config: IntegrationLoaderConfig): void {
     this.integrationLoader = config;
     this.integrationsLoaded = false;
+  }
+
+  clientSupportsElicitation(mode: "form" | "url"): boolean {
+    const raw = this.clientCapabilities.elicitation;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+    const elicitation = raw as Record<string, unknown>;
+    // Per MCP spec: empty elicitation object implies basic form support (backwards compat)
+    if (mode === "form" && Object.keys(elicitation).length === 0) return true;
+    return mode in elicitation;
   }
 
   handleRequest(request: JSONRPCRequest, context?: ToolExecutionContext): Promise<JSONRPCResponse> {
@@ -177,8 +218,21 @@ export class MCPServer {
         return this.initialize(params);
       case "notifications/initialized":
         return Promise.resolve({});
+      case "notifications/cancelled":
+        // TODO(#841): propagate cancellation to in-flight tool executions via AbortController
+        return Promise.resolve({});
       case "completion/complete":
         return this.complete(params);
+      case "logging/setLevel":
+        return this.setLogLevel(params);
+      case "tasks/get":
+        return this.getTask(params);
+      case "tasks/result":
+        return this.getTaskResult(params);
+      case "tasks/cancel":
+        return this.cancelTask(params);
+      case "tasks/list":
+        return this.listTasks();
       default:
         throw toError(
           createError({
@@ -196,6 +250,9 @@ export class MCPServer {
       ? requested
       : MCP_SUPPORTED_VERSIONS[0];
 
+    const clientCaps = (p.capabilities ?? {}) as Record<string, unknown>;
+    this.clientCapabilities = clientCaps;
+
     return Promise.resolve({
       protocolVersion: negotiated,
       serverInfo: {
@@ -210,6 +267,8 @@ export class MCPServer {
         resources: { subscribe: true, listChanged: true },
         prompts: { listChanged: true },
         completions: {},
+        logging: {},
+        tasks: { list: {}, cancel: {}, requests: { tools: { call: {} } } },
       },
       instructions:
         "Veryfront MCP server provides development tools. Use vf_get_errors to check for code errors, vf_get_logs for server logs, vf_scaffold for code generation, and vf_get_project_context for project structure.",
@@ -249,7 +308,13 @@ export class MCPServer {
     params: JSONRPCParams | undefined,
     context?: ToolExecutionContext,
   ): Promise<Record<string, unknown>> {
-    const { name, arguments: args } = toParamsRecord(params);
+    const p = toParamsRecord(params);
+    const { name, arguments: args } = p;
+    const meta = (p._meta ?? {}) as Record<string, unknown>;
+    const rawToken = meta.progressToken;
+    const progressToken = (typeof rawToken === "string" || typeof rawToken === "number")
+      ? rawToken
+      : undefined;
 
     if (!name) {
       throw toError(createError({ type: "agent", message: "Tool name is required" }));
@@ -272,11 +337,55 @@ export class MCPServer {
       }
     }
 
+    const toolContext: ToolExecutionContext | undefined = progressToken !== undefined
+      ? { ...context, progressToken }
+      : context;
+
+    // Async task mode: if the caller provides a `task` field, create a task
+    // and run the tool in the background, returning the task immediately.
+    const taskParam = p.task as { ttl?: number } | undefined;
+    if (taskParam) {
+      const MIN_TTL = 1000;
+      const MAX_TTL = 3_600_000; // 1 hour
+      const rawTtl = typeof taskParam.ttl === "number" ? taskParam.ttl : 60000;
+      const ttl = Math.max(MIN_TTL, Math.min(MAX_TTL, rawTtl));
+      const task = this.taskStore.create(ttl);
+
+      // Run tool in background, update task on completion
+      // TODO(#842): wire AbortController so that tasks/cancel actually aborts the running tool execution
+      const pending = withSpan(
+        "mcp.callTool.async",
+        async () => {
+          try {
+            const result = await executeTool(toolName, args, toolContext);
+            this.taskStore.complete(task.taskId, {
+              content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+              isError: false,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            logger.warn("Async tool execution failed", {
+              tool: toolName,
+              taskId: task.taskId,
+              error: message,
+            });
+            this.taskStore.fail(task.taskId, message);
+          }
+        },
+        { "mcp.tool.name": toolName, "mcp.task.id": task.taskId },
+      ).then(() => {
+        this.pendingTasks.delete(task.taskId);
+      });
+      this.pendingTasks.set(task.taskId, pending);
+
+      return Promise.resolve({ task });
+    }
+
     return withSpan(
       "mcp.callTool",
       async () => {
         try {
-          const result = await executeTool(toolName, args, context);
+          const result = await executeTool(toolName, args, toolContext);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             isError: false,
@@ -444,6 +553,75 @@ export class MCPServer {
     return Promise.resolve({
       completion: { values: [], total: 0, hasMore: false },
     });
+  }
+
+  private setLogLevel(
+    params: JSONRPCParams | undefined,
+  ): Promise<Record<string, unknown>> {
+    const p = toParamsRecord(params);
+    const level = p.level as string;
+    if (
+      !MCPServer.LOG_LEVELS.includes(
+        level as typeof MCPServer.LOG_LEVELS[number],
+      )
+    ) {
+      return Promise.reject({
+        code: -32602,
+        message: `Invalid log level: ${level}. Valid levels: ${MCPServer.LOG_LEVELS.join(", ")}`,
+      });
+    }
+    this.logLevel = level as typeof MCPServer.LOG_LEVELS[number];
+    return Promise.resolve({});
+  }
+
+  private getTask(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+    const { taskId } = toParamsRecord(params);
+    if (!taskId) {
+      throw new JsonRpcError(-32602, "taskId is required");
+    }
+    const task = this.taskStore.get(String(taskId));
+    if (!task) {
+      throw new JsonRpcError(-32602, `Task not found: ${taskId}`);
+    }
+    return Promise.resolve({ ...task });
+  }
+
+  private getTaskResult(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+    const { taskId } = toParamsRecord(params);
+    if (!taskId) {
+      throw new JsonRpcError(-32602, "taskId is required");
+    }
+    const task = this.taskStore.get(String(taskId));
+    if (!task) {
+      throw new JsonRpcError(-32602, `Task not found: ${taskId}`);
+    }
+    const result = this.taskStore.getResult(String(taskId));
+    if (result === undefined) {
+      throw new JsonRpcError(-32002, "Task result is not yet available");
+    }
+    return Promise.resolve(result as Record<string, unknown>);
+  }
+
+  private cancelTask(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+    const { taskId } = toParamsRecord(params);
+    if (!taskId) {
+      throw new JsonRpcError(-32602, "taskId is required");
+    }
+    const cancelled = this.taskStore.cancel(String(taskId));
+    if (!cancelled) {
+      throw new JsonRpcError(-32002, `Cannot cancel task: ${taskId}`);
+    }
+    const task = this.taskStore.get(String(taskId));
+    return Promise.resolve({ ...task });
+  }
+
+  private listTasks(): Promise<Record<string, unknown>> {
+    return Promise.resolve({ tasks: this.taskStore.list() });
+  }
+
+  /** Wait for all background task executions to settle. Useful in tests. */
+  waitForPendingTasks(): Promise<void> {
+    return Promise.all(this.pendingTasks.values()).then(() => {});
   }
 
   createHTTPHandler(): (request: Request) => Promise<Response> {
@@ -622,6 +800,11 @@ export class MCPServer {
       };
     }
     await syncIntegrationConfig(apiBaseUrl, apiToken, integrationConfigs);
+    try {
+      this.notifyToolsChanged();
+    } catch (_) {
+      // Notification delivery failure is non-fatal — sync already succeeded
+    }
     return true;
   }
 }

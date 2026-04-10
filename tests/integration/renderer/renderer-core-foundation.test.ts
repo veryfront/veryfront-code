@@ -802,6 +802,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
+            projectId: context.projectId,
             mode: "development",
           });
 

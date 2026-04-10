@@ -1018,6 +1018,70 @@ describe("mcp/server", () => {
     assertEquals(data.completion.hasMore, false);
   });
 
+  it("stores client capabilities from initialize request", async () => {
+    const server = createMCPServer({ enabled: true });
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: { elicitation: { form: {}, url: {} } },
+        clientInfo: { name: "test", version: "1.0" },
+      },
+    });
+    assertEquals(server.clientSupportsElicitation("form"), true);
+    assertEquals(server.clientSupportsElicitation("url"), true);
+  });
+
+  it("reports no elicitation support when client does not declare it", async () => {
+    const server = createMCPServer({ enabled: true });
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "test", version: "1.0" },
+      },
+    });
+    assertEquals(server.clientSupportsElicitation("form"), false);
+    assertEquals(server.clientSupportsElicitation("url"), false);
+  });
+
+  it("treats empty elicitation capability as form-only support", async () => {
+    const server = createMCPServer({ enabled: true });
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: { elicitation: {} },
+        clientInfo: { name: "test", version: "1.0" },
+      },
+    });
+    assertEquals(server.clientSupportsElicitation("form"), true);
+    assertEquals(server.clientSupportsElicitation("url"), false);
+  });
+
+  it("handles malformed elicitation capability without crashing", async () => {
+    const server = createMCPServer({ enabled: true });
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: { elicitation: true },
+        clientInfo: { name: "test", version: "1.0" },
+      },
+    });
+    assertEquals(server.clientSupportsElicitation("form"), false);
+    assertEquals(server.clientSupportsElicitation("url"), false);
+  });
+
   it("syncs integration config to API on first tools/list call", async () => {
     const server = createMCPServer({ enabled: true });
     server.setIntegrationLoader({
@@ -1389,6 +1453,368 @@ describe("mcp/server", () => {
         }),
       );
       assertEquals(response.status, 200);
+    });
+  });
+
+  it("declares tasks capability in initialize", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "test", version: "1.0" },
+      },
+    });
+    const caps = (result.result as Record<string, unknown>)
+      .capabilities as Record<string, Record<string, unknown>>;
+    assertExists(caps.tasks);
+    assertExists(caps.logging);
+  });
+
+  it("logging/setLevel stores the level and returns empty result", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "logging/setLevel",
+      params: { level: "warning" },
+    });
+    assertEquals(result.error, undefined);
+    assertEquals(result.result, {});
+  });
+
+  it("extracts progressToken from _meta and passes to tool context", async () => {
+    const server = createMCPServer({ enabled: true });
+    let capturedContext: Record<string, unknown> | undefined;
+
+    registerTool(
+      "test:progress",
+      dynamicTool({
+        id: "test:progress",
+        description: "Captures context",
+        inputSchema: z.object({}),
+        execute: async (_input, context) => {
+          capturedContext = context as Record<string, unknown>;
+          return { ok: true };
+        },
+      }),
+    );
+
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:progress", arguments: {}, _meta: { progressToken: "token-123" } },
+    });
+
+    assertExists(capturedContext);
+    assertEquals(capturedContext?.progressToken, "token-123");
+  });
+
+  it("accepts notifications/cancelled without error", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: 1, reason: "User cancelled" },
+    });
+    assertEquals(result.error, undefined);
+    assertEquals(result.result, {});
+  });
+
+  it("logging/setLevel rejects invalid level", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "logging/setLevel",
+      params: { level: "invalid_level" },
+    });
+    assertExists(result.error);
+    assertEquals(result.error.code, -32602);
+  });
+
+  it("tools/call with task field returns CreateTaskResult immediately", async () => {
+    const server = createMCPServer({ enabled: true });
+    registerTool(
+      "test:slow",
+      dynamicTool({
+        id: "test:slow",
+        description: "Slow tool",
+        inputSchema: z.object({}),
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 50));
+          return { done: true };
+        },
+      }),
+    );
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:slow", arguments: {}, task: { ttl: 60000 } },
+    });
+    const res = result.result as { task: Record<string, unknown> };
+    assertExists(res.task.taskId);
+    assertEquals(res.task.status, "working");
+    await server.waitForPendingTasks();
+  });
+
+  it("tasks/get returns task status", async () => {
+    const server = createMCPServer({ enabled: true });
+    registerTool(
+      "test:slow2",
+      dynamicTool({
+        id: "test:slow2",
+        description: "Slow tool",
+        inputSchema: z.object({}),
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return { done: true };
+        },
+      }),
+    );
+    const createResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:slow2", arguments: {}, task: { ttl: 60000 } },
+    });
+    const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
+    const getResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/get",
+      params: { taskId },
+    });
+    const task = getResult.result as Record<string, unknown>;
+    assertExists(task.taskId);
+    assertExists(task.status);
+    await server.waitForPendingTasks();
+  });
+
+  it("tasks/cancel cancels a working task", async () => {
+    const server = createMCPServer({ enabled: true });
+    registerTool(
+      "test:slow3",
+      dynamicTool({
+        id: "test:slow3",
+        description: "Slow tool",
+        inputSchema: z.object({}),
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 100));
+          return { done: true };
+        },
+      }),
+    );
+    const createResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:slow3", arguments: {}, task: { ttl: 60000 } },
+    });
+    const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
+    const cancelResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/cancel",
+      params: { taskId },
+    });
+    assertEquals(
+      (cancelResult.result as Record<string, unknown>).status,
+      "cancelled",
+    );
+    await server.waitForPendingTasks();
+  });
+
+  it("tasks/result returns completed task result", async () => {
+    const server = createMCPServer({ enabled: true });
+    registerTool(
+      "test:fast",
+      dynamicTool({
+        id: "test:fast",
+        description: "Fast tool",
+        inputSchema: z.object({}),
+        execute: async () => ({ answer: 42 }),
+      }),
+    );
+    const createResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:fast", arguments: {}, task: { ttl: 60000 } },
+    });
+    const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
+    await server.waitForPendingTasks();
+    const resultResp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/result",
+      params: { taskId },
+    });
+    const payload = resultResp.result as { content: { text: string }[]; isError: boolean };
+    assertEquals(payload.isError, false);
+    assertExists(payload.content);
+  });
+
+  it("tasks/result returns error when task is still working", async () => {
+    const server = createMCPServer({ enabled: true });
+    registerTool(
+      "test:slow4",
+      dynamicTool({
+        id: "test:slow4",
+        description: "Slow tool",
+        inputSchema: z.object({}),
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return { done: true };
+        },
+      }),
+    );
+    const createResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:slow4", arguments: {}, task: { ttl: 60000 } },
+    });
+    const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
+    const resultResp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/result",
+      params: { taskId },
+    });
+    assertExists(resultResp.error);
+    assertEquals(resultResp.error!.code, -32002);
+    await server.waitForPendingTasks();
+  });
+
+  it("async tool failure sets task status to failed", async () => {
+    const server = createMCPServer({ enabled: true });
+    registerTool(
+      "test:fail",
+      dynamicTool({
+        id: "test:fail",
+        description: "Failing tool",
+        inputSchema: z.object({}),
+        execute: async () => {
+          throw new Error("tool broke");
+        },
+      }),
+    );
+    const createResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:fail", arguments: {}, task: { ttl: 60000 } },
+    });
+    const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
+    await server.waitForPendingTasks();
+    const getResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/get",
+      params: { taskId },
+    });
+    const task = getResult.result as Record<string, unknown>;
+    assertEquals(task.status, "failed");
+    assertEquals(task.statusMessage, "tool broke");
+  });
+
+  it("tasks/get returns error for unknown taskId", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tasks/get",
+      params: { taskId: "nonexistent" },
+    });
+    assertExists(result.error);
+    assertEquals(result.error!.code, -32602);
+  });
+
+  it("tasks/cancel returns error for unknown taskId", async () => {
+    const server = createMCPServer({ enabled: true });
+    const result = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tasks/cancel",
+      params: { taskId: "nonexistent" },
+    });
+    assertExists(result.error);
+  });
+
+  describe("listChanged notifications", () => {
+    it("calls onNotification when tools list changes", () => {
+      const notifications: Array<{ method: string }> = [];
+      const server = createMCPServer({ enabled: true });
+      server.onNotification = (notification) => {
+        notifications.push(notification as { method: string });
+      };
+      server.notifyToolsChanged();
+      assertEquals(notifications.length, 1);
+      assertEquals(notifications[0].method, "notifications/tools/list_changed");
+    });
+
+    it("calls onNotification for resources list changes", () => {
+      const notifications: Array<{ method: string }> = [];
+      const server = createMCPServer({ enabled: true });
+      server.onNotification = (notification) => {
+        notifications.push(notification as { method: string });
+      };
+      server.notifyResourcesChanged();
+      assertEquals(notifications.length, 1);
+      assertEquals(notifications[0].method, "notifications/resources/list_changed");
+    });
+
+    it("calls onNotification for prompts list changes", () => {
+      const notifications: Array<{ method: string }> = [];
+      const server = createMCPServer({ enabled: true });
+      server.onNotification = (notification) => {
+        notifications.push(notification as { method: string });
+      };
+      server.notifyPromptsChanged();
+      assertEquals(notifications.length, 1);
+      assertEquals(notifications[0].method, "notifications/prompts/list_changed");
+    });
+
+    it("does not throw when onNotification is not set", () => {
+      const server = createMCPServer({ enabled: true });
+      server.notifyToolsChanged(); // should not throw
+    });
+
+    it("emits tools/list_changed when loadRemoteIntegrationTools succeeds", async () => {
+      const server = createMCPServer({ enabled: true });
+      server.setIntegrationLoader({
+        integrations: { github: {} },
+        apiBaseUrl: "https://api.example.com",
+        apiToken: "test-token",
+      });
+
+      const notifications: Array<{ method: string }> = [];
+      server.onNotification = (notification) => {
+        notifications.push(notification as { method: string });
+      };
+
+      globalThis.fetch = async (input: string | URL | Request) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://api.example.com/integrations/config") {
+          return new Response(JSON.stringify({ synced: 1 }), {
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response("Not Found", { status: 404 });
+      };
+
+      await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+
+      const toolsChanged = notifications.find(
+        (n) => n.method === "notifications/tools/list_changed",
+      );
+      assertExists(toolsChanged);
     });
   });
 });

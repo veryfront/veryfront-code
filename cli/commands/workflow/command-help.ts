@@ -3,7 +3,7 @@ import type { CommandHelp } from "../../help/types.ts";
 export const workflowHelp: CommandHelp = {
   name: "workflow",
   category: "ai",
-  description: "Run a workflow from the app/workflows directory",
+  description: "Run a workflow from the workflows directory",
   usage: "veryfront workflow run <id> [options]",
   options: [
     {

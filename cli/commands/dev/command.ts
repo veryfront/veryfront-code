@@ -124,7 +124,8 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         throw error;
       }
 
-      const mcpPort = finalPort + 2;
+      const DEV_MCP_PORT_OFFSET = 2;
+      const mcpPort = finalPort + DEV_MCP_PORT_OFFSET;
       try {
         mcpServer = await createMCPServer({ httpPort: mcpPort });
       } catch {

@@ -9,6 +9,7 @@ import {
   formatSectionHeader,
 } from "./formatters.ts";
 import { bold, dim } from "../ui/colors.ts";
+import { DEFAULT_DEV_MCP_PORT } from "../shared/constants.ts";
 
 const CATEGORY_LABELS: Record<CommandCategory, string> = {
   development: "Development",
@@ -83,7 +84,9 @@ export function showMainHelp(): void {
 
   console.log();
   console.log(`  ${formatSectionHeader("Coding Agents (MCP)")}`);
-  console.log(`    ${dim("HTTP:")}   MCP auto-starts on port 9999 with dev server`);
+  console.log(
+    `    ${dim("HTTP:")}   MCP auto-starts with dev server (default port ${DEFAULT_DEV_MCP_PORT})`,
+  );
   console.log(`    ${dim("stdio:")}  veryfront mcp`);
   console.log(`    ${dim("Schema:")} veryfront schema --json`);
 

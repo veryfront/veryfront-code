@@ -1,6 +1,10 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { convertToModelMessage, convertToModelMessages } from "./model-message-converter.ts";
+import type {
+  ModelRuntimeAssistantMessage,
+  ModelRuntimeToolMessage,
+} from "./model-runtime-types.ts";
 import type { Message } from "../types.ts";
 
 describe("model-message-converter", () => {
@@ -46,7 +50,7 @@ describe("model-message-converter", () => {
       };
       const result = convertToModelMessage(msg);
       assertEquals(result.role, "assistant");
-      const content = result.content as Array<{ type: string; text?: string }>;
+      const content = (result as ModelRuntimeAssistantMessage).content;
       assertEquals(content.length, 1);
       assertEquals(content[0], { type: "text", text: "Sure, I can help." });
     });
@@ -67,7 +71,7 @@ describe("model-message-converter", () => {
       };
       const result = convertToModelMessage(msg);
       assertEquals(result.role, "assistant");
-      const content = result.content as Array<Record<string, unknown>>;
+      const content = (result as ModelRuntimeAssistantMessage).content;
       assertEquals(content.length, 2);
       assertEquals(content[0], { type: "text", text: "Let me search." });
       assertEquals(content[1], {
@@ -86,7 +90,7 @@ describe("model-message-converter", () => {
       };
       const result = convertToModelMessage(msg);
       assertEquals(result.role, "assistant");
-      const content = result.content as Array<{ type: string; text: string }>;
+      const content = (result as ModelRuntimeAssistantMessage).content;
       assertEquals(content.length, 1);
       assertEquals(content[0], { type: "text", text: "" });
     });
@@ -106,7 +110,7 @@ describe("model-message-converter", () => {
       };
       const result = convertToModelMessage(msg);
       assertEquals(result.role, "tool");
-      const content = result.content as Array<Record<string, unknown>>;
+      const content = (result as ModelRuntimeToolMessage).content;
       assertEquals(content.length, 1);
       assertEquals(content[0], {
         type: "tool-result",
@@ -129,8 +133,10 @@ describe("model-message-converter", () => {
         ],
       };
       const result = convertToModelMessage(msg);
-      const content = result.content as Array<Record<string, unknown>>;
-      assertEquals(content[0].toolName, "unknown");
+      const content = (result as ModelRuntimeToolMessage).content;
+      assertEquals(content.length, 1);
+      const firstPart = content[0];
+      assertEquals(firstPart?.toolName, "unknown");
     });
 
     it("falls back to user role for unknown message roles", () => {
@@ -158,9 +164,14 @@ describe("model-message-converter", () => {
         ],
       };
       const result = convertToModelMessage(msg);
-      const content = result.content as Array<Record<string, unknown>>;
-      assertEquals(content[0].type, "tool-call");
-      assertEquals(content[0].toolName, "calc");
+      const content = (result as ModelRuntimeAssistantMessage).content;
+      const firstPart = content[0];
+      assertEquals(content.length, 1);
+      assertEquals(firstPart?.type, "tool-call");
+      if (firstPart?.type !== "tool-call") {
+        throw new Error("Expected tool-call content");
+      }
+      assertEquals(firstPart.toolName, "calc");
     });
 
     it("skips tool-result parts in assistant messages", () => {
@@ -178,9 +189,10 @@ describe("model-message-converter", () => {
         ],
       };
       const result = convertToModelMessage(msg);
-      const content = result.content as Array<Record<string, unknown>>;
+      const content = (result as ModelRuntimeAssistantMessage).content;
       assertEquals(content.length, 1);
-      assertEquals(content[0].type, "text");
+      const firstPart = content[0];
+      assertEquals(firstPart?.type, "text");
     });
   });
 
@@ -192,8 +204,8 @@ describe("model-message-converter", () => {
       ];
       const result = convertToModelMessages(messages);
       assertEquals(result.length, 2);
-      assertEquals(result[0].role, "user");
-      assertEquals(result[1].role, "assistant");
+      assertEquals(result[0]?.role, "user");
+      assertEquals(result[1]?.role, "assistant");
     });
 
     it("returns empty array for empty input", () => {

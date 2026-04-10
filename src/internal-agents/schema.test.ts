@@ -1,11 +1,15 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ResumeSignalSchema, RuntimeRunAgentInputSchema } from "./schema.ts";
+import {
+  InternalAgentStreamRequestSchema,
+  ResumeSignalSchema,
+  RuntimeRunAgentInputSchema,
+  toRuntimeRunAgentInput,
+} from "./schema.ts";
 
 describe("internal-agents/schema", () => {
   it("applies defaults for optional runtime collections", () => {
     const parsed = RuntimeRunAgentInputSchema.parse({
-      agentId: "agent_1",
       threadId: crypto.randomUUID(),
       runId: "run_1",
       messages: [],
@@ -19,7 +23,6 @@ describe("internal-agents/schema", () => {
     assertThrows(
       () =>
         RuntimeRunAgentInputSchema.parse({
-          agentId: "agent_1",
           threadId: crypto.randomUUID(),
           runId: "run_1",
           messages: [],
@@ -37,7 +40,6 @@ describe("internal-agents/schema", () => {
     assertThrows(
       () =>
         RuntimeRunAgentInputSchema.parse({
-          agentId: "agent_1",
           threadId: crypto.randomUUID(),
           runId: "run_1",
           messages: [],
@@ -65,5 +67,212 @@ describe("internal-agents/schema", () => {
         isError: false,
       },
     );
+  });
+
+  it("accepts a canonical AG-UI-aligned runtime payload", () => {
+    const parsed = RuntimeRunAgentInputSchema.parse({
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      parentRunId: "run_parent",
+      state: { phase: "draft" },
+      messages: [
+        {
+          id: "sys_1",
+          role: "system",
+          content: "You are helpful",
+        },
+        {
+          id: "user_1",
+          role: "user",
+          content: "Hello",
+        },
+        {
+          id: "assistant_1",
+          role: "assistant",
+          content: "Working on it",
+          toolCalls: [{
+            id: "tool_1",
+            type: "function",
+            function: {
+              name: "search_docs",
+              arguments: JSON.stringify({ query: "ag-ui" }),
+            },
+          }],
+        },
+      ],
+      context: [{
+        description: "Current file",
+        value: "src/main.ts",
+      }],
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["search_docs"],
+        },
+      },
+    });
+
+    assertEquals(parsed.parentRunId, "run_parent");
+    assertEquals(parsed.state, { phase: "draft" });
+    assertEquals(parsed.messages[2].role, "assistant");
+    assertEquals(parsed.context, [{ description: "Current file", value: "src/main.ts" }]);
+  });
+
+  it("normalizes legacy internal stream payloads into the canonical runtime input", () => {
+    const internalRequest = InternalAgentStreamRequestSchema.parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messages: [
+        {
+          id: "user_1",
+          role: "user",
+          parts: [{ type: "text", text: "Hello" }],
+        },
+        {
+          id: "assistant_1",
+          role: "assistant",
+          parts: [
+            { type: "text", text: "Let me check" },
+            {
+              type: "tool-call",
+              toolCallId: "tool_1",
+              toolName: "search_docs",
+              args: { query: "ag-ui" },
+            },
+          ],
+        },
+      ],
+      context: [{ type: "text", text: "Current file: src/main.ts" }],
+    });
+
+    assertEquals(toRuntimeRunAgentInput(internalRequest), {
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messages: [
+        {
+          id: "user_1",
+          role: "user",
+          content: "Hello",
+        },
+        {
+          id: "assistant_1",
+          role: "assistant",
+          content: "Let me check",
+          toolCalls: [{
+            id: "tool_1",
+            type: "function",
+            function: {
+              name: "search_docs",
+              arguments: JSON.stringify({ query: "ag-ui" }),
+            },
+          }],
+        },
+      ],
+      tools: [],
+      context: [{ type: "text", text: "Current file: src/main.ts" }],
+    });
+  });
+
+  it("preserves canonical runtime messages on the compatibility route", () => {
+    const internalRequest = InternalAgentStreamRequestSchema.parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messages: [
+        {
+          id: "assistant_1",
+          role: "assistant",
+          content: "Working on it",
+          toolCalls: [{
+            id: "tool_1",
+            type: "function",
+            function: {
+              name: "search_docs",
+              arguments: JSON.stringify({ query: "ag-ui" }),
+            },
+          }],
+        },
+        {
+          id: "tool_1",
+          role: "tool",
+          toolCallId: "tool_1",
+          content: "Found docs",
+        },
+      ],
+      context: [],
+    });
+
+    assertEquals(toRuntimeRunAgentInput(internalRequest).messages, [
+      {
+        id: "assistant_1",
+        role: "assistant",
+        content: "Working on it",
+        toolCalls: [{
+          id: "tool_1",
+          type: "function",
+          function: {
+            name: "search_docs",
+            arguments: JSON.stringify({ query: "ag-ui" }),
+          },
+        }],
+      },
+      {
+        id: "tool_1",
+        role: "tool",
+        toolCallId: "tool_1",
+        content: "Found docs",
+      },
+    ]);
+  });
+
+  it("normalizes legacy tool_call and tool_result parts", () => {
+    const internalRequest = InternalAgentStreamRequestSchema.parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messages: [
+        {
+          id: "assistant_1",
+          role: "assistant",
+          parts: [{
+            type: "tool_call",
+            id: "tool_legacy",
+            name: "search_docs",
+            args: { query: "ag-ui" },
+          }],
+        },
+        {
+          id: "tool_message_1",
+          role: "tool",
+          parts: [{
+            type: "tool_result",
+            tool_call_id: "tool_legacy",
+            output: { ok: true },
+          }],
+        },
+      ],
+      context: [],
+    });
+
+    assertEquals(toRuntimeRunAgentInput(internalRequest).messages, [
+      {
+        id: "assistant_1",
+        role: "assistant",
+        toolCalls: [{
+          id: "tool_legacy",
+          type: "function",
+          function: {
+            name: "search_docs",
+            arguments: JSON.stringify({ query: "ag-ui" }),
+          },
+        }],
+      },
+      {
+        id: "tool_message_1",
+        role: "tool",
+        toolCallId: "tool_legacy",
+        content: JSON.stringify({ ok: true }),
+      },
+    ]);
   });
 });

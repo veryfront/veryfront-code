@@ -23,8 +23,9 @@ import {
   agentRunSessionManager,
 } from "#veryfront/internal-agents/session-manager.ts";
 import {
+  InternalAgentStreamRequestSchema,
   type RuntimeAgentSourceContext,
-  RuntimeRunAgentInputSchema,
+  toRuntimeRunAgentInput,
 } from "#veryfront/internal-agents/schema.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
@@ -161,7 +162,7 @@ export class AgentStreamHandler extends BaseHandler {
           req,
           INTERNAL_AGENT_STREAM_MAX_BODY_BYTES,
         );
-        const payload = RuntimeRunAgentInputSchema.parse(JSON.parse(rawBody));
+        const payload = InternalAgentStreamRequestSchema.parse(JSON.parse(rawBody));
         await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: payload.runId,
           expectedSurface: "studio",
@@ -194,8 +195,9 @@ export class AgentStreamHandler extends BaseHandler {
               return this.respond(builder.json({ error: "Agent not found" }, 404));
             }
 
+            const runtimeInput = toRuntimeRunAgentInput(payload);
             const response = await createRuntimeAgentStreamResponse(
-              payload,
+              runtimeInput,
               agent as Agent,
               this.deps,
             );
