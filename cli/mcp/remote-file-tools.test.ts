@@ -1,5 +1,10 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  _resetEnvironmentConfig,
+  _setEnvironmentConfigForTesting,
+} from "#veryfront/config/environment-config.ts";
 import {
   remoteFileTools,
   vfRemoteCloneProject,
@@ -398,8 +403,99 @@ describe("cli/mcp/remote-file-tools", () => {
     });
   });
 
+  describe("tool execute happy-path behavior", () => {
+    const resetEnv = () => {
+      _setEnvironmentConfigForTesting({
+        apiBaseUrl: "https://api.remote-vf.test",
+        apiToken: "token-123",
+        nodeEnv: "test",
+        veryfrontEnv: "test",
+        veryfrontMode: "test",
+        debug: false,
+        ci: false,
+        denoTesting: false,
+        perfEnabled: false,
+        publicApiBaseUrl: "https://api.remote-vf.test",
+        apiUrl: "https://api.remote-vf.test/graphql",
+        projectSlug: "project",
+      });
+    };
+
+    it("loads a file via API with encoded path and returns typed payload", async () => {
+      resetEnv();
+
+      let requestUrl = "";
+      let requestMethod = "";
+      let requestAuth = "";
+      const response = {
+        id: "1",
+        path: "pages/index.tsx",
+        content: "export default function Page() {}",
+        size: 42,
+        type: "file",
+        updated_at: "2024-01-01T00:00:00.000Z",
+      };
+
+      const result = await withMockFetch(async () => {
+        return new Response(
+          JSON.stringify(response),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }, async () => {
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
+          const request = new Request(input, init);
+          requestUrl = request.url;
+          requestMethod = request.method;
+          requestAuth = request.headers.get("Authorization") ?? "";
+          return originalFetch(input, init);
+        };
+
+        try {
+          return await vfRemoteGetFile.execute({
+            project: "my-project",
+            path: "pages/index.tsx",
+          });
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      });
+
+      assertEquals(requestUrl, "https://api.remote-vf.test/api/my-project/files/pages/index.tsx");
+      assertEquals(requestMethod, "GET");
+      assertEquals(requestAuth, "Bearer token-123");
+      assertEquals(result.success, true);
+      assertEquals(result.file?.path, "pages/index.tsx");
+      assertEquals(result.file?.size, 42);
+    });
+
+    it("returns error response when API responds with unauthorized JSON error", async () => {
+      resetEnv();
+      let requestUrl = "";
+
+      const result = await withMockFetch(async (input: string | URL | Request) => {
+        const request = input instanceof Request ? input : new Request(input);
+        requestUrl = request.url;
+        return new Response(
+          JSON.stringify({ message: "Unauthorized" }),
+          { status: 401, headers: { "Content-Type": "application/json" } },
+        );
+      }, async () => {
+        return await vfRemoteGetFile.execute({
+          project: "my-project",
+          path: "pages/index.tsx",
+        });
+      });
+
+      assertEquals(requestUrl, "https://api.remote-vf.test/api/my-project/files/pages/index.tsx");
+      assertEquals(result.success, false);
+      assertEquals(result.error, "Unauthorized");
+    });
+  });
+
   describe("tool execute without API token", () => {
     it("should return error for list files without token", async () => {
+      _resetEnvironmentConfig();
       await assertExecuteError(
         vfRemoteListFiles.execute({
           project: "test",
@@ -409,6 +505,7 @@ describe("cli/mcp/remote-file-tools", () => {
     });
 
     it("should return error for get file without token", async () => {
+      _resetEnvironmentConfig();
       await assertExecuteError(
         vfRemoteGetFile.execute({
           project: "test",
@@ -418,6 +515,7 @@ describe("cli/mcp/remote-file-tools", () => {
     });
 
     it("should return error for delete file without token", async () => {
+      _resetEnvironmentConfig();
       await assertExecuteError(
         vfRemoteDeleteFile.execute({
           project: "test",
@@ -427,6 +525,7 @@ describe("cli/mcp/remote-file-tools", () => {
     });
 
     it("should return error for move file without token", async () => {
+      _resetEnvironmentConfig();
       await assertExecuteError(
         vfRemoteMoveFile.execute({
           project: "test",
@@ -437,6 +536,7 @@ describe("cli/mcp/remote-file-tools", () => {
     });
 
     it("should return error for list branches without token", async () => {
+      _resetEnvironmentConfig();
       await assertExecuteError(
         vfRemoteListBranches.execute({
           project: "test",
@@ -446,6 +546,7 @@ describe("cli/mcp/remote-file-tools", () => {
     });
 
     it("should return error for create branch without token", async () => {
+      _resetEnvironmentConfig();
       await assertExecuteError(
         vfRemoteCreateBranch.execute({
           project: "test",
@@ -455,6 +556,7 @@ describe("cli/mcp/remote-file-tools", () => {
     });
 
     it("should return error for merge branch without token", async () => {
+      _resetEnvironmentConfig();
       await assertExecuteError(
         vfRemoteMergeBranch.execute({
           project: "test",
@@ -464,6 +566,7 @@ describe("cli/mcp/remote-file-tools", () => {
     });
 
     it("should return error for delete branch without token", async () => {
+      _resetEnvironmentConfig();
       await assertExecuteError(
         vfRemoteDeleteBranch.execute({
           project: "test",
@@ -473,6 +576,7 @@ describe("cli/mcp/remote-file-tools", () => {
     });
 
     it("should return error for create project without token", async () => {
+      _resetEnvironmentConfig();
       await assertExecuteError(
         vfRemoteCreateProject.execute({
           slug: "test",
