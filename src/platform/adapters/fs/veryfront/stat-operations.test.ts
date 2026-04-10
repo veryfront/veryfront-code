@@ -425,6 +425,75 @@ describe("StatOperations", () => {
       assertEquals(listAllFilesCallCount, 0);
     });
 
+    it("should retry pages-prefixed API patterns after an incomplete index miss", async () => {
+      const patterns: string[] = [];
+
+      const client = createMockClient({
+        searchFiles: (pattern: string) => {
+          patterns.push(pattern);
+          if (pattern === "pages/about.*") {
+            return Promise.resolve([{ path: "pages/about.tsx" }]);
+          }
+          return Promise.resolve([]);
+        },
+      });
+
+      const statOps = createStatOps(
+        client,
+        new PathNormalizer(),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+      );
+
+      assertEquals(await statOps.resolveFile("about"), "pages/about.tsx");
+      assertEquals(patterns, ["about.*", "pages/about.*"]);
+    });
+
+    it("should retry index-file API patterns after an incomplete index miss", async () => {
+      const patterns: string[] = [];
+
+      const client = createMockClient({
+        searchFiles: (pattern: string) => {
+          patterns.push(pattern);
+          if (pattern === "components/index.*") {
+            return Promise.resolve([{ path: "components/index.tsx" }]);
+          }
+          return Promise.resolve([]);
+        },
+      });
+
+      const statOps = createStatOps(
+        client,
+        new PathNormalizer(),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+      );
+
+      assertEquals(await statOps.resolveFile("components"), "components/index.tsx");
+      assertEquals(patterns, ["components.*", "pages/components.*", "components/index.*"]);
+    });
+
+    it("should keep wildcard extension fallback after an incomplete index miss", async () => {
+      const patterns: string[] = [];
+
+      const client = createMockClient({
+        searchFiles: (pattern: string) => {
+          patterns.push(pattern);
+          if (pattern === "components/Button.*") {
+            return Promise.resolve([{ path: "components/Button.ts" }]);
+          }
+          return Promise.resolve([]);
+        },
+      });
+
+      const statOps = createStatOps(
+        client,
+        new PathNormalizer(),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+      );
+
+      assertEquals(await statOps.resolveFile("components/Button.tsx"), "components/Button.ts");
+      assertEquals(patterns, ["components/Button.*"]);
+    });
+
     it("should skip pages/ API search patterns when pages prefix is disabled", async () => {
       const patterns: string[] = [];
 

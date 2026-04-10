@@ -329,6 +329,7 @@ export class StatOperations extends VeryfrontOperationsBase {
   private buildResolveSearchPatterns(
     normalizedPath: string,
     options?: ResolveFileOptions,
+    knownExtensionFallback: "exact" | "wildcard" = "exact",
   ): string[] {
     const patterns = new Set<string>();
     const pathWithoutExt = stripKnownExtension(normalizedPath, EXTENSION_PRIORITY);
@@ -338,7 +339,9 @@ export class StatOperations extends VeryfrontOperationsBase {
     };
 
     if (EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext))) {
-      addPattern(normalizedPath);
+      addPattern(
+        knownExtensionFallback === "wildcard" ? `${pathWithoutExt}.*` : normalizedPath,
+      );
       return [...patterns];
     }
 
@@ -366,6 +369,7 @@ export class StatOperations extends VeryfrontOperationsBase {
   private async tryResolveViaApiSearch(
     normalizedPath: string,
     options?: ResolveFileOptions,
+    knownExtensionFallback: "exact" | "wildcard" = "exact",
   ): Promise<string | null | undefined> {
     if (isFrameworkSourcePath(normalizedPath)) {
       logger.debug("Skipping API search for framework path", { normalizedPath });
@@ -377,7 +381,11 @@ export class StatOperations extends VeryfrontOperationsBase {
       return undefined;
     }
 
-    const patterns = this.buildResolveSearchPatterns(normalizedPath, options);
+    const patterns = this.buildResolveSearchPatterns(
+      normalizedPath,
+      options,
+      knownExtensionFallback,
+    );
     let sawSuccessfulSearch = false;
 
     for (const pattern of patterns) {
@@ -573,55 +581,17 @@ export class StatOperations extends VeryfrontOperationsBase {
       return null;
     }
 
-    // NOTE: Removed optimization that skipped API search for paths with extensions.
-    // This was causing layout files and other project files to not be found when
-    // they were missing from the file index (due to cache issues, incomplete fetch, etc.).
-    // The API pattern search is the fallback to ensure files can still be found.
-
-    if (!this.apiSearchCircuitBreaker.canSearch()) {
-      logger.warn("API search circuit breaker open, skipping", { normalizedPath });
-      return null;
+    // NOTE: Keep the post-index API fallback aligned with the pre-index helper for extensionless
+    // paths, while preserving the older wildcard sibling-extension lookup for known-extension
+    // paths. Incomplete file-list snapshots otherwise hide valid files until the cache refreshes.
+    const apiResolved = await this.tryResolveViaApiSearch(normalizedPath, options, "wildcard");
+    if (typeof apiResolved === "string") {
+      this.cache.set(cacheKey, apiResolved);
+      return apiResolved;
     }
-
-    const searchPattern = `${pathWithoutExt}.*`;
-    logger.debug("Searching for file via API", {
-      pattern: searchPattern,
-      normalizedPath,
-    });
-
-    try {
-      const matches = await this.client.searchFiles(searchPattern);
-      this.apiSearchCircuitBreaker.recordSuccess();
-
-      logger.debug("API search result", {
-        pattern: searchPattern,
-        matchCount: matches.length,
-        matches: matches.map((m) => m.path).slice(0, 5),
-      });
-
-      const sortedMatches = sortPathsByExtensionPriority(matches, EXTENSION_PRIORITY);
-      const first = sortedMatches[0];
-      if (first) {
-        logger.debug("resolveFile found via API search", { path: first.path });
-        this.cache.set(cacheKey, first.path);
-        return first.path;
-      }
-    } catch (error) {
-      const result = this.apiSearchCircuitBreaker.recordFailure();
-      if (result.tripped) {
-        logger.warn("API search circuit breaker tripped", {
-          failures: result.failures,
-        });
-      }
-      logger.error("API pattern search failed", { pattern: searchPattern, error });
+    if (apiResolved === null) {
+      this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
     }
-
-    logger.debug("resolveFile not found after API search", {
-      normalizedPath,
-      pathWithoutExt,
-    });
-
-    this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
     return null;
   }
 }
