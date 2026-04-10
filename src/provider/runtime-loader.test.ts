@@ -564,6 +564,245 @@ describe("provider/runtime-loader", () => {
     ]);
   });
 
+  it("creates an Anthropic-compatible language runtime for provider-native web_fetch generate", async () => {
+    let requestedUrl = "";
+    let requestedInit: RequestInit | undefined;
+
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: (input, init) => {
+        requestedUrl = String(input);
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{
+                type: "server_tool_use",
+                id: "srvtool_fetch_1",
+                name: "web_fetch",
+                input: { url: "https://veryfront.com/docs" },
+              }, {
+                type: "web_fetch_tool_result",
+                tool_use_id: "srvtool_fetch_1",
+                content: {
+                  type: "web_fetch_result",
+                  url: "https://veryfront.com/docs",
+                  content: {
+                    type: "document",
+                    source: {
+                      type: "text",
+                      mediaType: "text/plain",
+                      data: "Veryfront docs",
+                    },
+                    title: "Docs",
+                  },
+                  retrievedAt: "2026-04-11T10:00:00Z",
+                },
+              }],
+              stop_reason: "end_turn",
+              usage: {
+                input_tokens: 12,
+                output_tokens: 7,
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-20250514");
+
+    const result = await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Fetch the docs page" }],
+      }],
+      tools: [{
+        type: "provider",
+        name: "web_fetch",
+        id: "anthropic.web_fetch_20250910",
+        args: {},
+      }],
+      maxOutputTokens: 64,
+    });
+
+    assertEquals(requestedUrl, "https://example.anthropic.test/v1/messages");
+    const requestBody = typeof requestedInit?.body === "string"
+      ? JSON.parse(requestedInit.body)
+      : undefined;
+    assertEquals(requestBody, {
+      model: "claude-sonnet-4-20250514",
+      messages: [{
+        role: "user",
+        content: [{ type: "text", text: "Fetch the docs page" }],
+      }],
+      max_tokens: 64,
+      tools: [{
+        type: "web_fetch_20250910",
+        name: "web_fetch",
+      }],
+    });
+    assertEquals(result, {
+      content: [{
+        type: "tool-call",
+        toolCallId: "srvtool_fetch_1",
+        toolName: "web_fetch",
+        input: '{"url":"https://veryfront.com/docs"}',
+      }, {
+        type: "tool-result",
+        toolCallId: "srvtool_fetch_1",
+        toolName: "web_fetch",
+        result: {
+          type: "web_fetch_result",
+          url: "https://veryfront.com/docs",
+          content: {
+            type: "document",
+            source: {
+              type: "text",
+              mediaType: "text/plain",
+              data: "Veryfront docs",
+            },
+            title: "Docs",
+          },
+          retrievedAt: "2026-04-11T10:00:00Z",
+        },
+      }],
+      finishReason: { unified: "stop", raw: "end_turn" },
+      usage: {
+        inputTokens: 12,
+        outputTokens: 7,
+        totalTokens: 19,
+      },
+    });
+  });
+
+  it("creates an Anthropic-compatible language runtime for provider-native web_fetch stream", async () => {
+    let requestedUrl = "";
+    let requestedInit: RequestInit | undefined;
+    const encoder = new TextEncoder();
+
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: (input, init) => {
+        requestedUrl = String(input);
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            ReadableStream.from([
+              encoder.encode(
+                'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":10}}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtool_fetch_2","name":"web_fetch"}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"url\\":\\"https://veryfront.com/docs\\"}"}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"web_fetch_tool_result","tool_use_id":"srvtool_fetch_2","content":{"type":"web_fetch_result","url":"https://veryfront.com/docs","content":{"type":"document","source":{"type":"text","mediaType":"text/plain","data":"Veryfront docs"}},"retrievedAt":"2026-04-11T10:05:00Z"}}}\n\n',
+              ),
+              encoder.encode(
+                'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}\n\n',
+              ),
+              encoder.encode(
+                'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+              ),
+            ]),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-20250514");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Fetch the docs page" }],
+      }],
+      tools: [{
+        type: "provider",
+        name: "web_fetch",
+        id: "anthropic.web_fetch_20250910",
+        args: {},
+      }],
+      maxOutputTokens: 64,
+    });
+
+    assertEquals(requestedUrl, "https://example.anthropic.test/v1/messages");
+    const requestBody = typeof requestedInit?.body === "string"
+      ? JSON.parse(requestedInit.body)
+      : undefined;
+    assertEquals(requestBody, {
+      model: "claude-sonnet-4-20250514",
+      messages: [{
+        role: "user",
+        content: [{ type: "text", text: "Fetch the docs page" }],
+      }],
+      max_tokens: 64,
+      stream: true,
+      tools: [{
+        type: "web_fetch_20250910",
+        name: "web_fetch",
+      }],
+    });
+
+    const parts = await collectAsync(result.stream);
+    assertEquals(parts.length, 5);
+    assertEquals(parts[0], {
+      type: "tool-input-start",
+      id: "srvtool_fetch_2",
+      toolName: "web_fetch",
+      providerExecuted: true,
+    });
+    assertEquals(parts[1], {
+      type: "tool-input-delta",
+      id: "srvtool_fetch_2",
+      delta: '{"url":"https://veryfront.com/docs"}',
+    });
+    assertEquals(parts[2], {
+      type: "tool-call",
+      toolCallId: "srvtool_fetch_2",
+      toolName: "web_fetch",
+      input: '{"url":"https://veryfront.com/docs"}',
+      providerExecuted: true,
+    });
+    assertEquals(parts[3], {
+      type: "tool-result",
+      toolCallId: "srvtool_fetch_2",
+      toolName: "web_fetch",
+      result: {
+        type: "web_fetch_result",
+        url: "https://veryfront.com/docs",
+        content: {
+          type: "document",
+          source: {
+            type: "text",
+            mediaType: "text/plain",
+            data: "Veryfront docs",
+          },
+        },
+        retrievedAt: "2026-04-11T10:05:00Z",
+      },
+      providerExecuted: true,
+    });
+    assertEquals(parts[4], {
+      type: "finish",
+      finishReason: { unified: "stop", raw: "end_turn" },
+      usage: {
+        inputTokens: 10,
+        outputTokens: 4,
+        totalTokens: 14,
+      },
+    });
+  });
+
   it("parses Anthropic-compatible SSE streams when events use CRLF delimiters", async () => {
     const encoder = new TextEncoder();
     const runtime = createAnthropicModelRuntime({

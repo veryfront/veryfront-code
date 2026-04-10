@@ -13,7 +13,10 @@ import {
   createRuntimeJsonSchema,
   createRuntimeTool,
 } from "./runtime-tool-builder.ts";
-import { createAnthropicWebSearchToolSet } from "./provider-native-tools.ts";
+import {
+  createAnthropicWebFetchToolSet,
+  createAnthropicWebSearchToolSet,
+} from "./provider-native-tools.ts";
 
 export interface ConvertToolsToRuntimeToolsOptions {
   model?: string;
@@ -35,7 +38,11 @@ function resolveHostedProvider(model?: string): string | undefined {
 function resolveProviderNativeTools(
   options?: ConvertToolsToRuntimeToolsOptions,
 ): RuntimeToolSet | undefined {
-  if (!options?.allowedToolNames?.includes("web_search")) {
+  if (
+    !options?.allowedToolNames?.some((toolName) =>
+      toolName === "web_search" || toolName === "web_fetch"
+    )
+  ) {
     return undefined;
   }
 
@@ -43,7 +50,10 @@ function resolveProviderNativeTools(
     return undefined;
   }
 
-  return createAnthropicWebSearchToolSet();
+  return {
+    ...createAnthropicWebSearchToolSet(),
+    ...createAnthropicWebFetchToolSet(),
+  };
 }
 
 /**

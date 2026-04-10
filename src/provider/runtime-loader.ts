@@ -722,6 +722,19 @@ function buildAnthropicGenerateResult(payload: unknown): {
         result: block.content,
       });
     }
+
+    if (
+      blockType === "web_fetch_tool_result" &&
+      typeof block?.tool_use_id === "string" &&
+      readRecord(block?.content)
+    ) {
+      normalized.push({
+        type: "tool-result",
+        toolCallId: block.tool_use_id,
+        toolName: "web_fetch",
+        result: block.content,
+      });
+    }
   }
 
   return {
@@ -845,6 +858,20 @@ async function* streamAnthropicCompatibleParts(
             type: "tool-result",
             toolCallId: contentBlock.tool_use_id,
             toolName: "web_search",
+            result: contentBlock.content,
+            providerExecuted: true,
+          };
+        }
+
+        if (
+          blockType === "web_fetch_tool_result" &&
+          typeof contentBlock?.tool_use_id === "string" &&
+          readRecord(contentBlock?.content)
+        ) {
+          yield {
+            type: "tool-result",
+            toolCallId: contentBlock.tool_use_id,
+            toolName: "web_fetch",
             result: contentBlock.content,
             providerExecuted: true,
           };

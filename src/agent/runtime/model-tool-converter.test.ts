@@ -113,10 +113,39 @@ describe("model-tool-converter", () => {
     assertEquals("web_search" in result!, true);
   });
 
+  it("adds provider-native web_fetch for anthropic models when explicitly allowed", () => {
+    const result = convertToolsToRuntimeTools([], {
+      model: "anthropic/claude-sonnet-4-6",
+      allowedToolNames: ["web_fetch"],
+    });
+
+    assertEquals(result !== undefined, true);
+    assertEquals("web_fetch" in result!, true);
+  });
+
+  it("adds provider-native web_fetch for veryfront-cloud anthropic models when explicitly allowed", () => {
+    const result = convertToolsToRuntimeTools([], {
+      model: "veryfront-cloud/anthropic/claude-sonnet-4-6",
+      allowedToolNames: ["web_fetch"],
+    });
+
+    assertEquals(result !== undefined, true);
+    assertEquals("web_fetch" in result!, true);
+  });
+
   it("does not add provider-native web_search for non-anthropic models", () => {
     const result = convertToolsToRuntimeTools([], {
       model: "openai/gpt-4o-mini",
       allowedToolNames: ["web_search"],
+    });
+
+    assertEquals(result, undefined);
+  });
+
+  it("does not add provider-native web_fetch for non-anthropic models", () => {
+    const result = convertToolsToRuntimeTools([], {
+      model: "openai/gpt-4o-mini",
+      allowedToolNames: ["web_fetch"],
     });
 
     assertEquals(result, undefined);

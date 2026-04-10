@@ -529,4 +529,241 @@ describe("runtime-bridge", () => {
       }],
     }]);
   });
+
+  it("uses the direct stream path for provider-native web_fetch", async () => {
+    const model = createStreamModel(
+      "anthropic",
+      "anthropic/test-direct-provider-web-fetch-stream",
+      async (options) => {
+        assertEquals(options.prompt, [{
+          role: "user",
+          content: [{ type: "text", text: "Fetch the docs page" }],
+        }]);
+        assertEquals(options.tools, [{
+          type: "provider",
+          name: "web_fetch",
+          id: "anthropic.web_fetch_20250910",
+          args: {},
+        }]);
+
+        return {
+          stream: ReadableStream.from([
+            {
+              type: "tool-call",
+              toolCallId: "tool-fetch-1",
+              toolName: "web_fetch",
+              input: '{"url":"https://veryfront.com/docs"}',
+              providerExecuted: true,
+            },
+            {
+              type: "tool-result",
+              toolCallId: "tool-fetch-1",
+              toolName: "web_fetch",
+              result: {
+                type: "web_fetch_result",
+                url: "https://veryfront.com/docs",
+                content: {
+                  type: "document",
+                  source: {
+                    type: "text",
+                    mediaType: "text/plain",
+                    data: "Veryfront docs",
+                  },
+                },
+                retrievedAt: "2026-04-11T10:10:00Z",
+              },
+              providerExecuted: true,
+            },
+            {
+              type: "finish",
+              finishReason: { unified: "stop", raw: "stop" },
+              usage: {
+                inputTokens: { total: 5 },
+                outputTokens: { total: 8 },
+              },
+            },
+          ]),
+        };
+      },
+    );
+
+    const result = streamText({
+      model,
+      messages: [{ role: "user", content: "Fetch the docs page" }],
+      tools: {
+        web_fetch: {
+          type: "provider",
+          id: "anthropic.web_fetch_20250910",
+          args: {},
+          inputSchema: () => ({
+            jsonSchema: {
+              type: "object",
+              properties: {
+                url: { type: "string" },
+              },
+              required: ["url"],
+              additionalProperties: false,
+            },
+          }),
+          outputSchema: () => ({
+            jsonSchema: {
+              type: "object",
+            },
+          }),
+          supportsDeferredResults: true,
+        },
+      },
+      temperature: 0,
+    });
+
+    const [textDeltas, fullStreamParts] = await Promise.all([
+      collectAsync(result.textStream),
+      collectAsync(result.fullStream),
+    ]);
+
+    assertEquals(textDeltas, []);
+    assertEquals(fullStreamParts, [
+      {
+        type: "tool-call",
+        toolCallId: "tool-fetch-1",
+        toolName: "web_fetch",
+        input: '{"url":"https://veryfront.com/docs"}',
+        providerExecuted: true,
+      },
+      {
+        type: "tool-result",
+        toolCallId: "tool-fetch-1",
+        toolName: "web_fetch",
+        result: {
+          type: "web_fetch_result",
+          url: "https://veryfront.com/docs",
+          content: {
+            type: "document",
+            source: {
+              type: "text",
+              mediaType: "text/plain",
+              data: "Veryfront docs",
+            },
+          },
+          retrievedAt: "2026-04-11T10:10:00Z",
+        },
+        providerExecuted: true,
+      },
+      {
+        type: "finish",
+        finishReason: "stop",
+        totalUsage: {
+          inputTokens: 5,
+          outputTokens: 8,
+        },
+      },
+    ]);
+  });
+
+  it("uses the direct generate path for provider-native web_fetch", async () => {
+    const model = createGenerateModel(
+      "anthropic",
+      "anthropic/test-direct-provider-web-fetch-generate",
+      async (options) => {
+        assertEquals(options.prompt, [{
+          role: "user",
+          content: [{ type: "text", text: "Fetch the docs page" }],
+        }]);
+        assertEquals(options.tools, [{
+          type: "provider",
+          name: "web_fetch",
+          id: "anthropic.web_fetch_20250910",
+          args: {},
+        }]);
+
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "tool-fetch-2",
+              toolName: "web_fetch",
+              input: '{"url":"https://veryfront.com/docs"}',
+            },
+            {
+              type: "tool-result",
+              toolCallId: "tool-fetch-2",
+              toolName: "web_fetch",
+              result: {
+                type: "web_fetch_result",
+                url: "https://veryfront.com/docs",
+                content: {
+                  type: "document",
+                  source: {
+                    type: "text",
+                    mediaType: "text/plain",
+                    data: "Veryfront docs",
+                  },
+                },
+                retrievedAt: "2026-04-11T10:12:00Z",
+              },
+            },
+          ],
+          finishReason: { unified: "stop", raw: "stop" },
+          usage: {
+            inputTokens: { total: 4 },
+            outputTokens: { total: 6 },
+          },
+        };
+      },
+    );
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Fetch the docs page" }],
+      tools: {
+        web_fetch: {
+          type: "provider",
+          id: "anthropic.web_fetch_20250910",
+          args: {},
+          inputSchema: () => ({
+            jsonSchema: {
+              type: "object",
+              properties: {
+                url: { type: "string" },
+              },
+              required: ["url"],
+              additionalProperties: false,
+            },
+          }),
+          outputSchema: () => ({
+            jsonSchema: {
+              type: "object",
+            },
+          }),
+          supportsDeferredResults: true,
+        },
+      },
+      temperature: 0,
+    });
+
+    assertEquals(result.text, "");
+    assertEquals(result.finishReason, "stop");
+    assertEquals(result.toolCalls, [{
+      toolCallId: "tool-fetch-2",
+      toolName: "web_fetch",
+      input: { url: "https://veryfront.com/docs" },
+    }]);
+    assertEquals(result.toolResults, [{
+      toolCallId: "tool-fetch-2",
+      toolName: "web_fetch",
+      result: {
+        type: "web_fetch_result",
+        url: "https://veryfront.com/docs",
+        content: {
+          type: "document",
+          source: {
+            type: "text",
+            mediaType: "text/plain",
+            data: "Veryfront docs",
+          },
+        },
+        retrievedAt: "2026-04-11T10:12:00Z",
+      },
+    }]);
+  });
 });
