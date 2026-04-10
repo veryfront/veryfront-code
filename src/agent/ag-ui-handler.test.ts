@@ -1,6 +1,7 @@
 import { assertEquals, assertMatch, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AgUiRequestSchema, createAgUiHandler } from "./ag-ui-handler.ts";
+import { AgentRuntime, RunResumeSessionManager } from "./index.ts";
 import type { Agent, Message } from "./types.ts";
 
 const encoder = new TextEncoder();
@@ -195,7 +196,139 @@ describe("agent/ag-ui-handler", () => {
     assertMatch(String(testAgent.capturedContext?.runId), /^run_[a-z0-9]+$/);
   });
 
-  it("rejects injected client tools until wait/resume primitives exist", async () => {
+  it("supports injected client tools when a public session manager is provided", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const originalStream = AgentRuntime.prototype.stream;
+
+    AgentRuntime.prototype.stream = async function (
+      messages,
+      context,
+    ): Promise<ReadableStream<Uint8Array>> {
+      const runtimeConfig = this as unknown as {
+        config: {
+          tools?: Record<string, {
+            execute: (
+              input: Record<string, unknown>,
+              context?: { toolCallId?: string },
+            ) => Promise<unknown>;
+          }>;
+        };
+      };
+
+      const injectedTool = runtimeConfig.config.tools?.client_confirm;
+      if (!injectedTool) {
+        throw new Error("Expected injected tool to be merged into the runtime config");
+      }
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          void (async () => {
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "message-start",
+                messageId: "assistant-msg-1",
+              }),
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "data",
+                data: {
+                  model: "anthropic/claude-sonnet-4-6",
+                  inferenceMode: "cloud",
+                },
+              }),
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-input-start",
+                toolCallId: "tool-call-1",
+                toolName: "client_confirm",
+              }),
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-input-delta",
+                toolCallId: "tool-call-1",
+                inputTextDelta: '{"approved":true}',
+              }),
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-input-available",
+                toolCallId: "tool-call-1",
+              }),
+            );
+
+            const result = await injectedTool.execute(
+              { approved: true },
+              { toolCallId: "tool-call-1" },
+            );
+
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-output-available",
+                toolCallId: "tool-call-1",
+                output: result,
+              }),
+            );
+            controller.close();
+          })();
+        },
+      });
+
+      assertEquals(messages[0]?.role, "user");
+      assertEquals(context?.runId, "run_1");
+      return stream;
+    };
+
+    try {
+      const handler = createAgUiHandler({
+        agent: createTestAgent().agent,
+        sessionManager,
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId: "run_1",
+            threadId: crypto.randomUUID(),
+            messages: [{
+              id: "msg-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            }],
+            tools: [{ name: "client_confirm" }],
+          }),
+        }),
+      );
+
+      assertEquals(response.status, 200);
+
+      const bodyPromise = response.text();
+      const submitOutcome = sessionManager.submitSignal("run_1", {
+        waitKey: "tool-call-1",
+        value: { result: { approved: true }, isError: false },
+      });
+      assertEquals(submitOutcome, { accepted: true });
+
+      const body = await bodyPromise;
+      assertStringIncludes(body, "event: ToolCallStart");
+      assertStringIncludes(body, "event: ToolCallEnd");
+      assertStringIncludes(body, "event: ToolCallResult");
+      assertStringIncludes(body, '"toolCallId":"tool-call-1"');
+      assertStringIncludes(body, '"approved":true');
+      assertStringIncludes(body, "event: RunFinished");
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
+  });
+
+  it("rejects injected client tools when no public session manager is provided", async () => {
     const testAgent = createTestAgent();
     const handler = createAgUiHandler({ agent: testAgent.agent });
 
@@ -216,6 +349,9 @@ describe("agent/ag-ui-handler", () => {
 
     assertEquals(response.status, 501);
     assertEquals(testAgent.clearMemoryCalls, 0);
-    assertStringIncludes(await response.text(), "Injected AG-UI tools are not supported");
+    assertStringIncludes(
+      await response.text(),
+      "Injected AG-UI tools require a public RunResumeSessionManager",
+    );
   });
 });
