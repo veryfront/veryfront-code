@@ -316,26 +316,15 @@ export class ReadOperations {
       if (!resolved) return null;
 
       const resolvedPath = this.normalizer.normalize(resolved.path);
-      const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolvedPath);
-
-      // Cache the path mapping to avoid future API resolution calls
-      this.extensionResolutionCache.set(apiPath, resolvedPath);
-
-      logger.debug("Resolved extension for base path", {
-        basePath: apiPath,
+      return this.finalizeResolvedExtension({
+        requestedPath: apiPath,
         resolvedPath,
+        cacheKeyPrefix,
         cacheKey,
-        resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
+        content: resolved.content,
+        persistToCache: isProduction && !skipPersistentCaches,
+        logMessage: "Resolved extension for base path",
       });
-
-      this.cacheResolvedContent(
-        cacheKey,
-        resolvedCacheKey,
-        resolved.content,
-        isProduction && !skipPersistentCaches,
-      );
-
-      return resolved.content;
     } catch (error) {
       logger.debug("resolveFileWithExtension failed", {
         basePath: apiPath,
@@ -357,10 +346,6 @@ export class ReadOperations {
     const resolved = await this.fileListIndex.findFirstMatch(candidatePaths);
     if (resolved.status !== "hit" || !resolved.path || !resolved.content) return resolved;
 
-    const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolved.path);
-
-    this.extensionResolutionCache.set(normalizedPath, resolved.path);
-
     logContentMetric("FILE_LIST_HIT", {
       path: normalizedPath,
       resolvedPath: resolved.path,
@@ -368,16 +353,53 @@ export class ReadOperations {
       cacheKey,
       isPreviewMode,
     });
-    logger.debug("Resolved extension from file list index", {
-      basePath: normalizedPath,
+
+    this.finalizeResolvedExtension({
+      requestedPath: normalizedPath,
       resolvedPath: resolved.path,
+      cacheKeyPrefix,
+      cacheKey,
+      content: resolved.content,
+      persistToCache: isProduction,
+      logMessage: "Resolved extension from file list index",
+    });
+
+    return resolved;
+  }
+
+  private finalizeResolvedExtension(
+    {
+      requestedPath,
+      resolvedPath,
+      cacheKeyPrefix,
+      cacheKey,
+      content,
+      persistToCache,
+      logMessage,
+    }: {
+      requestedPath: string;
+      resolvedPath: string;
+      cacheKeyPrefix: string;
+      cacheKey: string;
+      content: string;
+      persistToCache: boolean;
+      logMessage: string;
+    },
+  ): string {
+    const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolvedPath);
+
+    // Cache the path mapping to avoid future API resolution calls.
+    this.extensionResolutionCache.set(requestedPath, resolvedPath);
+
+    logger.debug(logMessage, {
+      basePath: requestedPath,
+      resolvedPath,
       cacheKey,
       resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
     });
 
-    this.cacheResolvedContent(cacheKey, resolvedCacheKey, resolved.content, isProduction);
-
-    return resolved;
+    this.cacheResolvedContent(cacheKey, resolvedCacheKey, content, persistToCache);
+    return content;
   }
 
   private cacheResolvedContent(
