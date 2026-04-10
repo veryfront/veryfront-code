@@ -96,6 +96,11 @@ export interface AgentConfig {
    */
   resolveModelTransport?: ModelTransportResolver;
   /**
+   * Optional step-boundary hook for refreshing the runtime system prompt and
+   * host-owned context during a long-lived run.
+   */
+  resolveRuntimeState?: RuntimeStateResolver;
+  /**
    * Enable skills for this agent.
    * - true: include all discovered skills from skills/ directory
    * - string[]: include only specific skill IDs
@@ -129,6 +134,24 @@ export interface ResolvedModelTransport {
 export type ModelTransportResolver = (
   request: ModelTransportRequest,
 ) => ResolvedModelTransport | Promise<ResolvedModelTransport>;
+
+export interface RuntimeStateRequest {
+  agentId: string;
+  mode: "generate" | "stream";
+  step: number;
+  system: string;
+  messages: Message[];
+  context?: Record<string, unknown>;
+}
+
+export interface ResolvedRuntimeState {
+  system?: string;
+  context?: Record<string, unknown>;
+}
+
+export type RuntimeStateResolver = (
+  request: RuntimeStateRequest,
+) => ResolvedRuntimeState | undefined | Promise<ResolvedRuntimeState | undefined>;
 
 // Import for use in AgentMiddleware
 import type { AgentContext, AgentResponse } from "./schemas/index.ts";

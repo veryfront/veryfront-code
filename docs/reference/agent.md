@@ -191,22 +191,23 @@ When `model` is omitted, Veryfront defaults to the runtime convention: local
 inference by default, automatically upgrading to an available cloud provider
 when bootstrap credentials are present.
 
-| Property         | Type                                                                                 | Description                                                         |
-| ---------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
-| `id?`            | `string`                                                                             | Unique identifier (auto-generated if omitted)                       |
-| `model?`         | `ModelString`                                                                        | Provider/model override. Omit or use `"auto"` for runtime defaults. |
-| `system`         | <code>string &#124; (() =&gt; string) &#124; (() =&gt; Promise&lt;string&gt;)</code> | System prompt — string, function, or async function                 |
-| `tools?`         | <code>true &#124; Record&lt;string, Tool &#124; boolean&gt;</code>                   | Tools available to the agent                                        |
-| `remoteTools?`   | `RemoteToolSource[]`                                                                 | Remote tool sources queried per request (for example remote MCP)    |
-| `maxSteps?`      | `number`                                                                             | Max tool-call iterations per request                                |
-| `streaming?`     | `boolean`                                                                            | Enable streaming responses                                          |
-| `memory?`        | `MemoryConfig`                                                                       | Conversation memory settings                                        |
-| `middleware?`    | `AgentMiddleware[]`                                                                  | Execution middleware pipeline                                       |
-| `edge?`          | `EdgeConfig`                                                                         | Edge runtime configuration                                          |
-| `multimodal?`    | <code>&#123; vision?: boolean; audio?: boolean &#125;</code>                         | Enable vision and/or audio                                          |
-| `allowedModels?` | `ModelString[]`                                                                      | Restrict runtime model overrides to these "provider/model" strings. |
-| `resolveModelTransport?` | <code>(request: ModelTransportRequest) =&gt; ResolvedModelTransport &#124; Promise&lt;ResolvedModelTransport&gt;</code> | Inject request-aware model runtime, headers, or provider options. |
-| `skills?`        | `true \| string[]`                                                                   | Enable skills for this agent.                                       |
+| Property                 | Type                                                                                                                                                | Description                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `id?`                    | `string`                                                                                                                                            | Unique identifier (auto-generated if omitted)                                        |
+| `model?`                 | `ModelString`                                                                                                                                       | Provider/model override. Omit or use `"auto"` for runtime defaults.                  |
+| `system`                 | <code>string &#124; (() =&gt; string) &#124; (() =&gt; Promise&lt;string&gt;)</code>                                                                | System prompt — string, function, or async function                                  |
+| `tools?`                 | <code>true &#124; Record&lt;string, Tool &#124; boolean&gt;</code>                                                                                  | Tools available to the agent                                                         |
+| `remoteTools?`           | `RemoteToolSource[]`                                                                                                                                | Remote tool sources queried per request (for example remote MCP)                     |
+| `maxSteps?`              | `number`                                                                                                                                            | Max tool-call iterations per request                                                 |
+| `streaming?`             | `boolean`                                                                                                                                           | Enable streaming responses                                                           |
+| `memory?`                | `MemoryConfig`                                                                                                                                      | Conversation memory settings                                                         |
+| `middleware?`            | `AgentMiddleware[]`                                                                                                                                 | Execution middleware pipeline                                                        |
+| `edge?`                  | `EdgeConfig`                                                                                                                                        | Edge runtime configuration                                                           |
+| `multimodal?`            | <code>&#123; vision?: boolean; audio?: boolean &#125;</code>                                                                                        | Enable vision and/or audio                                                           |
+| `allowedModels?`         | `ModelString[]`                                                                                                                                     | Restrict runtime model overrides to these "provider/model" strings.                  |
+| `resolveModelTransport?` | <code>(request: ModelTransportRequest) =&gt; ResolvedModelTransport &#124; Promise&lt;ResolvedModelTransport&gt;</code>                             | Inject request-aware model runtime, headers, or provider options.                    |
+| `resolveRuntimeState?`   | <code>(request: RuntimeStateRequest) =&gt; ResolvedRuntimeState &#124; Promise&lt;ResolvedRuntimeState &#124; undefined&gt; &#124; undefined</code> | Refresh the current system prompt and host-owned runtime context at step boundaries. |
+| `skills?`                | `true \| string[]`                                                                                                                                  | Enable skills for this agent.                                                        |
 
 **Returns:** `Agent`
 
@@ -233,6 +234,42 @@ const assistant = agent({
       },
     },
   }),
+});
+```
+
+### Step-boundary runtime refresh
+
+Hosts that need long-lived runs to react to changing steering or project state
+can use `resolveRuntimeState`. The hook runs before each model step with the
+current system string, accumulated messages, and host-owned runtime context.
+
+```ts
+import { agent } from "veryfront/agent";
+
+const assistant = agent({
+  system: "You are a helpful assistant.",
+  resolveRuntimeState: async ({ step, messages, context, system }) => {
+    if (step === 0) {
+      return undefined;
+    }
+
+    const switchedProject = messages.some((message) =>
+      message.role === "tool" &&
+      message.parts.some((part) =>
+        part.type === "tool-result" &&
+        part.toolName === "switch_project"
+      )
+    );
+
+    if (!switchedProject) {
+      return { system, context };
+    }
+
+    return {
+      system: `${system}\n\nActive project: project-b`,
+      context: { ...context, projectId: "project-b" },
+    };
+  },
 });
 ```
 
@@ -504,6 +541,9 @@ Clear all stored messages from memory.
 | `RedisClient`                    | Redis client interface (compatible with ioredis and node-redis)              |
 | `RedisMemoryConfig`              | Redis memory configuration                                                   |
 | `ResolvedModelTransport`         | Request-aware model runtime / headers / providerOptions resolution           |
+| `ResolvedRuntimeState`           | Step-boundary system/context refresh result                                  |
+| `RuntimeStateRequest`            | Step-boundary runtime refresh hook input                                     |
+| `RuntimeStateResolver`           | Hook that refreshes system/context state during long-lived runs              |
 | `StreamToolCall`                 | Streaming tool call                                                          |
 | `ToolCall`                       | Completed tool call                                                          |
 | `ToolCallPart`                   | Tool call message segment                                                    |
