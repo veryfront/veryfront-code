@@ -879,6 +879,39 @@ export function rewriteCompiledBinaryUserDependencyImports(
   return transformed;
 }
 
+export async function rewriteDenoNpmDependencyImports(
+  code: string,
+  projectDir: string,
+  fs: FileSystem,
+  userDeps: Map<string, string>,
+): Promise<string> {
+  let transformed = code;
+
+  for (const [name, version] of userDeps) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    let resolvedVersion = version;
+    try {
+      const pkgPath = pathHelper.join(projectDir, "node_modules", name, "package.json");
+      const pkgContent = await fs.readTextFile(pkgPath);
+      const pkg = JSON.parse(pkgContent) as { version?: string };
+      if (pkg.version) resolvedVersion = pkg.version;
+    } catch (_) {
+      /* expected: installed package.json may not exist, fall back to declared range */
+    }
+
+    transformed = transformed.replace(
+      new RegExp(`from\\s+["']${escaped}(/[^"']*)?["']`, "g"),
+      (_, subpath) => `from "npm:${name}@${resolvedVersion}${subpath || ""}"`,
+    );
+    transformed = transformed.replace(
+      new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']*)?["']\\s*\\)`, "g"),
+      (_, subpath) => `import("npm:${name}@${resolvedVersion}${subpath || ""}")`,
+    );
+  }
+
+  return transformed;
+}
+
 async function rewriteExternalImports(
   code: string,
   projectDir: string,
@@ -920,29 +953,7 @@ async function rewriteExternalImports(
     if (isCompiledBinary()) {
       transformed = rewriteCompiledBinaryUserDependencyImports(transformed, userDeps);
     } else {
-      for (const [name, version] of userDeps) {
-        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        // Resolve exact installed version from node_modules (falls back to range)
-        let resolvedVersion = version;
-        try {
-          const pkgPath = pathHelper.join(projectDir, "node_modules", name, "package.json");
-          const pkgContent = await fs.readTextFile(pkgPath);
-          const pkg = JSON.parse(pkgContent) as { version?: string };
-          if (pkg.version) resolvedVersion = pkg.version;
-        } catch (_) {
-          /* expected: installed package.json may not exist, fall back to declared range */
-        }
-        // Static: from "pkg" and from "pkg/sub"
-        transformed = transformed.replace(
-          new RegExp(`from\\s+["']${escaped}(/[^"']*)?["']`, "g"),
-          (_, subpath) => `from "npm:${name}@${resolvedVersion}${subpath || ""}"`,
-        );
-        // Dynamic: import("pkg") and import("pkg/sub")
-        transformed = transformed.replace(
-          new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']*)?["']\\s*\\)`, "g"),
-          (_, subpath) => `import("npm:${name}@${resolvedVersion}${subpath || ""}")`,
-        );
-      }
+      transformed = await rewriteDenoNpmDependencyImports(transformed, projectDir, fs, userDeps);
     }
 
     // In compiled binaries, "veryfront" resolves to embedded source that can't be
