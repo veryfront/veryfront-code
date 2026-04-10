@@ -31,15 +31,14 @@ import {
   normalizeCssModuleKey,
   rewriteCssModuleContent,
 } from "#veryfront/transforms/css-modules/naming.ts";
-import { getProjectCSS } from "#veryfront/html/styles-builder/index.ts";
-import { warmPreparedCSSArtifactFromFiles } from "#veryfront/html/styles-builder/css-pregeneration.ts";
-import { getRouteCandidates } from "./css-candidate-manifest.ts";
-import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
-import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
-import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
+import {
+  extractProjectClassesForRoute,
+  type ProjectCSSResult,
+  startPreparedCSSWarmup,
+  startProjectCSSPreparation,
+} from "./html-project-css.ts";
 
 const logger = rendererLogger.component("html-generator");
-type ProjectCSSResult = Awaited<ReturnType<typeof getProjectCSS>> | null;
 
 function applyExplicitThemeToDocument(
   html: string,
@@ -136,7 +135,7 @@ export class HTMLGenerator {
           "html.build_options",
           () => this.buildHTMLOptions(context, mergedFrontmatter),
         );
-        projectCSSPromise = this.startProjectCSSPreparation(context, htmlOptions);
+        projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
       }
 
       html = await this.handleFullHTMLDocument(context, projectCSSPromise);
@@ -162,8 +161,8 @@ export class HTMLGenerator {
       "html.build_options",
       () => this.buildHTMLOptions(fullContext, mergedFrontmatter),
     );
-    const projectCSSPromise = this.startProjectCSSPreparation(fullContext, htmlOptions);
-    this.startPreparedCSSWarmup(fullContext, htmlOptions);
+    const projectCSSPromise = startProjectCSSPreparation(fullContext, htmlOptions);
+    startPreparedCSSWarmup(this.config, fullContext, htmlOptions);
 
     let reactContent: string;
     try {
@@ -319,8 +318,8 @@ export class HTMLGenerator {
       "html.build_options",
       () => this.buildHTMLOptions(context, mergedFrontmatter),
     );
-    const projectCSSPromise = this.startProjectCSSPreparation(context, htmlOptions);
-    this.startPreparedCSSWarmup(context, htmlOptions);
+    const projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
+    startPreparedCSSWarmup(this.config, context, htmlOptions);
     const reactContent = context.html.trim();
 
     const { start, end } = await profilePhase(
@@ -392,76 +391,6 @@ export class HTMLGenerator {
     }
 
     return { start: modifiedStart, end };
-  }
-
-  private startProjectCSSPreparation(
-    context: HTMLGenerationContext,
-    htmlOptions: HTMLGenerationOptions,
-  ): Promise<ProjectCSSResult> | undefined {
-    const isLocalProject = htmlOptions.isLocalProject ?? false;
-    if (isLocalProject || htmlOptions.environment !== "production") return undefined;
-
-    const projectScope = htmlOptions.projectSlug || htmlOptions.projectId || context.slug;
-    if (!projectScope || projectScope === "default") return undefined;
-
-    return getProjectCSS(
-      projectScope,
-      htmlOptions.globalCSS,
-      new Set([...(htmlOptions.projectClasses ?? [])]),
-      {
-        minify: true,
-        environment: htmlOptions.environment,
-        buildMode: htmlOptions.mode,
-      },
-    );
-  }
-
-  private startPreparedCSSWarmup(
-    context: HTMLGenerationContext,
-    htmlOptions: HTMLGenerationOptions,
-  ): void {
-    const isLocalProject = htmlOptions.isLocalProject ?? false;
-    const usesPreviewStylesheet = isLocalProject || htmlOptions.environment !== "production";
-    if (!usesPreviewStylesheet) return;
-
-    const wrappedFs = this.config.adapter.fs as unknown as {
-      getUnderlyingAdapter?: () => unknown;
-    };
-    if (typeof wrappedFs.getUnderlyingAdapter !== "function") return;
-
-    const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
-      getAllSourceFiles?: () =>
-        | Array<{ path: string; content?: string }>
-        | Promise<Array<{ path: string; content?: string }>>;
-    };
-    if (typeof fsAdapter.getAllSourceFiles !== "function") return;
-
-    const projectScope = htmlOptions.projectSlug || htmlOptions.projectId || context.slug;
-    if (!projectScope || projectScope === "default") return;
-
-    const projectVersion = this.getProjectContentVersion() ??
-      (this.config.mode === "development" ? "dev" : "unknown");
-    const styleProfile = createStyleScopeProfile(this.config.config);
-    const stylesheetPath = this.config.config?.tailwind?.stylesheet;
-
-    Promise.resolve(fsAdapter.getAllSourceFiles()).then((files) =>
-      warmPreparedCSSArtifactFromFiles({
-        projectSlug: projectScope,
-        projectVersion,
-        projectDir: this.config.projectDir,
-        files,
-        styleProfile,
-        stylesheetPath,
-        minify: true,
-        environment: "preview",
-        buildMode: "production",
-      })
-    ).catch((error) => {
-      logger.debug("Prepared CSS warmup skipped after source scan failure", {
-        projectScope,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
   }
 
   private buildHeadElements(head?: CollectedHead): { scripts: string; other: string } {
@@ -565,7 +494,7 @@ export class HTMLGenerator {
     const appComponentPath = appComponentPathOrNull ?? undefined;
     const projectClasses = await profilePhase(
       "html.route_candidates",
-      () => this.extractProjectClassesForRoute(context, appComponentPath),
+      () => extractProjectClassesForRoute(this.config, context, appComponentPath),
     );
 
     // Load CSS imported by components and merge with globalCSS.
@@ -695,91 +624,5 @@ export class HTMLGenerator {
       totalLength: combined.length,
     });
     return combined;
-  }
-
-  private getProjectContentVersion(): string | undefined {
-    const wrappedFs = this.config.adapter.fs as unknown as {
-      getUnderlyingAdapter?: () => unknown;
-    };
-
-    if (typeof wrappedFs.getUnderlyingAdapter !== "function") return undefined;
-
-    const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
-      getContentContext?: () => ResolvedContentContext | null;
-      getProjectData?: () => { updated_at?: string } | undefined;
-    };
-
-    const contentContext = typeof fsAdapter.getContentContext === "function"
-      ? fsAdapter.getContentContext()
-      : null;
-
-    if (contentContext) return resolveStyleContentVersion(contentContext);
-
-    return fsAdapter.getProjectData?.()?.updated_at;
-  }
-
-  private buildRouteManifestKey(pagePath: string): string {
-    const relativePagePath = extractRelativePath(pagePath, this.config.projectDir);
-    return relativePagePath
-      .replace(/\.(tsx|ts|jsx|mdx|md|js)$/, "")
-      .replace(/^pages\//, "");
-  }
-
-  private async extractProjectClassesForRoute(
-    context: HTMLGenerationContext,
-    appComponentPath?: string,
-  ): Promise<Set<string>> {
-    const classes = new Set<string>();
-
-    const wrappedFs = this.config.adapter.fs as unknown as {
-      getUnderlyingAdapter?: () => unknown;
-    };
-
-    if (typeof wrappedFs.getUnderlyingAdapter !== "function") return classes;
-
-    const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
-      getAllSourceFiles?: () =>
-        | Array<{ path: string; content?: string }>
-        | Promise<Array<{ path: string; content?: string }>>;
-    };
-
-    if (typeof fsAdapter.getAllSourceFiles !== "function") return classes;
-
-    const files = await fsAdapter.getAllSourceFiles();
-    const projectScope = context.options?.projectSlug || context.options?.projectId ||
-      this.config.projectDir;
-    const projectVersion = this.getProjectContentVersion() ??
-      (this.config.mode === "development" ? "dev" : "unknown");
-    const routeKey = this.buildRouteManifestKey(context.pageInfo.entity.path);
-    const routeLayoutPaths = context.nestedLayouts
-      .map((layout) => layout.componentPath || layout.path)
-      .filter((path): path is string => Boolean(path));
-    const routeFilePaths = [
-      context.pageInfo.entity.path,
-      ...routeLayoutPaths,
-      ...(appComponentPath ? [appComponentPath] : []),
-    ];
-
-    const routeCandidates = getRouteCandidates({
-      projectScope,
-      projectVersion,
-      projectDir: this.config.projectDir,
-      styleProfile: createStyleScopeProfile(this.config.config),
-      routeKey,
-      routeFilePaths,
-      files,
-      developmentMode: this.config.mode === "development",
-    });
-
-    for (const cls of routeCandidates) classes.add(cls);
-
-    logger.debug("extractProjectClasses", {
-      filesProcessed: files.length,
-      routeKey,
-      routeFileCount: routeFilePaths.length,
-      totalClasses: classes.size,
-    });
-
-    return classes;
   }
 }
