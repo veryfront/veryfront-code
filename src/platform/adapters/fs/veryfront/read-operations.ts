@@ -396,6 +396,16 @@ export class ReadOperations {
     }
   }
 
+  private storeFetchedContent(
+    cacheKey: string,
+    content: string,
+    shouldCache: boolean,
+  ): string {
+    if (shouldCache) this.cache.set(cacheKey, content);
+    setRequestScopedFile(cacheKey, content);
+    return content;
+  }
+
   private async fetchContent(normalizedPath: string): Promise<string> {
     // Framework paths should NEVER be fetched from API - they must be read from local filesystem.
     // If we reach here for a framework path, the module server's local resolution failed.
@@ -581,9 +591,7 @@ export class ReadOperations {
         releaseId,
       });
 
-      if (shouldCache) this.cache.set(cacheKey, content);
-      setRequestScopedFile(cacheKey, content);
-      return content;
+      return this.storeFetchedContent(cacheKey, content, shouldCache);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const is404Error = isNotFoundLikeError(error);
@@ -642,9 +650,7 @@ export class ReadOperations {
         contentLength: result.content.length,
       });
 
-      if (shouldCache) this.cache.set(cacheKey, result.content);
-      setRequestScopedFile(cacheKey, result.content);
-      return result.content;
+      return this.storeFetchedContent(cacheKey, result.content, shouldCache);
     } catch (error) {
       logger.debug("Pattern search failed, trying sequential fallback", {
         originalPath: apiPath,
@@ -713,9 +719,7 @@ export class ReadOperations {
           candidateCount: candidates.length,
         });
 
-        if (shouldCache) this.cache.set(cacheKey, content);
-        setRequestScopedFile(cacheKey, content);
-        return content;
+        return this.storeFetchedContent(cacheKey, content, shouldCache);
       } catch (_) {
         /* expected: this extension variant does not exist, try next priority */
         continue;
@@ -746,8 +750,6 @@ export class ReadOperations {
       willCache: shouldCache,
     });
 
-    if (shouldCache) this.cache.set(cacheKey, content);
-    setRequestScopedFile(cacheKey, content);
-    return content;
+    return this.storeFetchedContent(cacheKey, content, shouldCache);
   }
 }
