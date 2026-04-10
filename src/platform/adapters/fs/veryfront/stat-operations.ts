@@ -390,6 +390,67 @@ export class StatOperations extends VeryfrontOperationsBase {
     return Array.isArray(files) && files.length > 0;
   }
 
+  private resolveFromIndex(
+    fileIdx: Map<string, ProjectFile>,
+    normalizedPath: string,
+    options: ResolveFileOptions | undefined,
+    indexMs: number,
+    resolveStart: number,
+  ): string | null {
+    if (fileIdx.has(normalizedPath)) {
+      const totalMs = Math.round(performance.now() - resolveStart);
+      logger.debug("resolveFile exact match found", {
+        normalizedPath,
+        indexMs,
+        totalMs,
+      });
+      return normalizedPath;
+    }
+
+    const pathWithoutExt = stripKnownExtension(normalizedPath, EXTENSION_PRIORITY);
+
+    const resolvedDirect = resolveByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
+    if (resolvedDirect) {
+      const totalMs = Math.round(performance.now() - resolveStart);
+      logger.debug("resolveFile found with extension", {
+        pathWithExt: resolvedDirect,
+        indexMs,
+        totalMs,
+      });
+      return resolvedDirect;
+    }
+
+    if (options?.allowPagesPrefix !== false && !pathWithoutExt.startsWith("pages/")) {
+      const resolvedPages = resolveByExtensionPriority(
+        fileIdx,
+        `pages/${pathWithoutExt}`,
+        EXTENSION_PRIORITY,
+      );
+      if (resolvedPages) {
+        const totalMs = Math.round(performance.now() - resolveStart);
+        logger.debug("resolveFile found with pages prefix", {
+          pathWithExt: resolvedPages,
+          indexMs,
+          totalMs,
+        });
+        return resolvedPages;
+      }
+    }
+
+    const indexPath = resolveIndexByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
+    if (indexPath) {
+      const totalMs = Math.round(performance.now() - resolveStart);
+      logger.debug("resolveFile found index file", {
+        indexPath,
+        indexMs,
+        totalMs,
+      });
+      return indexPath;
+    }
+
+    return null;
+  }
+
   async exists(path: string): Promise<boolean> {
     const normalizedPath = this.normalizer.normalize(path);
     try {
@@ -453,55 +514,15 @@ export class StatOperations extends VeryfrontOperationsBase {
       return null;
     }
 
-    if (fileIdx.has(normalizedPath)) {
-      const totalMs = Math.round(performance.now() - resolveStart);
-      logger.debug("resolveFile exact match found", {
-        normalizedPath,
-        indexMs,
-        totalMs,
-      });
-      return normalizedPath;
-    }
-
-    const pathWithoutExt = stripKnownExtension(normalizedPath, EXTENSION_PRIORITY);
-
-    const resolvedDirect = resolveByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
-    if (resolvedDirect) {
-      const totalMs = Math.round(performance.now() - resolveStart);
-      logger.debug("resolveFile found with extension", {
-        pathWithExt: resolvedDirect,
-        indexMs,
-        totalMs,
-      });
-      return resolvedDirect;
-    }
-
-    if (options?.allowPagesPrefix !== false && !pathWithoutExt.startsWith("pages/")) {
-      const resolvedPages = resolveByExtensionPriority(
-        fileIdx,
-        `pages/${pathWithoutExt}`,
-        EXTENSION_PRIORITY,
-      );
-      if (resolvedPages) {
-        const totalMs = Math.round(performance.now() - resolveStart);
-        logger.debug("resolveFile found with pages prefix", {
-          pathWithExt: resolvedPages,
-          indexMs,
-          totalMs,
-        });
-        return resolvedPages;
-      }
-    }
-
-    const indexPath = resolveIndexByExtensionPriority(fileIdx, pathWithoutExt, EXTENSION_PRIORITY);
-    if (indexPath) {
-      const totalMs = Math.round(performance.now() - resolveStart);
-      logger.debug("resolveFile found index file", {
-        indexPath,
-        indexMs,
-        totalMs,
-      });
-      return indexPath;
+    const indexedResolution = this.resolveFromIndex(
+      fileIdx,
+      normalizedPath,
+      options,
+      indexMs,
+      resolveStart,
+    );
+    if (indexedResolution) {
+      return indexedResolution;
     }
 
     if (attemptedApiResolve) {
