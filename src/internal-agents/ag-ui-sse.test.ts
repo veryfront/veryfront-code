@@ -156,6 +156,40 @@ describe("internal-agents/ag-ui-sse", () => {
     assertEquals(finalizeRunEvents(state, null), []);
   });
 
+  it("maps runtime reasoning events to AG-UI reasoning message events", () => {
+    const state = createStreamTransformState();
+
+    assertEquals(
+      mapRuntimeEventToAgUi(state, { type: "message-start", messageId: "assistant-3" }),
+      [],
+    );
+    assertEquals(
+      mapRuntimeEventToAgUi(state, { type: "reasoning-start", id: "reasoning-1" }),
+      [{
+        event: "ReasoningMessageStart",
+        payload: { messageId: "assistant-3:reasoning:reasoning-1", role: "reasoning" },
+      }],
+    );
+    assertEquals(
+      mapRuntimeEventToAgUi(state, {
+        type: "reasoning-delta",
+        id: "reasoning-1",
+        delta: "thinking...",
+      }),
+      [{
+        event: "ReasoningMessageContent",
+        payload: { messageId: "assistant-3:reasoning:reasoning-1", delta: "thinking..." },
+      }],
+    );
+    assertEquals(
+      mapRuntimeEventToAgUi(state, { type: "reasoning-end", id: "reasoning-1" }),
+      [{
+        event: "ReasoningMessageEnd",
+        payload: { messageId: "assistant-3:reasoning:reasoning-1" },
+      }],
+    );
+  });
+
   it("finalizes open assistant text with usage metadata", () => {
     const state = createStreamTransformState();
     mapRuntimeEventToAgUi(state, { type: "message-start", messageId: "assistant-1" });

@@ -430,13 +430,32 @@ describe("chat-stream-handler", () => {
       assertEquals(events[0], { type: "error", error: "raw string error" });
     });
 
+    it("forwards reasoning stream parts", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "reasoning-start", id: "reasoning-1" },
+        { type: "reasoning-delta", id: "reasoning-1", delta: "thinking..." },
+        { type: "reasoning-end", id: "reasoning-1" },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events, [
+        { type: "reasoning-start", id: "reasoning-1" },
+        { type: "reasoning-delta", id: "reasoning-1", delta: "thinking..." },
+        { type: "reasoning-end", id: "reasoning-1" },
+      ]);
+    });
+
     it("ignores unrecognized stream part types", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
 
       const result = createMockResult([
         { type: "source", source: { id: "s1" } },
-        { type: "reasoning-delta", delta: "thinking..." },
         { type: "text-delta", text: "ok" },
         { type: "finish", finishReason: "stop", totalUsage: null },
       ]);

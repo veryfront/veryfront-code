@@ -165,6 +165,19 @@ describe("server/handlers/request/agent-stream.handler", () => {
                 encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
               );
               controller.enqueue(encodeDataStreamEvent({ type: "step-start" }));
+              controller.enqueue(
+                encodeDataStreamEvent({ type: "reasoning-start", id: "reasoning-1" }),
+              );
+              controller.enqueue(
+                encodeDataStreamEvent({
+                  type: "reasoning-delta",
+                  id: "reasoning-1",
+                  delta: "thinking through the answer",
+                }),
+              );
+              controller.enqueue(
+                encodeDataStreamEvent({ type: "reasoning-end", id: "reasoning-1" }),
+              );
               controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
               controller.enqueue(
                 encodeDataStreamEvent({
@@ -216,9 +229,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(text.includes("event: Custom"), false);
     assertEquals(text.includes("event: ActivitySnapshot"), false);
     assertEquals(text.includes("event: ActivityDelta"), false);
-    assertEquals(text.includes("event: ReasoningStart"), false);
-    assertEquals(text.includes("event: ReasoningContent"), false);
-    assertEquals(text.includes("event: ReasoningEnd"), false);
+    assertStringIncludes(text, "event: ReasoningMessageStart");
+    assertStringIncludes(text, "event: ReasoningMessageContent");
+    assertStringIncludes(text, "event: ReasoningMessageEnd");
   });
 
   it("accepts the canonical runtime AG-UI request shape on the existing internal stream route", async () => {

@@ -200,6 +200,31 @@ export function processStream(
           break;
         }
 
+        case "reasoning-start": {
+          sendSSE(controller, encoder, {
+            type: "reasoning-start",
+            id: typeof typedPart.id === "string" ? typedPart.id : "reasoning",
+          });
+          break;
+        }
+
+        case "reasoning-delta": {
+          sendSSE(controller, encoder, {
+            type: "reasoning-delta",
+            id: typeof typedPart.id === "string" ? typedPart.id : "reasoning",
+            delta: typeof typedPart.delta === "string" ? typedPart.delta : "",
+          });
+          break;
+        }
+
+        case "reasoning-end": {
+          sendSSE(controller, encoder, {
+            type: "reasoning-end",
+            id: typeof typedPart.id === "string" ? typedPart.id : "reasoning",
+          });
+          break;
+        }
+
         case "tool-input-start": {
           const toolId = typedPart.id;
           state.toolCalls.set(toolId, {

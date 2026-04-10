@@ -59,6 +59,9 @@ export type RuntimeToolCallRepairFunction = (
 
 export type RuntimeStreamPart =
   | { type: "text-delta"; text: string }
+  | { type: "reasoning-start"; id: string }
+  | { type: "reasoning-delta"; id: string; delta: string }
+  | { type: "reasoning-end"; id: string }
   | {
     type: "tool-input-start";
     id: string;
