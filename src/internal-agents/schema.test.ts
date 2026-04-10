@@ -113,7 +113,7 @@ describe("internal-agents/schema", () => {
 
     assertEquals(parsed.parentRunId, "run_parent");
     assertEquals(parsed.state, { phase: "draft" });
-    assertEquals(parsed.messages[2].role, "assistant");
+    assertEquals(parsed.messages[2]?.role, "assistant");
     assertEquals(parsed.context, [{ description: "Current file", value: "src/main.ts" }]);
   });
 

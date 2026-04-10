@@ -6,7 +6,7 @@ The goal is to make downstream consumers target one explicit AG-UI-aligned input
 
 ## Canonical Contract
 
-The canonical runtime contract is defined in [`src/internal-agents/schema.ts`](../../src/internal-agents/schema.ts) by [`RuntimeRunAgentInputSchema`](../../src/internal-agents/schema.ts).
+The canonical runtime contract is defined in [`src/agent/runtime-ag-ui-contract.ts`](../../src/agent/runtime-ag-ui-contract.ts) by [`AgUiRuntimeRequestSchema`](../../src/agent/runtime-ag-ui-contract.ts).
 
 It is based on the AG-UI `RunAgentInput` shape:
 
@@ -85,7 +85,7 @@ Current internal compatibility route:
 
 Downstream package/framework consumers should target:
 
-- the canonical `RuntimeRunAgentInputSchema`
+- the canonical `AgUiRuntimeRequestSchema`
 - AG-UI SSE responses
 - the default endpoint convention `/api/ag-ui` unless a host explicitly documents another route
 

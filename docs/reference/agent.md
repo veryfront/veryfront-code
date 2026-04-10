@@ -16,6 +16,7 @@ import {
   agentAsTool,
   AgentRuntime,
   AgUiRequestSchema,
+  AgUiRuntimeRequestSchema,
   createAgUiHandler,
   createMemory,
   getAgentsAsTools,
@@ -226,9 +227,10 @@ is `/api/ag-ui`, but the host application owns the actual path.
 
 The handler:
 
-- validates the AG-UI runtime request body
+- validates the higher-level `AgUiRequestSchema` wrapper body
 - clears server memory before each run
 - converts the package data-stream output into AG-UI SSE events
+- normalizes the wrapper request into the canonical hosted runtime contract
 - passes AG-UI request metadata into `agent.stream()` context as:
 
 ```ts
@@ -254,7 +256,14 @@ Current limitation:
 
 ### `AgUiRequestSchema`
 
-Validate AG-UI runtime requests for `createAgUiHandler()`.
+Validate the convenience wrapper request shape for `createAgUiHandler()`.
+
+### `AgUiRuntimeRequestSchema`
+
+Validate the canonical open-source AG-UI runtime request contract for hosted
+agent execution. This is the package-facing schema downstream runtimes should
+target; the older internal compatibility route remains a wrapper around this
+contract.
 
 ### `RunResumeSessionManager`
 
@@ -314,6 +323,13 @@ Clear all stored messages from memory.
 | `RedisMemory`             | Redis-backed persistent memory                    |
 | `RunResumeSessionManager` | Generic wait/resume manager for hosted agent runs |
 | `SummaryMemory`           | Compresses old messages into summaries            |
+
+### Schemas
+
+| Name                       | Description                                                          |
+| -------------------------- | -------------------------------------------------------------------- |
+| `AgUiRequestSchema`        | Convenience request schema for `createAgUiHandler()`                 |
+| `AgUiRuntimeRequestSchema` | Canonical open-source AG-UI runtime request contract for hosted runs |
 
 ### Types
 

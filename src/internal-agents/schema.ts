@@ -1,9 +1,17 @@
 import { z } from "zod";
+import {
+  AgUiRuntimeContextItemSchema,
+  AgUiRuntimeContextSchema,
+  AgUiRuntimeInjectedToolSchema,
+  type AgUiRuntimeMessage,
+  AgUiRuntimeMessageSchema,
+  type AgUiRuntimeRequest,
+  AgUiRuntimeRequestSchema,
+  AgUiRuntimeRunIdSchema,
+  AgUiRuntimeToolCallSchema,
+} from "#veryfront/agent/runtime-ag-ui-contract.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
-const MAX_TOOL_PARAMETERS_BYTES = 16_384;
-const MAX_CONTEXT_ITEM_BYTES = 16_384;
-const MAX_CONTEXT_TOTAL_BYTES = 65_536;
 const MAX_FORWARDED_PROPS_BYTES = 65_536;
 const MAX_TOOL_RESULT_BYTES = 65_536;
 const MAX_RUNTIME_MESSAGES = 100;
@@ -18,50 +26,9 @@ function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   }
 }
 
-export const RunIdSchema = z.string().min(1).max(128).regex(AGENT_ID_PATTERN);
+export const RunIdSchema = AgUiRuntimeRunIdSchema;
 
 export const AgentIdSchema = z.string().min(1).max(128).regex(AGENT_ID_PATTERN);
-
-export const ClientToolNameSchema = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(
-    /^[a-zA-Z][a-zA-Z0-9._:-]*$/,
-    "Tool names must start with a letter and use a valid client-tool format",
-  );
-
-export const RuntimeInjectedToolSchema = z.object({
-  name: ClientToolNameSchema,
-  description: z.string().max(1024).optional(),
-  parameters: z.record(z.string(), z.unknown()).optional().refine(
-    (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
-    { message: "Tool parameters must be less than 16 KB" },
-  ),
-});
-
-export const RuntimeContextItemSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("text"),
-    title: z.string().max(256).optional(),
-    text: z.string().max(MAX_CONTEXT_ITEM_BYTES),
-  }),
-  z.object({
-    type: z.literal("json"),
-    title: z.string().max(256).optional(),
-    data: z.record(z.string(), z.unknown()).refine(
-      (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_ITEM_BYTES),
-      { message: "JSON context item must be less than 16 KB" },
-    ),
-  }),
-  z.object({
-    type: z.literal("resource"),
-    title: z.string().max(256).optional(),
-    uri: z.string().max(2048),
-    mimeType: z.string().max(256).optional(),
-    text: z.string().max(MAX_CONTEXT_ITEM_BYTES).optional(),
-  }),
-]);
 
 export const RuntimeAgentSourceContextSchema = z.discriminatedUnion("type", [
   z.object({
@@ -79,85 +46,11 @@ export const RuntimeAgentSourceContextSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
-const RuntimeMessageExtensionFieldsSchema = {
-  name: z.string().max(256).optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-  createdAt: z.string().optional(),
-} as const;
-
-export const RuntimeToolFunctionCallSchema = z.object({
-  name: ClientToolNameSchema,
-  arguments: z.string().max(MAX_TOOL_PARAMETERS_BYTES),
-}).strict();
-
-export const RuntimeToolCallSchema = z.object({
-  id: z.string().min(1).max(128),
-  type: z.literal("function"),
-  function: RuntimeToolFunctionCallSchema,
-}).strict();
-
-export const RuntimeSystemMessageSchema = z.object({
-  id: z.string().min(1),
-  role: z.literal("system"),
-  content: z.string(),
-  ...RuntimeMessageExtensionFieldsSchema,
-}).strict();
-
-export const RuntimeUserMessageSchema = z.object({
-  id: z.string().min(1),
-  role: z.literal("user"),
-  content: z.string(),
-  ...RuntimeMessageExtensionFieldsSchema,
-}).strict();
-
-export const RuntimeAssistantMessageSchema = z.object({
-  id: z.string().min(1),
-  role: z.literal("assistant"),
-  content: z.string().optional(),
-  toolCalls: z.array(RuntimeToolCallSchema).optional(),
-  ...RuntimeMessageExtensionFieldsSchema,
-}).strict();
-
-export const RuntimeToolMessageSchema = z.object({
-  id: z.string().min(1),
-  role: z.literal("tool"),
-  toolCallId: z.string().min(1).max(128),
-  content: z.string(),
-  error: z.string().optional(),
-  ...RuntimeMessageExtensionFieldsSchema,
-}).strict();
-
-export const RuntimeMessageSchema = z.discriminatedUnion("role", [
-  RuntimeSystemMessageSchema,
-  RuntimeUserMessageSchema,
-  RuntimeAssistantMessageSchema,
-  RuntimeToolMessageSchema,
-]);
-
-export const RuntimeContextSchema = z.union([
-  z.object({
-    description: z.string().max(1024),
-    value: z.string().max(MAX_CONTEXT_ITEM_BYTES),
-  }),
-  RuntimeContextItemSchema,
-]);
-
-export const RuntimeRunAgentInputSchema = z.object({
-  threadId: z.string().uuid(),
-  runId: RunIdSchema,
-  parentRunId: RunIdSchema.optional(),
-  state: z.unknown().optional(),
-  messages: z.array(RuntimeMessageSchema).max(MAX_RUNTIME_MESSAGES),
-  tools: z.array(RuntimeInjectedToolSchema).max(50).default([]),
-  context: z.array(RuntimeContextSchema).max(10).default([]).refine(
-    (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_TOTAL_BYTES),
-    { message: "context must be less than 64 KB total" },
-  ),
-  forwardedProps: z.record(z.string(), z.unknown()).optional().refine(
-    (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
-    { message: "forwardedProps must be less than 64 KB" },
-  ),
-});
+export const RuntimeInjectedToolSchema = AgUiRuntimeInjectedToolSchema;
+export const RuntimeContextItemSchema = AgUiRuntimeContextItemSchema;
+export const RuntimeMessageSchema = AgUiRuntimeMessageSchema;
+export const RuntimeContextSchema = AgUiRuntimeContextSchema;
+export const RuntimeRunAgentInputSchema = AgUiRuntimeRequestSchema;
 
 export const InternalAgentCompatibilityMessageSchema = z.object({
   id: z.string().min(1),
@@ -178,7 +71,7 @@ export const InternalAgentStreamRequestSchema = z.object({
   ),
   tools: z.array(RuntimeInjectedToolSchema).max(50).default([]),
   context: z.array(RuntimeContextSchema).max(10).default([]).refine(
-    (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_TOTAL_BYTES),
+    (value) => isWithinJsonSizeLimit(value, 65_536),
     { message: "context must be less than 64 KB total" },
   ),
   agentSource: RuntimeAgentSourceContextSchema.optional(),
@@ -188,7 +81,7 @@ export const InternalAgentStreamRequestSchema = z.object({
   ),
 });
 
-type RuntimeMessage = z.infer<typeof RuntimeMessageSchema>;
+type RuntimeMessage = AgUiRuntimeMessage;
 type InternalAgentCompatibilityMessage = z.infer<typeof InternalAgentCompatibilityMessageSchema>;
 
 function extractToolArgs(
@@ -243,7 +136,7 @@ function isCanonicalToolCallPart(part: Record<string, unknown>): boolean {
 
 function getToolCallShape(
   part: Record<string, unknown>,
-): z.infer<typeof RuntimeToolCallSchema> | null {
+): z.infer<typeof AgUiRuntimeToolCallSchema> | null {
   const id = getPartString(part, "toolCallId", "tool_call_id", "id");
   const name = getPartString(part, "toolName", "tool_name", "name");
 
@@ -357,7 +250,7 @@ function toRuntimeMessage(
 
 export function toRuntimeRunAgentInput(
   input: z.infer<typeof InternalAgentStreamRequestSchema>,
-): z.infer<typeof RuntimeRunAgentInputSchema> {
+): AgUiRuntimeRequest {
   return {
     threadId: input.threadId,
     runId: input.runId,
@@ -385,6 +278,6 @@ export const ResumeSignalSchema = z.discriminatedUnion("type", [
 export type RuntimeInjectedTool = z.infer<typeof RuntimeInjectedToolSchema>;
 export type RuntimeContextItem = z.infer<typeof RuntimeContextItemSchema>;
 export type RuntimeAgentSourceContext = z.infer<typeof RuntimeAgentSourceContextSchema>;
-export type RuntimeRunAgentInput = z.infer<typeof RuntimeRunAgentInputSchema>;
+export type RuntimeRunAgentInput = AgUiRuntimeRequest;
 export type InternalAgentStreamRequest = z.infer<typeof InternalAgentStreamRequestSchema>;
 export type ResumeSignal = z.infer<typeof ResumeSignalSchema>;
