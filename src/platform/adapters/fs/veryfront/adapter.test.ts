@@ -18,6 +18,24 @@ function createAdapter(
   });
 }
 
+function seedCachedFiles(
+  adapter: VeryfrontFSAdapter,
+  files: Array<{ id?: string; path: string; content?: string }>,
+): void {
+  const context = adapter.getContentContext();
+  if (!context) throw new Error("Content context required before seeding cache");
+
+  const cacheKey = buildFileListCacheKey(context);
+  (adapter as unknown as {
+    cache: {
+      set: (
+        key: string,
+        value: Array<{ id?: string; path: string; content?: string }>,
+      ) => void;
+    };
+  }).cache.set(cacheKey, files);
+}
+
 async function waitFor(
   predicate: () => Promise<boolean>,
   timeoutMs = 200,
@@ -303,17 +321,83 @@ describe("VeryfrontFSAdapter", () => {
     it("should return empty array when no content context", async () => {
       assertEquals(await createAdapter().getAllSourceFiles(), []);
     });
+
+    it("should return cached file list entries after context is set", async () => {
+      const adapter = createAdapter({
+        projectDir: "/project/root",
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+
+      const files = [
+        { id: "entity-1", path: "pages/index.tsx", content: "export default () => null;" },
+        { id: "entity-2", path: "pages/about.tsx", content: "export default () => null;" },
+      ];
+      seedCachedFiles(adapter, files);
+
+      assertEquals(await adapter.getAllSourceFiles(), files);
+    });
   });
 
   describe("getEntityIdForPath", () => {
     it("should return undefined when no content context", () => {
       assertEquals(createAdapter().getEntityIdForPath("pages/index.tsx"), undefined);
     });
+
+    it("should resolve entity ids from the cached file list using normalized paths", () => {
+      const adapter = createAdapter({
+        projectDir: "/project/root",
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+
+      seedCachedFiles(adapter, [{ id: "entity-1", path: "pages/index.tsx" }]);
+
+      assertEquals(adapter.getEntityIdForPath("/project/root/pages/index.tsx"), "entity-1");
+    });
   });
 
   describe("getFilePathByEntityId", () => {
     it("should return undefined when no content context", () => {
       assertEquals(createAdapter().getFilePathByEntityId("entity-123"), undefined);
+    });
+
+    it("should resolve file paths from the cached file list by entity id", () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+
+      seedCachedFiles(adapter, [{ id: "entity-123", path: "pages/index.tsx" }]);
+
+      assertEquals(adapter.getFilePathByEntityId("entity-123"), "pages/index.tsx");
     });
   });
 
