@@ -1,6 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
+import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
 
 type Head = {
   metas: Array<{ name?: string; property?: string; content?: string }>;
@@ -8,62 +9,17 @@ type Head = {
   styles: string[];
 };
 
-// ---- Inline reimplementation of non-exported helpers ----
-
-function buildHeadElements(head?: Head): string {
-  if (!head) return "";
-
-  const parts: string[] = [];
-
-  for (const meta of head.metas) {
-    if (meta.name === "description") continue;
-
-    const attrs: string[] = [];
-    if (meta.name) attrs.push(`name="${meta.name}"`);
-    if (meta.property) attrs.push(`property="${meta.property}"`);
-    if (meta.content) attrs.push(`content="${meta.content}"`);
-
-    if (attrs.length) parts.push(`<meta ${attrs.join(" ")}>`);
-  }
-
-  for (const link of head.links) {
-    const attrs = Object.entries(link)
-      .filter(([, v]) => v != null)
-      .map(([k, v]) => `${k}="${v}"`)
-      .join(" ");
-
-    if (attrs) parts.push(`<link ${attrs}>`);
-  }
-
-  for (const style of head.styles) {
-    parts.push(`<style>${style}</style>`);
-  }
-
-  return parts.join("\n  ");
-}
-
-function mergeFrontmatter(context: {
-  pageInfo: { entity: { frontmatter?: Record<string, unknown> } };
-  pageBundle: { frontmatter?: Record<string, unknown> };
-  collectedMetadata?: Record<string, unknown>;
-}): Record<string, unknown> {
-  return {
-    ...context.pageInfo.entity.frontmatter,
-    ...context.pageBundle.frontmatter,
-    ...(context.collectedMetadata ?? {}),
-  };
-}
-
-// ---- Tests ----
-
 describe("HTMLGenerator helpers", () => {
   describe("buildHeadElements", () => {
     it("should return empty string for undefined head", () => {
-      assertEquals(buildHeadElements(undefined), "");
+      assertEquals(buildHeadElements(undefined), { scripts: "", other: "" });
     });
 
     it("should return empty string for empty head", () => {
-      assertEquals(buildHeadElements({ metas: [], links: [], styles: [] }), "");
+      assertEquals(buildHeadElements({ metas: [], links: [], styles: [], scripts: [] } as any), {
+        scripts: "",
+        other: "",
+      });
     });
 
     it("should skip description meta tags", () => {
@@ -72,7 +28,7 @@ describe("HTMLGenerator helpers", () => {
         links: [],
         styles: [],
       };
-      assertEquals(buildHeadElements(head), "");
+      assertEquals(buildHeadElements({ ...head, scripts: [] } as any), { scripts: "", other: "" });
     });
 
     it("should render meta tags with name attribute", () => {
@@ -81,7 +37,7 @@ describe("HTMLGenerator helpers", () => {
         links: [],
         styles: [],
       };
-      const result = buildHeadElements(head);
+      const result = buildHeadElements({ ...head, scripts: [] } as any).other;
       assertEquals(result.includes('name="viewport"'), true);
       assertEquals(result.includes('content="width=device-width"'), true);
     });
@@ -92,7 +48,7 @@ describe("HTMLGenerator helpers", () => {
         links: [],
         styles: [],
       };
-      const result = buildHeadElements(head);
+      const result = buildHeadElements({ ...head, scripts: [] } as any).other;
       assertEquals(result.includes('property="og:title"'), true);
       assertEquals(result.includes('content="My Page"'), true);
     });
@@ -103,7 +59,7 @@ describe("HTMLGenerator helpers", () => {
         links: [{ rel: "stylesheet", href: "/style.css", integrity: null }],
         styles: [],
       };
-      const result = buildHeadElements(head);
+      const result = buildHeadElements({ ...head, scripts: [] } as any).other;
       assertEquals(result.includes('rel="stylesheet"'), true);
       assertEquals(result.includes('href="/style.css"'), true);
       assertEquals(result.includes("integrity"), false);
@@ -115,7 +71,7 @@ describe("HTMLGenerator helpers", () => {
         links: [],
         styles: [".body { color: red; }", ".header { font-size: 2rem; }"],
       };
-      const result = buildHeadElements(head);
+      const result = buildHeadElements({ ...head, scripts: [] } as any).other;
       assertEquals(result.includes("<style>.body { color: red; }</style>"), true);
       assertEquals(result.includes("<style>.header { font-size: 2rem; }</style>"), true);
     });
@@ -129,7 +85,7 @@ describe("HTMLGenerator helpers", () => {
         links: [{ rel: "icon", href: "/favicon.ico" }],
         styles: [".body { margin: 0; }"],
       };
-      const result = buildHeadElements(head);
+      const result = buildHeadElements({ ...head, scripts: [] } as any).other;
       assertEquals(result.includes("<meta"), true);
       assertEquals(result.includes("<link"), true);
       assertEquals(result.includes("<style>"), true);
