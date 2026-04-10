@@ -116,6 +116,11 @@ interface MdxMetadataResult {
   headings: Array<{ id: string; text: string; level: number }>;
 }
 
+interface PageCssResult {
+  css: string | undefined;
+  cssError: string | undefined;
+}
+
 interface FetchedDataResult {
   type: "page" | "layout";
   id: string;
@@ -700,71 +705,7 @@ export class RenderPipeline {
       }
     }
 
-    let css: string | undefined;
-    let cssError: string | undefined;
-    const cssCacheKey = getPageCssCacheKey(
-      options?.projectId,
-      options?.environment,
-      slug,
-      projectUpdatedAt,
-    );
-
-    const cachedCss = getCachedPageCss(cssCacheKey);
-    if (cachedCss) {
-      css = cachedCss;
-      resolvePageDataLog.debug("CSS cache hit", { slug, cssLength: css.length });
-    } else {
-      try {
-        const renderResult = await withTimeout(
-          this.renderPage(slug, {
-            ...options,
-            delivery: "string",
-            skipCacheCheck: true,
-            skipCachePersist: true,
-          }),
-          CSS_SSR_TIMEOUT_MS,
-          `CSS SSR for ${slug}`,
-        );
-
-        if (renderResult?.html) {
-          css = await this.resolveCssFromRenderedHtml(
-            renderResult.html,
-            options?.projectSlug ?? options?.projectId,
-          );
-
-          if (css) {
-            resolvePageDataLog.debug("Reused SSR CSS for page data", {
-              slug,
-              cssLength: css.length,
-              source: "rendered-html-hash",
-            });
-          } else {
-            const candidates = extractCandidates(renderResult.html);
-            css = (await generateTailwindCSS(undefined, candidates, {
-              projectSlug: options?.projectSlug,
-            })).css;
-
-            resolvePageDataLog.debug("Fell back to HTML candidate CSS generation", {
-              slug,
-              htmlLength: renderResult.html.length,
-              cssLength: css?.length || 0,
-            });
-          }
-
-          if (css) cachePageCss(cssCacheKey, css);
-        }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        // Surface CSS generation failures instead of silently swallowing them.
-        // This allows clients to show a warning or fall back gracefully.
-        cssError = `CSS generation failed: ${errorMessage}`;
-        resolvePageDataLog.error("CSS generation failed", {
-          slug,
-          error: errorMessage,
-          projectId: options?.projectId,
-        });
-      }
-    }
+    const { css, cssError } = await this.resolvePageDataCss(slug, options, projectUpdatedAt);
 
     resolvePageDataLog.debug("Resolved page data", {
       slug,
@@ -836,6 +777,92 @@ export class RenderPipeline {
       });
       return { frontmatter: {}, headings: [] };
     }
+  }
+
+  private async resolvePageDataCss(
+    slug: string,
+    options: RenderOptions | undefined,
+    projectUpdatedAt: string | undefined,
+  ): Promise<PageCssResult> {
+    const cssCacheKey = getPageCssCacheKey(
+      options?.projectId,
+      options?.environment,
+      slug,
+      projectUpdatedAt,
+    );
+
+    const cachedCss = getCachedPageCss(cssCacheKey);
+    if (cachedCss) {
+      resolvePageDataLog.debug("CSS cache hit", { slug, cssLength: cachedCss.length });
+      return { css: cachedCss, cssError: undefined };
+    }
+
+    try {
+      const renderResult = await withTimeout(
+        this.renderPage(slug, {
+          ...options,
+          delivery: "string",
+          skipCacheCheck: true,
+          skipCachePersist: true,
+        }),
+        CSS_SSR_TIMEOUT_MS,
+        `CSS SSR for ${slug}`,
+      );
+
+      if (!renderResult?.html) {
+        return { css: undefined, cssError: undefined };
+      }
+
+      let css = await this.resolveCssFromRenderedHtml(
+        renderResult.html,
+        options?.projectSlug ?? options?.projectId,
+      );
+
+      if (css) {
+        resolvePageDataLog.debug("Reused SSR CSS for page data", {
+          slug,
+          cssLength: css.length,
+          source: "rendered-html-hash",
+        });
+      } else {
+        css = await this.generatePageCssFromHtml(slug, renderResult.html, options);
+      }
+
+      if (css) cachePageCss(cssCacheKey, css);
+      return { css, cssError: undefined };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      // Surface CSS generation failures instead of silently swallowing them.
+      // This allows clients to show a warning or fall back gracefully.
+      resolvePageDataLog.error("CSS generation failed", {
+        slug,
+        error: errorMessage,
+        projectId: options?.projectId,
+      });
+      return {
+        css: undefined,
+        cssError: `CSS generation failed: ${errorMessage}`,
+      };
+    }
+  }
+
+  private async generatePageCssFromHtml(
+    slug: string,
+    html: string,
+    options: RenderOptions | undefined,
+  ): Promise<string | undefined> {
+    const candidates = extractCandidates(html);
+    const generatedCss = (await generateTailwindCSS(undefined, candidates, {
+      projectSlug: options?.projectSlug,
+    })).css;
+
+    resolvePageDataLog.debug("Fell back to HTML candidate CSS generation", {
+      slug,
+      htmlLength: html.length,
+      cssLength: generatedCss?.length || 0,
+    });
+
+    return generatedCss;
   }
 
   /**
