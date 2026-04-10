@@ -2,6 +2,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
+import { mergeImportedCSS } from "./html-imported-css.ts";
 
 type Head = {
   metas: Array<{ name?: string; property?: string; content?: string }>;
@@ -720,7 +721,7 @@ describe("HTMLGenerator helpers", () => {
   describe("mergeImportedCSS", () => {
     it("deduplicates only exact configured stylesheet path", async () => {
       const readPaths: string[] = [];
-      const mockAdapter = {
+      const merged = await mergeImportedCSS({
         fs: {
           readFile: async (path: string) => {
             readPaths.push(path);
@@ -728,32 +729,13 @@ describe("HTMLGenerator helpers", () => {
             if (path === "/project/globals.css") return ".duplicate { color: blue; }";
             return "";
           },
-          exists: async () => false,
-          stat: async () => ({
-            isFile: false,
-            isDirectory: false,
-            isSymlink: false,
-            size: 0,
-            mtime: null,
-          }),
-          readDir: async function* () {},
-          mkdir: async () => {},
-          writeFile: async () => {},
         },
-      };
-
-      const generator = new HTMLGenerator({
+        logger: { debug: () => {} },
         projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
-        mode: "development",
+        globalCSS: "/* global */",
+        cssImports: ["/project/styles/globals.css", "/project/globals.css"],
+        stylesheetPath: "globals.css",
       });
-
-      const merged = await (generator as any).mergeImportedCSS(
-        "/* global */",
-        ["/project/styles/globals.css", "/project/globals.css"],
-        "globals.css",
-      );
 
       assertEquals(readPaths, ["/project/styles/globals.css"]);
       assertEquals(merged?.includes("/* global */"), true);
@@ -762,39 +744,20 @@ describe("HTMLGenerator helpers", () => {
     });
 
     it("orders imported css deterministically and rewrites module selectors", async () => {
-      const mockAdapter = {
+      const merged = await mergeImportedCSS({
         fs: {
           readFile: async (path: string) => {
             if (path === "/project/b.css") return ".b { color: blue; }";
             if (path === "/project/a.module.css") return ".root { color: red; }";
             return "";
           },
-          exists: async () => false,
-          stat: async () => ({
-            isFile: false,
-            isDirectory: false,
-            isSymlink: false,
-            size: 0,
-            mtime: null,
-          }),
-          readDir: async function* () {},
-          mkdir: async () => {},
-          writeFile: async () => {},
         },
-      };
-
-      const generator = new HTMLGenerator({
+        logger: { debug: () => {} },
         projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
-        mode: "development",
+        globalCSS: "/* global */",
+        cssImports: ["/project/a.module.css", "/project/b.css"],
+        stylesheetPath: "globals.css",
       });
-
-      const merged = await (generator as any).mergeImportedCSS(
-        "/* global */",
-        ["/project/a.module.css", "/project/b.css"],
-        "globals.css",
-      );
 
       assertEquals(
         merged?.indexOf(".b { color: blue; }")! > merged?.indexOf("/* global */")!,

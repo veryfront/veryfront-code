@@ -28,10 +28,6 @@ import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
 import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
 import { profilePhase, profileSyncPhase } from "#veryfront/observability/request-profiler.ts";
 import {
-  normalizeCssModuleKey,
-  rewriteCssModuleContent,
-} from "#veryfront/transforms/css-modules/naming.ts";
-import {
   extractProjectClassesForRoute,
   type ProjectCSSResult,
   startPreparedCSSWarmup,
@@ -41,6 +37,7 @@ import {
   buildHeadElements as buildCollectedHeadElements,
   mergeFrontmatter as mergeCollectedFrontmatter,
 } from "./html-head.ts";
+import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
 
 const logger = rendererLogger.component("html-generator");
 
@@ -508,57 +505,13 @@ export class HTMLGenerator {
     cssImports: string[] | undefined,
     stylesheetPath: string,
   ): Promise<string | undefined> {
-    if (!cssImports || cssImports.length === 0) return globalCSS;
-
-    const normalizedStylesheetPath = stylesheetPath.replace(/^\/+/, "");
-    const configuredStylesheetAbsolute = normalizeCssModuleKey(
-      join(this.config.projectDir, normalizedStylesheetPath),
-    );
-    const uniqueImports = new Map<string, string>();
-    for (const cssPath of cssImports) {
-      const normalized = normalizeCssModuleKey(cssPath);
-      if (!uniqueImports.has(normalized)) {
-        uniqueImports.set(normalized, cssPath);
-      }
-    }
-
-    const sortedImports = [...uniqueImports.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    const regularCssSegments: string[] = [];
-    const moduleCssSegments: string[] = [];
-
-    for (const [normalizedCssPath, cssPath] of sortedImports) {
-      // Deduplicate only exact path matches to avoid skipping unrelated files
-      // like /styles/globals.css when the configured stylesheet is /globals.css.
-      if (normalizedCssPath === configuredStylesheetAbsolute) {
-        continue;
-      }
-
-      try {
-        const content = await this.config.adapter.fs.readFile(cssPath);
-        if (!content) continue;
-
-        if (normalizedCssPath.endsWith(".module.css")) {
-          moduleCssSegments.push(rewriteCssModuleContent(content, normalizedCssPath));
-        } else {
-          regularCssSegments.push(content);
-        }
-      } catch (_) {
-        /* expected: imported CSS file may not exist */
-        logger.debug("Could not load imported CSS file", { cssPath });
-      }
-    }
-
-    if (regularCssSegments.length === 0 && moduleCssSegments.length === 0) return globalCSS;
-
-    const combined = [globalCSS, ...regularCssSegments, ...moduleCssSegments]
-      .filter(Boolean)
-      .join("\n");
-    logger.debug("Merged imported CSS with global stylesheet", {
-      importedCount: regularCssSegments.length + moduleCssSegments.length,
-      regularCount: regularCssSegments.length,
-      moduleCount: moduleCssSegments.length,
-      totalLength: combined.length,
+    return mergeImportedProjectCss({
+      fs: this.config.adapter.fs,
+      logger,
+      projectDir: this.config.projectDir,
+      globalCSS,
+      cssImports,
+      stylesheetPath,
     });
-    return combined;
   }
 }
