@@ -2,6 +2,7 @@
  * Agent type definitions
  **************************/
 
+import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import type { RemoteToolSource, Tool } from "#veryfront/tool";
 import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
 import type { Memory } from "./memory/memory-interface.ts";
@@ -90,6 +91,11 @@ export interface AgentConfig {
   /** Restrict runtime model overrides to these "provider/model" strings. */
   allowedModels?: ModelString[];
   /**
+   * Optional request-aware hook for overriding the resolved model runtime and
+   * provider transport options on a per-call basis.
+   */
+  resolveModelTransport?: ModelTransportResolver;
+  /**
    * Enable skills for this agent.
    * - true: include all discovered skills from skills/ directory
    * - string[]: include only specific skill IDs
@@ -105,6 +111,24 @@ export interface AgentConfig {
 }
 
 export type ResolvedAgentConfig = AgentConfig & { model: ModelString };
+
+export interface ModelTransportRequest {
+  agentId: string;
+  requestedModel: ModelString;
+  resolvedModel: ModelString;
+  context?: Record<string, unknown>;
+  mode: "generate" | "stream";
+}
+
+export interface ResolvedModelTransport {
+  model?: ModelRuntime;
+  headers?: HeadersInit;
+  providerOptions?: Record<string, unknown>;
+}
+
+export type ModelTransportResolver = (
+  request: ModelTransportRequest,
+) => ResolvedModelTransport | Promise<ResolvedModelTransport>;
 
 // Import for use in AgentMiddleware
 import type { AgentContext, AgentResponse } from "./schemas/index.ts";
