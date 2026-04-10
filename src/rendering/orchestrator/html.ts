@@ -37,6 +37,10 @@ import {
   startPreparedCSSWarmup,
   startProjectCSSPreparation,
 } from "./html-project-css.ts";
+import {
+  buildHeadElements as buildCollectedHeadElements,
+  mergeFrontmatter as mergeCollectedFrontmatter,
+} from "./html-head.ts";
 
 const logger = rendererLogger.component("html-generator");
 
@@ -130,7 +134,7 @@ export class HTMLGenerator {
     if (isFullHTMLDocument(context.html)) {
       let projectCSSPromise: Promise<ProjectCSSResult> | undefined;
       if (this.config.mode === "production" && context.options?.environment === "production") {
-        const mergedFrontmatter = this.mergeFrontmatter(context);
+        const mergedFrontmatter = mergeCollectedFrontmatter(context);
         const htmlOptions = await profilePhase(
           "html.build_options",
           () => this.buildHTMLOptions(context, mergedFrontmatter),
@@ -156,7 +160,7 @@ export class HTMLGenerator {
     context: Omit<HTMLGenerationContext, "html">,
   ): Promise<ReadableStream> {
     const fullContext = context as HTMLGenerationContext;
-    const mergedFrontmatter = this.mergeFrontmatter(fullContext);
+    const mergedFrontmatter = mergeCollectedFrontmatter(fullContext);
     const htmlOptions = await profilePhase(
       "html.build_options",
       () => this.buildHTMLOptions(fullContext, mergedFrontmatter),
@@ -313,7 +317,7 @@ export class HTMLGenerator {
   }
 
   private async wrapHTMLFragment(context: HTMLGenerationContext): Promise<string> {
-    const mergedFrontmatter = this.mergeFrontmatter(context);
+    const mergedFrontmatter = mergeCollectedFrontmatter(context);
     const htmlOptions = await profilePhase(
       "html.build_options",
       () => this.buildHTMLOptions(context, mergedFrontmatter),
@@ -369,7 +373,7 @@ export class HTMLGenerator {
       projectCSSPromise,
     );
 
-    const { scripts, other } = this.buildHeadElements(head);
+    const { scripts, other } = buildCollectedHeadElements(head);
     if (!scripts && !other) return { start, end };
 
     let modifiedStart = start;
@@ -391,74 +395,6 @@ export class HTMLGenerator {
     }
 
     return { start: modifiedStart, end };
-  }
-
-  private buildHeadElements(head?: CollectedHead): { scripts: string; other: string } {
-    if (!head) return { scripts: "", other: "" };
-
-    const scriptParts: string[] = [];
-    const otherParts: string[] = [];
-
-    // Scripts go at TOP of head (before CSS) to prevent flash
-    for (const script of head.scripts ?? []) {
-      const { content, ...attrs } = script;
-      const attrPairs: [string, string][] = [["data-vf-head", "true"]];
-
-      for (const [k, v] of Object.entries(attrs)) {
-        if (v != null) attrPairs.push([k, v]);
-      }
-
-      // For inline scripts without id, add hash for client-side deduplication
-      if (content && !attrs.id) {
-        let sum = 0;
-        for (let i = 0; i < Math.min(content.length, 200); i++) {
-          sum = ((sum << 5) - sum + content.charCodeAt(i)) | 0;
-        }
-        attrPairs.push(["data-vf-hash", "vf" + Math.abs(sum).toString(36)]);
-      }
-
-      const attrStr = attrPairs.map(([k, v]) => `${k}="${v}"`).join(" ");
-      if (content) {
-        scriptParts.push(`<script ${attrStr}>${content}</script>`);
-      } else if (attrs.src) {
-        scriptParts.push(`<script ${attrStr}></script>`);
-      }
-    }
-
-    for (const meta of head.metas) {
-      if (meta.name === "description") continue;
-
-      const attrs: string[] = [];
-      if (meta.name) attrs.push(`name="${meta.name}"`);
-      if (meta.property) attrs.push(`property="${meta.property}"`);
-      if (meta.content) attrs.push(`content="${meta.content}"`);
-      if (attrs.length) otherParts.push(`<meta ${attrs.join(" ")}>`);
-    }
-
-    for (const link of head.links) {
-      const attrs = Object.entries(link)
-        .filter(([, v]) => v != null)
-        .map(([k, v]) => `${k}="${v}"`)
-        .join(" ");
-      if (attrs) otherParts.push(`<link ${attrs}>`);
-    }
-
-    for (const style of head.styles) {
-      otherParts.push(`<style>${style}</style>`);
-    }
-
-    return {
-      scripts: scriptParts.join("\n  "),
-      other: otherParts.join("\n  "),
-    };
-  }
-
-  private mergeFrontmatter(context: HTMLGenerationContext): MDXFrontmatter {
-    return {
-      ...context.pageInfo.entity.frontmatter,
-      ...(context.pageBundle as MdxBundle).frontmatter,
-      ...(context.collectedMetadata || {}),
-    } as MDXFrontmatter;
   }
 
   private resolveAppPath(): Promise<string | null> {
