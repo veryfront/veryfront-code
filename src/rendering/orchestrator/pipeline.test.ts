@@ -1,26 +1,9 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RenderPipelineConfig } from "./pipeline.ts";
-
-function isHiddenSegment(segment: string): boolean {
-  return segment.startsWith(".") && segment !== "." && segment !== "..";
-}
-
-function isDotPath(slug: string, filePath?: string): boolean {
-  const hasDotSegment = (path: string) => path.split("/").some(isHiddenSegment);
-  return hasDotSegment(slug) || (filePath ? hasDotSegment(filePath) : false);
-}
-
-function getPageCssCacheKey(
-  projectId: string | undefined,
-  environment: string | undefined,
-  slug: string,
-  projectUpdatedAt: string | undefined,
-): string {
-  return `${projectId ?? "default"}:${environment ?? "preview"}:${slug}:${
-    projectUpdatedAt ?? "draft"
-  }`;
-}
+import { isDotPath, isHiddenSegment } from "./path-helpers.ts";
+import { getPageCssCacheKey } from "./css-cache.ts";
+import { collectModulesToLoad, hasDataFetchingFunction } from "./module-collection.ts";
 
 const PAGE_CSS_CACHE_MAX_SIZE = 200;
 const pageCssCache = new Map<string, string>();
@@ -35,39 +18,6 @@ function cachePageCss(cacheKey: string, css: string): void {
     if (firstKey) pageCssCache.delete(firstKey);
   }
   pageCssCache.set(cacheKey, css);
-}
-
-function hasDataFetchingFunction(mod: unknown): boolean {
-  if (!mod || typeof mod !== "object") return false;
-
-  const m = mod as Record<string, unknown>;
-  return typeof m.getServerData === "function" || typeof m.getStaticData === "function";
-}
-
-interface ModuleToLoad {
-  type: "page" | "layout";
-  id: string;
-  path: string;
-}
-
-function collectModulesToLoad(
-  pagePath: string,
-  isComponentPage: boolean,
-  isInPagesOrAppDir: boolean,
-  nestedLayouts: Array<{ kind: string; componentPath?: string }>,
-): ModuleToLoad[] {
-  const modules: ModuleToLoad[] = [];
-
-  if (isComponentPage && isInPagesOrAppDir) {
-    modules.push({ type: "page", id: pagePath, path: pagePath });
-  }
-
-  for (const { kind, componentPath } of nestedLayouts) {
-    if (kind !== "tsx" || !componentPath) continue;
-    modules.push({ type: "layout", id: componentPath, path: componentPath });
-  }
-
-  return modules;
 }
 
 describe("RenderPipeline helpers", () => {
