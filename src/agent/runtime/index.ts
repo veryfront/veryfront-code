@@ -100,6 +100,7 @@ import {
 } from "#veryfront/skill/allowed-tools.ts";
 import { resolveConfiguredAgentModel, resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
+import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 
 const logger = serverLogger.component("agent");
 const LOAD_SKILL_TOOL_ID = "load-skill";
@@ -108,45 +109,12 @@ type RuntimeToolFilterConfig = AgentConfig & {
   __vfAllowedRemoteTools?: string[];
 };
 
-function createAbortError(reason?: unknown): Error {
-  if (reason instanceof Error) {
-    return reason;
-  }
-
-  return new DOMException(
-    typeof reason === "string" && reason.length > 0 ? reason : "The operation was aborted",
-    "AbortError",
-  );
-}
-
-function throwIfAborted(abortSignal?: AbortSignal): void {
-  if (abortSignal?.aborted) {
-    throw createAbortError(abortSignal.reason);
-  }
-}
-
 function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
   if (abortSignal?.aborted && error === abortSignal.reason) {
     return true;
   }
 
   return error instanceof DOMException && error.name === "AbortError";
-}
-
-function stringifyToolError(error: unknown): string {
-  if (typeof error === "string" && error.length > 0) {
-    return error;
-  }
-
-  if (error instanceof Error && typeof error.message === "string" && error.message.length > 0) {
-    return error.message;
-  }
-
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
 }
 
 function getToolResultError(result: unknown): string | undefined {

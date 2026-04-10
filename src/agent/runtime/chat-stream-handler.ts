@@ -15,6 +15,7 @@ import { serverLogger } from "#veryfront/utils";
 import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 
 const logger = serverLogger.component("agent");
 
@@ -82,39 +83,6 @@ function normalizeToolInputObject(input: unknown): Record<string, unknown> {
   }
 
   return {};
-}
-
-function createAbortError(reason?: unknown): Error {
-  if (reason instanceof Error) {
-    return reason;
-  }
-
-  return new DOMException(
-    typeof reason === "string" && reason.length > 0 ? reason : "The operation was aborted",
-    "AbortError",
-  );
-}
-
-function throwIfAborted(abortSignal?: AbortSignal): void {
-  if (abortSignal?.aborted) {
-    throw createAbortError(abortSignal.reason);
-  }
-}
-
-function stringifyToolError(output: unknown): string {
-  if (typeof output === "string" && output.length > 0) {
-    return output;
-  }
-
-  if (output instanceof Error && typeof output.message === "string" && output.message.length > 0) {
-    return output.message;
-  }
-
-  try {
-    return JSON.stringify(output);
-  } catch {
-    return String(output);
-  }
 }
 
 function summarizeDebugValue(value: unknown): unknown {
