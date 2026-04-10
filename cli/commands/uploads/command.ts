@@ -7,6 +7,7 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
+import { getStringArg } from "../../shared/parsed-args.ts";
 
 export interface UploadItem {
   type: "file" | "folder";
@@ -86,14 +87,6 @@ const UploadDeleteArgsSchema = z.object({
 });
 
 export type UploadDeleteOptions = z.infer<typeof UploadDeleteArgsSchema>;
-
-function getStringArg(args: ParsedArgs, ...keys: string[]): string | undefined {
-  for (const key of keys) {
-    const value = args[key];
-    if (typeof value === "string" && value) return value;
-  }
-  return undefined;
-}
 
 function getBooleanArg(args: ParsedArgs, ...keys: string[]): boolean {
   return keys.some((key) => Boolean(args[key]));

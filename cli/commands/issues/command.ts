@@ -10,15 +10,7 @@ import { createIssuesManager, type Issue, type IssuePrefix, parseState } from "v
 import { bold, muted, success } from "#cli/ui";
 
 import type { ParsedArgs } from "#cli/shared/types";
-
-/** Extract a string value from parsed args by checking multiple keys */
-function str(args: ParsedArgs, ...keys: string[]): string | undefined {
-  for (const k of keys) {
-    const v = args[k];
-    if (typeof v === "string" && v) return v;
-  }
-  return undefined;
-}
+import { getStringArg } from "../../shared/parsed-args.ts";
 
 /** Extract a boolean value from parsed args by checking multiple keys */
 function bool(args: ParsedArgs, ...keys: string[]): boolean {
@@ -123,18 +115,18 @@ export async function issuesCommand(args: ParsedArgs): Promise<void> {
 
   switch (subcommand) {
     case "create": {
-      const title = str(args, "title", "t") || getId(args, 2);
+      const title = getStringArg(args, "title", "t") || getId(args, 2);
       if (!title) {
         throw new Error("Title is required. Usage: veryfront issues create --title 'My issue'");
       }
 
       const issue = await manager.create({
         title,
-        body: str(args, "body", "b"),
-        labels: parseLabels(str(args, "labels", "l")),
-        milestone: str(args, "milestone", "m"),
-        assignees: parseLabels(str(args, "assignees", "a")),
-        prefix: getPrefix(str(args, "prefix"), "ISSUE")!,
+        body: getStringArg(args, "body", "b"),
+        labels: parseLabels(getStringArg(args, "labels", "l")),
+        milestone: getStringArg(args, "milestone", "m"),
+        assignees: parseLabels(getStringArg(args, "assignees", "a")),
+        prefix: getPrefix(getStringArg(args, "prefix"), "ISSUE")!,
       });
 
       if (json) {
@@ -149,15 +141,16 @@ export async function issuesCommand(args: ParsedArgs): Promise<void> {
 
     case "list":
     case "ls": {
-      const stateArg = str(args, "state");
+      const stateArg = getStringArg(args, "state");
       const result = await manager.list({
         state: stateArg ? parseState(stateArg) ?? undefined : undefined,
-        labels: parseLabels(str(args, "labels", "l")),
-        milestone: str(args, "milestone", "m"),
-        assignee: str(args, "assignee"),
-        prefix: getPrefix(str(args, "prefix")),
-        sortBy: (str(args, "sort") as "created_at" | "updated_at" | "id") || "created_at",
-        sortDirection: (str(args, "dir") as "asc" | "desc") || "desc",
+        labels: parseLabels(getStringArg(args, "labels", "l")),
+        milestone: getStringArg(args, "milestone", "m"),
+        assignee: getStringArg(args, "assignee"),
+        prefix: getPrefix(getStringArg(args, "prefix")),
+        sortBy: (getStringArg(args, "sort") as "created_at" | "updated_at" | "id") ||
+          "created_at",
+        sortDirection: (getStringArg(args, "dir") as "asc" | "desc") || "desc",
         limit: num(args, "limit"),
       });
 
@@ -221,25 +214,25 @@ export async function issuesCommand(args: ParsedArgs): Promise<void> {
 
       const updates: Parameters<typeof manager.update>[1] = {};
 
-      const title = str(args, "title", "t");
+      const title = getStringArg(args, "title", "t");
       if (title) updates.title = title;
 
-      const body = str(args, "body", "b");
+      const body = getStringArg(args, "body", "b");
       if (body) updates.body = body;
 
-      const stateArg = str(args, "state");
+      const stateArg = getStringArg(args, "state");
       if (stateArg) {
         const state = parseState(stateArg);
         if (state) updates.state = state;
       }
 
-      const labels = parseLabels(str(args, "labels", "l"));
+      const labels = parseLabels(getStringArg(args, "labels", "l"));
       if (labels) updates.labels = labels;
 
-      const assignees = parseLabels(str(args, "assignees", "a"));
+      const assignees = parseLabels(getStringArg(args, "assignees", "a"));
       if (assignees) updates.assignees = assignees;
 
-      const milestone = str(args, "milestone", "m");
+      const milestone = getStringArg(args, "milestone", "m");
       if (milestone) updates.milestone = milestone;
 
       if (!Object.keys(updates).length) {
