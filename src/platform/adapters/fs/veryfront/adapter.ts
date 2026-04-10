@@ -70,6 +70,44 @@ export class VeryfrontFSAdapter implements FSAdapter {
   /** Whether running in proxy mode (shared adapter with per-request OAuth tokens) */
   private proxyMode: boolean;
 
+  private getCurrentFileListCacheKey(): string | undefined {
+    return this.contentContext ? buildFileListCacheKey(this.contentContext) : undefined;
+  }
+
+  private getCachedFileListSync<T extends { path: string; id?: string }>(): T[] | undefined {
+    const cacheKey = this.getCurrentFileListCacheKey();
+    if (!cacheKey) return undefined;
+    return this.cache.get(cacheKey) as T[] | undefined;
+  }
+
+  private async getCachedFileListAsync<T extends { path: string }>(
+    noContextMessage: string,
+    lookupLabel: string,
+    missReason: string,
+  ): Promise<{ cacheKey: string; files: T[] | undefined } | undefined> {
+    const cacheKey = this.getCurrentFileListCacheKey();
+    if (!cacheKey) {
+      logger.debug(noContextMessage);
+      return undefined;
+    }
+
+    const files = await this.cache.getAsync<T[]>(cacheKey);
+    logger.debug(`${lookupLabel} lookup`, {
+      cacheKey,
+      hasResult: !!files,
+      resultSize: files?.length ?? 0,
+      hasContent: (files as Array<{ content?: string }> | undefined)?.filter((file) =>
+        !!file.content
+      )?.length ?? 0,
+    });
+
+    if (!files?.length) {
+      this.scheduleFileListWarmup(missReason, cacheKey);
+    }
+
+    return { cacheKey, files };
+  }
+
   constructor(config: FSAdapterConfig) {
     this.invalidationCallbacks = config.invalidationCallbacks ?? {};
     const vf = config.veryfront;
@@ -120,56 +158,23 @@ export class VeryfrontFSAdapter implements FSAdapter {
       getReleaseId: () => this.contentContext?.releaseId ?? null,
       getContentContext: () => this.contentContext,
       getFileList: async () => {
-        if (!this.contentContext) {
-          logger.debug("getFileList: no contentContext");
-          return undefined;
-        }
-
-        const cacheKey = buildFileListCacheKey(this.contentContext);
-        const result = await this.cache.getAsync<
-          Array<{
-            id?: string;
-            path: string;
-            content?: string;
-            type?: string;
-            size?: number;
-            updated_at?: string;
-          }>
-        >(cacheKey);
-
-        logger.debug("getFileList lookup", {
-          cacheKey,
-          hasResult: !!result,
-          resultSize: result?.length ?? 0,
-        });
-
-        if (!result?.length) {
-          this.scheduleFileListWarmup("getFileList miss", cacheKey);
-        }
-
-        return result;
+        const cached = await this.getCachedFileListAsync<{
+          id?: string;
+          path: string;
+          content?: string;
+          type?: string;
+          size?: number;
+          updated_at?: string;
+        }>("getFileList: no contentContext", "getFileList", "getFileList miss");
+        return cached?.files;
       },
       hasCachedFileList: async () => {
-        if (!this.contentContext) {
-          logger.debug("hasCachedFileList: no contentContext");
-          return false;
-        }
-
-        const cacheKey = buildFileListCacheKey(this.contentContext);
-        const result = await this.cache.getAsync<Array<{ path: string }>>(cacheKey);
-        const hasResult = Array.isArray(result) && result.length > 0;
-
-        logger.debug("hasCachedFileList lookup", {
-          cacheKey,
-          hasResult,
-          resultSize: result?.length ?? 0,
-        });
-
-        if (!hasResult) {
-          this.scheduleFileListWarmup("hasCachedFileList miss", cacheKey);
-        }
-
-        return hasResult;
+        const cached = await this.getCachedFileListAsync<{ path: string }>(
+          "hasCachedFileList: no contentContext",
+          "hasCachedFileList",
+          "hasCachedFileList miss",
+        );
+        return Array.isArray(cached?.files) && cached.files.length > 0;
       },
       isPersistentCacheInvalidated: (prefix: string) => this.isPersistentCacheInvalidated(prefix),
       isReleaseBeingInvalidated: (releaseId: string) =>
@@ -196,28 +201,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
       contentContextGetter,
       (path) => this.statOps.getOriginalApiPath(path),
       async () => {
-        if (!this.contentContext) {
-          logger.debug("getFileListCache: no contentContext");
-          return undefined;
-        }
-
-        const cacheKey = buildFileListCacheKey(this.contentContext);
-        const result = await this.cache.getAsync<Array<{ path: string; content?: string }>>(
-          cacheKey,
+        const cached = await this.getCachedFileListAsync<{ path: string; content?: string }>(
+          "getFileListCache: no contentContext",
+          "getFileListCache",
+          "getFileListCache miss",
         );
-
-        logger.debug("getFileListCache lookup", {
-          cacheKey,
-          hasResult: !!result,
-          resultSize: result?.length ?? 0,
-          hasContent: result?.filter((f) => f.content)?.length ?? 0,
-        });
-
-        if (!result?.length) {
-          this.scheduleFileListWarmup("getFileListCache miss", cacheKey);
-        }
-
-        return result;
+        return cached?.files;
       },
     );
 
@@ -560,17 +549,21 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return [];
     }
 
-    const cacheKey = buildFileListCacheKey(this.contentContext);
-    const files = await this.cache.getAsync<Array<{ path: string; content?: string }>>(cacheKey);
+    const cached = await this.getCachedFileListAsync<{ path: string; content?: string }>(
+      "getAllSourceFiles: no contentContext",
+      "getAllSourceFiles",
+      "getAllSourceFiles miss",
+    );
+    const cacheKey = cached?.cacheKey;
+    const files = cached?.files;
 
-    if (!files?.length) {
+    if (!cacheKey || !files?.length) {
       logger.debug("getAllSourceFiles cache miss or empty", {
         cacheKey,
         initialized: this.initialized,
         hasFiles: !!files,
         fileCount: files?.length ?? 0,
       });
-      this.scheduleFileListWarmup("getAllSourceFiles miss", cacheKey);
       return [];
     }
 
@@ -588,24 +581,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   getEntityIdForPath(path: string): string | undefined {
-    if (!this.contentContext) return undefined;
-
     const normalizedPath = this.normalizer.normalize(path);
-    const cacheKey = buildFileListCacheKey(this.contentContext);
-    const cachedFiles = this.cache.get(cacheKey) as
-      | Array<{ id?: string; path: string }>
-      | undefined;
+    const cachedFiles = this.getCachedFileListSync<{ id?: string; path: string }>();
 
     return cachedFiles?.find((f) => f.path === normalizedPath)?.id;
   }
 
   getFilePathByEntityId(entityId: string): string | undefined {
-    if (!this.contentContext) return undefined;
-
-    const cacheKey = buildFileListCacheKey(this.contentContext);
-    const cachedFiles = this.cache.get(cacheKey) as
-      | Array<{ id?: string; path: string }>
-      | undefined;
+    const cachedFiles = this.getCachedFileListSync<{ id?: string; path: string }>();
 
     return cachedFiles?.find((f) => f.id === entityId)?.path;
   }
