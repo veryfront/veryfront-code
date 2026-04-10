@@ -354,29 +354,43 @@ function createImportMapPlugin(
 
       build.onLoad(
         { filter: /.*/, namespace: "import-map" },
-        wrapWithCurrentContext(async (args) => {
-          try {
-            const { filePath, contents } = await readFileWithExtensions(
-              adapter,
-              args.path,
-              FILE_EXTENSIONS,
-              projectDir,
-            );
-
-            return {
-              contents,
-              loader: getLoaderForFile(filePath),
-              resolveDir: pathHelper.dirname(filePath),
-            };
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            logger.error(`Failed to load file via import map: ${args.path}`, error);
-            return { errors: [{ text: `Failed to load: ${msg}` }] };
-          }
+        createNamespaceOnLoadHandler({
+          adapter,
+          projectDir,
+          errorLabel: "file via import map",
         }),
       );
     },
   };
+}
+
+function createNamespaceOnLoadHandler(options: {
+  adapter: RuntimeAdapter;
+  projectDir: string;
+  errorLabel: string;
+}) {
+  const { adapter, projectDir, errorLabel } = options;
+
+  return wrapWithCurrentContext(async (args: { path: string }) => {
+    try {
+      const { filePath, contents } = await readFileWithExtensions(
+        adapter,
+        args.path,
+        FILE_EXTENSIONS,
+        projectDir,
+      );
+
+      return {
+        contents,
+        loader: getLoaderForFile(filePath),
+        resolveDir: pathHelper.dirname(filePath),
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to load ${errorLabel}: ${args.path}`, error);
+      return { errors: [{ text: `Failed to load: ${msg}` }] };
+    }
+  });
 }
 
 /** Resolves relative imports through the adapter's virtual FS for remote projects. */
@@ -419,25 +433,10 @@ function createAdapterResolvePlugin(
       // cannot resolve the per-project adapter and all file reads fail silently.
       build.onLoad(
         { filter: /.*/, namespace: "vf-adapter" },
-        wrapWithCurrentContext(async (args) => {
-          try {
-            const { filePath, contents } = await readFileWithExtensions(
-              adapter,
-              args.path,
-              FILE_EXTENSIONS,
-              projectDir,
-            );
-
-            return {
-              contents,
-              loader: getLoaderForFile(filePath),
-              resolveDir: pathHelper.dirname(filePath),
-            };
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            logger.error(`Failed to load via adapter: ${args.path}`, error);
-            return { errors: [{ text: `Failed to load: ${msg}` }] };
-          }
+        createNamespaceOnLoadHandler({
+          adapter,
+          projectDir,
+          errorLabel: "via adapter",
         }),
       );
     },
