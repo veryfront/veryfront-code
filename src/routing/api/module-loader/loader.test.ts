@@ -6,6 +6,7 @@ import {
   loadHandlerModule,
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
+  rewriteDenoNpmDependencyImports,
   rewriteNodeExternalImports,
   toCjsDestructureBindings,
 } from "./loader.ts";
@@ -385,6 +386,48 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
     assertMatch(rewritten, /const widget = require\("my-lib\/subpath"\)/);
     assertMatch(rewritten, /Promise\.resolve\(require\("my-lib\/subpath"\)\)/);
+  });
+
+  it("rewrites non-compiled deno user dependency imports to npm: specifiers with resolved versions", async () => {
+    const tmpDir = await makeTempDir();
+    const depDir = join(tmpDir, "node_modules", "my-lib");
+    await fs.mkdir(depDir, { recursive: true });
+    await fs.writeTextFile(
+      join(depDir, "package.json"),
+      JSON.stringify({
+        version: "1.2.3",
+      }),
+    );
+
+    const source = [
+      'import thing from "my-lib";',
+      'import widget from "my-lib/subpath";',
+      'const loaded = import("my-lib/subpath");',
+    ].join("\n");
+
+    const rewritten = await rewriteDenoNpmDependencyImports(
+      source,
+      tmpDir,
+      fs,
+      new Map([["my-lib", "^1.0.0"]]),
+    );
+
+    assertMatch(rewritten, /from "npm:my-lib@1\.2\.3"/);
+    assertMatch(rewritten, /from "npm:my-lib@1\.2\.3\/subpath"/);
+    assertMatch(rewritten, /import\("npm:my-lib@1\.2\.3\/subpath"\)/);
+  });
+
+  it("falls back to declared ranges when node_modules package versions are unavailable", async () => {
+    const tmpDir = await makeTempDir();
+
+    const rewritten = await rewriteDenoNpmDependencyImports(
+      'import thing from "my-lib";',
+      tmpDir,
+      fs,
+      new Map([["my-lib", "^1.0.0"]]),
+    );
+
+    assertMatch(rewritten, /from "npm:my-lib@\^1\.0\.0"/);
   });
 
   it("rejects module path that escapes project directory via traversal", async () => {
