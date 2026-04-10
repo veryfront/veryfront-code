@@ -35,6 +35,60 @@ describe("cli/mc./error-collector", () => {
       assertEquals(counts.module, 1);
     });
 
+    it("should preserve file, context, and slug metadata for file-context error helpers", () => {
+      const ec = new ErrorCollector();
+      const sharedContext = { source: "dev-server" };
+
+      ec.addBundleError("bundle fail", "bundle.ts", sharedContext, "bundle-failed");
+      ec.addHMRError("hmr fail", "hmr.ts", sharedContext, "hmr-failed");
+      ec.addModuleError("module fail", "module.ts", sharedContext, "module-failed");
+
+      assertEquals(
+        ec.getAll({ type: "bundle" }).map((error) => ({
+          file: error.file,
+          context: error.context,
+          slug: error.slug,
+          category: error.category,
+        })),
+        [{
+          file: "bundle.ts",
+          context: sharedContext,
+          slug: "bundle-failed",
+          category: "BUILD",
+        }],
+      );
+
+      assertEquals(
+        ec.getAll({ type: "hmr" }).map((error) => ({
+          file: error.file,
+          context: error.context,
+          slug: error.slug,
+          category: error.category,
+        })),
+        [{
+          file: "hmr.ts",
+          context: sharedContext,
+          slug: "hmr-failed",
+          category: "DEV",
+        }],
+      );
+
+      assertEquals(
+        ec.getAll({ type: "module" }).map((error) => ({
+          file: error.file,
+          context: error.context,
+          slug: error.slug,
+          category: error.category,
+        })),
+        [{
+          file: "module.ts",
+          context: sharedContext,
+          slug: "module-failed",
+          category: "MODULE",
+        }],
+      );
+    });
+
     it("should enforce maxErrors", () => {
       const ec = new ErrorCollector({ maxErrors: 2 });
       ec.add({ type: "compile", category: "BUILD", message: "1" });

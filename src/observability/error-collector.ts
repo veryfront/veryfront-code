@@ -150,6 +150,16 @@ export class ErrorCollector {
     return this.addTypedError("runtime", message, { stack, context, slug });
   }
 
+  private addFileContextError(
+    type: "bundle" | "hmr" | "module",
+    message: string,
+    file?: string,
+    context?: Record<string, unknown>,
+    slug?: string,
+  ): DevError {
+    return this.addTypedError(type, message, { file, context, slug });
+  }
+
   /**
    * Add a bundle error
    * @param message Error message
@@ -163,7 +173,7 @@ export class ErrorCollector {
     context?: Record<string, unknown>,
     slug?: string,
   ): DevError {
-    return this.addTypedError("bundle", message, { file, context, slug });
+    return this.addFileContextError("bundle", message, file, context, slug);
   }
 
   /**
@@ -179,7 +189,7 @@ export class ErrorCollector {
     context?: Record<string, unknown>,
     slug?: string,
   ): DevError {
-    return this.addTypedError("hmr", message, { file, context, slug });
+    return this.addFileContextError("hmr", message, file, context, slug);
   }
 
   /**
@@ -195,7 +205,7 @@ export class ErrorCollector {
     context?: Record<string, unknown>,
     slug?: string,
   ): DevError {
-    return this.addTypedError("module", message, { file, context, slug });
+    return this.addFileContextError("module", message, file, context, slug);
   }
 
   getAll(filter?: ErrorFilter): DevError[] {
