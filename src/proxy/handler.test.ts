@@ -998,6 +998,7 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error?.status, 404);
         assertEquals(ctx.error?.message, "Project not found");
         assertEquals(ctx.error?.slug, "project-not-found");
+        assertEquals(ctx.token, "test-token");
 
         await handler.close();
       } finally {
