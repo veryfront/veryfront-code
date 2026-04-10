@@ -48,6 +48,8 @@ const REQUIRED_EXPORTS = {
     "AgentRuntime",
     "RunResumeSessionManager",
     "createAgUiHandler",
+    "waitForHumanInput",
+    "HumanInputRequestSchema",
     "registerAgent",
     "getAgentsAsTools",
     "agentAsTool",

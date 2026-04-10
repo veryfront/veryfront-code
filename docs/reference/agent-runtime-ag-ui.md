@@ -63,6 +63,7 @@ For resumable hosted runs, the package also exposes:
 - `createAgUiResumeHandler()`
 - `createAgUiCancelHandler()`
 - `AgUiResumeSignalSchema`
+- `waitForHumanInput()`
 
 ## Convenience Request Shape
 
@@ -115,6 +116,40 @@ export const DELETE = createAgUiCancelHandler({ sessionManager });
 
 These handlers are generic package surfaces. They do not include Veryfront
 control-plane auth/signature requirements.
+
+## Human Input / Approval Waits
+
+Hosts that need a structured user-input or approval step can compose the same
+public run-control seam with `waitForHumanInput()`:
+
+```ts
+import {
+  HumanInputRequestSchema,
+  RunResumeSessionManager,
+  waitForHumanInput,
+} from "veryfront/agent";
+
+const sessionManager = new RunResumeSessionManager<{
+  result: unknown;
+  isError: boolean;
+}>();
+
+const result = await waitForHumanInput({
+  sessionManager,
+  runId: "run_123",
+  toolCallId: "tool_approval",
+  request: HumanInputRequestSchema.parse({
+    title: "Deploy to production?",
+    fields: [{ type: "confirm", name: "approved", label: "Approve deploy?" }],
+  }),
+  onRequest: async (pending) => {
+    // Persist or publish the pending request through your host control plane.
+  },
+});
+```
+
+The host still owns persistence and UI delivery, but the request/result schema
+and the wait/resume loop are now public package substrate.
 
 ## Injected Client Tools
 

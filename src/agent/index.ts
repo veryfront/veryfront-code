@@ -161,6 +161,24 @@ export {
   createAgUiHandler,
 } from "./ag-ui-handler.ts";
 export {
+  type HumanInputField,
+  type HumanInputFieldInput,
+  HumanInputFieldSchema,
+  type HumanInputOption,
+  HumanInputOptionSchema,
+  type HumanInputPendingRequest,
+  HumanInputPendingRequestSchema,
+  type HumanInputRequest,
+  type HumanInputRequestInput,
+  HumanInputRequestSchema,
+  type HumanInputResult,
+  HumanInputResultSchema,
+  HumanInputResumeError,
+  InvalidHumanInputResultError,
+  waitForHumanInput,
+  type WaitForHumanInputOptions,
+} from "./human-input.ts";
+export {
   type ChatHandlerBeforeStream,
   type ChatHandlerBeforeStreamContext,
   type ChatHandlerBeforeStreamResult,
