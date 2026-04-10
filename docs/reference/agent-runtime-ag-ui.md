@@ -11,7 +11,7 @@ agent runtimes.
 
 ## Contract
 
-- request body: validated by `AgUiRequestSchema`
+- canonical hosted runtime request contract: `AgUiRuntimeRequestSchema`
 - response body: AG-UI SSE
 - default endpoint convention: `/api/ag-ui`
 - host path: overrideable by the application
@@ -20,7 +20,8 @@ The package defines the runtime contract. The host chooses where to mount it.
 
 ## Package API
 
-Use `createAgUiHandler()`:
+Use `createAgUiHandler()` as a convenience wrapper when you want a direct
+route handler:
 
 ```ts
 import { agent, createAgUiHandler } from "veryfront/agent";
@@ -34,7 +35,10 @@ export const POST = createAgUiHandler({
 });
 ```
 
-## Request Shape
+`createAgUiHandler()` validates the higher-level `AgUiRequestSchema` convenience
+shape and normalizes it into the canonical hosted runtime contract.
+
+## Convenience Request Shape
 
 `AgUiRequestSchema` accepts:
 

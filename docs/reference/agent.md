@@ -227,9 +227,10 @@ is `/api/ag-ui`, but the host application owns the actual path.
 
 The handler:
 
-- validates the AG-UI runtime request body
+- validates the higher-level `AgUiRequestSchema` wrapper body
 - clears server memory before each run
 - converts the package data-stream output into AG-UI SSE events
+- normalizes the wrapper request into the canonical hosted runtime contract
 - passes AG-UI request metadata into `agent.stream()` context as:
 
 ```ts
@@ -255,7 +256,7 @@ Current limitation:
 
 ### `AgUiRequestSchema`
 
-Validate AG-UI runtime requests for `createAgUiHandler()`.
+Validate the convenience wrapper request shape for `createAgUiHandler()`.
 
 ### `AgUiRuntimeRequestSchema`
 
