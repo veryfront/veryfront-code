@@ -4,6 +4,7 @@ import { join } from "#veryfront/compat/path";
 import {
   getNodeExternalPackagesToResolve,
   loadHandlerModule,
+  rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
   rewriteNodeExternalImports,
   toCjsDestructureBindings,
@@ -358,6 +359,32 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertMatch(rewritten, /import\("\.\/_vf_runtime\.mjs"\)/);
     assertMatch(rewritten, /from "\.\/_vf_agent\.mjs"/);
     assertMatch(rewritten, /import\("\.\/_vf_tool\.mjs"\)/);
+  });
+
+  it("rewrites compiled-binary user dependency imports to require-based shims", () => {
+    const source = [
+      'import thing from "my-lib";',
+      'import { alpha as beta } from "my-lib";',
+      'import * as namespace from "my-lib";',
+      'import combo, { gamma } from "my-lib";',
+      'import widget from "my-lib/subpath";',
+      'const loaded = import("my-lib/subpath");',
+    ].join("\n");
+
+    const rewritten = rewriteCompiledBinaryUserDependencyImports(
+      source,
+      new Map([["my-lib", "^1.0.0"]]),
+    );
+
+    assertMatch(rewritten, /const thing = __vf_interopDefault\(require\("my-lib"\)\)/);
+    assertMatch(rewritten, /const \{ alpha: beta \} = require\("my-lib"\)/);
+    assertMatch(rewritten, /const namespace = require\("my-lib"\)/);
+    assertMatch(
+      rewritten,
+      /const __vf_tmp_combo = require\("my-lib"\); const combo = __vf_interopDefault\(__vf_tmp_combo\); const \{ gamma \} = __vf_tmp_combo/,
+    );
+    assertMatch(rewritten, /const widget = require\("my-lib\/subpath"\)/);
+    assertMatch(rewritten, /Promise\.resolve\(require\("my-lib\/subpath"\)\)/);
   });
 
   it("rejects module path that escapes project directory via traversal", async () => {
