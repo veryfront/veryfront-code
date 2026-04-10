@@ -179,20 +179,18 @@ export interface DynamicToolConfig {
   id?: string;
   description: string;
   inputSchema: unknown;
+  inputSchemaJson?: JsonSchema;
   execute: (input: unknown, context?: ToolExecutionContext) => Promise<unknown> | unknown;
   toModelOutput?: (output: unknown) => unknown;
-  mcp?: {
-    enabled?: boolean;
-    requiresAuth?: boolean;
-    cachePolicy?: "no-cache" | "cache" | "cache-first";
-  };
+  mcp?: ToolConfig["mcp"];
 }
 
 export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
   const explicitId = typeof config.id === "string" && config.id.length > 0 ? config.id : undefined;
   const id = explicitId ?? generateToolId();
 
-  const inputSchemaJson = convertSchemaToJson(config.inputSchema, id, "DYNAMIC_TOOL", true);
+  const inputSchemaJson = config.inputSchemaJson ??
+    convertSchemaToJson(config.inputSchema, id, "DYNAMIC_TOOL", true);
 
   const createdTool: Tool<unknown, unknown> = {
     id,

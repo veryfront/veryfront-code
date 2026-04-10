@@ -65,12 +65,17 @@ const assistant = agent({
 ### Remote MCP tool source
 
 ```ts
-import { createRemoteMCPToolSource } from "veryfront/tool";
+import { createRemoteMCPToolSource, loadRemoteToolsFromSource } from "veryfront/tool";
 
 const docsTools = createRemoteMCPToolSource({
   id: "docs-mcp",
   endpoint: "https://docs.example.com/mcp",
   headers: { Authorization: `Bearer ${Deno.env.get("DOCS_TOKEN")}` },
+});
+
+const runtimeTools = await loadRemoteToolsFromSource(docsTools, {
+  context: { projectId: "proj_123" },
+  toolNameAliases: { search_docs: "docs_search" },
 });
 ```
 
@@ -106,29 +111,40 @@ Create a per-request remote tool source backed by an MCP `tools/list` + `tools/c
 
 **Returns:** `RemoteToolSource`
 
+### `createToolsFromRemoteDefinitions(source, definitions, options?)`
+
+Materialize runtime `Tool` instances from remote definitions while preserving the remote JSON schema.
+
+### `loadRemoteToolsFromSource(source, options?)`
+
+List tools from a remote source and materialize them into runtime `Tool` instances.
+
 ## Exports
 
 ### Functions
 
-| Name                        | Description                            |
-| --------------------------- | -------------------------------------- |
-| `dynamicTool`               | Create tool with runtime schema        |
-| `createRemoteMCPToolSource` | Create a remote MCP-backed tool source |
-| `executeTool`               | Execute tool by ID                     |
-| `tool`                      | Create typed tool (Zod-validated)      |
+| Name                               | Description                                       |
+| ---------------------------------- | ------------------------------------------------- |
+| `createToolsFromRemoteDefinitions` | Materialize runtime tools from remote definitions |
+| `dynamicTool`                      | Create tool with runtime schema                   |
+| `createRemoteMCPToolSource`        | Create a remote MCP-backed tool source            |
+| `executeTool`                      | Execute tool by ID                                |
+| `loadRemoteToolsFromSource`        | Load and materialize tools from a remote source   |
+| `tool`                             | Create typed tool (Zod-validated)                 |
 
 ### Types
 
-| Name                        | Description                                                       |
-| --------------------------- | ----------------------------------------------------------------- |
-| `DynamicToolConfig`         | `dynamicTool()` config                                            |
-| `JsonSchema`                | JSON Schema for tool input                                        |
-| `RemoteMCPToolSourceConfig` | `createRemoteMCPToolSource()` config                              |
-| `RemoteToolSource`          | Runtime-discovered remote tool source                             |
-| `Tool`                      | Tool instance (returned by tool() function)                       |
-| `ToolConfig`                | Tool configuration options                                        |
-| `ToolDefinition`            | Provider-facing tool definition used for model/tool registration. |
-| `ToolExecutionContext`      | Context passed to tool execution                                  |
+| Name                               | Description                                                       |
+| ---------------------------------- | ----------------------------------------------------------------- |
+| `DynamicToolConfig`                | `dynamicTool()` config                                            |
+| `JsonSchema`                       | JSON Schema for tool input                                        |
+| `RemoteMCPToolSourceConfig`        | `createRemoteMCPToolSource()` config                              |
+| `RemoteToolMaterializationOptions` | Options for loading/materializing remote tools                    |
+| `RemoteToolSource`                 | Runtime-discovered remote tool source                             |
+| `Tool`                             | Tool instance (returned by tool() function)                       |
+| `ToolConfig`                       | Tool configuration options                                        |
+| `ToolDefinition`                   | Provider-facing tool definition used for model/tool registration. |
+| `ToolExecutionContext`             | Context passed to tool execution                                  |
 
 ### Constants
 

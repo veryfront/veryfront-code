@@ -233,6 +233,29 @@ describe("tool factory", () => {
       });
       assertStringIncludes(t.id, "tool_");
     });
+
+    it("should preserve an explicit JSON schema override", () => {
+      const t = dynamicTool({
+        id: "remote-dynamic",
+        description: "Remote dynamic tool",
+        inputSchema: z.object({}).passthrough(),
+        inputSchemaJson: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+          },
+          required: ["query"],
+        },
+        execute: async () => null,
+      });
+      assertEquals(t.inputSchemaJson, {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+        },
+        required: ["query"],
+      });
+    });
   });
 
   describe("dynamicTool input validation", () => {
