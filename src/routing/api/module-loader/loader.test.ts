@@ -1,7 +1,12 @@
 import { assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
-import { loadHandlerModule, toCjsDestructureBindings } from "./loader.ts";
+import {
+  getNodeExternalPackagesToResolve,
+  loadHandlerModule,
+  rewriteNodeExternalImports,
+  toCjsDestructureBindings,
+} from "./loader.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
@@ -280,6 +285,62 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       toCjsDestructureBindings("{ foo, bar }"),
       "{ foo, bar }",
     );
+  });
+
+  it("builds the node external package resolution list without duplicates", () => {
+    const packages = getNodeExternalPackagesToResolve(
+      new Map([
+        ["pdf-parse", "^1.1.1"],
+        ["zod", "^3.22.0"],
+        ["another-lib", "^1.0.0"],
+      ]),
+    );
+
+    assertEquals(packages, ["zod", "pdf-parse", "another-lib"]);
+  });
+
+  it("rewrites bare veryfront imports using the package export map", async () => {
+    const tmpDir = await makeTempDir();
+    const vfDir = join(tmpDir, "node_modules", "veryfront");
+    await fs.mkdir(vfDir, { recursive: true });
+    await fs.writeTextFile(
+      join(vfDir, "package.json"),
+      JSON.stringify({
+        exports: {
+          ".": { import: "./dist/index.js" },
+        },
+      }),
+    );
+
+    const rewritten = await rewriteNodeExternalImports(
+      'import { defineConfig } from "veryfront";',
+      tmpDir,
+      fs,
+      new Map(),
+    );
+
+    assertMatch(rewritten, /from "file:\/\/.*node_modules\/veryfront\/dist\/index\.js"/);
+  });
+
+  it("rewrites imported user dependencies to resolved node_modules file URLs", async () => {
+    const tmpDir = await makeTempDir();
+    const depDir = join(tmpDir, "node_modules", "my-lib");
+    await fs.mkdir(depDir, { recursive: true });
+    await fs.writeTextFile(
+      join(depDir, "package.json"),
+      JSON.stringify({
+        main: "./dist/index.js",
+      }),
+    );
+
+    const rewritten = await rewriteNodeExternalImports(
+      'import thing from "my-lib";',
+      tmpDir,
+      fs,
+      new Map([["my-lib", "^1.0.0"]]),
+    );
+
+    assertMatch(rewritten, /from "file:\/\/.*node_modules\/my-lib\/dist\/index\.js"/);
   });
 
   it("rejects module path that escapes project directory via traversal", async () => {
