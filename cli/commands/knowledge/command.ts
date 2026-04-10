@@ -6,6 +6,7 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
+import { getStringArg } from "../../shared/parsed-args.ts";
 import { downloadUploadToFile, listAllUploads, type UploadItem } from "../uploads/command.ts";
 import { putRemoteFileFromLocal } from "../files/command.ts";
 import { knowledgeIngestPythonSource } from "./parser-source.ts";
@@ -108,14 +109,6 @@ const KnowledgeIngestArgsSchema = z.object({
 });
 
 export type KnowledgeIngestOptions = z.infer<typeof KnowledgeIngestArgsSchema>;
-
-function getStringArg(args: ParsedArgs, ...keys: string[]): string | undefined {
-  for (const key of keys) {
-    const value = args[key];
-    if (typeof value === "string" && value) return value;
-  }
-  return undefined;
-}
 
 function getBooleanArg(args: ParsedArgs, ...keys: string[]): boolean {
   return keys.some((key) => Boolean(args[key]));

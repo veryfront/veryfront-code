@@ -6,6 +6,7 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
+import { getStringArg } from "../../shared/parsed-args.ts";
 import { getFileContent, listAllFiles } from "../pull/command.ts";
 
 const MAIN_SOURCE = { type: "main" } as const;
@@ -50,14 +51,6 @@ export type FilesListOptions = z.infer<typeof FilesListArgsSchema>;
 export type FilesGetOptions = z.infer<typeof FilesGetArgsSchema>;
 export type FilesPutOptions = z.infer<typeof FilesPutArgsSchema>;
 export type FilesDeleteOptions = z.infer<typeof FilesDeleteArgsSchema>;
-
-function getStringArg(args: ParsedArgs, ...keys: string[]): string | undefined {
-  for (const key of keys) {
-    const value = args[key];
-    if (typeof value === "string" && value) return value;
-  }
-  return undefined;
-}
 
 function getBooleanArg(args: ParsedArgs, ...keys: string[]): boolean {
   return keys.some((key) => Boolean(args[key]));
