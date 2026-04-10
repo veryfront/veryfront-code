@@ -799,6 +799,29 @@ export async function rewriteNodeExternalImports(
   return transformed;
 }
 
+export function rewriteCompiledBinaryVeryfrontImports(code: string): string {
+  let transformed = code;
+
+  transformed = transformed.replace(
+    /from\s+["']veryfront["']/g,
+    'from "./_vf_runtime.mjs"',
+  );
+  transformed = transformed.replace(
+    /import\s*\(\s*["']veryfront["']\s*\)/g,
+    'import("./_vf_runtime.mjs")',
+  );
+  transformed = transformed.replace(
+    /from\s+["']veryfront\/([^"']+)["']/g,
+    (_match, subpath: string) => `from "./_vf_${subpath.replace(/\//g, "_")}.mjs"`,
+  );
+  transformed = transformed.replace(
+    /import\s*\(\s*["']veryfront\/([^"']+)["']\s*\)/g,
+    (_match, subpath: string) => `import("./_vf_${subpath.replace(/\//g, "_")}.mjs")`,
+  );
+
+  return transformed;
+}
+
 async function rewriteExternalImports(
   code: string,
   projectDir: string,
@@ -923,26 +946,7 @@ async function rewriteExternalImports(
     // In compiled binaries, "veryfront" resolves to embedded source that can't be
     // imported from external temp files. Rewrite to use local runtime shims.
     if (isCompiledBinary()) {
-      // Static root imports: from "veryfront"
-      transformed = transformed.replace(
-        /from\s+["']veryfront["']/g,
-        'from "./_vf_runtime.mjs"',
-      );
-      // Dynamic root imports: import("veryfront")
-      transformed = transformed.replace(
-        /import\s*\(\s*["']veryfront["']\s*\)/g,
-        'import("./_vf_runtime.mjs")',
-      );
-      // Subpath static imports: from "veryfront/agent" → from "./_vf_agent.mjs"
-      transformed = transformed.replace(
-        /from\s+["']veryfront\/([^"']+)["']/g,
-        (_match, subpath: string) => `from "./_vf_${subpath.replace(/\//g, "_")}.mjs"`,
-      );
-      // Subpath dynamic imports: import("veryfront/agent") → import("./_vf_agent.mjs")
-      transformed = transformed.replace(
-        /import\s*\(\s*["']veryfront\/([^"']+)["']\s*\)/g,
-        (_match, subpath: string) => `import("./_vf_${subpath.replace(/\//g, "_")}.mjs")`,
-      );
+      transformed = rewriteCompiledBinaryVeryfrontImports(transformed);
     }
   }
 
