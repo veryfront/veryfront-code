@@ -1,7 +1,10 @@
 import { describe, it } from "#veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat";
+import { tool } from "../../src/tool/factory.ts";
 import { type AgentConfig, type Message } from "../../src/agent/types.ts";
 import type { ModelRuntime } from "../../src/provider/types.ts";
+import { z } from "zod";
 
 function assert(condition: unknown, message?: string): void {
   if (!condition) throw new Error(message || "Assertion failed");
@@ -218,6 +221,129 @@ describe("AgentRuntime streaming", () => {
         !output.includes('"type":"error"'),
         "aborted streams should close without emitting a generic error",
       );
+
+      clearModelProviders();
+    } finally {
+      restoreEnv("LOG_LEVEL", originalLogLevel);
+      restoreEnv("NODE_ENV", originalNodeEnv);
+      restoreEnv("VF_DISABLE_LRU_INTERVAL", originalDisableLruInterval);
+    }
+  });
+
+  it("should execute repeated fallback tool ids across steps instead of reusing stale persisted results", async () => {
+    const originalLogLevel = getEnv("LOG_LEVEL");
+    const originalNodeEnv = getEnv("NODE_ENV");
+    const originalDisableLruInterval = getEnv("VF_DISABLE_LRU_INTERVAL");
+
+    setEnv("LOG_LEVEL", "silent");
+    setEnv("NODE_ENV", "test");
+    setEnv("VF_DISABLE_LRU_INTERVAL", "1");
+
+    try {
+      const { AgentRuntime } = await import("../../src/agent/runtime/index.ts");
+      const { registerModelProvider, clearModelProviders } = await import(
+        "../../src/provider/model-registry.ts"
+      );
+      clearModelProviders();
+
+      let streamCallCount = 0;
+      const executedValues: number[] = [];
+
+      const mockModel = createMockStreamingModel(
+        "mock",
+        "mock-model",
+        async () => {
+          streamCallCount += 1;
+
+          if (streamCallCount === 1) {
+            return {
+              stream: ReadableStream.from([
+                { type: "tool-input-start", id: "tool-0", toolName: "repeat-id" },
+                { type: "tool-input-delta", id: "tool-0", delta: '{"value":1}' },
+                {
+                  type: "tool-call",
+                  toolCallId: "tool-0",
+                  toolName: "repeat-id",
+                  input: '{"value":1}',
+                },
+                {
+                  type: "finish",
+                  finishReason: { unified: "tool-calls", raw: "tool_calls" },
+                },
+              ]),
+            };
+          }
+
+          if (streamCallCount === 2) {
+            return {
+              stream: ReadableStream.from([
+                { type: "tool-input-start", id: "tool-0", toolName: "repeat-id" },
+                { type: "tool-input-delta", id: "tool-0", delta: '{"value":2}' },
+                {
+                  type: "tool-call",
+                  toolCallId: "tool-0",
+                  toolName: "repeat-id",
+                  input: '{"value":2}',
+                },
+                {
+                  type: "finish",
+                  finishReason: { unified: "tool-calls", raw: "tool_calls" },
+                },
+              ]),
+            };
+          }
+
+          return {
+            stream: ReadableStream.from([
+              { type: "text-delta", delta: "done" },
+              {
+                type: "finish",
+                finishReason: { unified: "stop", raw: "stop" },
+                usage: {
+                  inputTokens: { total: 5 },
+                  outputTokens: { total: 1 },
+                },
+              },
+            ]),
+          };
+        },
+      );
+
+      registerModelProvider("mock", () => mockModel);
+
+      const runtime = new AgentRuntime("test", {
+        id: "test-agent",
+        model: "mock/mock-model",
+        system: "You are a tester",
+        memory: { type: "conversation", maxTokens: 4000 },
+        tools: {
+          "repeat-id": tool({
+            id: "repeat-id",
+            description: "Echoes the provided value",
+            inputSchema: z.object({ value: z.number() }),
+            execute: async ({ value }) => {
+              executedValues.push(value);
+              return { seen: value };
+            },
+          }),
+        },
+      });
+
+      const messages: Message[] = [{
+        id: "m1",
+        role: "user",
+        parts: [{ type: "text", text: "hi" }],
+      }];
+
+      const stream = await runtime.stream(messages);
+      const reader = stream.getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+
+      assert(streamCallCount >= 3, "should request multiple model steps");
+      assertEquals(executedValues, [1, 2]);
 
       clearModelProviders();
     } finally {

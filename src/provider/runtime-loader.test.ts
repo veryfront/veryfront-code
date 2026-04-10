@@ -16,6 +16,20 @@ async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   return values;
 }
 
+function readRequestBody(init: RequestInit | undefined): string | null {
+  if (!init || !("body" in init) || typeof init.body !== "string") {
+    return null;
+  }
+  return init.body;
+}
+
+function readRequestHeader(init: RequestInit | undefined, name: string): string | null {
+  if (!init || !("headers" in init)) {
+    return null;
+  }
+  return new Headers(init.headers).get(name);
+}
+
 describe("provider/runtime-loader", () => {
   it("creates an OpenAI-compatible language runtime without SDK helpers for generate", async () => {
     let requestedUrl = "";
@@ -218,6 +232,57 @@ describe("provider/runtime-loader", () => {
         },
       },
     ]);
+  });
+
+  it("keeps OpenAI providerOptions scoped to the active provider and alias", async () => {
+    let requestedInit: RequestInit | undefined;
+
+    const runtime = createOpenAIModelRuntime({
+      apiKey: "test-openai-key",
+      baseURL: "https://example.openai.test/v1",
+      name: "custom-openai",
+      fetch: (_input, init) => {
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{
+                finish_reason: "stop",
+                message: {
+                  role: "assistant",
+                  content: "done",
+                },
+              }],
+              usage: {
+                prompt_tokens: 4,
+                completion_tokens: 1,
+                total_tokens: 5,
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "gpt-4o-mini");
+
+    await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      }],
+      providerOptions: {
+        openai: { parallel_tool_calls: false },
+        anthropic: { top_k: 3 },
+        "custom-openai": { response_format: { type: "json_object" } },
+      },
+    });
+
+    const requestBody = typeof requestedInit?.body === "string"
+      ? JSON.parse(requestedInit.body)
+      : undefined;
+    assertEquals(requestBody?.parallel_tool_calls, false);
+    assertEquals(requestBody?.response_format, { type: "json_object" });
+    assertEquals("top_k" in (requestBody ?? {}), false);
   });
 
   it("creates an Anthropic-compatible language runtime without SDK helpers for generate", async () => {
@@ -447,6 +512,51 @@ describe("provider/runtime-loader", () => {
         },
       },
     ]);
+  });
+
+  it("keeps Anthropic providerOptions scoped to the active provider and alias", async () => {
+    let requestedInit: RequestInit | undefined;
+
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      name: "custom-anthropic",
+      fetch: (_input, init) => {
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{ type: "text", text: "done" }],
+              stop_reason: "end_turn",
+              usage: {
+                input_tokens: 4,
+                output_tokens: 1,
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-20250514");
+
+    await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      }],
+      providerOptions: {
+        anthropic: { top_k: 3 },
+        openai: { parallel_tool_calls: false },
+        "custom-anthropic": { metadata: { trace: "yes" } },
+      },
+    });
+
+    const requestBody = typeof requestedInit?.body === "string"
+      ? JSON.parse(requestedInit.body)
+      : undefined;
+    assertEquals(requestBody?.top_k, 3);
+    assertEquals(requestBody?.metadata, { trace: "yes" });
+    assertEquals("parallel_tool_calls" in (requestBody ?? {}), false);
   });
 
   it("creates a Google-compatible language runtime without SDK helpers for generate", async () => {
@@ -729,8 +839,8 @@ describe("provider/runtime-loader", () => {
       fetch: (input, init) => {
         requests.push({
           url: String(input),
-          body: typeof init?.body === "string" ? init.body : null,
-          apiKey: new Headers(init?.headers).get("x-goog-api-key"),
+          body: readRequestBody(init),
+          apiKey: readRequestHeader(init, "x-goog-api-key"),
         });
 
         const body = requests.length === 1

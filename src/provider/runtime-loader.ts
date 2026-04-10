@@ -666,7 +666,7 @@ function buildAnthropicMessagesRequest(
       : {}),
   };
 
-  Object.assign(body, readProviderOptions(options.providerOptions, "openai", providerName));
+  Object.assign(body, readProviderOptions(options.providerOptions, "anthropic", providerName));
   return body;
 }
 
@@ -1044,7 +1044,7 @@ function buildOpenAIChatRequest(
       : {}),
   };
 
-  Object.assign(body, readProviderOptions(options.providerOptions, "anthropic", providerName));
+  Object.assign(body, readProviderOptions(options.providerOptions, "openai", providerName));
   return body;
 }
 

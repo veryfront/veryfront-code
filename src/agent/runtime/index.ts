@@ -831,7 +831,7 @@ export class AgentRuntime {
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-start" });
-      const persistedToolResults = collectPersistedToolResults(currentMessages);
+      const currentStepToolResults = new Map<string, ToolResultPart>();
 
       let tools = isLocalStreaming ? [] : await getAvailableTools(this.config.tools, {
         includeSkillTools: Boolean(this.config.skills),
@@ -899,7 +899,7 @@ export class AgentRuntime {
       const finalToolResults = collectFinalStreamToolResults(state);
 
       const persistToolResult = async (toolResult: StreamingToolResult): Promise<void> => {
-        if (persistedToolResults.has(toolResult.toolCallId)) {
+        if (currentStepToolResults.has(toolResult.toolCallId)) {
           return;
         }
 
@@ -920,7 +920,7 @@ export class AgentRuntime {
         };
         currentMessages.push(toolResultMessage);
         await this.memory.add(toolResultMessage);
-        persistedToolResults.set(
+        currentStepToolResults.set(
           toolResult.toolCallId,
           toolResultMessage.parts[0] as ToolResultPart,
         );
@@ -945,7 +945,7 @@ export class AgentRuntime {
         const { args, error: argError } = parseToolArgs(tc.arguments);
         const toolCall: ToolCall = { id: tc.id, name: tc.name, args, status: "pending" };
         const matchingResult = finalToolResults.get(tc.id);
-        const persistedResult = persistedToolResults.get(tc.id);
+        const persistedResult = currentStepToolResults.get(tc.id);
 
         if (matchingResult) {
           await persistToolResult(matchingResult);
@@ -1056,10 +1056,10 @@ export class AgentRuntime {
             ],
             timestamp: Date.now(),
           };
-          if (!persistedToolResults.has(tc.id)) {
+          if (!currentStepToolResults.has(tc.id)) {
             currentMessages.push(toolResultMessage);
             await this.memory.add(toolResultMessage);
-            persistedToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
+            currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
           }
         } catch (error) {
           const errorStr = error instanceof Error ? error.message : String(error);
