@@ -23,8 +23,10 @@ import {
   createAgUiResumeHandler,
   createMemory,
   getAgentsAsTools,
+  HumanInputRequestSchema,
   registerAgent,
   RunResumeSessionManager,
+  waitForHumanInput,
 } from "veryfront/agent";
 ```
 
@@ -123,6 +125,42 @@ const assistant = agent({
 
 export const POST = createAgUiHandler({
   agent: assistant,
+});
+```
+
+### Human input over hosted AG-UI runs
+
+```ts
+import {
+  HumanInputRequestSchema,
+  RunResumeSessionManager,
+  waitForHumanInput,
+} from "veryfront/agent";
+
+const sessionManager = new RunResumeSessionManager<{
+  result: unknown;
+  isError: boolean;
+}>();
+
+const request = HumanInputRequestSchema.parse({
+  title: "Deployment confirmation",
+  fields: [
+    {
+      type: "confirm",
+      name: "approved",
+      label: "Ship this change?",
+    },
+  ],
+});
+
+const result = await waitForHumanInput({
+  sessionManager,
+  runId: "run_123",
+  toolCallId: "tool_approve",
+  request,
+  onRequest: async (pending) => {
+    // Persist or publish `pending` through your host control plane.
+  },
 });
 ```
 
@@ -302,6 +340,24 @@ product-specific control plane.
 Use this when a host runtime needs to start a resumable run-local session,
 pause on an external signal, and later submit a resume value for that run.
 
+### `HumanInputRequestSchema`
+
+Validate the canonical request shape for human-input / form-response prompts
+that pause a hosted AG-UI run.
+
+### `HumanInputResultSchema`
+
+Validate the canonical resumed result for a human-input wait. The result is
+submitted through the existing hosted run-control seam as a `tool_result`.
+
+### `waitForHumanInput(options)`
+
+Publish a canonical pending human-input request, wait on a public
+`RunResumeSessionManager`, and validate the resumed result.
+
+Use this when your host runtime needs a generic user-input or approval step
+without re-owning the underlying AG-UI wait/resume mechanics.
+
 ### `agent.getMemory()`
 
 Get the agent's memory instance.
@@ -324,44 +380,52 @@ Clear all stored messages from memory.
 
 ### Functions
 
-| Name                      | Description                                               |
-| ------------------------- | --------------------------------------------------------- |
-| `agent`                   | Create an agent                                           |
-| `agentAsTool`             | Wrap agent as callable tool                               |
-| `createAgUiCancelHandler` | Create a DELETE handler for hosted AG-UI run cancellation |
-| `createAgUiHandler`       | Create a POST handler for an AG-UI route                  |
-| `createAgUiResumeHandler` | Create a POST handler for hosted AG-UI run resume values  |
-| `createChatHandler`       | Create a POST handler for a chat API route.               |
-| `createMemory`            | Create memory (buffer, conversation, summary)             |
-| `createRedisMemory`       | Create Redis-backed memory                                |
-| `createWorkflow`          | Create sequential agent workflow                          |
-| `getAgent`                | Get agent by ID                                           |
-| `getAgentsAsTools`        | Get agents as tools (multi-agent)                         |
-| `getAllAgentIds`          | List registered agent IDs                                 |
-| `getTextFromParts`        | Extract text from multi-part message                      |
-| `getToolArguments`        | Extract parsed tool call args                             |
-| `hasArgs`                 | Check for parsed args on tool call                        |
-| `hasInput`                | Check for raw input on tool call                          |
-| `registerAgent`           | Register agent for discovery                              |
+| Name                      | Description                                                             |
+| ------------------------- | ----------------------------------------------------------------------- |
+| `agent`                   | Create an agent                                                         |
+| `agentAsTool`             | Wrap agent as callable tool                                             |
+| `createAgUiCancelHandler` | Create a DELETE handler for hosted AG-UI run cancellation               |
+| `createAgUiHandler`       | Create a POST handler for an AG-UI route                                |
+| `createAgUiResumeHandler` | Create a POST handler for hosted AG-UI run resume values                |
+| `createChatHandler`       | Create a POST handler for a chat API route.                             |
+| `createMemory`            | Create memory (buffer, conversation, summary)                           |
+| `createRedisMemory`       | Create Redis-backed memory                                              |
+| `createWorkflow`          | Create sequential agent workflow                                        |
+| `getAgent`                | Get agent by ID                                                         |
+| `getAgentsAsTools`        | Get agents as tools (multi-agent)                                       |
+| `getAllAgentIds`          | List registered agent IDs                                               |
+| `getTextFromParts`        | Extract text from multi-part message                                    |
+| `getToolArguments`        | Extract parsed tool call args                                           |
+| `hasArgs`                 | Check for parsed args on tool call                                      |
+| `hasInput`                | Check for raw input on tool call                                        |
+| `registerAgent`           | Register agent for discovery                                            |
+| `waitForHumanInput`       | Wait for a canonical human-input response over hosted AG-UI run control |
 
 ### Classes
 
-| Name                      | Description                                       |
-| ------------------------- | ------------------------------------------------- |
-| `AgentRuntime`            | Agent execution runtime                           |
-| `BufferMemory`            | In-memory message buffer                          |
-| `ConversationMemory`      | Full conversation history                         |
-| `RedisMemory`             | Redis-backed persistent memory                    |
-| `RunResumeSessionManager` | Generic wait/resume manager for hosted agent runs |
-| `SummaryMemory`           | Compresses old messages into summaries            |
+| Name                           | Description                                                              |
+| ------------------------------ | ------------------------------------------------------------------------ |
+| `AgentRuntime`                 | Agent execution runtime                                                  |
+| `BufferMemory`                 | In-memory message buffer                                                 |
+| `ConversationMemory`           | Full conversation history                                                |
+| `HumanInputResumeError`        | Error thrown when a host resumes a human-input wait with `isError: true` |
+| `InvalidHumanInputResultError` | Error thrown when a resumed human-input payload fails schema validation  |
+| `RedisMemory`                  | Redis-backed persistent memory                                           |
+| `RunResumeSessionManager`      | Generic wait/resume manager for hosted agent runs                        |
+| `SummaryMemory`                | Compresses old messages into summaries                                   |
 
 ### Schemas
 
-| Name                       | Description                                                            |
-| -------------------------- | ---------------------------------------------------------------------- |
-| `AgUiRequestSchema`        | Convenience request schema for `createAgUiHandler()`                   |
-| `AgUiRuntimeRequestSchema` | Canonical open-source AG-UI runtime request contract for hosted runs   |
-| `AgUiResumeSignalSchema`   | Canonical hosted-run resume payload for AG-UI tool-result continuation |
+| Name                             | Description                                                            |
+| -------------------------------- | ---------------------------------------------------------------------- |
+| `AgUiRequestSchema`              | Convenience request schema for `createAgUiHandler()`                   |
+| `AgUiRuntimeRequestSchema`       | Canonical open-source AG-UI runtime request contract for hosted runs   |
+| `AgUiResumeSignalSchema`         | Canonical hosted-run resume payload for AG-UI tool-result continuation |
+| `HumanInputFieldSchema`          | Canonical human-input field schema                                     |
+| `HumanInputOptionSchema`         | Canonical human-input option schema                                    |
+| `HumanInputPendingRequestSchema` | Canonical pending human-input request envelope for hosts               |
+| `HumanInputRequestSchema`        | Canonical human-input request payload                                  |
+| `HumanInputResultSchema`         | Canonical human-input resumed result payload                           |
 
 ### Types
 
@@ -382,9 +446,17 @@ Clear all stored messages from memory.
 | `AgUiRequest`                    | Validated AG-UI runtime request body                                         |
 | `AgUiResumeHandlerOptions`       | Options for `createAgUiResumeHandler`                                        |
 | `AgUiResumeSignal`               | Validated hosted-run resume payload                                          |
+| `HumanInputField`                | Canonical form/input field definition                                        |
+| `HumanInputFieldInput`           | Input shape accepted by `waitForHumanInput()` before defaults normalize      |
+| `HumanInputOption`               | Canonical select/radio option definition                                     |
+| `HumanInputPendingRequest`       | Pending human-input envelope passed to `onRequest`                           |
+| `HumanInputRequest`              | Normalized human-input request payload                                       |
+| `HumanInputRequestInput`         | Input shape accepted by `HumanInputRequestSchema`                            |
+| `HumanInputResult`               | Validated human-input resumed result                                         |
 | `RunResumeSessionManagerOptions` | Options for `RunResumeSessionManager`                                        |
 | `RunSessionStatus`               | Status of a resumable run session                                            |
 | `SubmitResumeValueOutcome`       | Result of submitting an accepted or duplicate resume value                   |
+| `WaitForHumanInputOptions`       | Options for `waitForHumanInput()`                                            |
 | `ChatHandlerBeforeStream`        | Hook signature for `createChatHandler` customization before streaming.       |
 | `ChatHandlerBeforeStreamContext` | Input passed to `beforeStream` hook.                                         |
 | `ChatHandlerBeforeStreamResult`  | Message/context mutations returned from `beforeStream`.                      |

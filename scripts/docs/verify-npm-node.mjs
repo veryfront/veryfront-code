@@ -95,13 +95,15 @@ try {
   const agentMod = await imp("./agent");
   assertType(agentMod.agent, "function", "agent() is function");
   assertType(agentMod.createAgUiHandler, "function", "createAgUiHandler is function");
+  assertType(agentMod.waitForHumanInput, "function", "waitForHumanInput is function");
   assertType(agentMod.registerAgent, "function", "registerAgent is function");
   assertType(agentMod.getAgentsAsTools, "function", "getAgentsAsTools is function");
   assertType(agentMod.agentAsTool, "function", "agentAsTool is function");
   assertType(agentMod.createMemory, "function", "createMemory is function");
   assert(agentMod.AgentRuntime !== undefined, "AgentRuntime exists");
   assert(agentMod.RunResumeSessionManager !== undefined, "RunResumeSessionManager exists");
-  console.log("  OK    agent — 8 checks");
+  assert(agentMod.HumanInputRequestSchema !== undefined, "HumanInputRequestSchema exists");
+  console.log("  OK    agent — 10 checks");
 } catch (err) {
   failed++;
   errors.push(`agent: ${err.message}`);
