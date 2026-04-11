@@ -15,6 +15,7 @@ import {
   agent,
   agentAsTool,
   AgentRuntime,
+  createAgUiBrowserEncoderState,
   AgUiRequestSchema,
   AgUiResumeSignalSchema,
   AgUiRuntimeRequestSchema,
@@ -128,6 +129,26 @@ export const POST = createAgUiHandler({
 });
 ```
 
+### Browser AG-UI encoder
+
+```ts
+import {
+  createAgUiBrowserEncoderState,
+  finalizeAgUiBrowserEvents,
+  mapRuntimeStreamEventToAgUiBrowserEvents,
+} from "veryfront/agent";
+
+const state = createAgUiBrowserEncoderState();
+const events = mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+  type: "tool-input-available",
+  toolCallId: "tool-1",
+  toolName: "web_search",
+  input: { query: "Veryfront" },
+});
+
+const finalEvents = finalizeAgUiBrowserEvents(state, null);
+```
+
 ### Human input over hosted AG-UI runs
 
 ```ts
@@ -210,6 +231,18 @@ when bootstrap credentials are present.
 | `skills?`                | `true \| string[]`                                                                                                                                  | Enable skills for this agent.                                                        |
 
 **Returns:** `Agent`
+
+### Browser AG-UI stream encoder
+
+Use these helpers when a host needs to turn the framework runtime stream event
+family into browser/public AG-UI events without importing internal transport
+modules.
+
+| Export | Type | Description |
+| ------ | ---- | ----------- |
+| `createAgUiBrowserEncoderState()` | `() => AgUiBrowserEncoderState` | Create mutable encoder state for one browser AG-UI stream. |
+| `mapRuntimeStreamEventToAgUiBrowserEvents(state, event)` | `(state, event) => AgUiBrowserEncodedEvent[]` | Map one runtime stream event into zero or more browser/public AG-UI events. |
+| `finalizeAgUiBrowserEvents(state, response)` | `(state, response) => AgUiBrowserEncodedEvent[]` | Emit terminal browser/public AG-UI events after the runtime stream finishes. |
 
 ### Request-aware model transport
 
