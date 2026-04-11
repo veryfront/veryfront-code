@@ -6,6 +6,31 @@ import { registerWebSocketUpgrade } from "./http-server.ts";
 import * as crypto from "node:crypto";
 import { Buffer } from "node:buffer";
 
+/**
+ * Build a structurally-compatible `CloseEvent` without relying on the
+ * `CloseEvent` constructor, which is not exposed as a global in Node.js
+ * before 23.0.0 (the framework supports Node 18+). Uses a plain `Event`
+ * decorated with the standard `code`/`reason`/`wasClean` fields.
+ *
+ * `wasClean` follows the `ws` library convention: any code other than
+ * `1006` (abnormal closure — no close frame received) is considered
+ * clean, because a received close frame implies the closing handshake
+ * completed. Code `1006` is what `ws` substitutes when the peer
+ * disappears without sending a close frame.
+ */
+function createCloseEvent(
+  code?: number,
+  reason?: Buffer | string,
+): CloseEvent {
+  const resolvedCode = typeof code === "number" ? code : 1006;
+  const resolvedReason = typeof reason === "string" ? reason : reason?.toString() ?? "";
+  return Object.assign(new Event("close"), {
+    code: resolvedCode,
+    reason: resolvedReason,
+    wasClean: resolvedCode !== 1006,
+  }) as CloseEvent;
+}
+
 export class NodeServerAdapter implements ServerAdapter {
   upgradeWebSocket(request: Request): WebSocketUpgrade {
     const key = request.headers.get("sec-websocket-key");
@@ -88,15 +113,7 @@ export class NodeWebSocket {
 
     ws.on("close", (code?: number, reason?: Buffer | string) => {
       this.readyState = 3;
-      // `CloseEvent` is a global in Deno/browsers but not in Node <23. Fall
-      // back to a plain `Event` with duck-typed code/reason/wasClean fields
-      // so consumers that read `event.code` / `event.reason` still work.
-      const event = Object.assign(new Event("close"), {
-        code: typeof code === "number" ? code : 1006,
-        reason: reason != null ? reason.toString() : "",
-        wasClean: code === 1000,
-      }) as unknown as CloseEvent;
-      this.onclose?.(event);
+      this.onclose?.(createCloseEvent(code, reason));
     });
 
     ws.on("error", (error: Error) => {
