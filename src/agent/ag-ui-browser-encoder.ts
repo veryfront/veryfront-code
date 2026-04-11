@@ -218,6 +218,21 @@ function createReasoningEvent(
   };
 }
 
+function createTextEvent(
+  messageId: string,
+  type: "TextMessageStart" | "TextMessageContent" | "TextMessageEnd",
+  delta = "",
+): AgUiBrowserEncodedEvent {
+  return {
+    event: type,
+    payload: type === "TextMessageStart"
+      ? { messageId, role: "assistant" }
+      : type === "TextMessageContent"
+      ? { messageId, delta }
+      : { messageId },
+  };
+}
+
 export function mapRuntimeStreamEventToAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
@@ -242,10 +257,7 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
       const messageId = getMessageId(state, event);
       state.textOpen = true;
       state.sawVisibleOutput = true;
-      return [{
-        event: "TextMessageStart",
-        payload: { messageId, role: "assistant" },
-      }];
+      return [createTextEvent(messageId, "TextMessageStart")];
     }
 
     case "text-delta": {
@@ -254,27 +266,26 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
       if (!state.textOpen) {
         state.textOpen = true;
         return [
-          { event: "TextMessageStart", payload: { messageId, role: "assistant" } },
-          {
-            event: "TextMessageContent",
-            payload: { messageId, delta: typeof event.delta === "string" ? event.delta : "" },
-          },
+          createTextEvent(messageId, "TextMessageStart"),
+          createTextEvent(
+            messageId,
+            "TextMessageContent",
+            typeof event.delta === "string" ? event.delta : "",
+          ),
         ];
       }
 
-      return [{
-        event: "TextMessageContent",
-        payload: { messageId, delta: typeof event.delta === "string" ? event.delta : "" },
-      }];
+      return [createTextEvent(
+        messageId,
+        "TextMessageContent",
+        typeof event.delta === "string" ? event.delta : "",
+      )];
     }
 
     case "text-end": {
       if (!state.textOpen) return [];
       state.textOpen = false;
-      return [{
-        event: "TextMessageEnd",
-        payload: { messageId: getMessageId(state, event) },
-      }];
+      return [createTextEvent(getMessageId(state, event), "TextMessageEnd")];
     }
 
     case "reasoning-start":
