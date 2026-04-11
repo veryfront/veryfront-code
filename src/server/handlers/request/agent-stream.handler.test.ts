@@ -178,6 +178,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
               controller.enqueue(
                 encodeDataStreamEvent({ type: "reasoning-end", id: "reasoning-1" }),
               );
+              controller.enqueue(
+                encodeDataStreamEvent({
+                  type: "data-message-metadata",
+                  data: { status: "running" },
+                }),
+              );
               controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
               controller.enqueue(
                 encodeDataStreamEvent({
@@ -224,9 +230,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(text, "event: TextMessageContent");
     assertStringIncludes(text, "event: RunFinished");
     assertStringIncludes(text, '"inputTokens":21');
-    assertEquals(text.includes("event: StepStarted"), false);
-    assertEquals(text.includes("event: StepFinished"), false);
-    assertEquals(text.includes("event: Custom"), false);
+    assertStringIncludes(text, "event: StepStarted");
+    assertStringIncludes(text, "event: StepFinished");
+    assertStringIncludes(text, "event: Custom");
+    assertStringIncludes(text, '"name":"message-metadata"');
     assertEquals(text.includes("event: ActivitySnapshot"), false);
     assertEquals(text.includes("event: ActivityDelta"), false);
     assertStringIncludes(text, "event: ReasoningMessageStart");

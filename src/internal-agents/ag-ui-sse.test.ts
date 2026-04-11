@@ -131,11 +131,11 @@ describe("internal-agents/ag-ui-sse", () => {
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "step-start" }),
-      [],
+      [{ event: "StepStarted", payload: { stepName: "step-1" } }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "step-end" }),
-      [],
+      [{ event: "StepFinished", payload: { stepName: "step-1" } }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, {
@@ -154,6 +154,90 @@ describe("internal-agents/ag-ui-sse", () => {
       [{ event: "RunError", payload: { message: "Agent run failed" } }],
     );
     assertEquals(finalizeRunEvents(state, null), []);
+  });
+
+  it("maps browser-facing custom, tool fallback, and tool error events", () => {
+    const state = createStreamTransformState();
+
+    assertEquals(
+      mapRuntimeEventToAgUi(state, {
+        type: "data-message-metadata",
+        data: {
+          status: "running",
+        },
+      }),
+      [{
+        event: "Custom",
+        payload: {
+          name: "message-metadata",
+          value: {
+            status: "running",
+          },
+        },
+      }],
+    );
+
+    assertEquals(
+      mapRuntimeEventToAgUi(state, {
+        type: "tool-input-available",
+        toolCallId: "tool-3",
+        toolName: "web_search",
+        input: { query: "Veryfront" },
+      }),
+      [
+        {
+          event: "ToolCallArgs",
+          payload: { toolCallId: "tool-3", delta: '{"query":"Veryfront"}' },
+        },
+        {
+          event: "ToolCallEnd",
+          payload: { toolCallId: "tool-3" },
+        },
+      ],
+    );
+
+    assertEquals(
+      mapRuntimeEventToAgUi(state, {
+        type: "tool-input-error",
+        toolCallId: "tool-4",
+        toolName: "web_fetch",
+        input: { url: "https://example.com" },
+        errorText: "invalid url",
+      }),
+      [
+        {
+          event: "ToolCallArgs",
+          payload: { toolCallId: "tool-4", delta: '{"url":"https://example.com"}' },
+        },
+        {
+          event: "ToolCallEnd",
+          payload: { toolCallId: "tool-4" },
+        },
+        {
+          event: "ToolCallResult",
+          payload: {
+            toolCallId: "tool-4",
+            result: { error: "invalid url" },
+            isError: true,
+          },
+        },
+      ],
+    );
+
+    assertEquals(
+      mapRuntimeEventToAgUi(state, {
+        type: "tool-output-denied",
+        toolCallId: "tool-5",
+      }),
+      [{
+        event: "ToolCallResult",
+        payload: {
+          toolCallId: "tool-5",
+          result: { error: "Tool output denied" },
+          isError: true,
+        },
+      }],
+    );
   });
 
   it("maps runtime reasoning events to AG-UI reasoning message events", () => {
