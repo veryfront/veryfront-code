@@ -187,6 +187,18 @@ function createCustomDataEvent(
   };
 }
 
+function createStepEvent(
+  state: AgUiBrowserEncoderState,
+  type: "StepStarted" | "StepFinished",
+): AgUiBrowserEncodedEvent {
+  return {
+    event: type,
+    payload: {
+      stepName: type === "StepStarted" ? nextStepName(state) : finishStepName(state),
+    },
+  };
+}
+
 export function mapRuntimeStreamEventToAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
@@ -331,18 +343,12 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
     case "step-start":
     case "start-step":
       state.sawVisibleOutput = true;
-      return [{
-        event: "StepStarted",
-        payload: { stepName: nextStepName(state) },
-      }];
+      return [createStepEvent(state, "StepStarted")];
 
     case "step-end":
     case "finish-step":
       state.sawVisibleOutput = true;
-      return [{
-        event: "StepFinished",
-        payload: { stepName: finishStepName(state) },
-      }];
+      return [createStepEvent(state, "StepFinished")];
 
     case "data":
       applyDataMetadata(state, event);
