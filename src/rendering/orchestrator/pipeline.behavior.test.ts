@@ -160,6 +160,25 @@ describe("RenderPipeline behavior", () => {
     assertEquals(pageData.headings, [{ id: "intro", text: "Intro", level: 2 }]);
   });
 
+  it("resolvePageData includes appPath when an app component exists", async () => {
+    const slug = "/behavior-app-path";
+    const projectId = "proj-app-path";
+    const pipeline = createPipeline("/project/pages/behavior-app-path.tsx");
+    primeCssCache(slug, projectId);
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).config.adapter.fs.exists = async (path: string) =>
+      path === "/project/components/app.tsx";
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+    });
+
+    assertEquals(pageData.appPath, "components/app.tsx");
+  });
+
   it("resolvePageData reuses the SSR hashed stylesheet for SPA CSS", async () => {
     const slug = "/behavior-ssr-css";
     const projectId = "proj-ssr-css";
