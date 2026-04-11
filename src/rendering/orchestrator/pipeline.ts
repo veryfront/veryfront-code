@@ -696,14 +696,7 @@ export class RenderPipeline {
       projectUpdatedAt = wrappedAdapter.getProjectData?.()?.updated_at;
     }
 
-    let appPath: string | undefined;
-    for (const ext of LAYOUT_EXTENSIONS) {
-      const candidatePath = join(this.config.projectDir, `components/app.${ext}`);
-      if (await this.config.adapter.fs.exists(candidatePath)) {
-        appPath = extractRelativePathShared(candidatePath, this.config.projectDir);
-        break;
-      }
-    }
+    const appPath = await this.resolveAppPath();
 
     const { css, cssError } = await this.resolvePageDataCss(slug, options, projectUpdatedAt);
 
@@ -777,6 +770,17 @@ export class RenderPipeline {
       });
       return { frontmatter: {}, headings: [] };
     }
+  }
+
+  private async resolveAppPath(): Promise<string | undefined> {
+    for (const ext of LAYOUT_EXTENSIONS) {
+      const candidatePath = join(this.config.projectDir, `components/app.${ext}`);
+      if (await this.config.adapter.fs.exists(candidatePath)) {
+        return extractRelativePathShared(candidatePath, this.config.projectDir);
+      }
+    }
+
+    return undefined;
   }
 
   private async resolvePageDataCss(
