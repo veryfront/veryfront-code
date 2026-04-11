@@ -84,6 +84,18 @@ describe("tool-helpers", () => {
       assertEquals(result.error, undefined);
     });
 
+    it("strips a transient leading empty-object placeholder before parsing real JSON", () => {
+      const result = parseToolArgs('{}{"skillId":"plan"}');
+      assertEquals(result.args, { skillId: "plan" });
+      assertEquals(result.error, undefined);
+    });
+
+    it("strips repeated empty-object placeholders before parsing real JSON", () => {
+      const result = parseToolArgs('{}  {}{"skillId":"plan"}');
+      assertEquals(result.args, { skillId: "plan" });
+      assertEquals(result.error, undefined);
+    });
+
     it("handles empty object passed directly", () => {
       const result = parseToolArgs({});
       assertEquals(result.args, {});
