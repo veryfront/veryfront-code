@@ -7,6 +7,7 @@
  * @module agent/runtime/model-tool-converter
  */
 import type { ToolDefinition } from "#veryfront/tool";
+import { getProviderNativeToolNames } from "../provider-native-tool-inventory.ts";
 import type { RuntimeToolSet } from "./runtime-tool-types.ts";
 import {
   addRuntimeTool,
@@ -23,37 +24,32 @@ export interface ConvertToolsToRuntimeToolsOptions {
   allowedToolNames?: string[];
 }
 
-function resolveHostedProvider(model?: string): string | undefined {
-  if (!model) return undefined;
-
-  const [provider, second] = model.split("/", 3);
-  if (!provider) return undefined;
-  if (provider === "veryfront-cloud") {
-    return second || undefined;
-  }
-
-  return provider;
-}
-
 function resolveProviderNativeTools(
   options?: ConvertToolsToRuntimeToolsOptions,
 ): RuntimeToolSet | undefined {
-  if (
-    !options?.allowedToolNames?.some((toolName) =>
-      toolName === "web_search" || toolName === "web_fetch"
-    )
-  ) {
+  const providerNativeToolNames = new Set(getProviderNativeToolNames({
+    model: options?.model,
+  }));
+
+  if (providerNativeToolNames.size === 0) {
     return undefined;
   }
 
-  if (resolveHostedProvider(options.model) !== "anthropic") {
+  const allowedProviderNativeToolNames =
+    options?.allowedToolNames?.filter((toolName) => providerNativeToolNames.has(toolName)) ?? [];
+  if (allowedProviderNativeToolNames.length === 0) {
     return undefined;
   }
 
-  return {
-    ...createAnthropicWebSearchToolSet(),
-    ...createAnthropicWebFetchToolSet(),
-  };
+  const toolSet: RuntimeToolSet = {};
+  if (allowedProviderNativeToolNames.includes("web_search")) {
+    Object.assign(toolSet, createAnthropicWebSearchToolSet());
+  }
+  if (allowedProviderNativeToolNames.includes("web_fetch")) {
+    Object.assign(toolSet, createAnthropicWebFetchToolSet());
+  }
+
+  return Object.keys(toolSet).length > 0 ? toolSet : undefined;
 }
 
 /**

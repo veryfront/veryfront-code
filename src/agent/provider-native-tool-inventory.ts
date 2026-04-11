@@ -1,0 +1,60 @@
+const ANTHROPIC_PROVIDER_NATIVE_TOOL_NAMES = [
+  "web_fetch",
+  "web_search",
+] as const;
+
+export interface ProviderNativeToolInventoryOptions {
+  model?: string;
+  provider?: string;
+}
+
+interface ExpandAllowedRemoteToolNamesOptions extends ProviderNativeToolInventoryOptions {
+  toolNames: readonly string[];
+}
+
+function resolveHostedProvider(model?: string): string | undefined {
+  if (!model) {
+    return undefined;
+  }
+
+  const [provider, second] = model.split("/", 3);
+  if (!provider) {
+    return undefined;
+  }
+
+  if (provider === "veryfront-cloud") {
+    return second || undefined;
+  }
+
+  return provider;
+}
+
+function resolveProvider(options?: ProviderNativeToolInventoryOptions): string | undefined {
+  if (options?.provider && options.provider.length > 0) {
+    return options.provider;
+  }
+
+  return resolveHostedProvider(options?.model);
+}
+
+export function getProviderNativeToolNames(
+  options?: ProviderNativeToolInventoryOptions,
+): string[] {
+  switch (resolveProvider(options)) {
+    case "anthropic":
+      return [...ANTHROPIC_PROVIDER_NATIVE_TOOL_NAMES];
+    default:
+      return [];
+  }
+}
+
+export function expandAllowedRemoteToolNames(
+  options: ExpandAllowedRemoteToolNamesOptions,
+): string[] {
+  return [
+    ...new Set([
+      ...options.toolNames,
+      ...getProviderNativeToolNames(options),
+    ]),
+  ].sort();
+}
