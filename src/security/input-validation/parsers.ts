@@ -3,6 +3,9 @@ import { createValidationError, VeryfrontError } from "./errors.ts";
 import { readBodyWithLimit, validateContentType, validateRequestLimits } from "./limits.ts";
 import { sanitizeData } from "./sanitizers.ts";
 import { DEFAULT_LIMITS, type ParseFormOptions, type ParseJsonOptions } from "./types.ts";
+// `File` is a global only on Node 20+; import from `node:buffer` for Node 18
+// compatibility (engines.node >= 18.0.0).
+import { File } from "node:buffer";
 
 export async function parseJsonBody<T>(
   request: Request,

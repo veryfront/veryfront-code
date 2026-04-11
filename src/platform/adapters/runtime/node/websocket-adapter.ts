@@ -4,6 +4,32 @@ import { createError, toError } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
 import { registerWebSocketUpgrade } from "./http-server.ts";
 import * as crypto from "node:crypto";
+import { Buffer } from "node:buffer";
+
+/**
+ * Build a structurally-compatible `CloseEvent` without relying on the
+ * `CloseEvent` constructor, which is not exposed as a global in Node.js
+ * before 23.0.0 (the framework supports Node 18+). Uses a plain `Event`
+ * decorated with the standard `code`/`reason`/`wasClean` fields.
+ *
+ * `wasClean` follows the `ws` library convention: any code other than
+ * `1006` (abnormal closure — no close frame received) is considered
+ * clean, because a received close frame implies the closing handshake
+ * completed. Code `1006` is what `ws` substitutes when the peer
+ * disappears without sending a close frame.
+ */
+function createCloseEvent(
+  code?: number,
+  reason?: Buffer | string,
+): CloseEvent {
+  const resolvedCode = typeof code === "number" ? code : 1006;
+  const resolvedReason = typeof reason === "string" ? reason : reason?.toString() ?? "";
+  return Object.assign(new Event("close"), {
+    code: resolvedCode,
+    reason: resolvedReason,
+    wasClean: resolvedCode !== 1006,
+  }) as CloseEvent;
+}
 
 export class NodeServerAdapter implements ServerAdapter {
   upgradeWebSocket(request: Request): WebSocketUpgrade {
@@ -85,9 +111,9 @@ export class NodeWebSocket {
       this.onmessage?.(new MessageEvent("message", { data: data.toString() }));
     });
 
-    ws.on("close", () => {
+    ws.on("close", (code?: number, reason?: Buffer | string) => {
       this.readyState = 3;
-      this.onclose?.(new CloseEvent("close"));
+      this.onclose?.(createCloseEvent(code, reason));
     });
 
     ws.on("error", (error: Error) => {

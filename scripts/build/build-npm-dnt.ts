@@ -65,12 +65,20 @@ await build({
 	skipNpmInstall: true,
 
 	// Package metadata
+	//
+	// `undici` and `blob` shims are intentionally disabled. With those enabled,
+	// dnt injects `_dnt.shims.js → undici` (and `buffer`) imports into every
+	// file that references fetch/Headers/Response/Blob — including client-bound
+	// React runtime files like `src/react/runtime/core.ts`. The SSR http-cache
+	// pipeline then tries to fetch `undici` from esm.sh, which returns 404
+	// (esm.sh refuses to build Node-only packages with `external=react`).
+	//
+	// Node 18+ (our minimum engine) provides fetch/Headers/Response/Request/
+	// FormData/File/Blob as globals natively, so no shim is needed.
 	shims: {
 		deno: true,
 		timers: true,
 		crypto: true,
-		blob: true,
-		undici: true,
 	},
 
 	// Compiler options for declaration generation
