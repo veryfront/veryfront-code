@@ -177,6 +177,16 @@ function createToolResultEvent(
   };
 }
 
+function createCustomDataEvent(
+  name: string,
+  value: unknown,
+): AgUiBrowserEncodedEvent {
+  return {
+    event: "Custom",
+    payload: { name, value },
+  };
+}
+
 export function mapRuntimeStreamEventToAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
@@ -188,13 +198,7 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
     }
 
     state.sawVisibleOutput = true;
-    return [{
-      event: "Custom",
-      payload: {
-        name,
-        value: "data" in event ? event.data : null,
-      },
-    }];
+    return [createCustomDataEvent(name, "data" in event ? event.data : null)];
   }
 
   switch (event.type) {
