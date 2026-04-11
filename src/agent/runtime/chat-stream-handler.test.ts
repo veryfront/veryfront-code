@@ -167,6 +167,40 @@ describe("chat-stream-handler", () => {
       });
     });
 
+    it("replaces a transient empty-object placeholder when real streamed tool JSON begins", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "tool-input-start", id: "tc-placeholder", toolName: "load_skill" },
+        { type: "tool-input-delta", id: "tc-placeholder", delta: "{}" },
+        { type: "tool-input-delta", id: "tc-placeholder", delta: '{"skillId":"' },
+        { type: "tool-input-delta", id: "tc-placeholder", delta: 'plan"}' },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      const tc = state.toolCalls.get("tc-placeholder")!;
+      assertEquals(tc.arguments, '{"skillId":"plan"}');
+
+      assertEquals(events[1], {
+        type: "tool-input-delta",
+        toolCallId: "tc-placeholder",
+        inputTextDelta: "{}",
+      });
+      assertEquals(events[2], {
+        type: "tool-input-delta",
+        toolCallId: "tc-placeholder",
+        inputTextDelta: '{"skillId":"',
+      });
+      assertEquals(events[3], {
+        type: "tool-input-delta",
+        toolCallId: "tc-placeholder",
+        inputTextDelta: 'plan"}',
+      });
+    });
+
     it("handles tool-call with full input object", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
@@ -222,6 +256,28 @@ describe("chat-stream-handler", () => {
         toolName: "web_search",
         input: { query: "Veryfront", maxUses: 1 },
       });
+    });
+
+    it("keeps streamed tool JSON when the later tool-call payload is only an empty-object placeholder", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "tool-input-start", id: "tc-tool-call-placeholder", toolName: "load_skill" },
+        { type: "tool-input-delta", id: "tc-tool-call-placeholder", delta: '{"skillId":"plan"}' },
+        {
+          type: "tool-call",
+          toolCallId: "tc-tool-call-placeholder",
+          toolName: "load_skill",
+          input: {},
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      const tc = state.toolCalls.get("tc-tool-call-placeholder")!;
+      assertEquals(tc.arguments, '{"skillId":"plan"}');
     });
     it("preserves provider-executed tool calls in stream state and SSE output", async () => {
       const { events, controller, encoder } = createSSECollector();

@@ -66,6 +66,30 @@ function normalizeToolInputString(input: unknown): string {
   return JSON.stringify(input ?? null) ?? "null";
 }
 
+function mergeToolInputDelta(currentArguments: string, nextDelta: string): string {
+  if (currentArguments === "{}" && nextDelta.trimStart().startsWith("{")) {
+    return nextDelta;
+  }
+
+  return currentArguments + nextDelta;
+}
+
+function mergeToolCallInput(currentArguments: string, nextInput: string): string {
+  if (currentArguments.length === 0) {
+    return nextInput;
+  }
+
+  if (nextInput.trim() === "{}" && currentArguments.trim().startsWith("{")) {
+    return currentArguments;
+  }
+
+  if (currentArguments.trim() === "{}" && nextInput.trim().startsWith("{")) {
+    return nextInput;
+  }
+
+  return nextInput;
+}
+
 function normalizeToolInputObject(input: unknown): Record<string, unknown> {
   if (isRecord(input)) {
     return input;
@@ -225,7 +249,7 @@ export function processStream(
           const tc = state.toolCalls.get(toolId);
           if (!tc) break;
 
-          tc.arguments += typedPart.delta;
+          tc.arguments = mergeToolInputDelta(tc.arguments, typedPart.delta);
           sendSSE(controller, encoder, {
             type: "tool-input-delta",
             toolCallId: toolId,
@@ -238,10 +262,12 @@ export function processStream(
           // tool-call fires when the full tool call is available
           const toolId = typedPart.toolCallId;
           const inputStr = normalizeToolInputString(typedPart.input);
+          const previousArguments = state.toolCalls.get(toolId)?.arguments ?? "";
+          const resolvedArguments = mergeToolCallInput(previousArguments, inputStr);
           state.toolCalls.set(toolId, {
             id: toolId,
             name: typedPart.toolName,
-            arguments: inputStr,
+            arguments: resolvedArguments,
             providerExecuted: typedPart.providerExecuted,
             dynamic: typedPart.dynamic,
           });

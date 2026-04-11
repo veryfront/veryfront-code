@@ -27,6 +27,16 @@ export interface ParsedToolArgs {
   error?: string;
 }
 
+function stripLeadingEmptyObjectPlaceholder(rawArgs: string): string {
+  let normalized = rawArgs.trim();
+
+  while (normalized.startsWith("{}") && normalized.slice(2).trimStart().startsWith("{")) {
+    normalized = normalized.slice(2).trimStart();
+  }
+
+  return normalized;
+}
+
 /**
  * Parse tool arguments from raw string or object.
  * Returns parsed args and optional error message.
@@ -37,10 +47,12 @@ export function parseToolArgs(
   try {
     // Handle empty string or whitespace-only string as empty object
     if (typeof rawArgs === "string") {
-      const trimmed = rawArgs.trim();
+      const trimmed = stripLeadingEmptyObjectPlaceholder(rawArgs);
       if (trimmed === "" || trimmed === "{}") {
         return { args: {} };
       }
+
+      rawArgs = trimmed;
     }
 
     const parsed = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
