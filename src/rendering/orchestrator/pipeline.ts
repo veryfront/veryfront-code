@@ -687,14 +687,7 @@ export class RenderPipeline {
 
     const providers: string[] = [];
 
-    let projectUpdatedAt: string | undefined;
-    const fs = this.config.adapter?.fs;
-    if (fs && isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter()) {
-      const wrappedAdapter = fs.getUnderlyingAdapter() as {
-        getProjectData?: () => { updated_at?: string } | undefined;
-      };
-      projectUpdatedAt = wrappedAdapter.getProjectData?.()?.updated_at;
-    }
+    const projectUpdatedAt = this.resolveProjectUpdatedAt();
 
     const appPath = await this.resolveAppPath();
 
@@ -781,6 +774,18 @@ export class RenderPipeline {
     }
 
     return undefined;
+  }
+
+  private resolveProjectUpdatedAt(): string | undefined {
+    const fs = this.config.adapter?.fs;
+    if (!fs || !isExtendedFSAdapter(fs) || !fs.isVeryfrontAdapter()) {
+      return undefined;
+    }
+
+    const wrappedAdapter = fs.getUnderlyingAdapter() as {
+      getProjectData?: () => { updated_at?: string } | undefined;
+    };
+    return wrappedAdapter.getProjectData?.()?.updated_at;
   }
 
   private async resolvePageDataCss(

@@ -179,6 +179,37 @@ describe("RenderPipeline behavior", () => {
     assertEquals(pageData.appPath, "components/app.tsx");
   });
 
+  it("resolvePageData includes projectUpdated in buildVersion when available", async () => {
+    const slug = "/behavior-build-version";
+    const projectId = "proj-build-version";
+    const projectUpdated = "2025-01-02T03:04:05Z";
+    const pipeline = createPipeline("/project/pages/behavior-build-version.tsx");
+    primeCssCache(slug, projectId);
+    cachePageCss(
+      getPageCssCacheKey(projectId, undefined, slug, projectUpdated),
+      "/* cached css */",
+    );
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).config.adapter.fs = {
+      exists: async () => false,
+      isMultiProjectMode: () => false,
+      isVeryfrontAdapter: () => true,
+      getAdapterType: () => "VeryfrontFSAdapter",
+      getUnderlyingAdapter: () => ({
+        getProjectData: () => ({ updated_at: projectUpdated }),
+      }),
+    };
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+    });
+
+    assertEquals(pageData.buildVersion.projectUpdated, projectUpdated);
+  });
+
   it("resolvePageData reuses the SSR hashed stylesheet for SPA CSS", async () => {
     const slug = "/behavior-ssr-css";
     const projectId = "proj-ssr-css";
