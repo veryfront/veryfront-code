@@ -162,6 +162,21 @@ function completeToolInput(
   return events;
 }
 
+function createToolResultEvent(
+  toolCallId: unknown,
+  result: Record<string, unknown> | unknown,
+  isError = false,
+): AgUiBrowserEncodedEvent {
+  return {
+    event: "ToolCallResult",
+    payload: {
+      toolCallId,
+      result,
+      ...(isError ? { isError: true } : {}),
+    },
+  };
+}
+
 export function mapRuntimeStreamEventToAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
@@ -299,35 +314,15 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
 
     case "tool-output-available":
       state.sawVisibleOutput = true;
-      return [{
-        event: "ToolCallResult",
-        payload: {
-          toolCallId: event.toolCallId,
-          result: event.output,
-        },
-      }];
+      return [createToolResultEvent(event.toolCallId, event.output)];
 
     case "tool-output-error":
       state.sawVisibleOutput = true;
-      return [{
-        event: "ToolCallResult",
-        payload: {
-          toolCallId: event.toolCallId,
-          result: { error: event.errorText },
-          isError: true,
-        },
-      }];
+      return [createToolResultEvent(event.toolCallId, { error: event.errorText }, true)];
 
     case "tool-output-denied":
       state.sawVisibleOutput = true;
-      return [{
-        event: "ToolCallResult",
-        payload: {
-          toolCallId: event.toolCallId,
-          result: { error: "Tool output denied" },
-          isError: true,
-        },
-      }];
+      return [createToolResultEvent(event.toolCallId, { error: "Tool output denied" }, true)];
 
     case "step-start":
     case "start-step":
