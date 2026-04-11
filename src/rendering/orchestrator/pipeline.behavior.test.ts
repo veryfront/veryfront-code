@@ -238,6 +238,35 @@ describe("RenderPipeline behavior", () => {
     ]);
   });
 
+  it("resolvePageData includes layoutProps from fetched layout data", async () => {
+    const slug = "/behavior-layout-props";
+    const projectId = "proj-layout-props";
+    const pipeline = createPipeline("/project/pages/behavior-layout-props.tsx");
+    primeCssCache(slug, projectId);
+
+    (pipeline as any).loadModule = async (path: string) =>
+      path === "/project/layouts/root.tsx"
+        ? { getServerData: () => ({ props: { theme: "docs" } }) }
+        : {};
+    (pipeline as any).config.layoutOrchestrator.collectLayouts = async () => ({
+      layoutBundle: undefined,
+      nestedLayouts: [{ kind: "tsx", componentPath: "/project/layouts/root.tsx" }],
+    });
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+    });
+
+    assertEquals(
+      {
+        "/project/layouts/root.tsx": { theme: "docs" },
+      },
+      pageData.layoutProps,
+    );
+  });
+
   it("resolvePageData reuses the SSR hashed stylesheet for SPA CSS", async () => {
     const slug = "/behavior-ssr-css";
     const projectId = "proj-ssr-css";
