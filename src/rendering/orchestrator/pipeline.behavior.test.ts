@@ -210,6 +210,34 @@ describe("RenderPipeline behavior", () => {
     assertEquals(pageData.buildVersion.projectUpdated, projectUpdated);
   });
 
+  it("resolvePageData serializes non-empty layouts with project-relative paths", async () => {
+    const slug = "/behavior-layouts";
+    const projectId = "proj-layouts";
+    const pipeline = createPipeline("/project/pages/behavior-layouts.tsx");
+    primeCssCache(slug, projectId);
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).config.layoutOrchestrator.collectLayouts = async () => ({
+      layoutBundle: undefined,
+      nestedLayouts: [
+        { kind: "tsx", componentPath: "/project/layouts/root.tsx" },
+        { kind: "mdx", path: "/project/layouts/docs.mdx" },
+        { kind: "tsx" },
+      ],
+    });
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+    });
+
+    assertEquals(pageData.layouts, [
+      { kind: "tsx", path: "layouts/root.tsx" },
+      { kind: "mdx", path: "layouts/docs.mdx" },
+    ]);
+  });
+
   it("resolvePageData reuses the SSR hashed stylesheet for SPA CSS", async () => {
     const slug = "/behavior-ssr-css";
     const projectId = "proj-ssr-css";

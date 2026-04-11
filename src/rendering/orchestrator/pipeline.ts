@@ -678,12 +678,7 @@ export class RenderPipeline {
       params,
     );
 
-    const layouts = layoutResult.nestedLayouts
-      .filter((l: LayoutItem) => l.componentPath || l.path)
-      .map((l: LayoutItem) => ({
-        kind: l.kind,
-        path: extractRelativePathShared(l.componentPath || l.path || "", this.config.projectDir),
-      }));
+    const layouts = this.serializeLayouts(layoutResult.nestedLayouts);
 
     const providers: string[] = [];
 
@@ -763,6 +758,20 @@ export class RenderPipeline {
       });
       return { frontmatter: {}, headings: [] };
     }
+  }
+
+  private serializeLayouts(
+    nestedLayouts: LayoutItem[],
+  ): Array<{ kind: LayoutItem["kind"]; path: string }> {
+    return nestedLayouts
+      .filter((layout: LayoutItem) => layout.componentPath || layout.path)
+      .map((layout: LayoutItem) => ({
+        kind: layout.kind,
+        path: extractRelativePathShared(
+          layout.componentPath || layout.path || "",
+          this.config.projectDir,
+        ),
+      }));
   }
 
   private async resolveAppPath(): Promise<string | undefined> {
