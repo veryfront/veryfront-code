@@ -133,6 +133,35 @@ function applyResponseMetadata(
   }
 }
 
+function completeToolInput(
+  state: AgUiBrowserEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiBrowserEncodedEvent[] {
+  const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
+  const events: AgUiBrowserEncodedEvent[] = [];
+
+  if (toolCallId.length > 0 && !state.streamedToolInputIds.has(toolCallId)) {
+    events.push({
+      event: "ToolCallArgs",
+      payload: {
+        toolCallId,
+        delta: serializeToolInput("input" in event ? event.input : {}),
+      },
+    });
+  }
+
+  if (toolCallId.length > 0) {
+    state.streamedToolInputIds.delete(toolCallId);
+  }
+
+  events.push({
+    event: "ToolCallEnd",
+    payload: { toolCallId: event.toolCallId },
+  });
+
+  return events;
+}
+
 export function mapRuntimeStreamEventToAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
@@ -249,53 +278,12 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
 
     case "tool-input-available": {
       state.sawVisibleOutput = true;
-      const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
-      const events: AgUiBrowserEncodedEvent[] = [];
-
-      if (toolCallId.length > 0 && !state.streamedToolInputIds.has(toolCallId)) {
-        events.push({
-          event: "ToolCallArgs",
-          payload: {
-            toolCallId,
-            delta: serializeToolInput("input" in event ? event.input : {}),
-          },
-        });
-      }
-
-      if (toolCallId.length > 0) {
-        state.streamedToolInputIds.delete(toolCallId);
-      }
-
-      events.push({
-        event: "ToolCallEnd",
-        payload: { toolCallId: event.toolCallId },
-      });
-      return events;
+      return completeToolInput(state, event);
     }
 
     case "tool-input-error": {
       state.sawVisibleOutput = true;
-      const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
-      const events: AgUiBrowserEncodedEvent[] = [];
-
-      if (toolCallId.length > 0 && !state.streamedToolInputIds.has(toolCallId)) {
-        events.push({
-          event: "ToolCallArgs",
-          payload: {
-            toolCallId,
-            delta: serializeToolInput("input" in event ? event.input : {}),
-          },
-        });
-      }
-
-      if (toolCallId.length > 0) {
-        state.streamedToolInputIds.delete(toolCallId);
-      }
-
-      events.push({
-        event: "ToolCallEnd",
-        payload: { toolCallId: event.toolCallId },
-      });
+      const events = completeToolInput(state, event);
       events.push({
         event: "ToolCallResult",
         payload: {
