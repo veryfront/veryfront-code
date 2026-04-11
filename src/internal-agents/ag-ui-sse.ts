@@ -20,6 +20,9 @@ export interface StreamTransformState {
   messageId: string | null;
   textOpen: boolean;
   reasoningMessageId: string | null;
+  activeStepName: string | null;
+  stepCount: number;
+  streamedToolInputIds: Set<string>;
   sawVisibleOutput: boolean;
   sawTerminalError: boolean;
   metadata: RunFinishedMetadata;
@@ -30,10 +33,21 @@ export function createStreamTransformState(): StreamTransformState {
     messageId: null,
     textOpen: false,
     reasoningMessageId: null,
+    activeStepName: null,
+    stepCount: 0,
+    streamedToolInputIds: new Set<string>(),
     sawVisibleOutput: false,
     sawTerminalError: false,
     metadata: {},
   };
+}
+
+function serializeToolInput(input: unknown): string {
+  try {
+    return JSON.stringify(input ?? {});
+  } catch {
+    return "{}";
+  }
 }
 
 const agUiEventPayloadSchemas = {
@@ -76,6 +90,12 @@ const agUiEventPayloadSchemas = {
   ReasoningMessageEnd: z.object({
     messageId: z.string().min(1),
   }),
+  StepStarted: z.object({
+    stepName: z.string().min(1),
+  }),
+  StepFinished: z.object({
+    stepName: z.string().min(1),
+  }),
   ToolCallStart: z.object({
     toolCallId: z.string().min(1),
     toolCallName: z.string().min(1),
@@ -91,6 +111,10 @@ const agUiEventPayloadSchemas = {
     toolCallId: z.string().min(1),
     result: z.unknown(),
     isError: z.boolean().optional(),
+  }),
+  Custom: z.object({
+    name: z.string().min(1),
+    value: z.unknown(),
   }),
   RunError: z.object({
     code: z.string().min(1).optional(),
@@ -180,6 +204,18 @@ function getReasoningMessageId(state: StreamTransformState, event: RuntimeDataEv
   return state.reasoningMessageId;
 }
 
+function nextStepName(state: StreamTransformState): string {
+  state.stepCount += 1;
+  state.activeStepName = `step-${state.stepCount}`;
+  return state.activeStepName;
+}
+
+function finishStepName(state: StreamTransformState): string {
+  const stepName = state.activeStepName ?? `step-${Math.max(state.stepCount, 1)}`;
+  state.activeStepName = null;
+  return stepName;
+}
+
 function applyDataMetadata(state: StreamTransformState, event: RuntimeDataEvent): void {
   const data = event.data && typeof event.data === "object" && !Array.isArray(event.data)
     ? event.data as Record<string, unknown>
@@ -215,6 +251,22 @@ export function mapRuntimeEventToAgUi(
   state: StreamTransformState,
   event: RuntimeDataEvent,
 ): Array<{ event: string; payload: Record<string, unknown> }> {
+  if (event.type.startsWith("data-")) {
+    const name = event.type.slice("data-".length);
+    if (name.length === 0) {
+      return [];
+    }
+
+    state.sawVisibleOutput = true;
+    return [{
+      event: "Custom",
+      payload: {
+        name,
+        value: "data" in event ? event.data : null,
+      },
+    }];
+  }
+
   switch (event.type) {
     case "message-start":
       getMessageId(state, event);
@@ -298,6 +350,9 @@ export function mapRuntimeEventToAgUi(
 
     case "tool-input-delta":
       state.sawVisibleOutput = true;
+      if (typeof event.toolCallId === "string") {
+        state.streamedToolInputIds.add(event.toolCallId);
+      }
       return [{
         event: "ToolCallArgs",
         payload: {
@@ -306,12 +361,67 @@ export function mapRuntimeEventToAgUi(
         },
       }];
 
-    case "tool-input-available":
+    case "tool-input-available": {
       state.sawVisibleOutput = true;
-      return [{
+      const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
+      const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
+
+      if (toolCallId.length > 0 && !state.streamedToolInputIds.has(toolCallId)) {
+        events.push({
+          event: "ToolCallArgs",
+          payload: {
+            toolCallId,
+            delta: serializeToolInput("input" in event ? event.input : {}),
+          },
+        });
+      }
+
+      if (toolCallId.length > 0) {
+        state.streamedToolInputIds.delete(toolCallId);
+      }
+
+      events.push({
         event: "ToolCallEnd",
         payload: { toolCallId: event.toolCallId },
-      }];
+      });
+      return events;
+    }
+
+    case "tool-input-error": {
+      state.sawVisibleOutput = true;
+      const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
+      const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
+
+      if (toolCallId.length > 0 && !state.streamedToolInputIds.has(toolCallId)) {
+        events.push({
+          event: "ToolCallArgs",
+          payload: {
+            toolCallId,
+            delta: serializeToolInput("input" in event ? event.input : {}),
+          },
+        });
+      }
+
+      if (toolCallId.length > 0) {
+        state.streamedToolInputIds.delete(toolCallId);
+      }
+
+      events.push({
+        event: "ToolCallEnd",
+        payload: { toolCallId: event.toolCallId },
+      });
+      events.push({
+        event: "ToolCallResult",
+        payload: {
+          toolCallId: event.toolCallId,
+          result: {
+            error: typeof event.errorText === "string" ? event.errorText : "Tool input failed",
+          },
+          isError: true,
+        },
+      });
+      return events;
+    }
 
     case "tool-output-available":
       state.sawVisibleOutput = true;
@@ -334,11 +444,32 @@ export function mapRuntimeEventToAgUi(
         },
       }];
 
+    case "tool-output-denied":
+      state.sawVisibleOutput = true;
+      return [{
+        event: "ToolCallResult",
+        payload: {
+          toolCallId: event.toolCallId,
+          result: { error: "Tool output denied" },
+          isError: true,
+        },
+      }];
+
     case "step-start":
-      return [];
+    case "start-step":
+      state.sawVisibleOutput = true;
+      return [{
+        event: "StepStarted",
+        payload: { stepName: nextStepName(state) },
+      }];
 
     case "step-end":
-      return [];
+    case "finish-step":
+      state.sawVisibleOutput = true;
+      return [{
+        event: "StepFinished",
+        payload: { stepName: finishStepName(state) },
+      }];
 
     case "data":
       applyDataMetadata(state, event);
