@@ -150,6 +150,15 @@ export {
   AgUiRuntimeRequestSchema,
 } from "./runtime-ag-ui-contract.ts";
 export {
+  type AgUiBrowserEncodedEvent,
+  type AgUiBrowserEncoderState,
+  type AgUiBrowserRunFinishedMetadata,
+  type AgUiRuntimeStreamEvent,
+  createAgUiBrowserEncoderState,
+  finalizeAgUiBrowserEvents,
+  mapRuntimeStreamEventToAgUiBrowserEvents,
+} from "./ag-ui-browser-encoder.ts";
+export {
   type AgUiCancelHandlerOptions,
   type AgUiResumeHandlerOptions,
   type AgUiResumeSignal,
