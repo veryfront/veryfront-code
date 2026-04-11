@@ -199,6 +199,25 @@ function createStepEvent(
   };
 }
 
+function createReasoningEvent(
+  state: AgUiBrowserEncoderState,
+  event: AgUiRuntimeStreamEvent,
+  type: "ReasoningMessageStart" | "ReasoningMessageContent" | "ReasoningMessageEnd",
+): AgUiBrowserEncodedEvent {
+  const messageId = getReasoningMessageId(state, event);
+  return {
+    event: type,
+    payload: type === "ReasoningMessageStart"
+      ? { messageId, role: "reasoning" }
+      : type === "ReasoningMessageContent"
+      ? {
+        messageId,
+        delta: typeof event.delta === "string" ? event.delta : "",
+      }
+      : { messageId },
+  };
+}
+
 export function mapRuntimeStreamEventToAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
@@ -260,28 +279,16 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
 
     case "reasoning-start":
       state.sawVisibleOutput = true;
-      return [{
-        event: "ReasoningMessageStart",
-        payload: { messageId: getReasoningMessageId(state, event), role: "reasoning" },
-      }];
+      return [createReasoningEvent(state, event, "ReasoningMessageStart")];
 
     case "reasoning-delta":
       state.sawVisibleOutput = true;
-      return [{
-        event: "ReasoningMessageContent",
-        payload: {
-          messageId: getReasoningMessageId(state, event),
-          delta: typeof event.delta === "string" ? event.delta : "",
-        },
-      }];
+      return [createReasoningEvent(state, event, "ReasoningMessageContent")];
 
     case "reasoning-end": {
-      const messageId = getReasoningMessageId(state, event);
+      const reasoningEvent = createReasoningEvent(state, event, "ReasoningMessageEnd");
       state.reasoningMessageId = null;
-      return [{
-        event: "ReasoningMessageEnd",
-        payload: { messageId },
-      }];
+      return [reasoningEvent];
     }
 
     case "tool-input-start":
