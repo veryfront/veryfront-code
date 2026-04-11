@@ -4,6 +4,7 @@ import { createError, toError } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
 import { registerWebSocketUpgrade } from "./http-server.ts";
 import * as crypto from "node:crypto";
+import { Buffer } from "node:buffer";
 
 export class NodeServerAdapter implements ServerAdapter {
   upgradeWebSocket(request: Request): WebSocketUpgrade {
@@ -85,9 +86,17 @@ export class NodeWebSocket {
       this.onmessage?.(new MessageEvent("message", { data: data.toString() }));
     });
 
-    ws.on("close", () => {
+    ws.on("close", (code?: number, reason?: Buffer | string) => {
       this.readyState = 3;
-      this.onclose?.(new CloseEvent("close"));
+      // `CloseEvent` is a global in Deno/browsers but not in Node <23. Fall
+      // back to a plain `Event` with duck-typed code/reason/wasClean fields
+      // so consumers that read `event.code` / `event.reason` still work.
+      const event = Object.assign(new Event("close"), {
+        code: typeof code === "number" ? code : 1006,
+        reason: reason != null ? reason.toString() : "",
+        wasClean: code === 1000,
+      }) as unknown as CloseEvent;
+      this.onclose?.(event);
     });
 
     ws.on("error", (error: Error) => {
