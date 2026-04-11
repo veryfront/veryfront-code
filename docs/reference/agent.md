@@ -15,15 +15,17 @@ import {
   agent,
   agentAsTool,
   AgentRuntime,
-  createAgUiBrowserEncoderState,
   AgUiRequestSchema,
   AgUiResumeSignalSchema,
   AgUiRuntimeRequestSchema,
+  createAgUiBrowserEncoderState,
   createAgUiCancelHandler,
   createAgUiHandler,
   createAgUiResumeHandler,
   createMemory,
+  expandAllowedRemoteToolNames,
   getAgentsAsTools,
+  getProviderNativeToolNames,
   HumanInputRequestSchema,
   registerAgent,
   RunResumeSessionManager,
@@ -149,6 +151,21 @@ const events = mapRuntimeStreamEventToAgUiBrowserEvents(state, {
 const finalEvents = finalizeAgUiBrowserEvents(state, null);
 ```
 
+### Provider-native tool inventory
+
+```ts
+import { expandAllowedRemoteToolNames, getProviderNativeToolNames } from "veryfront/agent";
+
+const providerNativeToolNames = getProviderNativeToolNames({
+  model: "anthropic/claude-sonnet-4-6",
+});
+
+const allowedRemoteToolNames = expandAllowedRemoteToolNames({
+  model: "anthropic/claude-sonnet-4-6",
+  toolNames: ["create_file"],
+});
+```
+
 ### Human input over hosted AG-UI runs
 
 ```ts
@@ -238,11 +255,22 @@ Use these helpers when a host needs to turn the framework runtime stream event
 family into browser/public AG-UI events without importing internal transport
 modules.
 
-| Export | Type | Description |
-| ------ | ---- | ----------- |
-| `createAgUiBrowserEncoderState()` | `() => AgUiBrowserEncoderState` | Create mutable encoder state for one browser AG-UI stream. |
-| `mapRuntimeStreamEventToAgUiBrowserEvents(state, event)` | `(state, event) => AgUiBrowserEncodedEvent[]` | Map one runtime stream event into zero or more browser/public AG-UI events. |
-| `finalizeAgUiBrowserEvents(state, response)` | `(state, response) => AgUiBrowserEncodedEvent[]` | Emit terminal browser/public AG-UI events after the runtime stream finishes. |
+| Export                                                   | Type                                             | Description                                                                  |
+| -------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `createAgUiBrowserEncoderState()`                        | `() => AgUiBrowserEncoderState`                  | Create mutable encoder state for one browser AG-UI stream.                   |
+| `mapRuntimeStreamEventToAgUiBrowserEvents(state, event)` | `(state, event) => AgUiBrowserEncodedEvent[]`    | Map one runtime stream event into zero or more browser/public AG-UI events.  |
+| `finalizeAgUiBrowserEvents(state, response)`             | `(state, response) => AgUiBrowserEncodedEvent[]` | Emit terminal browser/public AG-UI events after the runtime stream finishes. |
+
+### Provider-native tool inventory
+
+Use these helpers when a host needs to derive provider-native remote-tool
+allowlists for forked or runtime-isolated executions without hardcoding
+provider/tool mappings outside the package.
+
+| Export                                  | Type                                                                       | Description                                                                                                   |
+| --------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `getProviderNativeToolNames(options)`   | `({ model?: string; provider?: string }) => string[]`                      | Return the provider-native tool ids currently available for the provider/model.                               |
+| `expandAllowedRemoteToolNames(options)` | `({ model?: string; provider?: string; toolNames: string[] }) => string[]` | Expand a local remote-tool allowlist with the package-owned provider-native tool ids for that provider/model. |
 
 ### Request-aware model transport
 

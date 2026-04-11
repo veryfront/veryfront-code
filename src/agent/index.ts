@@ -159,6 +159,11 @@ export {
   mapRuntimeStreamEventToAgUiBrowserEvents,
 } from "./ag-ui-browser-encoder.ts";
 export {
+  expandAllowedRemoteToolNames,
+  getProviderNativeToolNames,
+  type ProviderNativeToolInventoryOptions,
+} from "./provider-native-tool-inventory.ts";
+export {
   type AgUiCancelHandlerOptions,
   type AgUiResumeHandlerOptions,
   type AgUiResumeSignal,
