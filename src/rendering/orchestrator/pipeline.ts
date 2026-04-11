@@ -664,11 +664,7 @@ export class RenderPipeline {
 
     const pageProps: Record<string, unknown> = dataResolution.pageProps;
     const params = dataResolution.params;
-    const layoutProps: Record<string, Record<string, unknown>> = {};
-
-    for (const [layoutId, props] of dataResolution.layoutProps.entries()) {
-      layoutProps[layoutId] = props;
-    }
+    const layoutProps = this.serializeLayoutProps(dataResolution.layoutProps);
 
     const { frontmatter, headings } = await this.extractMdxMetadata(
       pageType,
@@ -772,6 +768,18 @@ export class RenderPipeline {
           this.config.projectDir,
         ),
       }));
+  }
+
+  private serializeLayoutProps(
+    layoutProps: Map<string, Record<string, unknown>>,
+  ): Record<string, Record<string, unknown>> {
+    const serialized: Record<string, Record<string, unknown>> = {};
+
+    for (const [layoutId, props] of layoutProps.entries()) {
+      serialized[layoutId] = props;
+    }
+
+    return serialized;
   }
 
   private async resolveAppPath(): Promise<string | undefined> {
