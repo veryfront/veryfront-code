@@ -3,6 +3,9 @@ import { VeryfrontCloudBlobStorage } from "#veryfront/workflow/blob/veryfront-cl
 import { serverLogger } from "#veryfront/utils";
 import type { RagStore } from "./types.ts";
 import { loadUpload } from "./upload-loader.ts";
+// `File` is a global only on Node 20+; import from `node:buffer` for Node 18
+// compatibility (engines.node >= 18.0.0).
+import { File } from "node:buffer";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_FILE_NAME_LENGTH = 200;
