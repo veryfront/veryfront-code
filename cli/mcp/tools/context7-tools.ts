@@ -51,7 +51,14 @@ const c7ResolveLibrary: MCPTool<
           "Context7 API key not configured. Set the CONTEXT7_API_KEY environment variable.",
       };
     }
-    return await getSource().executeTool("resolve-library-id", input);
+    try {
+      return await getSource().executeTool("resolve-library-id", input);
+    } catch (error) {
+      return {
+        error: "context7_request_failed",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
   },
 };
 
@@ -91,7 +98,14 @@ const c7QueryDocs: MCPTool<
           "Context7 API key not configured. Set the CONTEXT7_API_KEY environment variable.",
       };
     }
-    return await getSource().executeTool("query-docs", input);
+    try {
+      return await getSource().executeTool("query-docs", input);
+    } catch (error) {
+      return {
+        error: "context7_request_failed",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
   },
 };
 
