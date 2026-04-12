@@ -92,6 +92,17 @@ describe("mcp/standalone", () => {
       assertEquals(names.includes("vf_get_project_info"), true);
     });
 
+    it("tools/list includes context7 tools", async () => {
+      const server = new StandaloneMCPServer();
+      const resp = await dispatch(server, "tools/list");
+      const result = resp.result as {
+        tools: { name: string }[];
+      };
+      const names = result.tools.map((t) => t.name);
+      assertEquals(names.includes("c7_resolve_library"), true);
+      assertEquals(names.includes("c7_query_docs"), true);
+    });
+
     it("tools/list includes dev server tools", async () => {
       const server = new StandaloneMCPServer();
       const resp = await dispatch(server, "tools/list");
