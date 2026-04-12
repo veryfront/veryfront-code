@@ -107,7 +107,10 @@ describe("resolveSecurityMiddleware", () => {
       platform: "deno",
     };
 
-    const result = await securityFn(context, async () => createAgentResponse({ text: "It is sunny." }));
+    const result = await securityFn(
+      context,
+      async () => createAgentResponse({ text: "It is sunny." }),
+    );
     assertEquals(result.text, "It is sunny.");
   });
 
@@ -125,7 +128,8 @@ describe("resolveSecurityMiddleware", () => {
 
     const result = await securityFn(
       context,
-      async () => createAgentResponse({ text: "User email is john@example.com and SSN is 123-45-6789" }),
+      async () =>
+        createAgentResponse({ text: "User email is john@example.com and SSN is 123-45-6789" }),
     );
     assertEquals(result.text.includes("john@example.com"), false);
     assertEquals(result.text.includes("[EMAIL]"), true);
