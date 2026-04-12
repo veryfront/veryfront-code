@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { resolveSecurityMiddleware } from "./factory.ts";
+import { agent, resolveSecurityMiddleware } from "./factory.ts";
+import { AgentRuntime } from "./runtime/index.ts";
 import type { AgentContext, AgentMiddleware, AgentResponse } from "./types.ts";
 
 function createDummyMiddleware(label: string): AgentMiddleware {
@@ -11,6 +12,20 @@ function createDummyMiddleware(label: string): AgentMiddleware {
   // Tag for identification in tests
   Object.defineProperty(fn, "name", { value: label });
   return fn;
+}
+
+function createAgentResponse(input: { text: string }): AgentResponse {
+  return {
+    text: input.text,
+    messages: [],
+    toolCalls: [],
+    status: "completed",
+    usage: {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+    },
+  };
 }
 
 describe("resolveSecurityMiddleware", () => {
@@ -61,7 +76,7 @@ describe("resolveSecurityMiddleware", () => {
 
   it("security middleware blocks prompt injection patterns", async () => {
     const middleware = resolveSecurityMiddleware({});
-    const securityFn = middleware[0];
+    const securityFn = middleware[0]!;
 
     const context: AgentContext = {
       agentId: "test",
@@ -73,7 +88,7 @@ describe("resolveSecurityMiddleware", () => {
 
     let threw = false;
     try {
-      await securityFn(context, async () => ({ text: "ok", usage: { input: 0, output: 0 } }));
+      await securityFn(context, async () => createAgentResponse({ text: "ok" }));
     } catch {
       threw = true;
     }
@@ -82,7 +97,7 @@ describe("resolveSecurityMiddleware", () => {
 
   it("security middleware allows normal input", async () => {
     const middleware = resolveSecurityMiddleware({});
-    const securityFn = middleware[0];
+    const securityFn = middleware[0]!;
 
     const context: AgentContext = {
       agentId: "test",
@@ -92,16 +107,16 @@ describe("resolveSecurityMiddleware", () => {
       platform: "deno",
     };
 
-    const result = await securityFn(context, async () => ({
-      text: "It is sunny.",
-      usage: { input: 10, output: 5 },
-    }));
+    const result = await securityFn(
+      context,
+      async () => createAgentResponse({ text: "It is sunny." }),
+    );
     assertEquals(result.text, "It is sunny.");
   });
 
   it("security middleware filters PII from output", async () => {
     const middleware = resolveSecurityMiddleware({});
-    const securityFn = middleware[0];
+    const securityFn = middleware[0]!;
 
     const context: AgentContext = {
       agentId: "test",
@@ -111,13 +126,73 @@ describe("resolveSecurityMiddleware", () => {
       platform: "deno",
     };
 
-    const result = await securityFn(context, async () => ({
-      text: "User email is john@example.com and SSN is 123-45-6789",
-      usage: { input: 10, output: 20 },
-    }));
+    const result = await securityFn(
+      context,
+      async () =>
+        createAgentResponse({ text: "User email is john@example.com and SSN is 123-45-6789" }),
+    );
     assertEquals(result.text.includes("john@example.com"), false);
     assertEquals(result.text.includes("[EMAIL]"), true);
     assertEquals(result.text.includes("123-45-6789"), false);
     assertEquals(result.text.includes("[SSN]"), true);
+  });
+
+  it("forwards abortSignal and onFinish through agent.stream", async () => {
+    const originalStream = AgentRuntime.prototype.stream;
+    const abortController = new AbortController();
+    const finishCalls: AgentResponse[] = [];
+    let capturedAbortSignal: AbortSignal | undefined;
+    let forwardedOnFinish: ((response: AgentResponse) => void) | undefined;
+
+    AgentRuntime.prototype.stream = async function (
+      messages,
+      context,
+      callbacks,
+      modelOverride,
+      maxOutputTokensOverride,
+      abortSignal,
+    ): Promise<ReadableStream<Uint8Array>> {
+      capturedAbortSignal = abortSignal;
+      forwardedOnFinish = callbacks?.onFinish;
+
+      assertEquals(messages.length, 1);
+      assertEquals(messages[0]?.role, "user");
+      assertEquals(context, undefined);
+      assertEquals(modelOverride, undefined);
+      assertEquals(maxOutputTokensOverride, undefined);
+
+      callbacks?.onFinish?.(createAgentResponse({ text: "stream complete" }));
+
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close();
+        },
+      });
+    };
+
+    try {
+      const assistant = agent({
+        system: "You are helpful.",
+      });
+
+      const result = await assistant.stream({
+        input: "hello",
+        abortSignal: abortController.signal,
+        onFinish: (response) => {
+          finishCalls.push(response);
+        },
+      });
+
+      await result.toDataStreamResponse().text();
+
+      assertEquals(capturedAbortSignal instanceof AbortSignal, true);
+      assertEquals(capturedAbortSignal?.aborted, false);
+      assertEquals(typeof forwardedOnFinish, "function");
+      assertEquals(finishCalls.length, 1);
+      assertEquals(finishCalls[0]?.text, "stream complete");
+      assertEquals(finishCalls[0]?.status, "completed");
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
   });
 });
