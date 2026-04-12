@@ -21,8 +21,7 @@ const c7ResolveLibrary: MCPTool<
 > = {
   name: "c7_resolve_library",
   title: "Context7: Resolve Library ID",
-  description:
-    "Resolves a package or product name to a Context7-compatible library ID. " +
+  description: "Resolves a package or product name to a Context7-compatible library ID. " +
     "Call this before c7_query_docs to obtain the correct library ID. " +
     "Returns matching libraries with metadata (name, description, snippet count, reputation).",
   annotations: {
@@ -47,8 +46,7 @@ const c7ResolveLibrary: MCPTool<
     if (!isContext7Available()) {
       return {
         error: "context7_not_configured",
-        message:
-          "Context7 API key not configured. Set the CONTEXT7_API_KEY environment variable.",
+        message: "Context7 API key not configured. Set the CONTEXT7_API_KEY environment variable.",
       };
     }
     try {
@@ -94,8 +92,7 @@ const c7QueryDocs: MCPTool<
     if (!isContext7Available()) {
       return {
         error: "context7_not_configured",
-        message:
-          "Context7 API key not configured. Set the CONTEXT7_API_KEY environment variable.",
+        message: "Context7 API key not configured. Set the CONTEXT7_API_KEY environment variable.",
       };
     }
     try {

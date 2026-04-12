@@ -44,8 +44,7 @@ describe("cli/mcp/tools/context7-tools", () => {
 
       assertEquals(result, {
         error: "context7_not_configured",
-        message:
-          "Context7 API key not configured. Set the CONTEXT7_API_KEY environment variable.",
+        message: "Context7 API key not configured. Set the CONTEXT7_API_KEY environment variable.",
       });
     } finally {
       if (originalKey !== undefined) {
@@ -72,8 +71,7 @@ describe("cli/mcp/tools/context7-tools", () => {
 
       assertEquals(result, {
         error: "context7_not_configured",
-        message:
-          "Context7 API key not configured. Set the CONTEXT7_API_KEY environment variable.",
+        message: "Context7 API key not configured. Set the CONTEXT7_API_KEY environment variable.",
       });
     } finally {
       if (originalKey !== undefined) {
