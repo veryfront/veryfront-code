@@ -112,6 +112,58 @@ describe("tool/context7", () => {
     assertEquals(result, { libraryId: "/vercel/next.js" });
   });
 
+  it("falls back to CONTEXT7_API_KEY env var when apiKey config is omitted", async () => {
+    const originalEnv = Deno.env.get("CONTEXT7_API_KEY");
+    try {
+      Deno.env.set("CONTEXT7_API_KEY", "env-fallback-key");
+      let capturedHeaders: Headers | undefined;
+
+      const source = createContext7ToolSource({ endpoint: "https://mcp.test/mcp" });
+
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          capturedHeaders = request.headers;
+          return Response.json({
+            jsonrpc: "2.0",
+            id: "context7:tools:list",
+            result: { tools: [] },
+          });
+        },
+        async () => await source.listTools(),
+      );
+
+      assertEquals(capturedHeaders?.get("CONTEXT7_API_KEY"), "env-fallback-key");
+    } finally {
+      if (originalEnv !== undefined) {
+        Deno.env.set("CONTEXT7_API_KEY", originalEnv);
+      } else {
+        Deno.env.delete("CONTEXT7_API_KEY");
+      }
+    }
+  });
+
+  it("uses the default endpoint when none is provided", async () => {
+    let capturedUrl = "";
+
+    const source = createContext7ToolSource({ apiKey: "test-key" });
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        capturedUrl = request.url;
+        return Response.json({
+          jsonrpc: "2.0",
+          id: "context7:tools:list",
+          result: { tools: [] },
+        });
+      },
+      async () => await source.listTools(),
+    );
+
+    assertEquals(capturedUrl, "https://mcp.context7.com/mcp");
+  });
+
   it("throws when no API key is provided and CONTEXT7_API_KEY env is unset", async () => {
     const originalEnv = Deno.env.get("CONTEXT7_API_KEY");
     try {
