@@ -152,6 +152,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
   it("accepts a tool result before the runtime registers the wait", async () => {
     const sessionManager = new AgentRunSessionManager();
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    sessionManager.prepareForToolResult("run_1", "tool_1");
 
     const handler = new AgentRunResumeHandler(sessionManager);
     const body = JSON.stringify({

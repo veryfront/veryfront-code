@@ -56,6 +56,7 @@ type RunSession<T> = {
   status: RunSessionStatus;
   abortController: AbortController;
   waitingState: WaitingState<T> | null;
+  preparedWaitKeys: Set<string>;
   submittedValues: Map<string, SubmittedValue<T>>;
   waitingTimeoutId: number | null;
   sessionTimeoutId: number | null;
@@ -170,6 +171,7 @@ export class RunResumeSessionManager<T> {
       status: "running",
       abortController: new AbortController(),
       waitingState: null,
+      preparedWaitKeys: new Set(),
       submittedValues: new Map(),
       waitingTimeoutId: null,
       sessionTimeoutId: null,
@@ -178,6 +180,23 @@ export class RunResumeSessionManager<T> {
     this.sessions.set(input.runId, session);
     this.touchSession(session);
     return session.abortController.signal;
+  }
+
+  prepareForSignal(runId: string, waitKey: string): void {
+    const session = this.sessions.get(runId);
+    if (!session) {
+      throw new RunNotActiveError(runId);
+    }
+
+    if (
+      session.status === "completed" || session.status === "failed" ||
+      session.status === "cancelled"
+    ) {
+      throw new RunNotActiveError(runId);
+    }
+
+    session.preparedWaitKeys.add(waitKey);
+    this.touchSession(session);
   }
 
   async waitForSignal(runId: string, waitKey: string): Promise<T> {
@@ -190,6 +209,7 @@ export class RunResumeSessionManager<T> {
       throw new RunCancelledError();
     }
 
+    session.preparedWaitKeys.add(waitKey);
     const existingValue = session.submittedValues.get(waitKey);
     if (existingValue) {
       session.status = "running";
@@ -265,6 +285,10 @@ export class RunResumeSessionManager<T> {
     }
 
     if (!session.waitingState) {
+      if (!session.preparedWaitKeys.has(input.waitKey)) {
+        throw new WaitNotPendingError(runId, input.waitKey);
+      }
+
       session.submittedValues.set(input.waitKey, normalized);
       this.touchSession(session);
       return { accepted: true };

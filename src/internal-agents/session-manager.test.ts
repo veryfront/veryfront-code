@@ -42,6 +42,7 @@ describe("internal-agents/session-manager", () => {
   it("buffers submissions that arrive before the tool call starts waiting", async () => {
     const sessionManager = new AgentRunSessionManager();
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    sessionManager.prepareForToolResult("run_1", "tool_1");
 
     assertEquals(
       sessionManager.submitToolResult("run_1", {

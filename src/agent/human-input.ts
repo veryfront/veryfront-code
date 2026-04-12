@@ -130,6 +130,7 @@ export class InvalidHumanInputResultError extends Error {
 export async function waitForHumanInput(
   options: WaitForHumanInputOptions,
 ): Promise<HumanInputResult> {
+  options.sessionManager.prepareForSignal(options.runId, options.toolCallId);
   const pendingRequest = HumanInputPendingRequestSchema.parse({
     runId: options.runId,
     toolCallId: options.toolCallId,
