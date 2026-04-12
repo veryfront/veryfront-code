@@ -17,6 +17,7 @@ import type { MCPTool } from "veryfront/mcp";
 import { advancedTools } from "./advanced-tools.ts";
 import { remoteFileTools } from "./remote-file-tools.ts";
 import { issuesMcpTools } from "veryfront/issues";
+import { context7Tools } from "./tools/context7-tools.ts";
 import { DEFAULT_MCP_PORT } from "#cli/shared/constants";
 
 export type { MCPTool };
@@ -235,6 +236,7 @@ export const allTools: MCPTool[] = [
   ...advancedTools,
   ...remoteFileTools,
   ...issuesMcpTools,
+  ...context7Tools,
   vfGetErrors,
   vfGetLogs,
   vfClearCache,
