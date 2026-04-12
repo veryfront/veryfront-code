@@ -264,7 +264,13 @@ export class RunResumeSessionManager<T> {
       throw new RunNotActiveError(runId);
     }
 
-    if (!session.waitingState || session.waitingState.waitKey !== input.waitKey) {
+    if (!session.waitingState) {
+      session.submittedValues.set(input.waitKey, normalized);
+      this.touchSession(session);
+      return { accepted: true };
+    }
+
+    if (session.waitingState.waitKey !== input.waitKey) {
       throw new WaitNotPendingError(runId, input.waitKey);
     }
 

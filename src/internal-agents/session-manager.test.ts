@@ -39,18 +39,47 @@ describe("internal-agents/session-manager", () => {
     );
   });
 
-  it("rejects submissions for tool calls that are not currently waiting", async () => {
+  it("buffers submissions that arrive before the tool call starts waiting", async () => {
     const sessionManager = new AgentRunSessionManager();
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    assertEquals(
+      sessionManager.submitToolResult("run_1", {
+        toolCallId: "tool_1",
+        result: { ok: true },
+      }),
+      { accepted: true },
+    );
+
+    assertEquals(await sessionManager.waitForToolResult("run_1", "tool_1"), {
+      result: { ok: true },
+      isError: false,
+    });
+    sessionManager.completeRun("run_1");
+  });
+
+  it("still rejects tool results for a different wait key while another wait is pending", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    const pending = sessionManager.waitForToolResult("run_1", "tool_1");
 
     await assertRejects(
       async () => {
         sessionManager.submitToolResult("run_1", {
-          toolCallId: "tool_1",
+          toolCallId: "tool_2",
           result: { ok: true },
         });
       },
       ToolResultNotWaitingError,
+    );
+
+    assertEquals(sessionManager.cancelRun("run_1"), true);
+    await assertRejects(
+      async () => {
+        await pending;
+      },
+      AgentRunCancelledError,
     );
   });
 

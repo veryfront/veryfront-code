@@ -149,7 +149,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     assertEquals(await result.response.json(), { error: "TOOL_RESULT_CONFLICT" });
   });
 
-  it("returns 409 when the run is not waiting for the submitted tool call", async () => {
+  it("accepts a tool result before the runtime registers the wait", async () => {
     const sessionManager = new AgentRunSessionManager();
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
 
@@ -174,8 +174,45 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     );
 
     assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), { accepted: true });
+    assertEquals(await sessionManager.waitForToolResult("run_1", "tool_1"), {
+      result: { ok: true },
+      isError: false,
+    });
+    sessionManager.completeRun("run_1");
+  });
+
+  it("returns 409 when a different tool call is submitted while another wait is active", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    const pending = sessionManager.waitForToolResult("run_1", "tool_1");
+
+    const handler = new AgentRunResumeHandler(sessionManager);
+    const body = JSON.stringify({
+      type: "tool_result",
+      toolCallId: "tool_2",
+      result: { ok: true },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/runs/run_1/resume", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
     assertEquals(result.response.status, 409);
     assertEquals(await result.response.json(), { error: "TOOL_RESULT_NOT_WAITING" });
+    assertEquals(sessionManager.cancelRun("run_1"), true);
+    await pending.catch(() => undefined);
   });
 
   it("returns 410 when the run is no longer active", async () => {

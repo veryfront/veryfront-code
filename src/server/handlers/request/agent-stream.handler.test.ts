@@ -954,4 +954,136 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(sessionManager.stats.cancelCalls, 0);
     assertEquals(sessionManager.stats.failCalls, 0);
   });
+
+  it("accepts an early resume before the runtime registers the tool wait", async () => {
+    const sessionManager = new TrackingSessionManager();
+    const resumeHandler = new AgentRunResumeHandler(sessionManager);
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager,
+      createRuntime: (_agent, mergedTools) => ({
+        async stream(_messages, _context, callbacks) {
+          const tool = mergedTools && mergedTools !== true
+            ? mergedTools["studio_focus_component"] as {
+              execute: (input: unknown, context?: unknown) => Promise<unknown>;
+            }
+            : undefined;
+          if (!tool) {
+            throw new Error("Expected injected tool");
+          }
+
+          return new ReadableStream<Uint8Array>({
+            async start(controller) {
+              controller.enqueue(
+                encodeDataStreamEvent({ type: "message-start", messageId: "assistant-1" }),
+              );
+              controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "assistant-1" }));
+              controller.enqueue(encodeDataStreamEvent({
+                type: "tool-input-start",
+                toolCallId: "tool-1",
+                toolName: "studio_focus_component",
+              }));
+              controller.enqueue(encodeDataStreamEvent({
+                type: "tool-input-available",
+                toolCallId: "tool-1",
+                toolName: "studio_focus_component",
+                input: { target: "hero" },
+              }));
+
+              await new Promise((resolve) => setTimeout(resolve, 0));
+
+              const output = await tool.execute(
+                { target: "hero" },
+                { toolCallId: "tool-1" },
+              );
+
+              controller.enqueue(encodeDataStreamEvent({
+                type: "tool-output-available",
+                toolCallId: "tool-1",
+                output,
+              }));
+              controller.enqueue(encodeDataStreamEvent({
+                type: "text-delta",
+                id: "assistant-1",
+                delta: "Done.",
+              }));
+              controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "assistant-1" }));
+              controller.close();
+
+              callbacks?.onFinish?.({
+                text: "Done.",
+                messages: [],
+                toolCalls: [],
+                status: "completed",
+                usage: {
+                  promptTokens: 5,
+                  completionTokens: 3,
+                  totalTokens: 8,
+                },
+                metadata: {
+                  finishReason: "stop",
+                },
+              });
+            },
+          });
+        },
+      }),
+    });
+
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/internal/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertExists(result.response.body);
+
+    const reader = result.response.body.getReader();
+    const initialText = await readUntil(reader, (chunk) => chunk.includes("event: ToolCallEnd"));
+    assertEquals(sessionManager.getRunStatus("run_1"), "running");
+    assertStringIncludes(initialText, "event: ToolCallStart");
+
+    const resumeBody = JSON.stringify({
+      type: "tool_result",
+      toolCallId: "tool-1",
+      result: { focused: true },
+    });
+    const resumeSignature = await createControlPlaneSignature(resumeBody, { requestId: "run_1" });
+
+    const resumeResult = await resumeHandler.handle(
+      new Request("https://example.com/internal/agents/runs/run_1/resume", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": resumeSignature.jws,
+        },
+        body: resumeBody,
+      }),
+      createCtx(resumeSignature.publicKeyPem),
+    );
+
+    assertExists(resumeResult.response);
+    assertEquals(resumeResult.response.status, 200);
+    assertEquals(await resumeResult.response.json(), { accepted: true });
+
+    const finalText = initialText + await readRemainingText(reader);
+    assertStringIncludes(finalText, "event: ToolCallResult");
+    assertStringIncludes(finalText, "event: RunFinished");
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
+    assertEquals(sessionManager.stats.completeCalls, 1);
+    assertEquals(sessionManager.stats.cancelCalls, 0);
+    assertEquals(sessionManager.stats.failCalls, 0);
+  });
 });
