@@ -219,6 +219,8 @@ export interface Agent {
     maxOutputTokens?: number;
     onToolCall?: (toolCall: ToolCall) => void;
     onChunk?: (chunk: string) => void;
+    onFinish?: (response: AgentResponse) => void;
+    abortSignal?: AbortSignal;
   }): Promise<AgentStreamResult>;
 
   respond(request: Request): Promise<Response>;

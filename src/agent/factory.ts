@@ -189,9 +189,11 @@ export function agent(config: AgentConfig): Agent {
             {
               onToolCall: input.onToolCall,
               onChunk: input.onChunk,
+              onFinish: input.onFinish,
             },
             input.model,
             input.maxOutputTokens,
+            input.abortSignal,
           );
 
           return createAgentStreamResult(stream);
