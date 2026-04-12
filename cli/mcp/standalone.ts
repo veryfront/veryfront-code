@@ -409,6 +409,98 @@ export class StandaloneMCPServer {
           }
         },
       },
+      ...this.createContext7Tools(),
+    ];
+  }
+
+  private createContext7Tools(): StandaloneTool[] {
+    const isAvailable = () => Boolean(Deno.env.get("CONTEXT7_API_KEY"));
+
+    let source: {
+      executeTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+    } | undefined;
+
+    const getSource = async () => {
+      if (!source) {
+        const { createContext7ToolSource } = await import("veryfront/tool");
+        source = createContext7ToolSource();
+      }
+      return source;
+    };
+
+    const notConfigured = {
+      error: "context7_not_configured",
+      message: "Context7 API key not configured. Set the CONTEXT7_API_KEY environment variable.",
+    };
+
+    return [
+      {
+        name: "c7_resolve_library",
+        description: "Resolves a package or product name to a Context7-compatible library ID. " +
+          "Call this before c7_query_docs to obtain the correct library ID. " +
+          "Returns matching libraries with metadata (name, description, snippet count, reputation).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            libraryName: {
+              type: "string",
+              description:
+                "Library name to search for. Use the official name with proper punctuation — e.g., 'Next.js' not 'nextjs'.",
+            },
+            query: {
+              type: "string",
+              description:
+                "The question or task you need help with. Used to rank results by relevance.",
+            },
+          },
+          required: ["libraryName", "query"],
+        },
+        async execute(args) {
+          if (!isAvailable()) return notConfigured;
+          try {
+            return await (await getSource()).executeTool("resolve-library-id", args);
+          } catch (error) {
+            return {
+              error: "context7_request_failed",
+              message: error instanceof Error ? error.message : String(error),
+            };
+          }
+        },
+      },
+      {
+        name: "c7_query_docs",
+        description:
+          "Retrieves up-to-date documentation and code examples from Context7 for a library. " +
+          "You must call c7_resolve_library first to obtain the library ID, unless the user " +
+          "provides one directly in '/org/project' format.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            libraryId: {
+              type: "string",
+              description:
+                "Context7-compatible library ID (e.g., '/vercel/next.js', '/supabase/supabase').",
+            },
+            query: {
+              type: "string",
+              description:
+                "The question or task you need help with. Be specific and include relevant details.",
+            },
+          },
+          required: ["libraryId", "query"],
+        },
+        async execute(args) {
+          if (!isAvailable()) return notConfigured;
+          try {
+            return await (await getSource()).executeTool("query-docs", args);
+          } catch (error) {
+            return {
+              error: "context7_request_failed",
+              message: error instanceof Error ? error.message : String(error),
+            };
+          }
+        },
+      },
     ];
   }
 }

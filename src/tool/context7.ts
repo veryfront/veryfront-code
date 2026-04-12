@@ -1,0 +1,33 @@
+import { createRemoteMCPToolSource } from "./remote-mcp.ts";
+import type { RemoteToolSource } from "./types.ts";
+
+export interface Context7ToolSourceConfig {
+  /** Context7 API key. Falls back to Deno.env.get("CONTEXT7_API_KEY"). */
+  apiKey?: string;
+  /** Override the default endpoint (useful for testing). */
+  endpoint?: string;
+}
+
+const DEFAULT_ENDPOINT = "https://mcp.context7.com/mcp";
+
+function resolveApiKey(config: Context7ToolSourceConfig): string {
+  const key = config.apiKey ?? Deno.env.get("CONTEXT7_API_KEY");
+  if (!key) {
+    throw new Error(
+      "Context7 API key is required. Pass apiKey or set the CONTEXT7_API_KEY environment variable.",
+    );
+  }
+  return key;
+}
+
+export function createContext7ToolSource(
+  config: Context7ToolSourceConfig = {},
+): RemoteToolSource {
+  return createRemoteMCPToolSource({
+    id: "context7",
+    endpoint: config.endpoint ?? DEFAULT_ENDPOINT,
+    headers: () => ({
+      CONTEXT7_API_KEY: resolveApiKey(config),
+    }),
+  });
+}
