@@ -66,6 +66,7 @@ function createInjectedStudioTool(
         throw new Error(`Missing toolCallId for injected tool "${toolName}"`);
       }
 
+      sessionManager.prepareForToolResult(runId, toolCallId);
       const waitResult = await sessionManager.waitForToolResult(runId, toolCallId);
       if (waitResult.isError) {
         throw new Error(
@@ -284,6 +285,21 @@ export async function createRuntimeAgentStreamResponse(
           clientAttached = false;
         }
       };
+      const prepareToolResultIfNeeded = (event: string, payload: Record<string, unknown>) => {
+        if (
+          event !== "ToolCallStart" && event !== "ToolCallArgs" &&
+          event !== "ToolCallEnd"
+        ) {
+          return;
+        }
+
+        const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : null;
+        if (!toolCallId) {
+          return;
+        }
+
+        deps.sessionManager.prepareForToolResult(input.runId, toolCallId);
+      };
 
       const throwIfAborted = () => {
         if (aborted || abortSignal.aborted) {
@@ -330,6 +346,7 @@ export async function createRuntimeAgentStreamResponse(
 
           for (const event of parsed.events) {
             for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
+              prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
               enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
             }
           }
@@ -340,6 +357,7 @@ export async function createRuntimeAgentStreamResponse(
         const trailingEvents = parseSseJsonEvents(`${remainder}\n\n`);
         for (const event of trailingEvents.events) {
           for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
+            prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
             enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
           }
         }

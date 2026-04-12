@@ -276,6 +276,7 @@ async function createAgUiStreamResponse(
     upstreamStatusText?: string;
     onFinish?: () => void;
     onError?: (error: unknown) => void;
+    onToolCallSeen?: (toolCallId: string) => void;
   },
 ): Promise<Response> {
   const {
@@ -288,6 +289,7 @@ async function createAgUiStreamResponse(
     upstreamStatusText,
     onFinish,
     onError,
+    onToolCallSeen,
   } = options;
 
   const stream = new ReadableStream<Uint8Array>({
@@ -296,6 +298,19 @@ async function createAgUiStreamResponse(
       let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
       let remainder = "";
       const decoder = new TextDecoder();
+      const prepareToolResultIfNeeded = (event: string, payload: Record<string, unknown>) => {
+        if (
+          event !== "ToolCallStart" && event !== "ToolCallArgs" &&
+          event !== "ToolCallEnd"
+        ) {
+          return;
+        }
+
+        const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : null;
+        if (toolCallId) {
+          onToolCallSeen?.(toolCallId);
+        }
+      };
 
       if (!enqueueEvent(controller, "RunStarted", { runId, threadId, agentId })) {
         return;
@@ -331,6 +346,7 @@ async function createAgUiStreamResponse(
 
           for (const event of parsed.events as AgUiRuntimePart[]) {
             for (const mapped of mapRuntimeEventToAgUi(state, event)) {
+              prepareToolResultIfNeeded(mapped.event, mapped.payload);
               if (!enqueueEvent(controller, mapped.event, mapped.payload)) {
                 return;
               }
@@ -342,6 +358,7 @@ async function createAgUiStreamResponse(
         const parsed = parseSseJsonEvents(remainder);
         for (const event of parsed.events as AgUiRuntimePart[]) {
           for (const mapped of mapRuntimeEventToAgUi(state, event)) {
+            prepareToolResultIfNeeded(mapped.event, mapped.payload);
             if (!enqueueEvent(controller, mapped.event, mapped.payload)) {
               return;
             }
@@ -420,6 +437,7 @@ function createInjectedAgUiTool(
         throw new Error(`Missing toolCallId for injected tool "${tool.name}"`);
       }
 
+      sessionManager.prepareForSignal(runId, toolCallId);
       const submitted = await sessionManager.waitForSignal(runId, toolCallId);
       if (submitted.isError) {
         throw new Error(
@@ -499,6 +517,9 @@ async function createAgUiInjectedToolsStreamResponse(
     },
     onError: () => {
       sessionManager.failRun(runId);
+    },
+    onToolCallSeen: (toolCallId) => {
+      sessionManager.prepareForSignal(runId, toolCallId);
     },
   });
 }

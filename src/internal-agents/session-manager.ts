@@ -128,6 +128,10 @@ export class AgentRunSessionManager {
     }
   }
 
+  prepareForToolResult(runId: string, toolCallId: string): void {
+    this.sessions.prepareForSignal(runId, toolCallId);
+  }
+
   submitToolResult(
     runId: string,
     input: { toolCallId: string; result: unknown; isError?: boolean },

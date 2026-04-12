@@ -55,6 +55,22 @@ describe("agent/runtime/resume-session", () => {
     );
   });
 
+  it("buffers submissions for wait keys that were prepared before waiting starts", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    manager.prepareForSignal("run_1", "tool_1");
+
+    assertEquals(
+      manager.submitSignal("run_1", {
+        waitKey: "tool_1",
+        value: { ok: true },
+      }),
+      { accepted: true },
+    );
+
+    assertEquals(await manager.waitForSignal("run_1", "tool_1"), { ok: true });
+  });
+
   it("cancels waiting runs and rejects the parked wait promise", async () => {
     const manager = new RunResumeSessionManager<{ ok: boolean }>();
     manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
