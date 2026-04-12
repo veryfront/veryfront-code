@@ -173,6 +173,69 @@ describe("agent/ag-ui-handler", () => {
     assertStringIncludes(body, '"delta":"hello from runtime"');
   });
 
+  it("flushes the final runtime data event when the upstream stream ends without a trailing blank line", async () => {
+    const agent: Agent = {
+      id: "assistant-1",
+      config: {
+        id: "assistant-1",
+        system: "You are helpful.",
+        model: "anthropic/claude-sonnet-4-6",
+      } as Agent["config"],
+      generate: async () => {
+        throw new Error("not used");
+      },
+      stream: async () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+            );
+            controller.enqueue(
+              encoder.encode('data: {"type":"text-delta","delta":"tail event survives"}'),
+            );
+            controller.close();
+          },
+        });
+
+        return {
+          toDataStreamResponse: () =>
+            new Response(stream, {
+              headers: { "Content-Type": "text/event-stream" },
+            }),
+        };
+      },
+      respond: async () => new Response("not used"),
+      getMemory: () => {
+        throw new Error("not used");
+      },
+      getMemoryStats: async () => ({
+        totalMessages: 0,
+        estimatedTokens: 0,
+        type: "conversation",
+      }),
+      clearMemory: async () => {},
+    };
+    const handler = createAgUiHandler({ agent });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    const body = await response.text();
+    assertStringIncludes(body, "event: TextMessageStart");
+    assertStringIncludes(body, '"delta":"tail event survives"');
+  });
+
   it("accepts a Pages Router style request wrapper and generates default ids", async () => {
     const testAgent = createTestAgent();
     const handler = createAgUiHandler({ agent: testAgent.agent });

@@ -4,16 +4,15 @@ import type {
   AgUiBrowserRunFinishedMetadata,
   AgUiRuntimeStreamEvent,
 } from "../agent/ag-ui-browser-encoder.ts";
+import { parseDataStreamSseEvents } from "../agent/data-stream.ts";
 import {
   createAgUiBrowserEncoderState,
   finalizeAgUiBrowserEvents,
   mapRuntimeStreamEventToAgUiBrowserEvents,
 } from "../agent/ag-ui-browser-encoder.ts";
-import { serverLogger } from "#veryfront/utils";
 import { z } from "zod";
 
 const encoder = new TextEncoder();
-const logger = serverLogger.component("internal-agents-ag-ui-sse");
 
 type RuntimeDataEvent = AgUiRuntimeStreamEvent;
 export type RunFinishedMetadata = AgUiBrowserRunFinishedMetadata;
@@ -118,30 +117,11 @@ export function parseSseJsonEvents(chunk: string): {
   events: RuntimeDataEvent[];
   remainder: string;
 } {
-  const blocks = chunk.split("\n\n");
-  const remainder = blocks.pop() ?? "";
-  const events = blocks.flatMap((block) => {
-    const dataLines = block.split("\n")
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart());
-
-    if (!dataLines.length) {
-      return [];
-    }
-
-    try {
-      const payload = JSON.parse(dataLines.join("\n")) as RuntimeDataEvent;
-      return [payload];
-    } catch (error) {
-      logger.warn("Skipping malformed runtime SSE event payload", {
-        error,
-        dataLength: dataLines.join("\n").length,
-      });
-      return [];
-    }
-  });
-
-  return { events, remainder };
+  const parsed = parseDataStreamSseEvents(chunk);
+  return {
+    events: parsed.events,
+    remainder: parsed.remainder,
+  };
 }
 
 export function mapRuntimeEventToAgUi(
