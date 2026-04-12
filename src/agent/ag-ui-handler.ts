@@ -14,8 +14,8 @@ import {
   finalizeRunEvents,
   formatAgUiEvent,
   mapRuntimeEventToAgUi,
-  parseSseJsonEvents,
 } from "#veryfront/internal-agents/ag-ui-sse.ts";
+import { streamDataStreamEvents } from "./data-stream.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;
@@ -295,9 +295,6 @@ async function createAgUiStreamResponse(
   const stream = new ReadableStream<Uint8Array>({
     start: async (controller) => {
       const state = createStreamTransformState();
-      let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-      let remainder = "";
-      const decoder = new TextDecoder();
       const prepareToolResultIfNeeded = (event: string, payload: Record<string, unknown>) => {
         if (
           event !== "ToolCallStart" && event !== "ToolCallArgs" &&
@@ -334,29 +331,9 @@ async function createAgUiStreamResponse(
           return;
         }
 
-        reader = upstreamBody.getReader();
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          remainder += decoder.decode(value, { stream: true });
-          const parsed = parseSseJsonEvents(remainder);
-          remainder = parsed.remainder;
-
-          for (const event of parsed.events as AgUiRuntimePart[]) {
-            for (const mapped of mapRuntimeEventToAgUi(state, event)) {
-              prepareToolResultIfNeeded(mapped.event, mapped.payload);
-              if (!enqueueEvent(controller, mapped.event, mapped.payload)) {
-                return;
-              }
-            }
-          }
-        }
-
-        remainder += decoder.decode();
-        const parsed = parseSseJsonEvents(remainder);
-        for (const event of parsed.events as AgUiRuntimePart[]) {
+        for await (
+          const event of streamDataStreamEvents(upstreamBody) as AsyncIterable<AgUiRuntimePart>
+        ) {
           for (const mapped of mapRuntimeEventToAgUi(state, event)) {
             prepareToolResultIfNeeded(mapped.event, mapped.payload);
             if (!enqueueEvent(controller, mapped.event, mapped.payload)) {
@@ -377,7 +354,6 @@ async function createAgUiStreamResponse(
           message: error instanceof Error ? error.message : "Agent run failed",
         });
       } finally {
-        await reader?.cancel().catch(() => undefined);
         closeController(controller);
       }
     },

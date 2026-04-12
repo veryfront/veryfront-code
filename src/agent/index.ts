@@ -159,6 +159,14 @@ export {
   mapRuntimeStreamEventToAgUiBrowserEvents,
 } from "./ag-ui-browser-encoder.ts";
 export {
+  mergeToolCallInput,
+  mergeToolInputDelta,
+  parseDataStreamSseEvents,
+  parseToolInputObject,
+  streamDataStreamEvents,
+  stripLeadingEmptyObjectPlaceholder,
+} from "./data-stream.ts";
+export {
   expandAllowedRemoteToolNames,
   getProviderNativeToolNames,
   type ProviderNativeToolInventoryOptions,

@@ -10,6 +10,7 @@
 
 import type { RuntimeStreamPart, RuntimeStreamResult } from "./runtime-tool-types.ts";
 import { sendSSE } from "./sse-utils.ts";
+import { mergeToolCallInput, mergeToolInputDelta, parseToolInputObject } from "../data-stream.ts";
 import { isDynamicTool } from "./tool-helpers.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
@@ -64,49 +65,6 @@ function normalizeToolInputString(input: unknown): string {
   }
 
   return JSON.stringify(input ?? null) ?? "null";
-}
-
-function mergeToolInputDelta(currentArguments: string, nextDelta: string): string {
-  if (currentArguments === "{}" && nextDelta.trimStart().startsWith("{")) {
-    return nextDelta;
-  }
-
-  return currentArguments + nextDelta;
-}
-
-function mergeToolCallInput(currentArguments: string, nextInput: string): string {
-  if (currentArguments.length === 0) {
-    return nextInput;
-  }
-
-  if (nextInput.trim() === "{}" && currentArguments.trim().startsWith("{")) {
-    return currentArguments;
-  }
-
-  if (currentArguments.trim() === "{}" && nextInput.trim().startsWith("{")) {
-    return nextInput;
-  }
-
-  return nextInput;
-}
-
-function normalizeToolInputObject(input: unknown): Record<string, unknown> {
-  if (isRecord(input)) {
-    return input;
-  }
-
-  if (typeof input === "string") {
-    try {
-      const parsed = JSON.parse(input);
-      if (isRecord(parsed)) {
-        return parsed;
-      }
-    } catch {
-      return {};
-    }
-  }
-
-  return {};
 }
 
 function summarizeDebugValue(value: unknown): unknown {
@@ -298,7 +256,7 @@ export function processStream(
           });
 
           const dynamic = isDynamicTool(typedPart.toolName);
-          const inputObj = normalizeToolInputObject(typedPart.input);
+          const inputObj = parseToolInputObject(typedPart.input);
           sendSSE(controller, encoder, {
             type: "tool-input-available",
             toolCallId: toolId,
