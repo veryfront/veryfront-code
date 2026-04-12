@@ -50,6 +50,8 @@ describe("cli/mcp/tools/context7-tools", () => {
     } finally {
       if (originalKey !== undefined) {
         Deno.env.set("CONTEXT7_API_KEY", originalKey);
+      } else {
+        Deno.env.delete("CONTEXT7_API_KEY");
       }
     }
   });
@@ -76,6 +78,8 @@ describe("cli/mcp/tools/context7-tools", () => {
     } finally {
       if (originalKey !== undefined) {
         Deno.env.set("CONTEXT7_API_KEY", originalKey);
+      } else {
+        Deno.env.delete("CONTEXT7_API_KEY");
       }
     }
   });
