@@ -284,6 +284,72 @@ describe("provider/runtime-loader", () => {
     ]);
   });
 
+  it("parses OpenAI-compatible reasoning_content deltas into reasoning parts", async () => {
+    const encoder = new TextEncoder();
+    const runtime = createOpenAIModelRuntime({
+      apiKey: "test-openai-key",
+      baseURL: "https://example.openai.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            ReadableStream.from([
+              encoder.encode(
+                'data: {"choices":[{"delta":{"reasoning_content":"Let me think."}}]}\n\n',
+              ),
+              encoder.encode(
+                'data: {"choices":[{"delta":{"content":"Done."}}]}\n\n',
+              ),
+              encoder.encode(
+                'data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}\n\n',
+              ),
+              encoder.encode("data: [DONE]\n\n"),
+            ]),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        ),
+    }, "moonshotai/kimi-k2.5");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Think before answering" }],
+      }],
+    });
+
+    const parts = await collectAsync(result.stream);
+    assertEquals(parts, [
+      {
+        type: "reasoning-start",
+        id: "reasoning-0",
+      },
+      {
+        type: "reasoning-delta",
+        id: "reasoning-0",
+        delta: "Let me think.",
+      },
+      {
+        type: "reasoning-end",
+        id: "reasoning-0",
+      },
+      {
+        type: "text-delta",
+        delta: "Done.",
+      },
+      {
+        type: "finish",
+        finishReason: "stop",
+        usage: {
+          inputTokens: 8,
+          outputTokens: 2,
+          totalTokens: 10,
+        },
+      },
+    ]);
+  });
+
   it("keeps OpenAI providerOptions scoped to the active provider and alias", async () => {
     let requestedInit: RequestInit | undefined;
 
@@ -859,6 +925,80 @@ describe("provider/runtime-loader", () => {
     ]);
   });
 
+  it("parses Anthropic extended thinking stream events into reasoning parts", async () => {
+    const encoder = new TextEncoder();
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            ReadableStream.from([
+              encoder.encode(
+                'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":12}}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think."}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_123"}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+              ),
+              encoder.encode(
+                'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":6}}\n\n',
+              ),
+              encoder.encode(
+                'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+              ),
+            ]),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        ),
+    }, "claude-sonnet-4-20250514");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Think before answering" }],
+      }],
+      maxOutputTokens: 64,
+    });
+
+    const parts = await collectAsync(result.stream);
+    assertEquals(parts, [
+      {
+        type: "reasoning-start",
+        id: "thinking-0",
+      },
+      {
+        type: "reasoning-delta",
+        id: "thinking-0",
+        delta: "Let me think.",
+      },
+      {
+        type: "reasoning-end",
+        id: "thinking-0",
+      },
+      {
+        type: "finish",
+        finishReason: { unified: "stop", raw: "end_turn" },
+        usage: {
+          inputTokens: 12,
+          outputTokens: 6,
+          totalTokens: 18,
+        },
+      },
+    ]);
+  });
+
   it("keeps Anthropic providerOptions scoped to the active provider and alias", async () => {
     let requestedInit: RequestInit | undefined;
 
@@ -1118,6 +1258,73 @@ describe("provider/runtime-loader", () => {
         toolCallId: "tool_weather",
         toolName: "weather",
         input: '{"city":"Tokyo"}',
+      },
+      {
+        type: "finish",
+        finishReason: { unified: "stop", raw: "STOP" },
+        usage: {
+          inputTokens: 8,
+          outputTokens: 2,
+          totalTokens: 10,
+        },
+      },
+    ]);
+  });
+
+  it("parses Google thought parts into reasoning events", async () => {
+    const encoder = new TextEncoder();
+
+    const runtime = createGoogleModelRuntime({
+      apiKey: "test-google-key",
+      baseURL: "https://example.google.test/v1beta",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            ReadableStream.from([
+              encoder.encode(
+                'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Let me think.","thought":true}]}}]}\n\n',
+              ),
+              encoder.encode(
+                'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Done."}]}}]}\n\n',
+              ),
+              encoder.encode(
+                'data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":2,"totalTokenCount":10}}\n\n',
+              ),
+              encoder.encode("data: [DONE]\n\n"),
+            ]),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        ),
+    }, "gemini-2.0-flash");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Think before answering" }],
+      }],
+    });
+
+    const parts = await collectAsync(result.stream);
+    assertEquals(parts, [
+      {
+        type: "reasoning-start",
+        id: "reasoning-0",
+      },
+      {
+        type: "reasoning-delta",
+        id: "reasoning-0",
+        delta: "Let me think.",
+      },
+      {
+        type: "reasoning-end",
+        id: "reasoning-0",
+      },
+      {
+        type: "text-delta",
+        delta: "Done.",
       },
       {
         type: "finish",
