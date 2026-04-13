@@ -166,6 +166,33 @@ describe("chat/ag-ui", () => {
     assertEquals(result.events[0]?.chatEvents, [{ type: "abort" }]);
   });
 
+  it("keeps fallback reasoning ids stable across start, delta, and end", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        'data: {"role":"assistant"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"delta":"Thinking"}',
+        "",
+        "event: ReasoningMessageEnd",
+        "data: {}",
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = result.events.flatMap((entry) => entry.chatEvents);
+    assertEquals(chatEvents, [
+      { type: "reasoning-start", id: "agui-reasoning:1" },
+      { type: "reasoning-delta", id: "agui-reasoning:1", delta: "Thinking" },
+      { type: "reasoning-end", id: "agui-reasoning:1" },
+    ]);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
   it("preserves non-renderable custom events as data chunks", () => {
     const state = createAgUiChatEventDecoderState();
     const result = decodeAgUiSseChunk(

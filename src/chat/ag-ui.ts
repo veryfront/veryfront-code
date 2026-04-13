@@ -41,6 +41,7 @@ export type AgUiChatEventDecoderState = {
   lastEventId: number;
   toolCalls: Map<string, ToolCallState>;
   reasoningFallbackIndex: number;
+  activeFallbackReasoningPartId: string | null;
 };
 
 export const AgUiRunFinishedMetadataSchema = z.object({
@@ -407,6 +408,7 @@ function mapFinishReason(reason: string | undefined): ChatFinishReason | undefin
 function getReasoningPartId(
   state: AgUiChatEventDecoderState,
   payload: { id?: string; messageId?: string },
+  phase: "start" | "content" | "end",
 ): string {
   if (typeof payload.id === "string" && payload.id.length > 0) {
     return payload.id;
@@ -416,8 +418,20 @@ function getReasoningPartId(
     return `agui-reasoning:${payload.messageId}`;
   }
 
+  if (state.activeFallbackReasoningPartId) {
+    const fallbackId = state.activeFallbackReasoningPartId;
+    if (phase === "end") {
+      state.activeFallbackReasoningPartId = null;
+    }
+    return fallbackId;
+  }
+
   state.reasoningFallbackIndex += 1;
-  return `agui-reasoning:${state.reasoningFallbackIndex}`;
+  const fallbackId = `agui-reasoning:${state.reasoningFallbackIndex}`;
+  if (phase !== "end") {
+    state.activeFallbackReasoningPartId = fallbackId;
+  }
+  return fallbackId;
 }
 
 function splitSseFrames(value: string): { frames: string[]; remainder: string } {
@@ -496,20 +510,20 @@ function mapWireEventToChatEvents(
     case "ReasoningMessageStart":
       return [{
         type: "reasoning-start",
-        id: getReasoningPartId(state, wireEvent.payload),
+        id: getReasoningPartId(state, wireEvent.payload, "start"),
       }];
 
     case "ReasoningMessageContent":
       return [{
         type: "reasoning-delta",
-        id: getReasoningPartId(state, wireEvent.payload),
+        id: getReasoningPartId(state, wireEvent.payload, "content"),
         delta: wireEvent.payload.delta,
       }];
 
     case "ReasoningMessageEnd":
       return [{
         type: "reasoning-end",
-        id: getReasoningPartId(state, wireEvent.payload),
+        id: getReasoningPartId(state, wireEvent.payload, "end"),
       }];
 
     case "ToolCallStart":
@@ -679,6 +693,7 @@ export function createAgUiChatEventDecoderState(
     lastEventId: input.lastEventId ?? -1,
     toolCalls: new Map<string, ToolCallState>(),
     reasoningFallbackIndex: 0,
+    activeFallbackReasoningPartId: null,
   };
 }
 
