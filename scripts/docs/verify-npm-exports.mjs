@@ -13,18 +13,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BROWSER_SAFE_EXPORTS } from "../build/browser-safe-exports.mjs";
-
-const BROWSER_SAFE_CLIENT_MODULES = [
-  "src/agent/react/use-voice-input.js",
-  "src/react/components/chat/chat/components/code-block.js",
-  "src/react/components/chat/chat/components/inline-citation.js",
-  "src/react/components/chat/chat/components/message-actions.js",
-  "src/react/components/chat/chat/components/reasoning.js",
-  "src/react/components/chat/chat/hooks/use-threads.js",
-  "src/security/client/html-sanitizer.js",
-  "src/platform/compat/runtime.js",
-];
+import { BROWSER_SAFE_CLIENT_MODULES, BROWSER_SAFE_EXPORTS } from "../build/browser-safe-exports.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "../..");

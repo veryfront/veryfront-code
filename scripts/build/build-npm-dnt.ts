@@ -12,18 +12,7 @@
  */
 
 import { build, emptyDir } from "jsr:@deno/dnt";
-import { BROWSER_SAFE_EXPORTS } from "./browser-safe-exports.mjs";
-
-const BROWSER_SAFE_CLIENT_MODULES = [
-	"./npm/esm/src/agent/react/use-voice-input.js",
-	"./npm/esm/src/react/components/chat/chat/components/code-block.js",
-	"./npm/esm/src/react/components/chat/chat/components/inline-citation.js",
-	"./npm/esm/src/react/components/chat/chat/components/message-actions.js",
-	"./npm/esm/src/react/components/chat/chat/components/reasoning.js",
-	"./npm/esm/src/react/components/chat/chat/hooks/use-threads.js",
-	"./npm/esm/src/security/client/html-sanitizer.js",
-	"./npm/esm/src/platform/compat/runtime.js",
-];
+import { BROWSER_SAFE_CLIENT_MODULES, BROWSER_SAFE_EXPORTS } from "./browser-safe-exports.mjs";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
@@ -230,8 +219,8 @@ await build({
 
 		for (const path of BROWSER_SAFE_CLIENT_MODULES) {
 			normalizeBrowserTimerShim(
-				path,
-				`${path.replace("./npm/esm/", "")} browser-safe dnt shim removal`,
+				`./npm/esm/${path}`,
+				`${path} browser-safe dnt shim removal`,
 			);
 		}
 
