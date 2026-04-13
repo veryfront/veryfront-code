@@ -151,7 +151,7 @@ try {
   assert(chat.useAgent !== undefined, "useAgent exists");
   assert(chat.AgentCard !== undefined, "AgentCard exists");
   assert(chat.Message !== undefined, "Message exists");
-  assert(chat.AIErrorBoundary !== undefined, "AIErrorBoundary exists");
+  assert(chat.ChatErrorBoundary !== undefined, "ChatErrorBoundary exists");
   console.log("  OK    chat — 6 checks");
 } catch (err) {
   failed++;

@@ -13,6 +13,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { BROWSER_SAFE_CLIENT_MODULES, BROWSER_SAFE_EXPORTS } from "../build/browser-safe-exports.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "../..");
@@ -40,7 +41,7 @@ const REQUIRED_EXPORTS = {
   "./router": ["Link", "useRouter", "RouterProvider"],
   "./context": ["usePageContext", "PageContextProvider"],
   "./fonts": ["GoogleFonts"],
-  "./chat": ["Chat", "useChat", "useAgent", "AgentCard", "Message", "AIErrorBoundary"],
+  "./chat": ["Chat", "useChat", "useAgent", "AgentCard", "Message", "ChatErrorBoundary"],
   "./markdown": ["Markdown"],
   "./mdx": ["MDXProvider", "useMDXComponents"],
   "./agent": [
@@ -72,8 +73,6 @@ const REQUIRED_EXPORTS = {
   ],
   "./fs": ["readTextFile", "writeTextFile", "join", "resolve", "exists", "mkdir"],
 };
-
-const BROWSER_SAFE_EXPORTS = ["./chat/ag-ui", "./chat/protocol"];
 
 let passed = 0;
 let failed = 0;
@@ -163,8 +162,35 @@ for (const exportPath of BROWSER_SAFE_EXPORTS) {
   console.log(`  OK    ${label} (browser-safe entry)`);
 }
 
+for (const relativePath of BROWSER_SAFE_CLIENT_MODULES) {
+  const builtFile = resolve(NPM_DIR, "esm", relativePath);
+  const label = `veryfront/${relativePath}`;
+
+  if (!existsSync(builtFile)) {
+    failed++;
+    errors.push(`  ${label}: missing built file ${builtFile}`);
+    console.log(`  FAIL  ${label} — missing built file`);
+    continue;
+  }
+
+  const content = readFileSync(builtFile, "utf8");
+  if (content.includes("_dnt.shims.js")) {
+    failed++;
+    errors.push(`  ${label}: should not import _dnt.shims.js`);
+    console.log(`  FAIL  ${label} — still imports _dnt.shims.js`);
+    continue;
+  }
+
+  passed++;
+  console.log(`  OK    ${label} (browser-safe module)`);
+}
+
 console.log();
-console.log(`${passed} passed, ${failed} failed out of ${moduleExports.length + 1 + BROWSER_SAFE_EXPORTS.length} export paths`);
+console.log(
+  `${passed} passed, ${failed} failed out of ${
+    moduleExports.length + 1 + BROWSER_SAFE_EXPORTS.length + BROWSER_SAFE_CLIENT_MODULES.length
+  } export paths`,
+);
 
 if (errors.length > 0) {
   console.log("\nErrors:");
