@@ -570,6 +570,112 @@ describe("provider/runtime-loader", () => {
     });
   });
 
+  it("merges tool-result replay with consecutive user retries into one Anthropic user message", async () => {
+    let requestedInit: RequestInit | undefined;
+
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: (_input, init) => {
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{ type: "text", text: "done" }],
+              stop_reason: "end_turn",
+              usage: {
+                input_tokens: 6,
+                output_tokens: 1,
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-20250514");
+
+    await runtime.doGenerate({
+      prompt: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "toolu_1",
+              toolName: "get_project",
+              input: { project_reference: "project-1" },
+            },
+            {
+              type: "text",
+              text: "The project slug is `my-project`.",
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "toolu_1",
+            toolName: "get_project",
+            output: {
+              type: "json",
+              value: { slug: "my-project" },
+            },
+          }],
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "What is the project slug now?" }],
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "Reply with only the project slug." }],
+        },
+      ],
+      maxOutputTokens: 32,
+    });
+
+    const requestBody = typeof requestedInit?.body === "string"
+      ? JSON.parse(requestedInit.body)
+      : undefined;
+
+    assertEquals(requestBody?.messages, [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_1",
+            name: "get_project",
+            input: { project_reference: "project-1" },
+          },
+          {
+            type: "text",
+            text: "The project slug is `my-project`.",
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_1",
+            content: '{"slug":"my-project"}',
+          },
+          {
+            type: "text",
+            text: "What is the project slug now?",
+          },
+          {
+            type: "text",
+            text: "Reply with only the project slug.",
+          },
+        ],
+      },
+    ]);
+  });
+
   it("creates an Anthropic-compatible language runtime without SDK helpers for stream", async () => {
     let requestedUrl = "";
     let requestedInit: RequestInit | undefined;

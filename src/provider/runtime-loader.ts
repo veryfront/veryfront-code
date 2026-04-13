@@ -538,6 +538,26 @@ function toSnakeCaseRecord(record: Record<string, unknown>): Record<string, unkn
   );
 }
 
+function pushAnthropicUserContent(
+  messages: AnthropicCompatibleMessage[],
+  content: Array<Record<string, unknown>>,
+): void {
+  if (content.length === 0) {
+    return;
+  }
+
+  const lastMessage = messages.at(-1);
+  if (lastMessage?.role === "user") {
+    lastMessage.content.push(...content);
+    return;
+  }
+
+  messages.push({
+    role: "user",
+    content,
+  });
+}
+
 function toAnthropicMessages(
   prompt: RuntimePromptMessage[],
 ): { system?: string; messages: AnthropicCompatibleMessage[] } {
@@ -552,10 +572,10 @@ function toAnthropicMessages(
         }
         break;
       case "user":
-        messages.push({
-          role: "user",
-          content: [{ type: "text", text: readTextParts(message.content) }],
-        });
+        pushAnthropicUserContent(messages, [{
+          type: "text",
+          text: readTextParts(message.content),
+        }]);
         break;
       case "assistant":
         messages.push({
@@ -571,14 +591,14 @@ function toAnthropicMessages(
         });
         break;
       case "tool":
-        messages.push({
-          role: "user",
-          content: message.content.map((part) => ({
+        pushAnthropicUserContent(
+          messages,
+          message.content.map((part) => ({
             type: "tool_result",
             tool_use_id: part.toolCallId,
             content: stringifyJsonValue(part.output.value),
           })),
-        });
+        );
         break;
     }
   }
