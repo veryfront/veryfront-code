@@ -4,8 +4,6 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 const BROWSER_SAFE_ENTRY_OUTPUTS = [
   "./npm/esm/src/chat/index.js",
   "./npm/esm/src/chat/index.d.ts",
-  "./npm/esm/src/react/components/chat/chat.js",
-  "./npm/esm/src/react/components/chat/chat.d.ts",
   "./npm/esm/src/chat/ag-ui.js",
   "./npm/esm/src/chat/ag-ui.d.ts",
   "./npm/esm/src/chat/protocol.js",
@@ -20,6 +18,7 @@ const SHIM_FREE_BROWSER_MODULES = [
   "./npm/esm/src/react/components/chat/chat/components/message-actions.js",
   "./npm/esm/src/react/components/chat/chat/components/inline-citation.js",
   "./npm/esm/src/react/components/chat/markdown.js",
+  "./npm/esm/src/react/components/chat/model-selector.js",
   "./npm/esm/src/security/client/html-sanitizer.js",
 ] as const;
 

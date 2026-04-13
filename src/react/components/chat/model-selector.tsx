@@ -39,6 +39,14 @@ export interface ModelSelectorProps {
   disabled?: boolean;
 }
 
+function getViewportPosition(trigger: DOMRect): { bottom: number; right: number } | null {
+  if (typeof self === "undefined") return null;
+  return {
+    bottom: self.innerHeight - trigger.top + 6,
+    right: self.innerWidth - trigger.right,
+  };
+}
+
 function groupByProvider(models: ModelOption[]): Map<string, ModelOption[]> {
   const groups = new Map<string, ModelOption[]>();
   for (const model of models) {
@@ -72,11 +80,9 @@ export function ModelSelector({
   // Measure trigger and position dropdown above it, right-aligned
   React.useEffect(() => {
     if (!open || !triggerRef.current) return;
-    const r = triggerRef.current.getBoundingClientRect();
-    setPos({
-      bottom: globalThis.innerHeight - r.top + 6,
-      right: globalThis.innerWidth - r.right,
-    });
+    const nextPos = getViewportPosition(triggerRef.current.getBoundingClientRect());
+    if (!nextPos) return;
+    setPos(nextPos);
     // Focus the selected item when opening
     const selectedIdx = models.findIndex((m) => m.value === (value ?? selected?.value));
     setFocusedIndex(selectedIdx >= 0 ? selectedIdx : 0);

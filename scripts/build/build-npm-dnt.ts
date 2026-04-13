@@ -23,7 +23,7 @@ if (!license) {
 	throw new Error("deno.json must have a 'license' field");
 }
 
-const BROWSER_SAFE_EXPORTS = ["./chat", "./chat/ui", "./chat/ag-ui", "./chat/protocol"] as const;
+const BROWSER_SAFE_EXPORTS = ["./chat", "./chat/ag-ui", "./chat/protocol"] as const;
 
 console.log(`\n📦 Building Veryfront v${version} for npm using dnt...\n`);
 
