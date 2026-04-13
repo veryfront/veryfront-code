@@ -45,7 +45,7 @@
  */
 
 import * as React from "react";
-import { useVoiceInput } from "#veryfront/agent/react";
+import { useVoiceInput } from "#veryfront/agent/react/use-voice-input.ts";
 import type {
   BranchInfo,
   BrowserInferenceStatus,
@@ -53,7 +53,7 @@ import type {
   ChatMessage,
   ChatToolPart,
   InferenceMode,
-} from "#veryfront/agent/react";
+} from "#veryfront/agent/react/use-chat/index.ts";
 import { type ChatTheme, defaultChatTheme, mergeThemes } from "../theme.ts";
 import type { ModelOption } from "../model-selector.tsx";
 import type { Source } from "./components/sources.tsx";

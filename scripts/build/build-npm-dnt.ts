@@ -204,16 +204,94 @@ await build({
 			"./npm/esm/src/chat/ag-ui.d.ts",
 			"./npm/esm/src/chat/index.js",
 			"./npm/esm/src/chat/index.d.ts",
+			"./npm/esm/src/react/components/chat/chat.js",
+			"./npm/esm/src/react/components/chat/chat.d.ts",
 			"./npm/esm/src/chat/protocol.js",
 			"./npm/esm/src/chat/protocol.d.ts",
 		]) {
 			patchFile(
 				path,
-				'import "../../_dnt.polyfills.js";\n',
+				/import "(?:\.\.\/)+_dnt\.polyfills\.js";\n/,
 				"",
 				"browser-safe chat module polyfill removal",
 			);
 		}
+
+		// Client chat modules only use browser globals/timers. dnt rewrites those
+		// references through `_dnt.shims.js`, which eagerly imports
+		// `@deno/shim-deno` and breaks browser bundlers in dev. Restore the native
+		// browser references in the built output for these browser-only modules.
+		patchFile(
+			"./npm/esm/src/agent/react/use-voice-input.js",
+			'import * as dntShim from "../../../_dnt.shims.js";\n',
+			"",
+			"browser-safe voice input shim removal",
+		);
+		patchFile(
+			"./npm/esm/src/agent/react/use-voice-input.js",
+			/dntShim\.dntGlobalThis/g,
+			"globalThis",
+			"browser-safe voice input global replacement",
+		);
+
+		for (const path of [
+			"./npm/esm/src/react/components/chat/chat/hooks/use-threads.js",
+			"./npm/esm/src/react/components/chat/chat/components/reasoning.js",
+			"./npm/esm/src/react/components/chat/chat/components/code-block.js",
+			"./npm/esm/src/react/components/chat/chat/components/message-actions.js",
+			"./npm/esm/src/react/components/chat/chat/components/inline-citation.js",
+		]) {
+			patchFile(
+				path,
+				'import * as dntShim from "../../../../../../_dnt.shims.js";\n',
+				"",
+				"browser-safe chat shim removal",
+			);
+			patchFile(
+				path,
+				/dntShim\.setTimeout/g,
+				"setTimeout",
+				"browser-safe chat timer replacement",
+			);
+		}
+
+		patchFile(
+			"./npm/esm/src/platform/compat/runtime.js",
+			'import * as dntShim from "../../../_dnt.shims.js";\n',
+			"",
+			"browser-safe runtime shim removal",
+		);
+		patchFile(
+			"./npm/esm/src/platform/compat/runtime.js",
+			/dntShim\.dntGlobalThis/g,
+			"globalThis",
+			"browser-safe runtime global replacement",
+		);
+		patchFile(
+			"./npm/esm/src/platform/compat/runtime.js",
+			/typeof dntShim\.Deno/g,
+			"typeof Deno",
+			"browser-safe runtime Deno type check replacement",
+		);
+		patchFile(
+			"./npm/esm/src/platform/compat/runtime.js",
+			/dntShim\.Deno/g,
+			"Deno",
+			"browser-safe runtime Deno replacement",
+		);
+
+		patchFile(
+			"./npm/esm/src/security/client/html-sanitizer.js",
+			'import * as dntShim from "../../../_dnt.shims.js";\n',
+			"",
+			"browser-safe html sanitizer shim removal",
+		);
+		patchFile(
+			"./npm/esm/src/security/client/html-sanitizer.js",
+			/dntShim\.dntGlobalThis/g,
+			"globalThis",
+			"browser-safe html sanitizer global replacement",
+		);
 
 		// Note: Templates are now embedded in manifest.json which is bundled by dnt
 		// No need to copy template files separately
