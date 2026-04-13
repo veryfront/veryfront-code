@@ -195,6 +195,24 @@ await build({
 			"dnt polyfill process.argv[1] fix",
 		);
 
+		// Keep browser-safe chat helpers free of dnt Node polyfill imports.
+		// These modules are consumed directly in client bundles and do not rely on
+		// any Node-only globals, so retaining the injected side-effect import only
+		// bloats the graph and breaks browser builds.
+		for (const path of [
+			"./npm/esm/src/chat/ag-ui.js",
+			"./npm/esm/src/chat/ag-ui.d.ts",
+			"./npm/esm/src/chat/protocol.js",
+			"./npm/esm/src/chat/protocol.d.ts",
+		]) {
+			patchFile(
+				path,
+				'import "../../_dnt.polyfills.js";\n',
+				"",
+				"browser-safe chat module polyfill removal",
+			);
+		}
+
 		// Note: Templates are now embedded in manifest.json which is bundled by dnt
 		// No need to copy template files separately
 

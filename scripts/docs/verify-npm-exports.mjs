@@ -73,6 +73,8 @@ const REQUIRED_EXPORTS = {
   "./fs": ["readTextFile", "writeTextFile", "join", "resolve", "exists", "mkdir"],
 };
 
+const BROWSER_SAFE_EXPORTS = ["./chat/ag-ui", "./chat/protocol"];
+
 let passed = 0;
 let failed = 0;
 const errors = [];
@@ -130,8 +132,39 @@ if (!cliEntry) {
   }
 }
 
+for (const exportPath of BROWSER_SAFE_EXPORTS) {
+  const target = exports[exportPath];
+  const label = `veryfront/${exportPath.replace("./", "")}`;
+
+  if (!target) {
+    failed++;
+    errors.push(`  ${label}: missing deno.json export entry`);
+    console.log(`  FAIL  ${label} — missing deno.json export entry`);
+    continue;
+  }
+
+  const builtFile = resolve(NPM_DIR, "esm", target.replace(/\.tsx?$/, ".js"));
+  if (!existsSync(builtFile)) {
+    failed++;
+    errors.push(`  ${label}: missing built file ${builtFile}`);
+    console.log(`  FAIL  ${label} — missing built file`);
+    continue;
+  }
+
+  const content = readFileSync(builtFile, "utf8");
+  if (content.includes('_dnt.polyfills.js')) {
+    failed++;
+    errors.push(`  ${label}: should not import _dnt.polyfills.js`);
+    console.log(`  FAIL  ${label} — still imports _dnt.polyfills.js`);
+    continue;
+  }
+
+  passed++;
+  console.log(`  OK    ${label} (browser-safe entry)`);
+}
+
 console.log();
-console.log(`${passed} passed, ${failed} failed out of ${moduleExports.length + 1} export paths`);
+console.log(`${passed} passed, ${failed} failed out of ${moduleExports.length + 1 + BROWSER_SAFE_EXPORTS.length} export paths`);
 
 if (errors.length > 0) {
   console.log("\nErrors:");
