@@ -156,6 +156,9 @@ type AnthropicStreamToolCallState = {
   input: string;
   providerExecuted?: boolean;
 };
+type AnthropicStreamReasoningState = {
+  id: string;
+};
 type GoogleCompatibleContent = {
   role: "user" | "model";
   parts: Array<Record<string, unknown>>;
@@ -780,6 +783,7 @@ async function* streamAnthropicCompatibleParts(
   const decoder = new TextDecoder();
   let buffer = "";
   const toolCalls = new Map<number, AnthropicStreamToolCallState>();
+  const reasoningBlocks = new Map<number, AnthropicStreamReasoningState>();
   let finishReason: string | { unified: string; raw: string } | null = null;
   let usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
 
@@ -812,6 +816,24 @@ async function* streamAnthropicCompatibleParts(
           contentBlock.text.length > 0
         ) {
           yield { type: "text-delta", delta: contentBlock.text };
+          continue;
+        }
+
+        if (blockType === "thinking") {
+          const reasoningId = `thinking-${index}`;
+          reasoningBlocks.set(index, { id: reasoningId });
+          yield {
+            type: "reasoning-start",
+            id: reasoningId,
+          };
+
+          if (typeof contentBlock?.thinking === "string" && contentBlock.thinking.length > 0) {
+            yield {
+              type: "reasoning-delta",
+              id: reasoningId,
+              delta: contentBlock.thinking,
+            };
+          }
           continue;
         }
 
@@ -892,6 +914,23 @@ async function* streamAnthropicCompatibleParts(
           continue;
         }
 
+        if (
+          deltaType === "thinking_delta" && typeof delta?.thinking === "string" &&
+          delta.thinking.length > 0
+        ) {
+          const current = reasoningBlocks.get(index);
+          if (!current) {
+            continue;
+          }
+
+          yield {
+            type: "reasoning-delta",
+            id: current.id,
+            delta: delta.thinking,
+          };
+          continue;
+        }
+
         if (deltaType === "input_json_delta" && typeof delta?.partial_json === "string") {
           const current = toolCalls.get(index);
           if (!current) {
@@ -911,6 +950,16 @@ async function* streamAnthropicCompatibleParts(
 
       if (eventType === "content_block_stop") {
         const index = typeof record?.index === "number" ? record.index : 0;
+        const reasoning = reasoningBlocks.get(index);
+        if (reasoning) {
+          yield {
+            type: "reasoning-end",
+            id: reasoning.id,
+          };
+          reasoningBlocks.delete(index);
+          continue;
+        }
+
         const current = toolCalls.get(index);
         if (!current) {
           continue;
@@ -1334,6 +1383,8 @@ async function* streamGoogleCompatibleParts(
   const decoder = new TextDecoder();
   let buffer = "";
   const seenToolCalls = new Set<string>();
+  let reasoningId: string | null = null;
+  let reasoningIndex = 0;
   let finishReason: string | { unified: string; raw: string } | null = null;
   let usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
 
@@ -1355,6 +1406,32 @@ async function* streamGoogleCompatibleParts(
       }
 
       for (const [index, part] of extractGoogleCandidateParts(event).entries()) {
+        const isThought = part.thought === true;
+        if (isThought && typeof part.text === "string" && part.text.length > 0) {
+          if (!reasoningId) {
+            reasoningId = `reasoning-${reasoningIndex++}`;
+            yield {
+              type: "reasoning-start",
+              id: reasoningId,
+            };
+          }
+
+          yield {
+            type: "reasoning-delta",
+            id: reasoningId,
+            delta: part.text,
+          };
+          continue;
+        }
+
+        if (reasoningId) {
+          yield {
+            type: "reasoning-end",
+            id: reasoningId,
+          };
+          reasoningId = null;
+        }
+
         if (typeof part.text === "string" && part.text.length > 0) {
           yield { type: "text-delta", delta: part.text };
           continue;
@@ -1400,6 +1477,13 @@ async function* streamGoogleCompatibleParts(
       }
       usage = extractGoogleUsage(event) ?? usage;
     }
+  }
+
+  if (reasoningId) {
+    yield {
+      type: "reasoning-end",
+      id: reasoningId,
+    };
   }
 
   yield {
@@ -1462,6 +1546,8 @@ async function* streamOpenAICompatibleParts(
   const decoder = new TextDecoder();
   let buffer = "";
   const toolCalls = new Map<number, OpenAIStreamToolCallState>();
+  let reasoningId: string | null = null;
+  let reasoningIndex = 0;
   let finishReason: string | { unified: string; raw: string } | null = null;
   let usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
 
@@ -1477,65 +1563,92 @@ async function* streamOpenAICompatibleParts(
 
       const record = readRecord(event);
       usage = extractOpenAIUsage(record) ?? usage;
-      const choices = Array.isArray(record?.choices) ? record.choices : [];
+      const choice = extractFirstChoice(record);
+      if (!choice) {
+        continue;
+      }
 
-      for (const choiceValue of choices) {
-        const choice = readRecord(choiceValue);
-        if (!choice) {
-          continue;
-        }
-
-        const delta = readRecord(choice.delta);
-        const textDelta = extractOpenAIContentText(delta?.content);
-        if (textDelta.length > 0) {
-          yield { type: "text-delta", delta: textDelta };
-        }
-
-        const rawToolCalls = Array.isArray(delta?.tool_calls) ? delta.tool_calls : [];
-        for (const rawToolCall of rawToolCalls) {
-          const toolCallRecord = readRecord(rawToolCall);
-          const index = typeof toolCallRecord?.index === "number" ? toolCallRecord.index : 0;
-          const current = toolCalls.get(index) ?? {
-            id: typeof toolCallRecord?.id === "string" ? toolCallRecord.id : `tool-${index}`,
-            name: "",
-            arguments: "",
-            started: false,
+      const delta = readRecord(choice.delta);
+      if (typeof delta?.reasoning_content === "string" && delta.reasoning_content.length > 0) {
+        if (!reasoningId) {
+          reasoningId = `reasoning-${reasoningIndex++}`;
+          yield {
+            type: "reasoning-start",
+            id: reasoningId,
           };
-
-          if (typeof toolCallRecord?.id === "string") {
-            current.id = toolCallRecord.id;
-          }
-
-          const fn = readRecord(toolCallRecord?.function);
-          if (typeof fn?.name === "string") {
-            current.name = fn.name;
-          }
-
-          if (!current.started && current.name.length > 0) {
-            current.started = true;
-            yield {
-              type: "tool-input-start",
-              id: current.id,
-              toolName: current.name,
-            };
-          }
-
-          if (typeof fn?.arguments === "string" && fn.arguments.length > 0) {
-            current.arguments += fn.arguments;
-            yield {
-              type: "tool-input-delta",
-              id: current.id,
-              delta: fn.arguments,
-            };
-          }
-
-          toolCalls.set(index, current);
         }
 
-        const normalizedFinishReason = normalizeOpenAIFinishReason(choice.finish_reason);
-        if (normalizedFinishReason) {
-          finishReason = normalizedFinishReason;
+        yield {
+          type: "reasoning-delta",
+          id: reasoningId,
+          delta: delta.reasoning_content,
+        };
+      }
+
+      const textDelta = extractOpenAIContentText(delta?.content);
+      if (textDelta.length > 0) {
+        if (reasoningId) {
+          yield {
+            type: "reasoning-end",
+            id: reasoningId,
+          };
+          reasoningId = null;
         }
+        yield { type: "text-delta", delta: textDelta };
+      }
+
+      const rawToolCalls = Array.isArray(delta?.tool_calls) ? delta.tool_calls : [];
+      for (const rawToolCall of rawToolCalls) {
+        if (reasoningId) {
+          yield {
+            type: "reasoning-end",
+            id: reasoningId,
+          };
+          reasoningId = null;
+        }
+
+        const toolCallRecord = readRecord(rawToolCall);
+        const index = typeof toolCallRecord?.index === "number" ? toolCallRecord.index : 0;
+        const current = toolCalls.get(index) ?? {
+          id: typeof toolCallRecord?.id === "string" ? toolCallRecord.id : `tool-${index}`,
+          name: "",
+          arguments: "",
+          started: false,
+        };
+
+        if (typeof toolCallRecord?.id === "string") {
+          current.id = toolCallRecord.id;
+        }
+
+        const fn = readRecord(toolCallRecord?.function);
+        if (typeof fn?.name === "string") {
+          current.name = fn.name;
+        }
+
+        if (!current.started && current.name.length > 0) {
+          current.started = true;
+          yield {
+            type: "tool-input-start",
+            id: current.id,
+            toolName: current.name,
+          };
+        }
+
+        if (typeof fn?.arguments === "string" && fn.arguments.length > 0) {
+          current.arguments += fn.arguments;
+          yield {
+            type: "tool-input-delta",
+            id: current.id,
+            delta: fn.arguments,
+          };
+        }
+
+        toolCalls.set(index, current);
+      }
+
+      const normalizedFinishReason = normalizeOpenAIFinishReason(choice.finish_reason);
+      if (normalizedFinishReason) {
+        finishReason = normalizedFinishReason;
       }
     }
   }
@@ -1550,6 +1663,13 @@ async function* streamOpenAICompatibleParts(
       const record = readRecord(event);
       usage = extractOpenAIUsage(record) ?? usage;
     }
+  }
+
+  if (reasoningId) {
+    yield {
+      type: "reasoning-end",
+      id: reasoningId,
+    };
   }
 
   if (
