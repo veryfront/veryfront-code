@@ -202,6 +202,8 @@ await build({
 		for (const path of [
 			"./npm/esm/src/chat/ag-ui.js",
 			"./npm/esm/src/chat/ag-ui.d.ts",
+			"./npm/esm/src/chat/index.js",
+			"./npm/esm/src/chat/index.d.ts",
 			"./npm/esm/src/chat/protocol.js",
 			"./npm/esm/src/chat/protocol.d.ts",
 		]) {
