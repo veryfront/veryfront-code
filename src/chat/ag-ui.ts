@@ -36,12 +36,16 @@ export type AgUiDecodedChunk = {
   remainder: string;
 };
 
+export type AgUiDecoderValidationMode = "permissive" | "strict";
+
 export type AgUiChatEventDecoderState = {
   remainder: string;
   lastEventId: number;
   toolCalls: Map<string, ToolCallState>;
   reasoningFallbackIndex: number;
   activeFallbackReasoningPartId: string | null;
+  validationMode: AgUiDecoderValidationMode;
+  onInvalidJson: ((details: { eventName: string | null; dataLength: number }) => void) | null;
 };
 
 export const AgUiRunFinishedMetadataSchema = z.object({
@@ -448,7 +452,13 @@ function isCommentOnlySseFrame(raw: string): boolean {
     .every((line) => line.trim().length === 0 || line.trimStart().startsWith(":"));
 }
 
-function parseAgUiWireEvent(frame: ParsedSseEvent): AgUiWireEvent | null {
+function parseAgUiWireEvent(
+  frame: ParsedSseEvent,
+  input: {
+    validationMode: AgUiDecoderValidationMode;
+    onInvalidJson: ((details: { eventName: string | null; dataLength: number }) => void) | null;
+  },
+): AgUiWireEvent | null {
   if (frame.data === "[DONE]" || !frame.event || !frame.data) {
     return null;
   }
@@ -462,6 +472,10 @@ function parseAgUiWireEvent(frame: ParsedSseEvent): AgUiWireEvent | null {
   try {
     payload = JSON.parse(frame.data);
   } catch {
+    input.onInvalidJson?.({
+      eventName: frame.event,
+      dataLength: frame.data.length,
+    });
     return null;
   }
 
@@ -473,6 +487,10 @@ function parseAgUiWireEvent(frame: ParsedSseEvent): AgUiWireEvent | null {
     eventName: eventName.data,
     payload,
   });
+
+  if (!parsed.success && input.validationMode === "strict") {
+    throw new Error(`Malformed AG-UI event payload for ${eventName.data}`);
+  }
 
   return parsed.success ? parsed.data : null;
 }
@@ -686,6 +704,8 @@ export function parseSseEvent(raw: string): ParsedSseEvent {
 export function createAgUiChatEventDecoderState(
   input: {
     lastEventId?: number;
+    validationMode?: AgUiDecoderValidationMode;
+    onInvalidJson?: (details: { eventName: string | null; dataLength: number }) => void;
   } = {},
 ): AgUiChatEventDecoderState {
   return {
@@ -694,6 +714,8 @@ export function createAgUiChatEventDecoderState(
     toolCalls: new Map<string, ToolCallState>(),
     reasoningFallbackIndex: 0,
     activeFallbackReasoningPartId: null,
+    validationMode: input.validationMode ?? "permissive",
+    onInvalidJson: input.onInvalidJson ?? null,
   };
 }
 
@@ -720,7 +742,10 @@ export function decodeAgUiSseChunk(
       state.lastEventId = frame.id;
     }
 
-    const wireEvent = parseAgUiWireEvent(frame);
+    const wireEvent = parseAgUiWireEvent(frame, {
+      validationMode: state.validationMode,
+      onInvalidJson: state.onInvalidJson,
+    });
     if (!wireEvent) {
       continue;
     }

@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createAgUiChatEventDecoderState,
@@ -153,6 +153,59 @@ describe("chat/ag-ui", () => {
 
     assertEquals(result.events, []);
     assertEquals(state.lastEventId, 4);
+  });
+
+  it("reports invalid JSON frames in strict mode without throwing", () => {
+    const invalidFrames: Array<{ eventName: string | null; dataLength: number }> = [];
+    const state = createAgUiChatEventDecoderState({
+      validationMode: "strict",
+      onInvalidJson: (details) => invalidFrames.push(details),
+    });
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "id: 3",
+        "event: ToolCallStart",
+        "data: not-json",
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    assertEquals(result.events, []);
+    assertEquals(state.lastEventId, 3);
+    assertEquals(invalidFrames, [{ eventName: "ToolCallStart", dataLength: 8 }]);
+  });
+
+  it("throws on malformed handled payloads in strict mode", () => {
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+
+    assertThrows(
+      () =>
+        decodeAgUiSseChunk(
+          state,
+          'id: 1\nevent: RunFinished\ndata: {"metadata":"bad"}\n\n',
+        ),
+      Error,
+      "Malformed AG-UI event payload for RunFinished",
+    );
+  });
+
+  it("throws on malformed trailing handled payloads when flushed in strict mode", () => {
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+    const initial = decodeAgUiSseChunk(
+      state,
+      'id: 1\nevent: RunFinished\ndata: {"metadata":"bad"}',
+    );
+
+    assertEquals(initial.events, []);
+    assertEquals(initial.remainder.length > 0, true);
+
+    assertThrows(
+      () => flushAgUiSseChunk(state),
+      Error,
+      "Malformed AG-UI event payload for RunFinished",
+    );
   });
 
   it("maps cancellation errors to abort events", () => {
