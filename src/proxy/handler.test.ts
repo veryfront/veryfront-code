@@ -157,6 +157,42 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("returns 404 when token fetch says custom domain has no project", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          return new Response(
+            JSON.stringify({ error: "Project not found for domain" }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          );
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://custom-domain.com/page", {
+          headers: { host: "custom-domain.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.projectSlug, undefined);
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(
+          ctx.error?.message,
+          "No project configured for domain: custom-domain.com",
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("returns 502 error when no token available for custom domain", async () => {
       const handler = createProxyHandler({
         config: {
