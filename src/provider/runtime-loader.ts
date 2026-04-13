@@ -1563,96 +1563,92 @@ async function* streamOpenAICompatibleParts(
 
       const record = readRecord(event);
       usage = extractOpenAIUsage(record) ?? usage;
-      const choices = Array.isArray(record?.choices) ? record.choices : [];
+      const choice = extractFirstChoice(record);
+      if (!choice) {
+        continue;
+      }
 
-      for (const choiceValue of choices) {
-        const choice = readRecord(choiceValue);
-        if (!choice) {
-          continue;
-        }
-
-        const delta = readRecord(choice.delta);
-        if (typeof delta?.reasoning_content === "string" && delta.reasoning_content.length > 0) {
-          if (!reasoningId) {
-            reasoningId = `reasoning-${reasoningIndex++}`;
-            yield {
-              type: "reasoning-start",
-              id: reasoningId,
-            };
-          }
-
+      const delta = readRecord(choice.delta);
+      if (typeof delta?.reasoning_content === "string" && delta.reasoning_content.length > 0) {
+        if (!reasoningId) {
+          reasoningId = `reasoning-${reasoningIndex++}`;
           yield {
-            type: "reasoning-delta",
+            type: "reasoning-start",
             id: reasoningId,
-            delta: delta.reasoning_content,
           };
         }
 
-        const textDelta = extractOpenAIContentText(delta?.content);
-        if (textDelta.length > 0) {
-          if (reasoningId) {
-            yield {
-              type: "reasoning-end",
-              id: reasoningId,
-            };
-            reasoningId = null;
-          }
-          yield { type: "text-delta", delta: textDelta };
-        }
+        yield {
+          type: "reasoning-delta",
+          id: reasoningId,
+          delta: delta.reasoning_content,
+        };
+      }
 
-        const rawToolCalls = Array.isArray(delta?.tool_calls) ? delta.tool_calls : [];
-        for (const rawToolCall of rawToolCalls) {
-          if (reasoningId) {
-            yield {
-              type: "reasoning-end",
-              id: reasoningId,
-            };
-            reasoningId = null;
-          }
-
-          const toolCallRecord = readRecord(rawToolCall);
-          const index = typeof toolCallRecord?.index === "number" ? toolCallRecord.index : 0;
-          const current = toolCalls.get(index) ?? {
-            id: typeof toolCallRecord?.id === "string" ? toolCallRecord.id : `tool-${index}`,
-            name: "",
-            arguments: "",
-            started: false,
+      const textDelta = extractOpenAIContentText(delta?.content);
+      if (textDelta.length > 0) {
+        if (reasoningId) {
+          yield {
+            type: "reasoning-end",
+            id: reasoningId,
           };
+          reasoningId = null;
+        }
+        yield { type: "text-delta", delta: textDelta };
+      }
 
-          if (typeof toolCallRecord?.id === "string") {
-            current.id = toolCallRecord.id;
-          }
-
-          const fn = readRecord(toolCallRecord?.function);
-          if (typeof fn?.name === "string") {
-            current.name = fn.name;
-          }
-
-          if (!current.started && current.name.length > 0) {
-            current.started = true;
-            yield {
-              type: "tool-input-start",
-              id: current.id,
-              toolName: current.name,
-            };
-          }
-
-          if (typeof fn?.arguments === "string" && fn.arguments.length > 0) {
-            current.arguments += fn.arguments;
-            yield {
-              type: "tool-input-delta",
-              id: current.id,
-              delta: fn.arguments,
-            };
-          }
-
-          toolCalls.set(index, current);
+      const rawToolCalls = Array.isArray(delta?.tool_calls) ? delta.tool_calls : [];
+      for (const rawToolCall of rawToolCalls) {
+        if (reasoningId) {
+          yield {
+            type: "reasoning-end",
+            id: reasoningId,
+          };
+          reasoningId = null;
         }
 
-        const normalizedFinishReason = normalizeOpenAIFinishReason(choice.finish_reason);
-        if (normalizedFinishReason) {
-          finishReason = normalizedFinishReason;
+        const toolCallRecord = readRecord(rawToolCall);
+        const index = typeof toolCallRecord?.index === "number" ? toolCallRecord.index : 0;
+        const current = toolCalls.get(index) ?? {
+          id: typeof toolCallRecord?.id === "string" ? toolCallRecord.id : `tool-${index}`,
+          name: "",
+          arguments: "",
+          started: false,
+        };
+
+        if (typeof toolCallRecord?.id === "string") {
+          current.id = toolCallRecord.id;
         }
+
+        const fn = readRecord(toolCallRecord?.function);
+        if (typeof fn?.name === "string") {
+          current.name = fn.name;
+        }
+
+        if (!current.started && current.name.length > 0) {
+          current.started = true;
+          yield {
+            type: "tool-input-start",
+            id: current.id,
+            toolName: current.name,
+          };
+        }
+
+        if (typeof fn?.arguments === "string" && fn.arguments.length > 0) {
+          current.arguments += fn.arguments;
+          yield {
+            type: "tool-input-delta",
+            id: current.id,
+            delta: fn.arguments,
+          };
+        }
+
+        toolCalls.set(index, current);
+      }
+
+      const normalizedFinishReason = normalizeOpenAIFinishReason(choice.finish_reason);
+      if (normalizedFinishReason) {
+        finishReason = normalizedFinishReason;
       }
     }
   }

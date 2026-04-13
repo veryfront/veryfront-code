@@ -350,6 +350,72 @@ describe("provider/runtime-loader", () => {
     ]);
   });
 
+  it("ignores secondary streamed choices for OpenAI-compatible reasoning deltas", async () => {
+    const encoder = new TextEncoder();
+    const runtime = createOpenAIModelRuntime({
+      apiKey: "test-openai-key",
+      baseURL: "https://example.openai.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            ReadableStream.from([
+              encoder.encode(
+                'data: {"choices":[{"index":0,"delta":{"reasoning_content":"Let me think."}},{"index":1,"delta":{"content":"Ignore me."}}]}\n\n',
+              ),
+              encoder.encode(
+                'data: {"choices":[{"index":0,"delta":{"content":"Done."}},{"index":1,"delta":{"content":"Still ignored."}}]}\n\n',
+              ),
+              encoder.encode(
+                'data: {"choices":[{"index":0,"finish_reason":"stop"},{"index":1,"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}\n\n',
+              ),
+              encoder.encode("data: [DONE]\n\n"),
+            ]),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        ),
+    }, "moonshotai/kimi-k2.5");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Think before answering" }],
+      }],
+    });
+
+    const parts = await collectAsync(result.stream);
+    assertEquals(parts, [
+      {
+        type: "reasoning-start",
+        id: "reasoning-0",
+      },
+      {
+        type: "reasoning-delta",
+        id: "reasoning-0",
+        delta: "Let me think.",
+      },
+      {
+        type: "reasoning-end",
+        id: "reasoning-0",
+      },
+      {
+        type: "text-delta",
+        delta: "Done.",
+      },
+      {
+        type: "finish",
+        finishReason: "stop",
+        usage: {
+          inputTokens: 8,
+          outputTokens: 2,
+          totalTokens: 10,
+        },
+      },
+    ]);
+  });
+
   it("keeps OpenAI providerOptions scoped to the active provider and alias", async () => {
     let requestedInit: RequestInit | undefined;
 
