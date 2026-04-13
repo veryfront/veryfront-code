@@ -12,6 +12,7 @@
  */
 
 import { build, emptyDir } from "jsr:@deno/dnt";
+import { BROWSER_SAFE_EXPORTS } from "./browser-safe-exports.mjs";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
@@ -195,22 +196,25 @@ await build({
 			"dnt polyfill process.argv[1] fix",
 		);
 
-		// Keep browser-safe chat helpers free of dnt Node polyfill imports.
-		// These modules are consumed directly in client bundles and do not rely on
+		// Keep browser-safe client exports free of dnt Node polyfill imports.
+		// These modules are consumed directly in browser bundles and do not rely on
 		// any Node-only globals, so retaining the injected side-effect import only
 		// bloats the graph and breaks browser builds.
-		for (const path of [
-			"./npm/esm/src/chat/ag-ui.js",
-			"./npm/esm/src/chat/ag-ui.d.ts",
-			"./npm/esm/src/chat/protocol.js",
-			"./npm/esm/src/chat/protocol.d.ts",
-		]) {
-			patchFile(
-				path,
-				'import "../../_dnt.polyfills.js";\n',
-				"",
-				"browser-safe chat module polyfill removal",
-			);
+		for (const exportPath of BROWSER_SAFE_EXPORTS) {
+			const sourcePath = (denoJson.exports as Record<string, string>)[exportPath];
+			if (!sourcePath) {
+				throw new Error(`Missing browser-safe export source for ${exportPath}`);
+			}
+
+			const builtJsPath = `./npm/esm/${sourcePath.replace(/\.tsx?$/, ".js").replace(/^\.\//, "")}`;
+			const builtDtsPath = `./npm/esm/${sourcePath.replace(/\.tsx?$/, ".d.ts").replace(/^\.\//, "")}`;
+
+			for (const path of [builtJsPath, builtDtsPath]) {
+				stripPolyfillImportIfPresent(
+					path,
+					`${exportPath} browser-safe polyfill removal`,
+				);
+			}
 		}
 
 		// Note: Templates are now embedded in manifest.json which is bundled by dnt
@@ -267,6 +271,22 @@ function patchFile(
 				`dnt output may have changed — update the patch or remove it if the bug is fixed.`,
 		);
 	}
+	Deno.writeTextFileSync(path, patched);
+	console.log(`📝 Patched ${description} in ${path}`);
+}
+
+function stripPolyfillImportIfPresent(
+	path: string,
+	description: string,
+): void {
+	const content = Deno.readTextFileSync(path);
+	const polyfillImportPattern = /^import ["'](?:\.\.\/)+_dnt\.polyfills\.js["'];\n/m;
+	const patched = content.replace(polyfillImportPattern, "");
+	if (patched === content) {
+		console.log(`ℹ️  ${description} not needed for ${path}`);
+		return;
+	}
+
 	Deno.writeTextFileSync(path, patched);
 	console.log(`📝 Patched ${description} in ${path}`);
 }
