@@ -14,6 +14,17 @@
 import { build, emptyDir } from "jsr:@deno/dnt";
 import { BROWSER_SAFE_EXPORTS } from "./browser-safe-exports.mjs";
 
+const BROWSER_SAFE_CLIENT_MODULES = [
+	"./npm/esm/src/agent/react/use-voice-input.js",
+	"./npm/esm/src/react/components/chat/chat/components/code-block.js",
+	"./npm/esm/src/react/components/chat/chat/components/inline-citation.js",
+	"./npm/esm/src/react/components/chat/chat/components/message-actions.js",
+	"./npm/esm/src/react/components/chat/chat/components/reasoning.js",
+	"./npm/esm/src/react/components/chat/chat/hooks/use-threads.js",
+	"./npm/esm/src/security/client/html-sanitizer.js",
+	"./npm/esm/src/platform/compat/runtime.js",
+];
+
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
 if (!version) {
@@ -217,6 +228,13 @@ await build({
 			}
 		}
 
+		for (const path of BROWSER_SAFE_CLIENT_MODULES) {
+			normalizeBrowserTimerShim(
+				path,
+				`${path.replace("./npm/esm/", "")} browser-safe dnt shim removal`,
+			);
+		}
+
 		// Note: Templates are now embedded in manifest.json which is bundled by dnt
 		// No need to copy template files separately
 
@@ -282,6 +300,29 @@ function stripPolyfillImportIfPresent(
 	const content = Deno.readTextFileSync(path);
 	const polyfillImportPattern = /^import ["'](?:\.\.\/)+_dnt\.polyfills\.js["'];\n/m;
 	const patched = content.replace(polyfillImportPattern, "");
+	if (patched === content) {
+		console.log(`ℹ️  ${description} not needed for ${path}`);
+		return;
+	}
+
+	Deno.writeTextFileSync(path, patched);
+	console.log(`📝 Patched ${description} in ${path}`);
+}
+
+function normalizeBrowserTimerShim(
+	path: string,
+	description: string,
+): void {
+	const content = Deno.readTextFileSync(path);
+	const patched = content
+		.replace(/^import \* as dntShim from ["'](?:\.\.\/)+_dnt\.shims\.js["'];\n/m, "")
+		.replaceAll("dntShim.dntGlobalThis", "globalThis")
+		.replaceAll("dntShim.Deno", "globalThis.Deno")
+		.replaceAll("dntShim.dntGlobalThis.setTimeout", "globalThis.setTimeout")
+		.replaceAll("dntShim.setTimeout", "globalThis.setTimeout")
+		.replaceAll("dntShim.dntGlobalThis.clearTimeout", "globalThis.clearTimeout")
+		.replaceAll("dntShim.clearTimeout", "globalThis.clearTimeout");
+
 	if (patched === content) {
 		console.log(`ℹ️  ${description} not needed for ${path}`);
 		return;

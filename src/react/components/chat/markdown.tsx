@@ -22,7 +22,7 @@ export interface CodeBlockProps {
 }
 
 const ESM_REACT_MARKDOWN =
-  "https://esm.sh/react-markdown@9.0.3?external=react&target=es2022&pin=v135";
+  "https://esm.sh/react-markdown@9.0.3?target=es2022&pin=v135&deps=react@19.2.4";
 const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4.0.1?target=es2022&pin=v135";
 const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7.0.2?target=es2022&pin=v135";
 const ESM_MERMAID = "https://esm.sh/mermaid@11.4.1?pin=v135";
@@ -41,7 +41,7 @@ type MermaidModule = {
 };
 
 async function importFromUrl<T>(url: string): Promise<T> {
-  return await import(url) as T;
+  return await import(/* @vite-ignore */ url) as T;
 }
 
 // deno-lint-ignore no-explicit-any

@@ -15,6 +15,17 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BROWSER_SAFE_EXPORTS } from "../build/browser-safe-exports.mjs";
 
+const BROWSER_SAFE_CLIENT_MODULES = [
+  "src/agent/react/use-voice-input.js",
+  "src/react/components/chat/chat/components/code-block.js",
+  "src/react/components/chat/chat/components/inline-citation.js",
+  "src/react/components/chat/chat/components/message-actions.js",
+  "src/react/components/chat/chat/components/reasoning.js",
+  "src/react/components/chat/chat/hooks/use-threads.js",
+  "src/security/client/html-sanitizer.js",
+  "src/platform/compat/runtime.js",
+];
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "../..");
 const NPM_DIR = resolve(ROOT, "npm");
@@ -162,8 +173,35 @@ for (const exportPath of BROWSER_SAFE_EXPORTS) {
   console.log(`  OK    ${label} (browser-safe entry)`);
 }
 
+for (const relativePath of BROWSER_SAFE_CLIENT_MODULES) {
+  const builtFile = resolve(NPM_DIR, "esm", relativePath);
+  const label = `veryfront/${relativePath}`;
+
+  if (!existsSync(builtFile)) {
+    failed++;
+    errors.push(`  ${label}: missing built file ${builtFile}`);
+    console.log(`  FAIL  ${label} — missing built file`);
+    continue;
+  }
+
+  const content = readFileSync(builtFile, "utf8");
+  if (content.includes("_dnt.shims.js")) {
+    failed++;
+    errors.push(`  ${label}: should not import _dnt.shims.js`);
+    console.log(`  FAIL  ${label} — still imports _dnt.shims.js`);
+    continue;
+  }
+
+  passed++;
+  console.log(`  OK    ${label} (browser-safe module)`);
+}
+
 console.log();
-console.log(`${passed} passed, ${failed} failed out of ${moduleExports.length + 1 + BROWSER_SAFE_EXPORTS.length} export paths`);
+console.log(
+  `${passed} passed, ${failed} failed out of ${
+    moduleExports.length + 1 + BROWSER_SAFE_EXPORTS.length + BROWSER_SAFE_CLIENT_MODULES.length
+  } export paths`,
+);
 
 if (errors.length > 0) {
   console.log("\nErrors:");
