@@ -1065,6 +1065,102 @@ describe("provider/runtime-loader", () => {
     ]);
   });
 
+  it("keeps Anthropic streamed reasoning scoped to its content block index", async () => {
+    const encoder = new TextEncoder();
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            ReadableStream.from([
+              encoder.encode(
+                'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"First thought."}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"thinking","thinking":""}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":"Second thought."}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_start\ndata: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":"Done."}}\n\n',
+              ),
+              encoder.encode(
+                'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":8,"output_tokens":2}}\n\n',
+              ),
+              encoder.encode(
+                'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+              ),
+            ]),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        ),
+    }, "claude-sonnet-4-20250514");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Think twice before answering" }],
+      }],
+    });
+
+    const parts = await collectAsync(result.stream);
+    assertEquals(parts, [
+      {
+        type: "reasoning-start",
+        id: "thinking-0",
+      },
+      {
+        type: "reasoning-delta",
+        id: "thinking-0",
+        delta: "First thought.",
+      },
+      {
+        type: "reasoning-start",
+        id: "thinking-1",
+      },
+      {
+        type: "reasoning-delta",
+        id: "thinking-1",
+        delta: "Second thought.",
+      },
+      {
+        type: "reasoning-end",
+        id: "thinking-0",
+      },
+      {
+        type: "reasoning-end",
+        id: "thinking-1",
+      },
+      {
+        type: "text-delta",
+        delta: "Done.",
+      },
+      {
+        type: "finish",
+        finishReason: { unified: "stop", raw: "end_turn" },
+        usage: {
+          inputTokens: 8,
+          outputTokens: 2,
+          totalTokens: 10,
+        },
+      },
+    ]);
+  });
+
   it("keeps Anthropic providerOptions scoped to the active provider and alias", async () => {
     let requestedInit: RequestInit | undefined;
 
