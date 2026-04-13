@@ -1,6 +1,5 @@
 import * as React from "react";
 import { cn } from "./theme.ts";
-import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { RichCodeBlock } from "./chat/components/code-block.tsx";
 
@@ -39,6 +38,10 @@ type MermaidModule = {
     render(id: string, code: string): Promise<{ svg: string }>;
   };
 };
+
+function isBrowserEnvironment(): boolean {
+  return typeof self !== "undefined" && typeof document !== "undefined";
+}
 
 async function importFromUrl<T>(url: string): Promise<T> {
   return await import(url) as T;

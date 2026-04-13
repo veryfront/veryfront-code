@@ -18,7 +18,9 @@ export const MessageActions = React.forwardRef<HTMLDivElement, MessageActionsPro
 
     const setCopiedWithTimeout = React.useCallback((): void => {
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (typeof self !== "undefined") {
+        self.setTimeout(() => setCopied(false), 2000);
+      }
     }, []);
 
     const fallbackCopy = React.useCallback((): void => {

@@ -18,8 +18,8 @@ export const ReasoningCard = React.forwardRef<HTMLDivElement, ReasoningCardProps
     React.useEffect(() => {
       if (isStreaming || !isOpen || userToggledRef.current) return;
 
-      const timer = setTimeout(() => setIsOpen(false), 1000);
-      return () => clearTimeout(timer);
+      const timer = self.setTimeout(() => setIsOpen(false), 1000);
+      return () => self.clearTimeout(timer);
     }, [isStreaming, isOpen]);
 
     const label = isStreaming ? <Shimmer>Thinking...</Shimmer> : <span>Thought process</span>;

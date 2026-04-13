@@ -13,6 +13,12 @@ export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
   function RichCodeBlock({ language, code, inline, className }, ref) {
     const [copied, setCopied] = React.useState(false);
 
+    const scheduleCopiedReset = React.useCallback((): void => {
+      if (typeof self !== "undefined") {
+        self.setTimeout(() => setCopied(false), 2000);
+      }
+    }, []);
+
     const handleCopy = React.useCallback(async (): Promise<void> => {
       try {
         await navigator.clipboard.writeText(code);
@@ -26,8 +32,8 @@ export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
         document.body.removeChild(textarea);
       }
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }, [code]);
+      scheduleCopiedReset();
+    }, [code, scheduleCopiedReset]);
 
     if (inline) {
       return (

@@ -16,13 +16,15 @@ export function InlineCitation({
   onClick,
 }: InlineCitationProps): React.ReactElement {
   const [showCard, setShowCard] = React.useState(false);
-  const timerRef = React.useRef<ReturnType<typeof setTimeout>>(undefined);
+  const timerRef = React.useRef<number | undefined>(undefined);
   const buttonRef = React.useRef<HTMLButtonElement>(null);
   const [cardStyle, setCardStyle] = React.useState<React.CSSProperties>({});
 
   const show = React.useCallback(() => {
-    clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
+    if (timerRef.current !== undefined) {
+      self.clearTimeout(timerRef.current);
+    }
+    timerRef.current = self.setTimeout(() => {
       // Position the card using fixed positioning to prevent overflow clipping
       const el = buttonRef.current;
       if (el) {
@@ -31,9 +33,9 @@ export function InlineCitation({
           position: "fixed",
           left: Math.max(
             8,
-            Math.min(rect.left + rect.width / 2 - 160, globalThis.innerWidth - 328),
+            Math.min(rect.left + rect.width / 2 - 160, self.innerWidth - 328),
           ),
-          bottom: globalThis.innerHeight - rect.top + 8,
+          bottom: self.innerHeight - rect.top + 8,
           zIndex: 9999,
         });
       }
@@ -42,11 +44,17 @@ export function InlineCitation({
   }, []);
 
   const hide = React.useCallback(() => {
-    clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => setShowCard(false), 100);
+    if (timerRef.current !== undefined) {
+      self.clearTimeout(timerRef.current);
+    }
+    timerRef.current = self.setTimeout(() => setShowCard(false), 100);
   }, []);
 
-  React.useEffect(() => () => clearTimeout(timerRef.current), []);
+  React.useEffect(() => () => {
+    if (timerRef.current !== undefined) {
+      self.clearTimeout(timerRef.current);
+    }
+  }, []);
 
   return (
     <>

@@ -8,7 +8,6 @@
  */
 
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
-import { SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
 
 export { escapeHtml };
 
@@ -26,16 +25,14 @@ const SUSPICIOUS_PATTERNS = [
 /** Global interface for Veryfront runtime flags */
 interface GlobalWithVeryfrontEnv {
   __VERYFRONT_DEV__?: boolean;
-  Deno?: {
-    env?: {
-      get?: (name: string) => string | undefined;
-    };
-  };
 }
 
 function isDevMode(): boolean {
-  const g = globalThis as GlobalWithVeryfrontEnv;
-  return g.__VERYFRONT_DEV__ === true || g.Deno?.env?.get?.("VERYFRONT_ENV") === "development";
+  if (typeof self === "undefined") {
+    return false;
+  }
+
+  return (self as Window & GlobalWithVeryfrontEnv).__VERYFRONT_DEV__ === true;
 }
 
 interface ValidateTrustedHtmlOptions {
@@ -68,7 +65,7 @@ export function validateTrustedHtml(
 
     if (warn) console.warn(`[Security] Suspicious ${name} detected in server HTML`);
     if (strict || !isDevMode()) {
-      throw SECURITY_VIOLATION.create({ detail: `Potentially unsafe HTML: ${name} detected` });
+      throw new Error(`Potentially unsafe HTML: ${name} detected`);
     }
   }
 

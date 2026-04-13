@@ -95,6 +95,10 @@ interface GlobalWithSpeechRecognition {
   webkitSpeechRecognition?: new () => SpeechRecognition;
 }
 
+function getSpeechRecognitionGlobal(): GlobalWithSpeechRecognition | null {
+  return typeof self === "undefined" ? null : self as unknown as GlobalWithSpeechRecognition;
+}
+
 export function useVoiceInput(
   options: UseVoiceInputOptions = {},
 ): UseVoiceInputResult {
@@ -115,15 +119,16 @@ export function useVoiceInput(
   const recognitionRef = React.useRef<SpeechRecognition | null>(null);
 
   const isSupported = React.useMemo((): boolean => {
-    if (typeof globalThis === "undefined") return false;
-    const g = globalThis as unknown as GlobalWithSpeechRecognition;
+    const g = getSpeechRecognitionGlobal();
+    if (!g) return false;
     return Boolean(g.SpeechRecognition ?? g.webkitSpeechRecognition);
   }, []);
 
   React.useEffect(() => {
     if (!isSupported) return;
 
-    const g = globalThis as unknown as GlobalWithSpeechRecognition;
+    const g = getSpeechRecognitionGlobal();
+    if (!g) return;
     const SpeechRecognitionAPI = g.SpeechRecognition ?? g.webkitSpeechRecognition;
     if (!SpeechRecognitionAPI) return;
 

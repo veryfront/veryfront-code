@@ -23,6 +23,8 @@ if (!license) {
 	throw new Error("deno.json must have a 'license' field");
 }
 
+const BROWSER_SAFE_EXPORTS = ["./chat", "./chat/ui", "./chat/ag-ui", "./chat/protocol"] as const;
+
 console.log(`\n📦 Building Veryfront v${version} for npm using dnt...\n`);
 
 // Generate templates manifest before build
@@ -195,20 +197,11 @@ await build({
 			"dnt polyfill process.argv[1] fix",
 		);
 
-		// Keep browser-safe chat helpers free of dnt Node polyfill imports.
-		// These modules are consumed directly in client bundles and do not rely on
-		// any Node-only globals, so retaining the injected side-effect import only
-		// bloats the graph and breaks browser builds.
-		for (const path of [
-			"./npm/esm/src/chat/ag-ui.js",
-			"./npm/esm/src/chat/ag-ui.d.ts",
-			"./npm/esm/src/chat/index.js",
-			"./npm/esm/src/chat/index.d.ts",
-			"./npm/esm/src/react/components/chat/chat.js",
-			"./npm/esm/src/react/components/chat/chat.d.ts",
-			"./npm/esm/src/chat/protocol.js",
-			"./npm/esm/src/chat/protocol.d.ts",
-		]) {
+		// Keep explicitly browser-safe exports free of dnt polyfill side-effect
+		// imports. These entrypoints are consumed directly by browser bundlers and
+		// only re-export browser-safe modules, so the injected polyfill import adds
+		// Node-only baggage without any runtime value.
+		for (const path of getBrowserSafeOutputPaths(denoJson.exports as Record<string, string>)) {
 			patchFile(
 				path,
 				/import "(?:\.\.\/)+_dnt\.polyfills\.js";\n/,
@@ -216,82 +209,6 @@ await build({
 				"browser-safe chat module polyfill removal",
 			);
 		}
-
-		// Client chat modules only use browser globals/timers. dnt rewrites those
-		// references through `_dnt.shims.js`, which eagerly imports
-		// `@deno/shim-deno` and breaks browser bundlers in dev. Restore the native
-		// browser references in the built output for these browser-only modules.
-		patchFile(
-			"./npm/esm/src/agent/react/use-voice-input.js",
-			'import * as dntShim from "../../../_dnt.shims.js";\n',
-			"",
-			"browser-safe voice input shim removal",
-		);
-		patchFile(
-			"./npm/esm/src/agent/react/use-voice-input.js",
-			/dntShim\.dntGlobalThis/g,
-			"globalThis",
-			"browser-safe voice input global replacement",
-		);
-
-		for (const path of [
-			"./npm/esm/src/react/components/chat/chat/hooks/use-threads.js",
-			"./npm/esm/src/react/components/chat/chat/components/reasoning.js",
-			"./npm/esm/src/react/components/chat/chat/components/code-block.js",
-			"./npm/esm/src/react/components/chat/chat/components/message-actions.js",
-			"./npm/esm/src/react/components/chat/chat/components/inline-citation.js",
-		]) {
-			patchFile(
-				path,
-				'import * as dntShim from "../../../../../../_dnt.shims.js";\n',
-				"",
-				"browser-safe chat shim removal",
-			);
-			patchFile(
-				path,
-				/dntShim\.setTimeout/g,
-				"setTimeout",
-				"browser-safe chat timer replacement",
-			);
-		}
-
-		patchFile(
-			"./npm/esm/src/platform/compat/runtime.js",
-			'import * as dntShim from "../../../_dnt.shims.js";\n',
-			"",
-			"browser-safe runtime shim removal",
-		);
-		patchFile(
-			"./npm/esm/src/platform/compat/runtime.js",
-			/dntShim\.dntGlobalThis/g,
-			"globalThis",
-			"browser-safe runtime global replacement",
-		);
-		patchFile(
-			"./npm/esm/src/platform/compat/runtime.js",
-			/typeof dntShim\.Deno/g,
-			"typeof Deno",
-			"browser-safe runtime Deno type check replacement",
-		);
-		patchFile(
-			"./npm/esm/src/platform/compat/runtime.js",
-			/dntShim\.Deno/g,
-			"Deno",
-			"browser-safe runtime Deno replacement",
-		);
-
-		patchFile(
-			"./npm/esm/src/security/client/html-sanitizer.js",
-			'import * as dntShim from "../../../_dnt.shims.js";\n',
-			"",
-			"browser-safe html sanitizer shim removal",
-		);
-		patchFile(
-			"./npm/esm/src/security/client/html-sanitizer.js",
-			/dntShim\.dntGlobalThis/g,
-			"globalThis",
-			"browser-safe html sanitizer global replacement",
-		);
 
 		// Note: Templates are now embedded in manifest.json which is bundled by dnt
 		// No need to copy template files separately
@@ -349,6 +266,29 @@ function patchFile(
 	}
 	Deno.writeTextFileSync(path, patched);
 	console.log(`📝 Patched ${description} in ${path}`);
+}
+
+function getBrowserSafeOutputPaths(exportsMap: Record<string, string>): string[] {
+	const outputPaths: string[] = [];
+
+	for (const exportName of BROWSER_SAFE_EXPORTS) {
+		const sourcePath = exportsMap[exportName];
+		if (!sourcePath) {
+			throw new Error(`Missing browser-safe export mapping for ${exportName}`);
+		}
+
+		if (!sourcePath.startsWith("./src/")) {
+			throw new Error(`Browser-safe export ${exportName} must point to ./src, got ${sourcePath}`);
+		}
+
+		const esmBasePath = sourcePath
+			.replace(/^\.\/src\//, "./npm/esm/src/")
+			.replace(/\.(ts|tsx)$/, "");
+
+		outputPaths.push(`${esmBasePath}.js`, `${esmBasePath}.d.ts`);
+	}
+
+	return outputPaths;
 }
 
 /**

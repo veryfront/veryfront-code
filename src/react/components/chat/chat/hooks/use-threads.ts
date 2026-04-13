@@ -1,6 +1,5 @@
 import * as React from "react";
 import type { ChatMessage } from "#veryfront/agent/react";
-import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 
 export interface Thread {
   id: string;
@@ -44,8 +43,12 @@ function createEmptyThread(): Thread {
   };
 }
 
+function hasBrowserStorage(): boolean {
+  return typeof self !== "undefined" && "localStorage" in self;
+}
+
 function loadIndex(key: string): ThreadIndex {
-  if (!isBrowserEnvironment()) return { ids: [] };
+  if (!hasBrowserStorage()) return { ids: [] };
   try {
     const raw = localStorage.getItem(`${key}-index`);
     if (raw) return JSON.parse(raw) as ThreadIndex;
@@ -54,12 +57,12 @@ function loadIndex(key: string): ThreadIndex {
 }
 
 function saveIndex(key: string, index: ThreadIndex): void {
-  if (!isBrowserEnvironment()) return;
+  if (!hasBrowserStorage()) return;
   localStorage.setItem(`${key}-index`, JSON.stringify(index));
 }
 
 function loadThread(key: string, id: string): Thread | null {
-  if (!isBrowserEnvironment()) return null;
+  if (!hasBrowserStorage()) return null;
   try {
     const raw = localStorage.getItem(`${key}-${id}`);
     if (raw) return JSON.parse(raw) as Thread;
@@ -68,12 +71,12 @@ function loadThread(key: string, id: string): Thread | null {
 }
 
 function saveThread(key: string, thread: Thread): void {
-  if (!isBrowserEnvironment()) return;
+  if (!hasBrowserStorage()) return;
   localStorage.setItem(`${key}-${thread.id}`, JSON.stringify(thread));
 }
 
 function removeThread(key: string, id: string): void {
-  if (!isBrowserEnvironment()) return;
+  if (!hasBrowserStorage()) return;
   localStorage.removeItem(`${key}-${id}`);
 }
 
@@ -114,12 +117,18 @@ export function useThreads(options?: UseThreadsOptions): UseThreadsResult {
   }, []);
 
   // Debounced persist — clear on unmount to avoid stale writes
-  const saveTimerRef = React.useRef<ReturnType<typeof setTimeout>>(undefined);
-  React.useEffect(() => () => clearTimeout(saveTimerRef.current), []);
+  const saveTimerRef = React.useRef<number | undefined>(undefined);
+  React.useEffect(() => () => {
+    if (saveTimerRef.current !== undefined && typeof self !== "undefined") {
+      self.clearTimeout(saveTimerRef.current);
+    }
+  }, []);
   const persistThreads = React.useCallback(
     (updated: Thread[]) => {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(() => {
+      if (saveTimerRef.current !== undefined) {
+        self.clearTimeout(saveTimerRef.current);
+      }
+      saveTimerRef.current = self.setTimeout(() => {
         saveIndex(storageKey, { ids: updated.map((t) => t.id) });
         for (const thread of updated) {
           saveThread(storageKey, thread);
