@@ -21,6 +21,7 @@ export function InlineCitation({
   const [cardStyle, setCardStyle] = React.useState<React.CSSProperties>({});
 
   const show = React.useCallback(() => {
+    if (typeof self === "undefined") return;
     if (timerRef.current !== undefined) {
       self.clearTimeout(timerRef.current);
     }
@@ -44,6 +45,7 @@ export function InlineCitation({
   }, []);
 
   const hide = React.useCallback(() => {
+    if (typeof self === "undefined") return;
     if (timerRef.current !== undefined) {
       self.clearTimeout(timerRef.current);
     }
@@ -51,7 +53,7 @@ export function InlineCitation({
   }, []);
 
   React.useEffect(() => () => {
-    if (timerRef.current !== undefined) {
+    if (typeof self !== "undefined" && timerRef.current !== undefined) {
       self.clearTimeout(timerRef.current);
     }
   }, []);

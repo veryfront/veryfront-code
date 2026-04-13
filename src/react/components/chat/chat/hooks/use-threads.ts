@@ -125,6 +125,7 @@ export function useThreads(options?: UseThreadsOptions): UseThreadsResult {
   }, []);
   const persistThreads = React.useCallback(
     (updated: Thread[]) => {
+      if (typeof self === "undefined") return;
       if (saveTimerRef.current !== undefined) {
         self.clearTimeout(saveTimerRef.current);
       }

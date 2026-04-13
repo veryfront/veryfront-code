@@ -16,7 +16,9 @@ export const ReasoningCard = React.forwardRef<HTMLDivElement, ReasoningCardProps
     const userToggledRef = React.useRef(false);
 
     React.useEffect(() => {
-      if (isStreaming || !isOpen || userToggledRef.current) return;
+      if (typeof self === "undefined" || isStreaming || !isOpen || userToggledRef.current) {
+        return;
+      }
 
       const timer = self.setTimeout(() => setIsOpen(false), 1000);
       return () => self.clearTimeout(timer);
