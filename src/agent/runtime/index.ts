@@ -35,6 +35,7 @@ import {
 } from "#veryfront/observability/tracing/index.ts";
 import { convertToModelMessages } from "./model-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
+import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
   type ChatStreamState,
   createStreamState,
@@ -313,7 +314,10 @@ export class AgentRuntime {
       resolvedModelString,
       languageModel: transport?.model ?? resolveModel(resolvedModelString),
       headers: transport?.headers,
-      providerOptions: transport?.providerOptions,
+      providerOptions: resolveProviderOptionsWithDefaults(
+        resolvedModelString,
+        transport?.providerOptions,
+      ),
     };
   }
 
