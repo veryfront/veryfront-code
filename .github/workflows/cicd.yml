@@ -69,6 +69,8 @@ jobs:
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
+      - name: Force apt to IPv4
+        run: echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
       - name: Install Chromium
         run: deno run -A npm:playwright install --with-deps chromium
       - uses: nick-fields/retry@v4.0.0
@@ -91,6 +93,8 @@ jobs:
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
+      - name: Force apt to IPv4
+        run: echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
       - name: Install Chromium
         run: deno run -A npm:playwright install --with-deps chromium
       - uses: nick-fields/retry@v4.0.0

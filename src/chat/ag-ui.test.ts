@@ -291,6 +291,40 @@ describe("chat/ag-ui", () => {
     ]);
   });
 
+  it("preserves ToolCallResult input when the result arrives without a prior tool start", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ToolCallResult",
+        'data: {"toolCallId":"tool-1","input":{"path":"report.md","content":"hello"},"result":{"success":true}}',
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = result.events.flatMap((entry) => entry.chatEvents);
+    assertEquals(chatEvents, [
+      {
+        type: "tool-input-available",
+        toolCallId: "tool-1",
+        toolName: "tool",
+        input: {
+          path: "report.md",
+          content: "hello",
+        },
+        dynamic: true,
+        providerExecuted: true,
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "tool-1",
+        output: { success: true },
+        providerExecuted: true,
+      },
+    ]);
+  });
+
   it("retains decoded wire events alongside canonical chat events", () => {
     const state = createAgUiChatEventDecoderState();
     const result = decodeAgUiSseChunk(
