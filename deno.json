@@ -44,6 +44,9 @@
     "./integrations": "./src/integrations/index.ts",
     "./sandbox": "./src/sandbox/index.ts",
     "./embedding": "./src/embedding/index.ts",
+    "./extensions": "./src/extensions/index.ts",
+    "./extensions/interfaces": "./src/extensions/interfaces/index.ts",
+    "./extensions/contracts": "./src/extensions/contracts.ts",
     "./cli": "./cli/main.ts"
   },
   "imports": {
