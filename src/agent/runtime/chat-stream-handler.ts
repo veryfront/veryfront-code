@@ -157,6 +157,31 @@ export function processStream(
 ): Promise<void> {
   return withSpan("agent.runtime.processStream", async () => {
     let eventCount = 0;
+    let textOpen = false;
+
+    const openTextSegment = () => {
+      if (textOpen) {
+        return;
+      }
+
+      textOpen = true;
+      sendSSE(controller, encoder, {
+        type: "text-start",
+        id: textPartId,
+      });
+    };
+
+    const closeTextSegment = () => {
+      if (!textOpen) {
+        return;
+      }
+
+      textOpen = false;
+      sendSSE(controller, encoder, {
+        type: "text-end",
+        id: textPartId,
+      });
+    };
 
     throwIfAborted(abortSignal);
 
@@ -172,6 +197,7 @@ export function processStream(
 
       switch (typedPart.type) {
         case "text-delta": {
+          openTextSegment();
           state.accumulatedText += typedPart.text;
           sendSSE(controller, encoder, {
             type: "text-delta",
@@ -183,6 +209,7 @@ export function processStream(
         }
 
         case "reasoning-start": {
+          closeTextSegment();
           sendSSE(controller, encoder, {
             type: "reasoning-start",
             id: typeof typedPart.id === "string" ? typedPart.id : "reasoning",
@@ -191,6 +218,7 @@ export function processStream(
         }
 
         case "reasoning-delta": {
+          closeTextSegment();
           sendSSE(controller, encoder, {
             type: "reasoning-delta",
             id: typeof typedPart.id === "string" ? typedPart.id : "reasoning",
@@ -200,6 +228,7 @@ export function processStream(
         }
 
         case "reasoning-end": {
+          closeTextSegment();
           sendSSE(controller, encoder, {
             type: "reasoning-end",
             id: typeof typedPart.id === "string" ? typedPart.id : "reasoning",
@@ -208,6 +237,7 @@ export function processStream(
         }
 
         case "tool-input-start": {
+          closeTextSegment();
           const toolId = typedPart.id;
           state.toolCalls.set(toolId, {
             id: toolId,
@@ -242,6 +272,7 @@ export function processStream(
         }
 
         case "tool-call": {
+          closeTextSegment();
           // tool-call fires when the full tool call is available
           const toolId = typedPart.toolCallId;
           const inputStr = normalizeToolInputString(typedPart.input);
@@ -271,6 +302,7 @@ export function processStream(
         }
 
         case "tool-result": {
+          closeTextSegment();
           const isError = typedPart.isError === true;
           logProviderToolPart("tool-result", {
             toolCallId: typedPart.toolCallId,
@@ -328,6 +360,7 @@ export function processStream(
         }
 
         case "tool-error": {
+          closeTextSegment();
           logProviderToolPart("tool-error", {
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,
@@ -358,6 +391,7 @@ export function processStream(
         }
 
         case "finish": {
+          closeTextSegment();
           state.finishReason = typedPart.finishReason ?? null;
           if (typedPart.totalUsage) {
             const input = typedPart.totalUsage.inputTokens ?? 0;
@@ -373,6 +407,7 @@ export function processStream(
         }
 
         case "error": {
+          closeTextSegment();
           logger.warn("Runtime stream error:", typedPart.error);
           sendSSE(controller, encoder, {
             type: "error",
