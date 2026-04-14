@@ -11,9 +11,9 @@ export type {
   BundleOptions,
   BundleOutput,
   Bundler,
+  BundleResult,
   BundlerPlugin,
   BundlerPluginBuild,
-  BundleResult,
   TransformOptions,
   TransformResult,
 } from "./bundler.ts";
