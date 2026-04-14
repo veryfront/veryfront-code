@@ -513,7 +513,11 @@ describe("chat-stream-handler", () => {
       await processStream(result, state, controller, encoder, "t", undefined);
 
       assertEquals(events, [
-        { type: "tool-input-start", toolCallId: "tc-provider-error-object", toolName: "web_search" },
+        {
+          type: "tool-input-start",
+          toolCallId: "tc-provider-error-object",
+          toolName: "web_search",
+        },
         {
           type: "tool-input-available",
           toolCallId: "tc-provider-error-object",

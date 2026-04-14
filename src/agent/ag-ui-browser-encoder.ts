@@ -449,11 +449,12 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
         ...closeOpenTextEvent(state),
         ...closeOpenReasoningEvent(state),
         {
-        event: "RunError",
-        payload: {
-          message: typeof event.error === "string" ? event.error : "Agent run failed",
+          event: "RunError",
+          payload: {
+            message: typeof event.error === "string" ? event.error : "Agent run failed",
+          },
         },
-      }];
+      ];
 
     default:
       return [];
