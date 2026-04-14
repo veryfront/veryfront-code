@@ -1888,14 +1888,14 @@ describe("provider/runtime-loader", () => {
       };
     }
 
-    const systemPrompt: RuntimePromptMessage = {
+    const systemPrompt = {
       role: "system",
       content: "You are a helpful assistant.",
-    };
-    const userPrompt: RuntimePromptMessage = {
+    } as const;
+    const userPrompt = {
       role: "user",
       content: [{ type: "text", text: "Hi" }],
-    };
+    } as const;
 
     const weatherTool = {
       type: "function" as const,
@@ -2050,6 +2050,248 @@ describe("provider/runtime-loader", () => {
       });
       const body = getBody() as Record<string, unknown>;
       assertEquals("tools" in body, false);
+    });
+  });
+
+  describe("cache usage reporting (cache_creation / cache_read / cached_tokens)", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    it("surfaces Anthropic cache_creation_input_tokens and cache_read_input_tokens on generate", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: {
+                  input_tokens: 12,
+                  output_tokens: 34,
+                  cache_creation_input_tokens: 2056,
+                  cache_read_input_tokens: 128,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-sonnet-4-20250514");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.usage, {
+        inputTokens: 12,
+        outputTokens: 34,
+        totalTokens: 46,
+        cacheCreationInputTokens: 2056,
+        cacheReadInputTokens: 128,
+      });
+    });
+
+    it("propagates Anthropic cache fields through the stream usage accumulator", async () => {
+      const encoder = new TextEncoder();
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              ReadableStream.from([
+                // message_start carries input + cache token counts up front.
+                encoder.encode(
+                  'event: message_start\ndata: {"type":"message_start","message":{"id":"m1","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-20250514","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":12,"output_tokens":1,"cache_creation_input_tokens":2056,"cache_read_input_tokens":128}}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+                ),
+                // message_delta only updates output_tokens; cache fields absent here.
+                encoder.encode(
+                  'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":34}}\n\n',
+                ),
+                encoder.encode(
+                  'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+                ),
+              ]),
+              { status: 200, headers: { "content-type": "text/event-stream" } },
+            ),
+          ),
+      }, "claude-sonnet-4-20250514");
+
+      const result = await runtime.doStream({ prompt: [userPrompt] });
+      const parts = await collectAsync(result.stream);
+      const finish = parts.find((p) => (p as { type: string }).type === "finish") as {
+        usage: {
+          inputTokens?: number;
+          outputTokens?: number;
+          cacheCreationInputTokens?: number;
+          cacheReadInputTokens?: number;
+        };
+      };
+      assertEquals(finish.usage.inputTokens, 12);
+      assertEquals(finish.usage.outputTokens, 34);
+      assertEquals(finish.usage.cacheCreationInputTokens, 2056);
+      assertEquals(finish.usage.cacheReadInputTokens, 128);
+    });
+
+    it("leaves Anthropic cache fields undefined when the provider omits them", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 4, output_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-sonnet-4-20250514");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      // Cache fields should be absent (not zero) when provider doesn't return them.
+      assertEquals(result.usage, {
+        inputTokens: 4,
+        outputTokens: 2,
+        totalTokens: 6,
+      });
+    });
+
+    it("surfaces OpenAI prompt_tokens_details.cached_tokens as cacheReadInputTokens", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "test-openai-key",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "ok" },
+                  finish_reason: "stop",
+                }],
+                usage: {
+                  prompt_tokens: 100,
+                  completion_tokens: 40,
+                  total_tokens: 140,
+                  prompt_tokens_details: { cached_tokens: 80 },
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gpt-4o-mini");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.usage, {
+        inputTokens: 100,
+        outputTokens: 40,
+        totalTokens: 140,
+        cacheReadInputTokens: 80,
+      });
+    });
+
+    it("leaves OpenAI cache field undefined when prompt_tokens_details is absent", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "test-openai-key",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "ok" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gpt-4o-mini");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.usage, {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+      });
+    });
+
+    it("surfaces Google cachedContentTokenCount as cacheReadInputTokens", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "test-google-key",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 123,
+                  candidatesTokenCount: 45,
+                  totalTokenCount: 168,
+                  cachedContentTokenCount: 100,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gemini-1.5-pro");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.usage, {
+        inputTokens: 123,
+        outputTokens: 45,
+        totalTokens: 168,
+        cacheReadInputTokens: 100,
+      });
+    });
+
+    it("leaves Google cache field undefined when cachedContentTokenCount is absent", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "test-google-key",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 8,
+                  candidatesTokenCount: 2,
+                  totalTokenCount: 10,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gemini-1.5-pro");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.usage, {
+        inputTokens: 8,
+        outputTokens: 2,
+        totalTokens: 10,
+      });
     });
   });
 });

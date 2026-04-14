@@ -518,9 +518,15 @@ function normalizeAnthropicFinishReason(
   }
 }
 
-function extractAnthropicUsage(payload: unknown):
-  | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
-  | undefined {
+type RuntimeUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+};
+
+function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefined {
   const record = readRecord(payload);
   const usage = readRecord(record?.usage);
   if (!usage) {
@@ -529,6 +535,8 @@ function extractAnthropicUsage(payload: unknown):
 
   const inputTokens = usage.input_tokens;
   const outputTokens = usage.output_tokens;
+  const cacheCreationInputTokens = usage.cache_creation_input_tokens;
+  const cacheReadInputTokens = usage.cache_read_input_tokens;
 
   return {
     inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
@@ -537,17 +545,15 @@ function extractAnthropicUsage(payload: unknown):
       ? (typeof inputTokens === "number" ? inputTokens : 0) +
         (typeof outputTokens === "number" ? outputTokens : 0)
       : undefined,
+    ...(typeof cacheCreationInputTokens === "number" ? { cacheCreationInputTokens } : {}),
+    ...(typeof cacheReadInputTokens === "number" ? { cacheReadInputTokens } : {}),
   };
 }
 
 function mergeUsage(
-  current:
-    | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
-    | undefined,
-  next:
-    | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
-    | undefined,
-): { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined {
+  current: RuntimeUsage | undefined,
+  next: RuntimeUsage | undefined,
+): RuntimeUsage | undefined {
   if (!current) {
     return next;
   }
@@ -558,11 +564,16 @@ function mergeUsage(
 
   const inputTokens = next.inputTokens ?? current.inputTokens;
   const outputTokens = next.outputTokens ?? current.outputTokens;
+  const cacheCreationInputTokens = next.cacheCreationInputTokens ??
+    current.cacheCreationInputTokens;
+  const cacheReadInputTokens = next.cacheReadInputTokens ?? current.cacheReadInputTokens;
 
   return {
     inputTokens,
     outputTokens,
     totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
   };
 }
 
@@ -863,7 +874,7 @@ function buildAnthropicGenerateResult(payload: unknown): {
     | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown }
   >;
   finishReason?: string | { unified: string; raw: string } | null;
-  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+  usage?: RuntimeUsage;
 } {
   const record = readRecord(payload);
   const content = Array.isArray(record?.content) ? record.content : [];
@@ -968,7 +979,7 @@ async function* streamAnthropicCompatibleParts(
   const toolCalls = new Map<number, AnthropicStreamToolCallState>();
   const reasoningBlocks = new Map<number, AnthropicStreamReasoningState>();
   let finishReason: string | { unified: string; raw: string } | null = null;
-  let usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
+  let usage: RuntimeUsage | undefined;
 
   for await (const chunk of stream) {
     buffer += decoder.decode(chunk, { stream: true });
@@ -1205,9 +1216,7 @@ function normalizeOpenAIFinishReason(
   return raw;
 }
 
-function extractOpenAIUsage(payload: unknown):
-  | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
-  | undefined {
+function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
   const record = readRecord(payload);
   const usage = readRecord(record?.usage);
   if (!usage) {
@@ -1217,11 +1226,14 @@ function extractOpenAIUsage(payload: unknown):
   const inputTokens = usage.prompt_tokens;
   const outputTokens = usage.completion_tokens;
   const totalTokens = usage.total_tokens;
+  const promptTokensDetails = readRecord(usage.prompt_tokens_details);
+  const cachedTokens = promptTokensDetails?.cached_tokens;
 
   return {
     inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
     outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
     totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
+    ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
   };
 }
 
@@ -1327,9 +1339,7 @@ function normalizeGoogleFinishReason(
   }
 }
 
-function extractGoogleUsage(payload: unknown):
-  | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
-  | undefined {
+function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
   const record = readRecord(payload);
   const usage = readRecord(record?.usageMetadata);
   if (!usage) {
@@ -1339,11 +1349,15 @@ function extractGoogleUsage(payload: unknown):
   const inputTokens = usage.promptTokenCount;
   const outputTokens = usage.candidatesTokenCount;
   const totalTokens = usage.totalTokenCount;
+  const cachedContentTokenCount = usage.cachedContentTokenCount;
 
   return {
     inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
     outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
     totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
+    ...(typeof cachedContentTokenCount === "number"
+      ? { cacheReadInputTokens: cachedContentTokenCount }
+      : {}),
   };
 }
 
@@ -1537,7 +1551,7 @@ function buildGoogleGenerateResult(payload: unknown): {
     | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
   >;
   finishReason?: string | { unified: string; raw: string } | null;
-  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+  usage?: RuntimeUsage;
 } {
   const parts = extractGoogleCandidateParts(payload);
   const content: Array<
@@ -1578,7 +1592,7 @@ async function* streamGoogleCompatibleParts(
   let reasoningId: string | null = null;
   let reasoningIndex = 0;
   let finishReason: string | { unified: string; raw: string } | null = null;
-  let usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
+  let usage: RuntimeUsage | undefined;
 
   for await (const chunk of stream) {
     buffer += decoder.decode(chunk, { stream: true });
@@ -1710,7 +1724,7 @@ function buildOpenAIGenerateResult(payload: unknown): {
     }
   >;
   finishReason?: string | { unified: string; raw: string } | null;
-  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+  usage?: RuntimeUsage;
 } {
   const choice = extractFirstChoice(payload);
   const message = readRecord(choice?.message);
@@ -1741,7 +1755,7 @@ async function* streamOpenAICompatibleParts(
   let reasoningId: string | null = null;
   let reasoningIndex = 0;
   let finishReason: string | { unified: string; raw: string } | null = null;
-  let usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
+  let usage: RuntimeUsage | undefined;
 
   for await (const chunk of stream) {
     buffer += decoder.decode(chunk, { stream: true });
