@@ -2053,6 +2053,331 @@ describe("provider/runtime-loader", () => {
     });
   });
 
+  describe("reasoning / thinking request options", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Solve this" }],
+    } as const;
+
+    function createAnthropicCaptureRuntime(modelId = "claude-opus-4-6") {
+      let capturedBody: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          capturedBody = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, modelId);
+      return { runtime, getBody: () => capturedBody };
+    }
+
+    function createOpenAICaptureRuntime(modelId: string) {
+      let capturedBody: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "test-openai-key",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          capturedBody = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "ok" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, modelId);
+      return { runtime, getBody: () => capturedBody };
+    }
+
+    function createGoogleCaptureRuntime(modelId = "gemini-2.5-pro") {
+      let capturedBody: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "test-google-key",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          capturedBody = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, modelId);
+      return { runtime, getBody: () => capturedBody };
+    }
+
+    it("emits Anthropic thinking block with medium effort budget by default", async () => {
+      const { runtime, getBody } = createAnthropicCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        maxOutputTokens: 2048,
+        reasoning: { enabled: true },
+      });
+      const body = getBody() as {
+        thinking: { type: string; budget_tokens: number };
+        max_tokens: number;
+      };
+      assertEquals(body.thinking, { type: "enabled", budget_tokens: 4096 });
+      // max_tokens = baseMaxTokens(2048) + budget(4096) = 6144
+      assertEquals(body.max_tokens, 6144);
+    });
+
+    it("maps Anthropic effort levels to budget_tokens", async () => {
+      async function budgetFor(effort: "low" | "medium" | "high" | "max") {
+        const { runtime, getBody } = createAnthropicCaptureRuntime();
+        await runtime.doGenerate({
+          prompt: [userPrompt],
+          maxOutputTokens: 1024,
+          reasoning: { enabled: true, effort },
+        });
+        return (getBody() as { thinking: { budget_tokens: number } }).thinking.budget_tokens;
+      }
+      assertEquals(await budgetFor("low"), 1024);
+      assertEquals(await budgetFor("medium"), 4096);
+      assertEquals(await budgetFor("high"), 16_384);
+      assertEquals(await budgetFor("max"), 32_768);
+    });
+
+    it("honours Anthropic explicit budgetTokens over effort", async () => {
+      const { runtime, getBody } = createAnthropicCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        maxOutputTokens: 1024,
+        reasoning: { enabled: true, effort: "low", budgetTokens: 12_345 },
+      });
+      const body = getBody() as { thinking: { budget_tokens: number } };
+      assertEquals(body.thinking.budget_tokens, 12_345);
+    });
+
+    it("clamps Anthropic max_tokens at the model cap when thinking is enabled", async () => {
+      const { runtime, getBody } = createAnthropicCaptureRuntime("claude-opus-4-6");
+      // Opus 4.6 caps at 128k. 100k base + 64k budget would be 164k — clamp to 128k.
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        maxOutputTokens: 100_000,
+        reasoning: { enabled: true, budgetTokens: 64_000 },
+      });
+      const body = getBody() as { max_tokens: number };
+      assertEquals(body.max_tokens, 128_000);
+    });
+
+    it("drops Anthropic temperature and top_p when thinking is enabled", async () => {
+      const { runtime, getBody } = createAnthropicCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+        reasoning: { enabled: true },
+      });
+      const body = getBody() as Record<string, unknown>;
+      assertEquals("temperature" in body, false);
+      assertEquals("top_p" in body, false);
+    });
+
+    it("preserves Anthropic sampling params when reasoning is disabled", async () => {
+      const { runtime, getBody } = createAnthropicCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+      });
+      const body = getBody() as { temperature: number; top_p: number };
+      assertEquals(body.temperature, 0.7);
+      assertEquals(body.top_p, 0.9);
+    });
+
+    it("omits Anthropic thinking field when reasoning.enabled is false", async () => {
+      const { runtime, getBody } = createAnthropicCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: false, effort: "high" },
+      });
+      const body = getBody() as Record<string, unknown>;
+      assertEquals("thinking" in body, false);
+    });
+
+    it("emits OpenAI reasoning_effort when reasoning is enabled", async () => {
+      const { runtime, getBody } = createOpenAICaptureRuntime("gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "high" },
+      });
+      const body = getBody() as { reasoning_effort: string };
+      assertEquals(body.reasoning_effort, "high");
+    });
+
+    it("collapses OpenAI 'max' effort to 'high'", async () => {
+      const { runtime, getBody } = createOpenAICaptureRuntime("gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "max" },
+      });
+      const body = getBody() as { reasoning_effort: string };
+      assertEquals(body.reasoning_effort, "high");
+    });
+
+    it("drops OpenAI sampling params on reasoning models (o1/o3/o4)", async () => {
+      const { runtime, getBody } = createOpenAICaptureRuntime("o3-mini");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+        presencePenalty: 0.1,
+        frequencyPenalty: 0.1,
+      });
+      const body = getBody() as Record<string, unknown>;
+      assertEquals("temperature" in body, false);
+      assertEquals("top_p" in body, false);
+      assertEquals("presence_penalty" in body, false);
+      assertEquals("frequency_penalty" in body, false);
+    });
+
+    it("preserves OpenAI sampling params on non-reasoning models", async () => {
+      const { runtime, getBody } = createOpenAICaptureRuntime("gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+      });
+      const body = getBody() as { temperature: number; top_p: number };
+      assertEquals(body.temperature, 0.7);
+      assertEquals(body.top_p, 0.9);
+    });
+
+    it("emits Google thinkingConfig when reasoning is enabled", async () => {
+      const { runtime, getBody } = createGoogleCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "high" },
+      });
+      const body = getBody() as {
+        generationConfig: { thinkingConfig: { includeThoughts: boolean; thinkingBudget: number } };
+      };
+      assertEquals(body.generationConfig.thinkingConfig, {
+        includeThoughts: true,
+        thinkingBudget: 8192,
+      });
+    });
+
+    it("maps Google effort 'max' to thinkingBudget: -1 (dynamic)", async () => {
+      const { runtime, getBody } = createGoogleCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "max" },
+      });
+      const body = getBody() as {
+        generationConfig: { thinkingConfig: { thinkingBudget: number } };
+      };
+      assertEquals(body.generationConfig.thinkingConfig.thinkingBudget, -1);
+    });
+
+    it("honours Google explicit budgetTokens over effort", async () => {
+      const { runtime, getBody } = createGoogleCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "low", budgetTokens: 4096 },
+      });
+      const body = getBody() as {
+        generationConfig: { thinkingConfig: { thinkingBudget: number } };
+      };
+      assertEquals(body.generationConfig.thinkingConfig.thinkingBudget, 4096);
+    });
+
+    it("omits Google thinkingConfig when reasoning is disabled", async () => {
+      const { runtime, getBody } = createGoogleCaptureRuntime();
+      await runtime.doGenerate({ prompt: [userPrompt] });
+      const body = getBody() as {
+        generationConfig?: { thinkingConfig?: unknown };
+      };
+      assertEquals(body.generationConfig?.thinkingConfig, undefined);
+    });
+
+    it("passes redacted_thinking blocks through as reasoning events without leaking content", async () => {
+      const encoder = new TextEncoder();
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              ReadableStream.from([
+                encoder.encode(
+                  'event: message_start\ndata: {"type":"message_start","message":{"id":"m1","type":"message","role":"assistant","content":[],"model":"claude-opus-4-6","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"encrypted-opaque-blob"}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ok"}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
+                ),
+                encoder.encode(
+                  'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n',
+                ),
+                encoder.encode(
+                  'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+                ),
+              ]),
+              { status: 200, headers: { "content-type": "text/event-stream" } },
+            ),
+          ),
+      }, "claude-opus-4-6");
+
+      const result = await runtime.doStream({ prompt: [userPrompt] });
+      const parts = await collectAsync(result.stream);
+      // Redacted thinking emits reasoning-start (block 0) + reasoning-end, but no delta.
+      const reasoningStarts = parts.filter((p) =>
+        (p as { type: string }).type === "reasoning-start"
+      );
+      const reasoningDeltas = parts.filter((p) =>
+        (p as { type: string }).type === "reasoning-delta"
+      );
+      const reasoningEnds = parts.filter((p) => (p as { type: string }).type === "reasoning-end");
+      assertEquals(reasoningStarts.length, 1);
+      assertEquals(reasoningDeltas.length, 0);
+      assertEquals(reasoningEnds.length, 1);
+    });
+  });
+
   describe("cache usage reporting (cache_creation / cache_read / cached_tokens)", () => {
     const userPrompt = {
       role: "user",

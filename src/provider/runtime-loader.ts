@@ -94,6 +94,33 @@ type ProviderCacheControlOption = {
   tools?: ProviderCacheTtl;
 };
 
+/**
+ * Unified effort level for extended reasoning / thinking. Maps to
+ * per-provider knobs: Anthropic `thinking.budget_tokens`, OpenAI
+ * `reasoning_effort`, Gemini `thinkingConfig.thinkingBudget`.
+ */
+type ProviderReasoningEffort = "low" | "medium" | "high" | "max";
+
+/**
+ * Unified reasoning / thinking request option.
+ *
+ * Setting `enabled: true` turns on extended thinking on providers that
+ * support it (Anthropic Claude 4.x, OpenAI o-series, Gemini 2.5+). The
+ * `effort` field picks a coarse budget; when `budgetTokens` is set it
+ * wins for providers that take a numeric budget (Anthropic, Gemini).
+ *
+ * Providers that do not support reasoning treat this as a no-op. On
+ * Anthropic + OpenAI, enabling reasoning also disables sampling params
+ * that the providers reject in combination (`temperature`, `topP`,
+ * `topK`, `presencePenalty`, `frequencyPenalty`) — silently dropping
+ * them rather than failing the request.
+ */
+type ProviderReasoningOption = {
+  enabled?: boolean;
+  effort?: ProviderReasoningEffort;
+  budgetTokens?: number;
+};
+
 type OpenAICompatibleLanguageOptions = {
   prompt: RuntimePromptMessage[];
   maxOutputTokens?: number;
@@ -116,6 +143,12 @@ type OpenAICompatibleLanguageOptions = {
    * unchanged on every provider.
    */
   cacheControl?: ProviderCacheControlOption;
+  /**
+   * Enable extended reasoning / thinking on providers that support it.
+   * See {@link ProviderReasoningOption}. When unset, reasoning behaviour
+   * is unchanged on every provider.
+   */
+  reasoning?: ProviderReasoningOption;
 };
 type OpenAICompatibleChatMessage =
   | { role: "system"; content: string }
@@ -830,6 +863,35 @@ function resolveAnthropicMaxTokens(
   return requested;
 }
 
+/**
+ * Map a unified reasoning effort level to an Anthropic `thinking.budget_tokens`
+ * value. Anthropic's minimum accepted budget is 1024; higher tiers give Claude
+ * more headroom to explore. `max` maps to the upper bound documented for
+ * Claude 4.x family (32k tokens of thinking — caller can override via
+ * `budgetTokens` if they need more).
+ */
+function resolveAnthropicThinkingBudget(
+  option: ProviderReasoningOption | undefined,
+): number | undefined {
+  if (!option || option.enabled !== true) {
+    return undefined;
+  }
+  if (typeof option.budgetTokens === "number" && option.budgetTokens >= 1024) {
+    return option.budgetTokens;
+  }
+  switch (option.effort) {
+    case "low":
+      return 1024;
+    case "high":
+      return 16_384;
+    case "max":
+      return 32_768;
+    case "medium":
+    default:
+      return 4096;
+  }
+}
+
 function buildAnthropicMessagesRequest(
   modelId: string,
   providerName: string,
@@ -845,15 +907,35 @@ function buildAnthropicMessagesRequest(
 
   const { system, messages } = toAnthropicMessages(options.prompt, systemCacheControl);
   const anthropicTools = toAnthropicTools(options.tools, toolsCacheControl);
+  const thinkingBudget = resolveAnthropicThinkingBudget(options.reasoning);
+  const thinkingEnabled = thinkingBudget !== undefined;
+
+  // Anthropic requires max_tokens > budget_tokens when thinking is enabled.
+  // Growing max_tokens by the thinking budget preserves the caller's intended
+  // output budget, and we clamp the sum at the model's advertised maximum so
+  // the request never exceeds the API's hard cap.
+  const baseMaxTokens = resolveAnthropicMaxTokens(modelId, options.maxOutputTokens);
+  const maxTokens = thinkingEnabled
+    ? Math.min(
+      baseMaxTokens + (thinkingBudget ?? 0),
+      getAnthropicModelCapabilities(modelId).maxOutputTokens,
+    )
+    : baseMaxTokens;
 
   const body: AnthropicCompatibleRequest = {
     model: modelId,
     messages,
-    max_tokens: resolveAnthropicMaxTokens(modelId, options.maxOutputTokens),
+    max_tokens: maxTokens,
     ...(stream ? { stream: true } : {}),
     ...(system ? { system } : {}),
-    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-    ...(options.topP !== undefined ? { top_p: options.topP } : {}),
+    // Sampling params are mutually exclusive with thinking on Anthropic — the
+    // API rejects the combo outright. Drop them silently when thinking is on
+    // (callers see thinking's output instead of what they'd have gotten from
+    // custom sampling, which is the documented tradeoff).
+    ...(!thinkingEnabled && options.temperature !== undefined
+      ? { temperature: options.temperature }
+      : {}),
+    ...(!thinkingEnabled && options.topP !== undefined ? { top_p: options.topP } : {}),
     ...(options.stopSequences && options.stopSequences.length > 0
       ? { stop_sequences: options.stopSequences }
       : {}),
@@ -861,6 +943,7 @@ function buildAnthropicMessagesRequest(
     ...(options.toolChoice !== undefined
       ? { tool_choice: normalizeAnthropicToolChoice(options.toolChoice) }
       : {}),
+    ...(thinkingEnabled ? { thinking: { type: "enabled", budget_tokens: thinkingBudget } } : {}),
   };
 
   Object.assign(body, readProviderOptions(options.providerOptions, "anthropic", providerName));
@@ -1028,6 +1111,20 @@ async function* streamAnthropicCompatibleParts(
               delta: contentBlock.thinking,
             };
           }
+          continue;
+        }
+
+        // Redacted thinking blocks arrive as opaque encrypted payloads when
+        // Claude's safety classifier flags the reasoning trace. Surface them
+        // as a zero-length reasoning block so callers know thinking happened
+        // without leaking the (legitimately hidden) contents.
+        if (blockType === "redacted_thinking") {
+          const reasoningId = `thinking-${index}`;
+          reasoningBlocks.set(index, { id: reasoningId });
+          yield {
+            type: "reasoning-start",
+            id: reasoningId,
+          };
           continue;
         }
 
@@ -1288,19 +1385,59 @@ function extractOpenAIToolCalls(message: Record<string, unknown>): Array<{
   return normalized;
 }
 
+/**
+ * OpenAI reasoning models (o1 / o3 / o4 family) use the completion path but
+ * have different constraints than chat models: sampling params are rejected,
+ * and they accept a `reasoning_effort` field. We detect them by model id
+ * prefix so callers don't have to configure it per runtime.
+ */
+function isOpenAIReasoningModel(modelId: string): boolean {
+  return /^o[134](-|$)/.test(modelId);
+}
+
+/**
+ * Map the unified reasoning effort to OpenAI's `reasoning_effort` enum.
+ * OpenAI doesn't accept "max" — we collapse it to "high".
+ */
+function resolveOpenAIReasoningEffort(
+  option: ProviderReasoningOption | undefined,
+): "low" | "medium" | "high" | undefined {
+  if (!option || option.enabled !== true) {
+    return undefined;
+  }
+  switch (option.effort) {
+    case "low":
+      return "low";
+    case "high":
+    case "max":
+      return "high";
+    case "medium":
+    default:
+      return "medium";
+  }
+}
+
 function buildOpenAIChatRequest(
   modelId: string,
   providerName: string,
   options: OpenAICompatibleLanguageOptions,
   stream: boolean,
 ): OpenAICompatibleChatRequest {
+  const isReasoningModel = isOpenAIReasoningModel(modelId);
+  const reasoningEffort = resolveOpenAIReasoningEffort(options.reasoning);
+  const reasoningEnabled = isReasoningModel || reasoningEffort !== undefined;
+
   const body: OpenAICompatibleChatRequest = {
     model: modelId,
     messages: toOpenAICompatibleMessages(options.prompt),
     ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
     ...(options.maxOutputTokens !== undefined ? { max_tokens: options.maxOutputTokens } : {}),
-    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-    ...(options.topP !== undefined ? { top_p: options.topP } : {}),
+    // OpenAI reasoning models reject temperature / top_p / frequency / presence.
+    // Drop them silently rather than letting the API bounce the request.
+    ...(!reasoningEnabled && options.temperature !== undefined
+      ? { temperature: options.temperature }
+      : {}),
+    ...(!reasoningEnabled && options.topP !== undefined ? { top_p: options.topP } : {}),
     ...(options.stopSequences && options.stopSequences.length > 0
       ? { stop: options.stopSequences }
       : {}),
@@ -1309,10 +1446,13 @@ function buildOpenAIChatRequest(
       : {}),
     ...(options.toolChoice !== undefined ? { tool_choice: options.toolChoice } : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
-    ...(options.presencePenalty !== undefined ? { presence_penalty: options.presencePenalty } : {}),
-    ...(options.frequencyPenalty !== undefined
+    ...(!reasoningEnabled && options.presencePenalty !== undefined
+      ? { presence_penalty: options.presencePenalty }
+      : {}),
+    ...(!reasoningEnabled && options.frequencyPenalty !== undefined
       ? { frequency_penalty: options.frequencyPenalty }
       : {}),
+    ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
   };
 
   Object.assign(body, readProviderOptions(options.providerOptions, "openai", providerName));
@@ -1483,9 +1623,46 @@ function normalizeGoogleToolChoice(toolChoice: unknown):
   return undefined;
 }
 
+/**
+ * Map the unified reasoning option to Gemini's thinkingConfig. Gemini 2.5+
+ * accepts `includeThoughts: true` to stream back `thought` parts, and
+ * `thinkingBudget: N` to cap the thinking token count. The effort levels
+ * here follow Google's own guidance (low ~= 512, medium ~= 2048,
+ * high ~= 8192, max = -1 means "dynamic/no cap").
+ */
+function resolveGoogleThinkingConfig(
+  option: ProviderReasoningOption | undefined,
+): Record<string, unknown> | undefined {
+  if (!option || option.enabled !== true) {
+    return undefined;
+  }
+  const config: Record<string, unknown> = { includeThoughts: true };
+  if (typeof option.budgetTokens === "number") {
+    config.thinkingBudget = option.budgetTokens;
+    return config;
+  }
+  switch (option.effort) {
+    case "low":
+      config.thinkingBudget = 512;
+      break;
+    case "high":
+      config.thinkingBudget = 8192;
+      break;
+    case "max":
+      config.thinkingBudget = -1;
+      break;
+    case "medium":
+    default:
+      config.thinkingBudget = 2048;
+      break;
+  }
+  return config;
+}
+
 function buildGoogleGenerationConfig(
   options: OpenAICompatibleLanguageOptions,
 ): Record<string, unknown> | undefined {
+  const thinkingConfig = resolveGoogleThinkingConfig(options.reasoning);
   const config: Record<string, unknown> = {
     ...(options.maxOutputTokens !== undefined ? { maxOutputTokens: options.maxOutputTokens } : {}),
     ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
@@ -1495,6 +1672,7 @@ function buildGoogleGenerationConfig(
       ? { stopSequences: options.stopSequences }
       : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    ...(thinkingConfig ? { thinkingConfig } : {}),
   };
 
   return Object.keys(config).length > 0 ? config : undefined;
