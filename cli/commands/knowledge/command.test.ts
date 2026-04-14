@@ -13,6 +13,7 @@ import {
   createKnowledgeIngestResult,
   deriveKnowledgeRemotePath,
   ensureUniqueSlugs,
+  executeKnowledgeParserCommand,
   formatKnowledgeUploadSource,
   ingestResolvedSources,
   isLikelyLocalPath,
@@ -1066,6 +1067,85 @@ describe("knowledgeIngestPythonSource", () => {
     assertStringIncludes(
       knowledgeIngestPythonSource,
       String.raw`return f"{CODE_FENCE}json\n{rendered}\n{CODE_FENCE}", stats, warnings`,
+    );
+  });
+});
+
+describe("executeKnowledgeParserCommand", () => {
+  it("uses the cross-runtime command runner for python execution", async () => {
+    const calls: Array<{
+      cmd: string;
+      args: string[];
+      env?: Record<string, string>;
+      capture: true;
+    }> = [];
+
+    await executeKnowledgeParserCommand(
+      {
+        scriptPath: "/tmp/ingest.py",
+        inputJsonPath: "/tmp/input.json",
+        outputJsonPath: "/tmp/output.json",
+        env: { PYTHONPATH: "/tmp/python" },
+      },
+      {
+        runCommandFn: async (cmd, options) => {
+          calls.push({ cmd, ...options });
+          return { success: true, code: 0, stdout: "", stderr: "" };
+        },
+      },
+    );
+
+    assertEquals(calls, [{
+      cmd: "python3",
+      args: [
+        "/tmp/ingest.py",
+        "--input-json",
+        "/tmp/input.json",
+        "--output-json",
+        "/tmp/output.json",
+      ],
+      env: { PYTHONPATH: "/tmp/python" },
+      capture: true,
+    }]);
+  });
+
+  it("maps an empty spawn failure to the existing python3-required error", async () => {
+    await assertRejects(
+      () =>
+        executeKnowledgeParserCommand(
+          {
+            scriptPath: "/tmp/ingest.py",
+            inputJsonPath: "/tmp/input.json",
+            outputJsonPath: "/tmp/output.json",
+          },
+          {
+            runCommandFn: async () => ({ success: false, code: 1 }),
+          },
+        ),
+      Error,
+      "python3 is required. Install python3 and the supported parser packages, or run the command inside the Veryfront sandbox.",
+    );
+  });
+
+  it("maps thrown missing-executable errors to the existing python3-required error", async () => {
+    await assertRejects(
+      () =>
+        executeKnowledgeParserCommand(
+          {
+            scriptPath: "/tmp/ingest.py",
+            inputJsonPath: "/tmp/input.json",
+            outputJsonPath: "/tmp/output.json",
+          },
+          {
+            runCommandFn: async () => {
+              const error = new Error("spawn python3 ENOENT");
+              (error as Error & { code?: string }).code = "ENOENT";
+              throw error;
+            },
+          },
+        ),
+      Error,
+      "python3 is required. Install python3 and the supported parser packages, or run the command inside the Veryfront sandbox.",
     );
   });
 });
