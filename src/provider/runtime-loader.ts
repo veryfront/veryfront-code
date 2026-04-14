@@ -60,6 +60,40 @@ type RuntimeToolDefinition =
     id: `${string}.${string}`;
     args: Record<string, unknown>;
   };
+/**
+ * TTL for a single prompt-cache breakpoint.
+ *
+ * `true` and `"5m"` both map to Anthropic's default ephemeral (5-minute) cache.
+ * `"1h"` maps to the extended 1-hour cache at a 2x write cost. Callers can
+ * pick per breakpoint target.
+ */
+type ProviderCacheTtl = boolean | "5m" | "1h";
+
+/**
+ * Per-provider prompt / context caching controls.
+ *
+ * For Anthropic, flipping these on emits `cache_control: { type: "ephemeral" }`
+ * breakpoints on the assembled system prompt and/or the last tool definition
+ * sent to the Messages API, enabling Anthropic's explicit prompt cache.
+ *
+ * OpenAI's prompt cache is automatic on gpt-4o+ and has no request-side
+ * directive to emit, so this option is a no-op for the OpenAI runtime. Google
+ * uses a separate `cachedContent` resource model that is intentionally not
+ * covered by this option (it belongs on a dedicated Gemini-specific surface).
+ */
+type ProviderCacheControlOption = {
+  /**
+   * Attach a cache breakpoint to the final system-prompt text block.
+   * Use when the system prompt is large and reused across requests.
+   */
+  system?: ProviderCacheTtl;
+  /**
+   * Attach a cache breakpoint to the last tool definition in `tools`.
+   * Use when the tool schemas are large and identical across requests.
+   */
+  tools?: ProviderCacheTtl;
+};
+
 type OpenAICompatibleLanguageOptions = {
   prompt: RuntimePromptMessage[];
   maxOutputTokens?: number;
@@ -76,6 +110,12 @@ type OpenAICompatibleLanguageOptions = {
   providerOptions?: Record<string, unknown>;
   includeRawChunks?: boolean;
   abortSignal?: AbortSignal;
+  /**
+   * Per-provider prompt / context caching controls. See
+   * {@link ProviderCacheControlOption}. When unset, caching behaviour is
+   * unchanged on every provider.
+   */
+  cacheControl?: ProviderCacheControlOption;
 };
 type OpenAICompatibleChatMessage =
   | { role: "system"; content: string }
@@ -142,7 +182,12 @@ type AnthropicCompatibleRequest = {
   messages: AnthropicCompatibleMessage[];
   max_tokens: number;
   stream?: boolean;
-  system?: string;
+  /**
+   * String form is the classic shorthand. Array-of-blocks form is required
+   * when the system prompt carries a cache_control breakpoint, because
+   * cache_control lives on an individual content block, not on a raw string.
+   */
+  system?: string | Array<Record<string, unknown>>;
   temperature?: number;
   top_p?: number;
   stop_sequences?: string[];
@@ -558,9 +603,32 @@ function pushAnthropicUserContent(
   });
 }
 
+/**
+ * Resolves a {@link ProviderCacheTtl} into Anthropic's `cache_control` shape.
+ *
+ * Returns `undefined` when caching is not requested (`false` / `undefined`),
+ * `{ type: "ephemeral" }` for the 5-minute default (`true` / `"5m"`), or
+ * `{ type: "ephemeral", ttl: "1h" }` for the extended 1-hour cache.
+ */
+function resolveAnthropicCacheControlBlock(
+  ttl: ProviderCacheTtl | undefined,
+): { type: "ephemeral"; ttl?: "1h" } | undefined {
+  if (ttl === undefined || ttl === false) {
+    return undefined;
+  }
+  if (ttl === "1h") {
+    return { type: "ephemeral", ttl: "1h" };
+  }
+  return { type: "ephemeral" };
+}
+
 function toAnthropicMessages(
   prompt: RuntimePromptMessage[],
-): { system?: string; messages: AnthropicCompatibleMessage[] } {
+  systemCacheControl?: { type: "ephemeral"; ttl?: "1h" },
+): {
+  system?: string | Array<Record<string, unknown>>;
+  messages: AnthropicCompatibleMessage[];
+} {
   const systemParts: string[] = [];
   const messages: AnthropicCompatibleMessage[] = [];
 
@@ -603,14 +671,32 @@ function toAnthropicMessages(
     }
   }
 
-  return {
-    ...(systemParts.length > 0 ? { system: systemParts.join("\n\n") } : {}),
-    messages,
-  };
+  if (systemParts.length === 0) {
+    return { messages };
+  }
+
+  const joined = systemParts.join("\n\n");
+
+  // Cache-controlled system prompts must use the array-of-blocks form so the
+  // breakpoint lands on an individual content block. Callers that don't opt
+  // in keep the legacy raw-string form for backward compatibility.
+  if (systemCacheControl) {
+    return {
+      system: [{
+        type: "text",
+        text: joined,
+        cache_control: systemCacheControl,
+      }],
+      messages,
+    };
+  }
+
+  return { system: joined, messages };
 }
 
 function toAnthropicTools(
   tools: RuntimeToolDefinition[] | undefined,
+  toolsCacheControl?: { type: "ephemeral"; ttl?: "1h" },
 ): Array<Record<string, unknown>> | undefined {
   if (!tools) {
     return undefined;
@@ -644,7 +730,23 @@ function toAnthropicTools(
     });
   }
 
-  return normalized.length > 0 ? normalized : undefined;
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  // Attach the cache breakpoint to the final tool entry so Anthropic caches
+  // the entire tools block up to and including that definition. Earlier tool
+  // entries are implicitly covered by the same breakpoint per Anthropic's
+  // walk-backward cache lookup behaviour.
+  if (toolsCacheControl) {
+    const lastIndex = normalized.length - 1;
+    normalized[lastIndex] = {
+      ...normalized[lastIndex],
+      cache_control: toolsCacheControl,
+    };
+  }
+
+  return normalized;
 }
 
 function createAnthropicRequestHeaders(options: {
@@ -723,7 +825,16 @@ function buildAnthropicMessagesRequest(
   options: OpenAICompatibleLanguageOptions,
   stream: boolean,
 ): AnthropicCompatibleRequest {
-  const { system, messages } = toAnthropicMessages(options.prompt);
+  const systemCacheControl = resolveAnthropicCacheControlBlock(
+    options.cacheControl?.system,
+  );
+  const toolsCacheControl = resolveAnthropicCacheControlBlock(
+    options.cacheControl?.tools,
+  );
+
+  const { system, messages } = toAnthropicMessages(options.prompt, systemCacheControl);
+  const anthropicTools = toAnthropicTools(options.tools, toolsCacheControl);
+
   const body: AnthropicCompatibleRequest = {
     model: modelId,
     messages,
@@ -735,7 +846,7 @@ function buildAnthropicMessagesRequest(
     ...(options.stopSequences && options.stopSequences.length > 0
       ? { stop_sequences: options.stopSequences }
       : {}),
-    ...(toAnthropicTools(options.tools) ? { tools: toAnthropicTools(options.tools) } : {}),
+    ...(anthropicTools ? { tools: anthropicTools } : {}),
     ...(options.toolChoice !== undefined
       ? { tool_choice: normalizeAnthropicToolChoice(options.toolChoice) }
       : {}),

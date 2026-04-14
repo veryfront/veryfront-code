@@ -1857,4 +1857,199 @@ describe("provider/runtime-loader", () => {
       assertEquals((body as { max_tokens: number }).max_tokens, 64_000);
     });
   });
+
+  describe("Anthropic prompt caching (cache_control breakpoints)", () => {
+    // Captures the outbound body for a single Anthropic generate call with a
+    // caller-provided cacheControl option. Returns the parsed body so each test
+    // can assert what landed on the wire.
+    function createCachingCaptureRuntime() {
+      let capturedBody: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          capturedBody = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-sonnet-4-20250514");
+      return {
+        runtime,
+        getBody: () => capturedBody,
+      };
+    }
+
+    const systemPrompt: RuntimePromptMessage = {
+      role: "system",
+      content: "You are a helpful assistant.",
+    };
+    const userPrompt: RuntimePromptMessage = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    };
+
+    const weatherTool = {
+      type: "function" as const,
+      name: "weather",
+      description: "Get weather",
+      inputSchema: {
+        type: "object",
+        properties: { city: { type: "string" } },
+        required: ["city"],
+        additionalProperties: false,
+      },
+    };
+    const searchTool = {
+      type: "function" as const,
+      name: "search",
+      description: "Search the web",
+      inputSchema: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    };
+
+    it("defaults system to string form when cacheControl is not set", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+      });
+      const body = getBody() as { system: unknown };
+      // Backward-compat path: without a breakpoint, system stays as a raw string.
+      assertEquals(body.system, "You are a helpful assistant.");
+    });
+
+    it("emits cache_control on the system block when cacheControl.system is true", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        cacheControl: { system: true },
+      });
+      const body = getBody() as { system: Array<Record<string, unknown>> };
+      assertEquals(body.system, [{
+        type: "text",
+        text: "You are a helpful assistant.",
+        cache_control: { type: "ephemeral" },
+      }]);
+    });
+
+    it('emits cache_control with 1h TTL when cacheControl.system is "1h"', async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        cacheControl: { system: "1h" },
+      });
+      const body = getBody() as { system: Array<Record<string, unknown>> };
+      assertEquals(body.system, [{
+        type: "text",
+        text: "You are a helpful assistant.",
+        cache_control: { type: "ephemeral", ttl: "1h" },
+      }]);
+    });
+
+    it("emits cache_control on the LAST tool entry when cacheControl.tools is true", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        tools: [weatherTool, searchTool],
+        cacheControl: { tools: true },
+      });
+      const body = getBody() as { tools: Array<Record<string, unknown>> };
+      assertEquals(body.tools.length, 2);
+      // First tool is unmodified
+      assertEquals(body.tools[0], {
+        name: "weather",
+        description: "Get weather",
+        input_schema: weatherTool.inputSchema,
+      });
+      // Last tool carries the breakpoint
+      assertEquals(body.tools[1], {
+        name: "search",
+        description: "Search the web",
+        input_schema: searchTool.inputSchema,
+        cache_control: { type: "ephemeral" },
+      });
+    });
+
+    it("emits both system and tools breakpoints when both are set", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        tools: [weatherTool],
+        cacheControl: { system: true, tools: "1h" },
+      });
+      const body = getBody() as {
+        system: Array<Record<string, unknown>>;
+        tools: Array<Record<string, unknown>>;
+      };
+      assertEquals(body.system, [{
+        type: "text",
+        text: "You are a helpful assistant.",
+        cache_control: { type: "ephemeral" },
+      }]);
+      assertEquals(body.tools, [{
+        name: "weather",
+        description: "Get weather",
+        input_schema: weatherTool.inputSchema,
+        cache_control: { type: "ephemeral", ttl: "1h" },
+      }]);
+    });
+
+    it("treats cacheControl.system === false as no-op (string form preserved)", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        cacheControl: { system: false },
+      });
+      const body = getBody() as { system: unknown };
+      assertEquals(body.system, "You are a helpful assistant.");
+    });
+
+    it("treats cacheControl.tools === false as no-op (no breakpoint attached)", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        tools: [weatherTool],
+        cacheControl: { tools: false },
+      });
+      const body = getBody() as { tools: Array<Record<string, unknown>> };
+      assertEquals(body.tools, [{
+        name: "weather",
+        description: "Get weather",
+        input_schema: weatherTool.inputSchema,
+      }]);
+    });
+
+    it("does not crash when cacheControl is set but there's no system prompt", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        cacheControl: { system: true },
+      });
+      const body = getBody() as Record<string, unknown>;
+      // No system field at all — nothing to attach the breakpoint to.
+      assertEquals("system" in body, false);
+    });
+
+    it("does not crash when cacheControl.tools is set but there's no tools array", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        cacheControl: { tools: true },
+      });
+      const body = getBody() as Record<string, unknown>;
+      assertEquals("tools" in body, false);
+    });
+  });
 });
