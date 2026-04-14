@@ -21,6 +21,7 @@ import {
   vfListLocalProjects,
   vfListRoutes,
 } from "./tools/project-tools.ts";
+import { vfRunLint } from "./tools/run-lint-tool.ts";
 import { vfRunTests } from "./tools/run-tests-tool.ts";
 import { vfGetConventions, vfScaffold } from "./tools/scaffold-tools.ts";
 import { vfGetSkillReference, vfGetSkills } from "./tools/skill-tools.ts";
@@ -48,6 +49,7 @@ export const advancedTools: MCPTool[] = [
   vfHotReload,
   vfTriggerHmr,
   vfWaitForReady,
+  vfRunLint,
   vfGetFlywheelStatus,
   vfRunTests,
 ];

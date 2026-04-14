@@ -442,6 +442,25 @@ export class StandaloneMCPServer {
           });
         },
       },
+      {
+        name: "vf_run_lint",
+        description:
+          "Run the linter. Returns structured diagnostics with file, line, column, rule code, and message. " +
+          "Do not use for test results — use vf_run_tests instead. " +
+          "Do not use for compile/runtime errors — use vf_get_errors instead.",
+        inputSchema: { type: "object", properties: {} },
+        async execute() {
+          const { parseLintJsonOutput } = await import("../commands/lint/command.ts");
+          const cmd = new Deno.Command("deno", {
+            args: ["lint", "--json"],
+            stdout: "piped",
+            stderr: "piped",
+          });
+          const { code, stdout } = await cmd.output();
+          const output = new TextDecoder().decode(stdout);
+          return parseLintJsonOutput(output, code);
+        },
+      },
       ...this.createContext7Tools(),
     ];
   }
