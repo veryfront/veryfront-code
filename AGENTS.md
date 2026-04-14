@@ -77,6 +77,29 @@ MCP auto-starts on `--port` + 2 (default: 3002) with `veryfront dev`. With `very
 
 **Resources:** `veryfront://skill`, `veryfront://errors`, `veryfront://logs`, `veryfront://schema`, `veryfront://agents-md`
 
+## Agent Workflows
+
+### Session Start
+Call `vf_bootstrap` once at session start for full project context:
+```
+# Single call replaces: vf_get_project_context + vf_get_conventions + vf_get_errors + vf_get_status
+vf_bootstrap()
+```
+
+### Development Loop (Flywheel)
+1. Edit code
+2. `vf_trigger_hmr({ path: "app/page.tsx" })` — push changes to browser
+3. `vf_get_errors()` — check for compile/runtime errors
+4. `vf_run_tests({ filter: "page" })` — run related tests
+5. `vf_run_lint()` — check for lint issues
+6. Iterate
+
+### Build & Deploy
+1. `vf_run_tests({ parallel: true })` — full test suite
+2. `vf_run_lint()` — verify no lint issues
+3. `vf_build({ dryRun: true })` — preview build output
+4. `vf_build()` — production build
+
 ## Architecture
 
 ```
