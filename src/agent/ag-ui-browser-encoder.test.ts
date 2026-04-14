@@ -155,6 +155,54 @@ describe("agent/ag-ui-browser-encoder", () => {
     );
   });
 
+  it("closes open text before orphan tool-input-delta is forwarded", () => {
+    const state = createAgUiBrowserEncoderState();
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "message-start",
+        messageId: "assistant-orphan",
+      }),
+      [],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "text-delta",
+        delta: "Now I have enough material to write the file.",
+      }),
+      [
+        {
+          event: "TextMessageStart",
+          payload: { messageId: "assistant-orphan", role: "assistant" },
+        },
+        {
+          event: "TextMessageContent",
+          payload: {
+            messageId: "assistant-orphan",
+            delta: "Now I have enough material to write the file.",
+          },
+        },
+      ],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "tool-input-delta",
+        toolCallId: "tool-orphan",
+        inputTextDelta: '{"path":"research/ai-ontologies.md"',
+      }),
+      [
+        {
+          event: "TextMessageEnd",
+          payload: { messageId: "assistant-orphan" },
+        },
+        {
+          event: "ToolCallArgs",
+          payload: { toolCallId: "tool-orphan", delta: '{"path":"research/ai-ontologies.md"' },
+        },
+      ],
+    );
+  });
+
   it("closes reasoning when non-reasoning events interrupt it", () => {
     const state = createAgUiBrowserEncoderState();
 

@@ -360,13 +360,17 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
       if (typeof event.toolCallId === "string") {
         state.streamedToolInputIds.add(event.toolCallId);
       }
-      return [{
-        event: "ToolCallArgs",
-        payload: {
-          toolCallId: event.toolCallId,
-          delta: typeof event.inputTextDelta === "string" ? event.inputTextDelta : "",
+      return [
+        ...closeOpenTextEvent(state),
+        ...closeOpenReasoningEvent(state),
+        {
+          event: "ToolCallArgs",
+          payload: {
+            toolCallId: event.toolCallId,
+            delta: typeof event.inputTextDelta === "string" ? event.inputTextDelta : "",
+          },
         },
-      }];
+      ];
 
     case "tool-input-available": {
       state.sawVisibleOutput = true;
