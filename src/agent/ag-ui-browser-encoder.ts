@@ -233,6 +233,28 @@ function createTextEvent(
   };
 }
 
+function closeOpenTextEvent(state: AgUiBrowserEncoderState): AgUiBrowserEncodedEvent[] {
+  if (!state.textOpen) {
+    return [];
+  }
+
+  state.textOpen = false;
+  return [createTextEvent(getMessageId(state, { type: "text-end" }), "TextMessageEnd")];
+}
+
+function closeOpenReasoningEvent(state: AgUiBrowserEncoderState): AgUiBrowserEncodedEvent[] {
+  if (state.reasoningMessageId === null) {
+    return [];
+  }
+
+  const messageId = state.reasoningMessageId;
+  state.reasoningMessageId = null;
+  return [{
+    event: "ReasoningMessageEnd",
+    payload: { messageId },
+  }];
+}
+
 export function mapRuntimeStreamEventToAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
@@ -253,33 +275,38 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
       return [];
 
     case "text-start": {
+      const events = closeOpenReasoningEvent(state);
       if (state.textOpen) return [];
       const messageId = getMessageId(state, event);
       state.textOpen = true;
       state.sawVisibleOutput = true;
-      return [createTextEvent(messageId, "TextMessageStart")];
+      events.push(createTextEvent(messageId, "TextMessageStart"));
+      return events;
     }
 
     case "text-delta": {
+      const events = closeOpenReasoningEvent(state);
       const messageId = getMessageId(state, event);
       state.sawVisibleOutput = true;
       if (!state.textOpen) {
         state.textOpen = true;
-        return [
+        events.push(
           createTextEvent(messageId, "TextMessageStart"),
           createTextEvent(
             messageId,
             "TextMessageContent",
             typeof event.delta === "string" ? event.delta : "",
           ),
-        ];
+        );
+        return events;
       }
 
-      return [createTextEvent(
+      events.push(createTextEvent(
         messageId,
         "TextMessageContent",
         typeof event.delta === "string" ? event.delta : "",
-      )];
+      ));
+      return events;
     }
 
     case "text-end": {
@@ -288,13 +315,23 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
       return [createTextEvent(getMessageId(state, event), "TextMessageEnd")];
     }
 
-    case "reasoning-start":
+    case "reasoning-start": {
+      const events = closeOpenTextEvent(state);
+      events.push(...closeOpenReasoningEvent(state));
       state.sawVisibleOutput = true;
-      return [createReasoningEvent(state, event, "ReasoningMessageStart")];
+      events.push(createReasoningEvent(state, event, "ReasoningMessageStart"));
+      return events;
+    }
 
-    case "reasoning-delta":
+    case "reasoning-delta": {
+      const events = closeOpenTextEvent(state);
       state.sawVisibleOutput = true;
-      return [createReasoningEvent(state, event, "ReasoningMessageContent")];
+      if (state.reasoningMessageId === null) {
+        events.push(createReasoningEvent(state, event, "ReasoningMessageStart"));
+      }
+      events.push(createReasoningEvent(state, event, "ReasoningMessageContent"));
+      return events;
+    }
 
     case "reasoning-end": {
       const reasoningEvent = createReasoningEvent(state, event, "ReasoningMessageEnd");
@@ -302,15 +339,21 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
       return [reasoningEvent];
     }
 
-    case "tool-input-start":
+    case "tool-input-start": {
+      const events = [
+        ...closeOpenTextEvent(state),
+        ...closeOpenReasoningEvent(state),
+      ];
       state.sawVisibleOutput = true;
-      return [{
+      events.push({
         event: "ToolCallStart",
         payload: {
           toolCallId: event.toolCallId,
           toolCallName: event.toolName,
         },
-      }];
+      });
+      return events;
+    }
 
     case "tool-input-delta":
       state.sawVisibleOutput = true;
@@ -327,12 +370,20 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
 
     case "tool-input-available": {
       state.sawVisibleOutput = true;
-      return completeToolInput(state, event);
+      return [
+        ...closeOpenTextEvent(state),
+        ...closeOpenReasoningEvent(state),
+        ...completeToolInput(state, event),
+      ];
     }
 
     case "tool-input-error": {
       state.sawVisibleOutput = true;
-      const events = completeToolInput(state, event);
+      const events = [
+        ...closeOpenTextEvent(state),
+        ...closeOpenReasoningEvent(state),
+        ...completeToolInput(state, event),
+      ];
       events.push({
         event: "ToolCallResult",
         payload: {
@@ -348,25 +399,45 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
 
     case "tool-output-available":
       state.sawVisibleOutput = true;
-      return [createToolResultEvent(event.toolCallId, event.output)];
+      return [
+        ...closeOpenTextEvent(state),
+        ...closeOpenReasoningEvent(state),
+        createToolResultEvent(event.toolCallId, event.output),
+      ];
 
     case "tool-output-error":
       state.sawVisibleOutput = true;
-      return [createToolResultEvent(event.toolCallId, { error: event.errorText }, true)];
+      return [
+        ...closeOpenTextEvent(state),
+        ...closeOpenReasoningEvent(state),
+        createToolResultEvent(event.toolCallId, { error: event.errorText }, true),
+      ];
 
     case "tool-output-denied":
       state.sawVisibleOutput = true;
-      return [createToolResultEvent(event.toolCallId, { error: "Tool output denied" }, true)];
+      return [
+        ...closeOpenTextEvent(state),
+        ...closeOpenReasoningEvent(state),
+        createToolResultEvent(event.toolCallId, { error: "Tool output denied" }, true),
+      ];
 
     case "step-start":
     case "start-step":
       state.sawVisibleOutput = true;
-      return [createStepEvent(state, "StepStarted")];
+      return [
+        ...closeOpenTextEvent(state),
+        ...closeOpenReasoningEvent(state),
+        createStepEvent(state, "StepStarted"),
+      ];
 
     case "step-end":
     case "finish-step":
       state.sawVisibleOutput = true;
-      return [createStepEvent(state, "StepFinished")];
+      return [
+        ...closeOpenTextEvent(state),
+        ...closeOpenReasoningEvent(state),
+        createStepEvent(state, "StepFinished"),
+      ];
 
     case "data":
       applyDataMetadata(state, event);
@@ -374,7 +445,10 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
 
     case "error":
       state.sawTerminalError = true;
-      return [{
+      return [
+        ...closeOpenTextEvent(state),
+        ...closeOpenReasoningEvent(state),
+        {
         event: "RunError",
         payload: {
           message: typeof event.error === "string" ? event.error : "Agent run failed",
@@ -408,13 +482,8 @@ export function finalizeAgUiBrowserEvents(
   }
 
   const events: AgUiBrowserEncodedEvent[] = [];
-  if (state.textOpen) {
-    state.textOpen = false;
-    events.push({
-      event: "TextMessageEnd",
-      payload: { messageId: getMessageId(state, { type: "text-end" }) },
-    });
-  }
+  events.push(...closeOpenTextEvent(state));
+  events.push(...closeOpenReasoningEvent(state));
 
   events.push({
     event: "RunFinished",

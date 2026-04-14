@@ -397,11 +397,20 @@ describe("chat-stream-handler", () => {
         toolName: "web_search",
         output: { results: [{ title: "AI" }] },
       }]);
-      assertEquals(events[0], {
-        type: "tool-output-available",
-        toolCallId: "tc-web",
-        output: { results: [{ title: "AI" }] },
-      });
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-web", toolName: "web_search" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-web",
+          toolName: "web_search",
+          input: { query: "latest ai news" },
+        },
+        {
+          type: "tool-output-available",
+          toolCallId: "tc-web",
+          output: { results: [{ title: "AI" }] },
+        },
+      ]);
     });
 
     it("forwards errored tool results as tool-output-error SSE events", async () => {
@@ -427,11 +436,20 @@ describe("chat-stream-handler", () => {
         toolName: "web_search",
         error: { error: "Search failed" },
       }]);
-      assertEquals(events[0], {
-        type: "tool-output-error",
-        toolCallId: "tc-web",
-        errorText: '{"error":"Search failed"}',
-      });
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-web", toolName: "web_search" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-web",
+          toolName: "web_search",
+          input: { query: "latest ai news" },
+        },
+        {
+          type: "tool-output-error",
+          toolCallId: "tc-web",
+          errorText: '{"error":"Search failed"}',
+        },
+      ]);
     });
 
     it("forwards tool-error parts as tool-output-error SSE events", async () => {
@@ -458,12 +476,22 @@ describe("chat-stream-handler", () => {
         error: "Expected object, received string",
         providerExecuted: true,
       }]);
-      assertEquals(events[0], {
-        type: "tool-output-error",
-        toolCallId: "tc-provider-error",
-        errorText: "Expected object, received string",
-        providerExecuted: true,
-      });
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-provider-error", toolName: "web_search" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-provider-error",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          providerExecuted: true,
+        },
+        {
+          type: "tool-output-error",
+          toolCallId: "tc-provider-error",
+          errorText: "Expected object, received string",
+          providerExecuted: true,
+        },
+      ]);
     });
 
     it("uses Error.message for streamed tool-error SSE events", async () => {
@@ -484,12 +512,22 @@ describe("chat-stream-handler", () => {
 
       await processStream(result, state, controller, encoder, "t", undefined);
 
-      assertEquals(events[0], {
-        type: "tool-output-error",
-        toolCallId: "tc-provider-error-object",
-        errorText: "Provider timeout",
-        providerExecuted: true,
-      });
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-provider-error-object", toolName: "web_search" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-provider-error-object",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          providerExecuted: true,
+        },
+        {
+          type: "tool-output-error",
+          toolCallId: "tc-provider-error-object",
+          errorText: "Provider timeout",
+          providerExecuted: true,
+        },
+      ]);
     });
     it("ignores tool-input-delta for unknown tool call IDs", async () => {
       const { events, controller, encoder } = createSSECollector();
@@ -543,6 +581,63 @@ describe("chat-stream-handler", () => {
         { type: "reasoning-start", id: "reasoning-1" },
         { type: "reasoning-delta", id: "reasoning-1", delta: "thinking..." },
         { type: "reasoning-end", id: "reasoning-1" },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events, [
+        { type: "reasoning-start", id: "reasoning-1" },
+        { type: "reasoning-delta", id: "reasoning-1", delta: "thinking..." },
+        { type: "reasoning-end", id: "reasoning-1" },
+      ]);
+    });
+
+    it("closes reasoning when tool activity interrupts it and synthesizes missing tool lifecycle before raw tool results", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "reasoning-start", id: "reasoning-1" },
+        { type: "reasoning-delta", id: "reasoning-1", delta: "thinking..." },
+        {
+          type: "tool-result",
+          toolCallId: "tc-standalone",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          output: { ok: true },
+        },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events, [
+        { type: "reasoning-start", id: "reasoning-1" },
+        { type: "reasoning-delta", id: "reasoning-1", delta: "thinking..." },
+        { type: "reasoning-end", id: "reasoning-1" },
+        { type: "tool-input-start", toolCallId: "tc-standalone", toolName: "web_search" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-standalone",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+        },
+        {
+          type: "tool-output-available",
+          toolCallId: "tc-standalone",
+          output: { ok: true },
+        },
+      ]);
+    });
+
+    it("closes reasoning when the run finishes without an explicit reasoning-end", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "reasoning-start", id: "reasoning-1" },
+        { type: "reasoning-delta", id: "reasoning-1", delta: "thinking..." },
         { type: "finish", finishReason: "stop", totalUsage: null },
       ]);
 

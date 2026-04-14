@@ -62,10 +62,16 @@ describe("agent/ag-ui-browser-encoder", () => {
         toolCallId: "tool-1",
         toolName: "web_search",
       }),
-      [{
-        event: "ToolCallStart",
-        payload: { toolCallId: "tool-1", toolCallName: "web_search" },
-      }],
+      [
+        {
+          event: "TextMessageEnd",
+          payload: { messageId: "assistant-1" },
+        },
+        {
+          event: "ToolCallStart",
+          payload: { toolCallId: "tool-1", toolCallName: "web_search" },
+        },
+      ],
     );
     assertEquals(
       mapRuntimeStreamEventToAgUiBrowserEvents(state, {
@@ -149,6 +155,56 @@ describe("agent/ag-ui-browser-encoder", () => {
     );
   });
 
+  it("closes reasoning when non-reasoning events interrupt it", () => {
+    const state = createAgUiBrowserEncoderState();
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "message-start",
+        messageId: "assistant-3",
+      }),
+      [],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "reasoning-start",
+        id: "reasoning-1",
+      }),
+      [{
+        event: "ReasoningMessageStart",
+        payload: { messageId: "assistant-3:reasoning:reasoning-1", role: "reasoning" },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "reasoning-delta",
+        id: "reasoning-1",
+        delta: "thinking",
+      }),
+      [{
+        event: "ReasoningMessageContent",
+        payload: { messageId: "assistant-3:reasoning:reasoning-1", delta: "thinking" },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "tool-input-start",
+        toolCallId: "tool-4",
+        toolName: "web_search",
+      }),
+      [
+        {
+          event: "ReasoningMessageEnd",
+          payload: { messageId: "assistant-3:reasoning:reasoning-1" },
+        },
+        {
+          event: "ToolCallStart",
+          payload: { toolCallId: "tool-4", toolCallName: "web_search" },
+        },
+      ],
+    );
+  });
+
   it("finalizes metadata and emits terminal errors for empty output", () => {
     const visibleState = createAgUiBrowserEncoderState();
     mapRuntimeStreamEventToAgUiBrowserEvents(visibleState, {
@@ -187,6 +243,55 @@ describe("agent/ag-ui-browser-encoder", () => {
               inputTokens: 12,
               outputTokens: 8,
               totalTokens: 20,
+              finishReason: "stop",
+            },
+          },
+        },
+      ],
+    );
+
+    const reasoningState = createAgUiBrowserEncoderState();
+    mapRuntimeStreamEventToAgUiBrowserEvents(reasoningState, {
+      type: "message-start",
+      messageId: "assistant-4",
+    });
+    mapRuntimeStreamEventToAgUiBrowserEvents(reasoningState, {
+      type: "reasoning-start",
+      id: "reasoning-2",
+    });
+    mapRuntimeStreamEventToAgUiBrowserEvents(reasoningState, {
+      type: "reasoning-delta",
+      id: "reasoning-2",
+      delta: "Thinking",
+    });
+
+    assertEquals(
+      finalizeAgUiBrowserEvents(reasoningState, {
+        text: "done",
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+        usage: {
+          promptTokens: 2,
+          completionTokens: 1,
+          totalTokens: 3,
+        },
+        metadata: {
+          finishReason: "stop",
+        },
+      }),
+      [
+        {
+          event: "ReasoningMessageEnd",
+          payload: { messageId: "assistant-4:reasoning:reasoning-2" },
+        },
+        {
+          event: "RunFinished",
+          payload: {
+            metadata: {
+              inputTokens: 2,
+              outputTokens: 1,
+              totalTokens: 3,
               finishReason: "stop",
             },
           },
