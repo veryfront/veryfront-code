@@ -85,6 +85,7 @@ docs/api/
 # Local working files
 .local/
 .refactor/
+.omc/
 .omx/
 benchmarks/results/
 benchmarks/report/
