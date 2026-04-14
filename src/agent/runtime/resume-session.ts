@@ -316,7 +316,11 @@ export class RunResumeSessionManager<T> {
     }
 
     const waitingState = session.waitingState;
-    session.abortController.abort(new RunCancelledError());
+    // Abort with an AbortError-shaped DOMException so provider SDK fetch
+    // consumers treat it as cancellation and don't surface unhandled
+    // rejections. The waiting-state reject path keeps RunCancelledError
+    // so callers can still `instanceof` it.
+    session.abortController.abort(new DOMException("Run cancelled", "AbortError"));
     waitingState?.reject(new RunCancelledError());
     this.finalizeSession(session, "cancelled");
     return true;
