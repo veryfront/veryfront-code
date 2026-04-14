@@ -2,6 +2,7 @@ import { z } from "zod";
 type SafeParseResult<T> = { success: true; data: T } | { success: false; error: z.ZodError };
 import { createFileSystem, getEnv } from "veryfront/platform";
 import { basename, extname, join, normalize, relative } from "veryfront/platform/path";
+import { type CommandResult, runCommand } from "#veryfront/platform/compat/process.ts";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
@@ -484,6 +485,50 @@ export async function runKnowledgeParser(input: {
   return result;
 }
 
+export async function executeKnowledgeParserCommand(input: {
+  scriptPath: string;
+  inputJsonPath: string;
+  outputJsonPath: string;
+  env?: Record<string, string>;
+}, deps: {
+  runCommandFn?: (
+    cmd: string,
+    options: {
+      args: string[];
+      env?: Record<string, string>;
+      capture: true;
+    },
+  ) => Promise<CommandResult>;
+} = {}): Promise<void> {
+  const runCommandFn = deps.runCommandFn ?? runCommand;
+  const result = await runCommandFn("python3", {
+    args: [
+      input.scriptPath,
+      "--input-json",
+      input.inputJsonPath,
+      "--output-json",
+      input.outputJsonPath,
+    ],
+    ...(input.env ? { env: input.env } : {}),
+    capture: true,
+  });
+
+  if (result.success) {
+    return;
+  }
+
+  const stderr = result.stderr?.trim();
+  const stdout = result.stdout?.trim();
+
+  if (result.code === 1 && !stderr && !stdout) {
+    throw new Error(
+      "python3 is required. Install python3 and the supported parser packages, or run the command inside the Veryfront sandbox.",
+    );
+  }
+
+  throw new Error(stderr || stdout || "parser exited unsuccessfully");
+}
+
 export async function runKnowledgeParsers(input: {
   files: KnowledgeParserInput[];
   outputDir: string;
@@ -514,27 +559,12 @@ export async function runKnowledgeParsers(input: {
       );
       await Deno.writeTextFile(scriptPath, knowledgeIngestPythonSource);
 
-      let result: Deno.CommandOutput;
-      try {
-        result = await new Deno.Command("python3", {
-          args: [scriptPath, "--input-json", inputJsonPath, "--output-json", outputJsonPath],
-          ...(input.env ? { env: input.env } : {}),
-          stdout: "piped",
-          stderr: "piped",
-        }).output();
-      } catch (error) {
-        if (error instanceof Deno.errors.NotFound) {
-          throw new Error(
-            "python3 is required. Install python3 and the supported parser packages, or run the command inside the Veryfront sandbox.",
-          );
-        }
-        throw error;
-      }
-
-      if (result.code !== 0) {
-        const stderr = new TextDecoder().decode(result.stderr).trim();
-        throw new Error(stderr || "parser exited unsuccessfully");
-      }
+      await executeKnowledgeParserCommand({
+        scriptPath,
+        inputJsonPath,
+        outputJsonPath,
+        env: input.env,
+      });
 
       const raw = await Deno.readTextFile(outputJsonPath);
       const parsed = JSON.parse(raw) as KnowledgeParserResult | KnowledgeParserResult[];
