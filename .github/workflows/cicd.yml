@@ -70,7 +70,7 @@ jobs:
         with:
           warm-cache: "true"
       - name: Install Chromium
-        run: deno run -A npm:playwright install --with-deps chromium
+        run: deno run -A npm:playwright install chromium
       - uses: nick-fields/retry@v4.0.0
         with:
           timeout_minutes: 10
@@ -92,7 +92,7 @@ jobs:
         with:
           warm-cache: "true"
       - name: Install Chromium
-        run: deno run -A npm:playwright install --with-deps chromium
+        run: deno run -A npm:playwright install chromium
       - uses: nick-fields/retry@v4.0.0
         with:
           timeout_minutes: 15
