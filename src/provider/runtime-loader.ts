@@ -412,7 +412,7 @@ function toOpenAICompatibleTools(
         type: "function" as const,
         function: {
           name: tool.name,
-          parameters: tool.inputSchema,
+          parameters: unwrapToolInputSchema(tool.inputSchema),
           ...(typeof tool.description === "string" ? { description: tool.description } : {}),
         },
       }]
@@ -623,7 +623,7 @@ function toAnthropicTools(
       normalized.push({
         name: tool.name,
         ...(typeof tool.description === "string" ? { description: tool.description } : {}),
-        input_schema: tool.inputSchema,
+        input_schema: unwrapToolInputSchema(tool.inputSchema),
       });
       continue;
     }
@@ -1257,12 +1257,21 @@ function toGoogleTools(
       ? [{
         name: tool.name,
         ...(typeof tool.description === "string" ? { description: tool.description } : {}),
-        parameters: tool.inputSchema,
+        parameters: unwrapToolInputSchema(tool.inputSchema),
       }]
       : []
   );
 
   return functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined;
+}
+
+function unwrapToolInputSchema(inputSchema: unknown): unknown {
+  if (typeof inputSchema !== "object" || inputSchema === null || Array.isArray(inputSchema)) {
+    return inputSchema;
+  }
+
+  const candidate = Reflect.get(inputSchema, "jsonSchema");
+  return candidate ?? inputSchema;
 }
 
 function normalizeGoogleToolChoice(toolChoice: unknown):
