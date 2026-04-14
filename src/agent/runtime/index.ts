@@ -488,8 +488,6 @@ export class AgentRuntime {
               model: effectiveModel,
             },
           });
-          sendSSE(controller, encoder, { type: "text-start", id: textPartId });
-
           const response = await this.executeAgentLoopStreaming(
             systemPrompt,
             memoryMessages,
@@ -510,7 +508,6 @@ export class AgentRuntime {
           callbacks?.onFinish?.(response);
           throwIfAborted(streamAbortSignal);
 
-          sendSSE(controller, encoder, { type: "text-end", id: textPartId });
           sendSSE(controller, encoder, { type: "message-finish" });
           closeSSEStream(controller);
         } catch (error) {

@@ -63,10 +63,16 @@ describe("internal-agents/ag-ui-sse", () => {
         toolCallId: "tool-1",
         toolName: "studio_focus_component",
       }),
-      [{
-        event: "ToolCallStart",
-        payload: { toolCallId: "tool-1", toolCallName: "studio_focus_component" },
-      }],
+      [
+        {
+          event: "TextMessageEnd",
+          payload: { messageId: "assistant-1" },
+        },
+        {
+          event: "ToolCallStart",
+          payload: { toolCallId: "tool-1", toolCallName: "studio_focus_component" },
+        },
+      ],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, {

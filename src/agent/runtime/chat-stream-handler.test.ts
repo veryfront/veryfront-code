@@ -74,9 +74,58 @@ describe("chat-stream-handler", () => {
       await processStream(result, state, controller, encoder, "text-1", undefined);
 
       assertEquals(state.accumulatedText, "Hello world");
-      assertEquals(events.length, 2);
-      assertEquals(events[0], { type: "text-delta", id: "text-1", delta: "Hello " });
-      assertEquals(events[1], { type: "text-delta", id: "text-1", delta: "world" });
+      assertEquals(events.length, 4);
+      assertEquals(events[0], { type: "text-start", id: "text-1" });
+      assertEquals(events[1], { type: "text-delta", id: "text-1", delta: "Hello " });
+      assertEquals(events[2], { type: "text-delta", id: "text-1", delta: "world" });
+      assertEquals(events[3], { type: "text-end", id: "text-1" });
+    });
+
+    it("closes and reopens text segments when a tool interrupts assistant text", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "text-delta", text: "Before tool." },
+        { type: "tool-input-start", id: "tc-form", toolName: "form_input" },
+        {
+          type: "tool-call",
+          toolCallId: "tc-form",
+          toolName: "form_input",
+          input: { title: "Need more detail" },
+        },
+        {
+          type: "tool-result",
+          toolCallId: "tc-form",
+          toolName: "form_input",
+          output: { submitted: false },
+        },
+        { type: "text-delta", text: " After tool." },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "text-1", undefined);
+
+      assertEquals(events, [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "Before tool." },
+        { type: "text-end", id: "text-1" },
+        { type: "tool-input-start", toolCallId: "tc-form", toolName: "form_input" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-form",
+          toolName: "form_input",
+          input: { title: "Need more detail" },
+        },
+        {
+          type: "tool-output-available",
+          toolCallId: "tc-form",
+          output: { submitted: false },
+        },
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: " After tool." },
+        { type: "text-end", id: "text-1" },
+      ]);
     });
 
     it("calls onChunk callback for each text delta", async () => {
@@ -348,11 +397,20 @@ describe("chat-stream-handler", () => {
         toolName: "web_search",
         output: { results: [{ title: "AI" }] },
       }]);
-      assertEquals(events[0], {
-        type: "tool-output-available",
-        toolCallId: "tc-web",
-        output: { results: [{ title: "AI" }] },
-      });
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-web", toolName: "web_search" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-web",
+          toolName: "web_search",
+          input: { query: "latest ai news" },
+        },
+        {
+          type: "tool-output-available",
+          toolCallId: "tc-web",
+          output: { results: [{ title: "AI" }] },
+        },
+      ]);
     });
 
     it("forwards errored tool results as tool-output-error SSE events", async () => {
@@ -378,11 +436,20 @@ describe("chat-stream-handler", () => {
         toolName: "web_search",
         error: { error: "Search failed" },
       }]);
-      assertEquals(events[0], {
-        type: "tool-output-error",
-        toolCallId: "tc-web",
-        errorText: '{"error":"Search failed"}',
-      });
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-web", toolName: "web_search" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-web",
+          toolName: "web_search",
+          input: { query: "latest ai news" },
+        },
+        {
+          type: "tool-output-error",
+          toolCallId: "tc-web",
+          errorText: '{"error":"Search failed"}',
+        },
+      ]);
     });
 
     it("forwards tool-error parts as tool-output-error SSE events", async () => {
@@ -409,12 +476,22 @@ describe("chat-stream-handler", () => {
         error: "Expected object, received string",
         providerExecuted: true,
       }]);
-      assertEquals(events[0], {
-        type: "tool-output-error",
-        toolCallId: "tc-provider-error",
-        errorText: "Expected object, received string",
-        providerExecuted: true,
-      });
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-provider-error", toolName: "web_search" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-provider-error",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          providerExecuted: true,
+        },
+        {
+          type: "tool-output-error",
+          toolCallId: "tc-provider-error",
+          errorText: "Expected object, received string",
+          providerExecuted: true,
+        },
+      ]);
     });
 
     it("uses Error.message for streamed tool-error SSE events", async () => {
@@ -435,12 +512,26 @@ describe("chat-stream-handler", () => {
 
       await processStream(result, state, controller, encoder, "t", undefined);
 
-      assertEquals(events[0], {
-        type: "tool-output-error",
-        toolCallId: "tc-provider-error-object",
-        errorText: "Provider timeout",
-        providerExecuted: true,
-      });
+      assertEquals(events, [
+        {
+          type: "tool-input-start",
+          toolCallId: "tc-provider-error-object",
+          toolName: "web_search",
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-provider-error-object",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          providerExecuted: true,
+        },
+        {
+          type: "tool-output-error",
+          toolCallId: "tc-provider-error-object",
+          errorText: "Provider timeout",
+          providerExecuted: true,
+        },
+      ]);
     });
     it("ignores tool-input-delta for unknown tool call IDs", async () => {
       const { events, controller, encoder } = createSSECollector();
@@ -506,6 +597,63 @@ describe("chat-stream-handler", () => {
       ]);
     });
 
+    it("closes reasoning when tool activity interrupts it and synthesizes missing tool lifecycle before raw tool results", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "reasoning-start", id: "reasoning-1" },
+        { type: "reasoning-delta", id: "reasoning-1", delta: "thinking..." },
+        {
+          type: "tool-result",
+          toolCallId: "tc-standalone",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          output: { ok: true },
+        },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events, [
+        { type: "reasoning-start", id: "reasoning-1" },
+        { type: "reasoning-delta", id: "reasoning-1", delta: "thinking..." },
+        { type: "reasoning-end", id: "reasoning-1" },
+        { type: "tool-input-start", toolCallId: "tc-standalone", toolName: "web_search" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-standalone",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+        },
+        {
+          type: "tool-output-available",
+          toolCallId: "tc-standalone",
+          output: { ok: true },
+        },
+      ]);
+    });
+
+    it("closes reasoning when the run finishes without an explicit reasoning-end", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "reasoning-start", id: "reasoning-1" },
+        { type: "reasoning-delta", id: "reasoning-1", delta: "thinking..." },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events, [
+        { type: "reasoning-start", id: "reasoning-1" },
+        { type: "reasoning-delta", id: "reasoning-1", delta: "thinking..." },
+        { type: "reasoning-end", id: "reasoning-1" },
+      ]);
+    });
+
     it("ignores unrecognized stream part types", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
@@ -518,9 +666,11 @@ describe("chat-stream-handler", () => {
 
       await processStream(result, state, controller, encoder, "t", undefined);
 
-      // Only text-delta should produce an event
-      assertEquals(events.length, 1);
-      assertEquals(events[0]?.type, "text-delta");
+      assertEquals(events, [
+        { type: "text-start", id: "t" },
+        { type: "text-delta", id: "t", delta: "ok" },
+        { type: "text-end", id: "t" },
+      ]);
     });
   });
 });
