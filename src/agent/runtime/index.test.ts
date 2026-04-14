@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  captureStreamedToolCallInput,
   collectFinalStreamToolResults,
   collectGeneratedToolResults,
   collectPersistedToolResults,
@@ -110,5 +111,25 @@ describe("agent runtime streamed tool result collection", () => {
 
     assertEquals(generatedToolResults.size, 1);
     assertEquals(generatedToolResults.get("tool-4")?.result, { ok: true });
+  });
+
+  it("preserves raw streamed tool input text when parsing fails", () => {
+    const captured = captureStreamedToolCallInput({
+      arguments: '{"query":"AI ontologies research"',
+    });
+
+    assertEquals(captured.args, {});
+    assertEquals(captured.inputText, '{"query":"AI ontologies research"');
+    assertEquals(typeof captured.parseError, "string");
+  });
+
+  it("preserves raw streamed tool input text when parsing succeeds", () => {
+    const captured = captureStreamedToolCallInput({
+      arguments: '{"query":"AI ontologies research"}',
+    });
+
+    assertEquals(captured.args, { query: "AI ontologies research" });
+    assertEquals(captured.inputText, '{"query":"AI ontologies research"}');
+    assertEquals(captured.parseError, undefined);
   });
 });

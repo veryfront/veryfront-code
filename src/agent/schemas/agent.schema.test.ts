@@ -385,6 +385,7 @@ describe("agent/schema", () => {
         id: "tool-2",
         name: "calculator",
         args: { x: 5, y: 3 },
+        inputText: '{"x":5,"y":3}',
         status: "completed",
         result: 8,
       });
@@ -461,6 +462,7 @@ describe("agent/schema", () => {
                 toolCallId: "call-1",
                 toolName: "calculator",
                 args: { x: 10, y: 5 },
+                inputText: '{"x":10,"y":5}',
               },
             ],
           },
@@ -470,6 +472,7 @@ describe("agent/schema", () => {
             id: "call-1",
             name: "calculator",
             args: { x: 10, y: 5 },
+            inputText: '{"x":10,"y":5}',
             status: "completed",
             result: 15,
             executionTime: 50,

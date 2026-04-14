@@ -29,6 +29,7 @@ export const ToolCallPartWithArgsSchema = z.object({
   toolCallId: z.string(),
   toolName: z.string(),
   args: z.record(z.string(), z.unknown()),
+  inputText: z.string().optional(),
 });
 
 export const ToolCallPartWithInputSchema = z.object({
@@ -36,6 +37,7 @@ export const ToolCallPartWithInputSchema = z.object({
   toolCallId: z.string(),
   toolName: z.string(),
   input: z.record(z.string(), z.unknown()),
+  inputText: z.string().optional(),
 });
 
 export const ToolCallPartSchema = z.union([
@@ -83,6 +85,7 @@ export const ToolCallSchema = z.object({
   id: z.string(),
   name: z.string(),
   args: z.record(z.string(), z.unknown()),
+  inputText: z.string().optional(),
   status: z.enum(["pending", "executing", "completed", "error"]),
   result: z.unknown().optional(),
   error: z.string().optional(),

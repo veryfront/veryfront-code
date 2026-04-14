@@ -40,6 +40,7 @@ import {
   type ChatStreamState,
   createStreamState,
   processStream,
+  type StreamingToolCall,
   type StreamingToolResult,
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
@@ -180,6 +181,21 @@ export function collectGeneratedToolResults(
   }
 
   return generatedToolResults;
+}
+
+export function captureStreamedToolCallInput(
+  toolCall: Pick<StreamingToolCall, "arguments">,
+): {
+  args: Record<string, unknown>;
+  inputText?: string;
+  parseError?: string;
+} {
+  const { args, error } = parseToolArgs(toolCall.arguments);
+  return {
+    args,
+    ...(toolCall.arguments.length > 0 ? { inputText: toolCall.arguments } : {}),
+    ...(error ? { parseError: error } : {}),
+  };
 }
 
 function isToolResultPart(part: MessagePart): part is ToolResultPart {
@@ -945,18 +961,19 @@ export class AgentRuntime {
       if (state.accumulatedText) streamParts.push({ type: "text", text: state.accumulatedText });
 
       for (const tc of state.toolCalls.values()) {
-        const { args, error } = parseToolArgs(tc.arguments);
-        if (error) {
+        const capturedInput = captureStreamedToolCallInput(tc);
+        if (capturedInput.parseError) {
           logger.warn("Failed to parse streamed tool arguments", {
             toolCallId: tc.id,
-            error,
+            error: capturedInput.parseError,
           });
         }
         streamParts.push({
           type: `tool-${tc.name}`,
           toolCallId: tc.id,
           toolName: tc.name,
-          args,
+          args: capturedInput.args,
+          ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
         });
       }
 
@@ -1016,8 +1033,14 @@ export class AgentRuntime {
 
       for (const tc of streamedToolCalls) {
         throwIfAborted(abortSignal);
-        const { args, error: argError } = parseToolArgs(tc.arguments);
-        const toolCall: ToolCall = { id: tc.id, name: tc.name, args, status: "pending" };
+        const capturedInput = captureStreamedToolCallInput(tc);
+        const toolCall: ToolCall = {
+          id: tc.id,
+          name: tc.name,
+          args: capturedInput.args,
+          ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
+          status: "pending",
+        };
         const matchingResult = finalToolResults.get(tc.id);
         const persistedResult = currentStepToolResults.get(tc.id);
 
@@ -1041,23 +1064,23 @@ export class AgentRuntime {
           continue;
         }
 
-        if (argError) {
+        if (capturedInput.parseError) {
           logger.warn("Invalid streamed tool arguments", {
             toolCallId: tc.id,
-            error: argError,
+            error: capturedInput.parseError,
           });
 
           const dynamic = isDynamicTool(tc.name);
           sendSSE(controller, encoder, {
             type: "tool-input-error",
             toolCallId: tc.id,
-            errorText: `Invalid tool arguments: ${argError}`,
+            errorText: `Invalid tool arguments: ${capturedInput.parseError}`,
             ...(dynamic ? { dynamic: true } : {}),
           });
 
           await this.recordToolError(
             toolCall,
-            `Invalid tool arguments: ${argError}`,
+            `Invalid tool arguments: ${capturedInput.parseError}`,
             controller,
             encoder,
             currentMessages,
