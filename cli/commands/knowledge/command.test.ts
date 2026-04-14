@@ -1126,6 +1126,28 @@ describe("executeKnowledgeParserCommand", () => {
       "python3 is required. Install python3 and the supported parser packages, or run the command inside the Veryfront sandbox.",
     );
   });
+
+  it("maps thrown missing-executable errors to the existing python3-required error", async () => {
+    await assertRejects(
+      () =>
+        executeKnowledgeParserCommand(
+          {
+            scriptPath: "/tmp/ingest.py",
+            inputJsonPath: "/tmp/input.json",
+            outputJsonPath: "/tmp/output.json",
+          },
+          {
+            runCommandFn: async () => {
+              const error = new Error("spawn python3 ENOENT");
+              (error as Error & { code?: string }).code = "ENOENT";
+              throw error;
+            },
+          },
+        ),
+      Error,
+      "python3 is required. Install python3 and the supported parser packages, or run the command inside the Veryfront sandbox.",
+    );
+  });
 });
 
 describe("runKnowledgeParser", () => {

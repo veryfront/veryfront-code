@@ -485,6 +485,22 @@ export async function runKnowledgeParser(input: {
   return result;
 }
 
+function isMissingPythonExecutableError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const errorWithCode = error as Error & { code?: unknown };
+  if (errorWithCode.code === "ENOENT") {
+    return true;
+  }
+
+  return error.name === "NotFound" ||
+    /\bENOENT\b/i.test(error.message) ||
+    /not found/i.test(error.message) ||
+    /no such file or directory/i.test(error.message);
+}
+
 export async function executeKnowledgeParserCommand(input: {
   scriptPath: string;
   inputJsonPath: string;
@@ -501,17 +517,27 @@ export async function executeKnowledgeParserCommand(input: {
   ) => Promise<CommandResult>;
 } = {}): Promise<void> {
   const runCommandFn = deps.runCommandFn ?? runCommand;
-  const result = await runCommandFn("python3", {
-    args: [
-      input.scriptPath,
-      "--input-json",
-      input.inputJsonPath,
-      "--output-json",
-      input.outputJsonPath,
-    ],
-    ...(input.env ? { env: input.env } : {}),
-    capture: true,
-  });
+  let result: CommandResult;
+  try {
+    result = await runCommandFn("python3", {
+      args: [
+        input.scriptPath,
+        "--input-json",
+        input.inputJsonPath,
+        "--output-json",
+        input.outputJsonPath,
+      ],
+      ...(input.env ? { env: input.env } : {}),
+      capture: true,
+    });
+  } catch (error) {
+    if (isMissingPythonExecutableError(error)) {
+      throw new Error(
+        "python3 is required. Install python3 and the supported parser packages, or run the command inside the Veryfront sandbox.",
+      );
+    }
+    throw error;
+  }
 
   if (result.success) {
     return;
