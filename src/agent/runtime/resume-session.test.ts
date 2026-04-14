@@ -142,4 +142,28 @@ describe("agent/runtime/resume-session", () => {
       "Maximum concurrent sessions (1) reached",
     );
   });
+
+  it("aborts the run signal with a DOMException AbortError so downstream fetch consumers don't leak unhandled rejections", () => {
+    // Regression: previously aborted with `new RunCancelledError()`, which
+    // surfaced as a non-AbortError rejection inside provider SDK fetch
+    // promises and crashed the host process via unhandledRejection.
+    const manager = new RunResumeSessionManager<{ ok: boolean }>({});
+    const signal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    manager.cancelRun("run_1");
+
+    assertEquals(signal.aborted, true);
+    assertEquals(signal.reason instanceof DOMException, true);
+    assertEquals((signal.reason as DOMException).name, "AbortError");
+  });
+
+  it("still rejects in-flight waitForSignal callers with RunCancelledError after cancel", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>({});
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    const pending = manager.waitForSignal("run_1", "tool_1");
+
+    manager.cancelRun("run_1");
+
+    await assertRejects(() => pending, RunCancelledError);
+  });
 });
