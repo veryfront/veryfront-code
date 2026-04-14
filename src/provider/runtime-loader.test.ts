@@ -1772,4 +1772,89 @@ describe("provider/runtime-loader", () => {
     assertEquals(result.embeddings, [[10, 20], [30, 40]]);
     assertEquals(result.usage, { tokens: 8 });
   });
+
+  describe("Anthropic max_tokens model-aware defaults", () => {
+    // Minimal fetch stub that captures the outbound request body and returns
+    // a trivial generate-mode response, so each test can assert what max_tokens
+    // ends up on the wire without wiring the full streaming path.
+    function createCapturingRuntime(modelId: string) {
+      let capturedBody: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          capturedBody = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, modelId);
+      return {
+        runtime,
+        getBody: () => capturedBody,
+      };
+    }
+
+    async function generateWith(modelId: string, maxOutputTokens?: number) {
+      const { runtime, getBody } = createCapturingRuntime(modelId);
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+        ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+      });
+      return getBody();
+    }
+
+    it("defaults Opus 4.6 to 128k when caller omits maxOutputTokens", async () => {
+      const body = await generateWith("claude-opus-4-6");
+      assertEquals((body as { max_tokens: number }).max_tokens, 128_000);
+    });
+
+    it("defaults Sonnet 4.6 to 128k when caller omits maxOutputTokens", async () => {
+      const body = await generateWith("claude-sonnet-4-6");
+      assertEquals((body as { max_tokens: number }).max_tokens, 128_000);
+    });
+
+    it("defaults Sonnet/Opus/Haiku 4.5 to 64k when caller omits maxOutputTokens", async () => {
+      const sonnet = await generateWith("claude-sonnet-4-5");
+      const opus = await generateWith("claude-opus-4-5");
+      const haiku = await generateWith("claude-haiku-4-5");
+      assertEquals((sonnet as { max_tokens: number }).max_tokens, 64_000);
+      assertEquals((opus as { max_tokens: number }).max_tokens, 64_000);
+      assertEquals((haiku as { max_tokens: number }).max_tokens, 64_000);
+    });
+
+    it("defaults Opus 4.1 to 32k when caller omits maxOutputTokens", async () => {
+      const body = await generateWith("claude-opus-4-1");
+      assertEquals((body as { max_tokens: number }).max_tokens, 32_000);
+    });
+
+    it("defaults unknown models to 4096 when caller omits maxOutputTokens", async () => {
+      const body = await generateWith("some-future-model");
+      assertEquals((body as { max_tokens: number }).max_tokens, 4096);
+    });
+
+    it("honours caller maxOutputTokens when under the model cap", async () => {
+      const body = await generateWith("claude-opus-4-6", 8_000);
+      assertEquals((body as { max_tokens: number }).max_tokens, 8_000);
+    });
+
+    it("caps caller maxOutputTokens at the model maximum for known models", async () => {
+      // Opus 4.1 caps at 32k; asking for 64k should clamp down.
+      const body = await generateWith("claude-opus-4-1", 64_000);
+      assertEquals((body as { max_tokens: number }).max_tokens, 32_000);
+    });
+
+    it("does not cap caller values for unknown models (no model intel to trust)", async () => {
+      const body = await generateWith("some-future-model", 64_000);
+      assertEquals((body as { max_tokens: number }).max_tokens, 64_000);
+    });
+  });
 });
