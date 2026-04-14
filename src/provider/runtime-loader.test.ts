@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createAnthropicModelRuntime } from "./runtime-loader.ts";
+import { createRuntimeJsonSchema } from "../agent/runtime/runtime-tool-builder.ts";
 import {
   createGoogleEmbeddingRuntime,
   createGoogleModelRuntime,
@@ -568,6 +569,74 @@ describe("provider/runtime-loader", () => {
         totalTokens: 10,
       },
     });
+  });
+
+  it("unwraps runtime tool schemas before sending Anthropic tool definitions", async () => {
+    let requestedInit: RequestInit | undefined;
+
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: (_input, init) => {
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [],
+              stop_reason: "end_turn",
+              usage: {
+                input_tokens: 8,
+                output_tokens: 2,
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-20250514");
+
+    await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Write a file" }],
+      }],
+      tools: [{
+        type: "function",
+        name: "create_file",
+        description: "Create a project file",
+        inputSchema: createRuntimeJsonSchema({
+          type: "object",
+          properties: {
+            project_reference: { type: "string" },
+            path: { type: "string" },
+            content: { type: "string" },
+          },
+          required: ["project_reference", "path", "content"],
+          additionalProperties: false,
+        }),
+      }],
+      toolChoice: "auto",
+      maxOutputTokens: 64,
+    });
+
+    const requestBody = typeof requestedInit?.body === "string"
+      ? JSON.parse(requestedInit.body)
+      : undefined;
+
+    assertEquals(requestBody?.tools, [{
+      name: "create_file",
+      description: "Create a project file",
+      input_schema: {
+        type: "object",
+        properties: {
+          project_reference: { type: "string" },
+          path: { type: "string" },
+          content: { type: "string" },
+        },
+        required: ["project_reference", "path", "content"],
+        additionalProperties: false,
+      },
+    }]);
   });
 
   it("merges tool-result replay with consecutive user retries into one Anthropic user message", async () => {
