@@ -666,21 +666,16 @@ function createAnthropicRequestHeaders(options: {
 }
 
 /**
- * Resolves the `max_tokens` to send on the outbound Anthropic Messages request.
- *
- * Anthropic's Messages API requires `max_tokens` to be set on every call, so
- * this function must return a defined number. The previous implementation
- * hardcoded `1024`, which silently truncated any response longer than the old
- * Claude 3 Haiku era default and made tools like `create_file` stop mid-stream
- * on modern Claude models (observed as "incomplete tool call args" in the
- * 2026-04-14 staging incident).
- *
- * Follows the pattern used by the Vercel AI SDK's `@ai-sdk/anthropic` package
- * (see `packages/anthropic/src/anthropic-messages-language-model.ts::getModelCapabilities`)
- * and LangChain / LiteLLM: pick a per-model maximum when the caller did not
- * provide one, and also cap caller-provided values at the model's true maximum
- * so we never send a request Anthropic will reject with "too many tokens".
- * Unknown model ids fall back to 4096, matching the dominant ecosystem floor.
+ * Anthropic's Messages API requires `max_tokens` on every call, so the
+ * outbound request builder must always supply a number. Picking the right
+ * one means knowing the model: different Claude families have wildly
+ * different maximum output budgets, and a flat default either truncates
+ * modern models mid-response or gets rejected with "too many tokens" on
+ * older ones. Return the model's advertised maximum as the default, and
+ * clamp caller-provided values at that same ceiling for known models so a
+ * bad input becomes a clipped response rather than an API error. Unknown
+ * model ids get a conservative 4096 fallback and pass caller values
+ * through unchanged, since we have no intel to clamp against.
  */
 function getAnthropicModelCapabilities(
   modelId: string,
