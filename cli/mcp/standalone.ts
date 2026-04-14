@@ -465,6 +465,46 @@ export class StandaloneMCPServer {
           });
         },
       },
+      {
+        name: "vf_bootstrap",
+        description:
+          "Get full project context in one call: structure, conventions, errors, and server status. " +
+          "Use at session start instead of calling vf_get_project_context + vf_get_conventions + " +
+          "vf_get_errors + vf_get_status separately.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            projectPath: {
+              type: "string",
+              description: "Project directory (defaults to cwd)",
+            },
+          },
+        },
+        async execute(args) {
+          const { vfGetProjectContext } = await import("./tools/project-tools.ts");
+          const { vfGetConventions } = await import("./tools/scaffold-tools.ts");
+
+          const [project, conventions] = await Promise.all([
+            vfGetProjectContext.execute({ projectPath: args.projectPath as string }),
+            vfGetConventions.execute({ topic: "all" }),
+          ]);
+
+          let errors: unknown[] = [];
+          try {
+            const result = await client.getLiveErrors();
+            errors = Array.isArray(result) ? result : [];
+          } catch {
+            // Dev server not running — no errors available
+          }
+
+          return {
+            project,
+            conventions,
+            errors: { total: errors.length, items: errors.slice(-20) },
+            status: { running: errors.length >= 0 },
+          };
+        },
+      },
       ...this.createContext7Tools(),
     ];
   }

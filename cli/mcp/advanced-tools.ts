@@ -26,12 +26,14 @@ import { vfRunLint } from "./tools/run-lint-tool.ts";
 import { vfRunTests } from "./tools/run-tests-tool.ts";
 import { vfGetConventions, vfScaffold } from "./tools/scaffold-tools.ts";
 import { vfGetSkillReference, vfGetSkills } from "./tools/skill-tools.ts";
+import { vfBootstrap } from "./tools/bootstrap-tool.ts";
 import { cicdTools } from "./tools/cicd-tools.ts";
 import { introspectionTools } from "./tools/introspection-tools.ts";
 
 export const advancedTools: MCPTool[] = [
   ...cicdTools,
   ...introspectionTools,
+  vfBootstrap,
   vfGetSkills,
   vfGetSkillReference,
   vfListLocalProjects,
