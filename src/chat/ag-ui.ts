@@ -213,6 +213,7 @@ export const AgUiWireEventSchema = z.discriminatedUnion("eventName", [
     payload: z.object({
       messageId: z.string().min(1).optional(),
       toolCallId: z.string().min(1),
+      input: z.unknown().optional(),
       content: z.unknown().optional(),
       result: z.unknown().optional(),
       role: z.literal("tool").optional(),
@@ -607,7 +608,7 @@ function mapWireEventToChatEvents(
           type: "tool-input-available",
           toolCallId: wireEvent.payload.toolCallId,
           toolName: "tool",
-          input: {},
+          input: wireEvent.payload.input ?? {},
           dynamic: true,
           providerExecuted: true,
         });
