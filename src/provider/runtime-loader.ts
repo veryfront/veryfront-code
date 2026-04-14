@@ -665,6 +665,58 @@ function createAnthropicRequestHeaders(options: {
   return headers;
 }
 
+/**
+ * Anthropic's Messages API requires `max_tokens` on every call, so the
+ * outbound request builder must always supply a number. Picking the right
+ * one means knowing the model: different Claude families have wildly
+ * different maximum output budgets, and a flat default either truncates
+ * modern models mid-response or gets rejected with "too many tokens" on
+ * older ones. Return the model's advertised maximum as the default, and
+ * clamp caller-provided values at that same ceiling for known models so a
+ * bad input becomes a clipped response rather than an API error. Unknown
+ * model ids get a conservative 4096 fallback and pass caller values
+ * through unchanged, since we have no intel to clamp against.
+ */
+function getAnthropicModelCapabilities(
+  modelId: string,
+): { maxOutputTokens: number; isKnownModel: boolean } {
+  if (modelId.includes("claude-sonnet-4-6") || modelId.includes("claude-opus-4-6")) {
+    return { maxOutputTokens: 128_000, isKnownModel: true };
+  }
+  if (
+    modelId.includes("claude-sonnet-4-5") ||
+    modelId.includes("claude-opus-4-5") ||
+    modelId.includes("claude-haiku-4-5")
+  ) {
+    return { maxOutputTokens: 64_000, isKnownModel: true };
+  }
+  if (modelId.includes("claude-opus-4-1")) {
+    return { maxOutputTokens: 32_000, isKnownModel: true };
+  }
+  if (modelId.includes("claude-sonnet-4-")) {
+    return { maxOutputTokens: 64_000, isKnownModel: true };
+  }
+  if (modelId.includes("claude-opus-4-")) {
+    return { maxOutputTokens: 32_000, isKnownModel: true };
+  }
+  if (modelId.includes("claude-3-haiku")) {
+    return { maxOutputTokens: 4096, isKnownModel: true };
+  }
+  return { maxOutputTokens: 4096, isKnownModel: false };
+}
+
+function resolveAnthropicMaxTokens(
+  modelId: string,
+  callerMaxOutputTokens: number | undefined,
+): number {
+  const { maxOutputTokens: modelMax, isKnownModel } = getAnthropicModelCapabilities(modelId);
+  const requested = callerMaxOutputTokens ?? modelMax;
+  if (isKnownModel && requested > modelMax) {
+    return modelMax;
+  }
+  return requested;
+}
+
 function buildAnthropicMessagesRequest(
   modelId: string,
   providerName: string,
@@ -675,7 +727,7 @@ function buildAnthropicMessagesRequest(
   const body: AnthropicCompatibleRequest = {
     model: modelId,
     messages,
-    max_tokens: options.maxOutputTokens ?? 1024,
+    max_tokens: resolveAnthropicMaxTokens(modelId, options.maxOutputTokens),
     ...(stream ? { stream: true } : {}),
     ...(system ? { system } : {}),
     ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
