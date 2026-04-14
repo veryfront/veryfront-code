@@ -203,6 +203,67 @@ describe("agent/ag-ui-browser-encoder", () => {
     );
   });
 
+  it("closes open reasoning before orphan tool-input-delta is forwarded", () => {
+    const state = createAgUiBrowserEncoderState();
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "message-start",
+        messageId: "assistant-orphan-reasoning",
+      }),
+      [],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "reasoning-start",
+        id: "reasoning-orphan",
+      }),
+      [{
+        event: "ReasoningMessageStart",
+        payload: {
+          messageId: "assistant-orphan-reasoning:reasoning:reasoning-orphan",
+          role: "reasoning",
+        },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "reasoning-delta",
+        id: "reasoning-orphan",
+        delta: "I should gather one more source before calling the tool.",
+      }),
+      [{
+        event: "ReasoningMessageContent",
+        payload: {
+          messageId: "assistant-orphan-reasoning:reasoning:reasoning-orphan",
+          delta: "I should gather one more source before calling the tool.",
+        },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "tool-input-delta",
+        toolCallId: "tool-orphan-reasoning",
+        inputTextDelta: '{"query":"ai ontologies"}',
+      }),
+      [
+        {
+          event: "ReasoningMessageEnd",
+          payload: {
+            messageId: "assistant-orphan-reasoning:reasoning:reasoning-orphan",
+          },
+        },
+        {
+          event: "ToolCallArgs",
+          payload: {
+            toolCallId: "tool-orphan-reasoning",
+            delta: '{"query":"ai ontologies"}',
+          },
+        },
+      ],
+    );
+  });
+
   it("closes reasoning when non-reasoning events interrupt it", () => {
     const state = createAgUiBrowserEncoderState();
 
