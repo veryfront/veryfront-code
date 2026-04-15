@@ -118,7 +118,10 @@ export function getVeryfrontCloudGatewayBaseUrl(
  * The gateway expects only Bearer auth, so we strip all provider-specific
  * headers to prevent credential leakage to the wrong auth path.
  */
-export function createVeryfrontCloudFetch(apiToken: string): typeof fetch {
+export function createVeryfrontCloudFetch(
+  apiToken: string,
+  projectSlug?: string,
+): typeof fetch {
   return (input, init) => {
     const request = new Request(input, init);
     const headers = new Headers(request.headers);
@@ -126,6 +129,10 @@ export function createVeryfrontCloudFetch(apiToken: string): typeof fetch {
     headers.delete("x-api-key");
     headers.delete("x-goog-api-key");
     headers.set("Authorization", `Bearer ${apiToken}`);
+
+    if (projectSlug) {
+      headers.set("x-veryfront-project-slug", projectSlug);
+    }
 
     return fetch(new Request(request, { headers }));
   };
