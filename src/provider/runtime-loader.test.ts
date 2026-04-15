@@ -3528,6 +3528,79 @@ describe("provider/runtime-loader", () => {
       ]);
     });
 
+    it("emits Google safetySettings when googleSafetySettings is set", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gemini-1.5-pro");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        googleSafetySettings: [
+          { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
+        ],
+      });
+      const body = captured as { safetySettings: unknown } | null;
+      assertEquals(body!.safetySettings, [
+        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
+      ]);
+    });
+
+    it("omits safetySettings when googleSafetySettings is unset or empty", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gemini-1.5-pro");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        googleSafetySettings: [],
+      });
+      assertEquals("safetySettings" in (captured ?? {}), false);
+    });
+
     it("emits Google cachedContent when googleCachedContent is set", async () => {
       let captured: Record<string, unknown> | null = null;
       const runtime = createGoogleModelRuntime({

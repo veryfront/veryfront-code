@@ -246,6 +246,17 @@ type OpenAICompatibleLanguageOptions = {
    */
   googleCachedContent?: string;
   /**
+   * Google-specific. Per-request safety filter configuration for
+   * Gemini. Each entry pairs a HARM_CATEGORY_* with a threshold
+   * (BLOCK_NONE / BLOCK_LOW_AND_ABOVE / BLOCK_MEDIUM_AND_ABOVE /
+   * BLOCK_ONLY_HIGH). Forwarded verbatim as the `safetySettings`
+   * field. See https://ai.google.dev/gemini-api/docs/safety-settings.
+   */
+  googleSafetySettings?: Array<{
+    category: string;
+    threshold: string;
+  }>;
+  /**
    * Anthropic-specific. Native MCP server definitions to pass directly
    * on the Messages API request body. Lets callers register MCP servers
    * server-side instead of reloading them into local function tools.
@@ -2364,6 +2375,9 @@ function buildGoogleGenerateContentRequest(
     ...(labels ? { labels } : {}),
     ...(typeof options.googleCachedContent === "string" && options.googleCachedContent.length > 0
       ? { cachedContent: options.googleCachedContent }
+      : {}),
+    ...(options.googleSafetySettings && options.googleSafetySettings.length > 0
+      ? { safetySettings: options.googleSafetySettings }
       : {}),
   };
 
