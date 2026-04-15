@@ -3528,6 +3528,98 @@ describe("provider/runtime-loader", () => {
       ]);
     });
 
+    it("emits OpenAI service_tier when serviceTier is set", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "ok" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        serviceTier: "flex",
+      });
+      const body = captured as { service_tier: string } | null;
+      assertEquals(body!.service_tier, "flex");
+    });
+
+    it("emits OpenAI parallel_tool_calls: false when parallelToolCalls is false", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "ok" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        parallelToolCalls: false,
+      });
+      const body = captured as { parallel_tool_calls: boolean } | null;
+      assertEquals(body!.parallel_tool_calls, false);
+    });
+
+    it("omits service_tier and parallel_tool_calls when unset", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "ok" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      });
+      assertEquals("service_tier" in (captured ?? {}), false);
+      assertEquals("parallel_tool_calls" in (captured ?? {}), false);
+    });
+
     it("emits OpenAI response_format json_schema when responseFormat is structured", async () => {
       let captured: Record<string, unknown> | null = null;
       const runtime = createOpenAIModelRuntime({

@@ -176,6 +176,26 @@ type OpenAICompatibleLanguageOptions = {
    */
   requestLabels?: Record<string, string>;
   /**
+   * OpenAI-specific. Maps to the `service_tier` field on Chat Completions
+   * which trades latency for cost. Documented values:
+   *
+   *  - `default` — standard processing (default if unset)
+   *  - `flex` — lower-priority queue, lower per-token cost, longer
+   *    expected latency. Useful for batchy or non-interactive workloads.
+   *  - `scale` — reserved-capacity tier with strict latency SLOs.
+   *  - `auto` — let OpenAI pick.
+   *
+   * Forwarded verbatim. Anthropic and Google have no equivalent and
+   * the field is silently omitted on those providers.
+   */
+  serviceTier?: "auto" | "default" | "flex" | "scale";
+  /**
+   * OpenAI-specific. When `false`, OpenAI runs tool calls sequentially
+   * instead of in parallel. Useful for ordered side effects where
+   * concurrent calls would race. Default behaviour (unset) is parallel.
+   */
+  parallelToolCalls?: boolean;
+  /**
    * Structured-output response format. Maps to OpenAI's `response_format`
    * field on Chat Completions (and Responses). Three variants:
    *
@@ -2021,6 +2041,10 @@ function buildOpenAIChatRequest(
     ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
     ...(typeof options.userId === "string" && options.userId.length > 0
       ? { user: options.userId }
+      : {}),
+    ...(options.serviceTier !== undefined ? { service_tier: options.serviceTier } : {}),
+    ...(options.parallelToolCalls !== undefined
+      ? { parallel_tool_calls: options.parallelToolCalls }
       : {}),
     ...(options.responseFormat && options.responseFormat.type !== "text"
       ? {
