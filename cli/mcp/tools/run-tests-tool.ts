@@ -16,15 +16,75 @@ const runTestsInput = z.object({
   parallel: z.boolean().optional().default(false).describe(
     "Run tests in parallel. Defaults to false.",
   ),
+  timeout: z.number().optional().default(300000).describe(
+    "Maximum time to wait for test completion in milliseconds. Defaults to 300000 (5 minutes).",
+  ),
 });
 
 type RunTestsInput = z.infer<typeof runTestsInput>;
+
+/** Build the deno test command args from input options. */
+export function buildTestArgs(input: { filter?: string; parallel?: boolean }): string[] {
+  return [
+    "test",
+    "--no-check",
+    "--allow-all",
+    "--unstable-worker-options",
+    "--unstable-net",
+    ...(input.parallel ? ["--parallel"] : []),
+    ...(input.filter ? [`--filter=${input.filter}`] : []),
+  ];
+}
+
+/** Env vars required for deterministic test runs. */
+export const TEST_ENV: Record<string, string> = {
+  VF_DISABLE_LRU_INTERVAL: "1",
+  SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
+  REVALIDATION_PER_PROJECT_LIMIT: "0",
+  NODE_ENV: "production",
+  LOG_FORMAT: "text",
+};
+
+/** Spawn deno test and return structured results. Exported for standalone reuse. */
+export async function executeTests(
+  input: { filter?: string; parallel?: boolean; timeout?: number },
+): Promise<TestResult> {
+  const cmd = new Deno.Command("deno", {
+    args: buildTestArgs(input),
+    stdout: "piped",
+    stderr: "piped",
+    env: TEST_ENV,
+  });
+
+  const child = cmd.spawn();
+  const timeoutMs = input.timeout ?? 300000;
+
+  const result = await Promise.race([
+    child.output(),
+    new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => {
+        try {
+          child.kill();
+        } catch {
+          // Process may have already exited
+        }
+        reject(new Error(`Test execution timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      // Don't prevent process exit while waiting
+      Deno.unrefTimer(timer);
+    }),
+  ]);
+
+  const stdout = new TextDecoder().decode(result.stdout);
+  const stderr = new TextDecoder().decode(result.stderr);
+  return parseTestOutput(stdout + "\n" + stderr, result.code);
+}
 
 export const vfRunTests: MCPTool<RunTestsInput, TestResult> = {
   name: "vf_run_tests",
   title: "Run Tests",
   annotations: {
-    readOnlyHint: true,
+    readOnlyHint: false,
     destructiveHint: false,
     idempotentHint: true,
     openWorldHint: false,
@@ -35,31 +95,5 @@ export const vfRunTests: MCPTool<RunTestsInput, TestResult> = {
     "file path, test name, error message, and line number. " +
     "Do not use for lint checks — use vf_run_lint instead.",
   inputSchema: runTestsInput,
-  execute: async (input) => {
-    const cmd = new Deno.Command("deno", {
-      args: [
-        "test",
-        "--no-check",
-        "--allow-all",
-        "--unstable-worker-options",
-        "--unstable-net",
-        ...(input.parallel ? ["--parallel"] : []),
-        ...(input.filter ? [`--filter=${input.filter}`] : []),
-      ],
-      stdout: "piped",
-      stderr: "piped",
-      env: {
-        VF_DISABLE_LRU_INTERVAL: "1",
-        SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
-        REVALIDATION_PER_PROJECT_LIMIT: "0",
-        NODE_ENV: "production",
-        LOG_FORMAT: "text",
-      },
-    });
-
-    const result = await cmd.output();
-    const stdout = new TextDecoder().decode(result.stdout);
-    const stderr = new TextDecoder().decode(result.stderr);
-    return parseTestOutput(stdout + "\n" + stderr, result.code);
-  },
+  execute: (input) => executeTests(input),
 };

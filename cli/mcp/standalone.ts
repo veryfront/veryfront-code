@@ -411,9 +411,10 @@ export class StandaloneMCPServer {
       },
       {
         name: "vf_run_tests",
-        description:
-          "Run the project's test suite. Returns structured pass/fail results with failure details " +
-          "including file path, test name, error message, and line number.",
+        description: "Run the project's test suite and get structured pass/fail results. " +
+          "Returns a summary with total, passed, failed, skipped counts and failure details " +
+          "including file path, test name, error message, and line number. " +
+          "Do not use for lint checks — use vf_run_lint instead.",
         inputSchema: {
           type: "object",
           properties: {
@@ -425,34 +426,20 @@ export class StandaloneMCPServer {
               type: "boolean",
               description: "Run tests in parallel",
             },
+            timeout: {
+              type: "number",
+              description:
+                "Maximum time to wait for test completion in milliseconds (default: 300000)",
+            },
           },
         },
         async execute(args) {
-          const { parseTestOutput } = await import("../commands/test/command.ts");
-          const cmd = new Deno.Command("deno", {
-            args: [
-              "test",
-              "--no-check",
-              "--allow-all",
-              "--unstable-worker-options",
-              "--unstable-net",
-              ...(args.parallel ? ["--parallel"] : []),
-              ...(args.filter ? [`--filter=${args.filter}`] : []),
-            ],
-            stdout: "piped",
-            stderr: "piped",
-            env: {
-              VF_DISABLE_LRU_INTERVAL: "1",
-              SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
-              REVALIDATION_PER_PROJECT_LIMIT: "0",
-              NODE_ENV: "production",
-              LOG_FORMAT: "text",
-            },
+          const { executeTests } = await import("./tools/run-tests-tool.ts");
+          return executeTests({
+            filter: args.filter as string | undefined,
+            parallel: args.parallel as boolean | undefined,
+            timeout: args.timeout as number | undefined,
           });
-          const result = await cmd.output();
-          const stdout = new TextDecoder().decode(result.stdout);
-          const stderr = new TextDecoder().decode(result.stderr);
-          return parseTestOutput(stdout + "\n" + stderr, result.code);
         },
       },
       ...this.createContext7Tools(),
