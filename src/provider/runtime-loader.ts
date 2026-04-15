@@ -407,17 +407,18 @@ function getToolCallIdFromStreamPart(part: unknown): string | null {
 function collectDueToolStatuses(
   toolStates: Map<string, ToolInputStatusState>,
   now: number,
+  thresholdMs: number,
 ): Array<{ type: "data-tool-call-status"; data: { toolCallId: string; status: "pending_input" } }> {
   const events: Array<
     { type: "data-tool-call-status"; data: { toolCallId: string; status: "pending_input" } }
   > = [];
 
   for (const [toolCallId, state] of toolStates.entries()) {
-    if (state.dueAt === null || state.dueAt > now || state.lastStatus === "pending_input") {
+    if (state.dueAt === null || state.dueAt > now) {
       continue;
     }
 
-    state.dueAt = null;
+    state.dueAt = now + thresholdMs;
     state.lastStatus = "pending_input";
     events.push({
       type: "data-tool-call-status",
@@ -553,13 +554,13 @@ export async function* withToolInputStatusTransitions(
       }
 
       if (timeoutResult.kind === "timeout") {
-        buffered.push(...collectDueToolStatuses(toolStates, Date.now()));
+        buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
         continue;
       }
 
       nextPartPromise = null;
       if (timeoutResult.result.done) {
-        buffered.push(...collectDueToolStatuses(toolStates, Date.now()));
+        buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
         while (buffered.length > 0) {
           yield buffered.shift();
         }
