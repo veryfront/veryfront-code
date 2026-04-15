@@ -2795,4 +2795,209 @@ describe("provider/runtime-loader", () => {
       assertEquals(err.retryable, true);
     });
   });
+
+  describe("provider warnings (unsupported-setting drops)", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    function okAnthropicResponse() {
+      return new Response(
+        JSON.stringify({
+          content: [{ type: "text", text: "ok" }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+
+    function okOpenAIResponse() {
+      return new Response(
+        JSON.stringify({
+          choices: [{
+            index: 0,
+            message: { role: "assistant", content: "ok" },
+            finish_reason: "stop",
+          }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+
+    function okGoogleResponse() {
+      return new Response(
+        JSON.stringify({
+          candidates: [{
+            content: { role: "model", parts: [{ text: "ok" }] },
+            finishReason: "STOP",
+          }],
+          usageMetadata: {
+            promptTokenCount: 1,
+            candidatesTokenCount: 1,
+            totalTokenCount: 2,
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+
+    function settings(result: { warnings?: unknown[] }): string[] {
+      return (result.warnings ?? []).flatMap((w) => {
+        const r = w as { setting?: string };
+        return r.setting ? [r.setting] : [];
+      });
+    }
+
+    it("warns on Anthropic presencePenalty / frequencyPenalty / seed / topK", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okAnthropicResponse()),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        presencePenalty: 0.1,
+        frequencyPenalty: 0.2,
+        seed: 42,
+        topK: 50,
+      });
+      const dropped = settings(result).sort();
+      assertEquals(dropped, ["frequencyPenalty", "presencePenalty", "seed", "topK"]);
+    });
+
+    it("warns when Anthropic stopSequences exceeds 4 entries (and truncates)", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okAnthropicResponse());
+        },
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        stopSequences: ["a", "b", "c", "d", "e", "f"],
+      });
+      const dropped = settings(result);
+      assertEquals(dropped.includes("stopSequences"), true);
+      const capturedBody = captured as { stop_sequences: string[] } | null;
+      assertEquals(capturedBody?.stop_sequences.length, 4);
+    });
+
+    it("warns when Anthropic temperature/topP are dropped due to extended thinking", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okAnthropicResponse()),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+        reasoning: { enabled: true, effort: "low" },
+      });
+      const dropped = settings(result).sort();
+      assertEquals(dropped, ["temperature", "topP"]);
+    });
+
+    it("emits no warnings on a clean Anthropic request", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okAnthropicResponse()),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+        stopSequences: ["END"],
+      }) as { warnings?: unknown[] };
+      assertEquals(result.warnings, undefined);
+    });
+
+    it("warns on OpenAI topK on Chat Completions", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () => Promise.resolve(okOpenAIResponse()),
+      }, "gpt-4o-mini");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        topK: 50,
+      });
+      assertEquals(settings(result), ["topK"]);
+    });
+
+    it("warns on OpenAI sampling params dropped for o3 reasoning model", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () => Promise.resolve(okOpenAIResponse()),
+      }, "o3-mini");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+        presencePenalty: 0.1,
+        frequencyPenalty: 0.1,
+      });
+      const dropped = settings(result).sort();
+      assertEquals(dropped, [
+        "frequencyPenalty",
+        "presencePenalty",
+        "temperature",
+        "topP",
+      ]);
+    });
+
+    it("warns on Google presencePenalty / frequencyPenalty drops", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () => Promise.resolve(okGoogleResponse()),
+      }, "gemini-1.5-pro");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        presencePenalty: 0.1,
+        frequencyPenalty: 0.2,
+      });
+      const dropped = settings(result).sort();
+      assertEquals(dropped, ["frequencyPenalty", "presencePenalty"]);
+    });
+
+    it("warnings are present on stream results too", async () => {
+      const encoder = new TextEncoder();
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              ReadableStream.from([
+                encoder.encode(
+                  'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+                ),
+                encoder.encode(
+                  'data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}\n\n',
+                ),
+                encoder.encode("data: [DONE]\n\n"),
+              ]),
+              { status: 200, headers: { "content-type": "text/event-stream" } },
+            ),
+          ),
+      }, "o3-mini");
+      const result = await runtime.doStream({
+        prompt: [userPrompt],
+        temperature: 0.5,
+      });
+      assertEquals(settings(result), ["temperature"]);
+      // Drain the stream to keep Deno test runner happy.
+      await collectAsync(result.stream);
+    });
+  });
 });

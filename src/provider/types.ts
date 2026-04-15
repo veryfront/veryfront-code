@@ -9,10 +9,12 @@ export interface ModelRuntimeGenerateResult {
   content?: unknown[];
   finishReason?: unknown;
   usage?: unknown;
+  warnings?: unknown[];
 }
 
 export interface ModelRuntimeStreamResult {
   stream: ReadableStream<unknown>;
+  warnings?: unknown[];
 }
 
 export interface ModelRuntime extends RuntimeMetadata {

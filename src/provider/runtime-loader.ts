@@ -368,6 +368,42 @@ function extractGoogleUsageTokens(payload: unknown): number | undefined {
 type ProviderKind = "anthropic" | "openai" | "google";
 
 /**
+ * Structured warning emitted when a provider runtime drops or rewrites a
+ * caller-provided option. Mirrors the AI ecosystem convention (Vercel AI
+ * SDK, LangChain) of returning `unsupported-setting` warnings on the
+ * runtime result so callers can discover silently-dropped fields without
+ * having to read the source.
+ */
+export type ProviderWarning = {
+  type: "unsupported-setting" | "other";
+  setting?: string;
+  details?: string;
+  provider: ProviderKind;
+};
+
+/**
+ * Mutable warning collector handed to per-provider request builders so
+ * they can append entries during the build pass instead of plumbing a
+ * return-tuple shape through every helper.
+ */
+type WarningCollector = {
+  push(warning: ProviderWarning): void;
+  drain(): ProviderWarning[];
+};
+
+function createWarningCollector(): WarningCollector {
+  const list: ProviderWarning[] = [];
+  return {
+    push(warning) {
+      list.push(warning);
+    },
+    drain() {
+      return list.slice();
+    },
+  };
+}
+
+/**
  * Base class for typed provider errors. The `retryable` flag is the
  * primary signal for callers (or a retry wrapper) to decide whether to
  * re-issue the request. `retryAfterMs` is set when the provider gave an
@@ -1064,6 +1100,7 @@ function buildAnthropicMessagesRequest(
   providerName: string,
   options: OpenAICompatibleLanguageOptions,
   stream: boolean,
+  warnings: WarningCollector,
 ): AnthropicCompatibleRequest {
   const systemCacheControl = resolveAnthropicCacheControlBlock(
     options.cacheControl?.system,
@@ -1076,6 +1113,70 @@ function buildAnthropicMessagesRequest(
   const anthropicTools = toAnthropicTools(options.tools, toolsCacheControl);
   const thinkingBudget = resolveAnthropicThinkingBudget(options.reasoning);
   const thinkingEnabled = thinkingBudget !== undefined;
+
+  // Anthropic doesn't support these unified options at all — emit warnings
+  // so callers don't quietly pass values that have zero effect.
+  if (options.presencePenalty !== undefined) {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "anthropic",
+      setting: "presencePenalty",
+      details: "Anthropic Messages API has no equivalent and the value was dropped.",
+    });
+  }
+  if (options.frequencyPenalty !== undefined) {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "anthropic",
+      setting: "frequencyPenalty",
+      details: "Anthropic Messages API has no equivalent and the value was dropped.",
+    });
+  }
+  if (options.seed !== undefined) {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "anthropic",
+      setting: "seed",
+      details: "Anthropic Messages API does not support deterministic seeding.",
+    });
+  }
+  if (options.topK !== undefined) {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "anthropic",
+      setting: "topK",
+      details: "Anthropic Messages API does not expose top_k on this surface.",
+    });
+  }
+  if (
+    options.stopSequences && options.stopSequences.length > 4
+  ) {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "anthropic",
+      setting: "stopSequences",
+      details:
+        `Anthropic accepts at most 4 stop sequences; ${options.stopSequences.length} were provided and the extras were truncated.`,
+    });
+  }
+  if (thinkingEnabled && options.temperature !== undefined) {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "anthropic",
+      setting: "temperature",
+      details:
+        "Dropped because Anthropic rejects sampling params when extended thinking is enabled.",
+    });
+  }
+  if (thinkingEnabled && options.topP !== undefined) {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "anthropic",
+      setting: "topP",
+      details:
+        "Dropped because Anthropic rejects sampling params when extended thinking is enabled.",
+    });
+  }
 
   // Anthropic requires max_tokens > budget_tokens when thinking is enabled.
   // Growing max_tokens by the thinking budget preserves the caller's intended
@@ -1104,7 +1205,7 @@ function buildAnthropicMessagesRequest(
       : {}),
     ...(!thinkingEnabled && options.topP !== undefined ? { top_p: options.topP } : {}),
     ...(options.stopSequences && options.stopSequences.length > 0
-      ? { stop_sequences: options.stopSequences }
+      ? { stop_sequences: options.stopSequences.slice(0, 4) }
       : {}),
     ...(anthropicTools ? { tools: anthropicTools } : {}),
     ...(options.toolChoice !== undefined
@@ -1589,10 +1690,46 @@ function buildOpenAIChatRequest(
   providerName: string,
   options: OpenAICompatibleLanguageOptions,
   stream: boolean,
+  warnings: WarningCollector,
 ): OpenAICompatibleChatRequest {
   const isReasoningModel = isOpenAIReasoningModel(modelId);
   const reasoningEffort = resolveOpenAIReasoningEffort(options.reasoning);
   const reasoningEnabled = isReasoningModel || reasoningEffort !== undefined;
+
+  // OpenAI Chat Completions has no top_k surface (it's exposed only on the
+  // Responses API for some reasoning models). Quietly accepting it would
+  // mislead callers into thinking it took effect.
+  if (options.topK !== undefined) {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "openai",
+      setting: "topK",
+      details: "OpenAI Chat Completions does not expose top_k; the value was dropped.",
+    });
+  }
+
+  // Reasoning models (o1 / o3 / o4) reject sampling params outright. Emit
+  // warnings at build time so callers see *why* the value didn't apply
+  // rather than a 400 from the API.
+  if (reasoningEnabled) {
+    const dropped: Array<[keyof typeof options, string]> = [
+      ["temperature", "temperature"],
+      ["topP", "top_p"],
+      ["presencePenalty", "presence_penalty"],
+      ["frequencyPenalty", "frequency_penalty"],
+    ];
+    for (const [key, openaiName] of dropped) {
+      if (options[key] !== undefined) {
+        warnings.push({
+          type: "unsupported-setting",
+          provider: "openai",
+          setting: key,
+          details:
+            `Dropped because OpenAI reasoning models reject ${openaiName}. Reasoning was active for this request.`,
+        });
+      }
+    }
+  }
 
   const body: OpenAICompatibleChatRequest = {
     model: modelId,
@@ -1848,8 +1985,30 @@ function buildGoogleGenerationConfig(
 function buildGoogleGenerateContentRequest(
   providerName: string,
   options: OpenAICompatibleLanguageOptions,
+  warnings: WarningCollector,
 ): GoogleCompatibleRequest {
+  // Google generate-content surface doesn't accept presence/frequency
+  // penalties on most current models. Emit warnings and let the request
+  // through without them.
+  if (options.presencePenalty !== undefined) {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "google",
+      setting: "presencePenalty",
+      details: "Gemini generateContent does not accept presencePenalty; the value was dropped.",
+    });
+  }
+  if (options.frequencyPenalty !== undefined) {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "google",
+      setting: "frequencyPenalty",
+      details: "Gemini generateContent does not accept frequencyPenalty; the value was dropped.",
+    });
+  }
+
   const { systemInstruction, contents } = toGoogleContents(options.prompt);
+  const generationConfig = buildGoogleGenerationConfig(options);
   const body: GoogleCompatibleRequest = {
     contents,
     ...(systemInstruction ? { systemInstruction } : {}),
@@ -1857,9 +2016,7 @@ function buildGoogleGenerateContentRequest(
     ...(normalizeGoogleToolChoice(options.toolChoice)
       ? { toolConfig: normalizeGoogleToolChoice(options.toolChoice) }
       : {}),
-    ...(buildGoogleGenerationConfig(options)
-      ? { generationConfig: buildGoogleGenerationConfig(options) }
-      : {}),
+    ...(generationConfig ? { generationConfig } : {}),
   };
 
   Object.assign(body, readProviderOptions(options.providerOptions, "google", providerName));
@@ -2258,7 +2415,14 @@ export function createOpenAIModelRuntime(
     doGenerate(optionsForRuntime: unknown) {
       const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
       const url = getOpenAIChatCompletionsUrl(config.baseURL);
-      const body = buildOpenAIChatRequest(modelId, config.name ?? "openai", options, false);
+      const warnings = createWarningCollector();
+      const body = buildOpenAIChatRequest(
+        modelId,
+        config.name ?? "openai",
+        options,
+        false,
+        warnings,
+      );
       return requestJson({
         url,
         fetchImpl,
@@ -2274,12 +2438,25 @@ export function createOpenAIModelRuntime(
           body: JSON.stringify(body),
           signal: options.abortSignal,
         },
-      }).then(buildOpenAIGenerateResult);
+      }).then((payload) => {
+        const drained = warnings.drain();
+        return {
+          ...buildOpenAIGenerateResult(payload),
+          ...(drained.length > 0 ? { warnings: drained } : {}),
+        };
+      });
     },
     doStream(optionsForRuntime: unknown) {
       const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
       const url = getOpenAIChatCompletionsUrl(config.baseURL);
-      const body = buildOpenAIChatRequest(modelId, config.name ?? "openai", options, true);
+      const warnings = createWarningCollector();
+      const body = buildOpenAIChatRequest(
+        modelId,
+        config.name ?? "openai",
+        options,
+        true,
+        warnings,
+      );
       return requestStream({
         url,
         fetchImpl,
@@ -2295,9 +2472,13 @@ export function createOpenAIModelRuntime(
           body: JSON.stringify(body),
           signal: options.abortSignal,
         },
-      }).then((responseStream) => ({
-        stream: ReadableStream.from(streamOpenAICompatibleParts(responseStream)),
-      }));
+      }).then((responseStream) => {
+        const drained = warnings.drain();
+        return {
+          stream: ReadableStream.from(streamOpenAICompatibleParts(responseStream)),
+          ...(drained.length > 0 ? { warnings: drained } : {}),
+        };
+      });
     },
   };
 }
@@ -2315,11 +2496,13 @@ export function createAnthropicModelRuntime(
     doGenerate(optionsForRuntime: unknown) {
       const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
       const url = getAnthropicMessagesUrl(config.baseURL);
+      const warnings = createWarningCollector();
       const body = buildAnthropicMessagesRequest(
         modelId,
         config.name ?? "anthropic",
         options,
         false,
+        warnings,
       );
       return requestJson({
         url,
@@ -2336,16 +2519,24 @@ export function createAnthropicModelRuntime(
           body: JSON.stringify(body),
           signal: options.abortSignal,
         },
-      }).then(buildAnthropicGenerateResult);
+      }).then((payload) => {
+        const drained = warnings.drain();
+        return {
+          ...buildAnthropicGenerateResult(payload),
+          ...(drained.length > 0 ? { warnings: drained } : {}),
+        };
+      });
     },
     doStream(optionsForRuntime: unknown) {
       const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
       const url = getAnthropicMessagesUrl(config.baseURL);
+      const warnings = createWarningCollector();
       const body = buildAnthropicMessagesRequest(
         modelId,
         config.name ?? "anthropic",
         options,
         true,
+        warnings,
       );
       return requestStream({
         url,
@@ -2362,9 +2553,13 @@ export function createAnthropicModelRuntime(
           body: JSON.stringify(body),
           signal: options.abortSignal,
         },
-      }).then((responseStream) => ({
-        stream: ReadableStream.from(streamAnthropicCompatibleParts(responseStream)),
-      }));
+      }).then((responseStream) => {
+        const drained = warnings.drain();
+        return {
+          stream: ReadableStream.from(streamAnthropicCompatibleParts(responseStream)),
+          ...(drained.length > 0 ? { warnings: drained } : {}),
+        };
+      });
     },
   };
 }
@@ -2382,7 +2577,12 @@ export function createGoogleModelRuntime(
     doGenerate(optionsForRuntime: unknown) {
       const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
       const url = getGoogleGenerateContentUrl(config.baseURL, modelId);
-      const body = buildGoogleGenerateContentRequest(config.name ?? "google", options);
+      const warnings = createWarningCollector();
+      const body = buildGoogleGenerateContentRequest(
+        config.name ?? "google",
+        options,
+        warnings,
+      );
       return requestJson({
         url,
         fetchImpl,
@@ -2398,12 +2598,23 @@ export function createGoogleModelRuntime(
           body: JSON.stringify(body),
           signal: options.abortSignal,
         },
-      }).then(buildGoogleGenerateResult);
+      }).then((payload) => {
+        const drained = warnings.drain();
+        return {
+          ...buildGoogleGenerateResult(payload),
+          ...(drained.length > 0 ? { warnings: drained } : {}),
+        };
+      });
     },
     doStream(optionsForRuntime: unknown) {
       const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
       const url = getGoogleStreamGenerateContentUrl(config.baseURL, modelId);
-      const body = buildGoogleGenerateContentRequest(config.name ?? "google", options);
+      const warnings = createWarningCollector();
+      const body = buildGoogleGenerateContentRequest(
+        config.name ?? "google",
+        options,
+        warnings,
+      );
       return requestStream({
         url,
         fetchImpl,
@@ -2419,9 +2630,13 @@ export function createGoogleModelRuntime(
           body: JSON.stringify(body),
           signal: options.abortSignal,
         },
-      }).then((responseStream) => ({
-        stream: ReadableStream.from(streamGoogleCompatibleParts(responseStream)),
-      }));
+      }).then((responseStream) => {
+        const drained = warnings.drain();
+        return {
+          stream: ReadableStream.from(streamGoogleCompatibleParts(responseStream)),
+          ...(drained.length > 0 ? { warnings: drained } : {}),
+        };
+      });
     },
   };
 }
