@@ -1,5 +1,5 @@
 export const AGENT_DEFAULTS = {
-  maxTokens: 4_096,
+  maxTokens: 16_384,
   temperature: 0.7,
   maxSteps: 20,
   memoryType: "conversation",
