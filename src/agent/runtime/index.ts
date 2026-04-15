@@ -87,7 +87,7 @@ export {
   MAX_STREAM_BUFFER_SIZE,
 } from "./constants.ts";
 
-import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE } from "./constants.ts";
+import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, getModelMaxOutputTokens } from "./constants.ts";
 import { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
 import {
   executeConfiguredTool,
@@ -726,7 +726,7 @@ export class AgentRuntime {
               allowedToolNames: allowedRemoteToolNames,
             }),
             experimental_repairToolCall: repairToolCall,
-            maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
+            maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
             temperature: DEFAULT_TEMPERATURE,
             ...(headers ? { headers } : {}),
             ...(providerOptions ? { providerOptions } : {}),
@@ -1033,7 +1033,7 @@ export class AgentRuntime {
           allowedToolNames: allowedRemoteToolNames,
         }),
         experimental_repairToolCall: repairToolCall,
-        maxOutputTokens: this.resolveMaxOutputTokens(maxOutputTokensOverride),
+        maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
         temperature: DEFAULT_TEMPERATURE,
         ...(headers ? { headers } : {}),
         ...(providerOptions ? { providerOptions } : {}),
@@ -1378,7 +1378,7 @@ export class AgentRuntime {
     return getMaxSteps(this.config.maxSteps, edgeMaxSteps, platformLimit);
   }
 
-  private resolveMaxOutputTokens(maxOutputTokensOverride?: number): number {
+  private resolveMaxOutputTokens(modelString?: string, maxOutputTokensOverride?: number): number {
     if (
       typeof maxOutputTokensOverride === "number" &&
       Number.isFinite(maxOutputTokensOverride) &&
@@ -1387,7 +1387,9 @@ export class AgentRuntime {
       return Math.floor(maxOutputTokensOverride);
     }
 
-    return this.config.memory?.maxTokens ?? DEFAULT_MAX_TOKENS;
+    return this.config.memory?.maxTokens
+      ?? (modelString ? getModelMaxOutputTokens(modelString) : undefined)
+      ?? DEFAULT_MAX_TOKENS;
   }
 
   /**
