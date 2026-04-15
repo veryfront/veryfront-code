@@ -64,8 +64,11 @@ export const vfBuild: MCPTool<BuildInput, BuildResult> = {
     idempotentHint: true,
     openWorldHint: false,
   },
-  description:
-    "Use this when you need to run a production build for the current project. Bundles, optimises, and writes output to the dist directory. Use dryRun=true to preview the build without writing files. Do not use for development — use the dev server tools instead.",
+  description: "Use this when you need to run a production build for the current project. " +
+    "Bundles, optimises, and writes output to the dist directory. " +
+    "Use dryRun=true to preview the build without writing files. " +
+    "Do not use for development — use the dev server tools instead. " +
+    "Do not use for lint checks — use vf_run_lint instead.",
   inputSchema: buildInput,
   execute: (input) =>
     withSpan(
@@ -107,6 +110,6 @@ export const vfBuild: MCPTool<BuildInput, BuildResult> = {
           };
         }
       },
-      {},
+      { "tool.dryRun": input.dryRun },
     ),
 };
