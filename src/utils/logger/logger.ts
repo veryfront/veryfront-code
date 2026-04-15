@@ -346,7 +346,9 @@ class ConsoleLogger implements Logger {
     if (entry.projectSlug && !entry.project_slug) entry.project_slug = entry.projectSlug;
     if (entry.durationMs != null && entry.duration_ms == null) entry.duration_ms = entry.durationMs;
     if (entry.userId && !entry.user_id) entry.user_id = entry.userId;
-    if (entry.conversationId && !entry.conversation_id) entry.conversation_id = entry.conversationId;
+    if (entry.conversationId && !entry.conversation_id) {
+      entry.conversation_id = entry.conversationId;
+    }
 
     if (Object.keys(mergedContext).length > 0) entry.context = mergedContext;
     if (error) entry.error = error;
