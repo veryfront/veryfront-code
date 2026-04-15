@@ -4,7 +4,7 @@
  * @module extensions/loader.test
  */
 
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ExtensionLoader } from "./loader.ts";
 import { reset } from "./contracts.ts";
@@ -93,6 +93,35 @@ describe("ExtensionLoader", () => {
       const loader = new ExtensionLoader(noopLogger);
       await loader.setupAll([makeResolved(a), makeResolved(b)], {});
       assertEquals(order, ["a", "b"]);
+    });
+
+    it("should teardown previous extensions when called twice", async () => {
+      const order: string[] = [];
+      const ext = makeExt("ext-a", {
+        setup: () => {
+          order.push("setup");
+        },
+        teardown: () => {
+          order.push("teardown");
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(ext)], {});
+      await loader.setupAll([makeResolved(ext)], {});
+      assertEquals(order, ["setup", "teardown", "setup"]);
+    });
+
+    it("should throw on contract conflicts", async () => {
+      const a = makeExt("ext-a", { provides: { Bundler: {} } });
+      const b = makeExt("ext-b", { provides: { Bundler: {} } });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(a), makeResolved(b)], {}),
+        Error,
+        "Extension conflicts",
+      );
     });
 
     it("should register static provides before calling setup()", async () => {

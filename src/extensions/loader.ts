@@ -4,10 +4,14 @@
  * @module extensions/loader
  */
 
-import { CIRCULAR_DEPENDENCY_ERROR, EXTENSION_VALIDATION_ERROR } from "./errors.ts";
+import {
+  CIRCULAR_DEPENDENCY_ERROR,
+  EXTENSION_CONFLICT_ERROR,
+  EXTENSION_VALIDATION_ERROR,
+} from "./errors.ts";
 import { register, reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import { auditCapabilities } from "./capabilities.ts";
-import { validateExtension } from "./validation.ts";
+import { detectConflicts, validateExtension } from "./validation.ts";
 import type { ExtensionContext, ExtensionLogger, ResolvedExtension } from "./types.ts";
 
 export class ExtensionLoader {
@@ -121,13 +125,28 @@ export class ExtensionLoader {
 
   /**
    * Run the full setup lifecycle for all extensions.
+   * If called while extensions are already loaded, tears them down first.
    */
   async setupAll(
     extensions: ResolvedExtension[],
     projectConfig: Record<string, unknown>,
   ): Promise<void> {
+    if (this.setupOrder.length > 0) {
+      await this.teardownAll();
+    }
     reset();
     this.setupOrder = [];
+
+    // Check for contract conflicts before loading
+    const conflicts = detectConflicts(extensions);
+    if (conflicts.length > 0) {
+      const details = conflicts
+        .map((c) => `"${c.contract}" provided by: ${c.providers.map((p) => p.name).join(", ")}`)
+        .join("; ");
+      throw EXTENSION_CONFLICT_ERROR.create({
+        message: `Extension conflicts detected: ${details}`,
+      });
+    }
 
     for (const resolved of extensions) {
       const ext = resolved.extension;
