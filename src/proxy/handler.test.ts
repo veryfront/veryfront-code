@@ -184,6 +184,46 @@ describe("Proxy Handler", () => {
       await handler.close();
     });
 
+    // Regression test for the ai-chatbot.veryfront.com incident (#1054): bare
+    // {slug}.veryfront.com is intentionally unsupported, so the handler treats it as a
+    // custom domain, the token mint returns "Project not found for domain", and the
+    // user previously saw a misleading 502. Must resolve to a clean 404.
+    it("returns 404 when custom domain token mint reports no project for domain", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          return new Response('{"error":"Project not found for domain"}', {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://ai-chatbot.veryfront.com/robots.txt", {
+          headers: { host: "ai-chatbot.veryfront.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.projectSlug, undefined);
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(
+          ctx.error?.message,
+          "No project configured for domain: ai-chatbot.veryfront.com",
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("strips port from custom domain host before token fetch", async () => {
       const tokenRequests: string[] = [];
       const { server, port } = createMockServer((req: Request) => {

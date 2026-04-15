@@ -215,6 +215,15 @@ function parseStatusFromError(error: unknown): number | null {
   return match ? Number(match[1]) : null;
 }
 
+// Brittle on purpose: we string-match the API's OAuth error body. Source of truth is
+// veryfront-api/src/api/http/rest/auth/routes.ts — `oauthError(c, 'Project not found
+// for domain', ...)`. If that string is renamed, this regex silently regresses to 502.
+// Durable fix is a typed error code from the token-mint helper; tracked separately.
+function isMissingCustomDomainProjectError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /project not found for domain/i.test(message);
+}
+
 async function extractUserIdFromToken(
   token: string,
   apiBaseUrl: string,
@@ -635,6 +644,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
       if (isCustomDomain && !projectSlug) {
         if (!token) {
+          if (isMissingCustomDomainProjectError(tokenFetchError)) {
+            logger?.info("Custom domain project not found during token fetch", {
+              domain: host,
+            });
+            return makeErrorContext(base, 404, `No project configured for domain: ${host}`);
+          }
+
           logger?.error("Cannot process custom domain without token", undefined, { domain: host });
           return makeErrorContext(base, 502, `Failed to authenticate for domain: ${host}`, token);
         }

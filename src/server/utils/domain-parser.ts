@@ -171,6 +171,10 @@ export function parseProjectDomain(host: string): ParsedDomain {
     return createParsedDomain(null, null, env, true, env === "preview");
   }
 
+  // Intentionally NOT supported: bare {slug}.veryfront.{com,org}. Projects must use the
+  // explicit {slug}.production.veryfront.com form. Do not re-add — this has been tried
+  // and reverted (PR #1055). It collides with infra subdomains (api/studio/docs/www)
+  // and erases the environment from the URL, which the product decision requires.
   return createParsedDomain(null, null, null, false, false);
 }
 
