@@ -396,6 +396,10 @@ function getOpenAIChatCompletionsUrl(baseURL?: string): string {
   return joinUrl(baseURL ?? DEFAULT_OPENAI_BASE_URL, "chat/completions");
 }
 
+function getOpenAIResponsesUrl(baseURL?: string): string {
+  return joinUrl(baseURL ?? DEFAULT_OPENAI_BASE_URL, "responses");
+}
+
 function getGoogleGenerateContentUrl(baseURL: string | undefined, modelId: string): string {
   return joinUrl(
     baseURL ?? DEFAULT_GOOGLE_BASE_URL,
@@ -2898,6 +2902,657 @@ export function createOpenAIModelRuntime(
         const drained = warnings.drain();
         return {
           stream: ReadableStream.from(streamOpenAICompatibleParts(responseStream)),
+          ...(drained.length > 0 ? { warnings: drained } : {}),
+        };
+      });
+    },
+  };
+}
+
+// =============================================================================
+// OpenAI Responses API runtime (#1077, deferred from #1052 C4)
+// =============================================================================
+//
+// The Responses API (/v1/responses) is a different surface than Chat
+// Completions. Same provider, different request shape, different streaming
+// event grammar, different response shape, and different reasoning-summary
+// surface. This runtime is parallel to createOpenAIModelRuntime so each
+// path stays focused on one wire format.
+//
+// Why parallel runtimes instead of a flag? See the rationale in #1077.
+//
+// docs: https://platform.openai.com/docs/api-reference/responses
+
+type OpenAIResponsesInputItem = Record<string, unknown>;
+
+type OpenAIResponsesRequest = {
+  model: string;
+  input: OpenAIResponsesInputItem[];
+  instructions?: string;
+  stream?: boolean;
+  max_output_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+  tools?: Array<Record<string, unknown>>;
+  tool_choice?: unknown;
+  reasoning?: { effort?: string; summary?: string };
+  metadata?: Record<string, string>;
+  user?: string;
+  service_tier?: string;
+  parallel_tool_calls?: boolean;
+  text?: { format: Record<string, unknown> };
+  [key: string]: unknown;
+};
+
+/**
+ * Convert the unified RuntimePromptMessage[] to the Responses API `input`
+ * array shape. Differences from Chat Completions:
+ *  - System prompts go on the top-level `instructions` field, not inline.
+ *  - Content parts use `input_text` / `output_text` discriminants instead
+ *    of the Chat Completions plain-text shorthand.
+ *  - Assistant tool calls become standalone `function_call` items in the
+ *    input array, not nested `tool_calls` on a message.
+ *  - Tool results become standalone `function_call_output` items.
+ *  - Reasoning content parts roundtrip as `reasoning` items so callers can
+ *    replay multi-turn conversations with chain-of-thought intact.
+ */
+function toOpenAIResponsesInput(
+  prompt: RuntimePromptMessage[],
+): { instructions?: string; input: OpenAIResponsesInputItem[] } {
+  const instructionsParts: string[] = [];
+  const input: OpenAIResponsesInputItem[] = [];
+
+  for (const message of prompt) {
+    switch (message.role) {
+      case "system":
+        if (message.content.length > 0) {
+          instructionsParts.push(message.content);
+        }
+        break;
+      case "user":
+        input.push({
+          role: "user",
+          content: [{ type: "input_text", text: readTextParts(message.content) }],
+        });
+        break;
+      case "assistant": {
+        const messageContent: Array<Record<string, unknown>> = [];
+        for (const part of message.content) {
+          if (part.type === "text") {
+            messageContent.push({ type: "output_text", text: part.text });
+            continue;
+          }
+          if (part.type === "reasoning") {
+            // Reasoning items are top-level entries in the input array,
+            // not nested inside the assistant message — flush whatever
+            // text we've accumulated first, then push the reasoning item.
+            if (messageContent.length > 0) {
+              input.push({ role: "assistant", content: [...messageContent] });
+              messageContent.length = 0;
+            }
+            const summary: Array<Record<string, unknown>> = [];
+            if (typeof part.text === "string" && part.text.length > 0) {
+              summary.push({ type: "summary_text", text: part.text });
+            }
+            input.push({
+              type: "reasoning",
+              ...(typeof part.signature === "string" ? { encrypted_content: part.signature } : {}),
+              summary,
+            });
+            continue;
+          }
+          // tool-call: flush message content, then push as standalone
+          // function_call item per Responses API shape.
+          if (messageContent.length > 0) {
+            input.push({ role: "assistant", content: [...messageContent] });
+            messageContent.length = 0;
+          }
+          input.push({
+            type: "function_call",
+            call_id: part.toolCallId,
+            name: part.toolName,
+            arguments: stringifyJsonValue(part.input),
+          });
+        }
+        if (messageContent.length > 0) {
+          input.push({ role: "assistant", content: messageContent });
+        }
+        break;
+      }
+      case "tool":
+        for (const part of message.content) {
+          input.push({
+            type: "function_call_output",
+            call_id: part.toolCallId,
+            output: stringifyJsonValue(part.output.value),
+          });
+        }
+        break;
+    }
+  }
+
+  return {
+    ...(instructionsParts.length > 0 ? { instructions: instructionsParts.join("\n\n") } : {}),
+    input,
+  };
+}
+
+/**
+ * Tools on the Responses API differ from Chat Completions: instead of
+ * `{ type: "function", function: { name, parameters } }` the function
+ * shape lifts the name/parameters/strict to the top of the entry. Native
+ * tools (web_search, file_search, computer_use, code_interpreter) live
+ * alongside function tools in the same array.
+ */
+function toOpenAIResponsesTools(
+  tools: RuntimeToolDefinition[] | undefined,
+): Array<Record<string, unknown>> | undefined {
+  if (!tools) return undefined;
+  const normalized: Array<Record<string, unknown>> = [];
+  for (const tool of tools) {
+    if (tool.type === "function") {
+      normalized.push({
+        type: "function",
+        name: tool.name,
+        ...(typeof tool.description === "string" ? { description: tool.description } : {}),
+        parameters: unwrapToolInputSchema(tool.inputSchema),
+      });
+      continue;
+    }
+    if (!tool.id.startsWith("openai.")) continue;
+    const providerType = tool.id.slice("openai.".length);
+    if (providerType.length === 0) continue;
+    normalized.push({
+      type: providerType,
+      ...toSnakeCaseRecord(tool.args),
+    });
+  }
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function buildOpenAIResponsesRequest(
+  modelId: string,
+  providerName: string,
+  options: OpenAICompatibleLanguageOptions,
+  stream: boolean,
+  warnings: WarningCollector,
+): OpenAIResponsesRequest {
+  const isReasoningModel = isOpenAIReasoningModel(modelId);
+  const reasoningEffort = resolveOpenAIReasoningEffort(options.reasoning);
+  const reasoningEnabled = isReasoningModel || reasoningEffort !== undefined;
+
+  // Same param-sanitization rules as Chat Completions: reasoning models
+  // reject sampling params. Drop with a warning.
+  if (options.topK !== undefined) {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "openai",
+      setting: "topK",
+      details: "OpenAI Responses API does not expose top_k; the value was dropped.",
+    });
+  }
+  if (reasoningEnabled) {
+    const dropped: Array<[keyof typeof options, string]> = [
+      ["temperature", "temperature"],
+      ["topP", "top_p"],
+      ["presencePenalty", "presence_penalty"],
+      ["frequencyPenalty", "frequency_penalty"],
+    ];
+    for (const [key, openaiName] of dropped) {
+      if (options[key] !== undefined) {
+        warnings.push({
+          type: "unsupported-setting",
+          provider: "openai",
+          setting: key,
+          details:
+            `Dropped because OpenAI reasoning models reject ${openaiName}. Reasoning was active for this request.`,
+        });
+      }
+    }
+  }
+
+  const { instructions, input } = toOpenAIResponsesInput(options.prompt);
+  const responsesTools = toOpenAIResponsesTools(options.tools);
+
+  const body: OpenAIResponsesRequest = {
+    model: modelId,
+    input,
+    ...(instructions !== undefined ? { instructions } : {}),
+    ...(stream ? { stream: true } : {}),
+    ...(options.maxOutputTokens !== undefined
+      ? { max_output_tokens: options.maxOutputTokens }
+      : {}),
+    ...(!reasoningEnabled && options.temperature !== undefined
+      ? { temperature: options.temperature }
+      : {}),
+    ...(!reasoningEnabled && options.topP !== undefined ? { top_p: options.topP } : {}),
+    ...(responsesTools ? { tools: responsesTools } : {}),
+    ...(options.toolChoice !== undefined ? { tool_choice: options.toolChoice } : {}),
+    // The Responses API surfaces reasoning effort + summary verbosity
+    // in a structured `reasoning` object instead of a flat field. We
+    // request "auto" summary so callers see structured summary parts
+    // without having to opt into them per request.
+    ...(reasoningEffort !== undefined
+      ? { reasoning: { effort: reasoningEffort, summary: "auto" } }
+      : {}),
+    ...(typeof options.userId === "string" && options.userId.length > 0
+      ? { user: options.userId }
+      : {}),
+    ...(options.serviceTier !== undefined ? { service_tier: options.serviceTier } : {}),
+    ...(options.parallelToolCalls !== undefined
+      ? { parallel_tool_calls: options.parallelToolCalls }
+      : {}),
+    // Responses API uses `text.format` instead of Chat Completions'
+    // `response_format`. The shape is similar but nested under `text`.
+    ...(options.responseFormat && options.responseFormat.type !== "text"
+      ? {
+        text: {
+          format: options.responseFormat.type === "json" ? { type: "json_object" } : {
+            type: "json_schema",
+            name: options.responseFormat.name,
+            ...(typeof options.responseFormat.description === "string"
+              ? { description: options.responseFormat.description }
+              : {}),
+            schema: unwrapToolInputSchema(options.responseFormat.schema),
+            ...(options.responseFormat.strict !== undefined
+              ? { strict: options.responseFormat.strict }
+              : {}),
+          },
+        },
+      }
+      : {}),
+  };
+
+  Object.assign(body, readProviderOptions(options.providerOptions, "openai", providerName));
+  return body;
+}
+
+/**
+ * The Responses API uses `input_tokens` / `output_tokens` field names
+ * instead of Chat Completions' `prompt_tokens` / `completion_tokens`.
+ * It also nests cached input tokens under `input_tokens_details` and
+ * exposes reasoning tokens via `output_tokens_details.reasoning_tokens`.
+ */
+function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | undefined {
+  const record = readRecord(payload);
+  // Streaming usage lives on response.completed inside `response.usage`;
+  // non-streaming has it at the top level.
+  const responseRecord = readRecord(record?.response);
+  const usage = readRecord(responseRecord?.usage) ?? readRecord(record?.usage);
+  if (!usage) return undefined;
+
+  const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : undefined;
+  const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : undefined;
+  const totalTokens = typeof usage.total_tokens === "number"
+    ? usage.total_tokens
+    : (inputTokens !== undefined || outputTokens !== undefined
+      ? (inputTokens ?? 0) + (outputTokens ?? 0)
+      : undefined);
+  const inputDetails = readRecord(usage.input_tokens_details);
+  const cachedTokens = inputDetails?.cached_tokens;
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
+  };
+}
+
+function normalizeOpenAIResponsesFinishReason(
+  raw: unknown,
+): string | { unified: string; raw: string } | null {
+  if (typeof raw !== "string") return null;
+  switch (raw) {
+    case "completed":
+      return { unified: "stop", raw };
+    case "incomplete":
+      return { unified: "length", raw };
+    case "failed":
+      return { unified: "error", raw };
+    case "in_progress":
+      return null;
+    default:
+      return raw;
+  }
+}
+
+type OpenAIResponsesContentPart =
+  | { type: "text"; text: string }
+  | {
+    type: "reasoning";
+    summaries?: Array<{ id?: string; text: string }>;
+    signature?: string;
+  }
+  | { type: "tool-call"; toolCallId: string; toolName: string; input: string };
+
+function buildOpenAIResponsesGenerateResult(payload: unknown): {
+  content: OpenAIResponsesContentPart[];
+  finishReason?: string | { unified: string; raw: string } | null;
+  usage?: RuntimeUsage;
+} {
+  const record = readRecord(payload);
+  const output = Array.isArray(record?.output) ? record.output : [];
+  const content: OpenAIResponsesContentPart[] = [];
+
+  for (const item of output) {
+    const itemRecord = readRecord(item);
+    const itemType = typeof itemRecord?.type === "string" ? itemRecord.type : undefined;
+
+    if (itemType === "message" && Array.isArray(itemRecord?.content)) {
+      // A message item bundles one or more output_text parts. Concat
+      // their texts into a single text content entry.
+      let text = "";
+      for (const part of itemRecord.content) {
+        const p = readRecord(part);
+        if (typeof p?.type === "string" && p.type === "output_text" && typeof p.text === "string") {
+          text += p.text;
+        }
+      }
+      if (text.length > 0) {
+        content.push({ type: "text", text });
+      }
+      continue;
+    }
+
+    if (itemType === "function_call") {
+      content.push({
+        type: "tool-call",
+        toolCallId: typeof itemRecord?.call_id === "string"
+          ? itemRecord.call_id
+          : (typeof itemRecord?.id === "string" ? itemRecord.id : ""),
+        toolName: typeof itemRecord?.name === "string" ? itemRecord.name : "",
+        input: typeof itemRecord?.arguments === "string"
+          ? itemRecord.arguments
+          : stringifyJsonValue(itemRecord?.arguments ?? {}),
+      });
+      continue;
+    }
+
+    if (itemType === "reasoning") {
+      const summary = Array.isArray(itemRecord?.summary) ? itemRecord.summary : [];
+      const summaries: Array<{ id?: string; text: string }> = [];
+      for (const s of summary) {
+        const sr = readRecord(s);
+        if (typeof sr?.text === "string" && sr.text.length > 0) {
+          summaries.push({
+            ...(typeof sr?.id === "string" ? { id: sr.id } : {}),
+            text: sr.text,
+          });
+        }
+      }
+      content.push({
+        type: "reasoning",
+        ...(summaries.length > 0 ? { summaries } : {}),
+        ...(typeof itemRecord?.encrypted_content === "string"
+          ? { signature: itemRecord.encrypted_content }
+          : {}),
+      });
+      continue;
+    }
+  }
+
+  return {
+    content,
+    finishReason: normalizeOpenAIResponsesFinishReason(record?.status),
+    usage: extractOpenAIResponsesUsage(payload),
+  };
+}
+
+type OpenAIResponsesStreamReasoningState = {
+  id: string;
+  emittedStart: boolean;
+};
+
+type OpenAIResponsesStreamFunctionCallState = {
+  id: string;
+  toolCallId: string;
+  name: string;
+  arguments: string;
+};
+
+/**
+ * Parse the Responses API streaming event grammar into the same UI part
+ * shapes the existing OpenAI / Anthropic / Google streams emit. The
+ * Responses API uses a strict event-typed protocol — every event has a
+ * `type` field naming the lifecycle phase — instead of the loose
+ * `delta`-based shape Chat Completions uses.
+ */
+async function* streamOpenAIResponsesParts(
+  stream: ReadableStream<Uint8Array>,
+): AsyncIterable<unknown> {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const reasoningBlocks = new Map<string, OpenAIResponsesStreamReasoningState>();
+  const functionCalls = new Map<string, OpenAIResponsesStreamFunctionCallState>();
+  const startedToolCalls = new Set<string>();
+  let finishReason: string | { unified: string; raw: string } | null = null;
+  let usage: RuntimeUsage | undefined;
+  let reasoningCounter = 0;
+
+  for await (const chunk of stream) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const parsed = parseSseChunk(buffer);
+    buffer = parsed.remainder;
+
+    for (const event of parsed.events) {
+      if (event === "[DONE]") continue;
+      const record = readRecord(event);
+      const type = typeof record?.type === "string" ? record.type : undefined;
+      if (!type) continue;
+
+      // response.output_item.added: a new output item begins. Track
+      // function_call items so their argument deltas can be attributed,
+      // and reasoning items so summary deltas can group correctly.
+      if (type === "response.output_item.added") {
+        const item = readRecord(record?.item);
+        const itemType = typeof item?.type === "string" ? item.type : undefined;
+        const itemId = typeof item?.id === "string" ? item.id : undefined;
+        if (itemType === "function_call" && itemId) {
+          const callId = typeof item?.call_id === "string" ? item.call_id : itemId;
+          const name = typeof item?.name === "string" ? item.name : "";
+          functionCalls.set(itemId, {
+            id: itemId,
+            toolCallId: callId,
+            name,
+            arguments: "",
+          });
+        }
+        if (itemType === "reasoning" && itemId) {
+          reasoningBlocks.set(itemId, {
+            id: `reasoning-${reasoningCounter++}`,
+            emittedStart: false,
+          });
+        }
+        continue;
+      }
+
+      // response.output_text.delta: text chunk for a message item.
+      if (type === "response.output_text.delta" && typeof record?.delta === "string") {
+        if (record.delta.length > 0) {
+          yield { type: "text-delta", delta: record.delta };
+        }
+        continue;
+      }
+
+      // response.reasoning_summary_text.delta: reasoning summary text
+      // chunk. The first delta on an item lazily emits the
+      // reasoning-start event so callers can group deltas into a part.
+      if (type === "response.reasoning_summary_text.delta" && typeof record?.delta === "string") {
+        const itemId = typeof record?.item_id === "string" ? record.item_id : undefined;
+        const state = itemId ? reasoningBlocks.get(itemId) : undefined;
+        if (state && record.delta.length > 0) {
+          if (!state.emittedStart) {
+            yield { type: "reasoning-start", id: state.id };
+            state.emittedStart = true;
+          }
+          yield { type: "reasoning-delta", id: state.id, delta: record.delta };
+        }
+        continue;
+      }
+
+      // response.function_call_arguments.delta: tool call argument
+      // chunk. The first delta lazily emits tool-input-start.
+      if (type === "response.function_call_arguments.delta" && typeof record?.delta === "string") {
+        const itemId = typeof record?.item_id === "string" ? record.item_id : undefined;
+        const state = itemId ? functionCalls.get(itemId) : undefined;
+        if (state && record.delta.length > 0) {
+          if (!startedToolCalls.has(state.id)) {
+            yield {
+              type: "tool-input-start",
+              id: state.toolCallId,
+              toolName: state.name,
+            };
+            startedToolCalls.add(state.id);
+          }
+          state.arguments += record.delta;
+          yield {
+            type: "tool-input-delta",
+            id: state.toolCallId,
+            delta: record.delta,
+          };
+        }
+        continue;
+      }
+
+      // response.output_item.done: an item has finished emitting deltas.
+      // Close any reasoning or function-call streams that were open.
+      if (type === "response.output_item.done") {
+        const item = readRecord(record?.item);
+        const itemType = typeof item?.type === "string" ? item.type : undefined;
+        const itemId = typeof item?.id === "string" ? item.id : undefined;
+        if (itemType === "reasoning" && itemId) {
+          const state = reasoningBlocks.get(itemId);
+          if (state?.emittedStart) {
+            yield { type: "reasoning-end", id: state.id };
+          }
+          reasoningBlocks.delete(itemId);
+        }
+        if (itemType === "function_call" && itemId) {
+          const state = functionCalls.get(itemId);
+          if (state) {
+            yield {
+              type: "tool-call",
+              toolCallId: state.toolCallId,
+              toolName: state.name,
+              input: state.arguments,
+            };
+          }
+          functionCalls.delete(itemId);
+        }
+        continue;
+      }
+
+      // response.completed: terminal event with the final response object
+      // (status + usage). Capture both for the final finish part.
+      if (type === "response.completed") {
+        usage = extractOpenAIResponsesUsage(record) ?? usage;
+        const responseRecord = readRecord(record?.response);
+        finishReason = normalizeOpenAIResponsesFinishReason(responseRecord?.status);
+        continue;
+      }
+
+      if (type === "response.failed" || type === "response.incomplete") {
+        const responseRecord = readRecord(record?.response);
+        finishReason = normalizeOpenAIResponsesFinishReason(responseRecord?.status) ??
+          (type === "response.failed"
+            ? { unified: "error", raw: "failed" }
+            : { unified: "length", raw: "incomplete" });
+        usage = extractOpenAIResponsesUsage(record) ?? usage;
+        continue;
+      }
+    }
+  }
+
+  // Close any reasoning streams still open at end-of-stream (defensive
+  // — a clean Responses API stream always closes them via output_item.done).
+  for (const state of reasoningBlocks.values()) {
+    if (state.emittedStart) {
+      yield { type: "reasoning-end", id: state.id };
+    }
+  }
+
+  yield {
+    type: "finish",
+    finishReason,
+    ...(usage ? { usage } : {}),
+  };
+}
+
+export function createOpenAIResponsesRuntime(
+  config: OpenAIRuntimeConfig,
+  modelId: string,
+): ModelRuntime {
+  const fetchImpl = config.fetch ?? globalThis.fetch;
+  return {
+    provider: config.name ?? "openai",
+    modelId,
+    specificationVersion: "v3",
+    supportedUrls: {},
+    doGenerate(optionsForRuntime: unknown) {
+      const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
+      const url = getOpenAIResponsesUrl(config.baseURL);
+      const warnings = createWarningCollector();
+      const body = buildOpenAIResponsesRequest(
+        modelId,
+        config.name ?? "openai",
+        options,
+        false,
+        warnings,
+      );
+      return requestJson({
+        url,
+        fetchImpl,
+        providerLabel: config.name ?? "openai",
+        providerKind: "openai",
+        init: {
+          method: "POST",
+          headers: createRequestHeaders({
+            apiKeyHeaderName: "authorization",
+            apiKey: `Bearer ${config.apiKey}`,
+            extraHeaders: options.headers,
+          }),
+          body: JSON.stringify(body),
+          signal: options.abortSignal,
+        },
+      }).then((payload) => {
+        const drained = warnings.drain();
+        return {
+          ...buildOpenAIResponsesGenerateResult(payload),
+          ...(drained.length > 0 ? { warnings: drained } : {}),
+        };
+      });
+    },
+    doStream(optionsForRuntime: unknown) {
+      const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
+      const url = getOpenAIResponsesUrl(config.baseURL);
+      const warnings = createWarningCollector();
+      const body = buildOpenAIResponsesRequest(
+        modelId,
+        config.name ?? "openai",
+        options,
+        true,
+        warnings,
+      );
+      return requestStream({
+        url,
+        fetchImpl,
+        providerLabel: config.name ?? "openai",
+        providerKind: "openai",
+        init: {
+          method: "POST",
+          headers: createRequestHeaders({
+            apiKeyHeaderName: "authorization",
+            apiKey: `Bearer ${config.apiKey}`,
+            extraHeaders: options.headers,
+          }),
+          body: JSON.stringify(body),
+          signal: options.abortSignal,
+        },
+      }).then((responseStream) => {
+        const drained = warnings.drain();
+        return {
+          stream: ReadableStream.from(streamOpenAIResponsesParts(responseStream)),
           ...(drained.length > 0 ? { warnings: drained } : {}),
         };
       });
