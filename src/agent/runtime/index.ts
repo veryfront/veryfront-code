@@ -198,6 +198,97 @@ export function captureStreamedToolCallInput(
   };
 }
 
+/**
+ * A streamed tool call is "incomplete" when the provider stream terminated
+ * (abort, stall, timeout, transport error) before the SDK emitted the
+ * finalizing `tool-call` event that sets `inputAvailable: true`. In that state
+ * `arguments` only holds partial JSON fragments from `tool-input-delta` events,
+ * so the tool call is NOT a committed model choice and must not be parsed or
+ * executed. This is semantically distinct from a parse failure on a finalized
+ * tool call (`inputAvailable: true` but malformed JSON — which only happens on
+ * genuine provider bugs) and needs to be reported as a stream-termination
+ * error rather than a tool-argument error.
+ */
+export function isStreamedToolCallIncomplete(
+  toolCall: Pick<StreamingToolCall, "inputAvailable">,
+): boolean {
+  return toolCall.inputAvailable !== true;
+}
+
+/**
+ * Classification of a streamed tool call when we reach end-of-stream and need
+ * to persist it into the assistant message. Three distinct cases, each with
+ * different semantics downstream:
+ *
+ * - `complete`: provider emitted the finalizing `tool-call` event and the
+ *   arguments parsed cleanly. Execute the tool normally.
+ * - `parse-error`: provider emitted the finalizing `tool-call` event but the
+ *   arguments are not valid JSON. This is a provider/SDK bug; record it as a
+ *   tool-argument error so the step can recover.
+ * - `incomplete`: stream terminated before the finalizing event fired. The
+ *   model never committed this tool use; record it as a stream-termination
+ *   error so the parent (e.g. child-fork watchdog) can decide whether to
+ *   retry the step cleanly instead of seeing a malformed tool call.
+ */
+export type StreamedToolCallMaterialization =
+  | { readonly kind: "complete"; readonly part: MessagePart }
+  | {
+    readonly kind: "parse-error";
+    readonly part: MessagePart;
+    readonly parseError: string;
+  }
+  | {
+    readonly kind: "incomplete";
+    readonly part: MessagePart;
+    readonly partialArgumentsLength: number;
+    readonly partialArgumentsPreview: string;
+  };
+
+/**
+ * Classify and build the persisted `MessagePart` for a single streamed tool
+ * call. Pure function — no logging, no SSE, no memory. Callers decide what to
+ * do with the result so this stays unit-testable.
+ *
+ * The resulting `part` is always pushed into the assistant message so the
+ * conversation history is transparent: even incomplete tool calls leave a
+ * visible trace with their partial `inputText`. What differs is the caller's
+ * error-surfacing behavior (log warning, SSE event, tool-result error).
+ */
+export function materializeStreamedToolCall(
+  tc: StreamingToolCall,
+): StreamedToolCallMaterialization {
+  const basePart: MessagePart = {
+    type: `tool-${tc.name}`,
+    toolCallId: tc.id,
+    toolName: tc.name,
+    args: {},
+    ...(tc.arguments.length > 0 ? { inputText: tc.arguments } : {}),
+  };
+
+  if (isStreamedToolCallIncomplete(tc)) {
+    return {
+      kind: "incomplete",
+      part: basePart,
+      partialArgumentsLength: tc.arguments.length,
+      partialArgumentsPreview: tc.arguments.slice(0, 200),
+    };
+  }
+
+  const capturedInput = captureStreamedToolCallInput(tc);
+  const part: MessagePart = {
+    type: `tool-${tc.name}`,
+    toolCallId: tc.id,
+    toolName: tc.name,
+    args: capturedInput.args,
+    ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
+  };
+
+  if (capturedInput.parseError) {
+    return { kind: "parse-error", part, parseError: capturedInput.parseError };
+  }
+  return { kind: "complete", part };
+}
+
 function isToolResultPart(part: MessagePart): part is ToolResultPart {
   return part.type === "tool-result" && "result" in part;
 }
@@ -961,20 +1052,35 @@ export class AgentRuntime {
       if (state.accumulatedText) streamParts.push({ type: "text", text: state.accumulatedText });
 
       for (const tc of state.toolCalls.values()) {
-        const capturedInput = captureStreamedToolCallInput(tc);
-        if (capturedInput.parseError) {
+        const materialized = materializeStreamedToolCall(tc);
+        streamParts.push(materialized.part);
+
+        if (materialized.kind === "incomplete") {
+          // Stream terminated before the provider emitted the finalizing
+          // `tool-call` event for this block. The model never committed this
+          // tool use. Surface the failure via SSE so the live client can
+          // react, and leave the partial fragment under `inputText` in the
+          // persisted part above so the history is replayable and transparent.
+          logger.warn("Streamed tool call terminated before tool-call event", {
+            toolCallId: tc.id,
+            toolName: tc.name,
+            partialArgumentsLength: materialized.partialArgumentsLength,
+            partialArgumentsPreview: materialized.partialArgumentsPreview,
+          });
+          const dynamicIncomplete = isDynamicTool(tc.name);
+          sendSSE(controller, encoder, {
+            type: "tool-input-error",
+            toolCallId: tc.id,
+            errorText: `Stream terminated before tool-call event fired for "${tc.name}". ` +
+              `Received ${materialized.partialArgumentsLength} chars of partial tool-input deltas.`,
+            ...(dynamicIncomplete ? { dynamic: true } : {}),
+          });
+        } else if (materialized.kind === "parse-error") {
           logger.warn("Failed to parse streamed tool arguments", {
             toolCallId: tc.id,
-            error: capturedInput.parseError,
+            error: materialized.parseError,
           });
         }
-        streamParts.push({
-          type: `tool-${tc.name}`,
-          toolCallId: tc.id,
-          toolName: tc.name,
-          args: capturedInput.args,
-          ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
-        });
       }
 
       const assistantMessage: Message = {
@@ -1033,6 +1139,30 @@ export class AgentRuntime {
 
       for (const tc of streamedToolCalls) {
         throwIfAborted(abortSignal);
+        if (isStreamedToolCallIncomplete(tc)) {
+          // Stream ended before the provider finalized this tool call. We
+          // cannot execute it — record a distinct stream-termination error
+          // (not a tool-argument parse error) so the parent step and any
+          // upstream orchestrator (e.g. the child-fork watchdog) see a
+          // completed step with a clearly-labelled failure and can recover.
+          const incompleteToolCall: ToolCall = {
+            id: tc.id,
+            name: tc.name,
+            args: {},
+            ...(tc.arguments.length > 0 ? { inputText: tc.arguments } : {}),
+            status: "pending",
+          };
+          await this.recordToolError(
+            incompleteToolCall,
+            `Stream terminated before tool-call event fired for "${tc.name}". ` +
+              `Received ${tc.arguments.length} chars of partial tool-input deltas.`,
+            controller,
+            encoder,
+            currentMessages,
+            toolCalls,
+          );
+          continue;
+        }
         const capturedInput = captureStreamedToolCallInput(tc);
         const toolCall: ToolCall = {
           id: tc.id,

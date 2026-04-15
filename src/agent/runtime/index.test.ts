@@ -5,6 +5,8 @@ import {
   collectFinalStreamToolResults,
   collectGeneratedToolResults,
   collectPersistedToolResults,
+  isStreamedToolCallIncomplete,
+  materializeStreamedToolCall,
 } from "./index.ts";
 import type { ChatStreamState } from "./chat-stream-handler.ts";
 import type { Message } from "../types.ts";
@@ -132,4 +134,174 @@ describe("agent runtime streamed tool result collection", () => {
     assertEquals(captured.inputText, '{"query":"AI ontologies research"}');
     assertEquals(captured.parseError, undefined);
   });
+
+  it("flags a streamed tool call as incomplete when inputAvailable is false", () => {
+    assertEquals(
+      isStreamedToolCallIncomplete({ inputAvailable: false }),
+      true,
+    );
+  });
+
+  it("flags a streamed tool call as incomplete when inputAvailable is missing", () => {
+    // `inputAvailable` is optional on StreamingToolCall and is only set to
+    // `true` once the provider emits the finalizing tool-call event. An
+    // undefined value means the stream terminated (abort, stall, transport
+    // error) before finalization and the accumulated `arguments` is only a
+    // partial delta fragment, NOT a committed tool-argument JSON.
+    assertEquals(
+      isStreamedToolCallIncomplete({}),
+      true,
+    );
+  });
+
+  it("treats a streamed tool call as complete only when inputAvailable is true", () => {
+    assertEquals(
+      isStreamedToolCallIncomplete({ inputAvailable: true }),
+      false,
+    );
+  });
+
+  it("materializes a complete streamed tool call into a ready-to-execute part", () => {
+    const materialized = materializeStreamedToolCall({
+      id: "toolu_complete",
+      name: "write_file",
+      arguments: '{"path":"/plans/report.md","content":"# Summary"}',
+      inputAvailable: true,
+    });
+
+    assertEquals(materialized.kind, "complete");
+    assertEquals(materialized.part.type, "tool-write_file");
+    assertEquals(
+      (materialized.part as { toolCallId: string }).toolCallId,
+      "toolu_complete",
+    );
+    assertEquals(
+      (materialized.part as { args: Record<string, unknown> }).args,
+      { path: "/plans/report.md", content: "# Summary" },
+    );
+    assertEquals(
+      (materialized.part as { inputText?: string }).inputText,
+      '{"path":"/plans/report.md","content":"# Summary"}',
+    );
+  });
+
+  it("materializes a parse-error streamed tool call without parsing executable args", () => {
+    const materialized = materializeStreamedToolCall({
+      id: "toolu_parse_error",
+      name: "web_search",
+      // Malformed JSON emitted by a finalized (inputAvailable: true) tool call
+      // is the rare provider/SDK bug case. It must NOT be conflated with stream
+      // termination.
+      arguments: '{"query":"streaming bugs',
+      inputAvailable: true,
+    });
+
+    assertEquals(materialized.kind, "parse-error");
+    assertEquals(
+      (materialized.part as { args: Record<string, unknown> }).args,
+      {},
+    );
+    assertEquals(
+      (materialized.part as { inputText?: string }).inputText,
+      '{"query":"streaming bugs',
+    );
+    if (materialized.kind === "parse-error") {
+      assertEquals(typeof materialized.parseError, "string");
+    }
+  });
+
+  it(
+    "materializes an incomplete streamed tool call (stream terminated before tool-call event)",
+    () => {
+      // This is the exact shape observed in production: a `write_file` tool
+      // whose `content` field got cut off mid-emission because the provider
+      // stream stalled before the finalizing `tool-call` event fired. The
+      // partial JSON would otherwise produce an "Expected ',' or '}' after
+      // property value" error if we naively parsed it.
+      const partialArgs = '{"path":"/plans/headless-browser-automation-research.md","conten';
+      const materialized = materializeStreamedToolCall({
+        id: "toolu_01HebautJT22EGCZh8K1Dfpw",
+        name: "write_file",
+        arguments: partialArgs,
+        // inputAvailable deliberately omitted — same as the production state
+        // when the stream ends before `tool-input-end` / `tool-call` fires.
+      });
+
+      assertEquals(materialized.kind, "incomplete");
+      // args MUST be empty — we must not hand the execution path a partial
+      // object constructed from truncated JSON, because downstream consumers
+      // assume args reflect a committed tool choice.
+      assertEquals(
+        (materialized.part as { args: Record<string, unknown> }).args,
+        {},
+      );
+      // inputText MUST preserve the partial fragment verbatim so the persisted
+      // assistant message is transparent about what happened (not swallowed).
+      assertEquals(
+        (materialized.part as { inputText?: string }).inputText,
+        partialArgs,
+      );
+      if (materialized.kind === "incomplete") {
+        assertEquals(materialized.partialArgumentsLength, partialArgs.length);
+        assertEquals(
+          materialized.partialArgumentsPreview,
+          partialArgs.slice(0, 200),
+        );
+      }
+    },
+  );
+
+  it(
+    "materializes an incomplete streamed tool call with empty arguments (stream died before any delta)",
+    () => {
+      const materialized = materializeStreamedToolCall({
+        id: "toolu_pre_delta_death",
+        name: "read_file",
+        arguments: "",
+      });
+
+      assertEquals(materialized.kind, "incomplete");
+      assertEquals(
+        (materialized.part as { args: Record<string, unknown> }).args,
+        {},
+      );
+      // No inputText field when the stream died before emitting any delta.
+      assertEquals(
+        (materialized.part as { inputText?: string }).inputText,
+        undefined,
+      );
+      if (materialized.kind === "incomplete") {
+        assertEquals(materialized.partialArgumentsLength, 0);
+        assertEquals(materialized.partialArgumentsPreview, "");
+      }
+    },
+  );
+
+  it(
+    "truncates partialArgumentsPreview to 200 chars for huge mid-stream cutoffs",
+    () => {
+      const longFragment = '{"path":"/plans/x.md","content":"' + "a".repeat(500);
+      const materialized = materializeStreamedToolCall({
+        id: "toolu_long_partial",
+        name: "write_file",
+        arguments: longFragment,
+      });
+
+      assertEquals(materialized.kind, "incomplete");
+      if (materialized.kind === "incomplete") {
+        assertEquals(materialized.partialArgumentsLength, longFragment.length);
+        assertEquals(materialized.partialArgumentsPreview.length, 200);
+        assertEquals(
+          materialized.partialArgumentsPreview,
+          longFragment.slice(0, 200),
+        );
+      }
+      // The full fragment is still preserved on the persisted part so we do
+      // not lose forensic data — only the log preview is truncated.
+      assertEquals(
+        (materialized.part as { inputText?: string }).inputText,
+        longFragment,
+      );
+    },
+  );
 });
