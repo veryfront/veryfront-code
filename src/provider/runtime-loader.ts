@@ -955,6 +955,37 @@ function toAnthropicMessages(
   return { system: joined, messages };
 }
 
+/**
+ * Short-name → latest-versioned-type alias map for Anthropic provider tools.
+ *
+ * Anthropic tool types are date-stamped (e.g. `code_execution_20260120`) so
+ * callers either pin a version or get the latest. We accept both: a caller
+ * can pass `anthropic.code_execution` and we map to the latest known version,
+ * or pass `anthropic.code_execution_20250522` and we forward verbatim.
+ *
+ * Versions chosen here are the latest documented releases as of 2026-04-15
+ * — see https://docs.claude.com/en/docs/agents-and-tools/tool-use/overview.
+ * When Anthropic ships newer versions, update this map.
+ */
+const ANTHROPIC_TOOL_VERSION_ALIASES: Record<string, string> = {
+  code_execution: "code_execution_20260120",
+  computer_use: "computer_20250124",
+  computer: "computer_20250124",
+  text_editor: "text_editor_20250728",
+  bash: "bash_20250124",
+  memory: "memory_20250818",
+  web_search: "web_search_20250305",
+  web_fetch: "web_fetch_20250910",
+};
+
+function resolveAnthropicProviderType(rawType: string): string {
+  // Already-versioned types (contain a date stamp suffix) pass through verbatim.
+  if (/_\d{8}$/.test(rawType)) {
+    return rawType;
+  }
+  return ANTHROPIC_TOOL_VERSION_ALIASES[rawType] ?? rawType;
+}
+
 function toAnthropicTools(
   tools: RuntimeToolDefinition[] | undefined,
   toolsCacheControl?: { type: "ephemeral"; ttl?: "1h" },
@@ -979,13 +1010,13 @@ function toAnthropicTools(
       continue;
     }
 
-    const providerType = tool.id.slice("anthropic.".length);
-    if (providerType.length === 0) {
+    const rawType = tool.id.slice("anthropic.".length);
+    if (rawType.length === 0) {
       continue;
     }
 
     normalized.push({
-      type: providerType,
+      type: resolveAnthropicProviderType(rawType),
       name: tool.name,
       ...toSnakeCaseRecord(tool.args),
     });

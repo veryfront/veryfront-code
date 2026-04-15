@@ -3119,4 +3119,94 @@ describe("provider/runtime-loader", () => {
       await collectAsync(result.stream);
     });
   });
+
+  describe("Anthropic provider tool version aliasing", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Run code" }],
+    } as const;
+
+    function captureBody() {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-opus-4-6");
+      return { runtime, getBody: () => captured };
+    }
+
+    function toolType(body: Record<string, unknown> | null): string | undefined {
+      const tools = body?.tools as Array<{ type?: string }> | undefined;
+      return tools?.[0]?.type;
+    }
+
+    const cases: Array<[string, string]> = [
+      ["anthropic.code_execution", "code_execution_20260120"],
+      ["anthropic.computer_use", "computer_20250124"],
+      ["anthropic.computer", "computer_20250124"],
+      ["anthropic.text_editor", "text_editor_20250728"],
+      ["anthropic.bash", "bash_20250124"],
+      ["anthropic.memory", "memory_20250818"],
+      ["anthropic.web_search", "web_search_20250305"],
+      ["anthropic.web_fetch", "web_fetch_20250910"],
+    ];
+
+    for (const [shortId, expected] of cases) {
+      it(`maps ${shortId} -> ${expected}`, async () => {
+        const { runtime, getBody } = captureBody();
+        await runtime.doGenerate({
+          prompt: [userPrompt],
+          tools: [{
+            type: "provider",
+            name: "tool",
+            id: shortId as `${string}.${string}`,
+            args: {},
+          }],
+        });
+        assertEquals(toolType(getBody()), expected);
+      });
+    }
+
+    it("passes already-versioned types through verbatim", async () => {
+      const { runtime, getBody } = captureBody();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        tools: [{
+          type: "provider",
+          name: "tool",
+          id: "anthropic.code_execution_20250522",
+          args: {},
+        }],
+      });
+      assertEquals(toolType(getBody()), "code_execution_20250522");
+    });
+
+    it("leaves unknown short names unchanged", async () => {
+      const { runtime, getBody } = captureBody();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        tools: [{
+          type: "provider",
+          name: "tool",
+          id: "anthropic.future_tool",
+          args: {},
+        }],
+      });
+      assertEquals(toolType(getBody()), "future_tool");
+    });
+  });
 });
