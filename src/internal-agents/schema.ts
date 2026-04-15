@@ -10,6 +10,7 @@ import {
   AgUiRuntimeRunIdSchema,
   AgUiRuntimeToolCallSchema,
 } from "#veryfront/agent/runtime-ag-ui-contract.ts";
+import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/data-stream.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_FORWARDED_PROPS_BYTES = 65_536;
@@ -88,11 +89,37 @@ function extractToolArgs(
   part: Record<string, unknown>,
 ): Record<string, unknown> {
   const args = part.args;
-  if (args && typeof args === "object" && !Array.isArray(args)) {
+  if (args && typeof args === "object" && !Array.isArray(args) && Object.keys(args).length > 0) {
     return args as Record<string, unknown>;
   }
 
   const input = part.input;
+  if (
+    input && typeof input === "object" && !Array.isArray(input) && Object.keys(input).length > 0
+  ) {
+    return input as Record<string, unknown>;
+  }
+
+  const inputText = part.inputText;
+  if (typeof inputText === "string" && inputText.length > 0) {
+    try {
+      const normalizedInputText = (() => {
+        const stripped = stripLeadingEmptyObjectPlaceholder(inputText);
+        return stripped.trimStart().startsWith('"') ? `{${stripped}` : stripped;
+      })();
+      const parsed = JSON.parse(normalizedInputText);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return {};
+    }
+  }
+
+  if (args && typeof args === "object" && !Array.isArray(args)) {
+    return args as Record<string, unknown>;
+  }
+
   if (input && typeof input === "object" && !Array.isArray(input)) {
     return input as Record<string, unknown>;
   }

@@ -173,6 +173,92 @@ describe("internal-agents/schema", () => {
     });
   });
 
+  it("prefers streamed inputText over empty fallback args when normalizing legacy assistant tool calls", () => {
+    const internalRequest = InternalAgentStreamRequestSchema.parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messages: [
+        {
+          id: "assistant_1",
+          role: "assistant",
+          parts: [
+            { type: "text", text: "Writing report" },
+            {
+              type: "tool-call",
+              toolCallId: "tool_1",
+              toolName: "create_file",
+              args: {},
+              inputText: '{"path":"plans/report.md","content":"# Report"}',
+            },
+          ],
+        },
+      ],
+      context: [],
+    });
+
+    assertEquals(toRuntimeRunAgentInput(internalRequest).messages, [
+      {
+        id: "assistant_1",
+        role: "assistant",
+        content: "Writing report",
+        toolCalls: [{
+          id: "tool_1",
+          type: "function",
+          function: {
+            name: "create_file",
+            arguments: JSON.stringify({
+              path: "plans/report.md",
+              content: "# Report",
+            }),
+          },
+        }],
+      },
+    ]);
+  });
+
+  it("repairs leading-quote streamed inputText before serializing legacy assistant tool calls", () => {
+    const internalRequest = InternalAgentStreamRequestSchema.parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messages: [
+        {
+          id: "assistant_1",
+          role: "assistant",
+          parts: [
+            {
+              type: "tool-call",
+              toolCallId: "tool_1",
+              toolName: "create_file",
+              args: {},
+              inputText: '"path":"plans/report.md","content":"# Report"}',
+            },
+          ],
+        },
+      ],
+      context: [],
+    });
+
+    assertEquals(toRuntimeRunAgentInput(internalRequest).messages, [
+      {
+        id: "assistant_1",
+        role: "assistant",
+        toolCalls: [{
+          id: "tool_1",
+          type: "function",
+          function: {
+            name: "create_file",
+            arguments: JSON.stringify({
+              path: "plans/report.md",
+              content: "# Report",
+            }),
+          },
+        }],
+      },
+    ]);
+  });
+
   it("preserves canonical runtime messages on the compatibility route", () => {
     const internalRequest = InternalAgentStreamRequestSchema.parse({
       agentId: "agent_1",
