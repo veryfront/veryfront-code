@@ -30,8 +30,19 @@ export interface ParsedToolArgs {
 function stripLeadingEmptyObjectPlaceholder(rawArgs: string): string {
   let normalized = rawArgs.trim();
 
-  while (normalized.startsWith("{}") && normalized.slice(2).trimStart().startsWith("{")) {
-    normalized = normalized.slice(2).trimStart();
+  while (normalized.startsWith("{}")) {
+    const remainder = normalized.slice(2).trimStart();
+    if (remainder.startsWith("{")) {
+      normalized = remainder;
+      continue;
+    }
+
+    if (remainder.startsWith('"')) {
+      normalized = `{${remainder}`;
+      continue;
+    }
+
+    break;
   }
 
   return normalized;

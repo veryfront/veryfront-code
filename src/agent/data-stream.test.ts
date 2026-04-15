@@ -83,4 +83,19 @@ describe("agent/data-stream", () => {
       { query: "Veryfront" },
     );
   });
+
+  it("repairs placeholder deltas when the provider streams the object body without a leading brace", () => {
+    assertEquals(
+      stripLeadingEmptyObjectPlaceholder('{}"path":"/plans/report.md","content":"# Report"}'),
+      '{"path":"/plans/report.md","content":"# Report"}',
+    );
+    assertEquals(
+      mergeToolInputDelta("{}", '"path":"/plans/report.md","content":"# Report"}'),
+      '{"path":"/plans/report.md","content":"# Report"}',
+    );
+    assertEquals(
+      parseToolInputObject('{}"path":"/plans/report.md","content":"# Report"}'),
+      { path: "/plans/report.md", content: "# Report" },
+    );
+  });
 });
