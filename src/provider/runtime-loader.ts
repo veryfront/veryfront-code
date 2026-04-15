@@ -149,6 +149,20 @@ type OpenAICompatibleLanguageOptions = {
    * is unchanged on every provider.
    */
   reasoning?: ProviderReasoningOption;
+  /**
+   * Stable per-user identifier for rate-limiting, abuse detection, and
+   * billing attribution. Maps to:
+   *  - Anthropic: `metadata.user_id`
+   *  - OpenAI: `user`
+   *  - Google: `labels.user_id` (when {@link requestLabels} is unset)
+   */
+  userId?: string;
+  /**
+   * Provider-specific label map for Google Gemini's `labels` field.
+   * Anthropic and OpenAI don't have an arbitrary-label equivalent, so
+   * this is intentionally Google-only. When unset, no labels are sent.
+   */
+  requestLabels?: Record<string, string>;
 };
 type OpenAICompatibleChatMessage =
   | { role: "system"; content: string }
@@ -1212,6 +1226,9 @@ function buildAnthropicMessagesRequest(
       ? { tool_choice: normalizeAnthropicToolChoice(options.toolChoice) }
       : {}),
     ...(thinkingEnabled ? { thinking: { type: "enabled", budget_tokens: thinkingBudget } } : {}),
+    ...(typeof options.userId === "string" && options.userId.length > 0
+      ? { metadata: { user_id: options.userId } }
+      : {}),
   };
 
   Object.assign(body, readProviderOptions(options.providerOptions, "anthropic", providerName));
@@ -1757,6 +1774,9 @@ function buildOpenAIChatRequest(
       ? { frequency_penalty: options.frequencyPenalty }
       : {}),
     ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
+    ...(typeof options.userId === "string" && options.userId.length > 0
+      ? { user: options.userId }
+      : {}),
   };
 
   Object.assign(body, readProviderOptions(options.providerOptions, "openai", providerName));
@@ -2009,6 +2029,14 @@ function buildGoogleGenerateContentRequest(
 
   const { systemInstruction, contents } = toGoogleContents(options.prompt);
   const generationConfig = buildGoogleGenerationConfig(options);
+  // requestLabels wins over userId-derived labels: when callers explicitly
+  // provide a label map, that's the source of truth. Otherwise fall back
+  // to {user_id} derived from the unified userId option.
+  const labels = options.requestLabels && Object.keys(options.requestLabels).length > 0
+    ? options.requestLabels
+    : typeof options.userId === "string" && options.userId.length > 0
+    ? { user_id: options.userId }
+    : undefined;
   const body: GoogleCompatibleRequest = {
     contents,
     ...(systemInstruction ? { systemInstruction } : {}),
@@ -2017,6 +2045,7 @@ function buildGoogleGenerateContentRequest(
       ? { toolConfig: normalizeGoogleToolChoice(options.toolChoice) }
       : {}),
     ...(generationConfig ? { generationConfig } : {}),
+    ...(labels ? { labels } : {}),
   };
 
   Object.assign(body, readProviderOptions(options.providerOptions, "google", providerName));

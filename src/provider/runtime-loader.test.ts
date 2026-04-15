@@ -2970,6 +2970,125 @@ describe("provider/runtime-loader", () => {
       assertEquals(dropped, ["frequencyPenalty", "presencePenalty"]);
     });
 
+    it("emits Anthropic metadata.user_id when userId is set", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okAnthropicResponse());
+        },
+      }, "claude-opus-4-6");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        userId: "user_42",
+      });
+      const body = captured as { metadata: { user_id: string } } | null;
+      assertEquals(body?.metadata, { user_id: "user_42" });
+    });
+
+    it("emits OpenAI user field when userId is set", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okOpenAIResponse());
+        },
+      }, "gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        userId: "user_42",
+      });
+      const body = captured as { user: string } | null;
+      assertEquals(body?.user, "user_42");
+    });
+
+    it("emits Google labels.user_id from userId when requestLabels is unset", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okGoogleResponse());
+        },
+      }, "gemini-1.5-pro");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        userId: "user_42",
+      });
+      const body = captured as { labels: Record<string, string> } | null;
+      assertEquals(body?.labels, { user_id: "user_42" });
+    });
+
+    it("Google requestLabels wins over userId-derived labels", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okGoogleResponse());
+        },
+      }, "gemini-1.5-pro");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        userId: "user_42",
+        requestLabels: { tenant: "acme", env: "prod" },
+      });
+      const body = captured as { labels: Record<string, string> } | null;
+      assertEquals(body?.labels, { tenant: "acme", env: "prod" });
+    });
+
+    it("omits provider metadata fields when userId is unset", async () => {
+      let anthropicBody: Record<string, unknown> | null = null;
+      let openaiBody: Record<string, unknown> | null = null;
+      let googleBody: Record<string, unknown> | null = null;
+
+      const anthropic = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          anthropicBody = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okAnthropicResponse());
+        },
+      }, "claude-opus-4-6");
+      const openai = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          openaiBody = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okOpenAIResponse());
+        },
+      }, "gpt-4o-mini");
+      const google = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          googleBody = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okGoogleResponse());
+        },
+      }, "gemini-1.5-pro");
+
+      await anthropic.doGenerate({ prompt: [userPrompt] });
+      await openai.doGenerate({ prompt: [userPrompt] });
+      await google.doGenerate({ prompt: [userPrompt] });
+
+      assertEquals("metadata" in (anthropicBody ?? {}), false);
+      assertEquals("user" in (openaiBody ?? {}), false);
+      assertEquals("labels" in (googleBody ?? {}), false);
+    });
+
     it("warnings are present on stream results too", async () => {
       const encoder = new TextEncoder();
       const runtime = createOpenAIModelRuntime({
