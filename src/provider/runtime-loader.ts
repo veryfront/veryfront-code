@@ -2317,7 +2317,18 @@ function buildOpenAIChatRequest(
       : {}),
   };
 
-  Object.assign(body, readProviderOptions(options.providerOptions, "openai", providerName));
+  const providerOpts = readProviderOptions(options.providerOptions, "openai", providerName);
+
+  // Normalize max_tokens → max_completion_tokens for native OpenAI models.
+  // Provider options can re-introduce max_tokens which newer models reject.
+  if (isNativeOpenAIModel(modelId) && "max_tokens" in providerOpts) {
+    if (!("max_completion_tokens" in providerOpts)) {
+      providerOpts.max_completion_tokens = providerOpts.max_tokens;
+    }
+    delete providerOpts.max_tokens;
+  }
+
+  Object.assign(body, providerOpts);
   return body;
 }
 
