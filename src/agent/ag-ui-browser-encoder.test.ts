@@ -123,6 +123,19 @@ describe("agent/ag-ui-browser-encoder", () => {
     );
     assertEquals(
       mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "data-tool-call-status",
+        data: { toolCallId: "tool-1", status: "pending_input" },
+      }),
+      [{
+        event: "Custom",
+        payload: {
+          name: "tool-call-status",
+          value: { toolCallId: "tool-1", status: "pending_input" },
+        },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
         type: "tool-input-error",
         toolCallId: "tool-2",
         input: { url: "https://example.com" },

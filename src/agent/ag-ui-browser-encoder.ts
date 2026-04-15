@@ -461,6 +461,9 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
       ];
 
     default:
+      if (typeof event.type === "string" && event.type.startsWith("data-")) {
+        return [createCustomDataEvent(event.type.slice(5), event.data)];
+      }
       return [];
   }
 }
