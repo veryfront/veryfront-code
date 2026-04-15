@@ -7,16 +7,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function stripLeadingEmptyObjectPlaceholder(rawArgs: string): string {
   let normalized = rawArgs.trim();
 
-  while (normalized.startsWith("{}") && normalized.slice(2).trimStart().startsWith("{")) {
-    normalized = normalized.slice(2).trimStart();
+  while (normalized.startsWith("{}")) {
+    const remainder = normalized.slice(2).trimStart();
+    if (remainder.startsWith("{")) {
+      normalized = remainder;
+      continue;
+    }
+
+    if (remainder.startsWith('"')) {
+      normalized = `{${remainder}`;
+      continue;
+    }
+
+    break;
   }
 
   return normalized;
 }
 
 export function mergeToolInputDelta(currentArguments: string, nextDelta: string): string {
-  if (currentArguments === "{}" && nextDelta.trimStart().startsWith("{")) {
-    return nextDelta;
+  if (currentArguments === "{}") {
+    const normalizedDelta = nextDelta.trimStart();
+    if (normalizedDelta.startsWith("{")) {
+      return normalizedDelta;
+    }
+
+    if (normalizedDelta.startsWith('"')) {
+      return `{${normalizedDelta}`;
+    }
   }
 
   return currentArguments + nextDelta;

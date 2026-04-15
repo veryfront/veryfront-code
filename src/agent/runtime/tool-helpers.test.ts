@@ -96,6 +96,12 @@ describe("tool-helpers", () => {
       assertEquals(result.error, undefined);
     });
 
+    it("repairs placeholder-prefixed streamed object bodies that omit the opening brace", () => {
+      const result = parseToolArgs('{}"path":"/plans/report.md","content":"# Report"}');
+      assertEquals(result.args, { path: "/plans/report.md", content: "# Report" });
+      assertEquals(result.error, undefined);
+    });
+
     it("handles empty object passed directly", () => {
       const result = parseToolArgs({});
       assertEquals(result.args, {});
