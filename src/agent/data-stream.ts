@@ -26,14 +26,16 @@ export function stripLeadingEmptyObjectPlaceholder(rawArgs: string): string {
 }
 
 export function mergeToolInputDelta(currentArguments: string, nextDelta: string): string {
-  if (currentArguments === "{}") {
-    const normalizedDelta = nextDelta.trimStart();
-    if (normalizedDelta.startsWith("{")) {
-      return normalizedDelta;
-    }
+  const normalizedDelta = nextDelta.trimStart();
+  const candidateDeltas = normalizedDelta.startsWith('"')
+    ? [normalizedDelta, `{${normalizedDelta}`]
+    : [normalizedDelta];
 
-    if (normalizedDelta.startsWith('"')) {
-      return `{${normalizedDelta}`;
+  if (currentArguments === "{}") {
+    for (const candidate of candidateDeltas) {
+      if (candidate.startsWith("{")) {
+        return candidate;
+      }
     }
   }
 
@@ -45,18 +47,20 @@ export function mergeToolInputDelta(currentArguments: string, nextDelta: string)
     return nextDelta;
   }
 
-  if (nextDelta === currentArguments || currentArguments.includes(nextDelta)) {
-    return currentArguments;
-  }
+  for (const candidate of candidateDeltas) {
+    if (candidate === currentArguments || currentArguments.includes(candidate)) {
+      return currentArguments;
+    }
 
-  if (nextDelta.startsWith(currentArguments)) {
-    return nextDelta;
-  }
+    if (candidate.startsWith(currentArguments)) {
+      return candidate;
+    }
 
-  const maxOverlap = Math.min(currentArguments.length, nextDelta.length);
-  for (let overlap = maxOverlap; overlap > 0; overlap--) {
-    if (currentArguments.endsWith(nextDelta.slice(0, overlap))) {
-      return currentArguments + nextDelta.slice(overlap);
+    const maxOverlap = Math.min(currentArguments.length, candidate.length);
+    for (let overlap = maxOverlap; overlap > 0; overlap--) {
+      if (currentArguments.endsWith(candidate.slice(0, overlap))) {
+        return currentArguments + candidate.slice(overlap);
+      }
     }
   }
 

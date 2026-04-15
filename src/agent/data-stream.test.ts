@@ -137,4 +137,30 @@ describe("agent/data-stream", () => {
       },
     );
   });
+
+  it("dedupes repeated placeholder-style cumulative chunks that omit the opening brace", () => {
+    const firstDelta = mergeToolInputDelta(
+      "{}",
+      '"path":"plans/report.md","content":"# Report',
+    );
+
+    assertEquals(firstDelta, '{"path":"plans/report.md","content":"# Report');
+
+    const secondDelta = mergeToolInputDelta(
+      firstDelta,
+      '"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
+    );
+
+    assertEquals(
+      secondDelta,
+      '{"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
+    );
+    assertEquals(
+      parseToolInputObject(secondDelta),
+      {
+        path: "plans/report.md",
+        content: "# Report\n\nExecutive summary",
+      },
+    );
+  });
 });
