@@ -98,4 +98,43 @@ describe("agent/data-stream", () => {
       { path: "/plans/report.md", content: "# Report" },
     );
   });
+
+  it("dedupes cumulative streamed tool argument buffers instead of concatenating them", () => {
+    const firstDelta = '{"path":"plans/report.md","content":"# Report';
+    const cumulativeSecondDelta =
+      '{"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}';
+
+    const merged = mergeToolInputDelta(firstDelta, cumulativeSecondDelta);
+
+    assertEquals(
+      merged,
+      '{"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
+    );
+    assertEquals(
+      parseToolInputObject(merged),
+      {
+        path: "plans/report.md",
+        content: "# Report\n\nExecutive summary",
+      },
+    );
+  });
+
+  it("merges overlapping tool argument deltas without duplicating the shared prefix", () => {
+    const firstDelta = '{"path":"plans/report.md","content":"# Report';
+    const overlappingSecondDelta = 'Report\\n\\nExecutive summary"}';
+
+    const merged = mergeToolInputDelta(firstDelta, overlappingSecondDelta);
+
+    assertEquals(
+      merged,
+      '{"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
+    );
+    assertEquals(
+      parseToolInputObject(merged),
+      {
+        path: "plans/report.md",
+        content: "# Report\n\nExecutive summary",
+      },
+    );
+  });
 });

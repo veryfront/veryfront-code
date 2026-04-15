@@ -37,6 +37,29 @@ export function mergeToolInputDelta(currentArguments: string, nextDelta: string)
     }
   }
 
+  if (nextDelta.length === 0) {
+    return currentArguments;
+  }
+
+  if (currentArguments.length === 0) {
+    return nextDelta;
+  }
+
+  if (nextDelta === currentArguments || currentArguments.includes(nextDelta)) {
+    return currentArguments;
+  }
+
+  if (nextDelta.startsWith(currentArguments)) {
+    return nextDelta;
+  }
+
+  const maxOverlap = Math.min(currentArguments.length, nextDelta.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap--) {
+    if (currentArguments.endsWith(nextDelta.slice(0, overlap))) {
+      return currentArguments + nextDelta.slice(overlap);
+    }
+  }
+
   return currentArguments + nextDelta;
 }
 
