@@ -289,6 +289,55 @@ describe("chat-stream-handler", () => {
       });
     });
 
+    it("dedupes repeated placeholder-style cumulative tool deltas without swallowing parse errors", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "tool-input-start", id: "tc-repeat-placeholder", toolName: "create_file" },
+        {
+          type: "tool-input-delta",
+          id: "tc-repeat-placeholder",
+          delta: "{}",
+        },
+        {
+          type: "tool-input-delta",
+          id: "tc-repeat-placeholder",
+          delta: '"path":"plans/report.md","content":"# Report',
+        },
+        {
+          type: "tool-input-delta",
+          id: "tc-repeat-placeholder",
+          delta: '"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      const tc = state.toolCalls.get("tc-repeat-placeholder")!;
+      assertEquals(
+        tc.arguments,
+        '{"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
+      );
+
+      assertEquals(events[1], {
+        type: "tool-input-delta",
+        toolCallId: "tc-repeat-placeholder",
+        inputTextDelta: "{}",
+      });
+      assertEquals(events[2], {
+        type: "tool-input-delta",
+        toolCallId: "tc-repeat-placeholder",
+        inputTextDelta: '"path":"plans/report.md","content":"# Report',
+      });
+      assertEquals(events[3], {
+        type: "tool-input-delta",
+        toolCallId: "tc-repeat-placeholder",
+        inputTextDelta: '"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
+      });
+    });
+
     it("handles tool-call with full input object", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
