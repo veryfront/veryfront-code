@@ -3276,5 +3276,31 @@ describe("provider/runtime-loader", () => {
       await second.runtime.doGenerate({ prompt: [userPrompt] });
       assertEquals("mcp_servers" in (second.getBody() ?? {}), false);
     });
+
+    it("emits container field verbatim when anthropicContainer is set", async () => {
+      const { runtime, getBody } = captureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        anthropicContainer: { id: "ctr_42", type: "computer-use" },
+      });
+      const body = getBody() as { container: unknown } | null;
+      assertEquals(body?.container, { id: "ctr_42", type: "computer-use" });
+    });
+
+    it("emits container as a bare string when anthropicContainer is a string", async () => {
+      const { runtime, getBody } = captureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        anthropicContainer: "ctr_42",
+      });
+      const body = getBody() as { container: string } | null;
+      assertEquals(body?.container, "ctr_42");
+    });
+
+    it("omits container when anthropicContainer is unset", async () => {
+      const { runtime, getBody } = captureRuntime();
+      await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals("container" in (getBody() ?? {}), false);
+    });
   });
 });

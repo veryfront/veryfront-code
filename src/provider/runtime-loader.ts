@@ -164,6 +164,17 @@ type OpenAICompatibleLanguageOptions = {
    */
   requestLabels?: Record<string, string>;
   /**
+   * Anthropic-specific. `container` field for programmatic tool calling
+   * and agent skills. Anthropic uses this to scope a session to a
+   * sandboxed container (e.g. for Computer Use, code execution
+   * sandboxes, or skills loaded from a container). Forwarded verbatim.
+   *
+   * The shape varies — string container id or a structured object
+   * depending on the feature. Caller passes whatever Anthropic's docs
+   * specify for the target feature.
+   */
+  anthropicContainer?: unknown;
+  /**
    * Anthropic-specific. Native MCP server definitions to pass directly
    * on the Messages API request body. Lets callers register MCP servers
    * server-side instead of reloading them into local function tools.
@@ -1298,6 +1309,7 @@ function buildAnthropicMessagesRequest(
     ...(options.mcpServers && options.mcpServers.length > 0
       ? { mcp_servers: deepSnakeCase(options.mcpServers) as unknown[] }
       : {}),
+    ...(options.anthropicContainer !== undefined ? { container: options.anthropicContainer } : {}),
   };
 
   Object.assign(body, readProviderOptions(options.providerOptions, "anthropic", providerName));
