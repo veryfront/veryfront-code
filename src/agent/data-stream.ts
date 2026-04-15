@@ -25,6 +25,28 @@ export function stripLeadingEmptyObjectPlaceholder(rawArgs: string): string {
   return normalized;
 }
 
+/**
+ * Minimum overlap length at which `mergeToolInputDelta` will accept a
+ * tail-overlap as an intentional retransmission from the provider and
+ * dedup the leading chunk of the next delta.
+ *
+ * Empirically, overlaps of 1–3 characters are almost always coincidental
+ * in streamed JSON (e.g. `"`, `,`, `":`, `,"`). Accepting them as dedup
+ * causes silent character drops — the exact pathology observed in staging
+ * on 2026-04-15 where `create_file` tool calls arrived at the classifier
+ * with 2–5 chars missing from the middle of the buffer. Requiring at
+ * least 4 chars of overlap makes false matches vanishingly unlikely while
+ * still honoring the real "retransmitted content-suffix" case pinned by
+ * the existing "overlapping suffix dedup" regression test (which relies
+ * on a 6-char `Report` overlap).
+ *
+ * Similarly, short deltas (< 4 chars) are treated as append-mode
+ * regardless of what they look like: a 1-char delta literally cannot
+ * contain enough signal to distinguish retransmission from append, and
+ * we will not silently drop it.
+ */
+const MIN_OVERLAP_DEDUP_LENGTH = 4;
+
 export function mergeToolInputDelta(currentArguments: string, nextDelta: string): string {
   const normalizedDelta = nextDelta.trimStart();
   const candidateDeltas = normalizedDelta.startsWith('"')
@@ -47,17 +69,32 @@ export function mergeToolInputDelta(currentArguments: string, nextDelta: string)
     return nextDelta;
   }
 
+  // Short deltas are trusted as append-mode. Retransmission at this size
+  // is indistinguishable from append and would produce more corruption
+  // than it prevents — see MIN_OVERLAP_DEDUP_LENGTH.
+  if (nextDelta.length < MIN_OVERLAP_DEDUP_LENGTH) {
+    return currentArguments + nextDelta;
+  }
+
   for (const candidate of candidateDeltas) {
-    if (candidate === currentArguments || currentArguments.includes(candidate)) {
+    // Exact duplicate: the provider resent the same full buffer.
+    if (candidate === currentArguments) {
       return currentArguments;
     }
 
+    // Cumulative mode: the delta is a strict extension of the current
+    // buffer and supersedes it verbatim.
     if (candidate.startsWith(currentArguments)) {
       return candidate;
     }
 
+    // Tail retransmission: the provider resent a suffix of the current
+    // buffer as the prefix of the new delta. Only accept overlaps of
+    // MIN_OVERLAP_DEDUP_LENGTH or longer — trivial 1-3 char matches in
+    // streamed JSON are overwhelmingly coincidental and deduping them
+    // corrupts append-mode streams.
     const maxOverlap = Math.min(currentArguments.length, candidate.length);
-    for (let overlap = maxOverlap; overlap > 0; overlap--) {
+    for (let overlap = maxOverlap; overlap >= MIN_OVERLAP_DEDUP_LENGTH; overlap--) {
       if (currentArguments.endsWith(candidate.slice(0, overlap))) {
         return currentArguments + candidate.slice(overlap);
       }

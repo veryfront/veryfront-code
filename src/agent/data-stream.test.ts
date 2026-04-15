@@ -191,4 +191,132 @@ describe("agent/data-stream", () => {
       '{"path":"plans/report.md","content":"# Report',
     );
   });
+
+  // ============================================================================
+  // Regression tests for the false-overlap drop bug observed in staging on
+  // 2026-04-15. The streamed-tool-call classifier from PR #1082 surfaced
+  // `create_file` tool calls with partial argument buffers shaped like:
+  //
+  //   {"project_reference": "13c888cc-ad7f-40af-81bf-d939fc922713", athplans/...
+  //   {"project_reference": "13c888cc-ad7f-40af-81bf-d939fc922713", "path"plans/...
+  //
+  // i.e., 2–5 characters silently dropped from the middle of the buffer.
+  //
+  // Root cause: the tail-overlap loop inside mergeToolInputDelta accepted any
+  // match of length ≥ 1 as a "retransmission" and trimmed that many chars off
+  // the incoming delta. When the buffer coincidentally ended with a single
+  // character that also appeared at the start of the next append-mode delta
+  // (common in JSON: `"`, `:`, `,`), the loop dropped 1–2 chars off delta,
+  // producing a corrupted merged buffer.
+  //
+  // These tests pin the invariant: mergeToolInputDelta must NEVER drop
+  // characters in the middle of a pure append-mode sequence. The legitimate
+  // overlap-dedup case (where the provider actually retransmits a multi-char
+  // tail) continues to work — see the existing
+  // "merges overlapping tool argument deltas without duplicating the shared
+  // prefix" test above, which asserts a 6-char `Report` overlap is still
+  // deduped.
+  // ============================================================================
+  describe("append-mode correctness (regression for #false-overlap-drops)", () => {
+    function mergeChunks(chunks: string[]): string {
+      return chunks.reduce((acc, chunk) => mergeToolInputDelta(acc, chunk), "");
+    }
+
+    it("preserves both quotes when current ends with a quote and next delta opens with a quote", () => {
+      // If the provider is in pure append mode, the correct delta boundary
+      // is `{"a":"x"` + `,"name":"y"}` (no retransmission). If instead the
+      // delta starts with `","name":"y"}` the concatenation is lossless:
+      // `{"a":"x"","name":"y"}` — invalid JSON that the downstream parser
+      // will reject loudly. That is strictly better than silently dropping
+      // the leading `"` of the delta (the production corruption observed
+      // in staging). LOSSLESS concat is the invariant.
+      const merged = mergeToolInputDelta('{"a":"x"', '","name":"y"}');
+      assertEquals(merged, '{"a":"x"","name":"y"}');
+    });
+
+    it('does not drop ": " when the previous delta ended mid-key', () => {
+      // Exact shape of the staging corruption: buffer ends with `"path"`,
+      // next delta starts with `: "plans/..."`. Naive overlap dedup would
+      // false-match the single trailing `"` of `"path"` against the first
+      // character of the delta and drop it.
+      const merged = mergeToolInputDelta(
+        '{"project_reference": "13c888cc-ad7f-40af-81bf-d939fc922713", "path"',
+        ': "plans/ai-code-review-bots-research.md"}',
+      );
+      assertEquals(
+        merged,
+        '{"project_reference": "13c888cc-ad7f-40af-81bf-d939fc922713", "path": "plans/ai-code-review-bots-research.md"}',
+      );
+      assertEquals(parseToolInputObject(merged), {
+        project_reference: "13c888cc-ad7f-40af-81bf-d939fc922713",
+        path: "plans/ai-code-review-bots-research.md",
+      });
+    });
+
+    it("does not drop a trailing comma when the next delta starts with a comma", () => {
+      const merged = mergeToolInputDelta('{"a":1,', ',"b":2}');
+      // With 1-char false-match dedup this would become `{"a":1,"b":2}` which
+      // happens to parse but silently corrupts the sequence — two distinct
+      // commas in the stream become one, which would also corrupt the text
+      // case where a comma is part of a string value. Guarantee the two
+      // chars are preserved; downstream JSON validity is the parser's job.
+      assertEquals(merged, '{"a":1,,"b":2}');
+    });
+
+    it("reconstructs a realistic create_file tool call split into append-mode chunks", () => {
+      // Chunks intentionally split on boundaries that overlap in single
+      // characters with the next chunk (e.g. `"` → `"`, `,` → `,`) so every
+      // transition exercises the false-match path.
+      const chunks = [
+        '{"project_reference": "13c888cc-ad7f-40af-81bf-d939fc922713"',
+        ', "path": "/plans/ai-code-review-bots-research.md"',
+        ', "content": "# AI Code Review Bots Research Report"',
+        "}",
+      ];
+
+      const merged = mergeChunks(chunks);
+
+      assertEquals(merged, chunks.join(""));
+      assertEquals(parseToolInputObject(merged), {
+        project_reference: "13c888cc-ad7f-40af-81bf-d939fc922713",
+        path: "/plans/ai-code-review-bots-research.md",
+        content: "# AI Code Review Bots Research Report",
+      });
+    });
+
+    it("handles many single-character append-mode chunks without dropping anything", () => {
+      // Pathological but deterministic: stream the JSON one character at a
+      // time. Every single transition has a 1-char overlap opportunity that
+      // the old logic could false-match against (current ends with `X`, next
+      // starts with `X`). A correct implementation must produce the exact
+      // concatenation.
+      const fullJson = '{"a":"hello","b":42,"c":[1,2,3],"d":{"nested":true}}';
+      const chunks = Array.from(fullJson);
+
+      const merged = mergeChunks(chunks);
+
+      assertEquals(merged, fullJson);
+      assertEquals(parseToolInputObject(merged), {
+        a: "hello",
+        b: 42,
+        c: [1, 2, 3],
+        d: { nested: true },
+      });
+    });
+
+    it("still dedupes a legitimate multi-char overlap from a retransmitting provider", () => {
+      // Regression-within-a-regression: the false-match fix must not regress
+      // the intended overlap-dedup behavior pinned by commit 24e1da60e
+      // ("Prevent cumulative tool-arg chunks from corrupting child calls").
+      // A 6-char `Report` overlap is unambiguously a retransmission, not a
+      // coincidence, and must still be deduped.
+      const first = '{"path":"plans/report.md","content":"# Report';
+      const second = 'Report\\n\\nExecutive summary"}';
+      const merged = mergeToolInputDelta(first, second);
+      assertEquals(
+        merged,
+        '{"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
+      );
+    });
+  });
 });
