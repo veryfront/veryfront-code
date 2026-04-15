@@ -1071,8 +1071,7 @@ export class AgentRuntime {
           sendSSE(controller, encoder, {
             type: "tool-input-error",
             toolCallId: tc.id,
-            errorText:
-              `Stream terminated before tool-call event fired for "${tc.name}". ` +
+            errorText: `Stream terminated before tool-call event fired for "${tc.name}". ` +
               `Received ${materialized.partialArgumentsLength} chars of partial tool-input deltas.`,
             ...(dynamicIncomplete ? { dynamic: true } : {}),
           });

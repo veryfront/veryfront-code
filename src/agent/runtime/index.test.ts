@@ -218,8 +218,7 @@ describe("agent runtime streamed tool result collection", () => {
       // stream stalled before the finalizing `tool-call` event fired. The
       // partial JSON would otherwise produce an "Expected ',' or '}' after
       // property value" error if we naively parsed it.
-      const partialArgs =
-        '{"path":"/plans/headless-browser-automation-research.md","conten';
+      const partialArgs = '{"path":"/plans/headless-browser-automation-research.md","conten';
       const materialized = materializeStreamedToolCall({
         id: "toolu_01HebautJT22EGCZh8K1Dfpw",
         name: "write_file",
@@ -281,8 +280,7 @@ describe("agent runtime streamed tool result collection", () => {
   it(
     "truncates partialArgumentsPreview to 200 chars for huge mid-stream cutoffs",
     () => {
-      const longFragment =
-        '{"path":"/plans/x.md","content":"' + "a".repeat(500);
+      const longFragment = '{"path":"/plans/x.md","content":"' + "a".repeat(500);
       const materialized = materializeStreamedToolCall({
         id: "toolu_long_partial",
         name: "write_file",
