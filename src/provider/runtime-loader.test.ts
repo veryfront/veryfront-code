@@ -1,6 +1,12 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createAnthropicModelRuntime } from "./runtime-loader.ts";
+import {
+  createAnthropicModelRuntime,
+  ProviderOverloadedError,
+  ProviderQuotaError,
+  ProviderRateLimitError,
+  ProviderRequestError,
+} from "./runtime-loader.ts";
 import { createRuntimeJsonSchema } from "../agent/runtime/runtime-tool-builder.ts";
 import {
   createGoogleEmbeddingRuntime,
@@ -1855,6 +1861,2316 @@ describe("provider/runtime-loader", () => {
     it("does not cap caller values for unknown models (no model intel to trust)", async () => {
       const body = await generateWith("some-future-model", 64_000);
       assertEquals((body as { max_tokens: number }).max_tokens, 64_000);
+    });
+  });
+
+  describe("Anthropic prompt caching (cache_control breakpoints)", () => {
+    // Captures the outbound body for a single Anthropic generate call with a
+    // caller-provided cacheControl option. Returns the parsed body so each test
+    // can assert what landed on the wire.
+    function createCachingCaptureRuntime() {
+      let capturedBody: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          capturedBody = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-sonnet-4-20250514");
+      return {
+        runtime,
+        getBody: () => capturedBody,
+      };
+    }
+
+    const systemPrompt = {
+      role: "system",
+      content: "You are a helpful assistant.",
+    } as const;
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    const weatherTool = {
+      type: "function" as const,
+      name: "weather",
+      description: "Get weather",
+      inputSchema: {
+        type: "object",
+        properties: { city: { type: "string" } },
+        required: ["city"],
+        additionalProperties: false,
+      },
+    };
+    const searchTool = {
+      type: "function" as const,
+      name: "search",
+      description: "Search the web",
+      inputSchema: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    };
+
+    it("defaults system to string form when cacheControl is not set", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+      });
+      const body = getBody() as { system: unknown };
+      // Backward-compat path: without a breakpoint, system stays as a raw string.
+      assertEquals(body.system, "You are a helpful assistant.");
+    });
+
+    it("emits cache_control on the system block when cacheControl.system is true", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        cacheControl: { system: true },
+      });
+      const body = getBody() as { system: Array<Record<string, unknown>> };
+      assertEquals(body.system, [{
+        type: "text",
+        text: "You are a helpful assistant.",
+        cache_control: { type: "ephemeral" },
+      }]);
+    });
+
+    it('emits cache_control with 1h TTL when cacheControl.system is "1h"', async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        cacheControl: { system: "1h" },
+      });
+      const body = getBody() as { system: Array<Record<string, unknown>> };
+      assertEquals(body.system, [{
+        type: "text",
+        text: "You are a helpful assistant.",
+        cache_control: { type: "ephemeral", ttl: "1h" },
+      }]);
+    });
+
+    it("emits cache_control on the LAST tool entry when cacheControl.tools is true", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        tools: [weatherTool, searchTool],
+        cacheControl: { tools: true },
+      });
+      const body = getBody() as { tools: Array<Record<string, unknown>> };
+      assertEquals(body.tools.length, 2);
+      // First tool is unmodified
+      assertEquals(body.tools[0], {
+        name: "weather",
+        description: "Get weather",
+        input_schema: weatherTool.inputSchema,
+      });
+      // Last tool carries the breakpoint
+      assertEquals(body.tools[1], {
+        name: "search",
+        description: "Search the web",
+        input_schema: searchTool.inputSchema,
+        cache_control: { type: "ephemeral" },
+      });
+    });
+
+    it("emits both system and tools breakpoints when both are set", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        tools: [weatherTool],
+        cacheControl: { system: true, tools: "1h" },
+      });
+      const body = getBody() as {
+        system: Array<Record<string, unknown>>;
+        tools: Array<Record<string, unknown>>;
+      };
+      assertEquals(body.system, [{
+        type: "text",
+        text: "You are a helpful assistant.",
+        cache_control: { type: "ephemeral" },
+      }]);
+      assertEquals(body.tools, [{
+        name: "weather",
+        description: "Get weather",
+        input_schema: weatherTool.inputSchema,
+        cache_control: { type: "ephemeral", ttl: "1h" },
+      }]);
+    });
+
+    it("treats cacheControl.system === false as no-op (string form preserved)", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        cacheControl: { system: false },
+      });
+      const body = getBody() as { system: unknown };
+      assertEquals(body.system, "You are a helpful assistant.");
+    });
+
+    it("treats cacheControl.tools === false as no-op (no breakpoint attached)", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        tools: [weatherTool],
+        cacheControl: { tools: false },
+      });
+      const body = getBody() as { tools: Array<Record<string, unknown>> };
+      assertEquals(body.tools, [{
+        name: "weather",
+        description: "Get weather",
+        input_schema: weatherTool.inputSchema,
+      }]);
+    });
+
+    it("does not crash when cacheControl is set but there's no system prompt", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        cacheControl: { system: true },
+      });
+      const body = getBody() as Record<string, unknown>;
+      // No system field at all — nothing to attach the breakpoint to.
+      assertEquals("system" in body, false);
+    });
+
+    it("does not crash when cacheControl.tools is set but there's no tools array", async () => {
+      const { runtime, getBody } = createCachingCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [systemPrompt, userPrompt],
+        cacheControl: { tools: true },
+      });
+      const body = getBody() as Record<string, unknown>;
+      assertEquals("tools" in body, false);
+    });
+  });
+
+  describe("reasoning / thinking request options", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Solve this" }],
+    } as const;
+
+    function createAnthropicCaptureRuntime(modelId = "claude-opus-4-6") {
+      let capturedBody: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          capturedBody = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, modelId);
+      return { runtime, getBody: () => capturedBody };
+    }
+
+    function createOpenAICaptureRuntime(modelId: string) {
+      let capturedBody: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "test-openai-key",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          capturedBody = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "ok" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, modelId);
+      return { runtime, getBody: () => capturedBody };
+    }
+
+    function createGoogleCaptureRuntime(modelId = "gemini-2.5-pro") {
+      let capturedBody: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "test-google-key",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          capturedBody = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, modelId);
+      return { runtime, getBody: () => capturedBody };
+    }
+
+    it("emits Anthropic thinking block with medium effort budget by default", async () => {
+      const { runtime, getBody } = createAnthropicCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        maxOutputTokens: 2048,
+        reasoning: { enabled: true },
+      });
+      const body = getBody() as {
+        thinking: { type: string; budget_tokens: number };
+        max_tokens: number;
+      };
+      assertEquals(body.thinking, { type: "enabled", budget_tokens: 4096 });
+      // max_tokens = baseMaxTokens(2048) + budget(4096) = 6144
+      assertEquals(body.max_tokens, 6144);
+    });
+
+    it("maps Anthropic effort levels to budget_tokens", async () => {
+      async function budgetFor(effort: "low" | "medium" | "high" | "max") {
+        const { runtime, getBody } = createAnthropicCaptureRuntime();
+        await runtime.doGenerate({
+          prompt: [userPrompt],
+          maxOutputTokens: 1024,
+          reasoning: { enabled: true, effort },
+        });
+        return (getBody() as { thinking: { budget_tokens: number } }).thinking.budget_tokens;
+      }
+      assertEquals(await budgetFor("low"), 1024);
+      assertEquals(await budgetFor("medium"), 4096);
+      assertEquals(await budgetFor("high"), 16_384);
+      assertEquals(await budgetFor("max"), 32_768);
+    });
+
+    it("honours Anthropic explicit budgetTokens over effort", async () => {
+      const { runtime, getBody } = createAnthropicCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        maxOutputTokens: 1024,
+        reasoning: { enabled: true, effort: "low", budgetTokens: 12_345 },
+      });
+      const body = getBody() as { thinking: { budget_tokens: number } };
+      assertEquals(body.thinking.budget_tokens, 12_345);
+    });
+
+    it("clamps Anthropic max_tokens at the model cap when thinking is enabled", async () => {
+      const { runtime, getBody } = createAnthropicCaptureRuntime("claude-opus-4-6");
+      // Opus 4.6 caps at 128k. 100k base + 64k budget would be 164k — clamp to 128k.
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        maxOutputTokens: 100_000,
+        reasoning: { enabled: true, budgetTokens: 64_000 },
+      });
+      const body = getBody() as { max_tokens: number };
+      assertEquals(body.max_tokens, 128_000);
+    });
+
+    it("drops Anthropic temperature and top_p when thinking is enabled", async () => {
+      const { runtime, getBody } = createAnthropicCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+        reasoning: { enabled: true },
+      });
+      const body = getBody() as Record<string, unknown>;
+      assertEquals("temperature" in body, false);
+      assertEquals("top_p" in body, false);
+    });
+
+    it("preserves Anthropic sampling params when reasoning is disabled", async () => {
+      const { runtime, getBody } = createAnthropicCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+      });
+      const body = getBody() as { temperature: number; top_p: number };
+      assertEquals(body.temperature, 0.7);
+      assertEquals(body.top_p, 0.9);
+    });
+
+    it("omits Anthropic thinking field when reasoning.enabled is false", async () => {
+      const { runtime, getBody } = createAnthropicCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: false, effort: "high" },
+      });
+      const body = getBody() as Record<string, unknown>;
+      assertEquals("thinking" in body, false);
+    });
+
+    it("emits OpenAI reasoning_effort when reasoning is enabled", async () => {
+      const { runtime, getBody } = createOpenAICaptureRuntime("gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "high" },
+      });
+      const body = getBody() as { reasoning_effort: string };
+      assertEquals(body.reasoning_effort, "high");
+    });
+
+    it("collapses OpenAI 'max' effort to 'high'", async () => {
+      const { runtime, getBody } = createOpenAICaptureRuntime("gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "max" },
+      });
+      const body = getBody() as { reasoning_effort: string };
+      assertEquals(body.reasoning_effort, "high");
+    });
+
+    it("drops OpenAI sampling params on reasoning models (o1/o3/o4)", async () => {
+      const { runtime, getBody } = createOpenAICaptureRuntime("o3-mini");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+        presencePenalty: 0.1,
+        frequencyPenalty: 0.1,
+      });
+      const body = getBody() as Record<string, unknown>;
+      assertEquals("temperature" in body, false);
+      assertEquals("top_p" in body, false);
+      assertEquals("presence_penalty" in body, false);
+      assertEquals("frequency_penalty" in body, false);
+    });
+
+    it("preserves OpenAI sampling params on non-reasoning models", async () => {
+      const { runtime, getBody } = createOpenAICaptureRuntime("gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+      });
+      const body = getBody() as { temperature: number; top_p: number };
+      assertEquals(body.temperature, 0.7);
+      assertEquals(body.top_p, 0.9);
+    });
+
+    it("emits Google thinkingConfig when reasoning is enabled", async () => {
+      const { runtime, getBody } = createGoogleCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "high" },
+      });
+      const body = getBody() as {
+        generationConfig: { thinkingConfig: { includeThoughts: boolean; thinkingBudget: number } };
+      };
+      assertEquals(body.generationConfig.thinkingConfig, {
+        includeThoughts: true,
+        thinkingBudget: 8192,
+      });
+    });
+
+    it("maps Google effort 'max' to thinkingBudget: -1 (dynamic)", async () => {
+      const { runtime, getBody } = createGoogleCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "max" },
+      });
+      const body = getBody() as {
+        generationConfig: { thinkingConfig: { thinkingBudget: number } };
+      };
+      assertEquals(body.generationConfig.thinkingConfig.thinkingBudget, -1);
+    });
+
+    it("honours Google explicit budgetTokens over effort", async () => {
+      const { runtime, getBody } = createGoogleCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "low", budgetTokens: 4096 },
+      });
+      const body = getBody() as {
+        generationConfig: { thinkingConfig: { thinkingBudget: number } };
+      };
+      assertEquals(body.generationConfig.thinkingConfig.thinkingBudget, 4096);
+    });
+
+    it("omits Google thinkingConfig when reasoning is disabled", async () => {
+      const { runtime, getBody } = createGoogleCaptureRuntime();
+      await runtime.doGenerate({ prompt: [userPrompt] });
+      const body = getBody() as {
+        generationConfig?: { thinkingConfig?: unknown };
+      };
+      assertEquals(body.generationConfig?.thinkingConfig, undefined);
+    });
+
+    it("passes redacted_thinking blocks through as reasoning events without leaking content", async () => {
+      const encoder = new TextEncoder();
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              ReadableStream.from([
+                encoder.encode(
+                  'event: message_start\ndata: {"type":"message_start","message":{"id":"m1","type":"message","role":"assistant","content":[],"model":"claude-opus-4-6","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"encrypted-opaque-blob"}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ok"}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
+                ),
+                encoder.encode(
+                  'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n',
+                ),
+                encoder.encode(
+                  'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+                ),
+              ]),
+              { status: 200, headers: { "content-type": "text/event-stream" } },
+            ),
+          ),
+      }, "claude-opus-4-6");
+
+      const result = await runtime.doStream({ prompt: [userPrompt] });
+      const parts = await collectAsync(result.stream);
+      // Redacted thinking emits reasoning-start (block 0) + reasoning-end, but no delta.
+      const reasoningStarts = parts.filter((p) =>
+        (p as { type: string }).type === "reasoning-start"
+      );
+      const reasoningDeltas = parts.filter((p) =>
+        (p as { type: string }).type === "reasoning-delta"
+      );
+      const reasoningEnds = parts.filter((p) => (p as { type: string }).type === "reasoning-end");
+      assertEquals(reasoningStarts.length, 1);
+      assertEquals(reasoningDeltas.length, 0);
+      assertEquals(reasoningEnds.length, 1);
+    });
+  });
+
+  describe("cache usage reporting (cache_creation / cache_read / cached_tokens)", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    it("surfaces Anthropic cache_creation_input_tokens and cache_read_input_tokens on generate", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: {
+                  input_tokens: 12,
+                  output_tokens: 34,
+                  cache_creation_input_tokens: 2056,
+                  cache_read_input_tokens: 128,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-sonnet-4-20250514");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.usage, {
+        inputTokens: 12,
+        outputTokens: 34,
+        totalTokens: 46,
+        cacheCreationInputTokens: 2056,
+        cacheReadInputTokens: 128,
+      });
+    });
+
+    it("propagates Anthropic cache fields through the stream usage accumulator", async () => {
+      const encoder = new TextEncoder();
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              ReadableStream.from([
+                // message_start carries input + cache token counts up front.
+                encoder.encode(
+                  'event: message_start\ndata: {"type":"message_start","message":{"id":"m1","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-20250514","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":12,"output_tokens":1,"cache_creation_input_tokens":2056,"cache_read_input_tokens":128}}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+                ),
+                // message_delta only updates output_tokens; cache fields absent here.
+                encoder.encode(
+                  'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":34}}\n\n',
+                ),
+                encoder.encode(
+                  'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+                ),
+              ]),
+              { status: 200, headers: { "content-type": "text/event-stream" } },
+            ),
+          ),
+      }, "claude-sonnet-4-20250514");
+
+      const result = await runtime.doStream({ prompt: [userPrompt] });
+      const parts = await collectAsync(result.stream);
+      const finish = parts.find((p) => (p as { type: string }).type === "finish") as {
+        usage: {
+          inputTokens?: number;
+          outputTokens?: number;
+          cacheCreationInputTokens?: number;
+          cacheReadInputTokens?: number;
+        };
+      };
+      assertEquals(finish.usage.inputTokens, 12);
+      assertEquals(finish.usage.outputTokens, 34);
+      assertEquals(finish.usage.cacheCreationInputTokens, 2056);
+      assertEquals(finish.usage.cacheReadInputTokens, 128);
+    });
+
+    it("leaves Anthropic cache fields undefined when the provider omits them", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 4, output_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-sonnet-4-20250514");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      // Cache fields should be absent (not zero) when provider doesn't return them.
+      assertEquals(result.usage, {
+        inputTokens: 4,
+        outputTokens: 2,
+        totalTokens: 6,
+      });
+    });
+
+    it("surfaces OpenAI prompt_tokens_details.cached_tokens as cacheReadInputTokens", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "test-openai-key",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "ok" },
+                  finish_reason: "stop",
+                }],
+                usage: {
+                  prompt_tokens: 100,
+                  completion_tokens: 40,
+                  total_tokens: 140,
+                  prompt_tokens_details: { cached_tokens: 80 },
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gpt-4o-mini");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.usage, {
+        inputTokens: 100,
+        outputTokens: 40,
+        totalTokens: 140,
+        cacheReadInputTokens: 80,
+      });
+    });
+
+    it("leaves OpenAI cache field undefined when prompt_tokens_details is absent", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "test-openai-key",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "ok" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gpt-4o-mini");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.usage, {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+      });
+    });
+
+    it("surfaces Google cachedContentTokenCount as cacheReadInputTokens", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "test-google-key",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 123,
+                  candidatesTokenCount: 45,
+                  totalTokenCount: 168,
+                  cachedContentTokenCount: 100,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gemini-1.5-pro");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.usage, {
+        inputTokens: 123,
+        outputTokens: 45,
+        totalTokens: 168,
+        cacheReadInputTokens: 100,
+      });
+    });
+
+    it("leaves Google cache field undefined when cachedContentTokenCount is absent", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "test-google-key",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 8,
+                  candidatesTokenCount: 2,
+                  totalTokenCount: 10,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gemini-1.5-pro");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.usage, {
+        inputTokens: 8,
+        outputTokens: 2,
+        totalTokens: 10,
+      });
+    });
+  });
+
+  describe("transient error classification (529 / 503 / 429 / Retry-After)", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    function errorResponse(status: number, body: unknown, headers?: Record<string, string>) {
+      return new Response(typeof body === "string" ? body : JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json", ...headers },
+      });
+    }
+
+    async function expectError<E extends Error>(
+      promise: PromiseLike<unknown>,
+      errorClass: new (...args: never[]) => E,
+    ): Promise<E> {
+      try {
+        await promise;
+        throw new Error("Expected promise to reject, but it resolved");
+      } catch (err) {
+        if (!(err instanceof errorClass)) {
+          throw new Error(
+            `Expected ${errorClass.name}, got ${err instanceof Error ? err.name : typeof err}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        return err;
+      }
+    }
+
+    it("classifies Anthropic 529 as ProviderOverloadedError (retryable)", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            errorResponse(529, { error: { type: "overloaded_error", message: "Overloaded" } }),
+          ),
+      }, "claude-opus-4-6");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderOverloadedError,
+      );
+      assertEquals(err.provider, "anthropic");
+      assertEquals(err.status, 529);
+      assertEquals(err.retryable, true);
+    });
+
+    it("classifies OpenAI 503 as ProviderOverloadedError (retryable)", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () => Promise.resolve(errorResponse(503, { error: { message: "Service down" } })),
+      }, "gpt-4o-mini");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderOverloadedError,
+      );
+      assertEquals(err.provider, "openai");
+      assertEquals(err.status, 503);
+      assertEquals(err.retryable, true);
+    });
+
+    it("classifies OpenAI 429 rate_limit_exceeded as ProviderRateLimitError with Retry-After", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            errorResponse(
+              429,
+              { error: { code: "rate_limit_exceeded", message: "Slow down" } },
+              { "retry-after": "12" },
+            ),
+          ),
+      }, "gpt-4o-mini");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderRateLimitError,
+      );
+      assertEquals(err.provider, "openai");
+      assertEquals(err.status, 429);
+      assertEquals(err.retryable, true);
+      assertEquals(err.retryAfterMs, 12_000);
+    });
+
+    it("classifies OpenAI 429 insufficient_quota as ProviderQuotaError (non-retryable)", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            errorResponse(429, {
+              error: { code: "insufficient_quota", message: "Out of credits" },
+            }),
+          ),
+      }, "gpt-4o-mini");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderQuotaError,
+      );
+      assertEquals(err.retryable, false);
+    });
+
+    it("classifies Google 503 as ProviderOverloadedError (retryable)", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(errorResponse(503, { error: { code: 503, message: "Unavailable" } })),
+      }, "gemini-1.5-pro");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderOverloadedError,
+      );
+      assertEquals(err.provider, "google");
+      assertEquals(err.retryable, true);
+    });
+
+    it("classifies Google 429 RESOURCE_EXHAUSTED as ProviderQuotaError (non-retryable)", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(
+            errorResponse(429, {
+              error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Daily quota" },
+            }),
+          ),
+      }, "gemini-1.5-pro");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderQuotaError,
+      );
+      assertEquals(err.retryable, false);
+    });
+
+    it("preserves non-retryable 4xx as ProviderRequestError", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () => Promise.resolve(errorResponse(400, { error: { message: "Bad request" } })),
+      }, "gpt-4o-mini");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderRequestError,
+      );
+      assertEquals(err.retryable, false);
+      assertEquals(err.status, 400);
+    });
+
+    it("classifies stream-mode 529 the same as JSON-mode", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            errorResponse(529, { error: { type: "overloaded_error", message: "Overloaded" } }),
+          ),
+      }, "claude-opus-4-6");
+      const err = await expectError(
+        runtime.doStream({ prompt: [userPrompt] }),
+        ProviderOverloadedError,
+      );
+      assertEquals(err.retryable, true);
+    });
+  });
+
+  describe("provider warnings (unsupported-setting drops)", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    function okAnthropicResponse() {
+      return new Response(
+        JSON.stringify({
+          content: [{ type: "text", text: "ok" }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+
+    function okOpenAIResponse() {
+      return new Response(
+        JSON.stringify({
+          choices: [{
+            index: 0,
+            message: { role: "assistant", content: "ok" },
+            finish_reason: "stop",
+          }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+
+    function okGoogleResponse() {
+      return new Response(
+        JSON.stringify({
+          candidates: [{
+            content: { role: "model", parts: [{ text: "ok" }] },
+            finishReason: "STOP",
+          }],
+          usageMetadata: {
+            promptTokenCount: 1,
+            candidatesTokenCount: 1,
+            totalTokenCount: 2,
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+
+    function settings(result: { warnings?: unknown[] }): string[] {
+      return (result.warnings ?? []).flatMap((w) => {
+        const r = w as { setting?: string };
+        return r.setting ? [r.setting] : [];
+      });
+    }
+
+    it("warns on Anthropic presencePenalty / frequencyPenalty / seed / topK", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okAnthropicResponse()),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        presencePenalty: 0.1,
+        frequencyPenalty: 0.2,
+        seed: 42,
+        topK: 50,
+      });
+      const dropped = settings(result).sort();
+      assertEquals(dropped, ["frequencyPenalty", "presencePenalty", "seed", "topK"]);
+    });
+
+    it("warns when Anthropic stopSequences exceeds 4 entries (and truncates)", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okAnthropicResponse());
+        },
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        stopSequences: ["a", "b", "c", "d", "e", "f"],
+      });
+      const dropped = settings(result);
+      assertEquals(dropped.includes("stopSequences"), true);
+      const capturedBody = captured as { stop_sequences: string[] } | null;
+      assertEquals(capturedBody?.stop_sequences.length, 4);
+    });
+
+    it("warns when Anthropic temperature/topP are dropped due to extended thinking", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okAnthropicResponse()),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+        reasoning: { enabled: true, effort: "low" },
+      });
+      const dropped = settings(result).sort();
+      assertEquals(dropped, ["temperature", "topP"]);
+    });
+
+    it("emits no warnings on a clean Anthropic request", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okAnthropicResponse()),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+        stopSequences: ["END"],
+      }) as { warnings?: unknown[] };
+      assertEquals(result.warnings, undefined);
+    });
+
+    it("warns on OpenAI topK on Chat Completions", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () => Promise.resolve(okOpenAIResponse()),
+      }, "gpt-4o-mini");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        topK: 50,
+      });
+      assertEquals(settings(result), ["topK"]);
+    });
+
+    it("warns on OpenAI sampling params dropped for o3 reasoning model", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () => Promise.resolve(okOpenAIResponse()),
+      }, "o3-mini");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+        presencePenalty: 0.1,
+        frequencyPenalty: 0.1,
+      });
+      const dropped = settings(result).sort();
+      assertEquals(dropped, [
+        "frequencyPenalty",
+        "presencePenalty",
+        "temperature",
+        "topP",
+      ]);
+    });
+
+    it("warns on Google presencePenalty / frequencyPenalty drops", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () => Promise.resolve(okGoogleResponse()),
+      }, "gemini-1.5-pro");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        presencePenalty: 0.1,
+        frequencyPenalty: 0.2,
+      });
+      const dropped = settings(result).sort();
+      assertEquals(dropped, ["frequencyPenalty", "presencePenalty"]);
+    });
+
+    it("emits Anthropic metadata.user_id when userId is set", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okAnthropicResponse());
+        },
+      }, "claude-opus-4-6");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        userId: "user_42",
+      });
+      const body = captured as { metadata: { user_id: string } } | null;
+      assertEquals(body?.metadata, { user_id: "user_42" });
+    });
+
+    it("emits OpenAI user field when userId is set", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okOpenAIResponse());
+        },
+      }, "gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        userId: "user_42",
+      });
+      const body = captured as { user: string } | null;
+      assertEquals(body?.user, "user_42");
+    });
+
+    it("emits Google labels.user_id from userId when requestLabels is unset", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okGoogleResponse());
+        },
+      }, "gemini-1.5-pro");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        userId: "user_42",
+      });
+      const body = captured as { labels: Record<string, string> } | null;
+      assertEquals(body?.labels, { user_id: "user_42" });
+    });
+
+    it("Google requestLabels wins over userId-derived labels", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okGoogleResponse());
+        },
+      }, "gemini-1.5-pro");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        userId: "user_42",
+        requestLabels: { tenant: "acme", env: "prod" },
+      });
+      const body = captured as { labels: Record<string, string> } | null;
+      assertEquals(body?.labels, { tenant: "acme", env: "prod" });
+    });
+
+    it("omits provider metadata fields when userId is unset", async () => {
+      let anthropicBody: Record<string, unknown> | null = null;
+      let openaiBody: Record<string, unknown> | null = null;
+      let googleBody: Record<string, unknown> | null = null;
+
+      const anthropic = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          anthropicBody = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okAnthropicResponse());
+        },
+      }, "claude-opus-4-6");
+      const openai = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          openaiBody = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okOpenAIResponse());
+        },
+      }, "gpt-4o-mini");
+      const google = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          googleBody = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(okGoogleResponse());
+        },
+      }, "gemini-1.5-pro");
+
+      await anthropic.doGenerate({ prompt: [userPrompt] });
+      await openai.doGenerate({ prompt: [userPrompt] });
+      await google.doGenerate({ prompt: [userPrompt] });
+
+      assertEquals("metadata" in (anthropicBody ?? {}), false);
+      assertEquals("user" in (openaiBody ?? {}), false);
+      assertEquals("labels" in (googleBody ?? {}), false);
+    });
+
+    it("warnings are present on stream results too", async () => {
+      const encoder = new TextEncoder();
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              ReadableStream.from([
+                encoder.encode(
+                  'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+                ),
+                encoder.encode(
+                  'data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}\n\n',
+                ),
+                encoder.encode("data: [DONE]\n\n"),
+              ]),
+              { status: 200, headers: { "content-type": "text/event-stream" } },
+            ),
+          ),
+      }, "o3-mini");
+      const result = await runtime.doStream({
+        prompt: [userPrompt],
+        temperature: 0.5,
+      });
+      assertEquals(settings(result), ["temperature"]);
+      // Drain the stream to keep Deno test runner happy.
+      await collectAsync(result.stream);
+    });
+  });
+
+  describe("Anthropic provider tool version aliasing", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Run code" }],
+    } as const;
+
+    function captureBody() {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-opus-4-6");
+      return { runtime, getBody: () => captured };
+    }
+
+    function toolType(body: Record<string, unknown> | null): string | undefined {
+      const tools = body?.tools as Array<{ type?: string }> | undefined;
+      return tools?.[0]?.type;
+    }
+
+    const cases: Array<[string, string]> = [
+      ["anthropic.code_execution", "code_execution_20260120"],
+      ["anthropic.computer_use", "computer_20250124"],
+      ["anthropic.computer", "computer_20250124"],
+      ["anthropic.text_editor", "text_editor_20250728"],
+      ["anthropic.bash", "bash_20250124"],
+      ["anthropic.memory", "memory_20250818"],
+      ["anthropic.web_search", "web_search_20250305"],
+      ["anthropic.web_fetch", "web_fetch_20250910"],
+    ];
+
+    for (const [shortId, expected] of cases) {
+      it(`maps ${shortId} -> ${expected}`, async () => {
+        const { runtime, getBody } = captureBody();
+        await runtime.doGenerate({
+          prompt: [userPrompt],
+          tools: [{
+            type: "provider",
+            name: "tool",
+            id: shortId as `${string}.${string}`,
+            args: {},
+          }],
+        });
+        assertEquals(toolType(getBody()), expected);
+      });
+    }
+
+    it("passes already-versioned types through verbatim", async () => {
+      const { runtime, getBody } = captureBody();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        tools: [{
+          type: "provider",
+          name: "tool",
+          id: "anthropic.code_execution_20250522",
+          args: {},
+        }],
+      });
+      assertEquals(toolType(getBody()), "code_execution_20250522");
+    });
+
+    it("leaves unknown short names unchanged", async () => {
+      const { runtime, getBody } = captureBody();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        tools: [{
+          type: "provider",
+          name: "tool",
+          id: "anthropic.future_tool",
+          args: {},
+        }],
+      });
+      assertEquals(toolType(getBody()), "future_tool");
+    });
+  });
+
+  describe("Anthropic native MCP server pass-through", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    function captureRuntime() {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-opus-4-6");
+      return { runtime, getBody: () => captured };
+    }
+
+    it("emits mcp_servers on the body when set, with deep snake_case conversion", async () => {
+      const { runtime, getBody } = captureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        mcpServers: [{
+          type: "url",
+          url: "https://example.com/mcp",
+          name: "example",
+          authorizationToken: "Bearer abc",
+          toolConfiguration: {
+            enabled: true,
+            allowedTools: ["search", "fetch"],
+          },
+        }],
+      });
+      const body = getBody() as { mcp_servers: Array<Record<string, unknown>> } | null;
+      assertEquals(body?.mcp_servers, [{
+        type: "url",
+        url: "https://example.com/mcp",
+        name: "example",
+        authorization_token: "Bearer abc",
+        tool_configuration: {
+          enabled: true,
+          allowed_tools: ["search", "fetch"],
+        },
+      }]);
+    });
+
+    it("omits mcp_servers when the option is empty or unset", async () => {
+      const { runtime, getBody } = captureRuntime();
+      await runtime.doGenerate({ prompt: [userPrompt], mcpServers: [] });
+      assertEquals("mcp_servers" in (getBody() ?? {}), false);
+
+      const second = captureRuntime();
+      await second.runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals("mcp_servers" in (second.getBody() ?? {}), false);
+    });
+
+    it("emits container field verbatim when anthropicContainer is set", async () => {
+      const { runtime, getBody } = captureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        anthropicContainer: { id: "ctr_42", type: "computer-use" },
+      });
+      const body = getBody() as { container: unknown } | null;
+      assertEquals(body?.container, { id: "ctr_42", type: "computer-use" });
+    });
+
+    it("emits container as a bare string when anthropicContainer is a string", async () => {
+      const { runtime, getBody } = captureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        anthropicContainer: "ctr_42",
+      });
+      const body = getBody() as { container: string } | null;
+      assertEquals(body?.container, "ctr_42");
+    });
+
+    it("omits container when anthropicContainer is unset", async () => {
+      const { runtime, getBody } = captureRuntime();
+      await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals("container" in (getBody() ?? {}), false);
+    });
+  });
+
+  describe("Anthropic thinking signature multi-turn replay", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    it("surfaces thinking blocks with text + signature on generate result", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [
+                  {
+                    type: "thinking",
+                    thinking: "Let me reason step by step...",
+                    signature: "sig_abc123",
+                  },
+                  { type: "text", text: "The answer is 42." },
+                ],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.content, [
+        { type: "reasoning", text: "Let me reason step by step...", signature: "sig_abc123" },
+        { type: "text", text: "The answer is 42." },
+      ]);
+    });
+
+    it("surfaces redacted thinking blocks as opaque reasoning parts", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [
+                  { type: "redacted_thinking", data: "encrypted-blob" },
+                  { type: "text", text: "ok" },
+                ],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.content, [
+        { type: "reasoning", redactedData: "encrypted-blob" },
+        { type: "text", text: "ok" },
+      ]);
+    });
+
+    it("replays reasoning content parts as thinking blocks on the next request", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-opus-4-6");
+      await runtime.doGenerate({
+        prompt: [
+          userPrompt,
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "reasoning",
+                text: "Step by step thinking...",
+                signature: "sig_abc123",
+              },
+              { type: "text", text: "The answer is 42." },
+            ],
+          },
+          { role: "user", content: [{ type: "text", text: "Are you sure?" }] },
+        ],
+      });
+      const body = captured as {
+        messages: Array<{ role: string; content: Array<Record<string, unknown>> }>;
+      } | null;
+      assertEquals(body!.messages[1]!.role, "assistant");
+      assertEquals(body!.messages[1]!.content[0], {
+        type: "thinking",
+        thinking: "Step by step thinking...",
+        signature: "sig_abc123",
+      });
+      assertEquals(body!.messages[1]!.content[1], {
+        type: "text",
+        text: "The answer is 42.",
+      });
+    });
+
+    it("surfaces text-block citations on the generate result", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [
+                  {
+                    type: "text",
+                    text: "The capital of France is Paris.",
+                    citations: [
+                      {
+                        type: "web_search_result_location",
+                        cited_text: "Paris is the capital of France",
+                        url: "https://example.com/france",
+                        title: "France facts",
+                      },
+                    ],
+                  },
+                ],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [{
+          role: "user",
+          content: [{ type: "text", text: "What is the capital of France?" }],
+        }],
+      });
+      const textPart = result.content![0] as {
+        type: "text";
+        text: string;
+        citations?: Array<Record<string, unknown>>;
+      };
+      assertEquals(textPart.text, "The capital of France is Paris.");
+      assertEquals(textPart.citations, [{
+        type: "web_search_result_location",
+        citedText: "Paris is the capital of France",
+        url: "https://example.com/france",
+        title: "France facts",
+      }]);
+    });
+
+    it("normalizes char_location and page_location citation kinds", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{
+                  type: "text",
+                  text: "ok",
+                  citations: [
+                    {
+                      type: "char_location",
+                      cited_text: "foo",
+                      document_index: 0,
+                      document_title: "Doc A",
+                      start_char_index: 12,
+                      end_char_index: 15,
+                    },
+                    {
+                      type: "page_location",
+                      cited_text: "bar",
+                      document_index: 1,
+                      start_page_number: 3,
+                      end_page_number: 4,
+                    },
+                  ],
+                }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Cite" }] }],
+      });
+      const textPart = result.content![0] as {
+        citations?: Array<Record<string, unknown>>;
+      };
+      assertEquals(textPart.citations, [
+        {
+          type: "char_location",
+          citedText: "foo",
+          documentIndex: 0,
+          documentTitle: "Doc A",
+          startCharIndex: 12,
+          endCharIndex: 15,
+        },
+        {
+          type: "page_location",
+          citedText: "bar",
+          documentIndex: 1,
+          startPageNumber: 3,
+          endPageNumber: 4,
+        },
+      ]);
+    });
+
+    it("normalizes Google toolChoice 'tools' multi-name allowlist", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gemini-1.5-pro");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        toolChoice: { type: "tools", names: ["weather", "clock"] },
+      });
+      const body = captured as
+        | { toolConfig: { functionCallingConfig: Record<string, unknown> } }
+        | null;
+      assertEquals(body!.toolConfig.functionCallingConfig, {
+        mode: "ANY",
+        allowedFunctionNames: ["weather", "clock"],
+      });
+    });
+
+    it("normalizes Google toolChoice 'auto' / 'any' / 'none' explicit modes", async () => {
+      async function modeFor(toolChoice: { type: string }) {
+        let captured: Record<string, unknown> | null = null;
+        const runtime = createGoogleModelRuntime({
+          apiKey: "k",
+          baseURL: "https://example.google.test/v1beta",
+          fetch: (_input, init) => {
+            const raw = readRequestBody(init);
+            captured = raw ? JSON.parse(raw) : null;
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  candidates: [{
+                    content: { role: "model", parts: [{ text: "ok" }] },
+                    finishReason: "STOP",
+                  }],
+                  usageMetadata: {
+                    promptTokenCount: 1,
+                    candidatesTokenCount: 1,
+                    totalTokenCount: 2,
+                  },
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              ),
+            );
+          },
+        }, "gemini-1.5-pro");
+        await runtime.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          toolChoice,
+        });
+        const body = captured as
+          | { toolConfig: { functionCallingConfig: { mode: string } } }
+          | null;
+        return body!.toolConfig.functionCallingConfig.mode;
+      }
+      assertEquals(await modeFor({ type: "auto" }), "AUTO");
+      assertEquals(await modeFor({ type: "any" }), "ANY");
+      assertEquals(await modeFor({ type: "none" }), "NONE");
+    });
+
+    it("surfaces Google groundingMetadata on the generate result when present", async () => {
+      const groundingMetadata = {
+        webSearchQueries: ["latest news"],
+        groundingChunks: [
+          {
+            web: {
+              uri: "https://example.com/article",
+              title: "Article title",
+            },
+          },
+        ],
+        groundingSupports: [{
+          segment: { startIndex: 0, endIndex: 10, text: "ok" },
+          groundingChunkIndices: [0],
+          confidenceScores: [0.95],
+        }],
+      };
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                  groundingMetadata,
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gemini-2.5-pro");
+      const result = await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      }) as { groundingMetadata?: Record<string, unknown> };
+      assertEquals(result.groundingMetadata, groundingMetadata);
+    });
+
+    it("omits groundingMetadata when the candidate doesn't have any", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gemini-2.5-pro");
+      const result = await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      }) as { groundingMetadata?: unknown };
+      assertEquals("groundingMetadata" in result, false);
+    });
+
+    it("emits Google code_execution provider tool", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gemini-2.5-pro");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Compute" }] }],
+        tools: [{
+          type: "provider",
+          name: "code_execution",
+          id: "google.code_execution",
+          args: {},
+        }],
+      });
+      const body = captured as { tools: Array<Record<string, unknown>> } | null;
+      assertEquals(body!.tools, [{ codeExecution: {} }]);
+    });
+
+    it("emits Google google_search provider tool alongside function declarations", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gemini-2.5-pro");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Search" }] }],
+        tools: [
+          {
+            type: "function",
+            name: "weather",
+            inputSchema: { type: "object", properties: {} },
+          },
+          {
+            type: "provider",
+            name: "google_search",
+            id: "google.google_search",
+            args: {},
+          },
+        ],
+      });
+      const body = captured as { tools: Array<Record<string, unknown>> } | null;
+      assertEquals(body!.tools.length, 2);
+      assertEquals("functionDeclarations" in (body!.tools[0] as Record<string, unknown>), true);
+      assertEquals(body!.tools[1], { googleSearch: {} });
+    });
+
+    it("emits Google safetySettings when googleSafetySettings is set", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gemini-1.5-pro");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        googleSafetySettings: [
+          { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
+        ],
+      });
+      const body = captured as { safetySettings: unknown } | null;
+      assertEquals(body!.safetySettings, [
+        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
+      ]);
+    });
+
+    it("omits safetySettings when googleSafetySettings is unset or empty", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gemini-1.5-pro");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        googleSafetySettings: [],
+      });
+      assertEquals("safetySettings" in (captured ?? {}), false);
+    });
+
+    it("emits Google cachedContent when googleCachedContent is set", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gemini-1.5-pro");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        googleCachedContent: "cachedContents/abc123",
+      });
+      const body = captured as { cachedContent: string } | null;
+      assertEquals(body!.cachedContent, "cachedContents/abc123");
+    });
+
+    it("omits cachedContent when googleCachedContent is unset", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gemini-1.5-pro");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      });
+      assertEquals("cachedContent" in (captured ?? {}), false);
+    });
+
+    it("emits OpenAI service_tier when serviceTier is set", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "ok" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        serviceTier: "flex",
+      });
+      const body = captured as { service_tier: string } | null;
+      assertEquals(body!.service_tier, "flex");
+    });
+
+    it("emits OpenAI parallel_tool_calls: false when parallelToolCalls is false", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "ok" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        parallelToolCalls: false,
+      });
+      const body = captured as { parallel_tool_calls: boolean } | null;
+      assertEquals(body!.parallel_tool_calls, false);
+    });
+
+    it("omits service_tier and parallel_tool_calls when unset", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "ok" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      });
+      assertEquals("service_tier" in (captured ?? {}), false);
+      assertEquals("parallel_tool_calls" in (captured ?? {}), false);
+    });
+
+    it("emits OpenAI response_format json_schema when responseFormat is structured", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "{}" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gpt-4o-2024-08-06");
+      const schema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+        additionalProperties: false,
+      };
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        responseFormat: {
+          type: "json_schema",
+          name: "Person",
+          schema,
+          strict: true,
+        },
+      });
+      const body = captured as { response_format: Record<string, unknown> } | null;
+      assertEquals(body!.response_format, {
+        type: "json_schema",
+        json_schema: {
+          name: "Person",
+          schema,
+          strict: true,
+        },
+      });
+    });
+
+    it("emits OpenAI response_format json_object for type:json", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "{}" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        responseFormat: { type: "json" },
+      });
+      const body = captured as { response_format: { type: string } } | null;
+      assertEquals(body!.response_format, { type: "json_object" });
+    });
+
+    it("warns and omits response_format on Anthropic when responseFormat is structured", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        responseFormat: { type: "json" },
+      }) as { warnings?: Array<{ setting?: string }> };
+      assertEquals("response_format" in (captured ?? {}), false);
+      const settingNames = (result.warnings ?? []).flatMap((w) => w.setting ? [w.setting] : []);
+      assertEquals(settingNames.includes("responseFormat"), true);
+    });
+
+    it("omits citations field on text blocks that don't have them", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "no citations here" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      });
+      const textPart = result.content![0] as { citations?: unknown };
+      assertEquals("citations" in textPart, false);
+    });
+
+    it("replays redacted reasoning parts as redacted_thinking blocks", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-opus-4-6");
+      await runtime.doGenerate({
+        prompt: [
+          userPrompt,
+          {
+            role: "assistant",
+            content: [
+              { type: "reasoning", redactedData: "encrypted-blob" },
+              { type: "text", text: "ok" },
+            ],
+          },
+          { role: "user", content: [{ type: "text", text: "go on" }] },
+        ],
+      });
+      const body = captured as {
+        messages: Array<{ role: string; content: Array<Record<string, unknown>> }>;
+      } | null;
+      assertEquals(body!.messages[1]!.content[0], {
+        type: "redacted_thinking",
+        data: "encrypted-blob",
+      });
     });
   });
 });
