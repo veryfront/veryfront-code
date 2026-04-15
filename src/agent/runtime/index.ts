@@ -1387,9 +1387,9 @@ export class AgentRuntime {
       return Math.floor(maxOutputTokensOverride);
     }
 
-    return this.config.memory?.maxTokens
-      ?? (modelString ? getModelMaxOutputTokens(modelString) : undefined)
-      ?? DEFAULT_MAX_TOKENS;
+    return this.config.memory?.maxTokens ??
+      (modelString ? getModelMaxOutputTokens(modelString) : undefined) ??
+      DEFAULT_MAX_TOKENS;
   }
 
   /**
