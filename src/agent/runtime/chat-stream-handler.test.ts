@@ -250,6 +250,45 @@ describe("chat-stream-handler", () => {
       });
     });
 
+    it("dedupes cumulative streamed tool argument buffers instead of corrupting the JSON payload", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "tool-input-start", id: "tc-cumulative", toolName: "create_file" },
+        {
+          type: "tool-input-delta",
+          id: "tc-cumulative",
+          delta: '{"path":"plans/report.md","content":"# Report',
+        },
+        {
+          type: "tool-input-delta",
+          id: "tc-cumulative",
+          delta: '{"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      const tc = state.toolCalls.get("tc-cumulative")!;
+      assertEquals(
+        tc.arguments,
+        '{"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
+      );
+
+      assertEquals(events[1], {
+        type: "tool-input-delta",
+        toolCallId: "tc-cumulative",
+        inputTextDelta: '{"path":"plans/report.md","content":"# Report',
+      });
+      assertEquals(events[2], {
+        type: "tool-input-delta",
+        toolCallId: "tc-cumulative",
+        inputTextDelta: '{"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
+      });
+    });
+
     it("handles tool-call with full input object", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
