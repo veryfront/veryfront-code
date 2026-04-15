@@ -3528,6 +3528,115 @@ describe("provider/runtime-loader", () => {
       ]);
     });
 
+    it("emits OpenAI response_format json_schema when responseFormat is structured", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "{}" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gpt-4o-2024-08-06");
+      const schema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+        additionalProperties: false,
+      };
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        responseFormat: {
+          type: "json_schema",
+          name: "Person",
+          schema,
+          strict: true,
+        },
+      });
+      const body = captured as { response_format: Record<string, unknown> } | null;
+      assertEquals(body!.response_format, {
+        type: "json_schema",
+        json_schema: {
+          name: "Person",
+          schema,
+          strict: true,
+        },
+      });
+    });
+
+    it("emits OpenAI response_format json_object for type:json", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  index: 0,
+                  message: { role: "assistant", content: "{}" },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        responseFormat: { type: "json" },
+      });
+      const body = captured as { response_format: { type: string } } | null;
+      assertEquals(body!.response_format, { type: "json_object" });
+    });
+
+    it("warns and omits response_format on Anthropic when responseFormat is structured", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        responseFormat: { type: "json" },
+      }) as { warnings?: Array<{ setting?: string }> };
+      assertEquals("response_format" in (captured ?? {}), false);
+      const settingNames = (result.warnings ?? []).flatMap((w) => w.setting ? [w.setting] : []);
+      assertEquals(settingNames.includes("responseFormat"), true);
+    });
+
     it("omits citations field on text blocks that don't have them", async () => {
       const runtime = createAnthropicModelRuntime({
         apiKey: "k",

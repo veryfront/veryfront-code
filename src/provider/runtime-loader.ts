@@ -176,6 +176,33 @@ type OpenAICompatibleLanguageOptions = {
    */
   requestLabels?: Record<string, string>;
   /**
+   * Structured-output response format. Maps to OpenAI's `response_format`
+   * field on Chat Completions (and Responses). Three variants:
+   *
+   *  - `{ type: "text" }` — the default (no constraint).
+   *  - `{ type: "json" }` — emits OpenAI's `response_format:
+   *    { type: "json_object" }` to force the model to return valid JSON.
+   *  - `{ type: "json_schema", name, schema, strict? }` — emits
+   *    OpenAI's `response_format: { type: "json_schema", json_schema: {
+   *    name, schema, strict } }` for fully constrained structured
+   *    outputs (gpt-4o-2024-08-06+).
+   *
+   * On Anthropic and Google this option emits an "unsupported-setting"
+   * warning when set to anything other than `text` (those providers
+   * have their own structured-output surfaces and need a dedicated
+   * follow-up to wire them in).
+   */
+  responseFormat?:
+    | { type: "text" }
+    | { type: "json" }
+    | {
+      type: "json_schema";
+      name: string;
+      schema: unknown;
+      description?: string;
+      strict?: boolean;
+    };
+  /**
    * Anthropic-specific. `container` field for programmatic tool calling
    * and agent skills. Anthropic uses this to scope a session to a
    * sandboxed container (e.g. for Computer Use, code execution
@@ -1304,6 +1331,15 @@ function buildAnthropicMessagesRequest(
         "Dropped because Anthropic rejects sampling params when extended thinking is enabled.",
     });
   }
+  if (options.responseFormat && options.responseFormat.type !== "text") {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "anthropic",
+      setting: "responseFormat",
+      details:
+        "Anthropic Messages API does not have a structured-output response_format equivalent. Use a tool with the schema as input_schema instead.",
+    });
+  }
 
   // Anthropic requires max_tokens > budget_tokens when thinking is enabled.
   // Growing max_tokens by the thinking budget preserves the caller's intended
@@ -1986,6 +2022,23 @@ function buildOpenAIChatRequest(
     ...(typeof options.userId === "string" && options.userId.length > 0
       ? { user: options.userId }
       : {}),
+    ...(options.responseFormat && options.responseFormat.type !== "text"
+      ? {
+        response_format: options.responseFormat.type === "json" ? { type: "json_object" } : {
+          type: "json_schema",
+          json_schema: {
+            name: options.responseFormat.name,
+            ...(typeof options.responseFormat.description === "string"
+              ? { description: options.responseFormat.description }
+              : {}),
+            schema: unwrapToolInputSchema(options.responseFormat.schema),
+            ...(options.responseFormat.strict !== undefined
+              ? { strict: options.responseFormat.strict }
+              : {}),
+          },
+        },
+      }
+      : {}),
   };
 
   Object.assign(body, readProviderOptions(options.providerOptions, "openai", providerName));
@@ -2242,6 +2295,15 @@ function buildGoogleGenerateContentRequest(
       provider: "google",
       setting: "frequencyPenalty",
       details: "Gemini generateContent does not accept frequencyPenalty; the value was dropped.",
+    });
+  }
+  if (options.responseFormat && options.responseFormat.type !== "text") {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "google",
+      setting: "responseFormat",
+      details:
+        "Gemini uses generationConfig.responseMimeType + responseSchema for structured outputs, which is a separate surface and not yet wired through this option.",
     });
   }
 
