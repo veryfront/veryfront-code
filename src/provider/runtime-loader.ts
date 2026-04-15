@@ -2437,6 +2437,7 @@ function buildGoogleGenerateResult(payload: unknown): {
   >;
   finishReason?: string | { unified: string; raw: string } | null;
   usage?: RuntimeUsage;
+  groundingMetadata?: Record<string, unknown>;
 } {
   const parts = extractGoogleCandidateParts(payload);
   const content: Array<
@@ -2461,10 +2462,19 @@ function buildGoogleGenerateResult(payload: unknown): {
     }
   }
 
+  // Gemini grounding (google_search / google_search_retrieval) returns
+  // a per-candidate groundingMetadata object with web search queries,
+  // grounding chunks, and citation indices into the response text.
+  // Pass it through opaquely so callers can render footnotes / source
+  // chips / "Search results" UI without parsing the wire shape.
+  const candidate = extractFirstGoogleCandidate(payload);
+  const groundingMetadata = readRecord(candidate?.groundingMetadata);
+
   return {
     content,
-    finishReason: normalizeGoogleFinishReason(extractFirstGoogleCandidate(payload)?.finishReason),
+    finishReason: normalizeGoogleFinishReason(candidate?.finishReason),
     usage: extractGoogleUsage(payload),
+    ...(groundingMetadata ? { groundingMetadata } : {}),
   };
 }
 

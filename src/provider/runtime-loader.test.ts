@@ -3528,6 +3528,79 @@ describe("provider/runtime-loader", () => {
       ]);
     });
 
+    it("surfaces Google groundingMetadata on the generate result when present", async () => {
+      const groundingMetadata = {
+        webSearchQueries: ["latest news"],
+        groundingChunks: [
+          {
+            web: {
+              uri: "https://example.com/article",
+              title: "Article title",
+            },
+          },
+        ],
+        groundingSupports: [{
+          segment: { startIndex: 0, endIndex: 10, text: "ok" },
+          groundingChunkIndices: [0],
+          confidenceScores: [0.95],
+        }],
+      };
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                  groundingMetadata,
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gemini-2.5-pro");
+      const result = await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      }) as { groundingMetadata?: Record<string, unknown> };
+      assertEquals(result.groundingMetadata, groundingMetadata);
+    });
+
+    it("omits groundingMetadata when the candidate doesn't have any", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gemini-2.5-pro");
+      const result = await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      }) as { groundingMetadata?: unknown };
+      assertEquals("groundingMetadata" in result, false);
+    });
+
     it("emits Google code_execution provider tool", async () => {
       let captured: Record<string, unknown> | null = null;
       const runtime = createGoogleModelRuntime({
