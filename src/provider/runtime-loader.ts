@@ -299,6 +299,7 @@ type OpenAICompatibleChatRequest = {
   stream_options?: {
     include_usage?: boolean;
   };
+  max_tokens?: number;
   max_completion_tokens?: number;
   temperature?: number;
   top_p?: number;
@@ -2171,6 +2172,16 @@ function isOpenAIReasoningModel(modelId: string): boolean {
 }
 
 /**
+ * Detect native OpenAI models (gpt-*, o-series, chatgpt-*) vs third-party
+ * OpenAI-compatible providers (Kimi, etc.). Native OpenAI models require
+ * `max_completion_tokens` (the old `max_tokens` is rejected by newer models
+ * like gpt-5.2), while third-party providers still expect `max_tokens`.
+ */
+function isNativeOpenAIModel(modelId: string): boolean {
+  return /^(gpt-|o[134](-|$)|chatgpt-)/.test(modelId);
+}
+
+/**
  * Map the unified reasoning effort to OpenAI's `reasoning_effort` enum.
  * OpenAI doesn't accept "max" — we collapse it to "high".
  */
@@ -2242,7 +2253,11 @@ function buildOpenAIChatRequest(
     model: modelId,
     messages: toOpenAICompatibleMessages(options.prompt),
     ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
-    ...(options.maxOutputTokens !== undefined ? { max_completion_tokens: options.maxOutputTokens } : {}),
+    ...(options.maxOutputTokens !== undefined
+      ? isNativeOpenAIModel(modelId)
+        ? { max_completion_tokens: options.maxOutputTokens }
+        : { max_tokens: options.maxOutputTokens }
+      : {}),
     // OpenAI reasoning models reject temperature / top_p / frequency / presence.
     // Drop them silently rather than letting the API bounce the request.
     ...(!reasoningEnabled && options.temperature !== undefined
