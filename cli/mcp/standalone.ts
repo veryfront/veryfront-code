@@ -507,6 +507,40 @@ export class StandaloneMCPServer {
           };
         },
       },
+      {
+        name: "vf_trigger_deploy",
+        description: "Deploy a project to an environment via the Veryfront API. " +
+          "Creates a release from the specified branch and deploys it to the target environment. " +
+          "Requires a valid API token (set VERYFRONT_API_TOKEN or run 'veryfront login'). " +
+          "Do not use for local builds — use vf_build instead. " +
+          "Do not use for running tests before deploy — use vf_run_tests instead.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            projectSlug: {
+              type: "string",
+              description: "The project slug to deploy. Example: 'my-app'.",
+            },
+            environment: {
+              type: "string",
+              description: "Target environment name. Defaults to 'production'.",
+            },
+            branch: {
+              type: "string",
+              description: "Git branch to create the release from. Defaults to 'main'.",
+            },
+          },
+          required: ["projectSlug"],
+        },
+        async execute(args) {
+          const { triggerDeploy } = await import("./tools/deploy-tool.ts");
+          return triggerDeploy({
+            projectSlug: args.projectSlug as string,
+            environment: (args.environment as string) ?? "production",
+            branch: (args.branch as string) ?? "main",
+          });
+        },
+      },
       ...this.createContext7Tools(),
     ];
   }
