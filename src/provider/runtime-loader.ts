@@ -299,7 +299,7 @@ type OpenAICompatibleChatRequest = {
   stream_options?: {
     include_usage?: boolean;
   };
-  max_tokens?: number;
+  max_completion_tokens?: number;
   temperature?: number;
   top_p?: number;
   stop?: string[];
@@ -2242,7 +2242,7 @@ function buildOpenAIChatRequest(
     model: modelId,
     messages: toOpenAICompatibleMessages(options.prompt),
     ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
-    ...(options.maxOutputTokens !== undefined ? { max_tokens: options.maxOutputTokens } : {}),
+    ...(options.maxOutputTokens !== undefined ? { max_completion_tokens: options.maxOutputTokens } : {}),
     // OpenAI reasoning models reject temperature / top_p / frequency / presence.
     // Drop them silently rather than letting the API bounce the request.
     ...(!reasoningEnabled && options.temperature !== undefined
