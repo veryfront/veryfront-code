@@ -23,6 +23,7 @@ export {
 
 export {
   __registerTraceContextGetter,
+  __registerTraceContextGetter as registerTraceContextGetter,
   agentLogger,
   bundlerLogger,
   createJobUserLogger,
