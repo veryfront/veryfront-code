@@ -448,17 +448,21 @@ export class StandaloneMCPServer {
           "Run the linter. Returns structured diagnostics with file, line, column, rule code, and message. " +
           "Do not use for test results — use vf_run_tests instead. " +
           "Do not use for compile/runtime errors — use vf_get_errors instead.",
-        inputSchema: { type: "object", properties: {} },
-        async execute() {
-          const { parseLintJsonOutput } = await import("../commands/lint/command.ts");
-          const cmd = new Deno.Command("deno", {
-            args: ["lint", "--json"],
-            stdout: "piped",
-            stderr: "piped",
+        inputSchema: {
+          type: "object",
+          properties: {
+            timeout: {
+              type: "number",
+              description:
+                "Maximum time to wait for lint completion in milliseconds (default: 120000)",
+            },
+          },
+        },
+        async execute(args) {
+          const { executeLint } = await import("./tools/run-lint-tool.ts");
+          return executeLint({
+            timeout: args.timeout as number | undefined,
           });
-          const { code, stdout } = await cmd.output();
-          const output = new TextDecoder().decode(stdout);
-          return parseLintJsonOutput(output, code);
         },
       },
       ...this.createContext7Tools(),
