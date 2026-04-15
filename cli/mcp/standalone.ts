@@ -490,9 +490,11 @@ export class StandaloneMCPServer {
           ]);
 
           let errors: unknown[] = [];
+          let running = false;
           try {
             const result = await client.getLiveErrors();
             errors = Array.isArray(result) ? result : [];
+            running = true;
           } catch {
             // Dev server not running — no errors available
           }
@@ -501,7 +503,7 @@ export class StandaloneMCPServer {
             project,
             conventions,
             errors: { total: errors.length, items: errors.slice(-20) },
-            status: { running: errors.length >= 0 },
+            status: { running },
           };
         },
       },
