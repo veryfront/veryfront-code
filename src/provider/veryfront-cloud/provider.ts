@@ -14,9 +14,9 @@ import {
 
 export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
-  const { apiBaseUrl, apiToken } = requireVeryfrontCloudBootstrap();
+  const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap();
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
-  const fetch = createVeryfrontCloudFetch(apiToken);
+  const fetch = createVeryfrontCloudFetch(apiToken, projectSlug);
 
   switch (provider) {
     case "anthropic":
