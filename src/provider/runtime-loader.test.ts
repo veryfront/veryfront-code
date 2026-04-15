@@ -13,7 +13,7 @@ import {
   createGoogleModelRuntime,
   createOpenAIEmbeddingRuntime,
 } from "./runtime-loader.ts";
-import { createOpenAIModelRuntime } from "./runtime-loader.ts";
+import { createOpenAIModelRuntime, createOpenAIResponsesRuntime } from "./runtime-loader.ts";
 
 async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const values: T[] = [];
@@ -4170,6 +4170,373 @@ describe("provider/runtime-loader", () => {
       assertEquals(body!.messages[1]!.content[0], {
         type: "redacted_thinking",
         data: "encrypted-blob",
+      });
+    });
+  });
+
+  describe("OpenAI Responses API runtime (#1077)", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    function captureResponsesRuntime(modelId = "gpt-4o-mini") {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createOpenAIResponsesRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                id: "resp_1",
+                object: "response",
+                status: "completed",
+                output: [{
+                  type: "message",
+                  id: "msg_1",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "ok" }],
+                }],
+                usage: {
+                  input_tokens: 1,
+                  output_tokens: 1,
+                  total_tokens: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, modelId);
+      return { runtime, getBody: () => captured };
+    }
+
+    it("hits the /v1/responses endpoint, not /v1/chat/completions", async () => {
+      let capturedUrl: string | undefined;
+      const runtime = createOpenAIResponsesRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (input) => {
+          capturedUrl = typeof input === "string" ? input : (input as URL).toString();
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                id: "resp_1",
+                object: "response",
+                status: "completed",
+                output: [],
+                usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gpt-4o-mini");
+      await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(capturedUrl, "https://example.openai.test/v1/responses");
+    });
+
+    it("converts user message to input_text content part on the wire", async () => {
+      const { runtime, getBody } = captureResponsesRuntime();
+      await runtime.doGenerate({ prompt: [userPrompt] });
+      const body = getBody() as { input: Array<Record<string, unknown>> } | null;
+      assertEquals(body!.input, [{
+        role: "user",
+        content: [{ type: "input_text", text: "Hi" }],
+      }]);
+    });
+
+    it("lifts system message to top-level instructions field", async () => {
+      const { runtime, getBody } = captureResponsesRuntime();
+      await runtime.doGenerate({
+        prompt: [
+          { role: "system", content: "You are concise." },
+          userPrompt,
+        ],
+      });
+      const body = getBody() as { instructions: string; input: unknown[] } | null;
+      assertEquals(body!.instructions, "You are concise.");
+      // System message should NOT appear in the input array.
+      assertEquals(body!.input.length, 1);
+    });
+
+    it("emits structured reasoning object with effort + summary on reasoning request", async () => {
+      const { runtime, getBody } = captureResponsesRuntime("o3");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "high" },
+      });
+      const body = getBody() as { reasoning: Record<string, string> } | null;
+      assertEquals(body!.reasoning, { effort: "high", summary: "auto" });
+    });
+
+    it("drops sampling params on reasoning models and emits warnings", async () => {
+      const { runtime, getBody } = captureResponsesRuntime("o3-mini");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        temperature: 0.7,
+        topP: 0.9,
+        presencePenalty: 0.1,
+        frequencyPenalty: 0.1,
+      }) as { warnings?: Array<{ setting?: string }> };
+      const body = getBody() as Record<string, unknown> | null;
+      assertEquals("temperature" in (body ?? {}), false);
+      assertEquals("top_p" in (body ?? {}), false);
+      const dropped = (result.warnings ?? [])
+        .flatMap((w) => (w.setting ? [w.setting] : []))
+        .sort();
+      assertEquals(dropped, [
+        "frequencyPenalty",
+        "presencePenalty",
+        "temperature",
+        "topP",
+      ]);
+    });
+
+    it("emits text.format json_schema for structured outputs", async () => {
+      const { runtime, getBody } = captureResponsesRuntime("gpt-4o-2024-08-06");
+      const schema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+        additionalProperties: false,
+      };
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        responseFormat: {
+          type: "json_schema",
+          name: "Person",
+          schema,
+          strict: true,
+        },
+      });
+      const body = getBody() as { text: { format: Record<string, unknown> } } | null;
+      assertEquals(body!.text.format, {
+        type: "json_schema",
+        name: "Person",
+        schema,
+        strict: true,
+      });
+    });
+
+    it("parses message + reasoning + function_call output items into UI parts", async () => {
+      const runtime = createOpenAIResponsesRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                id: "resp_1",
+                object: "response",
+                status: "completed",
+                output: [
+                  {
+                    type: "reasoning",
+                    id: "rs_1",
+                    summary: [
+                      { type: "summary_text", text: "First, I'll check the weather." },
+                    ],
+                    encrypted_content: "sig_abc",
+                  },
+                  {
+                    type: "function_call",
+                    id: "fc_1",
+                    call_id: "call_weather",
+                    name: "get_weather",
+                    arguments: '{"city":"Tokyo"}',
+                  },
+                  {
+                    type: "message",
+                    id: "msg_1",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: "It is sunny." }],
+                  },
+                ],
+                usage: {
+                  input_tokens: 12,
+                  output_tokens: 34,
+                  total_tokens: 46,
+                  output_tokens_details: { reasoning_tokens: 8 },
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "o3");
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.content, [
+        {
+          type: "reasoning",
+          summaries: [{ text: "First, I'll check the weather." }],
+          signature: "sig_abc",
+        },
+        {
+          type: "tool-call",
+          toolCallId: "call_weather",
+          toolName: "get_weather",
+          input: '{"city":"Tokyo"}',
+        },
+        { type: "text", text: "It is sunny." },
+      ]);
+      assertEquals(result.usage, { inputTokens: 12, outputTokens: 34, totalTokens: 46 });
+      assertEquals(result.finishReason, { unified: "stop", raw: "completed" });
+    });
+
+    it("parses Responses streaming events into UI parts (text + reasoning + tool call)", async () => {
+      const encoder = new TextEncoder();
+      const runtime = createOpenAIResponsesRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              ReadableStream.from([
+                // Reasoning item starts
+                encoder.encode(
+                  'data: {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning"}}\n\n',
+                ),
+                encoder.encode(
+                  'data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"Thinking..."}\n\n',
+                ),
+                encoder.encode(
+                  'data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning"}}\n\n',
+                ),
+                // Function call item
+                encoder.encode(
+                  'data: {"type":"response.output_item.added","item":{"id":"fc_1","type":"function_call","call_id":"call_w","name":"weather"}}\n\n',
+                ),
+                encoder.encode(
+                  'data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{\\"city\\":\\"Tokyo\\"}"}\n\n',
+                ),
+                encoder.encode(
+                  'data: {"type":"response.output_item.done","item":{"id":"fc_1","type":"function_call"}}\n\n',
+                ),
+                // Text message
+                encoder.encode(
+                  'data: {"type":"response.output_item.added","item":{"id":"msg_1","type":"message"}}\n\n',
+                ),
+                encoder.encode(
+                  'data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"It is sunny."}\n\n',
+                ),
+                encoder.encode(
+                  'data: {"type":"response.output_item.done","item":{"id":"msg_1","type":"message"}}\n\n',
+                ),
+                // Completion
+                encoder.encode(
+                  'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":12,"output_tokens":34,"total_tokens":46}}}\n\n',
+                ),
+                encoder.encode("data: [DONE]\n\n"),
+              ]),
+              { status: 200, headers: { "content-type": "text/event-stream" } },
+            ),
+          ),
+      }, "o3");
+
+      const result = await runtime.doStream({ prompt: [userPrompt] });
+      const parts = await collectAsync(result.stream);
+      const partTypes = parts.map((p) => (p as { type: string }).type);
+
+      assertEquals(partTypes, [
+        "reasoning-start",
+        "reasoning-delta",
+        "reasoning-end",
+        "tool-input-start",
+        "tool-input-delta",
+        "tool-call",
+        "text-delta",
+        "finish",
+      ]);
+
+      const finish = parts.find((p) => (p as { type: string }).type === "finish") as {
+        usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+      };
+      assertEquals(finish.usage, {
+        inputTokens: 12,
+        outputTokens: 34,
+        totalTokens: 46,
+      });
+
+      const toolCall = parts.find((p) => (p as { type: string }).type === "tool-call") as {
+        toolCallId: string;
+        toolName: string;
+        input: string;
+      };
+      assertEquals(toolCall.toolCallId, "call_w");
+      assertEquals(toolCall.toolName, "weather");
+      assertEquals(toolCall.input, '{"city":"Tokyo"}');
+    });
+
+    it("replays reasoning content parts as top-level reasoning items on the next request", async () => {
+      const { runtime, getBody } = captureResponsesRuntime("o3");
+      await runtime.doGenerate({
+        prompt: [
+          userPrompt,
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "reasoning",
+                text: "Step by step thinking",
+                signature: "sig_abc",
+              },
+              { type: "text", text: "The answer is 42." },
+            ],
+          },
+          { role: "user", content: [{ type: "text", text: "Are you sure?" }] },
+        ],
+      });
+      const body = getBody() as { input: Array<Record<string, unknown>> } | null;
+      // Expected order: user, reasoning (top-level), assistant text, user.
+      assertEquals(body!.input.length, 4);
+      assertEquals((body!.input[1] as { type: string }).type, "reasoning");
+      assertEquals(body!.input[1], {
+        type: "reasoning",
+        encrypted_content: "sig_abc",
+        summary: [{ type: "summary_text", text: "Step by step thinking" }],
+      });
+      assertEquals(body!.input[2], {
+        role: "assistant",
+        content: [{ type: "output_text", text: "The answer is 42." }],
+      });
+    });
+
+    it("converts tool messages to function_call_output items", async () => {
+      const { runtime, getBody } = captureResponsesRuntime("gpt-4o-mini");
+      await runtime.doGenerate({
+        prompt: [
+          userPrompt,
+          {
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: "weather",
+              input: { city: "Tokyo" },
+            }],
+          },
+          {
+            role: "tool",
+            content: [{
+              type: "tool-result",
+              toolCallId: "call_1",
+              toolName: "weather",
+              output: { type: "json", value: { temp: 25 } },
+            }],
+          },
+        ],
+      });
+      const body = getBody() as { input: Array<Record<string, unknown>> } | null;
+      const functionCallOutput = body!.input.find((item) =>
+        (item as { type?: string }).type === "function_call_output"
+      );
+      assertEquals(functionCallOutput, {
+        type: "function_call_output",
+        call_id: "call_1",
+        output: '{"temp":25}',
       });
     });
   });
