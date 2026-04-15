@@ -37,7 +37,6 @@ describe("extensions/integration", () => {
   it("load extension → resolve contract → use it", async () => {
     const store = new Map<string, unknown>();
     const cacheExt = makeExt("cache-map", {
-      capabilities: [{ type: "contract", name: "CacheStore" }],
       provides: {
         CacheStore: {
           get: (k: string) => store.get(k),
