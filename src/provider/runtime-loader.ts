@@ -2182,6 +2182,15 @@ function isNativeOpenAIModel(modelId: string): boolean {
 }
 
 /**
+ * Kimi K2.5 fixes sampling parameters (temperature, top_p, presence_penalty,
+ * frequency_penalty) to predetermined values and rejects any other values.
+ * See https://platform.moonshot.cn/docs/guide/kimi-k2-5-quickstart
+ */
+function isFixedSamplingModel(modelId: string): boolean {
+  return /^kimi-k2\.5/.test(modelId);
+}
+
+/**
  * Map the unified reasoning effort to OpenAI's `reasoning_effort` enum.
  * OpenAI doesn't accept "max" — we collapse it to "high".
  */
@@ -2213,6 +2222,8 @@ function buildOpenAIChatRequest(
   const isReasoningModel = isOpenAIReasoningModel(modelId);
   const reasoningEffort = resolveOpenAIReasoningEffort(options.reasoning);
   const reasoningEnabled = isReasoningModel || reasoningEffort !== undefined;
+  const fixedSampling = isFixedSamplingModel(modelId);
+  const dropSamplingParams = reasoningEnabled || fixedSampling;
 
   // OpenAI Chat Completions has no top_k surface (it's exposed only on the
   // Responses API for some reasoning models). Quietly accepting it would
@@ -2226,10 +2237,10 @@ function buildOpenAIChatRequest(
     });
   }
 
-  // Reasoning models (o1 / o3 / o4) reject sampling params outright. Emit
-  // warnings at build time so callers see *why* the value didn't apply
-  // rather than a 400 from the API.
-  if (reasoningEnabled) {
+  // Reasoning models (o1 / o3 / o4) and models with fixed sampling params
+  // (Kimi K2.5) reject sampling params outright. Emit warnings at build time
+  // so callers see *why* the value didn't apply rather than a 400 from the API.
+  if (dropSamplingParams) {
     const dropped: Array<[keyof typeof options, string]> = [
       ["temperature", "temperature"],
       ["topP", "top_p"],
@@ -2242,8 +2253,9 @@ function buildOpenAIChatRequest(
           type: "unsupported-setting",
           provider: "openai",
           setting: key,
-          details:
-            `Dropped because OpenAI reasoning models reject ${openaiName}. Reasoning was active for this request.`,
+          details: fixedSampling
+            ? `Dropped because this model uses fixed sampling parameters.`
+            : `Dropped because OpenAI reasoning models reject ${openaiName}. Reasoning was active for this request.`,
         });
       }
     }
@@ -2258,12 +2270,12 @@ function buildOpenAIChatRequest(
         ? { max_completion_tokens: options.maxOutputTokens }
         : { max_tokens: options.maxOutputTokens }
       : {}),
-    // OpenAI reasoning models reject temperature / top_p / frequency / presence.
-    // Drop them silently rather than letting the API bounce the request.
-    ...(!reasoningEnabled && options.temperature !== undefined
+    // Reasoning models and fixed-sampling models reject temperature / top_p /
+    // frequency / presence. Drop them rather than letting the API bounce.
+    ...(!dropSamplingParams && options.temperature !== undefined
       ? { temperature: options.temperature }
       : {}),
-    ...(!reasoningEnabled && options.topP !== undefined ? { top_p: options.topP } : {}),
+    ...(!dropSamplingParams && options.topP !== undefined ? { top_p: options.topP } : {}),
     ...(options.stopSequences && options.stopSequences.length > 0
       ? { stop: options.stopSequences }
       : {}),
@@ -2272,10 +2284,10 @@ function buildOpenAIChatRequest(
       : {}),
     ...(options.toolChoice !== undefined ? { tool_choice: options.toolChoice } : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
-    ...(!reasoningEnabled && options.presencePenalty !== undefined
+    ...(!dropSamplingParams && options.presencePenalty !== undefined
       ? { presence_penalty: options.presencePenalty }
       : {}),
-    ...(!reasoningEnabled && options.frequencyPenalty !== undefined
+    ...(!dropSamplingParams && options.frequencyPenalty !== undefined
       ? { frequency_penalty: options.frequencyPenalty }
       : {}),
     ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
