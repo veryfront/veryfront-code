@@ -65,6 +65,8 @@ export interface LogEntry {
   task?: string;
   event_kind?: string;
   user_visible?: string;
+  user_id?: string;
+  conversation_id?: string;
   // Duration for timed operations
   /** @deprecated Use `duration_ms` instead. Kept for Grafana dashboard transition. Planned removal after Grafana dashboard migration is complete. */
   durationMs?: number;
@@ -326,6 +328,8 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "event_kind", (v) => String(v));
     extractToEntryField(entry, mergedContext, "user_visible", (v) => String(v));
     extractToEntryField(entry, mergedContext, "duration_ms", (v) => Number(v));
+    extractToEntryField(entry, mergedContext, "user_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "conversation_id", (v) => String(v));
 
     // Emit snake_case aliases for camelCase fields (transition period)
     if (entry.requestId && !entry.request_id) entry.request_id = entry.requestId;
