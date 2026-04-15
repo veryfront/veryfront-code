@@ -301,6 +301,14 @@ export function processStream(
 
       const typedPart = part as RuntimeStreamPart;
 
+      if (typedPart.type.startsWith("data-")) {
+        sendSSE(controller, encoder, {
+          type: typedPart.type,
+          data: "data" in typedPart ? typedPart.data : undefined,
+        });
+        continue;
+      }
+
       switch (typedPart.type) {
         case "text-delta": {
           closeReasoningSegment();

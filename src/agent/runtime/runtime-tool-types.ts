@@ -63,6 +63,10 @@ export type RuntimeStreamPart =
   | { type: "reasoning-delta"; id: string; delta: string }
   | { type: "reasoning-end"; id: string }
   | {
+    type: `data-${string}`;
+    data: unknown;
+  }
+  | {
     type: "tool-input-start";
     id: string;
     toolName: string;

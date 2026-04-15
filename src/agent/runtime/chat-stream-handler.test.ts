@@ -81,6 +81,26 @@ describe("chat-stream-handler", () => {
       assertEquals(events[3], { type: "text-end", id: "text-1" });
     });
 
+    it("passes through data-tool-call-status events", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "data-tool-call-status",
+          data: { toolCallId: "tool-1", status: "pending_input" },
+        },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "text-1", undefined);
+
+      assertEquals(events[0], {
+        type: "data-tool-call-status",
+        data: { toolCallId: "tool-1", status: "pending_input" },
+      });
+    });
+
     it("closes and reopens text segments when a tool interrupts assistant text", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();

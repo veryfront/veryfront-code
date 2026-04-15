@@ -6,6 +6,7 @@ import {
   ProviderQuotaError,
   ProviderRateLimitError,
   ProviderRequestError,
+  withToolInputStatusTransitions,
 } from "./runtime-loader.ts";
 import { createRuntimeJsonSchema } from "../agent/runtime/runtime-tool-builder.ts";
 import {
@@ -38,6 +39,80 @@ function readRequestHeader(init: RequestInit | undefined, name: string): string 
 }
 
 describe("provider/runtime-loader", () => {
+  it("emits pending_input and streaming_input transitions when tool input goes silent and resumes", async () => {
+    const events = await collectAsync(withToolInputStatusTransitions({
+      async *[Symbol.asyncIterator]() {
+        yield { type: "tool-input-start", id: "tool-1", toolName: "create_file" };
+        await new Promise((resolve) => setTimeout(resolve, 8));
+        yield { type: "tool-input-delta", id: "tool-1", delta: '{"path":"docs/report.md"' };
+        await new Promise((resolve) => setTimeout(resolve, 8));
+        yield {
+          type: "tool-call",
+          toolCallId: "tool-1",
+          toolName: "create_file",
+          input: { path: "docs/report.md" },
+        };
+        yield { type: "finish", finishReason: "tool-calls" };
+      },
+    }, 5));
+
+    assertEquals(events, [
+      { type: "tool-input-start", id: "tool-1", toolName: "create_file" },
+      {
+        type: "data-tool-call-status",
+        data: { toolCallId: "tool-1", status: "pending_input" },
+      },
+      {
+        type: "data-tool-call-status",
+        data: { toolCallId: "tool-1", status: "streaming_input" },
+      },
+      { type: "tool-input-delta", id: "tool-1", delta: '{"path":"docs/report.md"' },
+      {
+        type: "data-tool-call-status",
+        data: { toolCallId: "tool-1", status: "pending_input" },
+      },
+      {
+        type: "tool-call",
+        toolCallId: "tool-1",
+        toolName: "create_file",
+        input: { path: "docs/report.md" },
+      },
+      { type: "finish", finishReason: "tool-calls" },
+    ]);
+  });
+
+  it("does not fabricate pending_input for google-style immediate tool input", async () => {
+    const events = await collectAsync(withToolInputStatusTransitions({
+      async *[Symbol.asyncIterator]() {
+        yield { type: "tool-input-start", id: "tool-1", toolName: "search" };
+        yield { type: "tool-input-delta", id: "tool-1", delta: '{"query":"Veryfront"}' };
+        yield {
+          type: "tool-call",
+          toolCallId: "tool-1",
+          toolName: "search",
+          input: { query: "Veryfront" },
+        };
+        yield { type: "finish", finishReason: "tool-calls" };
+      },
+    }, 5));
+
+    assertEquals(events, [
+      { type: "tool-input-start", id: "tool-1", toolName: "search" },
+      {
+        type: "data-tool-call-status",
+        data: { toolCallId: "tool-1", status: "streaming_input" },
+      },
+      { type: "tool-input-delta", id: "tool-1", delta: '{"query":"Veryfront"}' },
+      {
+        type: "tool-call",
+        toolCallId: "tool-1",
+        toolName: "search",
+        input: { query: "Veryfront" },
+      },
+      { type: "finish", finishReason: "tool-calls" },
+    ]);
+  });
+
   it("creates an OpenAI-compatible language runtime without SDK helpers for generate", async () => {
     let requestedUrl = "";
     let requestedInit: RequestInit | undefined;
@@ -212,6 +287,13 @@ describe("provider/runtime-loader", () => {
         type: "tool-input-start",
         id: "call_weather",
         toolName: "weather",
+      },
+      {
+        type: "data-tool-call-status",
+        data: {
+          toolCallId: "call_weather",
+          status: "streaming_input",
+        },
       },
       {
         type: "tool-input-delta",
@@ -841,6 +923,13 @@ describe("provider/runtime-loader", () => {
         providerExecuted: true,
       },
       {
+        type: "data-tool-call-status",
+        data: {
+          toolCallId: "srvtool_web_1",
+          status: "streaming_input",
+        },
+      },
+      {
         type: "tool-input-delta",
         id: "srvtool_web_1",
         delta: '{"query":"Veryfront"}',
@@ -1067,7 +1156,7 @@ describe("provider/runtime-loader", () => {
     });
 
     const parts = await collectAsync(result.stream);
-    assertEquals(parts.length, 5);
+    assertEquals(parts.length, 6);
     assertEquals(parts[0], {
       type: "tool-input-start",
       id: "srvtool_fetch_2",
@@ -1075,18 +1164,25 @@ describe("provider/runtime-loader", () => {
       providerExecuted: true,
     });
     assertEquals(parts[1], {
+      type: "data-tool-call-status",
+      data: {
+        toolCallId: "srvtool_fetch_2",
+        status: "streaming_input",
+      },
+    });
+    assertEquals(parts[2], {
       type: "tool-input-delta",
       id: "srvtool_fetch_2",
       delta: '{"url":"https://veryfront.com/docs"}',
     });
-    assertEquals(parts[2], {
+    assertEquals(parts[3], {
       type: "tool-call",
       toolCallId: "srvtool_fetch_2",
       toolName: "web_fetch",
       input: '{"url":"https://veryfront.com/docs"}',
       providerExecuted: true,
     });
-    assertEquals(parts[3], {
+    assertEquals(parts[4], {
       type: "tool-result",
       toolCallId: "srvtool_fetch_2",
       toolName: "web_fetch",
@@ -1105,7 +1201,7 @@ describe("provider/runtime-loader", () => {
       },
       providerExecuted: true,
     });
-    assertEquals(parts[4], {
+    assertEquals(parts[5], {
       type: "finish",
       finishReason: { unified: "stop", raw: "end_turn" },
       usage: {
@@ -1590,6 +1686,13 @@ describe("provider/runtime-loader", () => {
         type: "tool-input-start",
         id: "tool_weather",
         toolName: "weather",
+      },
+      {
+        type: "data-tool-call-status",
+        data: {
+          toolCallId: "tool_weather",
+          status: "streaming_input",
+        },
       },
       {
         type: "tool-input-delta",
@@ -4445,6 +4548,7 @@ describe("provider/runtime-loader", () => {
         "reasoning-delta",
         "reasoning-end",
         "tool-input-start",
+        "data-tool-call-status",
         "tool-input-delta",
         "tool-call",
         "text-delta",
