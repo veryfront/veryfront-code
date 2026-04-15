@@ -163,6 +163,21 @@ type OpenAICompatibleLanguageOptions = {
    * this is intentionally Google-only. When unset, no labels are sent.
    */
   requestLabels?: Record<string, string>;
+  /**
+   * Anthropic-specific. Native MCP server definitions to pass directly
+   * on the Messages API request body. Lets callers register MCP servers
+   * server-side instead of reloading them into local function tools.
+   *
+   * Caller must opt into the MCP beta by adding the matching header to
+   * `headers`, e.g. `{ "anthropic-beta": "mcp-client-2025-04-04" }`.
+   * Without that header Anthropic will reject the request.
+   *
+   * Each entry is forwarded with camelCase keys converted to snake_case
+   * so `authorizationToken` → `authorization_token`,
+   * `toolConfiguration.allowedTools` → `tool_configuration.allowed_tools`,
+   * etc.
+   */
+  mcpServers?: Array<Record<string, unknown>>;
 };
 type OpenAICompatibleChatMessage =
   | { role: "system"; content: string }
@@ -844,6 +859,26 @@ function toSnakeCaseRecord(record: Record<string, unknown>): Record<string, unkn
   );
 }
 
+/**
+ * Recursive snake_case key converter for nested config objects (used for
+ * Anthropic mcp_servers, where authorizationToken / toolConfiguration /
+ * allowedTools all need conversion).
+ */
+function deepSnakeCase(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(deepSnakeCase);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, v]) => [
+        key.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`),
+        deepSnakeCase(v),
+      ]),
+    );
+  }
+  return value;
+}
+
 function pushAnthropicUserContent(
   messages: AnthropicCompatibleMessage[],
   content: Array<Record<string, unknown>>,
@@ -1259,6 +1294,9 @@ function buildAnthropicMessagesRequest(
     ...(thinkingEnabled ? { thinking: { type: "enabled", budget_tokens: thinkingBudget } } : {}),
     ...(typeof options.userId === "string" && options.userId.length > 0
       ? { metadata: { user_id: options.userId } }
+      : {}),
+    ...(options.mcpServers && options.mcpServers.length > 0
+      ? { mcp_servers: deepSnakeCase(options.mcpServers) as unknown[] }
       : {}),
   };
 

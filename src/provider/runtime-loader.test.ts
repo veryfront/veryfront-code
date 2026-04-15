@@ -3209,4 +3209,72 @@ describe("provider/runtime-loader", () => {
       assertEquals(toolType(getBody()), "future_tool");
     });
   });
+
+  describe("Anthropic native MCP server pass-through", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    function captureRuntime() {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-opus-4-6");
+      return { runtime, getBody: () => captured };
+    }
+
+    it("emits mcp_servers on the body when set, with deep snake_case conversion", async () => {
+      const { runtime, getBody } = captureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        mcpServers: [{
+          type: "url",
+          url: "https://example.com/mcp",
+          name: "example",
+          authorizationToken: "Bearer abc",
+          toolConfiguration: {
+            enabled: true,
+            allowedTools: ["search", "fetch"],
+          },
+        }],
+      });
+      const body = getBody() as { mcp_servers: Array<Record<string, unknown>> } | null;
+      assertEquals(body?.mcp_servers, [{
+        type: "url",
+        url: "https://example.com/mcp",
+        name: "example",
+        authorization_token: "Bearer abc",
+        tool_configuration: {
+          enabled: true,
+          allowed_tools: ["search", "fetch"],
+        },
+      }]);
+    });
+
+    it("omits mcp_servers when the option is empty or unset", async () => {
+      const { runtime, getBody } = captureRuntime();
+      await runtime.doGenerate({ prompt: [userPrompt], mcpServers: [] });
+      assertEquals("mcp_servers" in (getBody() ?? {}), false);
+
+      const second = captureRuntime();
+      await second.runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals("mcp_servers" in (second.getBody() ?? {}), false);
+    });
+  });
 });
