@@ -1,6 +1,12 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createAnthropicModelRuntime } from "./runtime-loader.ts";
+import {
+  createAnthropicModelRuntime,
+  ProviderOverloadedError,
+  ProviderQuotaError,
+  ProviderRateLimitError,
+  ProviderRequestError,
+} from "./runtime-loader.ts";
 import { createRuntimeJsonSchema } from "../agent/runtime/runtime-tool-builder.ts";
 import {
   createGoogleEmbeddingRuntime,
@@ -2617,6 +2623,176 @@ describe("provider/runtime-loader", () => {
         outputTokens: 2,
         totalTokens: 10,
       });
+    });
+  });
+
+  describe("transient error classification (529 / 503 / 429 / Retry-After)", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    function errorResponse(status: number, body: unknown, headers?: Record<string, string>) {
+      return new Response(typeof body === "string" ? body : JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json", ...headers },
+      });
+    }
+
+    async function expectError<E extends Error>(
+      promise: PromiseLike<unknown>,
+      errorClass: new (...args: never[]) => E,
+    ): Promise<E> {
+      try {
+        await promise;
+        throw new Error("Expected promise to reject, but it resolved");
+      } catch (err) {
+        if (!(err instanceof errorClass)) {
+          throw new Error(
+            `Expected ${errorClass.name}, got ${err instanceof Error ? err.name : typeof err}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        return err;
+      }
+    }
+
+    it("classifies Anthropic 529 as ProviderOverloadedError (retryable)", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            errorResponse(529, { error: { type: "overloaded_error", message: "Overloaded" } }),
+          ),
+      }, "claude-opus-4-6");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderOverloadedError,
+      );
+      assertEquals(err.provider, "anthropic");
+      assertEquals(err.status, 529);
+      assertEquals(err.retryable, true);
+    });
+
+    it("classifies OpenAI 503 as ProviderOverloadedError (retryable)", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () => Promise.resolve(errorResponse(503, { error: { message: "Service down" } })),
+      }, "gpt-4o-mini");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderOverloadedError,
+      );
+      assertEquals(err.provider, "openai");
+      assertEquals(err.status, 503);
+      assertEquals(err.retryable, true);
+    });
+
+    it("classifies OpenAI 429 rate_limit_exceeded as ProviderRateLimitError with Retry-After", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            errorResponse(
+              429,
+              { error: { code: "rate_limit_exceeded", message: "Slow down" } },
+              { "retry-after": "12" },
+            ),
+          ),
+      }, "gpt-4o-mini");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderRateLimitError,
+      );
+      assertEquals(err.provider, "openai");
+      assertEquals(err.status, 429);
+      assertEquals(err.retryable, true);
+      assertEquals(err.retryAfterMs, 12_000);
+    });
+
+    it("classifies OpenAI 429 insufficient_quota as ProviderQuotaError (non-retryable)", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            errorResponse(429, {
+              error: { code: "insufficient_quota", message: "Out of credits" },
+            }),
+          ),
+      }, "gpt-4o-mini");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderQuotaError,
+      );
+      assertEquals(err.retryable, false);
+    });
+
+    it("classifies Google 503 as ProviderOverloadedError (retryable)", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(errorResponse(503, { error: { code: 503, message: "Unavailable" } })),
+      }, "gemini-1.5-pro");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderOverloadedError,
+      );
+      assertEquals(err.provider, "google");
+      assertEquals(err.retryable, true);
+    });
+
+    it("classifies Google 429 RESOURCE_EXHAUSTED as ProviderQuotaError (non-retryable)", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(
+            errorResponse(429, {
+              error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Daily quota" },
+            }),
+          ),
+      }, "gemini-1.5-pro");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderQuotaError,
+      );
+      assertEquals(err.retryable, false);
+    });
+
+    it("preserves non-retryable 4xx as ProviderRequestError", async () => {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () => Promise.resolve(errorResponse(400, { error: { message: "Bad request" } })),
+      }, "gpt-4o-mini");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderRequestError,
+      );
+      assertEquals(err.retryable, false);
+      assertEquals(err.status, 400);
+    });
+
+    it("classifies stream-mode 529 the same as JSON-mode", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            errorResponse(529, { error: { type: "overloaded_error", message: "Overloaded" } }),
+          ),
+      }, "claude-opus-4-6");
+      const err = await expectError(
+        runtime.doStream({ prompt: [userPrompt] }),
+        ProviderOverloadedError,
+      );
+      assertEquals(err.retryable, true);
     });
   });
 });
