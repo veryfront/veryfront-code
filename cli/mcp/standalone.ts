@@ -409,6 +409,39 @@ export class StandaloneMCPServer {
           }
         },
       },
+      {
+        name: "vf_run_tests",
+        description: "Run the project's test suite and get structured pass/fail results. " +
+          "Returns a summary with total, passed, failed, skipped counts and failure details " +
+          "including file path, test name, error message, and line number. " +
+          "Do not use for lint checks — use vf_run_lint instead.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            filter: {
+              type: "string",
+              description: "Filter tests by name pattern",
+            },
+            parallel: {
+              type: "boolean",
+              description: "Run tests in parallel",
+            },
+            timeout: {
+              type: "number",
+              description:
+                "Maximum time to wait for test completion in milliseconds (default: 300000)",
+            },
+          },
+        },
+        async execute(args) {
+          const { executeTests } = await import("./tools/run-tests-tool.ts");
+          return executeTests({
+            filter: args.filter as string | undefined,
+            parallel: args.parallel as boolean | undefined,
+            timeout: args.timeout as number | undefined,
+          });
+        },
+      },
       ...this.createContext7Tools(),
     ];
   }
