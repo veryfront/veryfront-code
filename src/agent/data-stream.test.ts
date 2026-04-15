@@ -163,4 +163,32 @@ describe("agent/data-stream", () => {
       },
     );
   });
+
+  it("normalizes a first streamed delta that starts at the first property without an opening brace", () => {
+    const merged = mergeToolInputDelta(
+      "",
+      '"path":"plans/report.md","content":"# Report"}',
+    );
+
+    assertEquals(
+      merged,
+      '{"path":"plans/report.md","content":"# Report"}',
+    );
+    assertEquals(
+      parseToolInputObject(merged),
+      { path: "plans/report.md", content: "# Report" },
+    );
+  });
+
+  it("preserves normalized partial streamed arguments when the later tool-call payload is only an empty object", () => {
+    const normalizedPartial = mergeToolInputDelta(
+      "",
+      '"path":"plans/report.md","content":"# Report',
+    );
+
+    assertEquals(
+      mergeToolCallInput(normalizedPartial, "{}"),
+      '{"path":"plans/report.md","content":"# Report',
+    );
+  });
 });

@@ -367,6 +367,47 @@ describe("chat-stream-handler", () => {
       });
     });
 
+    it("normalizes quote-prefixed first tool-input deltas before a fallback empty tool-call payload arrives", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "tool-input-start", id: "tc-leading-quote", toolName: "create_file" },
+        {
+          type: "tool-input-delta",
+          id: "tc-leading-quote",
+          delta: '"path":"plans/report.md","content":"# Report',
+        },
+        {
+          type: "tool-call",
+          toolCallId: "tc-leading-quote",
+          toolName: "create_file",
+          input: {},
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      const tc = state.toolCalls.get("tc-leading-quote")!;
+      assertEquals(
+        tc.arguments,
+        '{"path":"plans/report.md","content":"# Report',
+      );
+
+      assertEquals(events[1], {
+        type: "tool-input-delta",
+        toolCallId: "tc-leading-quote",
+        inputTextDelta: '"path":"plans/report.md","content":"# Report',
+      });
+      assertEquals(events[2], {
+        type: "tool-input-available",
+        toolCallId: "tc-leading-quote",
+        toolName: "create_file",
+        input: {},
+      });
+    });
+
     it("preserves tool-call input when the provider already emits a JSON string", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();

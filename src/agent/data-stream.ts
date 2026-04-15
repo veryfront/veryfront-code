@@ -31,7 +31,7 @@ export function mergeToolInputDelta(currentArguments: string, nextDelta: string)
     ? [normalizedDelta, `{${normalizedDelta}`]
     : [normalizedDelta];
 
-  if (currentArguments === "{}") {
+  if (currentArguments === "{}" || currentArguments.length === 0) {
     for (const candidate of candidateDeltas) {
       if (candidate.startsWith("{")) {
         return candidate;
@@ -72,8 +72,14 @@ export function mergeToolCallInput(currentArguments: string, nextInput: string):
     return nextInput;
   }
 
+  const normalizedCurrent = stripLeadingEmptyObjectPlaceholder(currentArguments);
+
   if (nextInput.trim() === "{}" && currentArguments.trim().startsWith("{")) {
     return currentArguments;
+  }
+
+  if (nextInput.trim() === "{}" && normalizedCurrent.trim().startsWith("{")) {
+    return normalizedCurrent;
   }
 
   if (currentArguments.trim() === "{}" && nextInput.trim().startsWith("{")) {
