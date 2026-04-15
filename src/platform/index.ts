@@ -14,6 +14,7 @@ export type { RuntimeAdapter } from "./adapters/base.ts";
 // Compat: process
 export {
   chdir,
+  type CommandResult,
   cwd,
   env,
   exit,

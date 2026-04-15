@@ -1,8 +1,7 @@
 import { z } from "zod";
 type SafeParseResult<T> = { success: true; data: T } | { success: false; error: z.ZodError };
-import { createFileSystem, getEnv } from "veryfront/platform";
+import { type CommandResult, createFileSystem, getEnv, runCommand } from "veryfront/platform";
 import { basename, extname, join, normalize, relative } from "veryfront/platform/path";
-import { type CommandResult, runCommand } from "#veryfront/platform/compat/process.ts";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
