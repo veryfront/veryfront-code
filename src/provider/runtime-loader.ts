@@ -368,9 +368,7 @@ type GoogleCompatibleRequest = {
   systemInstruction?: {
     parts: Array<{ text: string }>;
   };
-  tools?: Array<{
-    functionDeclarations: Array<Record<string, unknown>>;
-  }>;
+  tools?: Array<Record<string, unknown>>;
   toolConfig?: {
     functionCallingConfig: Record<string, unknown>;
   };
@@ -2206,22 +2204,45 @@ function toGoogleContents(
 
 function toGoogleTools(
   tools: RuntimeToolDefinition[] | undefined,
-): GoogleCompatibleRequest["tools"] | undefined {
+): Array<Record<string, unknown>> | undefined {
   if (!tools) {
     return undefined;
   }
 
-  const functionDeclarations = tools.flatMap((tool) =>
-    tool.type === "function"
-      ? [{
+  const functionDeclarations: Array<Record<string, unknown>> = [];
+  const providerEntries: Array<Record<string, unknown>> = [];
+
+  for (const tool of tools) {
+    if (tool.type === "function") {
+      functionDeclarations.push({
         name: tool.name,
         ...(typeof tool.description === "string" ? { description: tool.description } : {}),
         parameters: unwrapToolInputSchema(tool.inputSchema),
-      }]
-      : []
-  );
+      });
+      continue;
+    }
 
-  return functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined;
+    // Gemini provider tools — code_execution, google_search,
+    // google_search_retrieval — each lives in its own tools[] entry
+    // with a single key keyed by the camelCase tool name and an
+    // optional config payload (caller-provided tool.args).
+    if (!tool.id.startsWith("google.")) {
+      continue;
+    }
+    const providerType = tool.id.slice("google.".length);
+    if (providerType.length === 0) {
+      continue;
+    }
+    const camelKey = providerType.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase());
+    providerEntries.push({ [camelKey]: tool.args ?? {} });
+  }
+
+  const result: Array<Record<string, unknown>> = [];
+  if (functionDeclarations.length > 0) {
+    result.push({ functionDeclarations });
+  }
+  result.push(...providerEntries);
+  return result.length > 0 ? result : undefined;
 }
 
 function unwrapToolInputSchema(inputSchema: unknown): unknown {

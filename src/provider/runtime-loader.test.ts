@@ -3528,6 +3528,93 @@ describe("provider/runtime-loader", () => {
       ]);
     });
 
+    it("emits Google code_execution provider tool", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gemini-2.5-pro");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Compute" }] }],
+        tools: [{
+          type: "provider",
+          name: "code_execution",
+          id: "google.code_execution",
+          args: {},
+        }],
+      });
+      const body = captured as { tools: Array<Record<string, unknown>> } | null;
+      assertEquals(body!.tools, [{ codeExecution: {} }]);
+    });
+
+    it("emits Google google_search provider tool alongside function declarations", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gemini-2.5-pro");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Search" }] }],
+        tools: [
+          {
+            type: "function",
+            name: "weather",
+            inputSchema: { type: "object", properties: {} },
+          },
+          {
+            type: "provider",
+            name: "google_search",
+            id: "google.google_search",
+            args: {},
+          },
+        ],
+      });
+      const body = captured as { tools: Array<Record<string, unknown>> } | null;
+      assertEquals(body!.tools.length, 2);
+      assertEquals("functionDeclarations" in (body!.tools[0] as Record<string, unknown>), true);
+      assertEquals(body!.tools[1], { googleSearch: {} });
+    });
+
     it("emits Google safetySettings when googleSafetySettings is set", async () => {
       let captured: Record<string, unknown> | null = null;
       const runtime = createGoogleModelRuntime({
