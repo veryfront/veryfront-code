@@ -3528,6 +3528,86 @@ describe("provider/runtime-loader", () => {
       ]);
     });
 
+    it("normalizes Google toolChoice 'tools' multi-name allowlist", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                }],
+                usageMetadata: {
+                  promptTokenCount: 1,
+                  candidatesTokenCount: 1,
+                  totalTokenCount: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gemini-1.5-pro");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        toolChoice: { type: "tools", names: ["weather", "clock"] },
+      });
+      const body = captured as
+        | { toolConfig: { functionCallingConfig: Record<string, unknown> } }
+        | null;
+      assertEquals(body!.toolConfig.functionCallingConfig, {
+        mode: "ANY",
+        allowedFunctionNames: ["weather", "clock"],
+      });
+    });
+
+    it("normalizes Google toolChoice 'auto' / 'any' / 'none' explicit modes", async () => {
+      async function modeFor(toolChoice: { type: string }) {
+        let captured: Record<string, unknown> | null = null;
+        const runtime = createGoogleModelRuntime({
+          apiKey: "k",
+          baseURL: "https://example.google.test/v1beta",
+          fetch: (_input, init) => {
+            const raw = readRequestBody(init);
+            captured = raw ? JSON.parse(raw) : null;
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  candidates: [{
+                    content: { role: "model", parts: [{ text: "ok" }] },
+                    finishReason: "STOP",
+                  }],
+                  usageMetadata: {
+                    promptTokenCount: 1,
+                    candidatesTokenCount: 1,
+                    totalTokenCount: 2,
+                  },
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              ),
+            );
+          },
+        }, "gemini-1.5-pro");
+        await runtime.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          toolChoice,
+        });
+        const body = captured as
+          | { toolConfig: { functionCallingConfig: { mode: string } } }
+          | null;
+        return body!.toolConfig.functionCallingConfig.mode;
+      }
+      assertEquals(await modeFor({ type: "auto" }), "AUTO");
+      assertEquals(await modeFor({ type: "any" }), "ANY");
+      assertEquals(await modeFor({ type: "none" }), "NONE");
+    });
+
     it("surfaces Google groundingMetadata on the generate result when present", async () => {
       const groundingMetadata = {
         webSearchQueries: ["latest news"],

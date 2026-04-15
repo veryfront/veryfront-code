@@ -2274,13 +2274,42 @@ function normalizeGoogleToolChoice(toolChoice: unknown):
   }
 
   const record = readRecord(toolChoice);
-  if (record?.type === "tool" && typeof record.name === "string") {
+  if (!record) return undefined;
+
+  // Single-tool restriction: { type: "tool", name } — pin to one
+  // function via mode: ANY + allowedFunctionNames: [name].
+  if (record.type === "tool" && typeof record.name === "string") {
     return {
       functionCallingConfig: {
         mode: "ANY",
         allowedFunctionNames: [record.name],
       },
     };
+  }
+
+  // Multi-tool restriction: { type: "tools", names: string[] } — pin
+  // to a subset via mode: ANY + the full allowedFunctionNames array.
+  if (record.type === "tools" && Array.isArray(record.names)) {
+    const names = record.names.filter((n): n is string => typeof n === "string");
+    if (names.length > 0) {
+      return {
+        functionCallingConfig: {
+          mode: "ANY",
+          allowedFunctionNames: names,
+        },
+      };
+    }
+  }
+
+  // Explicit mode forms: { type: "auto" | "none" | "any" }.
+  if (record.type === "auto") {
+    return { functionCallingConfig: { mode: "AUTO" } };
+  }
+  if (record.type === "none") {
+    return { functionCallingConfig: { mode: "NONE" } };
+  }
+  if (record.type === "any" || record.type === "required") {
+    return { functionCallingConfig: { mode: "ANY" } };
   }
 
   return undefined;
