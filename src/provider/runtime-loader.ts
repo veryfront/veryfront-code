@@ -1359,9 +1359,57 @@ type AnthropicReasoningContent = {
   redactedData?: string;
 };
 
+type AnthropicCitation = {
+  type: string;
+  citedText?: string;
+  url?: string;
+  title?: string;
+  startCharIndex?: number;
+  endCharIndex?: number;
+  startBlockIndex?: number;
+  endBlockIndex?: number;
+  startPageNumber?: number;
+  endPageNumber?: number;
+  documentIndex?: number;
+  documentTitle?: string;
+};
+
+type AnthropicTextContent = {
+  type: "text";
+  text: string;
+  citations?: AnthropicCitation[];
+};
+
+/**
+ * Best-effort camelCase normalization of a single Anthropic citation
+ * record. Handles the union of fields across web_search_result_location,
+ * web_fetch_result_location, char_location, page_location, and
+ * content_block_location citation kinds — see
+ * https://docs.claude.com/en/docs/build-with-claude/citations
+ */
+function normalizeAnthropicCitation(raw: unknown): AnthropicCitation | undefined {
+  const r = readRecord(raw);
+  if (!r) return undefined;
+  const typeStr = typeof r.type === "string" ? r.type : undefined;
+  if (!typeStr) return undefined;
+  const out: AnthropicCitation = { type: typeStr };
+  if (typeof r.cited_text === "string") out.citedText = r.cited_text;
+  if (typeof r.url === "string") out.url = r.url;
+  if (typeof r.title === "string") out.title = r.title;
+  if (typeof r.start_char_index === "number") out.startCharIndex = r.start_char_index;
+  if (typeof r.end_char_index === "number") out.endCharIndex = r.end_char_index;
+  if (typeof r.start_block_index === "number") out.startBlockIndex = r.start_block_index;
+  if (typeof r.end_block_index === "number") out.endBlockIndex = r.end_block_index;
+  if (typeof r.start_page_number === "number") out.startPageNumber = r.start_page_number;
+  if (typeof r.end_page_number === "number") out.endPageNumber = r.end_page_number;
+  if (typeof r.document_index === "number") out.documentIndex = r.document_index;
+  if (typeof r.document_title === "string") out.documentTitle = r.document_title;
+  return out;
+}
+
 function buildAnthropicGenerateResult(payload: unknown): {
   content: Array<
-    | { type: "text"; text: string }
+    | AnthropicTextContent
     | AnthropicReasoningContent
     | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
     | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown }
@@ -1372,7 +1420,7 @@ function buildAnthropicGenerateResult(payload: unknown): {
   const record = readRecord(payload);
   const content = Array.isArray(record?.content) ? record.content : [];
   const normalized: Array<
-    | { type: "text"; text: string }
+    | AnthropicTextContent
     | AnthropicReasoningContent
     | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
     | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown }
@@ -1383,7 +1431,17 @@ function buildAnthropicGenerateResult(payload: unknown): {
     const blockType = typeof block?.type === "string" ? block.type : undefined;
 
     if (blockType === "text" && typeof block?.text === "string" && block.text.length > 0) {
-      normalized.push({ type: "text", text: block.text });
+      const citationsRaw = Array.isArray(block.citations) ? block.citations : undefined;
+      const citations = citationsRaw
+        ?.flatMap((c) => {
+          const normalizedCitation = normalizeAnthropicCitation(c);
+          return normalizedCitation ? [normalizedCitation] : [];
+        });
+      normalized.push({
+        type: "text",
+        text: block.text,
+        ...(citations && citations.length > 0 ? { citations } : {}),
+      });
       continue;
     }
 

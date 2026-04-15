@@ -3406,16 +3406,149 @@ describe("provider/runtime-loader", () => {
       const body = captured as {
         messages: Array<{ role: string; content: Array<Record<string, unknown>> }>;
       } | null;
-      assertEquals(body?.messages[1].role, "assistant");
-      assertEquals(body?.messages[1].content[0], {
+      assertEquals(body!.messages[1]!.role, "assistant");
+      assertEquals(body!.messages[1]!.content[0], {
         type: "thinking",
         thinking: "Step by step thinking...",
         signature: "sig_abc123",
       });
-      assertEquals(body?.messages[1].content[1], {
+      assertEquals(body!.messages[1]!.content[1], {
         type: "text",
         text: "The answer is 42.",
       });
+    });
+
+    it("surfaces text-block citations on the generate result", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [
+                  {
+                    type: "text",
+                    text: "The capital of France is Paris.",
+                    citations: [
+                      {
+                        type: "web_search_result_location",
+                        cited_text: "Paris is the capital of France",
+                        url: "https://example.com/france",
+                        title: "France facts",
+                      },
+                    ],
+                  },
+                ],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [{
+          role: "user",
+          content: [{ type: "text", text: "What is the capital of France?" }],
+        }],
+      });
+      const textPart = result.content![0] as {
+        type: "text";
+        text: string;
+        citations?: Array<Record<string, unknown>>;
+      };
+      assertEquals(textPart.text, "The capital of France is Paris.");
+      assertEquals(textPart.citations, [{
+        type: "web_search_result_location",
+        citedText: "Paris is the capital of France",
+        url: "https://example.com/france",
+        title: "France facts",
+      }]);
+    });
+
+    it("normalizes char_location and page_location citation kinds", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{
+                  type: "text",
+                  text: "ok",
+                  citations: [
+                    {
+                      type: "char_location",
+                      cited_text: "foo",
+                      document_index: 0,
+                      document_title: "Doc A",
+                      start_char_index: 12,
+                      end_char_index: 15,
+                    },
+                    {
+                      type: "page_location",
+                      cited_text: "bar",
+                      document_index: 1,
+                      start_page_number: 3,
+                      end_page_number: 4,
+                    },
+                  ],
+                }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Cite" }] }],
+      });
+      const textPart = result.content![0] as {
+        citations?: Array<Record<string, unknown>>;
+      };
+      assertEquals(textPart.citations, [
+        {
+          type: "char_location",
+          citedText: "foo",
+          documentIndex: 0,
+          documentTitle: "Doc A",
+          startCharIndex: 12,
+          endCharIndex: 15,
+        },
+        {
+          type: "page_location",
+          citedText: "bar",
+          documentIndex: 1,
+          startPageNumber: 3,
+          endPageNumber: 4,
+        },
+      ]);
+    });
+
+    it("omits citations field on text blocks that don't have them", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "no citations here" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      });
+      const textPart = result.content![0] as { citations?: unknown };
+      assertEquals("citations" in textPart, false);
     });
 
     it("replays redacted reasoning parts as redacted_thinking blocks", async () => {
@@ -3454,7 +3587,7 @@ describe("provider/runtime-loader", () => {
       const body = captured as {
         messages: Array<{ role: string; content: Array<Record<string, unknown>> }>;
       } | null;
-      assertEquals(body?.messages[1].content[0], {
+      assertEquals(body!.messages[1]!.content[0], {
         type: "redacted_thinking",
         data: "encrypted-blob",
       });
