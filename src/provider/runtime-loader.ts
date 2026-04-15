@@ -234,6 +234,18 @@ type OpenAICompatibleLanguageOptions = {
    */
   anthropicContainer?: unknown;
   /**
+   * Google-specific. Reference to a previously-created Gemini cached
+   * content resource (created via the separate caches API) to attach
+   * to this request. Resource name format:
+   * `cachedContents/<id>`. See https://ai.google.dev/gemini-api/docs/caching.
+   *
+   * Cache creation itself is out of scope for the runtime — callers
+   * use the Gemini REST API or SDK to create the cache, then pass the
+   * resource name here on each subsequent generate call to attach the
+   * cached prefix and avoid re-paying for it.
+   */
+  googleCachedContent?: string;
+  /**
    * Anthropic-specific. Native MCP server definitions to pass directly
    * on the Messages API request body. Lets callers register MCP servers
    * server-side instead of reloading them into local function tools.
@@ -2350,6 +2362,9 @@ function buildGoogleGenerateContentRequest(
       : {}),
     ...(generationConfig ? { generationConfig } : {}),
     ...(labels ? { labels } : {}),
+    ...(typeof options.googleCachedContent === "string" && options.googleCachedContent.length > 0
+      ? { cachedContent: options.googleCachedContent }
+      : {}),
   };
 
   Object.assign(body, readProviderOptions(options.providerOptions, "google", providerName));
