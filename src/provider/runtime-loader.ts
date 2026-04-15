@@ -36,6 +36,18 @@ type RuntimePromptMessage =
         input: unknown;
         providerExecuted?: boolean;
       }
+      | {
+        // Anthropic thinking block replay. Carries the original signed
+        // thinking trace so that on the next turn Anthropic can verify
+        // the signature and let Claude continue reasoning from the same
+        // point. `text` + `signature` are the normal pair for an
+        // un-redacted thinking block; `redactedData` is set instead of
+        // both when Anthropic returned an encrypted opaque payload.
+        type: "reasoning";
+        text?: string;
+        signature?: string;
+        redactedData?: string;
+      }
     >;
   }
   | {
@@ -687,6 +699,11 @@ function toOpenAICompatibleMessages(prompt: RuntimePromptMessage[]): OpenAICompa
             text += part.text;
             continue;
           }
+          // OpenAI Chat Completions has no roundtrip slot for Anthropic
+          // thinking blocks — they get dropped on replay. Anthropic-only.
+          if (part.type === "reasoning") {
+            continue;
+          }
 
           toolCalls.push({
             id: part.toolCallId,
@@ -955,14 +972,33 @@ function toAnthropicMessages(
       case "assistant":
         messages.push({
           role: "assistant",
-          content: message.content.map((part) =>
-            part.type === "text" ? { type: "text", text: part.text } : {
+          content: message.content.map((part) => {
+            if (part.type === "text") {
+              return { type: "text", text: part.text };
+            }
+            if (part.type === "reasoning") {
+              // Redacted thinking blocks roundtrip as the encrypted blob
+              // form Anthropic gave us. Plain thinking blocks need the
+              // signature to verify on the server.
+              if (typeof part.redactedData === "string") {
+                return {
+                  type: "redacted_thinking",
+                  data: part.redactedData,
+                };
+              }
+              return {
+                type: "thinking",
+                thinking: part.text ?? "",
+                ...(typeof part.signature === "string" ? { signature: part.signature } : {}),
+              };
+            }
+            return {
               type: "tool_use",
               id: part.toolCallId,
               name: part.toolName,
               input: part.input,
-            }
-          ),
+            };
+          }),
         });
         break;
       case "tool":
@@ -1316,9 +1352,17 @@ function buildAnthropicMessagesRequest(
   return body;
 }
 
+type AnthropicReasoningContent = {
+  type: "reasoning";
+  text?: string;
+  signature?: string;
+  redactedData?: string;
+};
+
 function buildAnthropicGenerateResult(payload: unknown): {
   content: Array<
     | { type: "text"; text: string }
+    | AnthropicReasoningContent
     | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
     | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown }
   >;
@@ -1329,6 +1373,7 @@ function buildAnthropicGenerateResult(payload: unknown): {
   const content = Array.isArray(record?.content) ? record.content : [];
   const normalized: Array<
     | { type: "text"; text: string }
+    | AnthropicReasoningContent
     | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
     | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown }
   > = [];
@@ -1339,6 +1384,31 @@ function buildAnthropicGenerateResult(payload: unknown): {
 
     if (blockType === "text" && typeof block?.text === "string" && block.text.length > 0) {
       normalized.push({ type: "text", text: block.text });
+      continue;
+    }
+
+    // Thinking blocks carry the cleartext trace plus a signature that
+    // Anthropic uses to verify on subsequent turns. Surfacing both lets
+    // callers persist them as `reasoning` content parts and replay on
+    // the next turn so Claude can continue from the same thinking.
+    if (blockType === "thinking") {
+      normalized.push({
+        type: "reasoning",
+        ...(typeof block?.thinking === "string" ? { text: block.thinking } : {}),
+        ...(typeof block?.signature === "string" ? { signature: block.signature } : {}),
+      });
+      continue;
+    }
+
+    // Redacted thinking blocks arrive when Claude's safety classifier
+    // hides the trace. Pass the encrypted blob through opaquely so the
+    // caller can replay it on the next turn (Anthropic still needs the
+    // blob to verify continuity even though it can't read it).
+    if (blockType === "redacted_thinking" && typeof block?.data === "string") {
+      normalized.push({
+        type: "reasoning",
+        redactedData: block.data,
+      });
       continue;
     }
 
@@ -1928,20 +1998,29 @@ function toGoogleContents(
           parts: [{ text: readTextParts(message.content) }],
         });
         break;
-      case "assistant":
-        contents.push({
-          role: "model",
-          parts: message.content.map((part) =>
-            part.type === "text" ? { text: part.text } : {
-              functionCall: {
-                id: part.toolCallId,
-                name: part.toolName,
-                args: part.input,
-              },
-            }
-          ),
-        });
+      case "assistant": {
+        // Anthropic-only `reasoning` parts have no Gemini equivalent
+        // and are dropped on replay.
+        const parts: Array<Record<string, unknown>> = [];
+        for (const part of message.content) {
+          if (part.type === "text") {
+            parts.push({ text: part.text });
+            continue;
+          }
+          if (part.type === "reasoning") {
+            continue;
+          }
+          parts.push({
+            functionCall: {
+              id: part.toolCallId,
+              name: part.toolName,
+              args: part.input,
+            },
+          });
+        }
+        contents.push({ role: "model", parts });
         break;
+      }
       case "tool":
         contents.push({
           role: "user",

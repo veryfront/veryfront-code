@@ -3303,4 +3303,161 @@ describe("provider/runtime-loader", () => {
       assertEquals("container" in (getBody() ?? {}), false);
     });
   });
+
+  describe("Anthropic thinking signature multi-turn replay", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    it("surfaces thinking blocks with text + signature on generate result", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [
+                  {
+                    type: "thinking",
+                    thinking: "Let me reason step by step...",
+                    signature: "sig_abc123",
+                  },
+                  { type: "text", text: "The answer is 42." },
+                ],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.content, [
+        { type: "reasoning", text: "Let me reason step by step...", signature: "sig_abc123" },
+        { type: "text", text: "The answer is 42." },
+      ]);
+    });
+
+    it("surfaces redacted thinking blocks as opaque reasoning parts", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [
+                  { type: "redacted_thinking", data: "encrypted-blob" },
+                  { type: "text", text: "ok" },
+                ],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-opus-4-6");
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.content, [
+        { type: "reasoning", redactedData: "encrypted-blob" },
+        { type: "text", text: "ok" },
+      ]);
+    });
+
+    it("replays reasoning content parts as thinking blocks on the next request", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-opus-4-6");
+      await runtime.doGenerate({
+        prompt: [
+          userPrompt,
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "reasoning",
+                text: "Step by step thinking...",
+                signature: "sig_abc123",
+              },
+              { type: "text", text: "The answer is 42." },
+            ],
+          },
+          { role: "user", content: [{ type: "text", text: "Are you sure?" }] },
+        ],
+      });
+      const body = captured as {
+        messages: Array<{ role: string; content: Array<Record<string, unknown>> }>;
+      } | null;
+      assertEquals(body?.messages[1].role, "assistant");
+      assertEquals(body?.messages[1].content[0], {
+        type: "thinking",
+        thinking: "Step by step thinking...",
+        signature: "sig_abc123",
+      });
+      assertEquals(body?.messages[1].content[1], {
+        type: "text",
+        text: "The answer is 42.",
+      });
+    });
+
+    it("replays redacted reasoning parts as redacted_thinking blocks", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-opus-4-6");
+      await runtime.doGenerate({
+        prompt: [
+          userPrompt,
+          {
+            role: "assistant",
+            content: [
+              { type: "reasoning", redactedData: "encrypted-blob" },
+              { type: "text", text: "ok" },
+            ],
+          },
+          { role: "user", content: [{ type: "text", text: "go on" }] },
+        ],
+      });
+      const body = captured as {
+        messages: Array<{ role: string; content: Array<Record<string, unknown>> }>;
+      } | null;
+      assertEquals(body?.messages[1].content[0], {
+        type: "redacted_thinking",
+        data: "encrypted-blob",
+      });
+    });
+  });
 });
