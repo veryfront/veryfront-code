@@ -95,14 +95,12 @@ flowchart TD
 
     ModelString --> AutoCheck
     AutoCheck -->|yes| LocalModel
-    AutoCheck -->|no| CloudCheck
+    AutoCheck -->|no| DirectKey
     LocalModel --> CloudCheck
 
-    CloudCheck -->|"yes + local model"| CloudProxy
-    CloudCheck -->|no| DirectKey
     DirectKey -->|yes| DirectAPI
     DirectKey -->|no| CloudCheck
-    CloudCheck -->|"yes + no direct key"| CloudProxy
+    CloudCheck -->|yes| CloudProxy
     CloudCheck -->|"no + no key"| LocalFallback
 
     DirectAPI --> Registry

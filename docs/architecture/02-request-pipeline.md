@@ -65,8 +65,8 @@ flowchart TD
         StaticFile["Static File<br/>(/_vf_modules/, assets/)"]
         APIRoute["API Route<br/>(src/api/)"]
         PageRoute["Page Route<br/>(src/pages/)"]
-        MCPEndpoint["MCP Endpoint<br/>(/mcp)"]
-        AgentEndpoint["Agent Endpoint<br/>(/agents/stream)"]
+        MCPEndpoint["MCP Endpoint<br/>(configurable path, default /mcp)"]
+        AgentEndpoint["Agent Endpoint<br/>(configurable path, default /agents/stream)"]
     end
 
     subgraph MiddlewarePipeline["Middleware Pipeline"]

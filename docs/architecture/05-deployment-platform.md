@@ -58,10 +58,6 @@ graph TB
         end
     end
 
-    subgraph Capabilities["Runtime Capabilities"]
-        CapTable["| Capability    | Deno | Node | Bun  | CF   |<br/>|--------------|------|------|------|------|<br/>| TypeScript    | no*  | no   | yes  | no   |<br/>| HTTP/2        | no   | yes  | no   | no   |<br/>| WebSocket     | yes  | yes  | yes  | yes  |<br/>| File Watch    | yes  | yes  | yes  | no   |<br/>| Shell         | yes  | yes  | yes  | no   |<br/>| KV Store      | yes  | no   | no   | yes  |<br/>| Writable FS   | yes  | yes  | yes  | no   |"]
-    end
-
     Detect --> DenoCheck & BunCheck & NodeCheck & CFCheck
     DenoCheck -->|match| DenoAdapter
     BunCheck -->|match| BunAdapter
@@ -69,8 +65,22 @@ graph TB
     CFCheck -->|match| CFAdapter
 
     AdapterInterface --> Adapters
-    Adapters --> Capabilities
 ```
+
+### Runtime Capabilities
+
+| Capability   | Deno | Node | Bun | Cloudflare Workers |
+|--------------|------|------|-----|--------------------|
+| TypeScript   | no (1) | no | yes | no |
+| HTTP/2       | no   | yes  | no  | no |
+| WebSocket    | yes  | yes  | yes | yes |
+| File Watch   | yes (2) | yes | yes | no |
+| Shell        | yes  | yes  | yes | no |
+| KV Store     | yes  | no   | no  | yes |
+| Writable FS  | yes  | yes  | yes | no |
+
+1. Deno supports TypeScript natively, but veryfront uses esbuild for its own transforms rather than Deno's built-in TS compiler.
+2. Deno uses poll-based file watching (manual snapshot diffing) due to platform limitations.
 
 ### Description
 
