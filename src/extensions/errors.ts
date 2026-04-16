@@ -17,7 +17,7 @@ export const MISSING_EXTENSION_ERROR = defineError({
 export const EXTENSION_VALIDATION_ERROR = defineError({
   slug: "extension-validation",
   category: "CONFIG",
-  status: 500,
+  status: 422,
   title: "Extension validation failed",
   suggestion: "Check that the extension exports a valid name, version, and capabilities array",
 });
@@ -25,7 +25,7 @@ export const EXTENSION_VALIDATION_ERROR = defineError({
 export const CIRCULAR_DEPENDENCY_ERROR = defineError({
   slug: "extension-circular-dependency",
   category: "CONFIG",
-  status: 500,
+  status: 422,
   title: "Circular dependency detected between extensions",
   suggestion: "Review the 'extends' fields in your extensions to break the cycle",
 });
@@ -33,7 +33,7 @@ export const CIRCULAR_DEPENDENCY_ERROR = defineError({
 export const EXTENSION_CONFLICT_ERROR = defineError({
   slug: "extension-conflict",
   category: "CONFIG",
-  status: 500,
+  status: 409,
   title: "Conflicting extensions detected",
   suggestion: "Remove or disable one of the conflicting extensions in your configuration",
 });
