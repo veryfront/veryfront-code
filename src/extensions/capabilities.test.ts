@@ -60,6 +60,12 @@ describe("capabilities", () => {
       assertEquals(perms, ["--allow-run=esbuild"]);
     });
 
+    it("should map net:listen ports to --allow-net with host:port format", () => {
+      const caps: Capability[] = [{ type: "net:listen", ports: [3000, 8080] }];
+      const perms = mapToDenoPermissions(caps);
+      assertEquals(perms, ["--allow-net=0.0.0.0:3000,0.0.0.0:8080"]);
+    });
+
     it("should map fs:read without paths to unscoped --allow-read", () => {
       const caps: Capability[] = [{ type: "fs:read" }];
       const perms = mapToDenoPermissions(caps);

@@ -26,11 +26,22 @@ export function formatCapabilities(capabilities: Capability[]): string[] {
   });
 }
 
-const DENO_PERMISSION_MAP: Record<string, { flag: string; scopeKey?: string }> = {
+interface PermissionMapping {
+  flag: string;
+  scopeKey?: string;
+  /** Transform scope values before joining (e.g., ports → host:port). */
+  transformScope?: (value: string) => string;
+}
+
+const DENO_PERMISSION_MAP: Record<string, PermissionMapping> = {
   "fs:read": { flag: "--allow-read", scopeKey: "paths" },
   "fs:write": { flag: "--allow-write", scopeKey: "paths" },
   "net:outbound": { flag: "--allow-net", scopeKey: "hosts" },
-  "net:listen": { flag: "--allow-net", scopeKey: "ports" },
+  "net:listen": {
+    flag: "--allow-net",
+    scopeKey: "ports",
+    transformScope: (port) => `0.0.0.0:${port}`,
+  },
   "env:read": { flag: "--allow-env", scopeKey: "keys" },
   "process:spawn": { flag: "--allow-run", scopeKey: "commands" },
   "native:ffi": { flag: "--allow-ffi" },
@@ -52,7 +63,8 @@ export function mapToDenoPermissions(capabilities: Capability[]): string[] {
     if (mapping.scopeKey) {
       const scopes = cap[mapping.scopeKey] as string[] | undefined;
       if (scopes && scopes.length > 0) {
-        flag = `${flag}=${scopes.join(",")}`;
+        const values = mapping.transformScope ? scopes.map(mapping.transformScope) : scopes;
+        flag = `${flag}=${values.join(",")}`;
       }
     }
 
