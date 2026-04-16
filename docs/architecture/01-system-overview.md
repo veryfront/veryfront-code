@@ -2,7 +2,9 @@
 
 ## High-Level Architecture
 
-Veryfront Code is a full-stack TypeScript app framework that combines rendering (SSR/RSC/SSG), AI capabilities, and multi-runtime deployment. It is the open core of the Veryfront platform. AI is part of the core framework model, not a separate addon layer. Veryfront Cloud is the primary managed path, and the same runtime can also be self-hosted or deployed to other cloud environments.
+Veryfront Code is a full-stack framework for AI apps and agents, combining rendering (SSR/RSC/SSG), native AI capabilities, and multi-runtime deployment.
+
+It is the open core of the Veryfront platform.
 
 ```mermaid
 graph TB
