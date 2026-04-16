@@ -13,12 +13,11 @@ export function resolve<T>(name: string): T {
   const impl = contracts.get(name);
   if (impl === undefined) {
     const recommendation = getRecommendation(name);
-    const suggestion = recommendation ? `Install it with: deno add ${recommendation}` : undefined;
     throw MISSING_EXTENSION_ERROR.create({
       message: `Missing extension for contract "${name}"${
         recommendation ? `. Recommended: ${recommendation}` : ""
       }`,
-      suggestion,
+      detail: recommendation ? `Install it with: deno add ${recommendation}` : undefined,
     });
   }
   return impl as T;
