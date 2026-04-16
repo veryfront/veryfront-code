@@ -32,6 +32,11 @@ const SOURCE_PRIORITY: Record<ExtensionSource, number> = {
 export function validateExtension(ext: Extension): string[] {
   const issues: string[] = [];
 
+  if (ext === null || ext === undefined || typeof ext !== "object") {
+    issues.push("Extension must be a non-null object.");
+    return issues;
+  }
+
   if (typeof ext.name !== "string" || ext.name.length === 0) {
     issues.push("name must be a non-empty string");
   }

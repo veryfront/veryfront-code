@@ -73,6 +73,22 @@ describe("validateExtension", () => {
     assertEquals(issues.length > 0, true);
     assertEquals(issues.some((i) => i.includes("type")), true);
   });
+
+  it("should reject null input", () => {
+    const issues = validateExtension(null as unknown as Extension);
+    assertEquals(issues.length, 1);
+    assertEquals(issues[0].includes("object"), true);
+  });
+
+  it("should reject undefined input", () => {
+    const issues = validateExtension(undefined as unknown as Extension);
+    assertEquals(issues.length, 1);
+  });
+
+  it("should reject non-object input", () => {
+    const issues = validateExtension("not-an-object" as unknown as Extension);
+    assertEquals(issues.length, 1);
+  });
 });
 
 describe("detectConflicts", () => {
