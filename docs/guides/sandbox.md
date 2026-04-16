@@ -10,11 +10,13 @@ Run isolated commands and file operations in ephemeral sandbox sessions.
 
 Use the sandbox when your app needs short-lived, isolated execution for tasks like code generation, repo inspection, file transformation, or script execution.
 
+The sandbox client talks to authenticated sandbox session APIs. In practice, that means you need either Veryfront Cloud credentials or your own compatible backing API/service layer for `/sandbox-sessions`.
+
 ## Create a sandbox session
 
-Use `Sandbox.create()` with standard Veryfront Cloud auth. In local development,
-`VERYFRONT_API_TOKEN` is enough. In remote requests, request-scoped credentials
-are used automatically.
+Use `Sandbox.create()` with sandbox API credentials. In local development,
+`VERYFRONT_API_TOKEN` plus a reachable `VERYFRONT_API_URL` is the default path.
+In remote requests, request-scoped credentials can be used automatically.
 
 ```ts
 import { Sandbox } from "veryfront/sandbox";
@@ -30,6 +32,14 @@ const sandbox = await Sandbox.get(sessionId);
 
 If you need to override the resolved credentials, pass `authToken`
 explicitly. This can be a JWT or a Studio-generated API key.
+
+If you need project-scoped billing or isolation, pass `projectId` when creating the session.
+
+```ts
+const sandbox = await Sandbox.create({
+  projectId: "proj_123",
+});
+```
 
 ## Execute commands
 

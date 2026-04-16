@@ -24,7 +24,7 @@ Purpose-built for TypeScript and React, Veryfront gives you everything you need 
 
 - [**Memory & Streaming**](https://veryfront.com/docs/code/guides/memory-and-streaming) — Give agents conversation history and streaming responses. Built-in chat UI components for React.
 
-- [**MCP Server**](https://veryfront.com/docs/code/guides/mcp-server) — Expose agents, tools, and resources via the Model Context Protocol. Connect your coding agent to live errors, logs, and HMR.
+- [**MCP Server**](https://veryfront.com/docs/code/guides/mcp-server) — Expose tools, prompts, and resources via the Model Context Protocol.
 
 - [**Pages & Routing**](https://veryfront.com/docs/code/guides/pages-and-routing) — File-based routing with React Server Components, layouts, and server-side rendering.
 

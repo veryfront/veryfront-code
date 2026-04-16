@@ -8,7 +8,7 @@ order: 1
 
 Create and run a Veryfront project in under 2 minutes.
 
-Veryfront Code is the open core of the Veryfront platform. This quickstart uses Veryfront Cloud by default, but the same project can also run self-hosted or on other cloud infrastructure.
+Veryfront Code is the open core of the Veryfront platform. The flow below starts locally and ends with an optional Veryfront Cloud deploy; the same project can also run self-hosted or on other cloud infrastructure.
 The npm package, CLI, and import name remain `veryfront`.
 
 ## Install

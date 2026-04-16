@@ -32,7 +32,7 @@ graph TB
             AgentRT["Agent Runtime<br/>(multi-step, streaming)"]
             Tools["Tool Registry<br/>(Zod schemas)"]
             Workflows["Workflow Engine<br/>(DAG execution)"]
-            Providers["Provider System<br/>(OpenAI, Anthropic, Google)"]
+            Providers["Provider System<br/>(local, Veryfront Cloud,<br/>OpenAI, Anthropic, Google)"]
             Embedding["Embedding / RAG<br/>(vector search)"]
         end
 

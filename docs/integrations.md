@@ -1,25 +1,25 @@
 ---
 title: "Integrations"
-description: "Config-driven integration tools with OAuth, token management, and API execution for 37+ services."
+description: "Config-driven integration tools with OAuth, token management, and API execution across the built-in connector catalog."
 order: 1
 ---
 
 # Integrations
 
-Veryfront integrations let AI agents use third-party services on behalf of users. Developers enable integrations in `veryfront.config.ts` and the framework handles everything — tool registration, OAuth flows, token management, and API execution.
+Veryfront integrations let AI agents use third-party services on behalf of users. Developers enable integrations in `veryfront.config.ts`, and the runtime uses the built-in connector catalog plus remote integration helpers to fetch tool definitions and execute calls through the configured API layer.
 
 ## How It Works
 
 ```
-veryfront.config.ts            Renderer (framework)               API (token vault)
+veryfront.config.ts            Runtime helpers                    API / service layer
 ┌──────────────────┐     ┌────────────────────────────┐     ┌────────────────────────┐
 │ integrations:    │────▶│ 1. Read config             │     │ Connector specs (JSON) │
-│   github: {}     │     │ 2. Fetch connector spec    │────▶│ OAuth ceremonies       │
-│   slack:         │     │    (cached 5 min)          │     │ Token storage          │
-│     tools:       │     │ 3. Generate MCP tools      │     │ Auto-refresh           │
+│   github: {}     │     │ 2. Sync integration config │────▶│ OAuth / token flows    │
+│   slack:         │     │ 3. Fetch remote tools      │     │ Token storage          │
+│     tools:       │     │    and schemas             │     │ Remote tool execution  │
 │       - send-msg │     │ 4. On tool call:           │     │                        │
-│   linear:        │     │    a. Get token from API   │────▶│ GET /oauth/token/:name │
-│     perUser: true│     │    b. Call external API    │     │ → { accessToken }      │
+│   linear:        │     │    a. Resolve API auth     │────▶│ Provider auth state    │
+│     perUser: true│     │    b. Call remote tool     │     │ Tool response          │
 └──────────────────┘     └─────────────┬──────────────┘     └────────────────────────┘
                                        │ Bearer token
                                        ▼
@@ -29,8 +29,8 @@ veryfront.config.ts            Renderer (framework)               API (token vau
 ```
 
 **Key points:**
-- The **renderer** owns tool listing and execution — tools run in-process, not proxied through the API
-- The **API** is the token vault — it handles OAuth ceremonies, stores encrypted tokens, and auto-refreshes expired ones
+- The **runtime** reads integration config locally, syncs it to the API when needed, and fetches remote tool definitions per request
+- The **API / service layer** is responsible for OAuth, token storage, and remote integration execution
 - **Config-driven** — adding `github: {}` to the `integrations` record enables all GitHub tools instantly
 - **Per-user tokens** — set `perUser: true` so each end-user authenticates with their own account
 - **Tool allowlisting** — use `tools: ["send-message"]` to expose only specific tools
@@ -68,14 +68,14 @@ When an agent calls an integration tool and no valid token exists:
 
 1. Tool returns `{ error: "authentication_required", connectUrl: "..." }`
 2. Agent surfaces the connect URL to the user
-3. User clicks → Veryfront OAuth app → Provider consent screen → Callback
-4. Token stored per (project, user, integration) — encrypted at rest
-5. Subsequent tool calls succeed automatically
-6. Token refresh is transparent — users never see expiry errors
+3. User clicks → configured OAuth app → provider consent screen → callback
+4. The backing API layer stores the resulting token according to its configured token store
+5. Subsequent tool calls can use that token automatically
+6. Refresh behavior depends on the provider and the API/service layer you run behind these endpoints
 
-### Zero-Config OAuth (Managed Apps)
+### OAuth credentials and deployment model
 
-For OAuth integrations, Veryfront provides **managed OAuth apps** by default. Developers don't need to create their own OAuth apps — just add the integration to config and it works.
+The open-core repo exposes provider metadata, OAuth handler building blocks, and integration/runtime helpers. Managed OAuth defaults, shared provider apps, and token-vault behavior depend on the API/service layer you deploy behind these endpoints.
 
 ### BYO Credentials
 
@@ -86,18 +86,18 @@ GITHUB_CLIENT_ID=your_app_id
 GITHUB_CLIENT_SECRET=your_app_secret
 ```
 
-When both are set, the system uses your credentials. Otherwise, it falls back to Veryfront's managed app.
+When these are set in the backing API environment, the OAuth handlers use them directly.
 
-## API Setup for Managed OAuth Apps
+## API Setup for OAuth Credentials
 
-To enable zero-config OAuth for users, Veryfront needs a registered OAuth app for each provider. Here's how to set them up:
+If you are running your own API/service layer for integrations, register an OAuth app for each provider you enable and configure the matching credentials there.
 
 ### Provider Registration
 
 For each OAuth provider, create an application and configure the callback URL:
 
 ```
-https://api.veryfront.com/api/oauth/callback/{integration-name}
+https://<api-host>/api/oauth/callback/{integration-name}
 ```
 
 Then set the credentials as environment variables on the API:
@@ -169,7 +169,7 @@ Outlook, Teams, OneDrive, and SharePoint all use `MICROSOFT_CLIENT_ID` / `MICROS
 
 ### API-Key Integrations (no OAuth setup needed)
 
-These integrations use API keys set by the developer in their project environment variables — no Veryfront OAuth app needed:
+These integrations use API keys set by the developer in their project environment variables — no OAuth app needed:
 
 | Integration | Required Variables |
 |-------------|-------------------|
@@ -186,7 +186,7 @@ These integrations use API keys set by the developer in their project environmen
 
 ## Available Integrations
 
-### Project Management (30 tools)
+### Project Management
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **Jira** | search-issues, get-issue, create-issue, update-issue, list-projects | OAuth |
@@ -196,7 +196,7 @@ These integrations use API keys set by the developer in their project environmen
 | **Monday.com** | list-boards, list-items, get-item, create-item, update-item | OAuth (GraphQL) |
 | **Trello** | list-boards, list-cards, get-card, create-card, update-card | OAuth |
 
-### Code & DevOps (22 tools)
+### Code & DevOps
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **GitHub** | list-repos, list-prs, create-issue, get-pr-diff | OAuth |
@@ -205,7 +205,7 @@ These integrations use API keys set by the developer in their project environmen
 | **Sentry** | list-projects, list-issues, get-issue, resolve-issue | API Key |
 | **AWS** | list-s3-buckets, list-s3-objects, get-s3-object, list-ec2-instances, list-lambda-functions | API Key |
 
-### Communication (24 tools)
+### Communication
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **Slack** | list-channels, send-message, get-messages | OAuth |
@@ -216,7 +216,7 @@ These integrations use API keys set by the developer in their project environmen
 | **Twilio** | send-sms, send-whatsapp, list-messages, get-message, list-calls | API Key |
 | **Webex** | list-meetings, get-meeting, create-meeting, list-rooms, send-message | OAuth |
 
-### Documents & Storage (34 tools)
+### Documents & Storage
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **Notion** | search-notion, read-page, create-page, query-database | OAuth |
@@ -229,7 +229,7 @@ These integrations use API keys set by the developer in their project environmen
 | **OneDrive** | list-files, search-files, upload-file, download-file | OAuth |
 | **SharePoint** | list-sites, get-site, list-files, get-file, upload-file | OAuth |
 
-### CRM & Sales (20 tools)
+### CRM & Sales
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **HubSpot** | list-contacts, get-contact, create-contact, list-deals, create-deal | OAuth |
@@ -237,56 +237,56 @@ These integrations use API keys set by the developer in their project environmen
 | **Pipedrive** | list-deals, get-deal, create-deal, update-deal, list-persons | OAuth |
 | **Intercom** | list-contacts, get-contact, list-conversations, get-conversation, send-message | OAuth |
 
-### Databases (15 tools)
+### Databases
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **Supabase** | list-tables, query-table, insert-row, update-row, delete-row | API Key |
 | **Neon** | list-projects, list-branches, query-database, list-tables, describe-table | API Key |
 | **Snowflake** | run-query, list-databases, list-schemas, list-tables, describe-table | API Key |
 
-### Design (5 tools)
+### Design
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **Figma** | list-files, get-file, get-comments, post-comment, list-projects | OAuth |
 
-### Analytics (14 tools)
+### Analytics
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **Mixpanel** | track-event, query-events, get-funnel, get-retention, list-cohorts | API Key |
 | **PostHog** | get-trends, list-feature-flags, list-persons, capture-event | API Key |
 | **Anthropic** | list-workspaces, get-usage, list-api-keys, list-members, get-organization | API Key |
 
-### Finance & Accounting (15 tools)
+### Finance & Accounting
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **Stripe** | list-customers, get-customer, list-payments, get-balance, list-subscriptions | API Key |
 | **QuickBooks** | list-invoices, get-invoice, create-invoice, list-customers, get-customer | OAuth |
 | **Xero** | list-invoices, get-invoice, create-invoice, list-contacts, get-contact | OAuth |
 
-### Support (14 tools)
+### Support
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **Zendesk** | list-tickets, get-ticket, create-ticket, search-tickets | OAuth |
 | **Freshdesk** | list-tickets, get-ticket, create-ticket, update-ticket, list-contacts | OAuth |
 | **ServiceNow** | list-incidents, get-incident, create-incident, update-incident, search-knowledge | OAuth |
 
-### Calendar & Meetings (13 tools)
+### Calendar & Meetings
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **Google Calendar** | list-events, create-event, find-free-time | OAuth |
 | **Zoom** | list-meetings, get-meeting, create-meeting, update-meeting, delete-meeting | OAuth |
 
-### Marketing (5 tools)
+### Marketing
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **Mailchimp** | list-campaigns, get-campaign, list-lists, get-list, list-members | OAuth |
 
-### E-Commerce (5 tools)
+### E-Commerce
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **Shopify** | list-products, get-product, list-orders, get-order, list-customers | OAuth |
 
-### Social (6 tools)
+### Social
 | Integration | Tools | Auth |
 |-------------|-------|------|
 | **Twitter/X** | search-tweets, post-tweet, get-timeline | OAuth |
@@ -294,4 +294,4 @@ These integrations use API keys set by the developer in their project environmen
 
 ---
 
-**50 integrations** | **235 tools** | **40 OAuth + 10 API Key**
+The built-in connector catalog spans OAuth-backed and API-key-backed integrations. Treat the tables above as representative current coverage rather than a hard-coded count contract.

@@ -15,3 +15,4 @@ This directory contains Mermaid architecture diagrams that describe the internal
 | [05-deployment-platform.md](./05-deployment-platform.md) | Deployment platform, runtime adapters, filesystem resolution |
 | [06-discovery-extensions.md](./06-discovery-extensions.md) | Auto-discovery engine, extension contracts, observability |
 | [07-architecture-issues.md](./07-architecture-issues.md) | Current architectural pressure points and strengthening directions |
+| [08-support-matrix.md](./08-support-matrix.md) | Router modes, runtime targets, and open-core vs service-backed capability boundaries |

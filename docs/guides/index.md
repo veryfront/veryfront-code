@@ -40,12 +40,12 @@ Learn Veryfront Code from the ground up: pages, routing, AI agents, and deployme
 | Guide                              | Description                                                                                       |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
 | [Jobs & Cron Jobs](./jobs.md)      | Create one-off jobs, schedule cron jobs, inspect events, and work with batch summaries.           |
-| [Providers](./providers.md)        | Unified LLM interface for OpenAI, Anthropic, and Google.                                          |
+| [Providers](./providers.md)        | Unified model interface for local, Veryfront Cloud, and direct provider runtimes.                 |
 | [Middleware](./middleware.md)      | CORS, rate limiting, logging, and custom middleware pipelines.                                    |
-| [OAuth](./oauth.md)                | OAuth 2.0 with 37 pre-configured providers.                                                       |
+| [OAuth](./oauth.md)                | OAuth 2.0 helpers with a built-in provider catalog.                                               |
 | [MCP Server](./mcp-server.md)      | Expose tools, prompts, and resources over Model Context Protocol.                                 |
 | [Sandbox](./sandbox.md)            | Run isolated commands and file operations in ephemeral sandbox sessions.                          |
-| [Integrations](../integrations.md) | Config-driven integration tools with OAuth, token management, and API execution for 37+ services. |
+| [Integrations](../integrations.md) | Config-driven integration tools with OAuth, token management, and API execution across the built-in connector catalog. |
 
 ## Production
 

@@ -16,9 +16,21 @@ This guide covers the application-facing MCP server exposed by `veryfront/mcp`. 
 import { createMCPServer } from "veryfront/mcp";
 
 const server = createMCPServer({ enabled: true });
+const handler = server.createHTTPHandler();
+
+export const POST = handler;
+export const DELETE = handler;
+export const OPTIONS = handler;
 ```
 
-That's it. All auto-discovered tools, prompts, and resources are exposed. AI clients (Claude Desktop, Cursor, etc.) can now connect and use them.
+Mount the handler on your application-owned MCP route. All auto-discovered tools, prompts, and resources are then exposed through the app-facing MCP transport.
+
+The HTTP transport is session-based:
+
+- clients `POST` `initialize`
+- the server returns `MCP-Session-Id`
+- subsequent requests send that header back
+- `DELETE` with the session header ends the session
 
 ## Tools
 
@@ -98,37 +110,11 @@ registerTool("custom-tool", tool({
 }));
 ```
 
-## Connecting clients
+## Transport note
 
-### Claude Desktop
+This guide is about the application-facing MCP server from `veryfront/mcp`.
 
-Add to your Claude Desktop config (`claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "my-app": {
-      "command": "veryfront",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-### Cursor
-
-Add to your `.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "my-app": {
-      "command": "veryfront",
-      "args": ["mcp"]
-    }
-  }
-}
-```
+It is not the same surface as the CLI development server started with `veryfront mcp`, which exposes Veryfront development/runtime tools rather than your app's MCP route.
 
 ## Next
 

@@ -1,12 +1,12 @@
 ---
 title: "veryfront/oauth"
-description: "OAuth 2.0 with 37 pre-configured providers."
+description: "OAuth 2.0 helpers with a built-in provider catalog."
 order: 16
 ---
 
 # veryfront/oauth
 
-OAuth 2.0 with 37 pre-configured providers.
+OAuth 2.0 helpers with a built-in provider catalog.
 
 Route examples below use the default app router. Equivalent handlers can also be mounted under `pages/api/**` when the pages router is enabled.
 
@@ -26,7 +26,7 @@ import {
 ## Examples
 
 ```typescript
-// Create OAuth routes with pre-configured providers
+// Create OAuth routes with built-in provider configs
 import { createOAuthInitHandler, createOAuthCallbackHandler, gmailConfig } from "veryfront/oauth";
 
 // app/api/auth/gmail/route.ts

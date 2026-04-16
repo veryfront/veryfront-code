@@ -38,8 +38,9 @@ tool({
   execute: async ({ query }) => ({ results: [] }),
 });
 
-// Start MCP server — registered tools are exposed automatically
-const server = createMCPServer();
+// Create the app-facing MCP server and mount its HTTP handler
+const server = createMCPServer({ enabled: true });
+const handler = server.createHTTPHandler();
 ```
 
 ## API
@@ -49,6 +50,26 @@ const server = createMCPServer();
 Create MCP server
 
 **Returns:** `MCPServer`
+
+### `server.createHTTPHandler()`
+
+Create the HTTP transport handler for the application-facing MCP server.
+
+The handler expects MCP JSON-RPC over HTTP, manages `MCP-Session-Id` headers
+after `initialize`, and handles `POST`, `DELETE`, and `OPTIONS` requests.
+
+**Returns:** `(request: Request) => Promise<Response>`
+
+### `MCPServerConfig`
+
+Current config shape:
+
+| Property | Type | Description |
+|------|-------------|-------------|
+| `enabled` | `boolean` | Enable the MCP server surface |
+| `port?` | `number` | Optional port for hosted/runtime wiring |
+| `auth?` | `{ type: "bearer" \| "api-key" \| "none"; validate?: Function }` | Optional request authentication |
+| `cors?` | `{ enabled: boolean; origins?: string[] }` | Optional CORS configuration |
 
 ## Exports
 

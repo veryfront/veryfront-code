@@ -372,7 +372,7 @@ export default function ChatPage() {
 
 | `inferenceMode`  | Description                                        |
 | ---------------- | -------------------------------------------------- |
-| `"cloud"`        | Using a cloud provider (OpenAI, Anthropic, Google) |
+| `"cloud"`        | Using Veryfront Cloud or a direct cloud provider runtime |
 | `"server-local"` | Running SmolLM2 locally via ONNX Runtime           |
 | `"browser"`      | Running SmolLM2 in a browser Web Worker            |
 

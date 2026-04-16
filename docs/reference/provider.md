@@ -1,12 +1,12 @@
 ---
 title: "veryfront/provider"
-description: "Provider registry for resolving \"provider/model\" strings to framework-compatible model runtimes. Auto-initializes built-in providers from environment variables on first use."
+description: "Provider registry for resolving \"provider/model\" strings to local, Veryfront Cloud, and direct provider runtimes."
 order: 17
 ---
 
 # veryfront/provider
 
-Provider registry. Maps "provider/model" strings to framework-compatible model runtimes.
+Provider registry. Maps "provider/model" strings to local, Veryfront Cloud, and direct provider runtimes.
 
 Most apps do not need this directly. Omit `model` on `agent()` to follow
 runtime defaults, or use `resolveModel()` and `registerModelProvider()` when

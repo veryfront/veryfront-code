@@ -150,7 +150,7 @@ The request pipeline has five route categories:
 
 - **Static Files:** Served directly with cache headers and optional compression. No middleware needed.
 - **API Routes:** Pass through the full middleware pipeline, then execute the user-defined handler function. Depending on router mode, these come from `app/api/**/route.*` or `pages/api/**`. Input is validated and output is serialized as JSON.
-- **Page Routes:** The most complex path. After middleware, the rendering engine fetches data via `getServerData()`, resolves the active router mode, runs SSR, optionally applies RSC transforms, and streams the HTML response with Suspense boundaries and hydration scripts. App-router projects add nested `layout.tsx` and `error.tsx` resolution on top of that flow.
+- **Page Routes:** The most complex path. After middleware, the rendering engine fetches data via `getServerData()`, resolves the active router mode, runs SSR, optionally applies RSC transforms, and streams the HTML response with Suspense boundaries and hydration scripts. Both router modes can apply matching `layout.tsx` and `error.tsx` files, but the composition rules differ between app-router and pages-router projects.
 - **MCP Endpoints:** Handle JSON-RPC requests for the MCP protocol. Session validation, dispatch to tools/resources/prompts, and support for async tasks.
 - **AG-UI Endpoints:** The package-level AG-UI handlers are designed around host-configurable routes such as `/api/ag-ui`, but the current Studio/control-plane path uses the signed compatibility wrapper at `/internal/agents/stream`. This transport is separate from MCP and streams AG-UI SSE events back to the client.
 
@@ -162,8 +162,8 @@ The request pipeline has five route categories:
 flowchart LR
     subgraph Input["Page Input"]
         PageFile["Page Component<br/>(app/about/page.*<br/>or pages/about.*)"]
-        Layouts["Layout Chain<br/>(app router only:<br/>layout.tsx at each level)"]
-        ErrorBoundaries["Error Boundaries<br/>(app router only:<br/>error.tsx)"]
+        Layouts["Layout Chain<br/>(matching app/**/layout.*<br/>or pages/**/layout.*)"]
+        ErrorBoundaries["Error Boundaries<br/>(matching app/**/error.*<br/>or pages/**/error.*)"]
     end
 
     subgraph DataPhase["Data Phase"]
@@ -208,7 +208,7 @@ flowchart LR
 The rendering pipeline converts page components into streamed HTML:
 
 1. **Data Phase:** `getServerData(ctx)` runs server-side to fetch props. For SSG, `getStaticPaths()` enumerates routes at build time.
-2. **Render Phase:** The renderer resolves the active route file, then applies router-specific composition. In app-router mode it compiles the nested `layout.tsx` tree and `error.tsx` boundaries; in pages-router mode it renders the matched page directly. Components are then resolved as client or server components and rendered via React's streaming API.
+2. **Render Phase:** The renderer resolves the active route file, then applies router-specific composition. In app-router mode it compiles nested `layout.tsx` and `error.tsx` files along the route tree. In pages-router mode it applies matching `pages/**/layout.tsx` and `pages/**/error.tsx` wrappers when present. Components are then resolved as client or server components and rendered via React's streaming API.
 3. **Output Phase:** If RSC is enabled, an RSC payload is generated alongside the HTML. The output includes the HTML shell, hydration scripts for client-side bootstrapping, and SEO meta tags. The response is streamed using chunked transfer encoding with Suspense boundary support.
 
 ---

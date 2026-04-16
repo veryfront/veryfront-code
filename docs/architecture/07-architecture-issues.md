@@ -143,6 +143,27 @@ Target direction:
 - keep canonical contracts easy to identify,
 - prefer package-level contract docs over route-specific implementation details.
 
+### 7. Documentation needs support matrices and recommendation markers where behavior is still evolving
+
+Several areas of the framework are real and production-relevant, but their exact support shape is easy to overstate in prose:
+
+- deployment/runtime portability,
+- generated integration catalogs and provider counts,
+- built-in versus user-composed MCP surfaces,
+- and implementation details that are stable enough to use but not yet strong enough to treat as product guarantees.
+
+Impact:
+
+- docs can drift into false precision,
+- contributors may read composition patterns as native built-ins,
+- operational decisions become harder because support claims are qualitative instead of explicit.
+
+Target direction:
+
+- prefer support matrices or source-backed summaries for fast-moving capability surfaces,
+- use recommendation language when a pattern is valid but not a built-in managed surface,
+- avoid manual exact counts in high-level doc copy unless those counts are generated from the same source of truth.
+
 ## Strengthening Directions
 
 ### 1. Replace strict layers with domains and bridges
@@ -200,3 +221,31 @@ If an issue becomes resolved, remove it or turn the outcome into:
 - a decision record,
 - a stronger architecture diagram,
 - or an enforced boundary rule.
+
+## Improvement Recommendations
+
+### SOTA Documentation Benchmarks
+
+- Recommended paths and supported alternatives should be separated explicitly instead of blended into one story.
+- Operator-facing docs should use exact env vars, endpoint names, and protocol terms from the implementation or official specs.
+- Public contracts should be documented separately from internal wrappers, compatibility routes, or managed-platform behavior.
+- High-drift capability surfaces should prefer generated support tables or short support matrices over narrative summaries.
+
+### Documentation
+
+- Add short support matrices for runtime targets, router modes, and cloud-managed vs self-hosted behavior.
+- Keep those support matrices centralized in [08-support-matrix.md](./08-support-matrix.md) so high-drift support details do not spread across multiple pages.
+- Prefer generated counts or catalog summaries over hand-written exact numbers in high-churn areas.
+- Mark recommendations as recommendations when the code supports a pattern but does not provide a built-in managed surface.
+
+### Architecture
+
+- Keep bridge modules explicit and thin instead of letting them become unowned cross-domain grab bags.
+- Separate platform portability concerns from Veryfront-specific cloud/bootstrap integration concerns more clearly over time.
+- Add boundary checks only for rules we are willing to enforce in code review and tooling.
+
+### Production Readiness
+
+- Keep operator-facing docs grounded in actual env vars, routes, and API shapes from the source tree.
+- Treat deployment, auth, integrations, and observability docs as high-drift surfaces and review them against implementation more often.
+- When behavior depends on an external API or service layer outside this repo, document that dependency explicitly instead of implying the open core guarantees it alone.

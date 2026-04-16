@@ -76,6 +76,18 @@ Pages use `page.tsx` (or `page.mdx`). API routes use `route.ts`. Layouts use `la
 
 If `veryfront.config.ts` sets `router: "pages"`, use `pages/` and `pages/api/` instead.
 
+Typical pages-router layout:
+
+```text
+pages/
+  index.tsx
+  about.tsx
+  blog/[slug].tsx
+  layout.tsx
+  api/
+    chat.ts
+```
+
 See [Pages & Routing](./pages-and-routing.md) for the full routing system.
 
 ## Auto-discovered directories

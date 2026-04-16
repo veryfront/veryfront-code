@@ -237,4 +237,4 @@ Get one first-party target definition.
 
 - [Jobs & Cron Jobs](../guides/jobs.md) - guide for creating and observing jobs
 - [`veryfront/workflow`](./workflow.md) - higher-level orchestration for application logic
-- [`veryfront/mcp`](./mcp.md) - expose or consume jobs-related automation through MCP
+- [`veryfront/mcp`](./mcp.md) - expose the jobs client through your own MCP tools when you need agent-facing access

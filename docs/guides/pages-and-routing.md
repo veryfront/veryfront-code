@@ -10,6 +10,20 @@ File-based routing, layouts, dynamic routes, and MDX pages.
 
 Examples below use the default app router. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.
 
+## Router equivalents
+
+The current implementation supports both router styles. The main difference is file shape:
+
+| URL / capability | App router | Pages router |
+| ---------------- | ---------- | ------------ |
+| `/` | `app/page.tsx` | `pages/index.tsx` |
+| `/about` | `app/about/page.tsx` | `pages/about.tsx` |
+| `/blog/:slug` | `app/blog/[slug]/page.tsx` | `pages/blog/[slug].tsx` |
+| `/api/users` | `app/api/users/route.ts` | `pages/api/users.ts` |
+| Root layout | `app/layout.tsx` | `pages/layout.tsx` |
+
+Use the app router when you want the newer directory-per-route shape. Use the pages router when you want the flatter file-per-route layout.
+
 ## Basic pages
 
 ```
