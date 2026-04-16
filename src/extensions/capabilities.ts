@@ -29,8 +29,8 @@ export function formatCapabilities(capabilities: Capability[]): string[] {
 interface PermissionMapping {
   flag: string;
   scopeKey?: string;
-  /** Transform scope values before joining (e.g., ports → host:port). */
-  transformScope?: (value: string) => string;
+  /** Resolve scopes from the full capability (overrides scopeKey when present). */
+  resolveScopes?: (cap: Capability) => string[];
 }
 
 const DENO_PERMISSION_MAP: Record<string, PermissionMapping> = {
@@ -39,8 +39,12 @@ const DENO_PERMISSION_MAP: Record<string, PermissionMapping> = {
   "net:outbound": { flag: "--allow-net", scopeKey: "hosts" },
   "net:listen": {
     flag: "--allow-net",
-    scopeKey: "ports",
-    transformScope: (port) => `0.0.0.0:${port}`,
+    resolveScopes: (cap) => {
+      const ports = cap.ports as (string | number)[] | undefined;
+      if (!ports || ports.length === 0) return [];
+      const host = (cap.host as string) || "localhost";
+      return ports.map((p) => `${host}:${p}`);
+    },
   },
   "env:read": { flag: "--allow-env", scopeKey: "keys" },
   "process:spawn": { flag: "--allow-run", scopeKey: "commands" },
@@ -60,12 +64,13 @@ export function mapToDenoPermissions(capabilities: Capability[]): string[] {
     if (!mapping) continue;
 
     let flag = mapping.flag;
-    if (mapping.scopeKey) {
-      const scopes = cap[mapping.scopeKey] as string[] | undefined;
-      if (scopes && scopes.length > 0) {
-        const values = mapping.transformScope ? scopes.map(mapping.transformScope) : scopes;
-        flag = `${flag}=${values.join(",")}`;
-      }
+    const scopes = mapping.resolveScopes
+      ? mapping.resolveScopes(cap)
+      : mapping.scopeKey
+      ? (cap[mapping.scopeKey] as string[] | undefined) ?? []
+      : [];
+    if (scopes.length > 0) {
+      flag = `${flag}=${scopes.join(",")}`;
     }
 
     if (!seen.has(flag)) {

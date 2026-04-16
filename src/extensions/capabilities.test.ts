@@ -60,10 +60,16 @@ describe("capabilities", () => {
       assertEquals(perms, ["--allow-run=esbuild"]);
     });
 
-    it("should map net:listen ports to --allow-net with host:port format", () => {
+    it("should map net:listen ports to localhost:port by default", () => {
       const caps: Capability[] = [{ type: "net:listen", ports: [3000, 8080] }];
       const perms = mapToDenoPermissions(caps);
-      assertEquals(perms, ["--allow-net=0.0.0.0:3000,0.0.0.0:8080"]);
+      assertEquals(perms, ["--allow-net=localhost:3000,localhost:8080"]);
+    });
+
+    it("should map net:listen with explicit host", () => {
+      const caps: Capability[] = [{ type: "net:listen", ports: [3000], host: "0.0.0.0" }];
+      const perms = mapToDenoPermissions(caps);
+      assertEquals(perms, ["--allow-net=0.0.0.0:3000"]);
     });
 
     it("should map fs:read without paths to unscoped --allow-read", () => {
