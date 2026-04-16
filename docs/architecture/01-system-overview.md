@@ -23,7 +23,7 @@ graph TB
             CLICmd["CLI Commands<br/>(dev, build, deploy)"]
         end
 
-        subgraph Core["Core Systems"]
+        subgraph App["App Framework"]
             Router["Router<br/>(File-based + API routes)"]
             Middleware["Middleware Pipeline<br/>(Auth, CORS, Rate Limit, CSP)"]
             Rendering["Rendering Engine<br/>(SSR / RSC / SSG / Streaming)"]
@@ -43,8 +43,8 @@ graph TB
             InternalAgUi["Internal AG-UI Transport<br/>(Studio / internal agents)"]
         end
 
-        subgraph Platform["Platform Layer"]
-            Adapters["Runtime Adapters<br/>(Deno, Node, Bun, CF Workers)"]
+        subgraph Platform["Platform and Runtime"]
+            Adapters["Runtime Adapters<br/>(Deno, Node, Bun,<br/>Cloudflare Workers limited)"]
             FS["Virtual Filesystems<br/>(Local, Veryfront API, GitHub)"]
             Build["Build System<br/>(esbuild, code splitting, SSG)"]
             Discovery["Discovery Engine<br/>(auto-find tools, agents, workflows)"]
@@ -54,18 +54,22 @@ graph TB
             Security["Security<br/>(validation, CSRF, injection protection)"]
             Observability["Observability<br/>(OpenTelemetry tracing + metrics)"]
             Cache["Cache System<br/>(memory, Redis, file, distributed)"]
-            Extensions["Extension System<br/>(contracts, DI, capabilities)"]
+            Extensions["Extension System<br/>(contracts, recommendations,<br/>capabilities)"]
         end
     end
 
-    subgraph Deploy["Deployment Targets"]
+    subgraph RuntimeProfiles["Runtime Profiles"]
+        DenoRuntime["Deno"]
+        NodeRuntime["Node.js"]
+        BunRuntime["Bun"]
+        EdgeRuntime["Cloudflare Workers<br/>(limited profile)"]
+    end
+
+    subgraph Hosting["Hosting Environments"]
         VfCloud["Veryfront Cloud"]
-        AWS["AWS / Lambda"]
-        GCP["Google Cloud"]
-        Azure["Azure"]
-        Cloudflare["Cloudflare Workers"]
-        Docker["Docker / K8s"]
-        SelfHost["Self-Hosted<br/>(any Node/Deno/Bun server)"]
+        SelfHost["Self-Hosted"]
+        Containers["Docker / K8s"]
+        CloudProviders["Other Cloud Platforms"]
     end
 
     Browser --> ProdServer
@@ -74,16 +78,19 @@ graph TB
     Studio --> InternalAgUi
     CLI --> CLICmd
 
-    EntryPoints --> Core
-    Core --> AI
-    Core --> Platform
+    EntryPoints --> App
+    EntryPoints --> AI
+    App <--> AI
+    App --> Integration
     AI --> Integration
+    App --> Platform
     AI --> Platform
-    Integration --> AI
 
-    Platform --> Deploy
+    Adapters --> RuntimeProfiles
+    Build --> Hosting
+    RuntimeProfiles --> Hosting
 
-    CrossCutting -.-> Core
+    CrossCutting -.-> App
     CrossCutting -.-> AI
     CrossCutting -.-> Platform
 ```
@@ -93,12 +100,12 @@ graph TB
 The diagram shows Veryfront's high-level architecture:
 
 - **Entry Points** are how users interact with the framework: dev server with HMR for development, production server for deployment, and CLI commands for build/deploy operations.
-- **Core Systems** handle traditional app framework responsibilities: routing, middleware, rendering, and data fetching.
+- **App Framework** handles routing, middleware, rendering, and data fetching.
 - **AI Capabilities** include agents, tools, workflows, model providers, and RAG as native framework capabilities.
 - **Integration Surfaces** include the App MCP server for exposing tools/resources/prompts to MCP clients, plus a separate internal AG-UI transport used by Veryfront Studio and internal agent control-plane flows. These are related but distinct surfaces.
-- **Platform Layer** abstracts away the runtime and deployment target. Runtime adapters support Deno, Node.js, Bun, and Cloudflare Workers. Virtual filesystems allow reading project files from local disk, Veryfront API, or GitHub.
+- **Platform and Runtime** contain runtime adapters, virtual filesystems, build, and discovery. Cloudflare Workers use a more constrained runtime profile than Deno, Node.js, or Bun.
 - **Cross-Cutting Concerns** (security, observability, caching, extensions) are wired throughout all layers.
-- **Deployment Targets** center on Veryfront Cloud as the primary managed path, while the runtime and build outputs also support self-hosted and other deployment environments.
+- **Runtime Profiles and Hosting Environments** are shown separately on purpose: runtime capability is one concern, while managed hosting or self-hosted deployment is another.
 
 ---
 
