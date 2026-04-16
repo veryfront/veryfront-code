@@ -72,8 +72,10 @@ graph TB
 | Capability   | Deno | Node | Bun | Cloudflare Workers |
 |--------------|------|------|-----|--------------------|
 | TypeScript   | yes (1) | no | yes | no |
-| HTTP/2       | no   | yes  | no  | no |
+| JSX          | yes  | no   | yes | no |
+| HTTP/2       | yes  | yes  | no  | no |
 | WebSocket    | yes  | yes  | yes | yes |
+| Workers      | yes  | no   | no  | no |
 | File Watch   | yes (2) | yes | yes | no |
 | Shell        | yes  | yes  | yes | no |
 | KV Store     | yes  | no   | no  | yes |

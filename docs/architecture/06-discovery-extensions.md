@@ -20,7 +20,7 @@ flowchart TD
     end
 
     subgraph Process["Processing Pipeline"]
-        PatternMatch["Pattern Matching<br/>(exclude *.test.ts, *.spec.ts)"]
+        PatternMatch["Pattern Matching<br/>(*.ts, *.tsx files)"]
         Transpile["Transpile TypeScript<br/>(esbuild transform)"]
         DynImport["Dynamic Import<br/>(import module)"]
         ExtractExport["Extract Export<br/>(default or named)"]
@@ -77,7 +77,7 @@ flowchart TD
 
 The discovery engine follows a convention-over-configuration approach:
 
-1. **Scan:** Each primitive type has a convention-based directory (`tools/`, `agents/`, `workflows/`, etc.). Files matching `**/*.ts` are collected, excluding test files (`*.test.ts`, `*.spec.ts`).
+1. **Scan:** Each primitive type has a convention-based directory (`tools/`, `agents/`, `workflows/`, etc.). Files matching `**/*.ts` and `**/*.tsx` are collected. Note: test files in discovery directories will be imported -- place tests outside these directories or use separate test directories.
 2. **Process:** TypeScript files are transpiled via esbuild, dynamically imported, and their exports (default or named) are extracted.
 3. **Validate:** Each handler validates that the export is a valid instance of its type (e.g., a `Tool` with an `execute` function and `inputSchema`). IDs are derived from the handler's `getId()` method or fall back to the export/file name.
 4. **Register:** Valid primitives are registered in project-scoped registries. Registration makes them available to agents, the MCP server, and the workflow engine.
@@ -98,15 +98,19 @@ graph TB
         Capability["Capability Declaration<br/>(required runtime features)"]
     end
 
-    subgraph Contracts["Contracts and Recommendations"]
+    subgraph Contracts["Contracts and Recommendations (12 domains)"]
         Bundler["Bundler"]
         CacheStore["CacheStore"]
         CSSProcessor["CSSProcessor"]
+        ContentTx["ContentTransformer"]
         DatabaseClient["DatabaseClient"]
         AuthProvider["AuthProvider"]
         TracingExporter["TracingExporter"]
         AIModelProvider["AIModelProvider"]
         EmbeddingProvider["EmbeddingProvider"]
+        CodeParser["CodeParser"]
+        SchemaValidator["SchemaValidator"]
+        NodeCompat["NodeCompat"]
     end
 
     subgraph ContractSystem["Contract System"]

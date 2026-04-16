@@ -77,7 +77,7 @@ The App MCP server implements the MCP protocol (versions 2025-11-25 and 2024-11-
 1. **Initialization:** The client sends an `initialize` request. The server creates a session (UUID), exchanges capabilities, and returns the session ID as an `MCP-Session-Id` header.
 2. **Discovery:** The client lists available tools, resources, and prompts. Tools include JSON Schema input definitions and MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`).
 3. **Synchronous Execution:** For fast tools, the server validates input against the Zod schema, executes the tool, and returns the result immediately.
-4. **Async Tasks:** For long-running tools, the caller opts into task mode by including a `task` object. The server creates a task and returns a task ID. The client polls `tasks/get` until the task reaches a terminal state (`completed`, `failed`, `cancelled`). Tasks have a max capacity of 1000, with TTL-based cleanup of terminal tasks.
+4. **Async Tasks:** For long-running tools, the caller opts into task mode by including a `task` object. The server creates a task and returns a task ID. The client polls `tasks/get` for status and `tasks/result` for output until the task reaches a terminal state (`completed`, `failed`, `cancelled`). Tasks have a max capacity of 1000, with TTL-based cleanup of terminal tasks.
 
 Key features:
 - **Auth:** Bearer token validation on every request
@@ -86,6 +86,7 @@ Key features:
 - **Tool Annotations:** MCP 2025-11-25 annotations hint at tool behavior for clients
 - **Progress Tokens:** Per-tool progress reporting via `progressToken` in context
 - **Request Size Limit:** 1 MB max request body
+- **Additional Methods:** `resources/templates/list` for resource template discovery, `completion/complete` for argument autocompletion, `logging/setLevel` for dynamic log level control, and `notifications/initialized` / `notifications/cancelled` for lifecycle events
 
 ---
 
