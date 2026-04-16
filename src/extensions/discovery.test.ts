@@ -4,6 +4,10 @@
  * Verifies multi-source extension discovery: package metadata parsing,
  * merge priority, disable directives, and deduplication.
  *
+ * Note: symlink handling for pnpm-style node_modules is covered by the
+ * `isDirectory || isSymlink` check in discoverPackageExtensions() and
+ * validated via pre-push integration tests against real filesystems.
+ *
  * @module extensions/discovery.test
  */
 

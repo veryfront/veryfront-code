@@ -126,14 +126,15 @@ export async function discoverPackageExtensions(
   const entries = await readDir(nmDir);
 
   for (const entry of entries) {
-    if (!entry.isDirectory) continue;
+    // Accept symlinks so pnpm-style node_modules layouts are discovered.
+    if (!entry.isDirectory && !entry.isSymlink) continue;
 
     if (entry.name.startsWith("@")) {
       // Scoped packages -- iterate one level deeper.
       const scopeDir = `${nmDir}/${entry.name}`;
       const scopeEntries = await readDir(scopeDir);
       for (const scopeEntry of scopeEntries) {
-        if (!scopeEntry.isDirectory) continue;
+        if (!scopeEntry.isDirectory && !scopeEntry.isSymlink) continue;
         const pkgName = `${entry.name}/${scopeEntry.name}`;
         const meta = await tryReadPackageMeta(
           `${scopeDir}/${scopeEntry.name}`,
