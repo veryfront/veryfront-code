@@ -8,7 +8,7 @@ order: 1
 
 Create and run a Veryfront project in under 2 minutes.
 
-Veryfront Code is the open core of the Veryfront platform. The flow below starts locally and ends with an optional Veryfront Cloud deploy; the same project can also run self-hosted or on other cloud infrastructure.
+The flow below starts locally and ends with an optional Veryfront Cloud deploy. The same project can also run self-hosted or on other infrastructure.
 The npm package, CLI, and import name remain `veryfront`.
 
 ## Install

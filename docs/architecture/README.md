@@ -2,7 +2,7 @@
 
 This directory contains Mermaid architecture diagrams that describe the internal structure of `veryfront-code`. These diagrams are intended as reference material for AI-assisted development and for onboarding contributors.
 
-> **Note:** `veryfront-code` is the open core of the Veryfront platform. Veryfront Cloud is the primary managed path, and the same runtime can also be self-hosted or deployed to other cloud environments.
+> **Note:** These diagrams describe the open-core runtime and framework architecture. Managed Veryfront Cloud behavior is called out explicitly where it matters.
 
 ## Diagram Index
 

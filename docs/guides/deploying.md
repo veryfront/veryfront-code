@@ -8,7 +8,7 @@ order: 17
 
 Production builds, static export, and deployment targets.
 
-Veryfront Code is the open core of the Veryfront platform. Veryfront Cloud is the primary managed deployment path, and the same runtime can also be self-hosted or deployed to other cloud environments.
+Veryfront Cloud is the primary managed deployment path. The same runtime can also be self-hosted or deployed on other infrastructure.
 The npm package, CLI, and import name remain `veryfront`.
 
 ## Build
@@ -91,7 +91,7 @@ EXPOSE 3000
 CMD ["deno", "task", "start"]
 ```
 
-You can also deploy the same build output to other cloud environments that support your chosen runtime or container model.
+You can also deploy the same build output on other infrastructure that supports your chosen runtime or container model.
 
 ## Next
 

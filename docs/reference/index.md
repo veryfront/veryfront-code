@@ -6,7 +6,7 @@ order: 0
 
 # Veryfront Code API Reference
 
-Complete API reference for Veryfront Code, the open core of the Veryfront platform.
+Complete API reference for Veryfront Code.
 The package name and import surface remain `veryfront`.
 
 ## Install

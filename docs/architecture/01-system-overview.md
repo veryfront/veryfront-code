@@ -90,7 +90,7 @@ graph TB
 
 ### Description
 
-The diagram shows veryfront's layered architecture:
+The diagram shows Veryfront's high-level architecture:
 
 - **Entry Points** are how users interact with the framework: dev server with HMR for development, production server for deployment, and CLI commands for build/deploy operations.
 - **Core Systems** handle traditional app framework responsibilities: routing, middleware, rendering, and data fetching.
@@ -98,7 +98,7 @@ The diagram shows veryfront's layered architecture:
 - **Integration Surfaces** include the App MCP server for exposing tools/resources/prompts to MCP clients, plus a separate internal AG-UI transport used by Veryfront Studio and internal agent control-plane flows. These are related but distinct surfaces.
 - **Platform Layer** abstracts away the runtime and deployment target. Runtime adapters support Deno, Node.js, Bun, and Cloudflare Workers. Virtual filesystems allow reading project files from local disk, Veryfront API, or GitHub.
 - **Cross-Cutting Concerns** (security, observability, caching, extensions) are wired throughout all layers.
-- **Deployment Targets** are centered on Veryfront Cloud as the primary managed path, while the open-core runtime/build layer also supports self-hosted and other cloud deployments without provider lock-in.
+- **Deployment Targets** center on Veryfront Cloud as the primary managed path, while the runtime and build outputs also support self-hosted and other deployment environments.
 
 ---
 

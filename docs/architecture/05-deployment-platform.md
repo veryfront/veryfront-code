@@ -1,6 +1,6 @@
 # Deployment Platform Architecture
 
-`veryfront-code` is the open core of the Veryfront platform. Veryfront Cloud is the primary managed deployment path, and the same runtime can also be self-hosted or deployed to other cloud environments. The runtime adapter pattern abstracts away platform differences, and the build system produces portable deployment artifacts.
+Veryfront Cloud is the primary managed deployment path. The same runtime can also be self-hosted or deployed on other infrastructure, and the runtime adapter pattern keeps platform differences contained while the build system produces portable deployment artifacts.
 
 ---
 
@@ -159,7 +159,7 @@ Veryfront produces standard deployment artifacts that work across managed and se
 - **Other Cloud Providers:** Use the same build/runtime outputs on cloud providers that run containers or Node.js/Deno/Bun applications -- AWS (EC2, ECS, Lambda), Google Cloud (Cloud Run, GKE), Azure (App Service, AKS), DigitalOcean, Fly.io, Railway, etc.
 - **Edge Platforms:** Deploy to Cloudflare Workers or Deno Deploy for edge execution with the Cloudflare adapter when that runtime model fits.
 
-The intent is straightforward: Veryfront Cloud is the primary managed path, but the open core stays portable and avoids deployment lock-in.
+Veryfront Cloud is the primary managed path, but the runtime stays portable across self-hosted and other deployment environments.
 
 ---
 
