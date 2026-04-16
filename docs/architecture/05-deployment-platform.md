@@ -111,36 +111,26 @@ graph TB
 
     subgraph Targets["Hosting Environments"]
         subgraph Managed["Managed Platform"]
-            VfCloud["Veryfront Cloud<br/>(managed deployment,<br/>releases, environments)"]
+            VfCloud["Veryfront Cloud"]
         end
 
         subgraph SelfHosted["Self-Hosted"]
             Direct["Direct server process"]
-            Docker["Docker"]
-            K8s["Kubernetes"]
+            Containers["Containers"]
         end
 
         subgraph CloudProviders["Other Cloud Platforms"]
-            AWS["AWS<br/>(EC2, ECS, Lambda)"]
-            GCP["Google Cloud<br/>(Cloud Run, GKE)"]
-            Azure["Azure<br/>(App Service, AKS)"]
-            DigitalOcean["DigitalOcean<br/>(App Platform)"]
-            Fly["Fly.io"]
-            Railway["Railway"]
+            CloudInfra["Containers or<br/>runtime hosts"]
         end
 
         subgraph Edge["Edge Hosting"]
-            CF["Cloudflare Workers"]
-            DenoEdge["Deno Deploy"]
+            EdgeHosts["Edge runtimes"]
         end
     end
 
     subgraph VfCloudFeatures["Veryfront Cloud Extras"]
-        Releases["Release Management<br/>(branch → release → deploy)"]
-        Environments["Environments<br/>(preview, production)"]
-        VfFS["Veryfront FS<br/>(remote filesystem API)"]
-        ModelProxy["Model Proxy<br/>(gateway to AI providers)"]
-        Analytics["Analytics & Monitoring"]
+        Releases["Releases and Environments"]
+        PlatformServices["Remote FS and<br/>platform services"]
     end
 
     ServerCode --> Deno
@@ -151,15 +141,12 @@ graph TB
     Deno --> Direct
     NodeJS --> Direct
     Bun --> Direct
-    Deno --> Docker
-    NodeJS --> Docker
-    Bun --> Docker
-    Deno --> K8s
-    NodeJS --> K8s
-    Bun --> K8s
-    Deno --> CloudProviders
-    NodeJS --> CloudProviders
-    Bun --> CloudProviders
+    Deno --> Containers
+    NodeJS --> Containers
+    Bun --> Containers
+    Deno --> CloudInfra
+    NodeJS --> CloudInfra
+    Bun --> CloudInfra
     EdgeProfile --> Edge
 
     BuildOutput --> SelfHosted
@@ -179,6 +166,8 @@ Veryfront produces standard deployment artifacts that work across managed and se
 - **Runtime Profiles:** Deno, Node.js, and Bun support the full server profile. Cloudflare Workers use a more constrained edge profile.
 - **Self-Hosted and Other Cloud Platforms:** Run directly as a server process, package in containers, or deploy on other platforms that support the chosen runtime profile.
 - **Edge Hosting:** Deploy to Cloudflare Workers or Deno Deploy when the constrained edge profile fits the workload.
+- **Examples stay in prose, not the boxes:** other cloud platforms include AWS, Google Cloud, Azure, DigitalOcean, Fly.io, Railway, and similar infrastructure that can run the selected runtime profile.
+- **Arrow conventions:** arrows from `Server Code` show runtime compatibility; arrows from `Build Output` show artifact portability.
 
 Veryfront Cloud is the primary managed path, but the runtime stays portable across self-hosted and other deployment environments.
 

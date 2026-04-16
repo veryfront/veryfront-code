@@ -24,37 +24,37 @@ graph TB
         end
 
         subgraph App["App Framework"]
-            Router["Router<br/>(File-based + API routes)"]
-            Middleware["Middleware Pipeline<br/>(Auth, CORS, Rate Limit, CSP)"]
-            Rendering["Rendering Engine<br/>(SSR / RSC / SSG / Streaming)"]
-            DataLayer["Data Layer<br/>(getServerData, caching)"]
+            Router["Routing and API Routes"]
+            Middleware["Middleware"]
+            Rendering["Rendering"]
+            DataLayer["Data and Caching"]
         end
 
         subgraph AI["AI Capabilities"]
-            AgentRT["Agent Runtime<br/>(multi-step, streaming)"]
-            Tools["Tool Registry<br/>(Zod schemas)"]
-            Workflows["Workflow Engine<br/>(DAG execution)"]
-            Providers["Provider System<br/>(local, Veryfront Cloud,<br/>OpenAI, Anthropic, Google)"]
-            Embedding["Embedding / RAG<br/>(vector search)"]
+            AgentRT["Agent Runtime"]
+            Tools["Tools and MCP"]
+            Workflows["Workflows"]
+            Providers["Providers"]
+            Embedding["Embeddings and RAG"]
         end
 
         subgraph Integration["Integration Surfaces"]
-            AppMCP["App MCP Server<br/>(tools, resources, prompts)"]
-            InternalAgUi["Internal AG-UI Transport<br/>(Studio / internal agents)"]
+            AppMCP["App MCP Server"]
+            InternalAgUi["Internal AG-UI"]
         end
 
         subgraph Platform["Platform and Runtime"]
-            Adapters["Runtime Adapters<br/>(Deno, Node, Bun,<br/>Cloudflare Workers limited)"]
-            FS["Virtual Filesystems<br/>(Local, Veryfront API, GitHub)"]
-            Build["Build System<br/>(esbuild, code splitting, SSG)"]
-            Discovery["Discovery Engine<br/>(auto-find tools, agents, workflows)"]
+            Adapters["Runtime Adapters"]
+            FS["Virtual Filesystems"]
+            Build["Build System"]
+            Discovery["Discovery"]
         end
 
         subgraph CrossCutting["Cross-Cutting"]
-            Security["Security<br/>(validation, CSRF, injection protection)"]
-            Observability["Observability<br/>(OpenTelemetry tracing + metrics)"]
-            Cache["Cache System<br/>(memory, Redis, file, distributed)"]
-            Extensions["Extension System<br/>(contracts, recommendations,<br/>capabilities)"]
+            Security["Security"]
+            Observability["Observability"]
+            Cache["Cache"]
+            Extensions["Extensions"]
         end
     end
 
@@ -102,10 +102,12 @@ The diagram shows Veryfront's high-level architecture:
 - **Entry Points** are how users interact with the framework: dev server with HMR for development, production server for deployment, and CLI commands for build/deploy operations.
 - **App Framework** handles routing, middleware, rendering, and data fetching.
 - **AI Capabilities** include agents, tools, workflows, model providers, and RAG as native framework capabilities.
-- **Integration Surfaces** include the App MCP server for exposing tools/resources/prompts to MCP clients, plus a separate internal AG-UI transport used by Veryfront Studio and internal agent control-plane flows. These are related but distinct surfaces.
+- **Integration Surfaces** include the App MCP server for exposing tools, resources, and prompts to MCP clients, plus a separate internal AG-UI transport used by Veryfront Studio and internal agent control-plane flows.
 - **Platform and Runtime** contain runtime adapters, virtual filesystems, build, and discovery. Cloudflare Workers use a more constrained runtime profile than Deno, Node.js, or Bun.
 - **Cross-Cutting Concerns** (security, observability, caching, extensions) are wired throughout all layers.
 - **Runtime Profiles and Hosting Environments** are shown separately on purpose: runtime capability is one concern, while managed hosting or self-hosted deployment is another.
+- **Examples stay in prose, not the boxes:** provider choices, virtual filesystem sources, and deployment targets are explained below or in the support matrix rather than packed into the top diagram.
+- **Arrow conventions:** solid arrows show composition/runtime relationships; dotted arrows show cross-cutting concerns.
 
 ---
 
