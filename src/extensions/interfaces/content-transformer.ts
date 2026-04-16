@@ -22,6 +22,8 @@ export interface ContentTransformResult {
   code: string;
   /** Front-matter or metadata extracted from the source. */
   frontmatter?: Record<string, unknown>;
+  /** Extracted table-of-contents headings. */
+  headings?: Array<{ depth: number; text: string; slug: string }>;
 }
 
 /**
