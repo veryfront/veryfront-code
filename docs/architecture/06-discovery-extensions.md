@@ -99,6 +99,21 @@ graph TB
         Source["Extension Source<br/>config | package | project | local-file"]
     end
 
+    subgraph Contracts["Contract Interfaces (12 domains)"]
+        AuthContract["Auth Contract"]
+        StorageContract["Storage Contract"]
+        CacheContract["Cache Contract"]
+        QueueContract["Queue Contract"]
+        EmailContract["Email Contract"]
+        SearchContract["Search Contract"]
+        PaymentContract["Payment Contract"]
+        AnalyticsContract["Analytics Contract"]
+        LoggingContract["Logging Contract"]
+        DatabaseContract["Database Contract"]
+        FileStorageContract["File Storage Contract"]
+        NotificationContract["Notification Contract"]
+    end
+
     subgraph ContractSystem["Contract System"]
         ContractDef["Contract Definition<br/>(typed interface contract)"]
         Require["context.require(contract)<br/>→ get implementation"]
@@ -108,15 +123,27 @@ graph TB
     subgraph Registry2["Contract Registry"]
         Register["register(contract, impl)"]
         Resolve["resolve(contract)<br/>→ implementation"]
+        Validate["validateConflicts()<br/>(detect duplicate providers)"]
         ListContracts["listContracts()"]
     end
 
+    subgraph Loader["Extension Loader"]
+        MultiSource["Multi-Source Discovery<br/>(config, packages, project, local)"]
+        TopoSort["Topological Sort<br/>(dependency ordering)"]
+        CapAudit["Capability Audit<br/>(+ Deno permission mapping)"]
+    end
+
     subgraph Lifecycle["Extension Lifecycle"]
-        Load["Load Extensions<br/>(from config/packages/project)"]
+        Load["Load Extensions"]
         ValidateCaps["Validate Capabilities<br/>(can requirements be met?)"]
         Setup["setup(context)<br/>(register implementations)"]
         Active["Extension Active<br/>(contracts available)"]
         Teardown["teardown(context)<br/>(cleanup resources)"]
+    end
+
+    subgraph ExtCLI["Extension CLI"]
+        InitCmd["veryfront ext init<br/>(scaffold extension)"]
+        ValidateCmd["veryfront ext validate<br/>(check contracts + capabilities)"]
     end
 
     subgraph Recommendations["Recommendations Engine"]
@@ -124,11 +151,15 @@ graph TB
         Suggest["Suggest extensions<br/>based on capabilities"]
     end
 
-    ExtDef --> Lifecycle
+    ExtDef --> Loader
+    Contracts --> ContractSystem
     ContractSystem --> Registry2
+    Loader --> Lifecycle
+    MultiSource --> TopoSort --> CapAudit
     Load --> ValidateCaps --> Setup --> Active
     Active --> Teardown
     Recommendations -.-> Suggest
+    ExtCLI -.-> Loader
 ```
 
 ### Description
@@ -136,9 +167,11 @@ graph TB
 The extension system:
 
 - **Extensions** declare a name, version, required capabilities, and `setup()`/`teardown()` lifecycle hooks. They can be loaded from configuration files, npm packages, the project directory, or local files.
-- **Contracts** are typed interface definitions that serve as the dependency injection key. Extensions use `context.require(contract)` to get implementations and `context.provide(contract, impl)` to register implementations. This decouples providers from consumers.
-- **Contract Registry** manages the mapping from contracts to implementations. It supports listing all registered contracts and resolving implementations at runtime.
+- **12 Contract Interfaces** cover the major integration domains: auth, storage, cache, queue, email, search, payment, analytics, logging, database, file storage, and notifications. Each contract is a typed interface that decouples providers from consumers (see PRs #1028, #1008).
+- **Contract Registry** manages the mapping from contracts to implementations, with conflict detection for duplicate providers. It supports listing all registered contracts and resolving implementations at runtime.
+- **Extension Loader** discovers extensions from multiple sources (config, packages, project, local files), topologically sorts them by dependency order, and audits capabilities against Deno permissions (see PRs #1031, #1035, #1029, #1030).
 - **Lifecycle:** Extensions are loaded, capabilities are validated (can all requirements be satisfied?), then `setup()` is called with the `ExtensionContext` for registration. On shutdown, `teardown()` handles cleanup.
+- **Extension CLI:** `veryfront ext init` scaffolds a new extension; `veryfront ext validate` checks contracts and capabilities (see PR #1034).
 - **Recommendations:** The recommendations engine analyzes the project's needs and suggests relevant extensions based on capability gaps.
 
 ---
@@ -152,6 +185,7 @@ graph TB
         FetchInstr["Fetch<br/>(outbound requests)"]
         RenderInstr["React Render<br/>(SSR/RSC timing)"]
         ErrorInstr["Error Collection<br/>(structured errors)"]
+        ReqCtx["Request Context<br/>(user_id, conversation_id)"]
     end
 
     subgraph Tracing["Distributed Tracing"]
@@ -198,7 +232,7 @@ The observability system provides three pillars:
 - **Metrics:** Automatic collection of HTTP metrics (request count, duration, status), cache metrics (hit rate, size, evictions), render metrics (SSR/RSC timing), build metrics (duration, bundle sizes), and AI metrics (token usage, provider latency).
 - **Error Handling:** A structured error collector with severity-based filtering and deduplication. In development, errors are displayed via a browser overlay. In production, a global error handler prevents process crashes from non-fatal errors while allowing fatal errors (stack overflow, out of memory) to trigger container restarts.
 
-Auto-instrumentation wraps HTTP handlers, fetch calls, React renders, and error boundaries without requiring manual code changes.
+Auto-instrumentation wraps HTTP handlers, fetch calls, React renders, and error boundaries without requiring manual code changes. Request context propagation attaches `user_id` and `conversation_id` to log entries for agent tracing (see PR #1085).
 
 ---
 

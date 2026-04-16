@@ -356,3 +356,41 @@ Veryfront Cloud deployment is a three-phase process:
 3. **Build & Deploy:** The cloud infrastructure exports source from the branch, runs a production build, and deploys the output. The CLI polls until all three stages (export, build, deploy) complete.
 
 This is one deployment option. For other cloud providers, developers use the standard build output with their preferred deployment tools.
+
+---
+
+## Veryfront Cloud CLI Commands
+
+The CLI provides operational commands for managing deployments on Veryfront Cloud:
+
+```mermaid
+graph LR
+    subgraph Stable["Stable Commands"]
+        Dev["veryfront dev<br/>(local dev server)"]
+        Build["veryfront build<br/>(production build)"]
+        Deploy["veryfront deploy<br/>(deploy to environment)"]
+        Init["veryfront init<br/>(scaffold project)"]
+    end
+
+    subgraph Planned["Planned Commands"]
+        Env["veryfront env<br/>(manage env variables)<br/>(PR #787, issue #920)"]
+        Rollback["veryfront rollback<br/>(rollback deployments)<br/>(PR #788, issue #921)"]
+        Logs["veryfront logs<br/>(stream build/deploy logs)<br/>(PR #789, issue #922)"]
+    end
+
+    subgraph PlannedAPI["Planned API Endpoints"]
+        BuildLogs["Build log storage/retrieval<br/>(issue #1091)"]
+        PipelineStatus["Pipeline/deployment status<br/>(issue #1090)"]
+        DeployHistory["Deployment history list<br/>(issue #1089)"]
+    end
+
+    Planned --> PlannedAPI
+```
+
+### Description
+
+The CLI is expanding with operational commands for Veryfront Cloud:
+
+- **Stable:** `dev`, `build`, `deploy`, and `init` are fully implemented.
+- **Planned:** `env` (manage environment variables), `rollback` (revert deployments), and `logs` (stream build and deploy logs) have CLI stubs in PRs #787-#789, pending backend API endpoints (issues #920-#922).
+- **Planned API Endpoints:** Build log storage (#1091), pipeline/deployment status (#1090), and deployment history (#1089) are tracked as open issues.

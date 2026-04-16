@@ -55,7 +55,7 @@ graph TB
 The agent lifecycle:
 
 1. **Factory:** `agent()` resolves the model string (e.g., `"openai/gpt-4o"`), registers tools with Zod schema validation, sets up skill tools if enabled, creates the memory backend, configures security middleware (prompt injection detection is on by default), and registers the agent in the global composition registry.
-2. **Runtime:** The agent loop sends messages to the model provider. When the provider returns tool calls, the runtime validates inputs against Zod schemas, executes tools, and feeds results back. This loop continues until the model returns text or hits the max step limit.
+2. **Runtime:** The agent loop sends messages to the model provider. When the provider returns tool calls, the runtime validates inputs against Zod schemas, executes tools, and feeds results back. This loop continues until the model returns text or hits the max step limit. Planned optimizations include parallel tool execution, cached model resolution, and fire-and-forget memory persistence (issues #885, #887, #888).
 3. **Output:** Three consumption modes -- `generate()` for full responses, `stream()` for real-time SSE streaming, and `respond(Request)` for direct HTTP endpoint integration.
 
 ---
