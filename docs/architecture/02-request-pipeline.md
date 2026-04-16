@@ -63,10 +63,10 @@ flowchart TD
     subgraph Routing["Route Resolution"]
         RouteMatch{"Match route type?"}
         StaticFile["Static File<br/>(/_vf_modules/, assets/)"]
-        APIRoute["API Route<br/>(src/api/)"]
-        PageRoute["Page Route<br/>(src/pages/)"]
+        APIRoute["API Route<br/>(app/api/**/route.*<br/>or pages/api/**)"]
+        PageRoute["Page Route<br/>(app/**/page.*<br/>or pages/**)"]
         MCPEndpoint["MCP Endpoint<br/>(configurable path, default /mcp)"]
-        AgentEndpoint["Agent Endpoint<br/>(configurable path, default /agents/stream)"]
+        AgentEndpoint["AG-UI Endpoint<br/>(package default /api/ag-ui;<br/>current internal wrapper /internal/agents/stream)"]
     end
 
     subgraph MiddlewarePipeline["Middleware Pipeline"]
@@ -104,7 +104,7 @@ flowchart TD
         end
 
         subgraph AgentHandler["Agent Stream Handler"]
-            AgentParse["Parse AgUI Request"]
+            AgentParse["Parse AG-UI Request"]
             AgentExec["Agent Runtime Execution"]
             SSEStream["SSE Stream Response"]
         end
@@ -119,7 +119,7 @@ flowchart TD
     RouteMatch -->|"/api/*"| APIRoute
     RouteMatch -->|"page path"| PageRoute
     RouteMatch -->|"/mcp"| MCPEndpoint
-    RouteMatch -->|"/agents/stream"| AgentEndpoint
+    RouteMatch -->|"/internal/agents/stream"| AgentEndpoint
 
     StaticFile --> StaticHandler
     APIRoute --> MiddlewarePipeline
@@ -149,10 +149,10 @@ flowchart TD
 The request pipeline has five route categories:
 
 - **Static Files:** Served directly with cache headers and optional compression. No middleware needed.
-- **API Routes:** Pass through the full middleware pipeline, then execute the user-defined handler function. Input is validated and output is serialized as JSON.
-- **Page Routes:** The most complex path. After middleware, the rendering engine fetches data via `getServerData()`, discovers layouts (nested `layout.tsx` and `error.tsx` files), runs SSR, optionally applies RSC transforms, and streams the HTML response with Suspense boundaries and hydration scripts.
+- **API Routes:** Pass through the full middleware pipeline, then execute the user-defined handler function. Depending on router mode, these come from `app/api/**/route.*` or `pages/api/**`. Input is validated and output is serialized as JSON.
+- **Page Routes:** The most complex path. After middleware, the rendering engine fetches data via `getServerData()`, resolves the active router mode, runs SSR, optionally applies RSC transforms, and streams the HTML response with Suspense boundaries and hydration scripts. App-router projects add nested `layout.tsx` and `error.tsx` resolution on top of that flow.
 - **MCP Endpoints:** Handle JSON-RPC requests for the MCP protocol. Session validation, dispatch to tools/resources/prompts, and support for async tasks.
-- **Agent Endpoints:** Accept AgUI requests with message history and injected tools, execute the agent runtime, and stream SSE events back to the client.
+- **AG-UI Endpoints:** The package-level AG-UI handlers are designed around host-configurable routes such as `/api/ag-ui`, but the current Studio/control-plane path uses the signed compatibility wrapper at `/internal/agents/stream`. This transport is separate from MCP and streams AG-UI SSE events back to the client.
 
 ---
 
@@ -161,9 +161,9 @@ The request pipeline has five route categories:
 ```mermaid
 flowchart LR
     subgraph Input["Page Input"]
-        PageFile["Page Component<br/>(pages/about.tsx)"]
-        Layouts["Layout Chain<br/>(layout.tsx at each level)"]
-        ErrorBoundaries["Error Boundaries<br/>(error.tsx)"]
+        PageFile["Page Component<br/>(app/about/page.*<br/>or pages/about.*)"]
+        Layouts["Layout Chain<br/>(app router only:<br/>layout.tsx at each level)"]
+        ErrorBoundaries["Error Boundaries<br/>(app router only:<br/>error.tsx)"]
     end
 
     subgraph DataPhase["Data Phase"]
@@ -208,7 +208,7 @@ flowchart LR
 The rendering pipeline converts page components into streamed HTML:
 
 1. **Data Phase:** `getServerData(ctx)` runs server-side to fetch props. For SSG, `getStaticPaths()` enumerates routes at build time.
-2. **Render Phase:** The layout tree is compiled by recursively wrapping children in `layout.tsx` files. Components are resolved as client or server components, then rendered via React's streaming API.
+2. **Render Phase:** The renderer resolves the active route file, then applies router-specific composition. In app-router mode it compiles the nested `layout.tsx` tree and `error.tsx` boundaries; in pages-router mode it renders the matched page directly. Components are then resolved as client or server components and rendered via React's streaming API.
 3. **Output Phase:** If RSC is enabled, an RSC payload is generated alongside the HTML. The output includes the HTML shell, hydration scripts for client-side bootstrapping, and SEO meta tags. The response is streamed using chunked transfer encoding with Suspense boundary support.
 
 ---

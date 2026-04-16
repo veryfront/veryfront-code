@@ -8,6 +8,8 @@ order: 9
 
 AI agents with memory, tools, and multi-agent composition.
 
+Route examples below use the default app router. The hosted AG-UI path is owned by the application; `/api/ag-ui` is the default package convention, not a required fixed route.
+
 ## Import
 
 ```ts

@@ -8,6 +8,8 @@ order: 15
 
 Expose tools, prompts, and resources over Model Context Protocol.
 
+This guide covers the application-facing MCP server exposed by `veryfront/mcp`. It is separate from the internal AG-UI transport used by Veryfront Studio and internal agent control-plane flows.
+
 ## Setup
 
 ```ts
@@ -72,8 +74,8 @@ import { resource } from "veryfront/resource";
 
 export default resource({
   description: "Project documentation",
-  uri: "docs://project",
-  read: async () => {
+  pattern: "docs://project",
+  load: async () => {
     const docs = await loadDocs();
     return { contents: docs };
   },

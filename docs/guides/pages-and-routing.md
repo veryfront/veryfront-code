@@ -8,6 +8,8 @@ order: 3
 
 File-based routing, layouts, dynamic routes, and MDX pages.
 
+Examples below use the default app router. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.
+
 ## Basic pages
 
 ```

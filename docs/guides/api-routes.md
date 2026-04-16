@@ -8,6 +8,8 @@ order: 5
 
 HTTP handlers, request parsing, and streaming responses.
 
+Examples below use the default app router. Veryfront Code also supports API routes under `pages/api/**`, but the pages router uses a different handler module shape than `app/api/**/route.*`.
+
 ## Basic route
 
 ```ts

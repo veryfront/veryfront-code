@@ -1,6 +1,6 @@
-# Multi-Cloud Deployment & Platform Architecture
+# Deployment Platform Architecture
 
-Veryfront is designed to deploy to **any cloud provider**, not just Veryfront Cloud. The runtime adapter pattern abstracts away platform differences, while the build system produces deployable artifacts for any target.
+`veryfront-code` is the open core of the Veryfront platform. Veryfront Cloud is the primary managed deployment path, and the same runtime can also be self-hosted or deployed to other cloud environments. The runtime adapter pattern abstracts away platform differences, and the build system produces portable deployment artifacts.
 
 ---
 
@@ -71,7 +71,7 @@ graph TB
 
 | Capability   | Deno | Node | Bun | Cloudflare Workers |
 |--------------|------|------|-----|--------------------|
-| TypeScript   | no (1) | no | yes | no |
+| TypeScript   | yes (1) | no | yes | no |
 | HTTP/2       | no   | yes  | no  | no |
 | WebSocket    | yes  | yes  | yes | yes |
 | File Watch   | yes (2) | yes | yes | no |
@@ -79,7 +79,7 @@ graph TB
 | KV Store     | yes  | no   | no  | yes |
 | Writable FS  | yes  | yes  | yes | no |
 
-1. Deno supports TypeScript natively, but veryfront uses esbuild for its own transforms rather than Deno's built-in TS compiler.
+1. Deno supports TypeScript natively. Veryfront still relies on esbuild for framework transforms and bundling.
 2. Deno uses poll-based file watching (manual snapshot diffing) due to platform limitations.
 
 ### Description
@@ -152,12 +152,14 @@ graph TB
 
 ### Description
 
-Veryfront produces standard deployment artifacts that work on any platform:
+Veryfront produces standard deployment artifacts that work across managed and self-hosted environments:
 
+- **Veryfront Cloud:** The primary managed deployment path. It adds release management (branch → release → deploy), preview/production environments, a remote filesystem API, AI model proxy gateway, and platform operations on top of the open-core runtime.
 - **Self-Hosted:** Run directly with `deno run`, `node`, or `bun`. Package in Docker containers for any container orchestration platform (Kubernetes, Docker Compose, etc.).
-- **Cloud Providers:** Deploy to any cloud provider that runs containers or Node.js/Deno/Bun applications -- AWS (EC2, ECS, Lambda), Google Cloud (Cloud Run, GKE), Azure (App Service, AKS), DigitalOcean, Fly.io, Railway, etc.
-- **Edge Platforms:** Deploy to Cloudflare Workers or Deno Deploy for edge execution with the Cloudflare adapter.
-- **Veryfront Cloud (Optional):** The managed platform adds release management (branch → release → deploy), preview/production environments, a remote filesystem API, AI model proxy gateway, and analytics. Using Veryfront Cloud is entirely optional.
+- **Other Cloud Providers:** Use the same build/runtime outputs on cloud providers that run containers or Node.js/Deno/Bun applications -- AWS (EC2, ECS, Lambda), Google Cloud (Cloud Run, GKE), Azure (App Service, AKS), DigitalOcean, Fly.io, Railway, etc.
+- **Edge Platforms:** Deploy to Cloudflare Workers or Deno Deploy for edge execution with the Cloudflare adapter when that runtime model fits.
+
+The intent is straightforward: Veryfront Cloud is the primary managed path, but the open core stays portable and avoids deployment lock-in.
 
 ---
 
@@ -247,8 +249,8 @@ Filesystem resolution follows a layered decision process:
 ```mermaid
 flowchart TD
     subgraph Input["Source Input"]
-        Pages["Pages<br/>(src/pages/**/*.tsx)"]
-        APIRoutes["API Routes<br/>(src/api/**/*.ts)"]
+        Pages["Pages<br/>(app/**/page.*<br/>or pages/**)"]
+        APIRoutes["API Routes<br/>(app/api/**/route.*<br/>or pages/api/**)"]
         Components["Components<br/>(src/components/**/*.tsx)"]
         MDXFiles["MDX Files<br/>(*.mdx)"]
         Styles["Styles<br/>(CSS, Tailwind)"]
@@ -296,7 +298,7 @@ flowchart TD
 
 The build pipeline transforms source code into production-ready artifacts:
 
-1. **Route Collection:** Discovers all page routes and API routes by scanning the project directory.
+1. **Route Collection:** Discovers page routes and API routes from both supported router modes. The active mode is controlled by `veryfront.config.ts` (`router: "app" | "pages"`), with fallback behavior when only one directory is present.
 2. **MDX Compilation:** Transforms MDX files into React components with plugin support and frontmatter extraction.
 3. **TypeScript Compilation:** Uses esbuild for fast TypeScript/JSX compilation.
 4. **Code Splitting:** Generates per-route chunks and shared chunks for optimal loading. Tree shaking removes unused code.
@@ -310,17 +312,15 @@ The `--preset embedded` flag produces a Deno-compiled bundle with all dependenci
 
 ---
 
-## Veryfront Cloud Deployment Flow
+## Veryfront Cloud Release and Deployment Flow
 
-When deploying to Veryfront Cloud specifically, the CLI uses a managed deployment pipeline:
+When deploying to Veryfront Cloud, the current CLI flow is release-and-deploy orchestration against the Veryfront API:
 
 ```mermaid
 sequenceDiagram
     participant Dev as Developer
     participant CLI as veryfront CLI
     participant API as Veryfront Cloud API
-    participant Build as Cloud Build
-    participant Env as Environment
 
     Dev->>CLI: veryfront deploy --branch main --env production
 
@@ -332,65 +332,49 @@ sequenceDiagram
 
     CLI->>API: POST /projects/{slug}/deployments<br/>{releaseId: "rel-1", environmentId: "env-1"}
     API-->>CLI: {id: "dep-1", status: "pending"}
-
-    loop Poll deployment status
-        CLI->>API: GET /projects/{slug}/deployments/{id}
-        Note over API,Build: export_status → build_status → deploy_status
-        API-->>CLI: {status: "building"}
-    end
-
-    Build->>Build: Export source from branch
-    Build->>Build: Run production build
-    Build->>Env: Deploy to environment
-
-    API-->>CLI: {status: "deployed", url: "https://..."}
-    CLI-->>Dev: Deployment complete!
+    API-->>CLI: deployment accepted
+    CLI-->>Dev: Release created and deployment started
 ```
 
 ### Description
 
-Veryfront Cloud deployment is a three-phase process:
+The current CLI-managed flow is:
 
-1. **Create Release:** A release is created from a git branch. The release captures the source code state at that point.
-2. **Deploy to Environment:** The release is deployed to a named environment (e.g., "production", "preview"). Environments are isolated and can run different releases.
-3. **Build & Deploy:** The cloud infrastructure exports source from the branch, runs a production build, and deploys the output. The CLI polls until all three stages (export, build, deploy) complete.
+1. **Resolve Environment:** `veryfront deploy` looks up the named environment through `/projects/{slug}/environments`.
+2. **Create Release:** The CLI creates a release from the requested branch through `/projects/{slug}/releases`.
+3. **Create Deployment:** The CLI creates a deployment linking that release to the target environment through `/projects/{slug}/deployments`.
 
-This is one deployment option. For other cloud providers, developers use the standard build output with their preferred deployment tools.
+After that, the platform continues the managed deployment workflow. The current CLI implementation does not document or expose a full build-status polling loop in this command, so this architecture page should stay grounded on the API interactions it actually performs.
+
+For other cloud providers, developers use the standard build output with their preferred deployment tools.
 
 ---
 
-## Veryfront Cloud CLI Commands
+## Current Deployment CLI Surfaces
 
-The CLI provides operational commands for managing deployments on Veryfront Cloud:
+The current deployment-related CLI surface is:
 
 ```mermaid
 graph LR
-    subgraph Stable["Stable Commands"]
-        Dev["veryfront dev<br/>(local dev server)"]
-        Build["veryfront build<br/>(production build)"]
-        Deploy["veryfront deploy<br/>(deploy to environment)"]
+    subgraph Current["Implemented Commands"]
         Init["veryfront init<br/>(scaffold project)"]
+        Push["veryfront push<br/>(upload local files to Veryfront branch)"]
+        Build["veryfront build<br/>(production build)"]
+        Deploy["veryfront deploy<br/>(create release + deployment)"]
+        Up["veryfront up<br/>(login/create/push/deploy)"]
+        Open["veryfront open<br/>(open Studio or environment URL)"]
     end
-
-    subgraph Planned["Planned Commands"]
-        Env["veryfront env<br/>(manage env variables)<br/>(PR #787, issue #920)"]
-        Rollback["veryfront rollback<br/>(rollback deployments)<br/>(PR #788, issue #921)"]
-        Logs["veryfront logs<br/>(stream build/deploy logs)<br/>(PR #789, issue #922)"]
-    end
-
-    subgraph PlannedAPI["Planned API Endpoints"]
-        BuildLogs["Build log storage/retrieval<br/>(issue #1091)"]
-        PipelineStatus["Pipeline/deployment status<br/>(issue #1090)"]
-        DeployHistory["Deployment history list<br/>(issue #1089)"]
-    end
-
-    Planned --> PlannedAPI
 ```
 
 ### Description
 
-The CLI is expanding with operational commands for Veryfront Cloud:
+These commands are implemented today and are the ones this documentation should treat as current:
 
-- **Stable:** `dev`, `build`, `deploy`, and `init` are fully implemented.
-- **Planned:** `env` (manage environment variables), `rollback` (revert deployments), and `logs` (stream build and deploy logs) have CLI stubs in PRs #787-#789, pending backend API endpoints (issues #920-#922).
-- **Planned API Endpoints:** Build log storage (#1091), pipeline/deployment status (#1090), and deployment history (#1089) are tracked as open issues.
+- **`veryfront init`:** Scaffold a project locally and optionally connect it to Veryfront.
+- **`veryfront push`:** Upload local files to a Veryfront branch and share preview work.
+- **`veryfront build`:** Produce the portable production build output.
+- **`veryfront deploy`:** Create a release from a branch and deploy it to a named environment.
+- **`veryfront up`:** Run the higher-level login/create/push/deploy flow.
+- **`veryfront open`:** Open Studio or a project environment URL in the browser.
+
+Operational commands such as environment-variable management, rollback, or deployment-log streaming should not be documented here as current CLI surfaces unless they are actually implemented.

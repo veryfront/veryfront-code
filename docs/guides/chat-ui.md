@@ -8,6 +8,8 @@ order: 9
 
 Pre-built chat components and React hooks for chat interfaces. Three levels of control:
 
+Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.
+
 1. **Preset** — `<Chat>` renders a complete chat UI with one component
 2. **Composition** — `<Chat.Root>`, `<Chat.MessageList>`, `<Chat.Composer>` for custom layouts
 3. **Compound** — `<Message.Root>`, `<Message.Content>`, `<Message.Actions>` for per-message control

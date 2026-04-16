@@ -95,7 +95,7 @@ This is the public source of truth for first-party target contracts such as `tas
 
 ## Work with batches
 
-If one user action fans out into multiple related jobs, Veryfront can group them with a shared `batch_id`.
+If one user action fans out into multiple related jobs, Veryfront Code can group them with a shared `batch_id`.
 
 ```ts
 const batch = await jobs.batches.get("22222222-2222-4222-8222-222222222222");

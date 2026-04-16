@@ -8,6 +8,9 @@ order: 17
 
 Production builds, static export, and deployment targets.
 
+Veryfront Code is the open core of the Veryfront platform. Veryfront Cloud is the primary managed deployment path, and the same runtime can also be self-hosted or deployed to other cloud environments.
+The npm package, CLI, and import name remain `veryfront`.
+
 ## Build
 
 Create a production build:
@@ -35,7 +38,7 @@ The production server serves pre-built assets, handles API routes, and renders d
 veryfront deploy
 ```
 
-Deploys your project to Veryfront Cloud. Your site is available at `https://<slug>.production.veryfront.com`.
+Deploys your project to Veryfront Cloud, the recommended managed deployment path. Your site is available at `https://<slug>.production.veryfront.com`.
 
 ### Preview deployments
 
@@ -45,7 +48,7 @@ Every branch gets a preview URL:
 veryfront deploy --branch feature-x
 ```
 
-Available at `https://<slug>-feature-x.preview.veryfront.com`.
+Available at `https://<slug>--feature-x.preview.veryfront.com`.
 
 ## Environment variables
 
@@ -56,11 +59,7 @@ OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-For Veryfront Cloud:
-
-```bash
-veryfront env set OPENAI_API_KEY sk-...
-```
+For Veryfront Cloud, set the same variables in the target environment before deploying.
 
 ## Build configuration
 
@@ -91,6 +90,8 @@ RUN deno task build
 EXPOSE 3000
 CMD ["deno", "task", "start"]
 ```
+
+You can also deploy the same build output to other cloud environments that support your chosen runtime or container model.
 
 ## Next
 

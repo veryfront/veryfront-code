@@ -8,6 +8,8 @@ order: 8
 
 Conversation memory strategies and streaming responses.
 
+Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.
+
 Memory configuration is independent of model selection, so these examples omit
 `model` and follow the runtime default.
 

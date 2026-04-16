@@ -8,6 +8,9 @@ order: 1
 
 Create and run a Veryfront project in under 2 minutes.
 
+Veryfront Code is the open core of the Veryfront platform. This quickstart uses Veryfront Cloud by default, but the same project can also run self-hosted or on other cloud infrastructure.
+The npm package, CLI, and import name remain `veryfront`.
+
 ## Install
 
 ```bash
@@ -81,7 +84,9 @@ veryfront start
 veryfront deploy
 ```
 
-Deploys to Veryfront Cloud. Your site is live at `https://<slug>.production.veryfront.com`.
+Deploys to Veryfront Cloud, the recommended managed deployment path. Your site is live at `https://<slug>.production.veryfront.com`.
+
+If you prefer a different deployment target, run `veryfront build` and deploy the generated output using your own infrastructure.
 
 ## Next
 

@@ -8,6 +8,8 @@ order: 14
 
 OAuth 2.0 with 37 pre-configured providers.
 
+Route examples below use the default app router. Veryfront Code also supports mounting equivalent handlers under `pages/api/**` when `router: "pages"` is enabled.
+
 ## Quick setup
 
 Two routes handle the full OAuth flow — redirect to the provider and handle the callback:

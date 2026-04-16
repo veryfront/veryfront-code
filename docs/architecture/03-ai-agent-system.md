@@ -1,8 +1,8 @@
-# AI / Agent System
+# AI Capabilities and Agent Runtime
 
 ## Agent Architecture Overview
 
-The agent system provides a complete AI development platform with multi-step reasoning, streaming, memory, tool use, and multi-agent composition.
+Veryfront's AI capabilities include multi-step reasoning, streaming, memory, tool use, and multi-agent composition through a native agent runtime.
 
 ```mermaid
 graph TB
@@ -68,7 +68,7 @@ Model strings follow the `provider/model` format. The resolution chain determine
 flowchart TD
     ModelString["Model String<br/>e.g. 'openai/gpt-4o'"]
     AutoCheck{"model ==<br/>'auto'?"}
-    LocalModel["local/distilbert-base-uncased"]
+    LocalModel["local/smollm2-135m"]
 
     CloudCheck{"Veryfront Cloud<br/>bootstrap exists?"}
     DirectKey{"Direct API key<br/>available?<br/>(OPENAI_API_KEY, etc.)"}
@@ -116,10 +116,11 @@ flowchart TD
 
 Model resolution follows a prioritized chain:
 
-1. **"auto"** resolves to a local model (`local/distilbert-base-uncased`), which is then upgraded to a cloud model if Veryfront Cloud bootstrap context exists.
-2. **Direct API Key:** If the user has set an API key environment variable (e.g., `OPENAI_API_KEY`), requests go directly to the provider API.
-3. **Veryfront Cloud Proxy:** When no direct key is available but Veryfront Cloud is bootstrapped, requests are proxied through the gateway at `api.veryfront.com/v1`, which routes to upstream providers (OpenAI, Anthropic, Google, Moonshot AI).
-4. **Local Fallback:** If no cloud context and no API keys, the local provider (HuggingFace Transformers) is used.
+1. **"auto"** resolves to the local default model (`local/smollm2-135m`).
+2. **Cloud Upgrade for Local Models:** At runtime, local models upgrade to the first available cloud runtime. The current preference order is Veryfront Cloud first, then Anthropic, OpenAI, and Google when their direct credentials are available.
+3. **Direct Provider Credentials:** If the caller explicitly selects a hosted provider model and direct provider credentials are configured (for example `OPENAI_API_KEY`), requests go directly to that provider API.
+4. **Veryfront Cloud Proxy:** If direct hosted-provider credentials are absent but Veryfront Cloud bootstrap context exists, hosted-provider requests can route through the Veryfront Cloud gateway instead of forcing a different public API shape.
+5. **Local Fallback:** If no cloud runtime is available, execution stays on the local provider.
 
 The Veryfront Cloud provider uses `AsyncLocalStorage` for request-scoped credentials, enabling multi-tenant model access.
 
@@ -200,9 +201,9 @@ flowchart TD
     subgraph Backends["Workflow Backends"]
         MemoryBE["Memory<br/>(local dev)"]
         RedisBE["Redis<br/>(crash recovery)"]
-        TemporalBE["Temporal<br/>(durable execution)"]
-        InngestBE["Inngest<br/>(event-driven)"]
-        CloudflareBE["Cloudflare<br/>(edge execution)"]
+        TemporalBE["Temporal<br/>(adapter scaffold)"]
+        InngestBE["Inngest<br/>(adapter scaffold)"]
+        CloudflareBE["Cloudflare<br/>(adapter scaffold)"]
     end
 
     subgraph State["Workflow Run State"]
@@ -231,7 +232,7 @@ The workflow engine:
 2. **Node Types:** Seven node types support different execution patterns -- single steps (calling agents or tools), parallel execution with configurable strategies (all/first/race), conditional branching, loops with max iteration guards, map for processing collections, wait for human approvals or external events, and sub-workflows for composition.
 3. **DAG Executor:** Builds a directed acyclic graph from node definitions, performs topological sort using Kahn's algorithm, detects cycles, and executes nodes as their dependencies are satisfied. Nodes without explicit `dependsOn` declarations implicitly depend on the previous node in the array.
 4. **Checkpointing:** After each node execution, a checkpoint is saved to the backend, enabling crash recovery. The workflow context accumulates outputs from each node, making them available to subsequent nodes.
-5. **Backends:** Five backends support different deployment scenarios -- in-memory for local development, Redis for crash recovery, Temporal for durable execution, Inngest for event-driven workflows, and Cloudflare for edge execution.
+5. **Backends:** `MemoryBackend` and `RedisBackend` are the implemented backends today. Temporal, Inngest, and Cloudflare appear in the architecture as adapter scaffolding and planned extension points, but they should not be treated as fully implemented production backends yet.
 
 ---
 

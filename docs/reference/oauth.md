@@ -8,6 +8,8 @@ order: 16
 
 OAuth 2.0 with 37 pre-configured providers.
 
+Route examples below use the default app router. Equivalent handlers can also be mounted under `pages/api/**` when the pages router is enabled.
+
 ## Import
 
 ```ts

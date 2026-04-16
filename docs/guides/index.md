@@ -1,12 +1,12 @@
 ---
 title: "Guides"
-description: "Learn Veryfront from the ground up — pages, routing, AI agents, and production deployment."
+description: "Learn Veryfront Code — pages, routing, AI agents, and deployment."
 order: 0
 ---
 
 # Guides
 
-Learn Veryfront from the ground up — pages, routing, AI agents, and production deployment.
+Learn Veryfront Code from the ground up: pages, routing, AI agents, and deployment.
 
 ## Getting Started
 

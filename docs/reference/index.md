@@ -1,12 +1,13 @@
 ---
-title: "Framework API Reference"
-description: "Complete API reference for the Veryfront framework."
+title: "Veryfront Code API Reference"
+description: "Complete API reference for Veryfront Code."
 order: 0
 ---
 
-# Framework API Reference
+# Veryfront Code API Reference
 
-Complete API reference for the Veryfront framework.
+Complete API reference for Veryfront Code, the open core of the Veryfront platform.
+The package name and import surface remain `veryfront`.
 
 ## Install
 

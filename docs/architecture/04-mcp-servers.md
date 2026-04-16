@@ -1,9 +1,9 @@
-# MCP Server Architecture
+# MCP Server and Internal AG-UI Transport
 
-Veryfront has two distinct MCP (Model Context Protocol) implementations:
+Veryfront has two distinct integration surfaces in this area:
 
 1. **App MCP Server** -- Lets user applications expose tools, resources, and prompts to any MCP client (Claude, Cursor, etc.)
-2. **Veryfront MCP (Internal Agents)** -- Platform agents that power the Veryfront Studio with AgUI streaming and tool result submission
+2. **Internal AG-UI Transport** -- A separate Studio/internal-agent transport for AG-UI streaming and run control. This is not a second MCP server.
 
 ---
 
@@ -39,11 +39,11 @@ sequenceDiagram
 
     Client->>Transport: POST /mcp<br/>{"method": "resources/list"}
     Server->>Registry: getMCPRegistry().resources
-    Server-->>Client: {resources: [{pattern, description, title}]}
+    Server-->>Client: {resources: [{uri, name, description, mimeType}]}
 
     Client->>Transport: POST /mcp<br/>{"method": "prompts/list"}
     Server->>Registry: getMCPRegistry().prompts
-    Server-->>Client: {prompts: [{description, suggestion}]}
+    Server-->>Client: {prompts: [{name, description}]}
 
     Note over Client,TaskStore: Phase 3: Tool Execution (Synchronous)
     Client->>Transport: POST /mcp<br/>{"method": "tools/call", "params": {"name": "search", "arguments": {"q": "hello"}}}
@@ -54,7 +54,7 @@ sequenceDiagram
     Server-->>Client: {content: [{type: "text", text: "..."}]}
 
     Note over Client,TaskStore: Phase 4: Async Task (Long-running)
-    Client->>Transport: POST /mcp<br/>{"method": "tools/call", "params": {"name": "analyze", "_meta": {"progressToken": "p1"}}}
+    Client->>Transport: POST /mcp<br/>{"method": "tools/call", "params": {"name": "analyze", "task": {"ttl": 60000}, "_meta": {"progressToken": "p1"}}}
     Server->>TaskStore: createTask(taskId)
     Server-->>Client: {task: {taskId: "t1", status: "working"}}
 
@@ -77,7 +77,7 @@ The App MCP server implements the MCP protocol (versions 2025-11-25 and 2024-11-
 1. **Initialization:** The client sends an `initialize` request. The server creates a session (UUID), exchanges capabilities, and returns the session ID as an `MCP-Session-Id` header.
 2. **Discovery:** The client lists available tools, resources, and prompts. Tools include JSON Schema input definitions and MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`).
 3. **Synchronous Execution:** For fast tools, the server validates input against the Zod schema, executes the tool, and returns the result immediately.
-4. **Async Tasks:** For long-running tools, the server creates a task and returns a task ID. The client polls `tasks/get` until the task reaches a terminal state (`completed`, `failed`, `cancelled`). Tasks have a max capacity of 1000, with TTL-based cleanup of terminal tasks.
+4. **Async Tasks:** For long-running tools, the caller opts into task mode by including a `task` object. The server creates a task and returns a task ID. The client polls `tasks/get` until the task reaches a terminal state (`completed`, `failed`, `cancelled`). Tasks have a max capacity of 1000, with TTL-based cleanup of terminal tasks.
 
 Key features:
 - **Auth:** Bearer token validation on every request
@@ -117,7 +117,7 @@ graph TB
         Dispatcher["JSON-RPC Dispatcher<br/>Route by method name"]
         SessionMgr["Session Manager<br/>UUID sessions"]
         TaskStore2["Task Store<br/>Async execution"]
-        HTTPTransport2["HTTP Transport<br/>CORS + Auth + SSE"]
+        HTTPTransport2["HTTP Transport<br/>CORS + Auth + Session Headers"]
     end
 
     subgraph RemoteMCP["Remote MCP Integration"]
@@ -150,21 +150,21 @@ The MCP server architecture connects user-defined primitives to MCP clients thro
 
 ---
 
-## Veryfront MCP (Internal Agents / Studio)
+## Internal AG-UI Transport (Studio / Internal Agents)
 
-The Veryfront MCP powers the Studio UI with real-time agent execution, tool result submission from the UI, and AgUI streaming.
+The Studio/internal-agent transport is a Veryfront-specific AG-UI wrapper around the public `veryfront/agent` AG-UI handlers. It powers the Studio UI with real-time agent execution, tool result submission from the UI, and AG-UI streaming, but it should not be described as a second MCP server.
 
 ```mermaid
 sequenceDiagram
     participant Studio as Veryfront Studio<br/>(Browser UI)
-    participant API as Agent Stream API<br/>(/agents/stream)
+    participant API as Agent Stream API<br/>(/internal/agents/stream)
     participant SessionMgr as AgentRunSessionManager
     participant Runtime as Agent Runtime
     participant Provider as Model Provider
     participant InjectedTool as Injected Tool<br/>(UI-submitted result)
 
     Note over Studio,InjectedTool: Phase 1: Start Agent Run
-    Studio->>API: POST /agents/stream<br/>{agentId, runId, threadId, messages, tools, context}
+    Studio->>API: POST /internal/agents/stream<br/>{agentId, runId, threadId, messages, tools, context}
     API->>API: Validate InternalAgentStreamRequestSchema
     API->>SessionMgr: startRun({runId, threadId})
     SessionMgr-->>API: AbortSignal
@@ -191,7 +191,7 @@ sequenceDiagram
     Runtime->>InjectedTool: waitForToolResult(runId, toolCallId)
     Note over InjectedTool: Blocks until UI submits result<br/>(5 min timeout)
 
-    Studio->>API: POST /agents/resume<br/>{runId, toolCallId, result: {...}}
+    Studio->>API: POST /internal/agents/runs/{runId}/resume<br/>{toolCallId, result: {...}}
     API->>SessionMgr: submitToolResult(runId, {toolCallId, result})
     SessionMgr->>InjectedTool: Unblock with result
 
@@ -207,12 +207,13 @@ sequenceDiagram
 
 ### Description
 
-The Veryfront MCP (internal agents) bridges AI agents with the Studio UI:
+The internal AG-UI transport bridges AI agents with the Studio UI:
 
-1. **Start Run:** The Studio sends a POST request with the agent ID, message history, injected tool definitions, and context. The `AgentRunSessionManager` creates a run with an abort signal.
+1. **Start Run:** The Studio sends a signed POST request to the internal compatibility wrapper with the agent ID, message history, injected tool definitions, and context. The `AgentRunSessionManager` creates a run with an abort signal.
 2. **Injected Tool Pattern:** The Studio passes tool definitions (name, schema) that the agent can call. The system creates wrapper tools that, when called by the agent, block execution and wait for the Studio to submit tool results. This enables human-in-the-loop tool execution where the UI handles the actual tool interaction.
-3. **Tool Result Submission:** When the agent calls an injected tool, the run pauses (up to 5 minutes). The Studio submits the tool result via a resume endpoint. The wrapper tool unblocks and returns the result to the agent.
-4. **AgUI Streaming:** All events are streamed as SSE in the AgUI wire format (`RunStarted`, `TextMessageContent`, `ToolCallStart`, `ToolCallArgs`, `ToolCallEnd`, `ToolCallResult`, `RunFinished`).
+3. **Tool Result Submission:** When the agent calls an injected tool, the run pauses (up to 5 minutes). The Studio submits the tool result via `/internal/agents/runs/:runId/resume`. The wrapper tool unblocks and returns the result to the agent.
+4. **AG-UI Streaming:** All events are streamed as SSE in the AG-UI wire format (`RunStarted`, `TextMessageContent`, `ToolCallStart`, `ToolCallArgs`, `ToolCallEnd`, `ToolCallResult`, `RunFinished`).
+5. **Contract Boundary:** The internal `/internal/agents/*` routes are compatibility/control-plane wrappers. The canonical package-level AG-UI handlers live under `veryfront/agent` and are designed around host-configurable endpoints such as `/api/ag-ui`.
 
 Session states: `active` → `waiting` (for tool result) → `completed` / `failed` / `cancelled`. Default session TTL is 15 minutes.
 
@@ -275,7 +276,7 @@ This dual-layer protocol keeps the internal agent runtime decoupled from the wir
 
 ---
 
-## MCP Integration Points
+## Integration Points
 
 ```mermaid
 graph TB
@@ -299,8 +300,8 @@ graph TB
             AgentB["Agent B<br/>(uses agent A as tool)"]
         end
 
-        subgraph VfMCPServer["Veryfront MCP (/agents/stream)"]
-            StudioBridge["Studio Bridge<br/>(AgUI streaming + tool submission)"]
+        subgraph InternalAgUi["Internal AG-UI<br/>(/internal/agents/stream)"]
+            StudioBridge["Studio Bridge<br/>(AG-UI streaming + tool submission)"]
         end
     end
 
@@ -339,4 +340,4 @@ MCP integration flows in three directions:
 
 1. **Inbound (External → App):** `createRemoteMCPToolSource()` connects to external MCP servers, loading their tools as local dynamic tools. These tools are available to agents and can be re-exposed through the App MCP server.
 2. **Outbound (App → Clients):** The App MCP server exposes local and remote tools, resources, and prompts to any MCP client (Claude Desktop, Cursor, custom clients).
-3. **Studio (App → UI):** The Veryfront MCP bridges agents with the Studio UI via AgUI streaming. The Studio can inject tools, receive streaming responses, and submit tool results for human-in-the-loop execution.
+3. **Studio (App → UI):** A separate internal AG-UI transport bridges agents with the Studio UI. The Studio can inject tools, receive streaming responses, and submit tool results for human-in-the-loop execution without going through MCP.

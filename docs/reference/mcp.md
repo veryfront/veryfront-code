@@ -8,6 +8,8 @@ order: 14
 
 MCP server exposing tools, prompts, and resources.
 
+This is the application-facing MCP surface. It is separate from the internal AG-UI transport used by Veryfront Studio and internal agent control-plane flows.
+
 ## Import
 
 ```ts

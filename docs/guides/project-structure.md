@@ -8,6 +8,8 @@ order: 2
 
 File conventions, directory layout, and how auto-discovery works.
 
+Examples below show the default app-router layout. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.
+
 ## Directory layout
 
 ```
@@ -61,7 +63,7 @@ my-app/
 
 ### `app/`
 
-The `app/` directory contains pages and API routes. The file path maps directly to the URL:
+The `app/` directory contains pages and API routes for the default app router. The file path maps directly to the URL:
 
 | File | URL |
 |------|-----|
@@ -71,6 +73,8 @@ The `app/` directory contains pages and API routes. The file path maps directly 
 | `app/api/users/route.ts` | `/api/users` |
 
 Pages use `page.tsx` (or `page.mdx`). API routes use `route.ts`. Layouts use `layout.tsx`.
+
+If `veryfront.config.ts` sets `router: "pages"`, use `pages/` and `pages/api/` instead.
 
 See [Pages & Routing](./pages-and-routing.md) for the full routing system.
 
@@ -137,7 +141,7 @@ These directories aren't auto-discovered but follow standard conventions:
 
 ## Why flat?
 
-Veryfront is an AI-native framework. Agents, tools, prompts, and workflows are first-class primitives — not add-ons tucked inside a subfolder. Keeping them at the project root makes them visible and accessible, just like `components/` or `lib/`.
+Veryfront Code is AI-native. Agents, tools, prompts, and workflows are first-class primitives, not add-ons tucked inside a subfolder. Keeping them at the project root makes them visible and accessible, just like `components/` or `lib/`.
 
 ## Next
 
