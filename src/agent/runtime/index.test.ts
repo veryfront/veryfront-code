@@ -5,9 +5,8 @@ import {
   collectFinalStreamToolResults,
   collectGeneratedToolResults,
   collectPersistedToolResults,
-  isStreamedToolCallIncomplete,
-  materializeStreamedToolCall,
-} from "./index.ts";
+} from "./stream-tool-results.ts";
+import { isStreamedToolCallIncomplete, materializeStreamedToolCall } from "./index.ts";
 import type { ChatStreamState } from "./chat-stream-handler.ts";
 import type { Message } from "../types.ts";
 

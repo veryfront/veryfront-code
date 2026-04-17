@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { enforceSkillPolicy, extractSkillPolicy } from "./index.ts";
+import { enforceSkillPolicy, extractSkillPolicy } from "./skill-policy.ts";
 
 describe("src/agent/runtime skill policy helpers", () => {
   describe("extractSkillPolicy", () => {

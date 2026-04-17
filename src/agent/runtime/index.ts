@@ -37,7 +37,6 @@ import { convertToModelMessages } from "./model-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
-  type ChatStreamState,
   createStreamState,
   processStream,
   type StreamingToolCall,
@@ -86,27 +85,31 @@ export {
   DEFAULT_TEMPERATURE,
   MAX_STREAM_BUFFER_SIZE,
 } from "./constants.ts";
+export {
+  captureStreamedToolCallInput,
+  collectFinalStreamToolResults,
+  collectGeneratedToolResults,
+  collectPersistedToolResults,
+} from "./stream-tool-results.ts";
 
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, getModelMaxOutputTokens } from "./constants.ts";
 import { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
-import {
-  executeConfiguredTool,
-  getAvailableTools,
-  isDynamicTool,
-  parseToolArgs,
-} from "./tool-helpers.ts";
+import { executeConfiguredTool, getAvailableTools, isDynamicTool } from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
-import {
-  filterToolsForSkill,
-  isToolAllowedBySkill,
-  validateAllowedToolPatterns,
-} from "#veryfront/skill/allowed-tools.ts";
+export { enforceSkillPolicy, extractSkillPolicy, LOAD_SKILL_TOOL_ID } from "./skill-policy.ts";
+export type { SkillPolicyResult } from "./skill-policy.ts";
+import { enforceSkillPolicy, extractSkillPolicy, LOAD_SKILL_TOOL_ID } from "./skill-policy.ts";
+import { filterToolsForSkill } from "#veryfront/skill/allowed-tools.ts";
 import { resolveConfiguredAgentModel, resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
+import {
+  captureStreamedToolCallInput,
+  collectFinalStreamToolResults,
+  collectGeneratedToolResults,
+} from "./stream-tool-results.ts";
 
 const logger = serverLogger.component("agent");
-const LOAD_SKILL_TOOL_ID = "load-skill";
 
 type RuntimeToolFilterConfig = AgentConfig & {
   __vfAllowedRemoteTools?: string[];
@@ -126,76 +129,6 @@ function getToolResultError(result: unknown): string | undefined {
   }
 
   return stringifyToolError(result.error);
-}
-
-function getSkillActivationRequiredError(toolName: string): string {
-  return `Tool "${toolName}" cannot run before load-skill succeeds in the same step. ` +
-    `Call "${LOAD_SKILL_TOOL_ID}" first to establish the active skill context.`;
-}
-
-export function collectFinalStreamToolResults(
-  state: Pick<ChatStreamState, "toolResults">,
-): Map<string, StreamingToolResult> {
-  const finalToolResults = new Map<string, StreamingToolResult>();
-
-  for (const toolResult of state.toolResults) {
-    if (toolResult.preliminary === true) {
-      continue;
-    }
-
-    finalToolResults.set(toolResult.toolCallId, toolResult);
-  }
-
-  return finalToolResults;
-}
-
-export function collectPersistedToolResults(
-  messages: Message[],
-): Map<string, ToolResultPart> {
-  const persistedToolResults = new Map<string, ToolResultPart>();
-
-  for (const message of messages) {
-    if (message.role !== "tool") {
-      continue;
-    }
-
-    for (const part of message.parts) {
-      if (!isToolResultPart(part)) {
-        continue;
-      }
-
-      persistedToolResults.set(part.toolCallId, part);
-    }
-  }
-
-  return persistedToolResults;
-}
-
-export function collectGeneratedToolResults(
-  toolResults: RuntimeGenerateToolResult[] | undefined,
-): Map<string, RuntimeGenerateToolResult> {
-  const generatedToolResults = new Map<string, RuntimeGenerateToolResult>();
-
-  for (const toolResult of toolResults ?? []) {
-    generatedToolResults.set(toolResult.toolCallId, toolResult);
-  }
-
-  return generatedToolResults;
-}
-
-export function captureStreamedToolCallInput(
-  toolCall: Pick<StreamingToolCall, "arguments">,
-): {
-  args: Record<string, unknown>;
-  inputText?: string;
-  parseError?: string;
-} {
-  const { args, error } = parseToolArgs(toolCall.arguments);
-  return {
-    args,
-    ...(toolCall.arguments.length > 0 ? { inputText: toolCall.arguments } : {}),
-    ...(error ? { parseError: error } : {}),
-  };
 }
 
 /**
@@ -286,79 +219,8 @@ export function materializeStreamedToolCall(
   if (capturedInput.parseError) {
     return { kind: "parse-error", part, parseError: capturedInput.parseError };
   }
+
   return { kind: "complete", part };
-}
-
-function isToolResultPart(part: MessagePart): part is ToolResultPart {
-  return part.type === "tool-result" && "result" in part;
-}
-
-/**
- * Extract and validate the skill policy from a load-skill tool result.
- * Returns `[]` (no tools allowed) for invalid/missing policies instead of
- * `undefined` (no restrictions), preventing accidental policy bypass.
- */
-export function extractSkillPolicy(result: unknown): string[] | undefined {
-  if (!result || typeof result !== "object") return undefined;
-  const skillResult = result as { allowedTools?: unknown };
-
-  // No allowedTools key means the skill has no restrictions
-  if (!("allowedTools" in skillResult) || skillResult.allowedTools === undefined) {
-    return undefined;
-  }
-
-  // Validate the shape: must be a string array
-  const raw = skillResult.allowedTools;
-  if (!Array.isArray(raw) || !raw.every((v) => typeof v === "string")) {
-    // Invalid shape — fail closed (empty policy = no tools allowed)
-    logger.warn(
-      "load-skill returned invalid allowedTools; falling back to empty policy (no tools)",
-    );
-    return [];
-  }
-
-  // Validate each pattern against the regex
-  try {
-    return validateAllowedToolPatterns(raw);
-  } catch (error) {
-    logger.warn(
-      "load-skill returned invalid tool patterns; falling back to empty policy (no tools)",
-      { error },
-    );
-    return [];
-  }
-}
-
-/** Result of skill policy enforcement for a single tool call */
-type SkillPolicyResult =
-  | { allowed: true }
-  | { allowed: false; error: string };
-
-/**
- * Enforce skill policy on a single tool call.
- * Shared between generate() and stream() paths.
- */
-export function enforceSkillPolicy(
-  toolName: string,
-  activeSkillPolicy: string[] | undefined,
-  mustLoadSkillFirst: boolean,
-): SkillPolicyResult {
-  // Must load skill before other tools
-  if (mustLoadSkillFirst && toolName !== LOAD_SKILL_TOOL_ID) {
-    return { allowed: false, error: getSkillActivationRequiredError(toolName) };
-  }
-
-  // Check tool allowed by active skill policy (Layer 2: execution-time)
-  if (activeSkillPolicy && !isToolAllowedBySkill(toolName, activeSkillPolicy)) {
-    return {
-      allowed: false,
-      error: `Tool "${toolName}" is not allowed by the active skill policy. Allowed: ${
-        activeSkillPolicy.join(", ")
-      }`,
-    };
-  }
-
-  return { allowed: true };
 }
 
 function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {
