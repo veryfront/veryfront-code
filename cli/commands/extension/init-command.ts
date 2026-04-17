@@ -9,6 +9,21 @@ export interface GeneratedFile {
   content: string;
 }
 
+const VALID_NAME = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * Validate an extension name. Returns an error message if invalid,
+ * or `undefined` if the name is acceptable.
+ */
+export function validateExtensionName(name: string): string | undefined {
+  if (!name) return "Extension name is required.";
+  if (!VALID_NAME.test(name)) {
+    return "Extension name must be lowercase alphanumeric with hyphens (e.g., 'my-cache').";
+  }
+  if (name.length > 64) return "Extension name must be 64 characters or fewer.";
+  return undefined;
+}
+
 /**
  * Generate the file contents for a new extension scaffold.
  * Does not write to disk — returns file path/content pairs.
@@ -109,6 +124,9 @@ function camelCase(name: string): string {
  * Execute the extension init command: generate files and write to disk.
  */
 export async function runExtensionInit(name: string, baseDir: string): Promise<void> {
+  const error = validateExtensionName(name);
+  if (error) throw new Error(error);
+
   const files = generateExtensionFiles(name);
 
   for (const file of files) {

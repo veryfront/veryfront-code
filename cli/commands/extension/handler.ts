@@ -5,7 +5,7 @@
  */
 
 import type { ParsedArgs } from "#cli/shared/types";
-import { runExtensionInit } from "./init-command.ts";
+import { runExtensionInit, validateExtensionName } from "./init-command.ts";
 import { runExtensionValidate } from "./validate-command.ts";
 
 export async function handleExtensionCommand(args: ParsedArgs): Promise<void> {
@@ -16,6 +16,11 @@ export async function handleExtensionCommand(args: ParsedArgs): Promise<void> {
       const name = args._[2] as string;
       if (!name) {
         console.error("Usage: veryfront extension init <name>");
+        Deno.exit(1);
+      }
+      const nameError = validateExtensionName(name);
+      if (nameError) {
+        console.error(`Error: ${nameError}`);
         Deno.exit(1);
       }
       await runExtensionInit(name, Deno.cwd());
