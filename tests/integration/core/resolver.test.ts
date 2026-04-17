@@ -4,7 +4,20 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { ModuleResolver } from "#veryfront/modules";
-import { withTestContext } from "../../_helpers/context.ts";
+import { type TestContext, withTestContext } from "../../_helpers/context.ts";
+
+type ResolverOptions = ConstructorParameters<typeof ModuleResolver>[0];
+
+async function createTestResolver(
+  context: TestContext,
+  options: Omit<ResolverOptions, "projectDir" | "adapter"> = {},
+): Promise<ModuleResolver> {
+  return new ModuleResolver({
+    projectDir: context.projectDir,
+    adapter: await getAdapter(),
+    ...options,
+  });
+}
 
 describe("ModuleResolver", () => {
   describe("Basic Resolution", () => {
@@ -14,11 +27,9 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src", "lib"), { recursive: true });
         await writeTextFile(filePath, "export const x=1\n");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: { "@alias": "/src/lib/util.ts" },
           virtualModules: new Map([["virtual:mod", "export const v=1"]]),
-          adapter: await getAdapter(),
         });
 
         const v = await r.resolve("virtual:mod");
@@ -48,10 +59,8 @@ describe("ModuleResolver", () => {
   describe("Virtual Modules", () => {
     it("should resolve virtual module with transformed flag", async () => {
       await withTestContext("virtual-transformed", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([["virtual:config", "export const cfg = {}"]]),
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("virtual:config");
@@ -64,10 +73,7 @@ describe("ModuleResolver", () => {
 
     it("should return null for non-existent virtual module", async () => {
       await withTestContext("virtual-missing", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("virtual:nonexistent");
         assertExists(resolved);
@@ -77,10 +83,7 @@ describe("ModuleResolver", () => {
 
     it("should add virtual module and clear cache", async () => {
       await withTestContext("virtual-add", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         let resolved = await r.resolve("virtual:new");
         assertEquals(resolved?.type, "npm");
@@ -96,10 +99,8 @@ describe("ModuleResolver", () => {
 
     it("should update existing virtual module", async () => {
       await withTestContext("virtual-update", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([["virtual:data", "export const v = 1"]]),
-          adapter: await getAdapter(),
         });
 
         const first = await r.resolve("virtual:data");
@@ -114,10 +115,8 @@ describe("ModuleResolver", () => {
 
     it("should remove virtual module", async () => {
       await withTestContext("virtual-remove", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([["virtual:temp", "export const t = 1"]]),
-          adapter: await getAdapter(),
         });
 
         let resolved = await r.resolve("virtual:temp");
@@ -133,10 +132,8 @@ describe("ModuleResolver", () => {
 
     it("should handle virtual module with empty content", async () => {
       await withTestContext("virtual-empty", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([["virtual:empty", ""]]),
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("virtual:empty");
@@ -148,14 +145,12 @@ describe("ModuleResolver", () => {
 
     it("should handle multiple virtual modules", async () => {
       await withTestContext("virtual-multiple", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([
             ["virtual:a", "export const a = 1"],
             ["virtual:b", "export const b = 2"],
             ["virtual:c", "export const c = 3"],
           ]),
-          adapter: await getAdapter(),
         });
 
         const [a, b, c] = await Promise.all([
@@ -178,10 +173,8 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export const util = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: { "@utils": "/src/utils.ts" },
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("@utils");
@@ -193,10 +186,8 @@ describe("ModuleResolver", () => {
 
     it("should resolve import map to external URL (http)", async () => {
       await withTestContext("importmap-http", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: { "http-lib": "http://example.com/lib.js" },
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("http-lib");
@@ -208,10 +199,8 @@ describe("ModuleResolver", () => {
 
     it("should resolve import map to external URL (https)", async () => {
       await withTestContext("importmap-https", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: { "cdn-lib": "https://cdn.example.com/lib.js" },
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("cdn-lib");
@@ -223,14 +212,12 @@ describe("ModuleResolver", () => {
 
     it("should handle import map with multiple entries", async () => {
       await withTestContext("importmap-multiple", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: {
             "@lib1": "https://cdn.com/lib1.js",
             "@lib2": "https://cdn.com/lib2.js",
             "@lib3": "https://cdn.com/lib3.js",
           },
-          adapter: await getAdapter(),
         });
 
         const [lib1, lib2, lib3] = await Promise.all([
@@ -247,10 +234,7 @@ describe("ModuleResolver", () => {
 
     it("should work without import map", async () => {
       await withTestContext("no-importmap", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("react");
         assertExists(resolved);
@@ -266,10 +250,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export const lib = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("./lib", "src/main.ts");
         assertExists(resolved);
@@ -286,10 +267,7 @@ describe("ModuleResolver", () => {
         });
         await writeTextFile(filePath, "export const util = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("../util", "src/components/Button.tsx");
         assertExists(resolved);
@@ -304,10 +282,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export const data = {}");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("./data.ts", "src/main.ts");
         assertExists(resolved);
@@ -321,10 +296,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export default function App() {}");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("./App.tsx", "src/index.ts");
         assertExists(resolved);
@@ -338,10 +310,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export const legacy = true");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("./legacy.js", "src/main.ts");
         assertExists(resolved);
@@ -355,10 +324,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export const Component = () => {}");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("./Component.jsx", "src/main.ts");
         assertExists(resolved);
@@ -372,10 +338,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export const mod = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("./module.mjs", "src/main.ts");
         assertExists(resolved);
@@ -389,10 +352,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export const help = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("./helper", "src/main.ts");
         assertExists(resolved);
@@ -402,10 +362,7 @@ describe("ModuleResolver", () => {
 
     it("should return null for missing relative import", async () => {
       await withTestContext("relative-missing", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("./nonexistent", "src/main.ts");
         assertEquals(resolved, null);
@@ -417,10 +374,7 @@ describe("ModuleResolver", () => {
         const filePath = join(context.projectDir, "lib.ts");
         await writeTextFile(filePath, "export const lib = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("./lib");
         assertExists(resolved);
@@ -442,10 +396,7 @@ describe("ModuleResolver", () => {
         });
         await writeTextFile(filePath, "export const str = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve(
           "../../core/utils/string",
@@ -463,10 +414,7 @@ describe("ModuleResolver", () => {
         const filePath = join(context.projectDir, "config.ts");
         await writeTextFile(filePath, "export const config = {}");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/config.ts");
         assertExists(resolved);
@@ -481,10 +429,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src", "lib"), { recursive: true });
         await writeTextFile(filePath, "export const utils = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/src/lib/utils.ts");
         assertExists(resolved);
@@ -494,10 +439,7 @@ describe("ModuleResolver", () => {
 
     it("should return null for missing absolute import", async () => {
       await withTestContext("absolute-missing", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/nonexistent.ts");
         assertEquals(resolved, null);
@@ -508,10 +450,7 @@ describe("ModuleResolver", () => {
   describe("NPM Package Resolution", () => {
     it("should resolve npm package to esm.sh", async () => {
       await withTestContext("npm-basic", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("lodash");
         assertExists(resolved);
@@ -522,10 +461,7 @@ describe("ModuleResolver", () => {
 
     it("should resolve scoped npm package", async () => {
       await withTestContext("npm-scoped", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("@babel/core");
         assertExists(resolved);
@@ -536,10 +472,7 @@ describe("ModuleResolver", () => {
 
     it("should resolve npm package with version", async () => {
       await withTestContext("npm-version", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("react@18.2.0");
         assertExists(resolved);
@@ -550,10 +483,7 @@ describe("ModuleResolver", () => {
 
     it("should resolve npm package with subpath", async () => {
       await withTestContext("npm-subpath", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("lodash/debounce");
         assertExists(resolved);
@@ -564,10 +494,7 @@ describe("ModuleResolver", () => {
 
     it("should resolve scoped npm package with subpath", async () => {
       await withTestContext("npm-scoped-subpath", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("@babel/parser/lib/index.js");
         assertExists(resolved);
@@ -578,10 +505,7 @@ describe("ModuleResolver", () => {
 
     it("should resolve npm package with tag", async () => {
       await withTestContext("npm-tag", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("react@next");
         assertExists(resolved);
@@ -598,10 +522,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export const cached = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const first = await r.resolve("/src/cached.ts");
         const second = await r.resolve("/src/cached.ts");
@@ -612,10 +533,7 @@ describe("ModuleResolver", () => {
 
     it("should cache with different referrers separately", async () => {
       await withTestContext("cache-referrer", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const [npm1, npm2] = await Promise.all([
           r.resolve("react", "src/app.ts"),
@@ -630,10 +548,8 @@ describe("ModuleResolver", () => {
 
     it("should clear entire cache without pattern", async () => {
       await withTestContext("cache-clear-all", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([["virtual:a", "a"], ["virtual:b", "b"]]),
-          adapter: await getAdapter(),
         });
 
         await r.resolve("virtual:a");
@@ -649,13 +565,11 @@ describe("ModuleResolver", () => {
 
     it("should clear cache with pattern matching", async () => {
       await withTestContext("cache-clear-pattern", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([
             ["virtual:config", "config"],
             ["virtual:data", "data"],
           ]),
-          adapter: await getAdapter(),
         });
 
         await r.resolve("virtual:config");
@@ -674,10 +588,7 @@ describe("ModuleResolver", () => {
 
     it("should invalidate cache when virtual module added", async () => {
       await withTestContext("cache-invalidate-add", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         let resolved = await r.resolve("virtual:dynamic");
         assertEquals(resolved?.type, "npm");
@@ -693,10 +604,8 @@ describe("ModuleResolver", () => {
 
     it("should invalidate cache when virtual module removed", async () => {
       await withTestContext("cache-invalidate-remove", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([["virtual:temp", "temp"]]),
-          adapter: await getAdapter(),
         });
 
         let resolved = await r.resolve("virtual:temp");
@@ -712,10 +621,7 @@ describe("ModuleResolver", () => {
 
     it("should handle concurrent resolutions", async () => {
       await withTestContext("cache-concurrent", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const results = await Promise.all([
           r.resolve("react"),
@@ -735,10 +641,7 @@ describe("ModuleResolver", () => {
   describe("Edge Cases", () => {
     it("should treat empty specifier as npm package", async () => {
       await withTestContext("edge-empty-specifier", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("");
         assertExists(resolved);
@@ -748,10 +651,7 @@ describe("ModuleResolver", () => {
 
     it("should handle malformed relative path", async () => {
       await withTestContext("edge-malformed-relative", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("./", "src/main.ts");
         assert(resolved === null || resolved.type === "file");
@@ -763,10 +663,7 @@ describe("ModuleResolver", () => {
         const filePath = join(context.projectDir, "file.test.ts");
         await writeTextFile(filePath, "export const test = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/file.test.ts");
         assertExists(resolved);
@@ -779,10 +676,7 @@ describe("ModuleResolver", () => {
         const filePath = join(context.projectDir, "my-file_v2.ts");
         await writeTextFile(filePath, "export const special = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/my-file_v2.ts");
         assertExists(resolved);
@@ -797,10 +691,7 @@ describe("ModuleResolver", () => {
         await writeTextFile(noExtPath, "no extension");
         await writeTextFile(tsPath, "with extension");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/file");
         assertExists(resolved);
@@ -824,10 +715,7 @@ describe("ModuleResolver", () => {
         });
         await writeTextFile(filePath, "export const deep = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve(
           "../../../../../a/b/c/d/e/deep",
@@ -840,12 +728,10 @@ describe("ModuleResolver", () => {
 
     it("should handle virtual module with special characters", async () => {
       await withTestContext("edge-virtual-special", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([
             ["virtual:@config/app", "export const config = {}"],
           ]),
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("virtual:@config/app");
@@ -856,10 +742,7 @@ describe("ModuleResolver", () => {
 
     it("should handle npm package with very long name", async () => {
       await withTestContext("edge-long-npm", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const longName = "@very-long-org-name/super-long-package-name-that-goes-on-forever";
         const resolved = await r.resolve(longName);
@@ -871,10 +754,7 @@ describe("ModuleResolver", () => {
 
     it("should handle URL-like specifiers that are not in import map", async () => {
       await withTestContext("edge-url-like", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("http-proxy");
         assertExists(resolved);
@@ -884,10 +764,7 @@ describe("ModuleResolver", () => {
 
     it("should handle resolution from root referrer", async () => {
       await withTestContext("edge-root-referrer", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("react", "");
         assertExists(resolved);
@@ -911,10 +788,7 @@ describe("ModuleResolver", () => {
 
     it("should handle relative import with missing referrer gracefully", async () => {
       await withTestContext("error-no-referrer", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("../outside");
         assert(resolved === null || resolved !== null);
@@ -928,10 +802,7 @@ describe("ModuleResolver", () => {
         await writeTextFile(fileA, "import './b'");
         await writeTextFile(fileB, "import './a'");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const [a, b] = await Promise.all([r.resolve("/a.ts"), r.resolve("/b.ts")]);
         assertExists(a);
@@ -947,10 +818,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export const lib = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/src//lib.ts");
         assertExists(resolved);
@@ -964,10 +832,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export const lib = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/src/./lib.ts");
         assertExists(resolved);
@@ -981,10 +846,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export const win = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/src/win.ts");
         assertExists(resolved);
@@ -999,11 +861,9 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export const local = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: { "@config": "https://cdn.com/config.js" },
           virtualModules: new Map([["virtual:env", "export const env = {}"]]),
-          adapter: await getAdapter(),
         });
 
         const [virtual, mapped, file, npm] = await Promise.all([
@@ -1022,10 +882,8 @@ describe("ModuleResolver", () => {
 
     it("should handle module updates without restart", async () => {
       await withTestContext("integration-hot-update", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([["virtual:state", "export const v = 1"]]),
-          adapter: await getAdapter(),
         });
 
         let resolved = await r.resolve("virtual:state");
@@ -1043,10 +901,7 @@ describe("ModuleResolver", () => {
 
     it("should handle large number of concurrent resolutions", async () => {
       await withTestContext("integration-concurrent-large", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const results = await Promise.all(
           Array.from({ length: 50 }, (_, i) => r.resolve(`package-${i}`)),
@@ -1067,10 +922,8 @@ describe("ModuleResolver", () => {
         const filePath = join(context.projectDir, "config.ts");
         await writeTextFile(filePath, "export const fs = true");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([["config.ts", "export const virtual = true"]]),
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("config.ts");
@@ -1082,12 +935,10 @@ describe("ModuleResolver", () => {
 
     it("should handle nested virtual module paths", async () => {
       await withTestContext("virtual-nested", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([
             ["virtual:app/config/database", "export const db = {}"],
           ]),
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("virtual:app/config/database");
@@ -1099,10 +950,8 @@ describe("ModuleResolver", () => {
 
     it("should handle virtual module with same name as npm package", async () => {
       await withTestContext("virtual-npm-conflict", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([["react", "export const CustomReact = {}"]]),
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("react");
@@ -1114,12 +963,10 @@ describe("ModuleResolver", () => {
 
     it("should handle virtual module with JSON-like content", async () => {
       await withTestContext("virtual-json", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([
             ["virtual:config.json", '{"key": "value", "nested": {"data": 123}}'],
           ]),
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("virtual:config.json");
@@ -1135,10 +982,8 @@ describe("ModuleResolver", () => {
     it("should handle virtual module with very large content", async () => {
       await withTestContext("virtual-large", async (context) => {
         const largeContent = "export const data = " + JSON.stringify(new Array(1000).fill("x"));
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           virtualModules: new Map([["virtual:large", largeContent]]),
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("virtual:large");
@@ -1150,10 +995,7 @@ describe("ModuleResolver", () => {
 
     it("should handle multiple sequential virtual module registrations", async () => {
       await withTestContext("virtual-sequential", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         r.addVirtualModule("virtual:a", "a");
         r.addVirtualModule("virtual:b", "b");
@@ -1175,13 +1017,11 @@ describe("ModuleResolver", () => {
   describe("Import Map Resolution - Conflicts and Edge Cases", () => {
     it("should handle longest prefix match in import map", async () => {
       await withTestContext("importmap-longest-prefix", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: {
             lib: "https://cdn.com/lib.js",
             "lib/utils": "https://cdn.com/lib-utils.js",
           },
-          adapter: await getAdapter(),
         });
 
         const [lib, libUtils] = await Promise.all([
@@ -1196,10 +1036,8 @@ describe("ModuleResolver", () => {
 
     it("should handle import map entries with trailing slashes", async () => {
       await withTestContext("importmap-trailing-slash", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: { "@lib/": "https://cdn.com/lib/" },
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("@lib/");
@@ -1210,10 +1048,8 @@ describe("ModuleResolver", () => {
 
     it("should treat non-matching import map entry as npm package", async () => {
       await withTestContext("importmap-no-match", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: { "@lib": "https://cdn.com/lib.js" },
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("@other");
@@ -1224,10 +1060,8 @@ describe("ModuleResolver", () => {
 
     it("should handle import map with empty value", async () => {
       await withTestContext("importmap-empty-value", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: { empty: "" },
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("empty");
@@ -1242,10 +1076,8 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "dist"), { recursive: true });
         await writeTextFile(filePath, "export const bundle = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: { "@bundle": "/dist/bundle.js" },
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("@bundle");
@@ -1257,10 +1089,8 @@ describe("ModuleResolver", () => {
 
     it("should handle import map precedence over npm packages", async () => {
       await withTestContext("importmap-npm-precedence", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: { lodash: "https://cdn.skypack.dev/lodash" },
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("lodash");
@@ -1272,10 +1102,8 @@ describe("ModuleResolver", () => {
 
     it("should handle import map with special characters in keys", async () => {
       await withTestContext("importmap-special-keys", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: { "@org/pkg-v2.0": "https://cdn.com/pkg.js" },
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("@org/pkg-v2.0");
@@ -1294,10 +1122,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "lib"), { recursive: true });
         await writeTextFile(sharedPath, "export const shared = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const [fromApp, fromLib] = await Promise.all([
           r.resolve("../shared/utils", "app/main.ts"),
@@ -1317,10 +1142,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "a", "b", "c"), { recursive: true });
         await writeTextFile(rootPath, "export const root = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("../../../root", "a/b/c/deep.ts");
         assertExists(resolved);
@@ -1333,10 +1155,7 @@ describe("ModuleResolver", () => {
         const filePath = join(context.projectDir, "config.ts");
         await writeTextFile(filePath, "export const cfg = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("./config", "index.ts");
         assertExists(resolved);
@@ -1350,10 +1169,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src", "lib"), { recursive: true });
         await writeTextFile(filePath, "export const utils = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve(".././lib/utils", "src/app/main.ts");
         assertExists(resolved);
@@ -1363,10 +1179,7 @@ describe("ModuleResolver", () => {
 
     it("should handle relative import attempting to escape project root", async () => {
       await withTestContext("relative-escape-root", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve(
           "../../../../../../../../nonexistent-file-xyz.ts",
@@ -1384,10 +1197,7 @@ describe("ModuleResolver", () => {
         await mkdir(join(context.projectDir, "src"), { recursive: true });
         await writeTextFile(filePath, "export const mod = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/src/module.ts");
         assertExists(resolved);
@@ -1400,10 +1210,7 @@ describe("ModuleResolver", () => {
         const filePath = join(context.projectDir, "index.ts");
         await writeTextFile(filePath, "export const index = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/index.ts");
         assertExists(resolved);
@@ -1427,10 +1234,7 @@ describe("ModuleResolver", () => {
         );
         await writeTextFile(filePath, "export class AuthService {}");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve(
           "/src/features/auth/services/auth.service.ts",
@@ -1442,10 +1246,7 @@ describe("ModuleResolver", () => {
 
     it("should prevent path traversal in absolute imports", async () => {
       await withTestContext("absolute-traversal", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/../../../etc/passwd");
         assertEquals(resolved, null);
@@ -1456,10 +1257,7 @@ describe("ModuleResolver", () => {
   describe("NPM Package Resolution - Advanced", () => {
     it("should resolve deeply nested npm package subpath", async () => {
       await withTestContext("npm-deep-subpath", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("lodash/fp/curry");
         assertExists(resolved);
@@ -1470,10 +1268,7 @@ describe("ModuleResolver", () => {
 
     it("should resolve scoped package with version and subpath", async () => {
       await withTestContext("npm-scoped-version-subpath", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("@babel/core@7.20.0/lib/index.js");
         assertExists(resolved);
@@ -1487,10 +1282,7 @@ describe("ModuleResolver", () => {
 
     it("should resolve package with jsx-runtime subpath", async () => {
       await withTestContext("npm-jsx-runtime", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("react/jsx-runtime");
         assertExists(resolved);
@@ -1501,10 +1293,7 @@ describe("ModuleResolver", () => {
 
     it("should resolve package with prerelease version", async () => {
       await withTestContext("npm-prerelease", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("next@14.0.0-canary.0");
         assertExists(resolved);
@@ -1515,10 +1304,7 @@ describe("ModuleResolver", () => {
 
     it("should handle package name with numbers and hyphens", async () => {
       await withTestContext("npm-complex-name", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("vue-router-4");
         assertExists(resolved);
@@ -1531,10 +1317,7 @@ describe("ModuleResolver", () => {
   describe("Cache Patterns - Advanced", () => {
     it("should maintain separate cache entries for same specifier with different referrers", async () => {
       await withTestContext("cache-referrer-keys", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         await r.resolve("react", "app/main.ts");
         await r.resolve("react", "lib/util.ts");
@@ -1547,10 +1330,8 @@ describe("ModuleResolver", () => {
 
     it("should invalidate cache on import map change", async () => {
       await withTestContext("cache-importmap-change", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: { lib: "https://cdn.com/v1.js" },
-          adapter: await getAdapter(),
         });
 
         const first = await r.resolve("lib");
@@ -1564,10 +1345,7 @@ describe("ModuleResolver", () => {
 
     it("should generate unique cache keys for edge case specifiers", async () => {
       await withTestContext("cache-edge-keys", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         await r.resolve("");
         await r.resolve(".");
@@ -1582,10 +1360,7 @@ describe("ModuleResolver", () => {
 
     it("should handle cache with high volume resolutions", async () => {
       await withTestContext("cache-high-volume", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         for (let i = 0; i < 100; i++) {
           await r.resolve(`package-${i}`);
@@ -1607,10 +1382,7 @@ describe("ModuleResolver", () => {
         await writeTextFile(join(context.projectDir, "module.tsx"), "tsx");
         await writeTextFile(join(context.projectDir, "module.ts"), "ts");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("./module", "index.ts");
         assertExists(resolved);
@@ -1623,10 +1395,7 @@ describe("ModuleResolver", () => {
         const filePath = join(context.projectDir, "my module.ts");
         await writeTextFile(filePath, "export const spaced = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/my module.ts");
         assertExists(resolved);
@@ -1639,10 +1408,7 @@ describe("ModuleResolver", () => {
         const filePath = join(context.projectDir, "モジュール.ts");
         await writeTextFile(filePath, "export const unicode = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/モジュール.ts");
         assertExists(resolved);
@@ -1669,10 +1435,7 @@ describe("ModuleResolver", () => {
         );
         await writeTextFile(fullPath, "export const long = 1");
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("/" + longPath);
         assertExists(resolved);
@@ -1687,10 +1450,8 @@ describe("ModuleResolver", () => {
           largeImportMap[`@lib${i}`] = `https://cdn.com/lib${i}.js`;
         }
 
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
+        const r = await createTestResolver(context, {
           importMap: largeImportMap,
-          adapter: await getAdapter(),
         });
 
         const resolved = await r.resolve("@lib50");
@@ -1701,10 +1462,7 @@ describe("ModuleResolver", () => {
 
     it("should handle empty string referrer", async () => {
       await withTestContext("edge-empty-referrer", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const resolved = await r.resolve("react", "");
         assertExists(resolved);
@@ -1714,10 +1472,7 @@ describe("ModuleResolver", () => {
 
     it("should handle undefined vs null differences gracefully", async () => {
       await withTestContext("edge-undefined-null", async (context) => {
-        const r = new ModuleResolver({
-          projectDir: context.projectDir,
-          adapter: await getAdapter(),
-        });
+        const r = await createTestResolver(context);
 
         const [withUndefined, withoutReferrer] = await Promise.all([
           r.resolve("react", undefined),
