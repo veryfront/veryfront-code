@@ -162,6 +162,5 @@ describe(
 
       assertEquals(result.continue, true);
     });
-
   },
 );
