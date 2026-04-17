@@ -19,8 +19,33 @@ import {
   VeryfrontError,
 } from "#veryfront/errors";
 import { getTailwindPluginBundleUrl } from "#veryfront/build/binary-plugin-includes.ts";
+import {
+  bareName,
+  PACKAGE_SPEC_RE,
+  TAILWIND_PLUGIN_ALLOWLIST,
+} from "./tailwind-plugin-allowlist.ts";
 
 const logger = serverLogger.component("tailwind");
+
+/**
+ * Enforce the Tailwind plugin allowlist (VULN-FS-1).
+ *
+ * Called at the top of every entry point that can load third-party plugin
+ * code. Rejects anything that is not a syntactically valid npm package
+ * specifier, and anything whose bare name is not on the allowlist.
+ */
+function assertPluginAllowed(spec: string): void {
+  if (!PACKAGE_SPEC_RE.test(spec)) {
+    throw new Error(`Invalid Tailwind plugin specifier: ${spec}`);
+  }
+  const name = bareName(spec);
+  if (!TAILWIND_PLUGIN_ALLOWLIST.has(name)) {
+    throw new Error(
+      `Package "${name}" is not on the Tailwind plugin allowlist. ` +
+        `See src/html/styles-builder/tailwind-plugin-allowlist.ts.`,
+    );
+  }
+}
 
 // Provide localStorage shim for plugins that use util-deprecate (which checks localStorage)
 // This prevents "LocalStorage is not supported in this context" errors in Deno.
@@ -107,6 +132,8 @@ async function importBundledModule(code: string): Promise<unknown> {
  * dynamic imports from URLs. Fetches bundled code, rewrites imports, loads via temp file.
  */
 export async function loadModuleFromEsmSh(packageName: string): Promise<unknown> {
+  assertPluginAllowed(packageName);
+
   const stubUrl = getTailwindPluginBundleUrl(packageName);
   logger.debug("Fetching esm.sh stub", { url: stubUrl });
 
@@ -177,6 +204,8 @@ export async function loadPlugin(
   if (pluginCache.has(id)) {
     return pluginCache.get(id);
   }
+
+  assertPluginAllowed(id);
 
   const { isDeno } = await import("#veryfront/platform/compat/runtime.ts");
 
