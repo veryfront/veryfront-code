@@ -11,8 +11,8 @@ import {
 } from "./errors.ts";
 import { register, reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import { auditCapabilities } from "./capabilities.ts";
-import { detectConflicts, validateExtension } from "./validation.ts";
-import type { ExtensionContext, ExtensionLogger, ResolvedExtension } from "./types.ts";
+import { detectConflicts, selectContractProviders, validateExtension } from "./validation.ts";
+import type { Extension, ExtensionContext, ExtensionLogger, ResolvedExtension } from "./types.ts";
 
 export class ExtensionLoader {
   private logger: ExtensionLogger;
@@ -24,20 +24,35 @@ export class ExtensionLoader {
 
   /**
    * Flatten presets: extensions with `extends` are replaced by their children.
+   * Recurses through nested presets; throws on cyclic `extends` graphs rather
+   * than stack-overflowing.
    */
   flattenPresets(extensions: ResolvedExtension[]): ResolvedExtension[] {
+    return this.flattenPresetsInner(extensions, new Set());
+  }
+
+  private flattenPresetsInner(
+    extensions: ResolvedExtension[],
+    path: Set<Extension>,
+  ): ResolvedExtension[] {
     const result: ResolvedExtension[] = [];
 
     for (const resolved of extensions) {
       const ext = resolved.extension;
       if (ext.extends && ext.extends.length > 0) {
+        if (path.has(ext)) {
+          throw EXTENSION_VALIDATION_ERROR.create({
+            message: `Circular preset extends chain detected via "${ext.name}"`,
+          });
+        }
+        path.add(ext);
         const children = ext.extends.map((child) => ({
           extension: child,
           source: resolved.source,
           origin: resolved.origin,
         }));
-        // Recursively flatten in case children are also presets
-        result.push(...this.flattenPresets(children));
+        result.push(...this.flattenPresetsInner(children, path));
+        path.delete(ext);
       } else {
         result.push(resolved);
       }
@@ -150,6 +165,12 @@ export class ExtensionLoader {
       });
     }
 
+    // Precompute the priority winner per contract so that a lower-priority
+    // provider later in the iteration order cannot overwrite the winning impl
+    // via register(). Without this, merged inputs (config -> package ->
+    // project -> local-file) silently invert the documented source priority.
+    const contractWinner = selectContractProviders(extensions);
+
     for (const resolved of extensions) {
       const ext = resolved.extension;
 
@@ -164,7 +185,9 @@ export class ExtensionLoader {
 
       if (ext.provides) {
         for (const [contract, impl] of Object.entries(ext.provides)) {
-          register(contract, impl);
+          if (contractWinner.get(contract) === resolved) {
+            register(contract, impl);
+          }
         }
       }
 
@@ -176,7 +199,25 @@ export class ExtensionLoader {
           config: projectConfig,
           logger: this.logger,
         };
-        await ext.setup(ctx);
+        try {
+          await ext.setup(ctx);
+        } catch (err) {
+          // Best-effort teardown of the partially-initialized extension so
+          // any resources it opened before throwing get a chance to close.
+          if (ext.teardown) {
+            try {
+              await ext.teardown();
+            } catch (teardownErr) {
+              this.logger.error(
+                `Error during rollback teardown of "${ext.name}":`,
+                teardownErr,
+              );
+            }
+          }
+          // Roll back everything loaded so far and clear the registry.
+          await this.teardownAll();
+          throw err;
+        }
       }
 
       this.setupOrder.push(resolved);

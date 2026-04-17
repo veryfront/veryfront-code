@@ -7,11 +7,14 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ExtensionLoader } from "./loader.ts";
-import { reset } from "./contracts.ts";
-import type { Extension, ResolvedExtension } from "./types.ts";
+import { reset, tryResolve } from "./contracts.ts";
+import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
 
-function makeResolved(ext: Extension): ResolvedExtension {
-  return { extension: ext, source: "config", origin: ext.name };
+function makeResolved(
+  ext: Extension,
+  source: ExtensionSource = "config",
+): ResolvedExtension {
+  return { extension: ext, source, origin: ext.name };
 }
 
 function makeExt(name: string, overrides: Partial<Extension> = {}): Extension {
@@ -203,6 +206,167 @@ describe("ExtensionLoader", () => {
       const flat = loader.flattenPresets([makeResolved(ext)]);
       assertEquals(flat.length, 1);
       assertEquals(flat[0]?.extension.name, "standalone");
+    });
+
+    it("should throw controlled error on cyclic extends (A -> B -> A)", () => {
+      const a = makeExt("ext-a");
+      const b = makeExt("ext-b", { extends: [a] });
+      a.extends = [b];
+
+      const loader = new ExtensionLoader(noopLogger);
+      assertThrows(
+        () => loader.flattenPresets([makeResolved(a)]),
+        Error,
+        "Circular preset extends",
+      );
+    });
+
+    it("should throw on self-referential extends (A -> A)", () => {
+      const a = makeExt("ext-a");
+      a.extends = [a];
+
+      const loader = new ExtensionLoader(noopLogger);
+      assertThrows(
+        () => loader.flattenPresets([makeResolved(a)]),
+        Error,
+        "Circular preset extends",
+      );
+    });
+
+    it("should accept diamond graph with shared leaf (not a cycle)", () => {
+      const leaf = makeExt("leaf");
+      const preset = makeExt("preset", { extends: [leaf, leaf] });
+
+      const loader = new ExtensionLoader(noopLogger);
+      const flat = loader.flattenPresets([makeResolved(preset)]);
+      assertEquals(flat.length, 2);
+      assertEquals(flat[0]?.extension.name, "leaf");
+      assertEquals(flat[1]?.extension.name, "leaf");
+    });
+  });
+
+  describe("setupAll() — source priority on register()", () => {
+    it("should register the higher-priority provider's impl when two sources provide the same contract", async () => {
+      const configProvider = makeExt("config-cache", {
+        provides: { Cache: { id: "config-impl" } },
+      });
+      const packageProvider = makeExt("package-cache", {
+        provides: { Cache: { id: "package-impl" } },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll(
+        [
+          makeResolved(configProvider, "config"),
+          makeResolved(packageProvider, "package"),
+        ],
+        {},
+      );
+
+      assertEquals((tryResolve("Cache") as { id: string }).id, "config-impl");
+    });
+
+    it("should win regardless of iteration order (lower-priority first)", async () => {
+      const configProvider = makeExt("config-cache", {
+        provides: { Cache: { id: "config-impl" } },
+      });
+      const projectProvider = makeExt("project-cache", {
+        provides: { Cache: { id: "project-impl" } },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      // Pass project first to prove order-insensitivity.
+      await loader.setupAll(
+        [
+          makeResolved(projectProvider, "project"),
+          makeResolved(configProvider, "config"),
+        ],
+        {},
+      );
+
+      assertEquals((tryResolve("Cache") as { id: string }).id, "config-impl");
+    });
+  });
+
+  describe("setupAll() — rollback on setup failure", () => {
+    it("should teardown previously-loaded extensions when a later setup throws", async () => {
+      const order: string[] = [];
+      const a = makeExt("ext-a", {
+        setup: () => {
+          order.push("a-setup");
+        },
+        teardown: () => {
+          order.push("a-teardown");
+        },
+      });
+      const b = makeExt("ext-b", {
+        setup: () => {
+          throw new Error("boom");
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(a), makeResolved(b)], {}),
+        Error,
+        "boom",
+      );
+      assertEquals(order, ["a-setup", "a-teardown"]);
+    });
+
+    it("should call teardown() on the failing extension (best-effort)", async () => {
+      const order: string[] = [];
+      const failing = makeExt("failing", {
+        setup: () => {
+          order.push("setup");
+          throw new Error("boom");
+        },
+        teardown: () => {
+          order.push("teardown");
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(failing)], {}),
+        Error,
+        "boom",
+      );
+      assertEquals(order, ["setup", "teardown"]);
+    });
+
+    it("should clear the contract registry so failed provides do not leak", async () => {
+      const a = makeExt("ext-a", {
+        provides: { Cache: { id: "a-impl" } },
+      });
+      const failing = makeExt("failing", {
+        setup: () => {
+          throw new Error("boom");
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(a), makeResolved(failing)], {}),
+        Error,
+        "boom",
+      );
+      assertEquals(tryResolve("Cache"), undefined);
+    });
+
+    it("should not throw when failing extension has no teardown hook", async () => {
+      const failing = makeExt("failing", {
+        setup: () => {
+          throw new Error("boom");
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(failing)], {}),
+        Error,
+        "boom",
+      );
     });
   });
 });

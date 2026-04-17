@@ -18,12 +18,38 @@ export interface ConflictInfo {
  * Priority map for extension sources.
  * Lower number = higher priority.
  */
-const SOURCE_PRIORITY: Record<ExtensionSource, number> = {
+export const SOURCE_PRIORITY: Record<ExtensionSource, number> = {
   config: 0,
   package: 1,
   project: 2,
   "local-file": 3,
 };
+
+/**
+ * Select the highest-priority provider for each contract across a list of
+ * resolved extensions. When multiple extensions provide the same contract,
+ * the one whose source has the lowest `SOURCE_PRIORITY` number wins.
+ * Ties break on first-seen order (mirrors detectConflicts semantics).
+ */
+export function selectContractProviders(
+  extensions: ResolvedExtension[],
+): Map<string, ResolvedExtension> {
+  const winner = new Map<string, ResolvedExtension>();
+  for (const resolved of extensions) {
+    const provides = resolved.extension.provides;
+    if (!provides) continue;
+    for (const contract of Object.keys(provides)) {
+      const current = winner.get(contract);
+      if (
+        !current ||
+        SOURCE_PRIORITY[resolved.source] < SOURCE_PRIORITY[current.source]
+      ) {
+        winner.set(contract, resolved);
+      }
+    }
+  }
+  return winner;
+}
 
 /**
  * Validate the shape of an extension object.
