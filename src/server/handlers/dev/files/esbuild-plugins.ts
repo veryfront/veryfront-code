@@ -46,7 +46,8 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
           };
         }
 
-        const basedir = args.resolveDir || (args.importer ? getDirectory(args.importer) : projectDir);
+        const basedir = args.resolveDir ||
+          (args.importer ? getDirectory(args.importer) : projectDir);
         // normalizePath collapses `./` and `foo/../` segments produced by
         // `joinPath` so downstream `adapter.fs.stat` lookups match the file
         // system's canonical key. Still inside the containment check below.
