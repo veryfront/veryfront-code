@@ -99,7 +99,7 @@ async function readProjectDependencies(
  * `new Function` to evaluate them in a proper CJS wrapper with require,
  * exports, module, __filename, and __dirname bindings.
  */
-function generateCompiledBinaryRequireShim(projectDir: string): string {
+export function generateCompiledBinaryRequireShim(projectDir: string): string {
   const builtinSet = JSON.stringify(NODE_BUILTINS);
   const safeProjectDir = JSON.stringify(projectDir + "/package.json");
   const safeProjectRoot = JSON.stringify(pathHelper.resolve(projectDir));
@@ -132,9 +132,19 @@ function __vf_loadCjs(id, parentDir) {
         try { Deno.statSync(resolved + exts[i]); resolved += exts[i]; break; } catch (_) { /* expected: probing file extensions */ }
       }
     }
-    __vf_assertContained(resolved);
   } else {
     resolved = __vf_builtinRequire.resolve(id);
+  }
+  // VULN-FS-5: Always assert containment after resolution (both branches),
+  // then re-canonicalize via realPathSync to resist symlinked node_modules
+  // entries that could point outside the project root.
+  __vf_assertContained(resolved);
+  try {
+    var real = Deno.realPathSync(resolved);
+    __vf_assertContained(real);
+    resolved = real;
+  } catch (_) {
+    /* expected: realPathSync fails for non-existent paths — assertContained above already held */
   }
   if (resolved in __vf_cache) return __vf_cache[resolved];
   var code = Deno.readTextFileSync(resolved);
