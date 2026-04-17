@@ -13,6 +13,7 @@ import { handleDemoCommand } from "./commands/demo/handler.ts";
 import { handleDeployCommand } from "./commands/deploy/handler.ts";
 import { handleDevCommand } from "./commands/dev/handler.ts";
 import { handleDoctorCommand } from "./commands/doctor/handler.ts";
+import { handleExtensionCommand } from "./commands/extension/handler.ts";
 import { handleGenerateCommand } from "./commands/generate/handler.ts";
 import { handleInitCommand } from "./commands/init/handler.ts";
 import { handleInstallCommand, handleUninstallCommand } from "./commands/install/handler.ts";
@@ -118,6 +119,7 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "install": handleInstallCommand,
   "uninstall": handleUninstallCommand,
   "demo": handleDemoCommand,
+  "extension": handleExtensionCommand,
   "mcp": handleMCPCommand,
   "issues": handleIssuesCommand,
   "start": handleStartCommand,
