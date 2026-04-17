@@ -1,4 +1,18 @@
 import type { EmbeddingRuntime, ModelRuntime } from "./types.ts";
+import {
+  getAnthropicMessagesUrl,
+  getGoogleEmbeddingUrl,
+  getGoogleGenerateContentUrl,
+  getGoogleStreamGenerateContentUrl,
+  getOpenAIChatCompletionsUrl,
+  getOpenAIEmbeddingUrl,
+  getOpenAIResponsesUrl,
+} from "./runtime-loader/provider-endpoints.ts";
+import {
+  createAnthropicRequestInit,
+  createGoogleRequestInit,
+  createOpenAIRequestInit,
+} from "./runtime-loader/provider-request-init.ts";
 
 export interface OpenAIRuntimeConfig {
   apiKey: string;
@@ -377,9 +391,6 @@ type GoogleCompatibleRequest = {
   [key: string]: unknown;
 };
 
-const DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
-const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
-const DEFAULT_GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 export const TOOL_INPUT_PENDING_THRESHOLD_MS = 5_000;
 type ToolInputActivityStatus = "pending_input" | "streaming_input";
 
@@ -580,47 +591,6 @@ export async function* withToolInputStatusTransitions(
 
     processPart(result.value);
   }
-}
-
-function joinUrl(base: string, path: string): string {
-  return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
-}
-
-function getOpenAIEmbeddingUrl(baseURL?: string): string {
-  return joinUrl(baseURL ?? DEFAULT_OPENAI_BASE_URL, "embeddings");
-}
-
-function getAnthropicMessagesUrl(baseURL?: string): string {
-  return joinUrl(baseURL ?? DEFAULT_ANTHROPIC_BASE_URL, "messages");
-}
-
-function getOpenAIChatCompletionsUrl(baseURL?: string): string {
-  return joinUrl(baseURL ?? DEFAULT_OPENAI_BASE_URL, "chat/completions");
-}
-
-function getOpenAIResponsesUrl(baseURL?: string): string {
-  return joinUrl(baseURL ?? DEFAULT_OPENAI_BASE_URL, "responses");
-}
-
-function getGoogleGenerateContentUrl(baseURL: string | undefined, modelId: string): string {
-  return joinUrl(
-    baseURL ?? DEFAULT_GOOGLE_BASE_URL,
-    `models/${encodeURIComponent(modelId)}:generateContent`,
-  );
-}
-
-function getGoogleStreamGenerateContentUrl(baseURL: string | undefined, modelId: string): string {
-  return joinUrl(
-    baseURL ?? DEFAULT_GOOGLE_BASE_URL,
-    `models/${encodeURIComponent(modelId)}:streamGenerateContent?alt=sse`,
-  );
-}
-
-function getGoogleEmbeddingUrl(baseURL: string | undefined, modelId: string): string {
-  return joinUrl(
-    baseURL ?? DEFAULT_GOOGLE_BASE_URL,
-    `models/${encodeURIComponent(modelId)}:embedContent`,
-  );
 }
 
 function isNumberArray(value: unknown): value is number[] {
@@ -1054,17 +1024,6 @@ function readProviderOptions(
   return merged;
 }
 
-function createRequestHeaders(options: {
-  apiKeyHeaderName: string;
-  apiKey: string;
-  extraHeaders?: HeadersInit;
-}): Headers {
-  const headers = new Headers(options.extraHeaders);
-  headers.set("content-type", "application/json");
-  headers.set(options.apiKeyHeaderName, options.apiKey);
-  return headers;
-}
-
 function normalizeAnthropicFinishReason(
   raw: unknown,
 ): string | { unified: string; raw: string } | null {
@@ -1395,24 +1354,6 @@ function toAnthropicTools(
   }
 
   return normalized;
-}
-
-function createAnthropicRequestHeaders(options: {
-  apiKey?: string;
-  authToken?: string;
-  extraHeaders?: HeadersInit;
-}): Headers {
-  const headers = new Headers(options.extraHeaders);
-  headers.set("content-type", "application/json");
-  headers.set("anthropic-version", headers.get("anthropic-version") ?? "2023-06-01");
-
-  if (options.authToken) {
-    headers.set("authorization", `Bearer ${options.authToken}`);
-  } else if (options.apiKey) {
-    headers.set("x-api-key", options.apiKey);
-  }
-
-  return headers;
 }
 
 /**
@@ -3093,16 +3034,12 @@ export function createOpenAIModelRuntime(
         fetchImpl,
         providerLabel: config.name ?? "openai",
         providerKind: "openai",
-        init: {
-          method: "POST",
-          headers: createRequestHeaders({
-            apiKeyHeaderName: "authorization",
-            apiKey: `Bearer ${config.apiKey}`,
-            extraHeaders: options.headers,
-          }),
+        init: createOpenAIRequestInit({
+          apiKey: config.apiKey,
+          extraHeaders: options.headers,
           body: JSON.stringify(body),
           signal: options.abortSignal,
-        },
+        }),
       }).then((payload) => {
         const drained = warnings.drain();
         return {
@@ -3127,16 +3064,12 @@ export function createOpenAIModelRuntime(
         fetchImpl,
         providerLabel: config.name ?? "openai",
         providerKind: "openai",
-        init: {
-          method: "POST",
-          headers: createRequestHeaders({
-            apiKeyHeaderName: "authorization",
-            apiKey: `Bearer ${config.apiKey}`,
-            extraHeaders: options.headers,
-          }),
+        init: createOpenAIRequestInit({
+          apiKey: config.apiKey,
+          extraHeaders: options.headers,
           body: JSON.stringify(body),
           signal: options.abortSignal,
-        },
+        }),
       }).then((responseStream) => {
         const drained = warnings.drain();
         return {
@@ -3746,16 +3679,12 @@ export function createOpenAIResponsesRuntime(
         fetchImpl,
         providerLabel: config.name ?? "openai",
         providerKind: "openai",
-        init: {
-          method: "POST",
-          headers: createRequestHeaders({
-            apiKeyHeaderName: "authorization",
-            apiKey: `Bearer ${config.apiKey}`,
-            extraHeaders: options.headers,
-          }),
+        init: createOpenAIRequestInit({
+          apiKey: config.apiKey,
+          extraHeaders: options.headers,
           body: JSON.stringify(body),
           signal: options.abortSignal,
-        },
+        }),
       }).then((payload) => {
         const drained = warnings.drain();
         return {
@@ -3780,16 +3709,12 @@ export function createOpenAIResponsesRuntime(
         fetchImpl,
         providerLabel: config.name ?? "openai",
         providerKind: "openai",
-        init: {
-          method: "POST",
-          headers: createRequestHeaders({
-            apiKeyHeaderName: "authorization",
-            apiKey: `Bearer ${config.apiKey}`,
-            extraHeaders: options.headers,
-          }),
+        init: createOpenAIRequestInit({
+          apiKey: config.apiKey,
+          extraHeaders: options.headers,
           body: JSON.stringify(body),
           signal: options.abortSignal,
-        },
+        }),
       }).then((responseStream) => {
         const drained = warnings.drain();
         return {
@@ -3829,16 +3754,13 @@ export function createAnthropicModelRuntime(
         fetchImpl,
         providerLabel: config.name ?? "anthropic",
         providerKind: "anthropic",
-        init: {
-          method: "POST",
-          headers: createAnthropicRequestHeaders({
-            apiKey: config.apiKey,
-            authToken: config.authToken,
-            extraHeaders: options.headers,
-          }),
+        init: createAnthropicRequestInit({
+          apiKey: config.apiKey,
+          authToken: config.authToken,
+          extraHeaders: options.headers,
           body: JSON.stringify(body),
           signal: options.abortSignal,
-        },
+        }),
       }).then((payload) => {
         const drained = warnings.drain();
         return {
@@ -3863,16 +3785,13 @@ export function createAnthropicModelRuntime(
         fetchImpl,
         providerLabel: config.name ?? "anthropic",
         providerKind: "anthropic",
-        init: {
-          method: "POST",
-          headers: createAnthropicRequestHeaders({
-            apiKey: config.apiKey,
-            authToken: config.authToken,
-            extraHeaders: options.headers,
-          }),
+        init: createAnthropicRequestInit({
+          apiKey: config.apiKey,
+          authToken: config.authToken,
+          extraHeaders: options.headers,
           body: JSON.stringify(body),
           signal: options.abortSignal,
-        },
+        }),
       }).then((responseStream) => {
         const drained = warnings.drain();
         return {
@@ -3910,16 +3829,12 @@ export function createGoogleModelRuntime(
         fetchImpl,
         providerLabel: config.name ?? "google",
         providerKind: "google",
-        init: {
-          method: "POST",
-          headers: createRequestHeaders({
-            apiKeyHeaderName: "x-goog-api-key",
-            apiKey: config.apiKey,
-            extraHeaders: options.headers,
-          }),
+        init: createGoogleRequestInit({
+          apiKey: config.apiKey,
+          extraHeaders: options.headers,
           body: JSON.stringify(body),
           signal: options.abortSignal,
-        },
+        }),
       }).then((payload) => {
         const drained = warnings.drain();
         return {
@@ -3942,16 +3857,12 @@ export function createGoogleModelRuntime(
         fetchImpl,
         providerLabel: config.name ?? "google",
         providerKind: "google",
-        init: {
-          method: "POST",
-          headers: createRequestHeaders({
-            apiKeyHeaderName: "x-goog-api-key",
-            apiKey: config.apiKey,
-            extraHeaders: options.headers,
-          }),
+        init: createGoogleRequestInit({
+          apiKey: config.apiKey,
+          extraHeaders: options.headers,
           body: JSON.stringify(body),
           signal: options.abortSignal,
-        },
+        }),
       }).then((responseStream) => {
         const drained = warnings.drain();
         return {
@@ -3989,18 +3900,14 @@ export function createOpenAIEmbeddingRuntime(
         fetchImpl,
         providerLabel: config.name ?? "openai",
         providerKind: "openai",
-        init: {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${config.apiKey}`,
-          },
+        init: createOpenAIRequestInit({
+          apiKey: config.apiKey,
           body: JSON.stringify({
             model: modelId,
             input: values,
           }),
           signal: abortSignal,
-        },
+        }),
       }).then((payload) => ({
         embeddings: extractOpenAIEmbeddings(payload),
         usage: {
@@ -4038,19 +3945,15 @@ export function createGoogleEmbeddingRuntime(
           fetchImpl,
           providerLabel: config.name ?? "google",
           providerKind: "google",
-          init: {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              "x-goog-api-key": config.apiKey,
-            },
+          init: createGoogleRequestInit({
+            apiKey: config.apiKey,
             body: JSON.stringify({
               content: {
                 parts: [{ text: value }],
               },
             }),
             signal: abortSignal,
-          },
+          }),
         })
       )).then((payloads) => ({
         embeddings: payloads.map(extractGoogleEmbedding),
