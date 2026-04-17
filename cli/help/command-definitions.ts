@@ -45,6 +45,7 @@ import { skillsHelp } from "../commands/skills/command-help.ts";
 import { configHelp } from "../commands/config/command-help.ts";
 import { openHelp } from "../commands/open/command-help.ts";
 import { completionsHelp } from "../commands/completions/command-help.ts";
+import { extensionHelp } from "../commands/extension/command-help.ts";
 
 /**
  * Central registry of all command help definitions.
@@ -89,4 +90,5 @@ export const COMMANDS: CommandRegistry = {
   config: configHelp,
   open: openHelp,
   completions: completionsHelp,
+  extension: extensionHelp,
 };

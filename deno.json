@@ -110,6 +110,7 @@
     "veryfront/observability": "./src/observability/index.ts",
     "veryfront/tool/schema": "./src/tool/schema/index.ts",
     "veryfront/agent/composition": "./src/agent/composition/index.ts",
+    "veryfront/extensions": "./src/extensions/index.ts",
     "#veryfront": "./src/index.ts",
     "#veryfront/agent": "./src/agent/index.ts",
     "#veryfront/agent/react": "./src/agent/react/index.ts",

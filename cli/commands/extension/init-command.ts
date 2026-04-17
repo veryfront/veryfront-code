@@ -37,9 +37,9 @@ export function generateExtensionFiles(name: string): GeneratedFile[] {
  * @module extensions/${name}
  */
 
-import type { Extension, ExtensionFactory } from "veryfront/extensions";
+import type { ExtensionFactory } from "veryfront/extensions";
 
-const ${camelCase(name)}: ExtensionFactory = (config?) => ({
+const ${camelCase(name)}: ExtensionFactory = () => ({
   name: "${name}",
   version: "0.1.0",
   capabilities: [],

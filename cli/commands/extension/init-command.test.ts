@@ -77,5 +77,30 @@ describe("extension init command", () => {
         assertEquals(f.path.startsWith("extensions/my-cache/"), true);
       }
     });
+
+    it("should import ExtensionFactory from the public veryfront/extensions path", () => {
+      const files = generateExtensionFiles("my-cache");
+      const indexFile = files.find((f) => f.path.endsWith("src/index.ts"));
+      const content = indexFile!.content;
+      assertEquals(
+        content.includes('from "veryfront/extensions"'),
+        true,
+        "scaffold must import from the public barrel, not a deep internal path",
+      );
+      assertEquals(
+        content.includes("import type { ExtensionFactory }"),
+        true,
+      );
+    });
+
+    it("should not type-annotate unused parameters in the scaffold", () => {
+      const files = generateExtensionFiles("my-cache");
+      const indexFile = files.find((f) => f.path.endsWith("src/index.ts"));
+      const content = indexFile!.content;
+      // The factory takes no args in the scaffold — avoids TS7006 in strict
+      // user projects (implicit-any on an unused `config?` parameter).
+      assertEquals(content.includes("(config?)"), false);
+      assertEquals(content.includes(": ExtensionFactory = ()"), true);
+    });
   });
 });
