@@ -17,6 +17,12 @@ import { isCompiledBinary } from "#veryfront/utils";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import { rewriteNpmImports } from "../../../transforms/npm-import-rewrites.ts";
+import {
+  getNodeExternalPackagesToResolve,
+  loadVeryfrontExportsMap,
+  readProjectDependencies,
+  resolveNodePackageToFileUrl,
+} from "./cache-resolution.ts";
 
 const logger = serverLogger.component("api");
 
@@ -74,20 +80,6 @@ const NODE_BUILTINS = [
   "worker_threads",
   "zlib",
 ] as const;
-
-async function readProjectDependencies(
-  projectDir: string,
-  fs: FileSystem,
-): Promise<Map<string, string>> {
-  try {
-    const content = await fs.readTextFile(pathHelper.join(projectDir, "package.json"));
-    const pkg = JSON.parse(content) as { dependencies?: Record<string, string> };
-    return new Map(Object.entries(pkg.dependencies ?? {}));
-  } catch (_) {
-    /* expected: package.json may not exist */
-    return new Map();
-  }
-}
 
 /**
  * Generates a CJS module loader shim for compiled Deno binaries.
@@ -162,23 +154,6 @@ var require = function(id) { return __vf_loadCjs(id, ${JSON.stringify(projectDir
 require.resolve = function(id) { return __vf_builtinRequire.resolve(id); };
 require.ensure = function(mods, cb) { cb(); };
 `.trim();
-}
-
-function resolveExportEntry(entry: unknown): string | undefined {
-  if (typeof entry === "string") return entry;
-  if (entry && typeof entry === "object") {
-    const obj = entry as Record<string, unknown>;
-    // Prefer import > default > first string value
-    for (const key of ["import", "default"]) {
-      const val = obj[key];
-      if (typeof val === "string") return val;
-      if (val && typeof val === "object") {
-        const nested = val as Record<string, unknown>;
-        if (typeof nested.default === "string") return nested.default;
-      }
-    }
-  }
-  return undefined;
 }
 
 export function toCjsDestructureBindings(bindings: string): string {
@@ -660,60 +635,11 @@ async function loadModuleFromCode(
   }
 }
 
-export function getNodeExternalPackagesToResolve(userDeps: Map<string, string>): string[] {
-  const externalPackagesToResolve = ["zod"];
-
-  for (const name of userDeps.keys()) {
-    if (!externalPackagesToResolve.includes(name)) {
-      externalPackagesToResolve.push(name);
-    }
-  }
-
-  return externalPackagesToResolve;
-}
-
-export async function resolveNodePackageToFileUrl(
-  projectDir: string,
-  packageName: string,
-  fs: FileSystem,
-  pathToFileURL: typeof import("node:url").pathToFileURL,
-): Promise<string | null> {
-  const packagePath = pathHelper.join(projectDir, "node_modules", packageName);
-  const packageJsonPath = pathHelper.join(packagePath, "package.json");
-
-  try {
-    const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
-    let entryPoint: string | undefined;
-
-    if (pkgJson.exports) {
-      entryPoint = resolveExportEntry(pkgJson.exports["."]);
-    }
-
-    entryPoint ||= pkgJson.module || pkgJson.main || "index.js";
-    if (!entryPoint) return null;
-
-    return pathToFileURL(pathHelper.join(packagePath, entryPoint)).href;
-  } catch (_) {
-    /* expected: package.json may not exist or be invalid */
-    return null;
-  }
-}
-
-export async function loadVeryfrontExportsMap(
-  projectDir: string,
-  fs: FileSystem,
-): Promise<Record<string, { import?: string }>> {
-  const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
-  const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
-
-  try {
-    const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
-    return pkgJson.exports || {};
-  } catch (_error) {
-    logger.debug("Could not read veryfront package.json");
-    return {};
-  }
-}
+export {
+  getNodeExternalPackagesToResolve,
+  loadVeryfrontExportsMap,
+  resolveNodePackageToFileUrl,
+} from "./cache-resolution.ts";
 
 export async function rewriteNodeExternalImports(
   code: string,
