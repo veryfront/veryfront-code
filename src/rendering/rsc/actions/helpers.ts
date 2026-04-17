@@ -7,8 +7,14 @@ export const parseCookies = parseCookiesFromHeaders;
 // Re-export CSRF helpers from canonical location for backward compatibility
 export { generateCsrfToken, validateCsrf } from "#veryfront/security/csrf/helpers.ts";
 
-/** Extract a JWT payload from a cookie (no signature verification) */
-export function getSessionFromJwt(
+/**
+ * DANGER: decodes a JWT payload WITHOUT verifying the signature.
+ * Do NOT use this for authentication or authorization. Use
+ * `verifySessionJwt` instead. This helper exists only for debugging
+ * and for reading claims from tokens whose issuer you already
+ * established out-of-band.
+ */
+export function decodeUnverifiedJwtClaims(
   req: Request,
   options?: { cookieName?: string },
 ): Record<string, unknown> | null {
