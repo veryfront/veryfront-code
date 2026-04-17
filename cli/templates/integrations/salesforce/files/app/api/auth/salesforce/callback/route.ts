@@ -2,31 +2,35 @@ import { createOAuthCallbackHandler, salesforceConfig } from "veryfront/oauth";
 import { tokenStore } from "../../../../../lib/token-store.ts";
 import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
-
-// TODO: Replace with real user ID from your auth system (e.g., session cookie, JWT)
-const USER_ID = "current-user";
-
 const hybridTokenStore = {
-  getTokens(serviceId: string) {
-    return tokenStore.getToken(USER_ID, serviceId);
+  getTokens(serviceId: string, userId: string) {
+    return tokenStore.getToken(userId, serviceId);
   },
   async setTokens(
     serviceId: string,
+    userId: string,
     tokens: { accessToken: string; refreshToken?: string; expiresAt?: number },
   ) {
-    await tokenStore.setToken(USER_ID, serviceId, tokens);
+    await tokenStore.setToken(userId, serviceId, tokens);
   },
-  async clearTokens(serviceId: string) {
-    await tokenStore.revokeToken(USER_ID, serviceId);
+  async clearTokens(serviceId: string, userId: string) {
+    await tokenStore.revokeToken(userId, serviceId);
   },
-  getState(state: string) {
-    return oauthMemoryTokenStore.getState(state);
+  setState(
+    state: string,
+    meta: {
+      userId: string;
+      serviceId: string;
+      codeVerifier?: string;
+      redirectUri?: string;
+      scopes?: string[];
+      createdAt: number;
+    },
+  ) {
+    return oauthMemoryTokenStore.setState(state, meta);
   },
-  setState(state: { state: string; codeVerifier?: string; createdAt: number }) {
-    return oauthMemoryTokenStore.setState(state);
-  },
-  clearState(state: string) {
-    return oauthMemoryTokenStore.clearState(state);
+  consumeState(state: string) {
+    return oauthMemoryTokenStore.consumeState(state);
   },
 };
 

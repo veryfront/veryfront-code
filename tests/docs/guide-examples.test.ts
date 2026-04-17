@@ -671,10 +671,13 @@ describe("Guide: oauth.mdx", () => {
   });
 
   it("should create OAuth handlers from config", () => {
-    const initHandler = createOAuthInitHandler(githubConfig);
+    // Auth-scoped handlers require a getUserId resolver. In real apps the
+    // resolver reads session/JWT; for docs purposes a simple stub suffices.
+    const getUserId = () => "user-1";
+    const initHandler = createOAuthInitHandler(githubConfig, { getUserId });
     const callbackHandler = createOAuthCallbackHandler(githubConfig);
-    const statusHandler = createOAuthStatusHandler(githubConfig);
-    const disconnectHandler = createOAuthDisconnectHandler(githubConfig);
+    const statusHandler = createOAuthStatusHandler(githubConfig, { getUserId });
+    const disconnectHandler = createOAuthDisconnectHandler(githubConfig, { getUserId });
 
     assert(typeof initHandler === "function");
     assert(typeof callbackHandler === "function");
@@ -682,21 +685,25 @@ describe("Guide: oauth.mdx", () => {
     assert(typeof disconnectHandler === "function");
   });
 
-  it("should support MemoryTokenStore for token persistence", async () => {
+  it("should support MemoryTokenStore for per-user token persistence", async () => {
     const store = new MemoryTokenStore();
 
     // No tokens initially
-    const initial = await store.getTokens("github");
+    const initial = await store.getTokens("github", "user-1");
     assertEquals(initial, null);
 
     // Store tokens
-    await store.setTokens("github", { accessToken: "test-token" });
-    const tokens = await store.getTokens("github");
+    await store.setTokens("github", "user-1", { accessToken: "test-token" });
+    const tokens = await store.getTokens("github", "user-1");
     assertEquals(tokens?.accessToken, "test-token");
 
+    // Different user's slot is untouched
+    const otherUser = await store.getTokens("github", "user-2");
+    assertEquals(otherUser, null);
+
     // Clear tokens
-    await store.clearTokens("github");
-    const after = await store.getTokens("github");
+    await store.clearTokens("github", "user-1");
+    const after = await store.getTokens("github", "user-1");
     assertEquals(after, null);
   });
 
@@ -713,7 +720,7 @@ describe("Guide: oauth.mdx", () => {
       apiBaseUrl: "https://api.provider.com",
     };
 
-    const handler = createOAuthInitHandler(myProvider);
+    const handler = createOAuthInitHandler(myProvider, { getUserId: () => "user-1" });
     assert(typeof handler === "function");
   });
 });

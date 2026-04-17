@@ -8,13 +8,9 @@ import { createOAuthCallbackHandler, discordConfig } from "veryfront/oauth";
 import { tokenStore } from "../../../../../lib/token-store.ts";
 import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
-
-// TODO: Replace with real user ID from your auth system (e.g., session cookie, JWT)
-const USER_ID = "current-user";
-
 const hybridTokenStore = {
-  getTokens(serviceId: string) {
-    return tokenStore.getToken(USER_ID, serviceId);
+  getTokens(serviceId: string, userId: string) {
+    return tokenStore.getToken(userId, serviceId);
   },
   setTokens(
     serviceId: string,
@@ -25,14 +21,21 @@ const hybridTokenStore = {
   clearTokens(serviceId: string) {
     return tokenStore.revokeToken(USER_ID, serviceId);
   },
-  getState(state: string) {
-    return oauthMemoryTokenStore.getState(state);
+  setState(
+    state: string,
+    meta: {
+      userId: string;
+      serviceId: string;
+      codeVerifier?: string;
+      redirectUri?: string;
+      scopes?: string[];
+      createdAt: number;
+    },
+  ) {
+    return oauthMemoryTokenStore.setState(state, meta);
   },
-  setState(state: { state: string; codeVerifier?: string; createdAt: number }) {
-    return oauthMemoryTokenStore.setState(state);
-  },
-  clearState(state: string) {
-    return oauthMemoryTokenStore.clearState(state);
+  consumeState(state: string) {
+    return oauthMemoryTokenStore.consumeState(state);
   },
 };
 
