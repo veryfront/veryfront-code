@@ -344,6 +344,20 @@ async function withServer(
   }
 }
 
+async function fetchOkHtml(server: TestServer, path = "/"): Promise<string> {
+  const response = await fetch(`http://127.0.0.1:${server.port}${path}`);
+  const html = await response.text();
+
+  assertEquals(response.status, 200, "Should return 200");
+  return html;
+}
+
+function assertHtmlDoesNotInclude(html: string, snippets: string[], message: string): void {
+  for (const snippet of snippets) {
+    assert(!html.includes(snippet), message);
+  }
+}
+
 async function withBrowserPageAgainstServer(
   server: TestServer,
   run: (session: BrowserPageSession) => Promise<void>,
@@ -471,12 +485,13 @@ export default function Home() {
     );
 
     await withServer(projectDir, async (server) => {
-      const response = await fetch(`http://127.0.0.1:${server.port}/`);
-      const html = await response.text();
+      const html = await fetchOkHtml(server);
 
-      assertEquals(response.status, 200, "Should return 200");
-      assert(!html.includes("esm.sh/_vf_modules"), "Should not have esm.sh/_vf_modules error");
-      assert(!html.includes("Module not found"), "Should not have module errors");
+      assertHtmlDoesNotInclude(
+        html,
+        ["esm.sh/_vf_modules", "Module not found"],
+        "Should not have module errors",
+      );
       assertStringIncludes(html, "Head import works", "Should render content");
 
       const errorLogs = server.logs.filter((l) =>
@@ -501,11 +516,9 @@ export default function Home() {
     );
 
     await withServer(projectDir, async (server) => {
-      const response = await fetch(`http://127.0.0.1:${server.port}/`);
-      const html = await response.text();
+      const html = await fetchOkHtml(server);
 
-      assertEquals(response.status, 200);
-      assert(!html.includes("Module not found"), "Should resolve router import");
+      assertHtmlDoesNotInclude(html, ["Module not found"], "Should resolve router import");
       assertStringIncludes(html, "Router pathname:");
     });
   });
@@ -532,10 +545,7 @@ export default function Home() {
     );
 
     await withServer(projectDir, async (server) => {
-      const response = await fetch(`http://127.0.0.1:${server.port}/`);
-      const html = await response.text();
-
-      assertEquals(response.status, 200);
+      const html = await fetchOkHtml(server);
       assertStringIncludes(html, "Fonts import works", "Should render page content");
       assertStringIncludes(html, "fonts.googleapis.com", "Should render Google Fonts link");
       assertStringIncludes(html, "--font-inter", "Should render generated CSS variables");
@@ -577,10 +587,7 @@ export default function Home() {
     );
 
     await withServer(projectDir, async (server) => {
-      const response = await fetch(`http://127.0.0.1:${server.port}/`);
-      const html = await response.text();
-
-      assertEquals(response.status, 200);
+      const html = await fetchOkHtml(server);
       assert(!html.includes("esm.sh/_vf_modules"));
       assert(!html.includes("Invalid hook call"), "Should not have React hooks error");
       assertStringIncludes(html, "Multi Import Test");
@@ -613,10 +620,7 @@ export default function Counter() {
     );
 
     await withServer(projectDir, async (server) => {
-      const response = await fetch(`http://127.0.0.1:${server.port}/`);
-      const html = await response.text();
-
-      assertEquals(response.status, 200);
+      const html = await fetchOkHtml(server);
       assert(!html.includes("Invalid hook call"), "Should not have hooks error");
       assert(!html.includes("more than one copy of React"), "Should not have dual React error");
     });
@@ -641,10 +645,7 @@ export default function Home() {
 
     await withServer(projectDir, async (server) => {
       await fetch(`http://127.0.0.1:${server.port}/`);
-      const response = await fetch(`http://127.0.0.1:${server.port}/`);
-      const html = await response.text();
-
-      assertEquals(response.status, 200);
+      const html = await fetchOkHtml(server);
       assertStringIncludes(html, "Cache isolation works");
 
       const cacheErrors = server.logs.filter((l) =>
@@ -687,10 +688,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     );
 
     await withServer(projectDir, async (server) => {
-      const response = await fetch(`http://127.0.0.1:${server.port}/`);
-      const html = await response.text();
+      const html = await fetchOkHtml(server);
 
-      assertEquals(response.status, 200, "Should return 200");
       assertStringIncludes(html, "Site Header", "Should render layout header");
       assertStringIncludes(html, "Home Page Content", "Should render page content");
       assertStringIncludes(html, "Site Footer", "Should render layout footer");
@@ -721,10 +720,8 @@ export default function App({ children }: { children: React.ReactNode }) {
     );
 
     await withServer(projectDir, async (server) => {
-      const response = await fetch(`http://127.0.0.1:${server.port}/`);
-      const html = await response.text();
+      const html = await fetchOkHtml(server);
 
-      assertEquals(response.status, 200, "Should return 200");
       assertStringIncludes(html, "app-wrapper", "Should have app wrapper from provider");
       assertStringIncludes(html, "App Header", "Should render app header");
       assertStringIncludes(html, "Home page rendered", "Should render page content");
