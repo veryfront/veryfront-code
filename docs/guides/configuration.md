@@ -42,6 +42,9 @@ Override the default directory conventions:
 defineConfig({
   directories: {
     app: "src/app",              // Override page/route directory
+    pages: "src/pages",          // Override pages-router directory
+    components: ["src/components"],
+    ai: "src/ai",
   },
 });
 ```
@@ -71,6 +74,15 @@ defineConfig({
 defineConfig({
   layout: "components/layout.tsx",  // Custom layout path
   // layout: false,                 // Disable layout
+});
+```
+
+### App wrapper
+
+```ts
+defineConfig({
+  app: "components/app.tsx",    // Custom app wrapper
+  // app: false,                // Disable app wrapper
 });
 ```
 
@@ -129,17 +141,53 @@ Notes:
 - Defaults are `tools`, `agents`, and `skills`.
 - Set `enabled: false` to disable discovery for that primitive.
 
+### AI providers and MCP
+
+Configure provider defaults or the app-facing MCP surface:
+
+```ts
+defineConfig({
+  ai: {
+    providers: {
+      openai: {
+        defaultModel: "gpt-4o-mini",
+      },
+    },
+    mcp: {
+      enabled: true,
+      port: 3002,
+      expose: ["tools", "prompts", "resources"],
+    },
+  },
+});
+```
+
 ## Environment variables
 
 Set environment variables in `.env` files or your deployment platform:
+
+### Veryfront Cloud bootstrap
+
+| Variable | Description |
+|----------|-------------|
+| `VERYFRONT_API_TOKEN` | Veryfront API token for cloud/bootstrap-aware features |
+| `VERYFRONT_PROJECT_SLUG` | Project slug used by Veryfront Cloud-aware features |
+| `VERYFRONT_API_URL` | Override the hosted API URL for self-hosted API deployments |
+| `VERYFRONT_API_BASE_URL` | Override the REST API base URL directly |
+| `VERYFRONT_DEFAULT_MODEL` | Override the default Veryfront Cloud model |
+| `VERYFRONT_DEFAULT_EMBEDDING_MODEL` | Override the default Veryfront Cloud embedding model |
+| `VERYFRONT_RAG_BACKEND` | Override the default RAG backend selection |
 
 ### Provider API keys
 
 | Variable | Description |
 |----------|-------------|
 | `OPENAI_API_KEY` | OpenAI API key |
+| `OPENAI_BASE_URL` | Custom OpenAI-compatible endpoint |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
+| `ANTHROPIC_BASE_URL` | Custom Anthropic-compatible endpoint |
 | `GOOGLE_API_KEY` | Google AI API key |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Alternate Google AI API key env name |
 
 ### Local AI
 
@@ -154,14 +202,24 @@ Set environment variables in `.env` files or your deployment platform:
 | `PORT` | Server port (default: 3000) |
 | `NODE_ENV` | `development`, `production`, or `test` |
 | `REDIS_URL` | Redis connection URL |
+| `REQUEST_TIMEOUT_MS` | Incoming HTTP request timeout |
+| `VF_HTTP_FETCH_TIMEOUT` | Outgoing fetch timeout |
+| `SSR_MAX_CONCURRENT_TRANSFORMS` | Concurrency limit for SSR transforms |
+| `VERYFRONT_EXPERIMENTAL_RSC` | Force-enable RSC experimental mode |
 
 ### Observability
 
 | Variable | Description |
 |----------|-------------|
-| `OTEL_ENABLED` | Enable OpenTelemetry tracing |
-| `OTEL_ENDPOINT` | OpenTelemetry collector endpoint |
+| `VERYFRONT_OTEL` | Enable Veryfront tracing and metrics defaults |
+| `OTEL_TRACES_ENABLED` | Enable OpenTelemetry tracing explicitly |
+| `OTEL_METRICS_ENABLED` | Enable OpenTelemetry metrics explicitly |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Shared OTLP collector endpoint |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Trace-specific OTLP endpoint |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | Metrics-specific OTLP endpoint |
 | `OTEL_SERVICE_NAME` | Service name for traces |
+
+For runtime-specific env behavior, `veryfront/config` and the cloud bootstrap helpers resolve these values per request where needed. Prefer environment variables for secrets and deployment-specific values, and keep `veryfront.config.ts` for stable project structure and feature defaults.
 
 ## Environment-based config
 

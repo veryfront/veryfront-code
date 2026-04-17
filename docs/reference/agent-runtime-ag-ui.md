@@ -9,6 +9,8 @@ order: 10
 The `veryfront/agent` package supports a generic AG-UI transport for hosted
 agent runtimes.
 
+This is the package-level AG-UI contract. Veryfront Studio's internal `/internal/agents/*` routes are compatibility/control-plane wrappers, not the canonical public package surface.
+
 ## Contract
 
 - canonical hosted runtime request contract: `AgUiRuntimeRequestSchema`
@@ -28,9 +30,7 @@ route handler:
 ```ts
 import {
   agent,
-  createAgUiCancelHandler,
   createAgUiHandler,
-  createAgUiResumeHandler,
   RunResumeSessionManager,
 } from "veryfront/agent";
 
@@ -47,11 +47,9 @@ export const POST = createAgUiHandler({
   agent: assistant,
   sessionManager,
 });
-
-// Mount the hosted run-control routes with the same session manager:
-const resumeHandler = createAgUiResumeHandler({ sessionManager });
-const cancelHandler = createAgUiCancelHandler({ sessionManager });
 ```
+
+Mount the hosted run-control routes separately with the same session manager.
 
 `createAgUiHandler()` validates the higher-level `AgUiRequestSchema` convenience
 shape and normalizes it into the canonical hosted runtime contract. When a host
@@ -110,7 +108,22 @@ const sessionManager = new RunResumeSessionManager<{
   isError: boolean;
 }>();
 
+// app/api/ag-ui/runs/[runId]/resume/route.ts
 export const POST = createAgUiResumeHandler({ sessionManager });
+```
+
+```ts
+import {
+  createAgUiCancelHandler,
+  RunResumeSessionManager,
+} from "veryfront/agent";
+
+const sessionManager = new RunResumeSessionManager<{
+  result: unknown;
+  isError: boolean;
+}>();
+
+// app/api/ag-ui/runs/[runId]/route.ts
 export const DELETE = createAgUiCancelHandler({ sessionManager });
 ```
 

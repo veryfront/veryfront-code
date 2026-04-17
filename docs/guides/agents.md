@@ -8,7 +8,9 @@ order: 6
 
 Create an AI agent with a system prompt, tools, and memory.
 
-For the normal path, omit `model`. Veryfront uses runtime conventions:
+Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.
+
+For the normal path, omit `model`. Veryfront Code uses runtime conventions:
 local inference by default, and Veryfront Cloud defaults when
 `VERYFRONT_API_TOKEN` plus project context are available.
 

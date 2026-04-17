@@ -8,6 +8,8 @@ order: 4
 
 Server data, static generation, and client-side fetching.
 
+Examples below use the default app router. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.
+
 ## Server data
 
 `getServerData` runs on every request. Use it when data depends on the request (auth, query params, cookies):

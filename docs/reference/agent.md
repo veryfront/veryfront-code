@@ -8,6 +8,8 @@ order: 9
 
 AI agents with memory, tools, and multi-agent composition.
 
+Route examples below use the default app router. The hosted AG-UI path is owned by the application; `/api/ag-ui` is the default package convention, not a required fixed route.
+
 ## Import
 
 ```ts
@@ -129,6 +131,38 @@ const assistant = agent({
 export const POST = createAgUiHandler({
   agent: assistant,
 });
+```
+
+### AG-UI run control routes
+
+```ts
+// app/api/ag-ui/runs/[runId]/resume/route.ts
+import {
+  createAgUiResumeHandler,
+  RunResumeSessionManager,
+} from "veryfront/agent";
+
+const sessionManager = new RunResumeSessionManager<{
+  result: unknown;
+  isError: boolean;
+}>();
+
+export const POST = createAgUiResumeHandler({ sessionManager });
+```
+
+```ts
+// app/api/ag-ui/runs/[runId]/route.ts
+import {
+  createAgUiCancelHandler,
+  RunResumeSessionManager,
+} from "veryfront/agent";
+
+const sessionManager = new RunResumeSessionManager<{
+  result: unknown;
+  isError: boolean;
+}>();
+
+export const DELETE = createAgUiCancelHandler({ sessionManager });
 ```
 
 ### Browser AG-UI encoder
@@ -428,6 +462,10 @@ Injected client tools:
 ### `AgUiRequestSchema`
 
 Validate the convenience wrapper request shape for `createAgUiHandler()`.
+
+This schema accepts the higher-level host request format based on message
+`parts`. `createAgUiHandler()` normalizes it into the canonical
+`AgUiRuntimeRequestSchema` before invoking the runtime.
 
 ### `AgUiRuntimeRequestSchema`
 

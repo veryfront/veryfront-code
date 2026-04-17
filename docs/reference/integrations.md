@@ -12,12 +12,10 @@ Integration metadata and SVG icons for all connectors.
 
 ```ts
 import {
-  clearConnectorCache,
-  createIntegrationTools,
-  executeEndpoint,
-  fetchConnector,
   getConnector,
   getConnectorNames,
+  getIcon,
+  listConnectors,
 } from "veryfront/integrations";
 ```
 
@@ -48,15 +46,14 @@ const slackIcon = getIcon("slack"); // raw SVG string
 
 | Name | Description |
 |------|-------------|
-| `clearConnectorCache` | Clear the connector cache (for testing). |
-| `createIntegrationTools` | Generate Tool instances from connector specifications |
-| `executeEndpoint` | Execute REST or GraphQL endpoints with authentication |
-| `fetchConnector` | Fetch connector spec from API with LRU caching |
+| `executeRemoteIntegrationTool` | Execute a remote integration tool against a synced connector |
 | `getConnector` | Look up connector config by name from registry |
 | `getConnectorNames` | Return readonly array of all connector names |
 | `getIcon` | Return SVG icon string for integration by name |
+| `getRemoteIntegrationToolDefinitions` | List tool definitions for a synced integration |
+| `isRemoteIntegrationTool` | Type guard for remote integration tools |
 | `listConnectors` | Return readonly array of all connectors |
-| `registerIntegrationMCP` | Register integration tools into the MCP tool registry. |
+| `syncIntegrationConfig` | Sync per-request integration runtime configuration |
 
 ### Types
 
@@ -65,10 +62,10 @@ const slackIcon = getIcon("slack"); // raw SVG string
 | `EnvVarConfig` | Environment variable requirement with metadata |
 | `IntegrationConfig` | Complete connector spec: name, auth, tools, prompts |
 | `IntegrationConnector` | Runtime connector with tools and endpoint definitions |
-| `IntegrationMCPConfig` | Configuration for registering integrations into MCP |
 | `IntegrationName` | Union type of valid integration name literals |
 | `IntegrationPrompt` | Predefined prompt template for integration use |
 | `IntegrationRuntimeConfig` | Per-user settings and tool allowlist for integration |
+| `IntegrationScope` | Scope descriptor for remote integration tool access |
 | `IntegrationTool` | Integration tool with endpoint execution spec |
 | `IntegrationToolMeta` | Tool metadata: name, description, write requirements |
 | `OAuthConfig` | OAuth/API key authentication type and parameters |

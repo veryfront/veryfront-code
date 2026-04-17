@@ -8,6 +8,8 @@ order: 13
 
 CORS, rate limiting, logging, and custom middleware pipelines.
 
+Examples below use the default app router. Veryfront Code also supports API routes under `pages/api/**`, but the pages router uses a different handler module shape than `app/api/**/route.*`.
+
 ## Built-in middleware
 
 ### CORS

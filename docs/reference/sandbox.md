@@ -6,7 +6,7 @@ order: 20
 
 # veryfront/sandbox
 
-Sandbox module for ephemeral compute environments. Provides the `Sandbox` class for creating and interacting with isolated execution environments.
+Sandbox module for ephemeral compute environments. Provides the `Sandbox` class for creating and interacting with isolated execution environments through sandbox session APIs.
 
 ## Import
 
@@ -63,6 +63,36 @@ Write files to the sandbox workspace.
 
 **Returns:** <code>Promise&lt;void&gt;</code>
 
+### `sandbox.startCommandJob(command, options?)`
+
+Start an async command job in the sandbox.
+
+**Returns:** <code>Promise&lt;CommandJob&gt;</code>
+
+### `sandbox.getCommandJob(jobId)`
+
+Get the status of an async command job.
+
+**Returns:** <code>Promise&lt;CommandJob&gt;</code>
+
+### `sandbox.getCommandJobOutput(jobId)`
+
+Get captured output for an async command job.
+
+**Returns:** <code>Promise&lt;CommandJobOutput&gt;</code>
+
+### `sandbox.listCommandJobs()`
+
+List async command jobs for the current sandbox session.
+
+**Returns:** <code>Promise&lt;CommandJob[]&gt;</code>
+
+### `sandbox.cancelCommandJob(jobId)`
+
+Cancel an async command job.
+
+**Returns:** <code>Promise&lt;CommandJob&gt;</code>
+
 ### `sandbox.heartbeat()`
 
 Send a heartbeat to prevent idle timeout.
@@ -97,6 +127,7 @@ Options for creating a sandbox session.
 | ------------ | -------- | ------------------------------------------------------------------------------------------------------------------- |
 | `apiUrl?`    | `string` | Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL env.                                                   |
 | `authToken?` | `string` | Explicit Veryfront auth token or API key override. Defaults to request-scoped credentials or `VERYFRONT_API_TOKEN`. |
+| `projectId?` | `string` | Optional project context for project-scoped or project-billed sandbox sessions.                                     |
 
 ### `ExecResult`
 
@@ -118,6 +149,34 @@ Streaming event emitted during command execution.
 | `data?`     | `string`                                    | Chunk payload for stdout/stderr/error events.     |
 | `exitCode?` | `number`                                    | Exit code for `exit` events.                      |
 
+### `CommandJob`
+
+Status of an async command job.
+
+| Property | Type | Description |
+| -------- | ---- | ----------- |
+| `id` | `string` | Job identifier. |
+| `status` | `"running" \| "completed" \| "failed" \| "canceled"` | Current job status. |
+| `exitCode` | `number \| null` | Exit code when available. |
+| `signal` | `string \| null` | Termination signal when present. |
+| `startedAt` | `string` | Job start timestamp. |
+| `finishedAt` | `string \| null` | Job completion timestamp. |
+| `heartbeatStatus` | `"disabled" \| "healthy" \| "degraded"` | Heartbeat health state. |
+| `lastHeartbeatAt` | `string \| null` | Last heartbeat timestamp. |
+| `lastHeartbeatError` | `string \| null` | Last heartbeat error, if any. |
+| `heartbeatFailureCount` | `number` | Number of heartbeat failures recorded. |
+
+### `CommandJobOutput`
+
+Command job with captured stdout/stderr.
+
+| Property | Type | Description |
+| -------- | ---- | ----------- |
+| `stdout` | `string` | Captured standard output. |
+| `stderr` | `string` | Captured standard error. |
+| `stdoutTruncated` | `boolean` | Whether stdout was truncated. |
+| `stderrTruncated` | `boolean` | Whether stderr was truncated. |
+
 ## Exports
 
 ### Classes
@@ -130,6 +189,8 @@ Streaming event emitted during command execution.
 
 | Name              | Description                                                   |
 | ----------------- | ------------------------------------------------------------- |
+| `CommandJob` | Status of an async command job. |
+| `CommandJobOutput` | Async command job with captured output. |
 | `ExecResult`      | Result of a command execution: stdout, stderr, and exit code. |
 | `ExecStreamEvent` | Streaming event emitted during command execution.             |
 | `SandboxOptions`  | Options for creating a sandbox session.                       |

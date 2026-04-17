@@ -1,12 +1,14 @@
 ---
 title: "OAuth"
-description: "OAuth 2.0 with 37 pre-configured providers."
+description: "OAuth 2.0 helpers with a built-in provider catalog."
 order: 14
 ---
 
 # OAuth
 
-OAuth 2.0 with 37 pre-configured providers.
+OAuth 2.0 helpers with a built-in provider catalog.
+
+Route examples below use the default app router. Veryfront Code also supports mounting equivalent handlers under `pages/api/**` when `router: "pages"` is enabled.
 
 ## Quick setup
 

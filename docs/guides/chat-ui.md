@@ -8,6 +8,8 @@ order: 9
 
 Pre-built chat components and React hooks for chat interfaces. Three levels of control:
 
+Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.
+
 1. **Preset** — `<Chat>` renders a complete chat UI with one component
 2. **Composition** — `<Chat.Root>`, `<Chat.MessageList>`, `<Chat.Composer>` for custom layouts
 3. **Compound** — `<Message.Root>`, `<Message.Content>`, `<Message.Actions>` for per-message control
@@ -257,7 +259,7 @@ Tool parts have a `state` property:
 <Chat
   {...chat}
   models={[
-    { value: "anthropic/claude-sonnet-4-5-20250929", label: "Claude Sonnet" },
+    { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet" },
     { value: "openai/gpt-4o", label: "GPT-4o" },
   ]}
   model={chat.model}
@@ -370,7 +372,7 @@ export default function ChatPage() {
 
 | `inferenceMode`  | Description                                        |
 | ---------------- | -------------------------------------------------- |
-| `"cloud"`        | Using a cloud provider (OpenAI, Anthropic, Google) |
+| `"cloud"`        | Using Veryfront Cloud or a direct cloud provider runtime |
 | `"server-local"` | Running SmolLM2 locally via ONNX Runtime           |
 | `"browser"`      | Running SmolLM2 in a browser Web Worker            |
 

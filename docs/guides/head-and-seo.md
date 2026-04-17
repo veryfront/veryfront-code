@@ -8,6 +8,8 @@ order: 18
 
 Declarative metadata, Open Graph, and structured data.
 
+Examples below use the default app router. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.
+
 ## Basic metadata
 
 ```tsx

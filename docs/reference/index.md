@@ -1,12 +1,13 @@
 ---
-title: "Framework API Reference"
-description: "Complete API reference for the Veryfront framework."
+title: "Veryfront Code API Reference"
+description: "Complete API reference for Veryfront Code."
 order: 0
 ---
 
-# Framework API Reference
+# Veryfront Code API Reference
 
-Complete API reference for the Veryfront framework.
+Complete API reference for Veryfront Code.
+The package name and import surface remain `veryfront`.
 
 ## Install
 
@@ -38,9 +39,9 @@ npm install veryfront
 | [`veryfront/jobs`](./jobs.md)                 | Project-scoped jobs and cron jobs with events, logs, batches, and target discovery.                                                                                   |
 | [`veryfront/mcp`](./mcp.md)                   | MCP server exposing tools, prompts, and resources.                                                                                                                    |
 | [`veryfront/middleware`](./middleware.md)     | CORS, rate limiting, logging, and timeout middleware.                                                                                                                 |
-| [`veryfront/oauth`](./oauth.md)               | OAuth 2.0 with 37 pre-configured providers.                                                                                                                           |
-| [`veryfront/provider`](./provider.md)         | Provider registry. Maps "provider/model" strings to framework-compatible model runtimes. Auto-initializes built-in providers from environment variables on first use. |
+| [`veryfront/oauth`](./oauth.md)               | OAuth 2.0 helpers with a built-in provider catalog.                                                                                                                    |
+| [`veryfront/provider`](./provider.md)         | Provider registry for local, Veryfront Cloud, and direct provider runtimes. Auto-initializes built-in providers from environment variables on first use.             |
 | [`veryfront/fs`](./fs.md)                     | Filesystem operations and path utilities.                                                                                                                             |
 | [`veryfront/integrations`](./integrations.md) | Integration metadata and SVG icons for all connectors.                                                                                                                |
-| [`veryfront/sandbox`](./sandbox.md)           | Sandbox module for ephemeral compute environments. Provides the `Sandbox` class for creating and interacting with isolated execution environments.                    |
+| [`veryfront/sandbox`](./sandbox.md)           | Sandbox client for ephemeral compute environments backed by sandbox session APIs.                                                                                     |
 | [`veryfront/cli`](./cli.md)                   | Veryfront CLI entry point.                                                                                                                                            |
