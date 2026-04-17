@@ -157,6 +157,39 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("returns 404 when token fetch says custom domain is not configured", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          return new Response('{"error":"Project not found for domain"}', { status: 400 });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://studio.veryfront.com/page", {
+          headers: { host: "studio.veryfront.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.projectSlug, undefined);
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(
+          ctx.error?.message,
+          "No project configured for domain: studio.veryfront.com",
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("returns 502 error when no token available for custom domain", async () => {
       const handler = createProxyHandler({
         config: {

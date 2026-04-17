@@ -635,6 +635,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
       if (isCustomDomain && !projectSlug) {
         if (!token) {
+          const status = parseStatusFromError(tokenFetchError);
+          if (status === 400 || status === 404) {
+            logger?.info("Custom domain not found during token fetch", { domain: host, status });
+            return makeErrorContext(base, 404, `No project configured for domain: ${host}`, token);
+          }
+
           logger?.error("Cannot process custom domain without token", undefined, { domain: host });
           return makeErrorContext(base, 502, `Failed to authenticate for domain: ${host}`, token);
         }
