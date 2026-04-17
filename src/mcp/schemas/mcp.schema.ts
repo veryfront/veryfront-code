@@ -1,15 +1,29 @@
 import { z } from "zod";
 
+/**
+ * MCP auth configuration. One of:
+ * - `{ type: "bearer", validate?: (token) => Promise<boolean> }` — bearer-token auth.
+ * - `{ type: "api-key", validate?: ... }` — api-key auth.
+ * - `{ type: "none", allowUnauthenticated: true }` — explicit opt-in to an
+ *   unauthenticated server. Required for local dev/testing; prevents accidental
+ *   exposure of the JSON-RPC surface in production (VULN-SRV-5).
+ */
+const AuthValidatedSchema = z.object({
+  type: z.enum(["bearer", "api-key"]),
+  validate: z.function().optional(),
+});
+
+const AuthNoneSchema = z.object({
+  type: z.literal("none"),
+  allowUnauthenticated: z.literal(true),
+});
+
+export const MCPAuthConfigSchema = z.union([AuthValidatedSchema, AuthNoneSchema]);
+
 export const MCPServerConfigSchema = z.object({
   enabled: z.boolean(),
   port: z.number().int().positive().optional(),
-  auth: z
-    .object({
-      type: z.enum(["bearer", "api-key", "none"]),
-      validate: z.function()
-        .optional(),
-    })
-    .optional(),
+  auth: MCPAuthConfigSchema,
   cors: z
     .object({
       enabled: z.boolean(),

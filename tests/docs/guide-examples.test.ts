@@ -728,7 +728,10 @@ import {
 
 describe("Guide: mcp-server.mdx", () => {
   it("should create an MCP server", () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
     assertExists(server);
     assertExists(server.handleRequest);
   });

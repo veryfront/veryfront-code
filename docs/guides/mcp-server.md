@@ -15,7 +15,13 @@ This guide covers the application-facing MCP server exposed by `veryfront/mcp`. 
 ```ts
 import { createMCPServer } from "veryfront/mcp";
 
-const server = createMCPServer({ enabled: true });
+const server = createMCPServer({
+  enabled: true,
+  auth: {
+    type: "bearer",
+    validate: async (token) => token === Deno.env.get("MCP_TOKEN"),
+  },
+});
 const handler = server.createHTTPHandler();
 
 export const POST = handler;
@@ -24,6 +30,19 @@ export const OPTIONS = handler;
 ```
 
 Mount the handler on your application-owned MCP route. All auto-discovered tools, prompts, and resources are then exposed through the app-facing MCP transport.
+
+### Auth is required
+
+`auth` is a required field. The server fails closed at construction time if
+it is missing. Options:
+
+- `{ type: "bearer", validate }` (recommended for production) — validates a
+  bearer token against your own logic.
+- `{ type: "api-key", validate }` — same as bearer but via a different header
+  convention.
+- `{ type: "none", allowUnauthenticated: true }` — **local development only**.
+  Must be set explicitly; accepts every request without any check. Do not ship
+  this to production.
 
 The HTTP transport is session-based:
 

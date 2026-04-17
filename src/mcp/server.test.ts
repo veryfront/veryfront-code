@@ -1,4 +1,9 @@
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { dynamicTool } from "#veryfront/tool";
 import { z } from "zod";
@@ -49,7 +54,7 @@ describe("mcp/server", () => {
   });
 
   it("extracts end-user and project IDs from HTTP headers into tool context", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     let capturedContext: { endUserId?: string; projectId?: string } | undefined;
 
     registerTool(
@@ -89,7 +94,7 @@ describe("mcp/server", () => {
   });
 
   it("ignores invalid identity headers when building tool context", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     let capturedContext: { endUserId?: string; projectId?: string } | undefined;
 
     registerTool(
@@ -130,6 +135,7 @@ describe("mcp/server", () => {
   it("includes integration context headers in CORS preflight response", async () => {
     const server = createMCPServer({
       enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
       cors: { enabled: true, origins: ["https://example.com"] },
     });
 
@@ -233,7 +239,7 @@ describe("mcp/server", () => {
 
   describe("request body size limit", () => {
     it("rejects requests with Content-Length exceeding 1MB", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
 
       const response = await handler(
@@ -253,7 +259,7 @@ describe("mcp/server", () => {
     });
 
     it("rejects requests with body exceeding 1MB even without Content-Length", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
 
       const largeBody = "x".repeat(1_048_577);
@@ -271,7 +277,7 @@ describe("mcp/server", () => {
     });
 
     it("accepts requests within the 1MB limit", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
 
       const response = await handler(
@@ -288,7 +294,7 @@ describe("mcp/server", () => {
 
   describe("request validation", () => {
     it("rejects requests with invalid content type", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
 
       const response = await handler(
@@ -305,7 +311,7 @@ describe("mcp/server", () => {
     });
 
     it("rejects malformed JSON request bodies", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
 
       const response = await handler(
@@ -326,6 +332,7 @@ describe("mcp/server", () => {
     it("returns CORS headers when request Origin matches configured origins", async () => {
       const server = createMCPServer({
         enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
         cors: { enabled: true, origins: ["https://a.com", "https://b.com"] },
       });
 
@@ -345,6 +352,7 @@ describe("mcp/server", () => {
     it("returns no CORS headers when request Origin does not match", async () => {
       const server = createMCPServer({
         enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
         cors: { enabled: true, origins: ["https://allowed.com"] },
       });
 
@@ -363,6 +371,7 @@ describe("mcp/server", () => {
     it("returns no CORS headers when no origins configured", async () => {
       const server = createMCPServer({
         enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
         cors: { enabled: true },
       });
 
@@ -379,7 +388,7 @@ describe("mcp/server", () => {
     });
 
     it("returns no CORS headers when CORS is disabled", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
 
       const handler = server.createHTTPHandler();
       const response = await handler(
@@ -396,6 +405,7 @@ describe("mcp/server", () => {
     it("includes CORS headers on POST responses when Origin matches", async () => {
       const server = createMCPServer({
         enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
         cors: { enabled: true, origins: ["https://example.com"] },
       });
 
@@ -418,7 +428,7 @@ describe("mcp/server", () => {
 
   describe("initialize version negotiation", () => {
     it("echoes 2025-11-25 when client requests it", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const res = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -430,7 +440,7 @@ describe("mcp/server", () => {
     });
 
     it("echoes 2024-11-05 when client requests it", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const res = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -442,7 +452,7 @@ describe("mcp/server", () => {
     });
 
     it("returns 2025-11-25 for unknown version", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const res = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -454,7 +464,7 @@ describe("mcp/server", () => {
     });
 
     it("returns 2025-11-25 when no version is provided", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const res = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -465,7 +475,7 @@ describe("mcp/server", () => {
     });
 
     it("serverInfo includes title and description", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const res = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -480,7 +490,7 @@ describe("mcp/server", () => {
     });
 
     it("includes instructions field", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const res = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -492,7 +502,7 @@ describe("mcp/server", () => {
     });
 
     it("capabilities include listChanged", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const res = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -511,6 +521,7 @@ describe("mcp/server", () => {
     it("returns 403 when Origin is not in allowed list", async () => {
       const server = createMCPServer({
         enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
         cors: { enabled: true, origins: ["https://allowed.com"] },
       });
 
@@ -534,6 +545,7 @@ describe("mcp/server", () => {
     it("returns 200 when Origin is in allowed list", async () => {
       const server = createMCPServer({
         enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
         cors: { enabled: true, origins: ["https://allowed.com"] },
       });
 
@@ -555,6 +567,7 @@ describe("mcp/server", () => {
     it("returns 200 when no Origin header is present", async () => {
       const server = createMCPServer({
         enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
         cors: { enabled: true, origins: ["https://allowed.com"] },
       });
 
@@ -573,7 +586,7 @@ describe("mcp/server", () => {
 
   describe("notifications/initialized", () => {
     it("handles notifications/initialized with id", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const res = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -585,7 +598,7 @@ describe("mcp/server", () => {
     });
 
     it("handles notifications/initialized without id (proper notification)", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const res = await server.handleRequest({
         jsonrpc: "2.0",
         method: "notifications/initialized",
@@ -597,7 +610,7 @@ describe("mcp/server", () => {
   });
 
   it("includes title and annotations in tools/list when configured", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
 
     registerTool(
       "test:annotated",
@@ -638,7 +651,7 @@ describe("mcp/server", () => {
   });
 
   it("omits title and annotations from tools/list when not configured", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
 
     registerTool(
       "test:plain",
@@ -664,7 +677,7 @@ describe("mcp/server", () => {
   });
 
   it("only includes valid annotation keys in tools/list", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
 
     registerTool(
       "test:partial-annotations",
@@ -695,7 +708,7 @@ describe("mcp/server", () => {
 
   describe("callTool error handling", () => {
     it("returns isError false on successful tool execution", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
 
       registerTool(
         "test:echo",
@@ -725,7 +738,7 @@ describe("mcp/server", () => {
     });
 
     it("returns isError true when tool execution throws", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
 
       registerTool(
         "test:fail",
@@ -756,7 +769,7 @@ describe("mcp/server", () => {
     });
 
     it("returns JSON-RPC error with code -32602 for unknown tool", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
 
       const response = await server.handleRequest({
         jsonrpc: "2.0",
@@ -771,7 +784,7 @@ describe("mcp/server", () => {
     });
 
     it("returns JSON-RPC error with code -32602 for invalid arguments", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
 
       registerTool(
         "test:strict",
@@ -799,7 +812,7 @@ describe("mcp/server", () => {
 
   describe("list endpoint pagination", () => {
     it("tools/list accepts cursor param without erroring", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const response = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -812,7 +825,7 @@ describe("mcp/server", () => {
     });
 
     it("tools/list does not include nextCursor when all results fit", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
 
       registerTool(
         "test:pagination",
@@ -836,7 +849,7 @@ describe("mcp/server", () => {
     });
 
     it("resources/list accepts cursor param without erroring", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const response = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -849,7 +862,7 @@ describe("mcp/server", () => {
     });
 
     it("prompts/list accepts cursor param without erroring", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const response = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -864,7 +877,7 @@ describe("mcp/server", () => {
 
   describe("resources/templates/list", () => {
     it("returns array without error", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const response = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -879,7 +892,7 @@ describe("mcp/server", () => {
     });
 
     it("includes parameterized resources as templates", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       registerResource("test:users", {
         id: "test:users",
         pattern: "/users/:id",
@@ -904,7 +917,7 @@ describe("mcp/server", () => {
     });
 
     it("excludes scheme-only colons like openapi://spec", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       registerResource("test:openapi", {
         id: "test:openapi",
         pattern: "openapi://spec",
@@ -927,7 +940,7 @@ describe("mcp/server", () => {
     });
 
     it("includes title when set on resource", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       registerResource("test:posts", {
         id: "test:posts",
         pattern: "/posts/:slug",
@@ -954,7 +967,7 @@ describe("mcp/server", () => {
   });
 
   it("declares completions capability in initialize", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     const result = await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -971,7 +984,7 @@ describe("mcp/server", () => {
   });
 
   it("completion/complete returns empty values for unknown ref", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     const result = await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -990,7 +1003,7 @@ describe("mcp/server", () => {
   });
 
   it("completion/complete returns empty values when argument is missing", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     const result = await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -1008,7 +1021,7 @@ describe("mcp/server", () => {
   });
 
   it("completion/complete returns empty values when ref is missing", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     const result = await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -1026,7 +1039,7 @@ describe("mcp/server", () => {
   });
 
   it("stores client capabilities from initialize request", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -1042,7 +1055,7 @@ describe("mcp/server", () => {
   });
 
   it("reports no elicitation support when client does not declare it", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -1058,7 +1071,7 @@ describe("mcp/server", () => {
   });
 
   it("treats empty elicitation capability as form-only support", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -1074,7 +1087,7 @@ describe("mcp/server", () => {
   });
 
   it("handles malformed elicitation capability without crashing", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -1090,7 +1103,7 @@ describe("mcp/server", () => {
   });
 
   it("keeps elicitation capabilities isolated per HTTP session", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     const handler = server.createHTTPHandler();
 
     const sessionA = await initSessionWithCapabilities(handler, { elicitation: { form: {} } });
@@ -1103,7 +1116,7 @@ describe("mcp/server", () => {
   });
 
   it("syncs integration config to API on first tools/list call", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     server.setIntegrationLoader({
       integrations: { github: {} },
       apiBaseUrl: "https://api.example.com",
@@ -1127,7 +1140,7 @@ describe("mcp/server", () => {
   });
 
   it("syncs integration config only once", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     server.setIntegrationLoader({
       integrations: { github: {} },
       apiBaseUrl: "https://api.example.com",
@@ -1154,7 +1167,7 @@ describe("mcp/server", () => {
 
   describe("Streamable HTTP session management", () => {
     it("returns MCP-Session-Id header on initialize response", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
       const response = await handler(
         new Request("http://localhost/mcp", {
@@ -1188,7 +1201,7 @@ describe("mcp/server", () => {
     });
 
     it("returns 400 when MCP-Session-Id is missing on post-init request", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
 
       // First, initialize to create a session
@@ -1206,7 +1219,7 @@ describe("mcp/server", () => {
     });
 
     it("returns 404 for expired/unknown session ID", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
 
       // Initialize to set the initialized flag
@@ -1226,7 +1239,7 @@ describe("mcp/server", () => {
     });
 
     it("accepts DELETE to terminate session", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
 
       // Initialize two sessions so one remains active after DELETE
@@ -1270,7 +1283,7 @@ describe("mcp/server", () => {
     });
 
     it("clears session-scoped elicitation capabilities after DELETE", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
 
       const sessionId = await initSessionWithCapabilities(handler, { elicitation: { form: {} } });
@@ -1287,7 +1300,7 @@ describe("mcp/server", () => {
     });
 
     it("returns 202 for JSON-RPC notifications", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
 
       // Initialize
@@ -1308,7 +1321,7 @@ describe("mcp/server", () => {
     });
 
     it("returns 200 with JSON-RPC response for request with id: 0", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
       const sessionId = await initSession(handler);
 
@@ -1348,7 +1361,7 @@ describe("mcp/server", () => {
     });
 
     it("returns 405 for unsupported HTTP methods", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
       const response = await handler(
         new Request("http://localhost/mcp", { method: "PUT" }),
@@ -1359,6 +1372,7 @@ describe("mcp/server", () => {
     it("includes MCP-Session-Id in CORS allowed headers", async () => {
       const server = createMCPServer({
         enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
         cors: { enabled: true, origins: ["https://example.com"] },
       });
 
@@ -1379,6 +1393,7 @@ describe("mcp/server", () => {
     it("includes DELETE in CORS allowed methods", async () => {
       const server = createMCPServer({
         enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
         cors: { enabled: true, origins: ["https://example.com"] },
       });
 
@@ -1396,7 +1411,7 @@ describe("mcp/server", () => {
     });
 
     it("resets session requirement after all sessions are terminated", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
 
       // Client initializes, creating a session
@@ -1423,7 +1438,7 @@ describe("mcp/server", () => {
     });
 
     it("isolates concurrent sessions independently", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
 
       // Two clients initialize
@@ -1483,7 +1498,7 @@ describe("mcp/server", () => {
     });
 
     it("accepts valid session ID on post-init requests", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       const handler = server.createHTTPHandler();
 
       const sessionId = await initSession(handler);
@@ -1503,7 +1518,7 @@ describe("mcp/server", () => {
   });
 
   it("declares tasks capability in initialize", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     const result = await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -1521,7 +1536,7 @@ describe("mcp/server", () => {
   });
 
   it("logging/setLevel stores the level and returns empty result", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     const result = await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -1533,7 +1548,7 @@ describe("mcp/server", () => {
   });
 
   it("extracts progressToken from _meta and passes to tool context", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     let capturedContext: Record<string, unknown> | undefined;
 
     registerTool(
@@ -1561,7 +1576,7 @@ describe("mcp/server", () => {
   });
 
   it("accepts notifications/cancelled without error", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     const result = await server.handleRequest({
       jsonrpc: "2.0",
       method: "notifications/cancelled",
@@ -1572,7 +1587,7 @@ describe("mcp/server", () => {
   });
 
   it("logging/setLevel rejects invalid level", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     const result = await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -1584,7 +1599,7 @@ describe("mcp/server", () => {
   });
 
   it("tools/call with task field returns CreateTaskResult immediately", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     registerTool(
       "test:slow",
       dynamicTool({
@@ -1610,7 +1625,7 @@ describe("mcp/server", () => {
   });
 
   it("tasks/get returns task status", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     registerTool(
       "test:slow2",
       dynamicTool({
@@ -1643,7 +1658,7 @@ describe("mcp/server", () => {
   });
 
   it("tasks/cancel cancels a working task", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     registerTool(
       "test:slow3",
       dynamicTool({
@@ -1677,7 +1692,7 @@ describe("mcp/server", () => {
   });
 
   it("tasks/result returns completed task result", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     registerTool(
       "test:fast",
       dynamicTool({
@@ -1707,7 +1722,7 @@ describe("mcp/server", () => {
   });
 
   it("tasks/result returns error when task is still working", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     registerTool(
       "test:slow4",
       dynamicTool({
@@ -1739,7 +1754,7 @@ describe("mcp/server", () => {
   });
 
   it("async tool failure sets task status to failed", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     registerTool(
       "test:fail",
       dynamicTool({
@@ -1771,7 +1786,7 @@ describe("mcp/server", () => {
   });
 
   it("tasks/get returns error for unknown taskId", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     const result = await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -1783,7 +1798,7 @@ describe("mcp/server", () => {
   });
 
   it("tasks/cancel returns error for unknown taskId", async () => {
-    const server = createMCPServer({ enabled: true });
+    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
     const result = await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -1796,7 +1811,7 @@ describe("mcp/server", () => {
   describe("listChanged notifications", () => {
     it("calls onNotification when tools list changes", () => {
       const notifications: Array<{ method: string }> = [];
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       server.onNotification = (notification) => {
         notifications.push(notification as { method: string });
       };
@@ -1807,7 +1822,7 @@ describe("mcp/server", () => {
 
     it("calls onNotification for resources list changes", () => {
       const notifications: Array<{ method: string }> = [];
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       server.onNotification = (notification) => {
         notifications.push(notification as { method: string });
       };
@@ -1818,7 +1833,7 @@ describe("mcp/server", () => {
 
     it("calls onNotification for prompts list changes", () => {
       const notifications: Array<{ method: string }> = [];
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       server.onNotification = (notification) => {
         notifications.push(notification as { method: string });
       };
@@ -1828,12 +1843,12 @@ describe("mcp/server", () => {
     });
 
     it("does not throw when onNotification is not set", () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       server.notifyToolsChanged(); // should not throw
     });
 
     it("emits tools/list_changed when loadRemoteIntegrationTools succeeds", async () => {
-      const server = createMCPServer({ enabled: true });
+      const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
       server.setIntegrationLoader({
         integrations: { github: {} },
         apiBaseUrl: "https://api.example.com",
@@ -1861,6 +1876,147 @@ describe("mcp/server", () => {
         (n) => n.method === "notifications/tools/list_changed",
       );
       assertExists(toolsChanged);
+    });
+  });
+
+  describe("auth fail-closed (VULN-SRV-5)", () => {
+    it("throws when no auth is configured (unset auth)", () => {
+      assertThrows(
+        () => {
+          // deno-lint-ignore no-explicit-any -- testing runtime guard against missing auth
+          createMCPServer({ enabled: true } as any);
+        },
+        Error,
+        "MCP auth must be configured",
+      );
+    });
+
+    it("error for unset auth mentions allowUnauthenticated for dev opt-in", () => {
+      assertThrows(
+        () => {
+          // deno-lint-ignore no-explicit-any -- testing runtime guard against missing auth
+          createMCPServer({ enabled: true } as any);
+        },
+        Error,
+        "allowUnauthenticated: true",
+      );
+    });
+
+    it("throws when auth.type is 'none' without allowUnauthenticated (undefined)", () => {
+      assertThrows(
+        () => {
+          // deno-lint-ignore no-explicit-any -- testing runtime guard against {type:"none"} shorthand
+          createMCPServer({ enabled: true, auth: { type: "none" } } as any);
+        },
+        Error,
+        "allowUnauthenticated: true",
+      );
+    });
+
+    it("throws when auth.type is 'none' with allowUnauthenticated: false", () => {
+      assertThrows(
+        () => {
+          createMCPServer({
+            enabled: true,
+            // deno-lint-ignore no-explicit-any -- deliberately invalid: allow=false must reject
+            auth: { type: "none", allowUnauthenticated: false } as any,
+          });
+        },
+        Error,
+        "allowUnauthenticated: true",
+      );
+    });
+
+    it("throws when auth.type is 'none' with non-boolean allowUnauthenticated", () => {
+      assertThrows(
+        () => {
+          createMCPServer({
+            enabled: true,
+            // deno-lint-ignore no-explicit-any -- deliberately invalid non-bool flag
+            auth: { type: "none", allowUnauthenticated: "yes" } as any,
+          });
+        },
+        Error,
+        "allowUnauthenticated: true",
+      );
+    });
+
+    it("throws when auth.type is unknown", () => {
+      assertThrows(
+        () => {
+          createMCPServer({
+            enabled: true,
+            // deno-lint-ignore no-explicit-any -- deliberately invalid auth type
+            auth: { type: "oauth" } as any,
+          });
+        },
+        Error,
+        "not supported",
+      );
+    });
+
+    it("succeeds with explicit allowUnauthenticated: true", () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      assertExists(server);
+    });
+
+    it("succeeds with bearer auth", () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "bearer", validate: async (t: string) => t === "ok" },
+      });
+      assertExists(server);
+    });
+
+    it("http-transport: bearer rejects missing token", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "bearer", validate: async (t: string) => t === "ok" },
+      });
+      const handler = server.createHTTPHandler();
+      const res = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+      assertEquals(res.status, 401);
+    });
+
+    it("http-transport: bearer rejects bad token", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "bearer", validate: async (t: string) => t === "ok" },
+      });
+      const handler = server.createHTTPHandler();
+      const res = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer nope" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+      assertEquals(res.status, 401);
+    });
+
+    it("http-transport: none + allowUnauthenticated accepts requests", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      const handler = server.createHTTPHandler();
+      const res = await handler(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+      );
+      assertEquals(res.status, 200);
     });
   });
 });

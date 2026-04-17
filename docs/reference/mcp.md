@@ -38,8 +38,13 @@ tool({
   execute: async ({ query }) => ({ results: [] }),
 });
 
-// Create the app-facing MCP server and mount its HTTP handler
-const server = createMCPServer({ enabled: true });
+// Create the app-facing MCP server and mount its HTTP handler.
+// `auth` is required — pick a real auth strategy for production, or use the
+// explicit `{ type: "none", allowUnauthenticated: true }` opt-in for local dev.
+const server = createMCPServer({
+  enabled: true,
+  auth: { type: "none", allowUnauthenticated: true },
+});
 const handler = server.createHTTPHandler();
 ```
 
@@ -68,7 +73,7 @@ Current config shape:
 |------|-------------|-------------|
 | `enabled` | `boolean` | Enable the MCP server surface |
 | `port?` | `number` | Optional port for hosted/runtime wiring |
-| `auth?` | `{ type: "bearer" \| "api-key" \| "none"; validate?: Function }` | Optional request authentication |
+| `auth` | `{ type: "bearer" \| "api-key"; validate?: Function } \| { type: "none"; allowUnauthenticated: true }` | **Required.** Request authentication. Use `{ type: "none", allowUnauthenticated: true }` only for local dev — the server fails closed when auth is unset. |
 | `cors?` | `{ enabled: boolean; origins?: string[] }` | Optional CORS configuration |
 
 ## Exports
