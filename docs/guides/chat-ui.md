@@ -259,7 +259,7 @@ Tool parts have a `state` property:
 <Chat
   {...chat}
   models={[
-    { value: "anthropic/claude-sonnet-4-5-20250929", label: "Claude Sonnet" },
+    { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet" },
     { value: "openai/gpt-4o", label: "GPT-4o" },
   ]}
   model={chat.model}
