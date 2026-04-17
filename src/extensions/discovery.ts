@@ -7,6 +7,7 @@
  * @module extensions/discovery
  */
 
+import { join } from "@std/path";
 import type { Capability, ResolvedExtension } from "./types.ts";
 
 /**
@@ -18,11 +19,20 @@ export interface PackageMetadata {
   capabilities: Capability[];
 }
 
+function isCapability(value: unknown): value is Capability {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const cap = value as Record<string, unknown>;
+  return typeof cap.type === "string" && cap.type.length > 0;
+}
+
 /**
  * Parse veryfront extension metadata from a package.json-like object.
  *
  * Returns `PackageMetadata` when the package declares
- * `veryfront.extension: true`, otherwise `undefined`.
+ * `veryfront.extension: true`, otherwise `undefined`. Malformed capability
+ * entries are filtered out; the caller receives only valid shapes.
  */
 export function parsePackageMetadata(
   pkg: Record<string, unknown>,
@@ -41,7 +51,7 @@ export function parsePackageMetadata(
   }
 
   const capabilities: Capability[] = Array.isArray(meta.capabilities)
-    ? (meta.capabilities as Capability[])
+    ? meta.capabilities.filter(isCapability)
     : [];
 
   return { isExtension: true, capabilities };
@@ -91,17 +101,16 @@ export function mergeExtensions(
 // Filesystem discovery helpers
 // ---------------------------------------------------------------------------
 
-async function readDir(
-  path: string,
-): Promise<Deno.DirEntry[]> {
+async function readDir(path: string): Promise<Deno.DirEntry[]> {
   try {
     const entries: Deno.DirEntry[] = [];
     for await (const entry of Deno.readDir(path)) {
       entries.push(entry);
     }
     return entries;
-  } catch {
-    return [];
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return [];
+    throw err;
   }
 }
 
@@ -109,8 +118,9 @@ async function fileExists(path: string): Promise<boolean> {
   try {
     await Deno.stat(path);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return false;
+    throw err;
   }
 }
 
@@ -121,7 +131,7 @@ async function fileExists(path: string): Promise<boolean> {
 export async function discoverPackageExtensions(
   baseDir: string,
 ): Promise<Array<{ packageName: string; metadata: PackageMetadata }>> {
-  const nmDir = `${baseDir}/node_modules`;
+  const nmDir = join(baseDir, "node_modules");
   const results: Array<{ packageName: string; metadata: PackageMetadata }> = [];
   const entries = await readDir(nmDir);
 
@@ -131,18 +141,18 @@ export async function discoverPackageExtensions(
 
     if (entry.name.startsWith("@")) {
       // Scoped packages -- iterate one level deeper.
-      const scopeDir = `${nmDir}/${entry.name}`;
+      const scopeDir = join(nmDir, entry.name);
       const scopeEntries = await readDir(scopeDir);
       for (const scopeEntry of scopeEntries) {
         if (!scopeEntry.isDirectory && !scopeEntry.isSymlink) continue;
         const pkgName = `${entry.name}/${scopeEntry.name}`;
         const meta = await tryReadPackageMeta(
-          `${scopeDir}/${scopeEntry.name}`,
+          join(scopeDir, scopeEntry.name),
         );
         if (meta) results.push({ packageName: pkgName, metadata: meta });
       }
     } else {
-      const meta = await tryReadPackageMeta(`${nmDir}/${entry.name}`);
+      const meta = await tryReadPackageMeta(join(nmDir, entry.name));
       if (meta) results.push({ packageName: entry.name, metadata: meta });
     }
   }
@@ -153,11 +163,18 @@ export async function discoverPackageExtensions(
 async function tryReadPackageMeta(
   pkgDir: string,
 ): Promise<PackageMetadata | undefined> {
+  let raw: string;
   try {
-    const raw = await Deno.readTextFile(`${pkgDir}/package.json`);
+    raw = await Deno.readTextFile(join(pkgDir, "package.json"));
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return undefined;
+    throw err;
+  }
+  try {
     const pkg = JSON.parse(raw) as Record<string, unknown>;
     return parsePackageMetadata(pkg);
   } catch {
+    // Malformed JSON -- treat as non-extension package.
     return undefined;
   }
 }
@@ -170,14 +187,14 @@ async function tryReadPackageMeta(
 export async function discoverProjectExtensions(
   baseDir: string,
 ): Promise<string[]> {
-  const extDir = `${baseDir}/extensions`;
+  const extDir = join(baseDir, "extensions");
   const entries = await readDir(extDir);
   const results: string[] = [];
 
   for (const entry of entries) {
     if (!entry.isDirectory) continue;
-    const srcIndex = `${extDir}/${entry.name}/src/index.ts`;
-    const rootIndex = `${extDir}/${entry.name}/index.ts`;
+    const srcIndex = join(extDir, entry.name, "src", "index.ts");
+    const rootIndex = join(extDir, entry.name, "index.ts");
 
     if (await fileExists(srcIndex)) {
       results.push(srcIndex);
@@ -198,5 +215,5 @@ export async function discoverLocalExtensions(
   const entries = await readDir(baseDir);
   return entries
     .filter((e) => !e.isDirectory && e.name.endsWith(".extension.ts"))
-    .map((e) => `${baseDir}/${e.name}`);
+    .map((e) => join(baseDir, e.name));
 }
