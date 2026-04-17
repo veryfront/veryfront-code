@@ -2,7 +2,12 @@ import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "esbuild";
 import { NETWORK_ERROR } from "#veryfront/errors";
 // Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { getDirectory, isWithinDirectory, joinPath } from "#veryfront/utils/path-utils.ts";
+import {
+  getDirectory,
+  isWithinDirectory,
+  joinPath,
+  normalizePath,
+} from "#veryfront/utils/path-utils.ts";
 
 import {
   computeIntegrity,
@@ -41,10 +46,15 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
           };
         }
 
-        const basedir = args.importer ? getDirectory(args.importer) : projectDir;
-        const candidate = args.path.startsWith("/")
-          ? joinPath(projectDir, args.path)
-          : joinPath(basedir, args.path);
+        const basedir = args.resolveDir || (args.importer ? getDirectory(args.importer) : projectDir);
+        // normalizePath collapses `./` and `foo/../` segments produced by
+        // `joinPath` so downstream `adapter.fs.stat` lookups match the file
+        // system's canonical key. Still inside the containment check below.
+        const candidate = normalizePath(
+          args.path.startsWith("/")
+            ? joinPath(projectDir, args.path)
+            : joinPath(basedir, args.path),
+        );
 
         // VULN-FS-6: refuse anything that, after joining, escapes the project
         // root. esbuild plugins fire per-import; an entry file with

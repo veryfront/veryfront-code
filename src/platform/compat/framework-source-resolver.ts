@@ -1,6 +1,6 @@
 import { join } from "#veryfront/compat/path/index.ts";
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
-import { isWithinDirectory } from "#veryfront/security";
+import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import { createFileSystem } from "./fs.ts";
 import { getFrameworkRoot, getFrameworkRootFromMeta } from "./vfs-paths.ts";
 
