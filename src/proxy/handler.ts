@@ -1,6 +1,18 @@
 import { TokenManager, type TokenScope } from "./token-manager.ts";
 import { type ParsedDomain, parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
+import {
+  extractUserToken,
+  getRequestHost,
+  getScope,
+  INTERNAL_PROXY_HEADERS,
+  isSignedInternalControlPlaneRequest,
+} from "./request-classification.ts";
+import {
+  isMissingCustomDomainProjectError,
+  makeAuthRedirectUrl,
+  parseStatusFromError,
+} from "./error-handling.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cwd, getEnv } from "#veryfront/platform/compat/process.ts";
 import { join } from "#veryfront/compat/path/index.ts";
@@ -8,47 +20,7 @@ import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from "jose";
 
-export const INTERNAL_PROXY_HEADERS = [
-  "x-token",
-  "x-project-slug",
-  "x-environment",
-  "x-environment-id",
-  "x-content-source-id",
-  "x-forwarded-host",
-  "x-project-path",
-  "x-project-id",
-  "x-release-id",
-  "x-branch-id",
-  "x-branch-name",
-] as const;
-
-const INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS = [
-  "x-veryfront-control-plane-jws",
-  "x-veryfront-dispatch-jws",
-] as const;
-
-function isInternalControlPlanePath(pathname: string): boolean {
-  return pathname === "/channels/invoke" ||
-    pathname.startsWith("/internal/agents/") ||
-    pathname.startsWith("/internal/tasks/") ||
-    pathname.startsWith("/internal/workflows/");
-}
-
-function isSignedInternalControlPlaneRequest(req: Request): boolean {
-  const pathname = new URL(req.url).pathname;
-  if (!isInternalControlPlanePath(pathname)) {
-    return false;
-  }
-
-  const hasSignature = INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS.some((header) =>
-    !!req.headers.get(header)
-  );
-  if (!hasSignature) {
-    return false;
-  }
-
-  return !!req.headers.get("x-token");
-}
+export { INTERNAL_PROXY_HEADERS } from "./request-classification.ts";
 
 interface DomainLookupResult {
   id: string;
@@ -194,34 +166,6 @@ export interface ProxyHandlerOptions {
   config: ProxyConfig;
   cache?: TokenCache;
   logger?: ProxyLogger;
-}
-
-function getRequestHost(req: Request): string {
-  return req.headers.get("host") ?? new URL(req.url).host;
-}
-
-function getScope(environment: string | null): TokenScope {
-  return environment === "preview" ? "preview" : "production";
-}
-
-function extractUserToken(cookieHeader: string): string | undefined {
-  const match = cookieHeader.match(/(?:^|;\s*)authToken=([^;]+)/);
-  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
-}
-
-function parseStatusFromError(error: unknown): number | null {
-  const message = error instanceof Error ? error.message : String(error);
-  const match = message.match(/failed: (\d+)/);
-  return match ? Number(match[1]) : null;
-}
-
-// Brittle on purpose: we string-match the API's OAuth error body. Source of truth is
-// veryfront-api/src/api/http/rest/auth/routes.ts — `oauthError(c, 'Project not found
-// for domain', ...)`. If that string is renamed, this regex silently regresses to 502.
-// Durable fix is a typed error code from the token-mint helper; tracked separately.
-function isMissingCustomDomainProjectError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /project not found for domain/i.test(message);
 }
 
 async function extractUserIdFromToken(
@@ -381,23 +325,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       isLocalProject: false,
       error: { status, message, redirectUrl, slug },
     };
-  }
-
-  function makeAuthRedirectUrl(req: Request): string {
-    const url = new URL(req.url);
-    // Collapse leading slashes to prevent protocol-relative open redirects (e.g. "//evil.com/path")
-    const safePath = url.pathname.replace(/^\/\/+/, "/");
-    let returnPath = safePath + url.search;
-
-    // Ensure the return path stays within the application and is not an absolute URL.
-    // - It must start with "/".
-    // - It must not contain a scheme delimiter ("://").
-    // If it fails validation, fall back to the root path.
-    if (!returnPath.startsWith("/") || returnPath.includes("://")) {
-      returnPath = "/";
-    }
-
-    return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnPath)}`;
   }
 
   function makeProjectNotFoundContext(
