@@ -43,7 +43,10 @@ async function initSession(
 
 describe("Acceptance Criteria — Streamable HTTP Transport (#839)", () => {
   it("POST with request returns application/json", async () => {
-    const handler = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } }).createHTTPHandler();
+    const handler = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    }).createHTTPHandler();
     const res = await post(handler, MCP_INIT);
     assertEquals(res.status, 200);
     assertEquals(res.headers.get("Content-Type"), "application/json");
@@ -52,7 +55,10 @@ describe("Acceptance Criteria — Streamable HTTP Transport (#839)", () => {
   });
 
   it("Server assigns MCP-Session-Id in initialize response", async () => {
-    const handler = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } }).createHTTPHandler();
+    const handler = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    }).createHTTPHandler();
     const res = await post(handler, MCP_INIT);
     const sessionId = res.headers.get("MCP-Session-Id");
     assertExists(sessionId);
@@ -60,7 +66,10 @@ describe("Acceptance Criteria — Streamable HTTP Transport (#839)", () => {
   });
 
   it("POST with notification returns 202 Accepted with no body", async () => {
-    const handler = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } }).createHTTPHandler();
+    const handler = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    }).createHTTPHandler();
     const sid = await initSession(handler);
     const res = await post(
       handler,
@@ -73,14 +82,20 @@ describe("Acceptance Criteria — Streamable HTTP Transport (#839)", () => {
   });
 
   it("Missing session ID on post-init requests returns 400 Bad Request", async () => {
-    const handler = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } }).createHTTPHandler();
+    const handler = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    }).createHTTPHandler();
     await initSession(handler);
     const res = await post(handler, { jsonrpc: "2.0", id: 2, method: "tools/list" });
     assertEquals(res.status, 400);
   });
 
   it("Unknown session IDs return 404 Not Found", async () => {
-    const handler = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } }).createHTTPHandler();
+    const handler = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    }).createHTTPHandler();
     await initSession(handler);
     const res = await post(
       handler,
@@ -91,7 +106,10 @@ describe("Acceptance Criteria — Streamable HTTP Transport (#839)", () => {
   });
 
   it("DELETE with session ID terminates the session", async () => {
-    const handler = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } }).createHTTPHandler();
+    const handler = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    }).createHTTPHandler();
     const sidA = await initSession(handler);
     await initSession(handler); // sidB keeps session check active
 
@@ -113,7 +131,10 @@ describe("Acceptance Criteria — Streamable HTTP Transport (#839)", () => {
   });
 
   it("OPTIONS returns 204", async () => {
-    const handler = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } }).createHTTPHandler();
+    const handler = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    }).createHTTPHandler();
     const res = await handler(
       new Request("http://localhost/mcp", { method: "OPTIONS" }),
     );
@@ -141,7 +162,10 @@ describe("Acceptance Criteria — Streamable HTTP Transport (#839)", () => {
   });
 
   it("Unsupported HTTP method returns 405", async () => {
-    const handler = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } }).createHTTPHandler();
+    const handler = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    }).createHTTPHandler();
     const res = await handler(
       new Request("http://localhost/mcp", { method: "PUT" }),
     );
@@ -155,7 +179,10 @@ describe("Acceptance Criteria — Streamable HTTP Transport (#839)", () => {
   });
 
   it("Existing stdio transport unchanged (handleRequest works directly)", async () => {
-    const server = createMCPServer({ enabled: true, auth: { type: "none", allowUnauthenticated: true } });
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
     const res = await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
