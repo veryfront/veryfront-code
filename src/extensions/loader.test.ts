@@ -57,6 +57,17 @@ describe("ExtensionLoader", () => {
       assertEquals(sorted[1].extension.name, "beta");
     });
 
+    it("should handle duplicate extension names without false circular error", () => {
+      const ext = makeExt("shared");
+      const loader = new ExtensionLoader(noopLogger);
+      const sorted = loader.topologicalSort([
+        makeResolved(ext),
+        makeResolved(ext),
+      ]);
+      assertEquals(sorted.length, 1);
+      assertEquals(sorted[0].extension.name, "shared");
+    });
+
     it("should throw on circular dependencies", () => {
       const a = makeExt("ext-a", {
         provides: { A: {} },
@@ -173,6 +184,17 @@ describe("ExtensionLoader", () => {
       assertEquals(flat.length, 2);
       assertEquals(flat[0].extension.name, "child1");
       assertEquals(flat[1].extension.name, "child2");
+    });
+
+    it("should recursively flatten nested presets", () => {
+      const leaf = makeExt("leaf");
+      const innerPreset = makeExt("inner-preset", { extends: [leaf] });
+      const outerPreset = makeExt("outer-preset", { extends: [innerPreset] });
+
+      const loader = new ExtensionLoader(noopLogger);
+      const flat = loader.flattenPresets([makeResolved(outerPreset)]);
+      assertEquals(flat.length, 1);
+      assertEquals(flat[0].extension.name, "leaf");
     });
 
     it("should keep non-preset extensions as-is", () => {

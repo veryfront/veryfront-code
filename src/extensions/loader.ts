@@ -31,9 +31,13 @@ export class ExtensionLoader {
     for (const resolved of extensions) {
       const ext = resolved.extension;
       if (ext.extends && ext.extends.length > 0) {
-        for (const child of ext.extends) {
-          result.push({ extension: child, source: resolved.source, origin: resolved.origin });
-        }
+        const children = ext.extends.map((child) => ({
+          extension: child,
+          source: resolved.source,
+          origin: resolved.origin,
+        }));
+        // Recursively flatten in case children are also presets
+        result.push(...this.flattenPresets(children));
       } else {
         result.push(resolved);
       }
@@ -111,8 +115,8 @@ export class ExtensionLoader {
       }
     }
 
-    if (sorted.length !== extensions.length) {
-      const unsorted = extensions
+    if (sorted.length !== extByName.size) {
+      const unsorted = [...extByName.values()]
         .filter((r) => !sorted.includes(r))
         .map((r) => r.extension.name);
       throw CIRCULAR_DEPENDENCY_ERROR.create({
