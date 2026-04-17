@@ -135,11 +135,9 @@ export class ExtensionLoader {
     extensions: ResolvedExtension[],
     projectConfig: Record<string, unknown>,
   ): Promise<void> {
-    if (this.setupOrder.length > 0) {
-      await this.teardownAll();
-    }
-    reset();
-    this.setupOrder = [];
+    // Idempotent: teardownAll clears setupOrder and resets the contract
+    // registry even when nothing is loaded yet.
+    await this.teardownAll();
 
     // Check for contract conflicts before loading
     const conflicts = detectConflicts(extensions);
