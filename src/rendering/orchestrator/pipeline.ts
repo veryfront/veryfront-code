@@ -14,71 +14,48 @@
  * @module rendering/orchestrator/pipeline
  */
 
-import { rendererLogger as logger } from "#veryfront/utils";
-import { getExtensionName } from "#veryfront/utils/path-utils.ts";
-import { createBuildVersion } from "#veryfront/utils/version.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { DataFetcher } from "#veryfront/data/index.ts";
 import { VeryfrontError } from "#veryfront/errors/index.ts";
-import { FILE_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
-import { buildQueryAwareCacheKey } from "#veryfront/cache/keys.ts";
-import {
-  extractRelativePath as extractRelativePathShared,
-  extractRouteParams as extractRouteParamsShared,
-} from "#veryfront/utils/route-path-utils.ts";
-import { join } from "#veryfront/compat/path";
-import type { MdxBundle, PageBundle } from "#veryfront/types";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import type { CacheLookupResult } from "../cache/cache-coordinator.ts";
-import type { PageRenderer } from "../page-renderer.ts";
-import type { PageResolver } from "../page-resolution/index.ts";
-import type { LayoutOrchestrator } from "./layout.ts";
-import type { SSROrchestrator } from "./ssr-orchestrator.ts";
-import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
-import { DataFetcher, type FetchDataOptions } from "#veryfront/data/index.ts";
-import type { DataContext, PageWithData } from "#veryfront/data/types.ts";
+import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
-import { setupSSRGlobals } from "../ssr-globals.ts";
-import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
-import type { LayoutItem } from "#veryfront/types";
-import { withTimeout, withTimeoutThrow } from "../utils/stream-utils.ts";
-import { extractCandidates, generateTailwindCSS } from "#veryfront/html/styles-builder/index.ts";
-import {
-  getCSSByHashAsync,
-  regenerateCSSByHash,
-} from "#veryfront/html/styles-builder/tailwind-compiler.ts";
-import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
-import type { ModuleLoaderConfig } from "./module-loader/index.ts";
 import {
   getCSSImports,
   runWithCSSCollector,
 } from "#veryfront/modules/react-loader/css-import-collector.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { MdxBundle, PageBundle } from "#veryfront/types";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { getExtensionName } from "#veryfront/utils/path-utils.ts";
+import { createBuildVersion } from "#veryfront/utils/version.ts";
+import { extractRelativePath as extractRelativePathShared } from "#veryfront/utils/route-path-utils.ts";
+import type { CacheLookupResult } from "../cache/cache-coordinator.ts";
+import type { PageRenderer } from "../page-renderer.ts";
+import type { PageResolver } from "../page-resolution/index.ts";
+import { setupSSRGlobals } from "../ssr-globals.ts";
+import { withTimeoutThrow } from "../utils/stream-utils.ts";
+import { __injectCssCacheForTests } from "./css-cache.ts";
+import type { LayoutOrchestrator } from "./layout.ts";
+import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
+import type { ModuleLoaderConfig } from "./module-loader/index.ts";
+import { SSR_RENDER_TIMEOUT_MS } from "./module-collection.ts";
+import { EMPTY_LAYOUT_RESULT, isDotPath } from "./path-helpers.ts";
+import { buildPipelineCacheKey, resolveDataFetchingStage } from "./pipeline/data-stage.ts";
+import { resolveCssFromRenderedHtml, resolvePageDataCssStage } from "./pipeline/css-stage.ts";
+import {
+  extractMdxMetadataStage,
+  resolveAppPathStage,
+  resolveProjectUpdatedAtStage,
+  serializeLayoutPropsStage,
+  serializeLayoutsStage,
+} from "./pipeline/page-data-stage.ts";
+import type { SSROrchestrator } from "./ssr-orchestrator.ts";
+import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
 
 // Extracted modules
-import { EMPTY_LAYOUT_RESULT, isDotPath } from "./path-helpers.ts";
-import {
-  __injectCssCacheForTests,
-  cachePageCss,
-  CSS_SSR_TIMEOUT_MS,
-  getCachedPageCss,
-  getPageCssCacheKey,
-} from "./css-cache.ts";
-import {
-  collectModulesToLoad,
-  DATA_FETCH_TIMEOUT_MS,
-  hasDataFetchingFunction,
-  type LoadedModule,
-  MODULE_LOAD_TIMEOUT_MS,
-  type ModuleToLoad,
-  SSR_RENDER_TIMEOUT_MS,
-} from "./module-collection.ts";
-
 const renderPageLog = logger.component("render-page");
 const renderPipelineLog = logger.component("render-pipeline");
 const resolvePageDataLog = logger.component("resolve-page-data");
-const RENDERED_CSS_HASH_RE = /href="\/_vf\/css\/([a-z0-9-]{1,16})\.css"/i;
-
 // Re-export test helper for backward compatibility
 export { __injectCssCacheForTests } from "./css-cache.ts";
 
@@ -103,29 +80,6 @@ export interface RenderPipelineConfig {
   projectDir: string;
   /** Query parameter handling for cache keys (from config.cache.queryParams) */
   queryParamOptions?: import("#veryfront/cache/keys.ts").QueryParamCacheOptions;
-}
-
-interface DataResolutionResult {
-  params: Record<string, string | string[]>;
-  pageProps: Record<string, unknown>;
-  layoutProps: Map<string, Record<string, unknown>>;
-}
-
-interface MdxMetadataResult {
-  frontmatter: Record<string, unknown>;
-  headings: Array<{ id: string; text: string; level: number }>;
-}
-
-interface PageCssResult {
-  css: string | undefined;
-  cssError: string | undefined;
-}
-
-interface FetchedDataResult {
-  type: "page" | "layout";
-  id: string;
-  result: Awaited<ReturnType<RenderPipeline["dataFetcher"]["fetchData"]>> | null;
-  error: Error | null;
 }
 
 export class RenderPipeline {
@@ -159,223 +113,11 @@ export class RenderPipeline {
     return loadModule(filePath, this.moduleLoaderConfig);
   }
 
-  private extractRenderedCssHash(html: string): string | undefined {
-    return html.match(RENDERED_CSS_HASH_RE)?.[1];
-  }
-
-  private async resolveCssFromRenderedHtml(
+  private resolveCssFromRenderedHtml(
     html: string,
     projectSlug: string | undefined,
   ): Promise<string | undefined> {
-    const cssHash = this.extractRenderedCssHash(html);
-    if (!cssHash) return undefined;
-
-    const cachedCss = await getCSSByHashAsync(cssHash);
-    if (cachedCss) return cachedCss;
-
-    return await regenerateCSSByHash(cssHash, projectSlug);
-  }
-
-  /**
-   * Load modules in parallel and return only successfully loaded ones.
-   *
-   * IMPORTANT: Page modules are considered critical - if a page module fails to load,
-   * we throw an error instead of silently continuing with missing props. This prevents
-   * users from seeing broken pages with no indication of the problem.
-   *
-   * Layout modules are considered non-critical - their failures are logged as warnings
-   * and the page continues to render (possibly without that layout's data).
-   */
-  private async loadModulesInParallel(modules: ModuleToLoad[]): Promise<LoadedModule[]> {
-    const results = await Promise.all(
-      modules.map(async (m) => {
-        try {
-          const mod = await this.loadModule(m.path);
-          return { ...m, mod, error: null as Error | null };
-        } catch (error) {
-          return { ...m, mod: null, error: error as Error };
-        }
-      }),
-    );
-
-    const loaded: LoadedModule[] = [];
-    const criticalFailures: Array<{ path: string; error: string }> = [];
-
-    for (const result of results) {
-      if (result.mod && !result.error) {
-        loaded.push({ type: result.type, id: result.id, mod: result.mod });
-        continue;
-      }
-
-      if (!result.error) continue;
-
-      const errorMessage = result.error.message;
-
-      if (result.type === "page") {
-        criticalFailures.push({ path: result.path, error: errorMessage });
-        renderPageLog.error("Critical page module failed to load", {
-          path: result.path,
-          error: errorMessage,
-        });
-        continue;
-      }
-
-      renderPageLog.warn("Layout module failed to load (non-critical)", {
-        path: result.path,
-        error: errorMessage,
-      });
-    }
-
-    if (criticalFailures.length > 0) {
-      const failedDetails = criticalFailures
-        .map((f) => `${f.path}: ${f.error}`)
-        .join("\n");
-      throw RENDER_ERROR.create({
-        detail: `Critical page module(s) failed to load:\n${failedDetails}`,
-        context: {
-          criticalFailures,
-          loadedCount: loaded.length,
-          totalModules: modules.length,
-        },
-      });
-    }
-
-    return loaded;
-  }
-
-  /**
-   * Resolve page + layout data props from module data-fetching hooks.
-   * Shared by both renderPage() and resolvePageData() to keep behavior aligned.
-   */
-  private async resolveDataFetching(
-    slug: string,
-    pagePath: string,
-    nestedLayouts: LayoutItem[],
-    options?: RenderOptions,
-  ): Promise<DataResolutionResult> {
-    let params: Record<string, string | string[]> = options?.params ? { ...options.params } : {};
-    const pageProps: Record<string, unknown> = {};
-    const layoutProps = new Map<string, Record<string, unknown>>();
-
-    if (!options?.request || !options?.url) {
-      return { params, pageProps, layoutProps };
-    }
-
-    if (Object.keys(params).length === 0) {
-      renderPageLog.debug("Extracting route params", {
-        slug,
-        pagePath,
-      });
-
-      const extracted = extractRouteParamsShared(pagePath, slug);
-      if (extracted.matched) {
-        params = extracted.params;
-        renderPageLog.debug("Extracted route params", { slug, params });
-      }
-    }
-
-    const dataContext: DataContext = {
-      params,
-      query: options.url.searchParams,
-      request: options.request,
-      url: options.url,
-    };
-
-    const fileExtension = getExtensionName(pagePath);
-    const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
-    const isInPagesDir = pagePath.includes("/pages/");
-    const isInAppDir = pagePath.includes("/app/");
-
-    const modulesToLoad = collectModulesToLoad(
-      pagePath,
-      isComponentPage,
-      isInPagesDir || isInAppDir,
-      nestedLayouts,
-    );
-
-    if (modulesToLoad.length === 0) {
-      return { params, pageProps, layoutProps };
-    }
-
-    const loadedModules = await withSpan(
-      SpanNames.RENDER_LOAD_MODULES,
-      () =>
-        withTimeoutThrow(
-          this.loadModulesInParallel(modulesToLoad),
-          MODULE_LOAD_TIMEOUT_MS,
-          `Module loading for ${slug}`,
-        ),
-      { "render.module_count": modulesToLoad.length },
-    );
-
-    const dataJobs = loadedModules.filter((m) => hasDataFetchingFunction(m.mod));
-    if (dataJobs.length === 0) {
-      return { params, pageProps, layoutProps };
-    }
-
-    const dataResults = await withSpan(
-      SpanNames.RENDER_FETCH_DATA,
-      () =>
-        withTimeoutThrow(
-          Promise.all(
-            dataJobs.map(async (job) => {
-              try {
-                const jobPath = (job as LoadedModule & { path?: string }).path;
-                const fetchOptions: FetchDataOptions = {
-                  modulePath: jobPath,
-                  projectDir: this.config.projectDir,
-                };
-                const result = await this.dataFetcher
-                  .fetchData(job.mod as PageWithData, dataContext, this.config.mode, fetchOptions);
-                return { ...job, result, error: null as Error | null };
-              } catch (error) {
-                return { ...job, result: null, error: error as Error };
-              }
-            }),
-          ),
-          DATA_FETCH_TIMEOUT_MS,
-          `Data fetch for ${slug}`,
-        ),
-      { "render.data_job_count": dataJobs.length },
-    );
-
-    this.applyFetchedDataResults(slug, dataResults, pageProps, layoutProps);
-
-    return { params, pageProps, layoutProps };
-  }
-
-  private applyFetchedDataResults(
-    slug: string,
-    dataResults: FetchedDataResult[],
-    pageProps: Record<string, unknown>,
-    layoutProps: Map<string, Record<string, unknown>>,
-  ): void {
-    for (const { type, id, result, error } of dataResults) {
-      if (error) throw error;
-      if (!result) continue;
-
-      if (result.notFound) {
-        throw FILE_NOT_FOUND.create({
-          detail: "Page/Layout returned notFound",
-          context: { slug, component: id },
-        });
-      }
-
-      if (result.redirect) {
-        throw RENDER_ERROR.create({
-          detail: `Redirect to ${result.redirect.destination}`,
-          context: { slug, redirect: result.redirect },
-        });
-      }
-
-      if (!result.props) continue;
-
-      if (type === "page") {
-        Object.assign(pageProps, result.props as Record<string, unknown>);
-      } else {
-        layoutProps.set(id, result.props as Record<string, unknown>);
-      }
-    }
+    return resolveCssFromRenderedHtml(html, projectSlug);
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
@@ -454,12 +196,16 @@ export class RenderPipeline {
                 "render.data_fetching",
                 async () => {
                   try {
-                    const dataResolution = await this.resolveDataFetching(
+                    const dataResolution = await resolveDataFetchingStage({
                       slug,
-                      pageInfo.entity.path,
-                      layoutResult.nestedLayouts,
+                      pagePath: pageInfo.entity.path,
+                      nestedLayouts: layoutResult.nestedLayouts,
                       options,
-                    );
+                      projectDir: this.config.projectDir,
+                      mode: this.config.mode,
+                      dataFetcher: this.dataFetcher,
+                      loadModule: (filePath) => this.loadModule(filePath),
+                    });
                     resolvedParams = dataResolution.params;
                     dataFetchingProps = Object.keys(dataResolution.pageProps).length > 0
                       ? dataResolution.pageProps
@@ -655,34 +401,46 @@ export class RenderPipeline {
     const pagePath = extractRelativePathShared(pageInfo.entity.path, this.config.projectDir);
     const fileExtension = getExtensionName(pageInfo.entity.path);
     const pageType = fileExtension as PageDataResponse["pageType"];
-    const dataResolution = await this.resolveDataFetching(
+    const dataResolution = await resolveDataFetchingStage({
       slug,
-      pageInfo.entity.path,
-      layoutResult.nestedLayouts,
+      pagePath: pageInfo.entity.path,
+      nestedLayouts: layoutResult.nestedLayouts,
       options,
-    );
+      projectDir: this.config.projectDir,
+      mode: this.config.mode,
+      dataFetcher: this.dataFetcher,
+      loadModule: (filePath) => this.loadModule(filePath),
+    });
 
     const pageProps: Record<string, unknown> = dataResolution.pageProps;
     const params = dataResolution.params;
-    const layoutProps = this.serializeLayoutProps(dataResolution.layoutProps);
+    const layoutProps = serializeLayoutPropsStage(dataResolution.layoutProps);
 
-    const { frontmatter, headings } = await this.extractMdxMetadata(
+    const { frontmatter, headings } = await extractMdxMetadataStage(
       pageType,
       pageInfo,
       slug,
       options,
       params,
+      this.config.pageRenderer,
     );
 
-    const layouts = this.serializeLayouts(layoutResult.nestedLayouts);
+    const layouts = serializeLayoutsStage(layoutResult.nestedLayouts, this.config.projectDir);
 
     const providers: string[] = [];
 
-    const projectUpdatedAt = this.resolveProjectUpdatedAt();
+    const projectUpdatedAt = resolveProjectUpdatedAtStage(this.config.adapter);
 
-    const appPath = await this.resolveAppPath();
+    const appPath = await resolveAppPathStage(this.config.adapter, this.config.projectDir);
 
-    const { css, cssError } = await this.resolvePageDataCss(slug, options, projectUpdatedAt);
+    const { css, cssError } = await resolvePageDataCssStage({
+      slug,
+      options,
+      projectUpdatedAt,
+      renderPage: (nextSlug, nextOptions) => this.renderPage(nextSlug, nextOptions),
+      resolveCssFromRenderedHtml: (html, projectSlug) =>
+        this.resolveCssFromRenderedHtml(html, projectSlug),
+    });
 
     resolvePageDataLog.debug("Resolved page data", {
       slug,
@@ -713,184 +471,6 @@ export class RenderPipeline {
     };
   }
 
-  private async extractMdxMetadata(
-    pageType: PageDataResponse["pageType"],
-    pageInfo: Awaited<ReturnType<PageResolver["resolvePage"]>>,
-    slug: string,
-    options: RenderOptions | undefined,
-    params: Record<string, string | string[]>,
-  ): Promise<MdxMetadataResult> {
-    if (pageType !== "mdx") {
-      return { frontmatter: {}, headings: [] };
-    }
-
-    try {
-      const bundleResult = await this.config.pageRenderer.preparePageBundles(
-        pageInfo,
-        slug,
-        undefined,
-        {
-          ...options,
-          ...(Object.keys(params).length > 0 ? { params } : {}),
-        },
-      );
-
-      const pageBundle = bundleResult.pageBundle;
-      return {
-        frontmatter: pageBundle && "frontmatter" in pageBundle
-          ? (pageBundle as { frontmatter?: Record<string, unknown> }).frontmatter || {}
-          : {},
-        headings: pageBundle && "headings" in pageBundle
-          ? (pageBundle as {
-            headings?: Array<{ id: string; text: string; level: number }>;
-          }).headings || []
-          : [],
-      };
-    } catch (error) {
-      renderPipelineLog.error("Frontmatter/headings extraction failed", {
-        slug,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      return { frontmatter: {}, headings: [] };
-    }
-  }
-
-  private serializeLayouts(
-    nestedLayouts: LayoutItem[],
-  ): Array<{ kind: LayoutItem["kind"]; path: string }> {
-    return nestedLayouts
-      .filter((layout: LayoutItem) => layout.componentPath || layout.path)
-      .map((layout: LayoutItem) => ({
-        kind: layout.kind,
-        path: extractRelativePathShared(
-          layout.componentPath || layout.path || "",
-          this.config.projectDir,
-        ),
-      }));
-  }
-
-  private serializeLayoutProps(
-    layoutProps: Map<string, Record<string, unknown>>,
-  ): Record<string, Record<string, unknown>> {
-    const serialized: Record<string, Record<string, unknown>> = {};
-
-    for (const [layoutId, props] of layoutProps.entries()) {
-      serialized[layoutId] = props;
-    }
-
-    return serialized;
-  }
-
-  private async resolveAppPath(): Promise<string | undefined> {
-    for (const ext of LAYOUT_EXTENSIONS) {
-      const candidatePath = join(this.config.projectDir, `components/app.${ext}`);
-      if (await this.config.adapter.fs.exists(candidatePath)) {
-        return extractRelativePathShared(candidatePath, this.config.projectDir);
-      }
-    }
-
-    return undefined;
-  }
-
-  private resolveProjectUpdatedAt(): string | undefined {
-    const fs = this.config.adapter?.fs;
-    if (!fs || !isExtendedFSAdapter(fs) || !fs.isVeryfrontAdapter()) {
-      return undefined;
-    }
-
-    const wrappedAdapter = fs.getUnderlyingAdapter() as {
-      getProjectData?: () => { updated_at?: string } | undefined;
-    };
-    return wrappedAdapter.getProjectData?.()?.updated_at;
-  }
-
-  private async resolvePageDataCss(
-    slug: string,
-    options: RenderOptions | undefined,
-    projectUpdatedAt: string | undefined,
-  ): Promise<PageCssResult> {
-    const cssCacheKey = getPageCssCacheKey(
-      options?.projectId,
-      options?.environment,
-      slug,
-      projectUpdatedAt,
-    );
-
-    const cachedCss = getCachedPageCss(cssCacheKey);
-    if (cachedCss) {
-      resolvePageDataLog.debug("CSS cache hit", { slug, cssLength: cachedCss.length });
-      return { css: cachedCss, cssError: undefined };
-    }
-
-    try {
-      const renderResult = await withTimeout(
-        this.renderPage(slug, {
-          ...options,
-          delivery: "string",
-          skipCacheCheck: true,
-          skipCachePersist: true,
-        }),
-        CSS_SSR_TIMEOUT_MS,
-        `CSS SSR for ${slug}`,
-      );
-
-      if (!renderResult?.html) {
-        return { css: undefined, cssError: undefined };
-      }
-
-      let css = await this.resolveCssFromRenderedHtml(
-        renderResult.html,
-        options?.projectSlug ?? options?.projectId,
-      );
-
-      if (css) {
-        resolvePageDataLog.debug("Reused SSR CSS for page data", {
-          slug,
-          cssLength: css.length,
-          source: "rendered-html-hash",
-        });
-      } else {
-        css = await this.generatePageCssFromHtml(slug, renderResult.html, options);
-      }
-
-      if (css) cachePageCss(cssCacheKey, css);
-      return { css, cssError: undefined };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      // Surface CSS generation failures instead of silently swallowing them.
-      // This allows clients to show a warning or fall back gracefully.
-      resolvePageDataLog.error("CSS generation failed", {
-        slug,
-        error: errorMessage,
-        projectId: options?.projectId,
-      });
-      return {
-        css: undefined,
-        cssError: `CSS generation failed: ${errorMessage}`,
-      };
-    }
-  }
-
-  private async generatePageCssFromHtml(
-    slug: string,
-    html: string,
-    options: RenderOptions | undefined,
-  ): Promise<string | undefined> {
-    const candidates = extractCandidates(html);
-    const generatedCss = (await generateTailwindCSS(undefined, candidates, {
-      projectSlug: options?.projectSlug,
-    })).css;
-
-    resolvePageDataLog.debug("Fell back to HTML candidate CSS generation", {
-      slug,
-      htmlLength: html.length,
-      cssLength: generatedCss?.length || 0,
-    });
-
-    return generatedCss;
-  }
-
   /**
    * Build a cache key that is safe for multi-tenant + query-param aware caching.
    * Returns null when request contains sensitive headers (Authorization/Cookie) and
@@ -899,18 +479,6 @@ export class RenderPipeline {
    * Query param handling uses config.queryParamOptions for filtering (utm_*, gclid, etc.).
    */
   private buildCacheKey(slug: string, options?: RenderOptions): string | null {
-    if (options?.cacheKey) return options.cacheKey;
-    const req = options?.request;
-    if (req) {
-      const hasAuth = req.headers.has("authorization") ||
-        req.headers.has("cookie") ||
-        req.headers.has("x-api-key");
-      if (hasAuth) return null;
-    }
-
-    const url = options?.url;
-    if (!url) return slug;
-
-    return buildQueryAwareCacheKey(slug, url, this.config.queryParamOptions);
+    return buildPipelineCacheKey(slug, options, this.config.queryParamOptions);
   }
 }
