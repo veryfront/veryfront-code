@@ -11,7 +11,7 @@ import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
  */
 export interface ConflictInfo {
   contract: string;
-  providers: Array<{ name: string; source: string }>;
+  providers: Array<{ name: string; source: ExtensionSource }>;
 }
 
 /**
@@ -28,30 +28,35 @@ const SOURCE_PRIORITY: Record<ExtensionSource, number> = {
 /**
  * Validate the shape of an extension object.
  * Returns an array of issue descriptions (empty array = valid).
+ *
+ * Accepts `unknown` so callers at module-boundary / config-loading paths can
+ * validate arbitrary imported values without casting.
  */
-export function validateExtension(ext: Extension): string[] {
+export function validateExtension(ext: unknown): string[] {
   const issues: string[] = [];
 
-  if (ext === null || ext === undefined || typeof ext !== "object") {
-    issues.push("Extension must be a non-null object.");
+  if (ext === null || typeof ext !== "object" || Array.isArray(ext)) {
+    issues.push("extension must be a non-null object");
     return issues;
   }
 
-  if (typeof ext.name !== "string" || ext.name.length === 0) {
+  const candidate = ext as Partial<Extension>;
+
+  if (typeof candidate.name !== "string" || candidate.name.length === 0) {
     issues.push("name must be a non-empty string");
   }
 
-  if (typeof ext.version !== "string" || ext.version.length === 0) {
+  if (typeof candidate.version !== "string" || candidate.version.length === 0) {
     issues.push("version must be a non-empty string");
   }
 
-  if (!Array.isArray(ext.capabilities)) {
+  if (!Array.isArray(candidate.capabilities)) {
     issues.push("capabilities must be an array");
     return issues;
   }
 
-  for (let i = 0; i < ext.capabilities.length; i++) {
-    const cap = ext.capabilities[i];
+  for (let i = 0; i < candidate.capabilities.length; i++) {
+    const cap = candidate.capabilities[i];
     if (typeof cap !== "object" || cap === null || Array.isArray(cap)) {
       issues.push(`capabilities[${i}] must be an object`);
       continue;
@@ -81,10 +86,12 @@ export function detectConflicts(extensions: ResolvedExtension[]): ConflictInfo[]
     if (!provides) continue;
 
     for (const contract of Object.keys(provides)) {
-      if (!contractProviders.has(contract)) {
-        contractProviders.set(contract, []);
+      let list = contractProviders.get(contract);
+      if (!list) {
+        list = [];
+        contractProviders.set(contract, list);
       }
-      contractProviders.get(contract)!.push({
+      list.push({
         name: resolved.extension.name,
         source: resolved.source,
       });
