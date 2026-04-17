@@ -43,8 +43,8 @@ describe("ExtensionLoader", () => {
         makeResolved(provider),
       ]);
 
-      assertEquals(sorted[0].extension.name, "provider");
-      assertEquals(sorted[1].extension.name, "consumer");
+      assertEquals(sorted[0]?.extension.name, "provider");
+      assertEquals(sorted[1]?.extension.name, "consumer");
     });
 
     it("should keep original order when no dependencies exist", () => {
@@ -53,8 +53,8 @@ describe("ExtensionLoader", () => {
 
       const loader = new ExtensionLoader(noopLogger);
       const sorted = loader.topologicalSort([makeResolved(a), makeResolved(b)]);
-      assertEquals(sorted[0].extension.name, "alpha");
-      assertEquals(sorted[1].extension.name, "beta");
+      assertEquals(sorted[0]?.extension.name, "alpha");
+      assertEquals(sorted[1]?.extension.name, "beta");
     });
 
     it("should handle duplicate extension names without false circular error", () => {
@@ -65,7 +65,7 @@ describe("ExtensionLoader", () => {
         makeResolved(ext),
       ]);
       assertEquals(sorted.length, 1);
-      assertEquals(sorted[0].extension.name, "shared");
+      assertEquals(sorted[0]?.extension.name, "shared");
     });
 
     it("should throw on circular dependencies", () => {
@@ -182,8 +182,8 @@ describe("ExtensionLoader", () => {
       const loader = new ExtensionLoader(noopLogger);
       const flat = loader.flattenPresets([makeResolved(preset)]);
       assertEquals(flat.length, 2);
-      assertEquals(flat[0].extension.name, "child1");
-      assertEquals(flat[1].extension.name, "child2");
+      assertEquals(flat[0]?.extension.name, "child1");
+      assertEquals(flat[1]?.extension.name, "child2");
     });
 
     it("should recursively flatten nested presets", () => {
@@ -194,7 +194,7 @@ describe("ExtensionLoader", () => {
       const loader = new ExtensionLoader(noopLogger);
       const flat = loader.flattenPresets([makeResolved(outerPreset)]);
       assertEquals(flat.length, 1);
-      assertEquals(flat[0].extension.name, "leaf");
+      assertEquals(flat[0]?.extension.name, "leaf");
     });
 
     it("should keep non-preset extensions as-is", () => {
@@ -202,7 +202,7 @@ describe("ExtensionLoader", () => {
       const loader = new ExtensionLoader(noopLogger);
       const flat = loader.flattenPresets([makeResolved(ext)]);
       assertEquals(flat.length, 1);
-      assertEquals(flat[0].extension.name, "standalone");
+      assertEquals(flat[0]?.extension.name, "standalone");
     });
   });
 });
