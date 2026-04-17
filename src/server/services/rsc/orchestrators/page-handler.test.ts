@@ -281,7 +281,7 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
         .find((line) => line.includes("const renderUrl ="));
       assertEquals(renderUrlLine !== undefined, true);
       assertEquals(
-        renderUrlLine!.includes("\""),
+        renderUrlLine!.includes('"'),
         true,
         "renderUrl line must use double quotes (JSON literal)",
       );
