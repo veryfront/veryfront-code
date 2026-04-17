@@ -14,13 +14,16 @@ export function createRequestContext(req: Request): RequestContext {
   const parsed = parseProjectDomain(effectiveHost);
   const headerProjectSlug = req.headers.get("x-project-slug")?.trim() || undefined;
 
-  const xEnvironment = req.headers.get("x-environment");
-
-  const mode: "preview" | "production" = parsed.environment === "preview" ||
-      effectiveHost.includes(".preview.") ||
-      xEnvironment === "preview"
-    ? "preview"
-    : "production";
+  // Mode derives from server-trusted signals only. The `x-environment` header
+  // is client-controlled and must NOT be able to flip a production request
+  // into preview mode (VULN-SRV-1 / VULN-SRV-2). Preview is determined by the
+  // HTTP Host / X-Forwarded-Host — those are terminated at the edge proxy and
+  // are the same signal used for routing, so they're the correct source of
+  // truth.
+  const mode: "preview" | "production" =
+    parsed.environment === "preview" || effectiveHost.includes(".preview.")
+      ? "preview"
+      : "production";
 
   return {
     // Framework-owned token: bypass project env overlay so proxy mode works
