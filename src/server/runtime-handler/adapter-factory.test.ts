@@ -8,6 +8,27 @@ import {
   ProjectDiscoveryCache,
 } from "./local-project-discovery.ts";
 
+/**
+ * Build a Request suitable for resolveAdapter tests.
+ *
+ * @param options.projectPath Value for the `x-project-path` header (if provided)
+ * @param options.trusted     When true, attaches a dispatch-JWS header so
+ *                            isProxyTrusted() returns true. Omit/false to
+ *                            simulate an untrusted client.
+ */
+function makeReq(
+  options: { projectPath?: string; trusted?: boolean } = {},
+): Request {
+  const headers = new Headers();
+  if (options.projectPath !== undefined) {
+    headers.set("x-project-path", options.projectPath);
+  }
+  if (options.trusted) {
+    headers.set("x-veryfront-dispatch-jws", "test-jws");
+  }
+  return new Request("http://example.com/", { headers });
+}
+
 function createMockAdapter(
   files: Record<string, { isDirectory: boolean; isFile?: boolean }>,
 ): RuntimeAdapter {
@@ -76,6 +97,7 @@ describe("adapter-factory", () => {
     });
 
     const result = await resolveAdapter({
+      req: makeReq({ projectPath: "/trusted/project", trusted: true }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -94,7 +116,6 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      headerProjectPath: "/trusted/project",
       isProxyMode: false,
     });
 
@@ -103,7 +124,7 @@ describe("adapter-factory", () => {
     assertEquals(localProjectCache.has("myproject"), false);
   });
 
-  it("accepts validated x-project-path override in proxy mode", async () => {
+  it("accepts validated x-project-path override in proxy mode when proxy trusted", async () => {
     const adapter = createMockAdapter({
       "/trusted/project": { isDirectory: true },
       "/trusted/project/app": { isDirectory: true },
@@ -113,6 +134,7 @@ describe("adapter-factory", () => {
     localAdapterCache.set("/trusted/project", adapter);
 
     const result = await resolveAdapter({
+      req: makeReq({ projectPath: "/trusted/project", trusted: true }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -131,13 +153,83 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      headerProjectPath: "/trusted/project",
       isProxyMode: true,
     });
 
     assertEquals(result.isLocalProject, true);
     assertEquals(result.projectDir, "/trusted/project");
     assertEquals(localProjectCache.get("myproject"), "/trusted/project");
+  });
+
+  it("ignores x-project-path in proxy mode when request is NOT proxy-trusted (VULN-SRV-3)", async () => {
+    // An attacker reaching the runtime directly (no dispatch-JWS, env not set)
+    // must not be able to steer project discovery at arbitrary filesystem paths.
+    const adapter = createMockAdapter({
+      "/attacker/chosen/path": { isDirectory: true },
+      "/attacker/chosen/path/app": { isDirectory: true },
+    });
+
+    const result = await resolveAdapter({
+      req: makeReq({ projectPath: "/attacker/chosen/path", trusted: false }),
+      projectDir: "/base/project",
+      adapter,
+      config: undefined,
+      projectSlug: "myproject",
+      projectId: "proj_123",
+      proxyToken: undefined,
+      releaseId: undefined,
+      proxyEnv: "preview",
+      branch: null,
+      environmentName: undefined,
+      parsedDomain: {
+        slug: null,
+        branch: null,
+        environment: null,
+        isVeryfrontDomain: false,
+        isDraft: false,
+        allowIframeEmbed: false,
+      },
+      isProxyMode: true,
+    });
+
+    // The attacker-supplied path must not be adopted as the project root.
+    assertEquals(result.isLocalProject, false);
+    assertEquals(result.projectDir, "/base/project");
+    assertEquals(localProjectCache.has("myproject"), false);
+  });
+
+  it("honours x-project-path in proxy mode when dispatch-JWS header is present", async () => {
+    const adapter = createMockAdapter({
+      "/trusted/project": { isDirectory: true },
+      "/trusted/project/app": { isDirectory: true },
+    });
+    localAdapterCache.set("/trusted/project", adapter);
+
+    const result = await resolveAdapter({
+      req: makeReq({ projectPath: "/trusted/project", trusted: true }),
+      projectDir: "/base/project",
+      adapter,
+      config: undefined,
+      projectSlug: "myproject",
+      projectId: "proj_123",
+      proxyToken: undefined,
+      releaseId: undefined,
+      proxyEnv: "preview",
+      branch: null,
+      environmentName: undefined,
+      parsedDomain: {
+        slug: null,
+        branch: null,
+        environment: null,
+        isVeryfrontDomain: false,
+        isDraft: false,
+        allowIframeEmbed: false,
+      },
+      isProxyMode: true,
+    });
+
+    assertEquals(result.isLocalProject, true);
+    assertEquals(result.projectDir, "/trusted/project");
   });
 
   it("returns original adapter when no local project found and not proxy mode", async () => {
@@ -161,7 +253,7 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      headerProjectPath: undefined,
+      req: makeReq(),
       isProxyMode: false,
     });
 
@@ -171,7 +263,7 @@ describe("adapter-factory", () => {
     assertEquals(result.config, undefined);
   });
 
-  it("skips local discovery in proxy mode without headerProjectPath", async () => {
+  it("skips local discovery in proxy mode when no x-project-path header is supplied", async () => {
     const adapter = createMockAdapter({
       "data/projects/myproject": { isDirectory: true },
       "data/projects/myproject/app": { isDirectory: true },
@@ -196,7 +288,7 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      headerProjectPath: undefined,
+      req: makeReq(),
       isProxyMode: true,
     });
 
@@ -230,7 +322,7 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      headerProjectPath: undefined,
+      req: makeReq(),
       isProxyMode: false,
     });
 
@@ -260,7 +352,7 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      headerProjectPath: undefined,
+      req: makeReq(),
       isProxyMode: false,
     });
 
@@ -289,7 +381,7 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      headerProjectPath: undefined,
+      req: makeReq(),
       isProxyMode: false,
     });
 
@@ -310,6 +402,7 @@ describe("adapter-factory", () => {
     cache.adapters.set("/trusted/project", adapter);
 
     const result = await resolveAdapter({
+      req: makeReq({ projectPath: "/trusted/project", trusted: true }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -328,7 +421,6 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      headerProjectPath: "/trusted/project",
       isProxyMode: true,
       cache,
     });
@@ -371,7 +463,7 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      headerProjectPath: undefined,
+      req: makeReq(),
       isProxyMode: false,
       cache,
     });
@@ -436,7 +528,7 @@ describe("adapter-factory", () => {
             isDraft: false,
             allowIframeEmbed: false,
           },
-          headerProjectPath: undefined,
+          req: makeReq(),
           isProxyMode: true,
         });
       } catch {
@@ -482,7 +574,7 @@ describe("adapter-factory", () => {
               isDraft: false,
               allowIframeEmbed: false,
             },
-            headerProjectPath: undefined,
+            req: makeReq(),
             isProxyMode: true,
           }),
         Error,
@@ -512,7 +604,7 @@ describe("adapter-factory", () => {
           isDraft: false,
           allowIframeEmbed: false,
         },
-        headerProjectPath: undefined,
+        req: makeReq(),
         isProxyMode: true,
       });
 
@@ -548,7 +640,7 @@ describe("adapter-factory", () => {
             isDraft: false,
             allowIframeEmbed: false,
           },
-          headerProjectPath: undefined,
+          req: makeReq(),
           isProxyMode: true,
         });
         succeeded = true;

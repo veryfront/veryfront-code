@@ -520,8 +520,12 @@ export function createVeryfrontHandler(
             if (response) return response;
           }
 
-          // Resolve adapter and config for project
+          // Resolve adapter and config for project.
+          // Note: `x-project-path` is NOT forwarded via `headers.projectPath` anymore;
+          // `resolveAdapter` reads it directly from `req` and only honours it when the
+          // request is proxy-trusted (see isProxyTrusted).
           const adapterRes = await resolveAdapter({
+            req,
             projectDir,
             adapter,
             config,
@@ -533,7 +537,6 @@ export function createVeryfrontHandler(
             branch: reqCtx.branch,
             environmentName: projectRes.environmentName,
             parsedDomain: projectRes.parsedDomain,
-            headerProjectPath: headers.projectPath,
             isProxyMode,
           });
 

@@ -28,6 +28,7 @@ import {
 import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-ping-keepalive.ts";
 import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
 import { getEffectiveRequestHost } from "../../utils/request-host.ts";
+import { isProxyTrusted } from "../../utils/proxy-trust.ts";
 
 const logger = serverLogger.component("hmr-handler");
 
@@ -95,7 +96,13 @@ export class HMRHandler extends BaseHandler {
     const queryEnv = url.searchParams.get("x-environment");
     const isPreviewMode = ctx.requestContext?.mode === "preview" || queryEnv === "preview";
     const isLocal = !!ctx.isLocalProject;
-    const host = getEffectiveRequestHost(req, url);
+    // SECURITY: x-forwarded-host is client-controlled unless we trust the upstream proxy.
+    // Honouring it unconditionally lets any remote client present `x-forwarded-host: localhost`
+    // and unlock the localhost short-circuit that opens HMR (VULN-SRV-4). Only consult
+    // forwarded headers when the request is proxy-trusted; otherwise use Host / url.host.
+    const host = isProxyTrusted(req)
+      ? getEffectiveRequestHost(req, url)
+      : (req.headers.get("host") ?? url.host);
     const isLocalhost = isLocalDevHost(host);
 
     if (!isPreviewMode && !isLocal && !isLocalhost) {

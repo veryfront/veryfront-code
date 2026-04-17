@@ -173,12 +173,13 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, false);
     });
 
-    it("proceeds when x-forwarded-host is a local preview host", async () => {
+    it("proceeds when x-forwarded-host is a local preview host AND request is proxy-trusted", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws", {
         headers: {
           host: "internal.proxy:3000",
           "x-forwarded-host": "preview.veryfront.me:3000",
+          "x-veryfront-dispatch-jws": "test-jws",
         },
       });
       const ctx = makeCtx({
@@ -195,7 +196,89 @@ describe("server/handlers/preview/hmr.handler", () => {
         headers: {
           host: "localhost:3000",
           "x-forwarded-host": "evil.example.com",
+          "x-veryfront-dispatch-jws": "test-jws",
         },
+      });
+      const ctx = makeCtx({
+        isLocalProject: false,
+        requestContext: { mode: "production" } as any,
+      });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.continue, true);
+    });
+
+    it("IGNORES x-forwarded-host: localhost when request is NOT proxy-trusted (VULN-SRV-4)", async () => {
+      // Without proxy trust, the forwarded host must not be allowed to unlock the
+      // localhost short-circuit that enables HMR. Otherwise any remote client could
+      // claim to be localhost and open a WebSocket against the dev runtime.
+      const handler = new HMRHandler();
+      const req = new Request("http://evil.example.com/_ws", {
+        headers: {
+          host: "evil.example.com",
+          "x-forwarded-host": "localhost",
+        },
+      });
+      const ctx = makeCtx({
+        isLocalProject: false,
+        requestContext: { mode: "production" } as any,
+      });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.continue, true);
+    });
+
+    it("IGNORES x-forwarded-host: 127.0.0.1 when request is NOT proxy-trusted", async () => {
+      const handler = new HMRHandler();
+      const req = new Request("http://evil.example.com/_ws", {
+        headers: {
+          host: "evil.example.com",
+          "x-forwarded-host": "127.0.0.1",
+        },
+      });
+      const ctx = makeCtx({
+        isLocalProject: false,
+        requestContext: { mode: "production" } as any,
+      });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.continue, true);
+    });
+
+    it("HONOURS x-forwarded-host: localhost when request IS proxy-trusted", async () => {
+      const handler = new HMRHandler();
+      const req = new Request("http://internal.proxy/_ws", {
+        headers: {
+          host: "internal.proxy:3000",
+          "x-forwarded-host": "localhost",
+          "x-veryfront-dispatch-jws": "test-jws",
+        },
+      });
+      const ctx = makeCtx({
+        isLocalProject: false,
+        adapter: createMockAdapter({ upgradeWebSocket: undefined }),
+      });
+      const result = await handler.handle(req, ctx);
+      // Handler path entered — not short-circuited.
+      assertEquals(result.continue, false);
+    });
+
+    it("HONOURS raw Host: localhost even without proxy trust (bare-metal local dev)", async () => {
+      const handler = new HMRHandler();
+      const req = new Request("http://localhost:3000/_ws", {
+        headers: { host: "localhost:3000" },
+      });
+      const ctx = makeCtx({
+        isLocalProject: false,
+        adapter: createMockAdapter({ upgradeWebSocket: undefined }),
+      });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.continue, false);
+    });
+
+    it('treats "localhost.evil.com" as non-local (must not match by prefix)', async () => {
+      // Regression: any substring-match on "localhost" would be dangerous; isLocalDevHost
+      // uses precise matching, and this test locks that behaviour in.
+      const handler = new HMRHandler();
+      const req = new Request("http://localhost.evil.com/_ws", {
+        headers: { host: "localhost.evil.com" },
       });
       const ctx = makeCtx({
         isLocalProject: false,

@@ -21,6 +21,7 @@ import {
   type ProjectDiscoveryCache,
 } from "./local-project-discovery.ts";
 import type { ParsedDomain } from "../utils/domain-parser.ts";
+import { isProxyTrusted } from "../utils/proxy-trust.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -38,6 +39,11 @@ interface AdapterResolutionResult {
 }
 
 interface AdapterResolutionOptions {
+  /**
+   * Inbound request. Used to determine whether forwarded headers such as
+   * `x-project-path` can be trusted (see {@link isProxyTrusted}).
+   */
+  req: Request;
   /** Base project directory */
   projectDir: string;
   /** Base adapter */
@@ -60,8 +66,6 @@ interface AdapterResolutionOptions {
   environmentName: string | undefined;
   /** Parsed domain info */
   parsedDomain: ParsedDomain;
-  /** Project path from header */
-  headerProjectPath: string | undefined;
   /** Whether running in proxy mode */
   isProxyMode: boolean;
   /** Optional injectable cache (defaults to module-level singleton) */
@@ -86,7 +90,15 @@ export async function resolveAdapter(
   // Check if this is a local project.
   // In proxy mode, skip local discovery unless there's an explicit header path override —
   // the standard directories (data/projects/, projects/) don't exist in k8s.
-  const trustedHeaderProjectPath = opts.isProxyMode ? opts.headerProjectPath : undefined;
+  //
+  // SECURITY: `x-project-path` is a client-controlled header. Honouring it from any
+  // request would let an attacker reaching the runtime directly aim project discovery
+  // (and therefore `/_veryfront/fs/...`) at arbitrary filesystem paths (VULN-SRV-3).
+  // Only read it when the request is proxy-trusted (control-plane JWS header present
+  // or the operator has explicitly opted in via VERYFRONT_TRUST_FORWARDED_HEADERS=1).
+  const trustedHeaderProjectPath = opts.isProxyMode && isProxyTrusted(opts.req)
+    ? opts.req.headers.get("x-project-path")?.trim() || undefined
+    : undefined;
   const shouldCheckLocalPath = opts.projectSlug && (!opts.isProxyMode || trustedHeaderProjectPath);
   const localProjectPath = shouldCheckLocalPath
     ? await findLocalProjectPath(opts.projectSlug!, opts.adapter, trustedHeaderProjectPath, cache)
