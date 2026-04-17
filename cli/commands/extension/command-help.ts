@@ -5,6 +5,7 @@ export const extensionHelp: CommandHelp = {
   category: "development",
   description: "Scaffold and validate veryfront extensions",
   usage: "veryfront extension <init|validate> [args]",
+  options: [],
   examples: [
     "veryfront extension init my-cache              # Scaffold a new extension",
     "veryfront extension validate extensions/my-cache   # Validate an extension",

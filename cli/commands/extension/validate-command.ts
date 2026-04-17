@@ -41,7 +41,7 @@ export async function validateExtensionAtPath(
   }
 
   try {
-    const mod = await import(`file://${Deno.realPathSync(entryPoint)}`);
+    const mod = await import(`file://${await Deno.realPath(entryPoint)}`);
     const factory = mod.default;
 
     if (typeof factory !== "function") {
