@@ -11,11 +11,18 @@
  */
 
 export const TAILWIND_PLUGIN_ALLOWLIST: ReadonlySet<string> = new Set([
+  // Bundled into the compiled binary (see src/build/binary-plugin-includes.ts).
+  // Must stay in sync with BINARY_TAILWIND_PLUGIN_PACKAGES — an invariant
+  // enforced by tailwind-plugin-allowlist.test.ts.
   "@tailwindcss/typography",
   "@tailwindcss/forms",
+  "tailwindcss-animate",
+  "tailwind-scrollbar-hide",
+  "daisyui",
+  // Allowlisted but NOT bundled: loaded from esm.sh on first use. Adding an
+  // entry here is arbitrary-code-exec surface; review each one explicitly.
   "@tailwindcss/aspect-ratio",
   "@tailwindcss/container-queries",
-  "tailwindcss-animate",
 ]);
 
 /**
