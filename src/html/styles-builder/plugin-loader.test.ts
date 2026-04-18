@@ -258,7 +258,7 @@ describe("styles-builder/plugin-loader allowlist enforcement (VULN-FS-1)", () =>
       const err = await assertRejects(
         () => loadModuleFromEsmSh("evil-package@1.0.0"),
         Error,
-      );
+      ) as Error;
       const combined = err.message;
       const mentionsAllowlist = combined.includes("allowlist") ||
         combined.includes("Invalid Tailwind plugin specifier");
@@ -294,7 +294,7 @@ describe("styles-builder/plugin-loader allowlist positive cases", () => {
         const err = await assertRejects(
           () => loadModuleFromEsmSh(pkg),
           Error,
-        );
+        ) as Error;
         assertStringIncludes(err.message, "Failed to fetch stub: 503");
       } finally {
         globalThis.fetch = originalFetch;
@@ -311,7 +311,7 @@ describe("styles-builder/plugin-loader allowlist positive cases", () => {
         const err = await assertRejects(
           () => loadModuleFromEsmSh(`${pkg}@1.2.3`),
           Error,
-        );
+        ) as Error;
         assertStringIncludes(err.message, "Failed to fetch stub: 503");
       } finally {
         globalThis.fetch = originalFetch;
@@ -341,7 +341,7 @@ describe("styles-builder/plugin-loader bareName", () => {
 });
 
 describe("styles-builder/plugin-loader PACKAGE_SPEC_RE", () => {
-  const rejects = [
+  const rejects: Array<[string, string]> = [
     ["empty string", ""],
     ["URL-like", "https://evil.com/x"],
     ["path traversal", "../../etc/passwd"],
