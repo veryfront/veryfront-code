@@ -198,14 +198,17 @@ export async function loadPlugin(
   pluginCache: Map<string, unknown>,
   pluginErrors: Map<string, Error>,
 ): Promise<unknown> {
+  // Enforce the allowlist before consulting any caches so a disallowed id can
+  // never be served from a pre-seeded or stale cache entry — defence-in-depth
+  // against future changes that might pre-populate these maps.
+  assertPluginAllowed(id);
+
   const cachedError = pluginErrors.get(id);
   if (cachedError) throw cachedError;
 
   if (pluginCache.has(id)) {
     return pluginCache.get(id);
   }
-
-  assertPluginAllowed(id);
 
   const { isDeno } = await import("#veryfront/platform/compat/runtime.ts");
 
