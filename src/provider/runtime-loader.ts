@@ -3789,6 +3789,7 @@ export function createAnthropicModelRuntime(
           apiKey: config.apiKey,
           authToken: config.authToken,
           extraHeaders: options.headers,
+          enableFineGrainedToolStreaming: true,
           body: JSON.stringify(body),
           signal: options.abortSignal,
         }),
