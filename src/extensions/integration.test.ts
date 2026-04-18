@@ -103,8 +103,8 @@ describe("extensions/integration", () => {
     const flat = loader.flattenPresets([makeResolved(preset)]);
 
     assertEquals(flat.length, 2);
-    assertEquals(flat[0].extension.name, "child1");
-    assertEquals(flat[1].extension.name, "child2");
+    assertEquals(flat[0]?.extension.name, "child1");
+    assertEquals(flat[1]?.extension.name, "child2");
   });
 
   it("conflict detection", () => {
@@ -117,8 +117,8 @@ describe("extensions/integration", () => {
     ]);
 
     assertEquals(conflicts.length, 1);
-    assertEquals(conflicts[0].contract, "CacheStore");
-    assertEquals(conflicts[0].providers.length, 2);
+    assertEquals(conflicts[0]?.contract, "CacheStore");
+    assertEquals(conflicts[0]?.providers.length, 2);
   });
 
   it("reverse teardown order", async () => {
