@@ -20,8 +20,10 @@ export type {
   ResolvedExtension,
 } from "./types.ts";
 
-// Contract registry
-export { register, reset, resolve, tryResolve } from "./contracts.ts";
+// Contract registry — resolve/tryResolve are the consumer-facing API.
+// register()/reset() are internal primitives (used by ExtensionLoader and
+// tests) and are intentionally not exported here.
+export { resolve, tryResolve } from "./contracts.ts";
 
 // Discovery
 export type { PackageMetadata } from "./discovery.ts";

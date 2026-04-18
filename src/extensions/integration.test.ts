@@ -8,8 +8,9 @@
 
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { detectConflicts, ExtensionLoader, register, reset, resolve } from "./index.ts";
+import { detectConflicts, ExtensionLoader, resolve } from "./index.ts";
 import type { Extension, ResolvedExtension } from "./index.ts";
+import { register, reset } from "./contracts.ts";
 
 const noopLogger = {
   debug: () => {},
