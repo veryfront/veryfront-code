@@ -261,7 +261,6 @@
     "tailwindcss/defaultTheme": "https://esm.sh/tailwindcss@4.2.2/defaultTheme",
     "tailwindcss/colors": "https://esm.sh/tailwindcss@4.2.2/colors",
     "redis": "npm:redis@5.11.0",
-    "pg": "npm:pg@8.13.1",
     "jose": "npm:jose@5.9.6",
     "@opentelemetry/api": "npm:@opentelemetry/api@1.9.0",
     "@opentelemetry/core": "npm:@opentelemetry/core@2.6.0",
