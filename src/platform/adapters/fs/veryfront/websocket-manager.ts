@@ -13,22 +13,23 @@ import {
   getPendingInvalidationsCount,
   removePendingInvalidation,
 } from "./invalidation-state.ts";
+import {
+  buildContentSourceLabel,
+  buildReloadProjectContext,
+  getConnectionLogContext as getConnectionLogContextHelper,
+  getPreviewInvalidationPrefixes as getPreviewInvalidationPrefixesHelper,
+  getReconnectDelay as getReconnectDelayHelper,
+  INVALIDATION_DEBOUNCE_MS,
+  type PreviewStyleArtifactInfo,
+  WS_HEARTBEAT_INTERVAL_MS,
+  WS_HEARTBEAT_TIMEOUT_MS,
+  WS_RECONNECT_MAX_DELAY_MS,
+  WS_RECONNECT_MAX_FAILURES,
+} from "./websocket-manager-helpers.ts";
 
 const logger = getBaseLogger("SERVER", { injectTraceContext: false }).component(
   "web-socket-manager",
 );
-
-const INVALIDATION_DEBOUNCE_MS = 100;
-const WS_RECONNECT_DELAY_MS = 5000;
-const WS_RECONNECT_MAX_DELAY_MS = 120000;
-const WS_RECONNECT_MAX_FAILURES = 10;
-const WS_HEARTBEAT_INTERVAL_MS = 60000;
-const WS_HEARTBEAT_TIMEOUT_MS = 300000;
-
-interface PreviewStyleArtifactInfo {
-  hash: string;
-  assetPath: string;
-}
 
 interface WebSocketDeps {
   apiBaseUrl: string;
@@ -76,15 +77,13 @@ export class WebSocketManager {
   constructor(private readonly deps: WebSocketDeps) {}
 
   private getConnectionLogContext(context: Record<string, unknown> = {}): Record<string, unknown> {
-    if (!this.deps.projectSlug) return context;
-    return { projectSlug: this.deps.projectSlug, ...context };
+    return getConnectionLogContextHelper(this.deps.projectSlug, context);
   }
 
   private getPreviewInvalidationPrefixes(
     contentContext: ResolvedContentContext | null,
   ): string[] {
-    if (contentContext?.sourceType !== "branch") return [];
-    return [buildFileCacheKeyPrefix(contentContext)];
+    return getPreviewInvalidationPrefixesHelper(contentContext);
   }
 
   private beginPreviewInvalidation(contentContext: ResolvedContentContext | null): void {
@@ -168,8 +167,7 @@ export class WebSocketManager {
           this.getConnectionLogContext({
             projectId,
             connectionId: this.wsConnectionId,
-            contentSource: this.deps.getContentSource(),
-            branch: this.deps.getContentContext()?.branch,
+            ...buildContentSourceLabel(this.deps.getContentSource, this.deps.getContentContext),
           }),
         );
         this.wsLastPong = Date.now();
@@ -232,8 +230,7 @@ export class WebSocketManager {
 
   private getReconnectDelay(): number {
     // Exponential backoff: 5s, 10s, 20s, 40s, 80s, capped at 120s
-    const delay = WS_RECONNECT_DELAY_MS * Math.pow(2, this.wsConsecutiveFailures - 1);
-    return Math.min(delay, WS_RECONNECT_MAX_DELAY_MS);
+    return getReconnectDelayHelper(this.wsConsecutiveFailures);
   }
 
   dispose(): void {
@@ -663,18 +660,12 @@ export class WebSocketManager {
         },
       );
 
-      const environment: "preview" | "production" = contentContext?.sourceType === "branch"
-        ? "preview"
-        : "production";
-      const projectContext = {
-        projectSlug: this.deps.projectSlug,
-        projectId: this.deps.client.getProjectId(),
-        environment,
-        branch: contentContext?.branch ?? null,
-        releaseId: contentContext?.releaseId ?? null,
-        styleArtifactHash: preparedStyleArtifact?.hash,
-        styleAssetPath: preparedStyleArtifact?.assetPath,
-      };
+      const projectContext = buildReloadProjectContext(
+        contentContext,
+        this.deps.projectSlug,
+        this.deps.client.getProjectId(),
+        preparedStyleArtifact,
+      );
 
       this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
 
@@ -805,18 +796,12 @@ export class WebSocketManager {
         hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
       });
 
-      const environment: "preview" | "production" = contentContext?.sourceType === "branch"
-        ? "preview"
-        : "production";
-      const projectContext = {
-        projectSlug: this.deps.projectSlug,
-        projectId: this.deps.client.getProjectId(),
-        environment,
-        branch: contentContext?.branch ?? null,
-        releaseId: contentContext?.releaseId ?? null,
-        styleArtifactHash: preparedStyleArtifact?.hash,
-        styleAssetPath: preparedStyleArtifact?.assetPath,
-      };
+      const projectContext = buildReloadProjectContext(
+        contentContext,
+        this.deps.projectSlug,
+        this.deps.client.getProjectId(),
+        preparedStyleArtifact,
+      );
 
       this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);
 
