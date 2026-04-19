@@ -80,6 +80,10 @@ export function getResolvedCacheKey(
   return `${cacheKeyPrefix}:${normalizedResolvedPath}`;
 }
 
+export function buildContentPreview(content: string, max = 80): string {
+  return content.length > max ? `${content.slice(0, max)}...` : content;
+}
+
 export function buildExtensionCandidatePaths(basePath: string): string[] {
   return READ_OPERATION_EXTENSION_PRIORITY.map((ext) => `${basePath}${ext}`);
 }
