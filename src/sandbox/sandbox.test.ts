@@ -1,6 +1,19 @@
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  clearSandboxEnv,
+  type FetchCall,
+  headerValue,
+  installMockFetch,
+  jsonBody,
+  jsonResponse,
+  type MockResponseEntry,
+  mockTimers,
+  ndjsonResponse,
+  restoreTimers,
+  textResponse,
+} from "./sandbox.test-helpers.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithProjectEnv } from "../server/project-env/storage.ts";
 import type { ExecStreamEvent } from "./sandbox.ts";
@@ -8,88 +21,13 @@ import { Sandbox } from "./sandbox.ts";
 
 // Mock fetch for testing
 const originalFetch = globalThis.fetch;
-let fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
-let fetchResponses: Array<Response | (() => Response)> = [];
+let fetchCalls: FetchCall[] = [];
+let fetchResponses: MockResponseEntry[] = [];
 
-function mockFetch(responses: Array<Response | (() => Response)>) {
+function mockFetch(responses: MockResponseEntry[]) {
   fetchResponses = [...responses];
   fetchCalls = [];
-  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = typeof input === "string"
-      ? input
-      : input instanceof URL
-      ? input.toString()
-      : input.url;
-    fetchCalls.push({ url, init });
-    const entry = fetchResponses.shift();
-    if (!entry) throw new Error(`No mock response for: ${url}`);
-    return typeof entry === "function" ? entry() : entry;
-  }) as typeof fetch;
-}
-
-// Zero-delay setTimeout mock to avoid real polling delays (cross-runtime)
-const originalSetTimeout = globalThis.setTimeout;
-function mockTimers() {
-  // deno-lint-ignore no-explicit-any
-  (globalThis as any).setTimeout = (fn: () => void, _ms?: number) => {
-    return originalSetTimeout(fn, 0);
-  };
-}
-function restoreTimers() {
-  // deno-lint-ignore no-explicit-any
-  (globalThis as any).setTimeout = originalSetTimeout;
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-function textResponse(body: string, status = 200): Response {
-  return new Response(body, { status });
-}
-
-function ndjsonResponse(events: Array<Record<string, unknown>>): Response {
-  const body = events.map((e) => JSON.stringify(e)).join("\n");
-  return new Response(body, {
-    status: 200,
-    headers: { "Content-Type": "application/x-ndjson" },
-  });
-}
-
-function call(index: number): { url: string; init?: RequestInit } {
-  const entry = fetchCalls[index];
-  if (!entry) throw new Error(`No fetch call at index ${index}`);
-  return entry;
-}
-
-function headerValue(index: number, name: string): string | null {
-  return new Headers(call(index).init?.headers).get(name);
-}
-
-function jsonBody(index: number): unknown {
-  const body = call(index).init?.body;
-  if (typeof body !== "string") {
-    throw new Error(`Expected string body for fetch call ${index}`);
-  }
-  return JSON.parse(body);
-}
-
-const SANDBOX_ENV_KEYS = [
-  "VERYFRONT_API_TOKEN",
-  "VERYFRONT_API_URL",
-] as const;
-
-function clearSandboxEnv(): void {
-  for (const key of SANDBOX_ENV_KEYS) {
-    try {
-      deleteEnv(key);
-    } catch {
-      // expected: env may already be unset
-    }
-  }
+  globalThis.fetch = installMockFetch({ calls: fetchCalls, responses: fetchResponses });
 }
 
 describe("Sandbox", () => {
@@ -118,11 +56,11 @@ describe("Sandbox", () => {
       assertEquals(sandbox.id, "session-1");
       assertEquals(sandbox.url, "https://sandbox.example.com");
 
-      assertStringIncludes(call(0).url, "/sandbox-sessions");
-      assertEquals(call(0).init?.method, "POST");
-      assertEquals(headerValue(0, "Authorization"), "Bearer test-token");
-      assertEquals(headerValue(0, "Content-Type"), "application/json");
-      assertEquals(call(0).init?.body, "{}");
+      assertStringIncludes(fetchCalls[0]!.url, "/sandbox-sessions");
+      assertEquals(fetchCalls[0]!.init?.method, "POST");
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer test-token");
+      assertEquals(headerValue(fetchCalls, 0, "Content-Type"), "application/json");
+      assertEquals(fetchCalls[0]!.init?.body, "{}");
     });
 
     it("should pass project_id when creating a project-scoped sandbox", async () => {
@@ -139,7 +77,7 @@ describe("Sandbox", () => {
         projectId: "project-123",
       });
 
-      assertEquals(call(0).init?.body, JSON.stringify({ project_id: "project-123" }));
+      assertEquals(fetchCalls[0]!.init?.body, JSON.stringify({ project_id: "project-123" }));
     });
 
     it("should use VERYFRONT_API_TOKEN when authToken is omitted", async () => {
@@ -157,8 +95,8 @@ describe("Sandbox", () => {
       const sandbox = await Sandbox.create();
       assertEquals(sandbox.id, "session-env-token");
 
-      assertStringIncludes(call(0).url, "https://api.test.com/sandbox-sessions");
-      assertEquals(headerValue(0, "Authorization"), "Bearer vf_env_token");
+      assertStringIncludes(fetchCalls[0]!.url, "https://api.test.com/sandbox-sessions");
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_env_token");
     });
 
     it("should prefer request-scoped credentials over VERYFRONT_API_TOKEN", async () => {
@@ -183,7 +121,7 @@ describe("Sandbox", () => {
         },
       );
 
-      assertEquals(headerValue(0, "Authorization"), "Bearer vf_request_token");
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_request_token");
     });
 
     it("should let explicit authToken override bootstrap auth", async () => {
@@ -203,7 +141,7 @@ describe("Sandbox", () => {
       });
       assertEquals(sandbox.id, "session-explicit-token");
 
-      assertEquals(headerValue(0, "Authorization"), "Bearer vf_explicit_token");
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_explicit_token");
     });
 
     it("should poll until ready when not running", async () => {
@@ -227,8 +165,8 @@ describe("Sandbox", () => {
       });
       assertEquals(sandbox.id, "session-2");
       assertEquals(fetchCalls.length, 2);
-      assertStringIncludes(call(1).url, "/sandbox-sessions/session-2");
-      assertEquals(headerValue(1, "Authorization"), "Bearer test-token");
+      assertStringIncludes(fetchCalls[1]!.url, "/sandbox-sessions/session-2");
+      assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer test-token");
     });
 
     it("should throw on creation failure", async () => {
@@ -287,7 +225,7 @@ describe("Sandbox", () => {
           assertEquals(sandbox.id, "session-host-env");
         });
 
-        assertStringIncludes(call(0).url, "https://internal.api.test/sandbox-sessions");
+        assertStringIncludes(fetchCalls[0]!.url, "https://internal.api.test/sandbox-sessions");
       } finally {
         deleteEnv("VERYFRONT_API_URL");
       }
@@ -306,8 +244,8 @@ describe("Sandbox", () => {
       });
       assertEquals(sandbox.id, "session-existing");
       assertEquals(sandbox.url, "https://sandbox.example.com");
-      assertStringIncludes(call(0).url, "/sandbox-sessions/session-existing");
-      assertEquals(headerValue(0, "Authorization"), "Bearer test-token");
+      assertStringIncludes(fetchCalls[0]!.url, "/sandbox-sessions/session-existing");
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer test-token");
     });
 
     it("should reconnect using VERYFRONT_API_TOKEN when authToken is omitted", async () => {
@@ -321,7 +259,7 @@ describe("Sandbox", () => {
         apiUrl: "https://api.test.com",
       });
       assertEquals(sandbox.id, "session-existing");
-      assertEquals(headerValue(0, "Authorization"), "Bearer vf_env_token");
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_env_token");
     });
 
     it("should throw when sandbox not found", async () => {
@@ -354,10 +292,10 @@ describe("Sandbox", () => {
       assertEquals(result.stdout, "hello\n");
       assertEquals(result.stderr, "");
       assertEquals(result.exitCode, 0);
-      assertEquals(call(1).init?.method, "POST");
-      assertEquals(headerValue(1, "Authorization"), "Bearer token");
-      assertEquals(headerValue(1, "Content-Type"), "application/json");
-      assertEquals(jsonBody(1), { command: "echo hello" });
+      assertEquals(fetchCalls[1]!.init?.method, "POST");
+      assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
+      assertEquals(headerValue(fetchCalls, 1, "Content-Type"), "application/json");
+      assertEquals(jsonBody(fetchCalls, 1), { command: "echo hello" });
     });
 
     it("should collect stderr output", async () => {
@@ -375,7 +313,7 @@ describe("Sandbox", () => {
       assertEquals(result.stdout, "");
       assertEquals(result.stderr, "error occurred\n");
       assertEquals(result.exitCode, 1);
-      assertEquals(jsonBody(1), { command: "failing-cmd" });
+      assertEquals(jsonBody(fetchCalls, 1), { command: "failing-cmd" });
     });
   });
 
@@ -402,10 +340,10 @@ describe("Sandbox", () => {
       assertEquals(events[1]!.type, "stderr");
       assertEquals(events[2]!.type, "exit");
       assertEquals(events[2]!.exitCode, 0);
-      assertEquals(call(1).init?.method, "POST");
-      assertEquals(headerValue(1, "Authorization"), "Bearer token");
-      assertEquals(headerValue(1, "Content-Type"), "application/json");
-      assertEquals(jsonBody(1), { command: "cmd" });
+      assertEquals(fetchCalls[1]!.init?.method, "POST");
+      assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
+      assertEquals(headerValue(fetchCalls, 1, "Content-Type"), "application/json");
+      assertEquals(jsonBody(fetchCalls, 1), { command: "cmd" });
     });
 
     it("should throw on non-OK response", async () => {
@@ -424,7 +362,7 @@ describe("Sandbox", () => {
         Error,
         "Exec failed",
       );
-      assertEquals(jsonBody(1), { command: "bad-cmd" });
+      assertEquals(jsonBody(fetchCalls, 1), { command: "bad-cmd" });
     });
 
     it("should handle chunked NDJSON delivery", async () => {
@@ -456,7 +394,7 @@ describe("Sandbox", () => {
       assertEquals(events[0]!.type, "stdout");
       assertEquals(events[1]!.type, "stderr");
       assertEquals(events[2]!.type, "exit");
-      assertEquals(jsonBody(1), { command: "cmd" });
+      assertEquals(jsonBody(fetchCalls, 1), { command: "cmd" });
     });
   });
 
@@ -479,7 +417,7 @@ describe("Sandbox", () => {
 
       assertEquals(result.stdout, "ok\n");
       assertEquals(result.exitCode, 0);
-      assertEquals(jsonBody(1), {
+      assertEquals(jsonBody(fetchCalls, 1), {
         command: "ls",
         cwd: "/workspace/app",
         timeout_seconds: 30,
@@ -498,7 +436,7 @@ describe("Sandbox", () => {
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       await sandbox.executeCommand("pwd");
 
-      assertEquals(jsonBody(1), { command: "pwd" });
+      assertEquals(jsonBody(fetchCalls, 1), { command: "pwd" });
     });
   });
 
@@ -519,7 +457,7 @@ describe("Sandbox", () => {
       }
 
       assertEquals(events.length, 2);
-      assertEquals(jsonBody(1), { command: "cmd", cwd: "/tmp" });
+      assertEquals(jsonBody(fetchCalls, 1), { command: "cmd", cwd: "/tmp" });
     });
   });
 
@@ -549,7 +487,7 @@ describe("Sandbox", () => {
       });
 
       assertEquals(job.id, "job-opts");
-      assertEquals(jsonBody(1), {
+      assertEquals(jsonBody(fetchCalls, 1), {
         command: "npm test",
         cwd: "/workspace",
         timeout_seconds: 120,
@@ -569,8 +507,8 @@ describe("Sandbox", () => {
       const content = await sandbox.readFile("/workspace/test.txt");
 
       assertEquals(content, "file content here");
-      assertStringIncludes(call(1).url, "/file?path=");
-      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+      assertStringIncludes(fetchCalls[1]!.url, "/file?path=");
+      assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
 
     it("should throw on read failure", async () => {
@@ -601,11 +539,11 @@ describe("Sandbox", () => {
         { path: "/workspace/b.txt", content: "bbb" },
       ]);
 
-      assertEquals(call(1).init?.method, "POST");
-      assertStringIncludes(call(1).url, "/files");
-      assertEquals(headerValue(1, "Authorization"), "Bearer token");
-      assertEquals(headerValue(1, "Content-Type"), "application/json");
-      assertEquals(jsonBody(1), {
+      assertEquals(fetchCalls[1]!.init?.method, "POST");
+      assertStringIncludes(fetchCalls[1]!.url, "/files");
+      assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
+      assertEquals(headerValue(fetchCalls, 1, "Content-Type"), "application/json");
+      assertEquals(jsonBody(fetchCalls, 1), {
         files: [
           { path: "/workspace/a.txt", content: "aaa" },
           { path: "/workspace/b.txt", content: "bbb" },
@@ -624,9 +562,9 @@ describe("Sandbox", () => {
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       await sandbox.heartbeat();
 
-      assertStringIncludes(call(1).url, "/sandbox-sessions/s6/heartbeat");
-      assertEquals(call(1).init?.method, "POST");
-      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+      assertStringIncludes(fetchCalls[1]!.url, "/sandbox-sessions/s6/heartbeat");
+      assertEquals(fetchCalls[1]!.init?.method, "POST");
+      assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
   });
 
@@ -640,9 +578,9 @@ describe("Sandbox", () => {
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       await sandbox.close();
 
-      assertStringIncludes(call(1).url, "/sandbox-sessions/s7");
-      assertEquals(call(1).init?.method, "DELETE");
-      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+      assertStringIncludes(fetchCalls[1]!.url, "/sandbox-sessions/s7");
+      assertEquals(fetchCalls[1]!.init?.method, "DELETE");
+      assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
   });
 
@@ -688,8 +626,8 @@ describe("Sandbox", () => {
       assertEquals(result.pageInfo.prev, null);
       assertEquals(result.pageInfo.first, null);
 
-      assertStringIncludes(call(0).url, "/sandbox-sessions");
-      assertEquals(headerValue(0, "Authorization"), "Bearer test-token");
+      assertStringIncludes(fetchCalls[0]!.url, "/sandbox-sessions");
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer test-token");
     });
 
     it("should pass cursor and limit as query params", async () => {
@@ -704,8 +642,8 @@ describe("Sandbox", () => {
         limit: 10,
       });
 
-      assertStringIncludes(call(0).url, "cursor=abc123");
-      assertStringIncludes(call(0).url, "limit=10");
+      assertStringIncludes(fetchCalls[0]!.url, "cursor=abc123");
+      assertStringIncludes(fetchCalls[0]!.url, "limit=10");
     });
 
     it("should throw on list failure", async () => {
@@ -749,11 +687,11 @@ describe("Sandbox", () => {
       assertEquals(job.heartbeatStatus, "disabled");
       assertEquals(job.heartbeatFailureCount, 0);
 
-      assertEquals(call(1).init?.method, "POST");
-      assertStringIncludes(call(1).url, "/exec/jobs");
-      assertEquals(headerValue(1, "Authorization"), "Bearer token");
-      assertEquals(headerValue(1, "Content-Type"), "application/json");
-      assertEquals(jsonBody(1), { command: "npm test" });
+      assertEquals(fetchCalls[1]!.init?.method, "POST");
+      assertStringIncludes(fetchCalls[1]!.url, "/exec/jobs");
+      assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
+      assertEquals(headerValue(fetchCalls, 1, "Content-Type"), "application/json");
+      assertEquals(jsonBody(fetchCalls, 1), { command: "npm test" });
     });
 
     it("should throw on start failure", async () => {
@@ -799,8 +737,8 @@ describe("Sandbox", () => {
       assertEquals(job.heartbeatStatus, "healthy");
       assertEquals(job.lastHeartbeatAt, "2026-01-01T00:00:30Z");
 
-      assertStringIncludes(call(1).url, "/exec/jobs/job-2");
-      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+      assertStringIncludes(fetchCalls[1]!.url, "/exec/jobs/job-2");
+      assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
 
     it("should throw on get failure", async () => {
@@ -850,8 +788,8 @@ describe("Sandbox", () => {
       assertEquals(output.stderrTruncated, false);
       assertEquals(output.exitCode, 0);
 
-      assertStringIncludes(call(1).url, "/exec/jobs/job-3/output");
-      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+      assertStringIncludes(fetchCalls[1]!.url, "/exec/jobs/job-3/output");
+      assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
 
     it("should throw on output fetch failure", async () => {
@@ -913,8 +851,8 @@ describe("Sandbox", () => {
       assertEquals(jobs[1]!.status, "completed");
       assertEquals(jobs[1]!.exitCode, 0);
 
-      assertStringIncludes(call(1).url, "/exec/jobs");
-      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+      assertStringIncludes(fetchCalls[1]!.url, "/exec/jobs");
+      assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
 
     it("should handle array response format", async () => {
@@ -983,9 +921,9 @@ describe("Sandbox", () => {
       assertEquals(job.status, "canceled");
       assertEquals(job.signal, "SIGTERM");
 
-      assertStringIncludes(call(1).url, "/exec/jobs/job-4/cancel");
-      assertEquals(call(1).init?.method, "POST");
-      assertEquals(headerValue(1, "Authorization"), "Bearer token");
+      assertStringIncludes(fetchCalls[1]!.url, "/exec/jobs/job-4/cancel");
+      assertEquals(fetchCalls[1]!.init?.method, "POST");
+      assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
 
     it("should throw on cancel failure", async () => {
