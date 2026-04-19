@@ -1,3 +1,13 @@
+import {
+  createMockHistory,
+  createMockLocation,
+  createMockNavigator,
+  type MockHistory,
+  type MockLocation,
+  type MockNetworkInformation,
+  setupRequestIdleCallback,
+} from "./browser-mocks.ts";
+
 type GlobalWithBrowserAPIs = typeof globalThis & {
   location: Location;
   history: History;
@@ -116,163 +126,6 @@ export class MockMutationObserver {
     };
 
     this.callback([record], this as unknown as MutationObserver);
-  }
-}
-
-export interface MockNetworkInformation {
-  effectiveType: "4g" | "wifi" | "3g" | "2g" | "slow-2g";
-  saveData: boolean;
-  downlink?: number;
-  rtt?: number;
-}
-
-export function createMockNavigator(
-  connection?: Partial<MockNetworkInformation>,
-): Navigator {
-  const mockConnection: MockNetworkInformation = {
-    effectiveType: connection?.effectiveType ?? "4g",
-    saveData: connection?.saveData ?? false,
-    downlink: connection?.downlink,
-    rtt: connection?.rtt,
-  };
-
-  return {
-    ...globalThis.navigator,
-    connection: mockConnection,
-  } as unknown as Navigator;
-}
-
-export interface MockHistory {
-  state: any;
-  length: number;
-  scrollRestoration: ScrollRestoration;
-  pushState(state: any, title: string, url?: string | URL | null): void;
-  replaceState(state: any, title: string, url?: string | URL | null): void;
-  go(delta?: number): void;
-  back(): void;
-  forward(): void;
-}
-
-export function createMockHistory(options?: {
-  onPushState?: (state: any, title: string, url?: string | URL | null) => void;
-  onReplaceState?: (state: any, title: string, url?: string | URL | null) => void;
-}): MockHistory {
-  let currentState: any = null;
-  const states: any[] = [];
-  let currentIndex = 0;
-
-  function updateLocation(url?: string | URL | null): void {
-    if (!url) return;
-
-    const urlStr = typeof url === "string" ? url : url.toString();
-    const global = globalThis as GlobalWithBrowserAPIs;
-    (global.location as unknown as MockLocation).pathname = urlStr;
-    (global.location as unknown as MockLocation).href = `${global.location.origin}${urlStr}`;
-  }
-
-  return {
-    state: currentState,
-    length: 1,
-    scrollRestoration: "auto" as ScrollRestoration,
-
-    pushState(state: any, title: string, url?: string | URL | null): void {
-      currentState = state;
-      states.push({ state, url });
-      currentIndex = states.length - 1;
-      options?.onPushState?.(state, title, url);
-      updateLocation(url);
-    },
-
-    replaceState(state: any, title: string, url?: string | URL | null): void {
-      currentState = state;
-      if (states[currentIndex]) states[currentIndex] = { state, url };
-      options?.onReplaceState?.(state, title, url);
-      updateLocation(url);
-    },
-
-    go(delta?: number): void {
-      if (!delta) return;
-
-      const newIndex = currentIndex + delta;
-      if (newIndex < 0 || newIndex >= states.length) return;
-
-      currentIndex = newIndex;
-      currentState = states[currentIndex].state;
-    },
-
-    back(): void {
-      this.go(-1);
-    },
-
-    forward(): void {
-      this.go(1);
-    },
-  };
-}
-
-export interface MockLocation {
-  href: string;
-  origin: string;
-  protocol: string;
-  host: string;
-  hostname: string;
-  port: string;
-  pathname: string;
-  search: string;
-  hash: string;
-  reload(): void;
-  replace(url: string): void;
-  assign(url: string): void;
-}
-
-export function createMockLocation(url = "http://localhost:3000/"): MockLocation {
-  const urlObj = new URL(url);
-
-  return {
-    href: urlObj.href,
-    origin: urlObj.origin,
-    protocol: urlObj.protocol,
-    host: urlObj.host,
-    hostname: urlObj.hostname,
-    port: urlObj.port,
-    pathname: urlObj.pathname,
-    search: urlObj.search,
-    hash: urlObj.hash,
-    reload(): void {
-      // No-op in tests
-    },
-    replace(url: string): void {
-      const newUrl = new URL(url, this.origin);
-      this.href = newUrl.href;
-      this.pathname = newUrl.pathname;
-      this.search = newUrl.search;
-      this.hash = newUrl.hash;
-    },
-    assign(url: string): void {
-      this.replace(url);
-    },
-  };
-}
-
-export function setupRequestIdleCallback(): void {
-  const global = globalThis as GlobalWithBrowserAPIs;
-
-  if (!global.requestIdleCallback) {
-    global.requestIdleCallback = (callback: IdleRequestCallback) => {
-      const start = Date.now();
-      return setTimeout(() => {
-        callback({
-          didTimeout: false,
-          timeRemaining: () => Math.max(0, 50 - (Date.now() - start)),
-        });
-      }, 1);
-    };
-  }
-
-  if (!global.cancelIdleCallback) {
-    global.cancelIdleCallback = (id: number) => {
-      clearTimeout(id);
-    };
   }
 }
 
