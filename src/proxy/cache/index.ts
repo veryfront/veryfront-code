@@ -14,11 +14,13 @@ export type {
 } from "./types.ts";
 export { MemoryCache } from "./memory-cache.ts";
 export { ResilientCache } from "./resilient-cache.ts";
+export { TracingTokenCache } from "./tracing-cache.ts";
 
 import type { CacheOptions, TokenCache } from "./types.ts";
 import type { TokenCacheStore } from "../../extensions/interfaces/token-cache-store.ts";
 import { MemoryCache } from "./memory-cache.ts";
 import { ResilientCache } from "./resilient-cache.ts";
+import { TracingTokenCache } from "./tracing-cache.ts";
 import { tryResolve } from "../../extensions/contracts.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { proxyLogger } from "../logger.ts";
@@ -35,7 +37,7 @@ export async function createCache(options: CacheOptions): Promise<TokenCache> {
     async () => {
       if (options.type === "redis") {
         const tokenCache = tryResolve<TokenCacheStore>("TokenCacheStore");
-        if (tokenCache) return tokenCache as unknown as TokenCache;
+        if (tokenCache) return new TracingTokenCache(tokenCache as unknown as TokenCache);
         logger.info(MISSING_EXTENSION_INFO);
         return new MemoryCache(undefined);
       }
@@ -63,9 +65,13 @@ export async function createCacheFromEnv(): Promise<TokenCache> {
       }
 
       // Wrap the extension-provided cache with a memory fallback so a Redis
-      // outage does not take the proxy down.
+      // outage does not take the proxy down. TracingTokenCache sits between
+      // ResilientCache and the extension impl so spans wrap the actual
+      // primary-cache attempt (mirrors the pre-extraction RedisCache which
+      // had inner withSpan calls).
       logger.debug("[Cache] Using TokenCacheStore extension with memory fallback (ResilientCache)");
-      return new ResilientCache(tokenCache as unknown as TokenCache, new MemoryCache());
+      const traced = new TracingTokenCache(tokenCache as unknown as TokenCache);
+      return new ResilientCache(traced, new MemoryCache());
     },
     { "cache.type": cacheType },
   );
