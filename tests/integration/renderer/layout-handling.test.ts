@@ -1,42 +1,22 @@
-import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import * as React from "react";
 import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
-import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
+import { compileMDXLayouts, computeDepsHash } from "#veryfront/rendering/layouts/index.ts";
 import {
-  applyLayoutsESM,
-  applyLayoutsFunctionBody,
-  compileMDXLayouts,
-  computeDepsHash,
-  discoverNestedLayouts,
-} from "#veryfront/rendering/layouts/index.ts";
-import { withTestContext } from "../../_helpers/context.ts";
-
-function createMockCompileMDX(): (
-  content: string,
-  frontmatter?: any,
-  filePath?: string,
-) => Promise<MdxBundle> {
-  return (_content: string, frontmatter?: any, _filePath?: string): Promise<MdxBundle> =>
-    Promise.resolve({
-      compiledCode: `
-        export function MDXLayout({ children }) {
-          return React.createElement('div', { className: 'layout' }, children);
-        }
-        export const frontmatter = ${JSON.stringify(frontmatter || {})};
-      `,
-      frontmatter: frontmatter || {},
-      globals: {},
-    });
-}
+  applyLayoutsEsmForTest,
+  applyLayoutsFunctionBodyForTest,
+  createLayoutCache,
+  createMockCompileMDX,
+  discoverLayoutsForTest,
+  withLayoutHandlingContext,
+} from "./layout-handling.test-helpers.ts";
 
 describe("Layout Handling", () => {
   describe("discoverNestedLayouts", () => {
     it("discovers MDX layout in the same directory", async () => {
-      await withTestContext("layout-handling-discover-mdx", async (context) => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext("layout-handling-discover-mdx", async (context, adapter) => {
         const pageDir = `${context.projectDir}/pages/blog`;
         await mkdir(pageDir, { recursive: true });
 
@@ -49,12 +29,7 @@ describe("Layout Handling", () => {
           `export const MDXLayout = ({ children }) => <div>{children}</div>`,
         );
 
-        const layouts = await discoverNestedLayouts(
-          pageFile,
-          `${context.projectDir}/pages`,
-          context.projectDir,
-          adapter,
-        );
+        const layouts = await discoverLayoutsForTest(pageFile, "pages", context, adapter);
 
         assertEquals(layouts.length, 1);
         assertEquals(layouts[0]?.kind, "mdx");
@@ -63,8 +38,7 @@ describe("Layout Handling", () => {
     });
 
     it("discovers TSX layout in the same directory", async () => {
-      await withTestContext("layout-handling-discover-tsx", async (context) => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext("layout-handling-discover-tsx", async (context, adapter) => {
         const pageDir = `${context.projectDir}/pages/blog`;
         await mkdir(pageDir, { recursive: true });
 
@@ -77,12 +51,7 @@ describe("Layout Handling", () => {
           `export default function Layout({ children }) { return <div>{children}</div>; }`,
         );
 
-        const layouts = await discoverNestedLayouts(
-          pageFile,
-          `${context.projectDir}/pages`,
-          context.projectDir,
-          adapter,
-        );
+        const layouts = await discoverLayoutsForTest(pageFile, "pages", context, adapter);
 
         assertEquals(layouts.length, 1);
         assertEquals(layouts[0]?.kind, "tsx");
@@ -91,8 +60,7 @@ describe("Layout Handling", () => {
     });
 
     it("discovers JSX layout in the same directory", async () => {
-      await withTestContext("layout-handling-discover-jsx", async (context) => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext("layout-handling-discover-jsx", async (context, adapter) => {
         const pageDir = `${context.projectDir}/pages/docs`;
         await mkdir(pageDir, { recursive: true });
 
@@ -105,12 +73,7 @@ describe("Layout Handling", () => {
           `export default function Layout({ children }) { return <main>{children}</main>; }`,
         );
 
-        const layouts = await discoverNestedLayouts(
-          pageFile,
-          `${context.projectDir}/pages`,
-          context.projectDir,
-          adapter,
-        );
+        const layouts = await discoverLayoutsForTest(pageFile, "pages", context, adapter);
 
         assertEquals(layouts.length, 1);
         assertEquals(layouts[0]?.kind, "tsx");
@@ -119,69 +82,58 @@ describe("Layout Handling", () => {
     });
 
     it("discovers nested layouts from page to root", async () => {
-      await withTestContext("layout-handling-discover-nested", async (context) => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext(
+        "layout-handling-discover-nested",
+        async (context, adapter) => {
+          const nestedDir = `${context.projectDir}/pages/blog/2024`;
+          await mkdir(nestedDir, { recursive: true });
 
-        const nestedDir = `${context.projectDir}/pages/blog/2024`;
-        await mkdir(nestedDir, { recursive: true });
+          const pageFile = `${nestedDir}/post.mdx`;
+          await writeTextFile(pageFile, "# Post");
 
-        const pageFile = `${nestedDir}/post.mdx`;
-        await writeTextFile(pageFile, "# Post");
+          const rootLayout = `${context.projectDir}/pages/layout.tsx`;
+          const blogLayout = `${context.projectDir}/pages/blog/layout.tsx`;
+          const yearLayout = `${nestedDir}/layout.tsx`;
 
-        const rootLayout = `${context.projectDir}/pages/layout.tsx`;
-        const blogLayout = `${context.projectDir}/pages/blog/layout.tsx`;
-        const yearLayout = `${nestedDir}/layout.tsx`;
+          await writeTextFile(
+            rootLayout,
+            "export default function Root({ children }) { return <div>{children}</div>; }",
+          );
+          await writeTextFile(
+            blogLayout,
+            "export default function Blog({ children }) { return <div>{children}</div>; }",
+          );
+          await writeTextFile(
+            yearLayout,
+            "export default function Year({ children }) { return <div>{children}</div>; }",
+          );
 
-        await writeTextFile(
-          rootLayout,
-          "export default function Root({ children }) { return <div>{children}</div>; }",
-        );
-        await writeTextFile(
-          blogLayout,
-          "export default function Blog({ children }) { return <div>{children}</div>; }",
-        );
-        await writeTextFile(
-          yearLayout,
-          "export default function Year({ children }) { return <div>{children}</div>; }",
-        );
+          const layouts = await discoverLayoutsForTest(pageFile, "pages", context, adapter);
 
-        const layouts = await discoverNestedLayouts(
-          pageFile,
-          `${context.projectDir}/pages`,
-          context.projectDir,
-          adapter,
-        );
-
-        assertEquals(layouts.length, 3);
-        assert(layouts[0]?.path?.endsWith("pages/layout.tsx"));
-        assert(layouts[1]?.path?.endsWith("pages/blog/layout.tsx"));
-        assert(layouts[2]?.path?.endsWith("pages/blog/2024/layout.tsx"));
-      });
+          assertEquals(layouts.length, 3);
+          assert(layouts[0]?.path?.endsWith("pages/layout.tsx"));
+          assert(layouts[1]?.path?.endsWith("pages/blog/layout.tsx"));
+          assert(layouts[2]?.path?.endsWith("pages/blog/2024/layout.tsx"));
+        },
+      );
     });
 
     it("handles missing layouts gracefully", async () => {
-      await withTestContext("layout-handling-no-layouts", async (context) => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext("layout-handling-no-layouts", async (context, adapter) => {
         const pageDir = `${context.projectDir}/pages/simple`;
         await mkdir(pageDir, { recursive: true });
 
         const pageFile = `${pageDir}/page.mdx`;
         await writeTextFile(pageFile, "# Simple Page");
 
-        const layouts = await discoverNestedLayouts(
-          pageFile,
-          `${context.projectDir}/pages`,
-          context.projectDir,
-          adapter,
-        );
+        const layouts = await discoverLayoutsForTest(pageFile, "pages", context, adapter);
 
         assertEquals(layouts.length, 0);
       });
     });
 
     it("discovers both MDX and TSX when both exist", async () => {
-      await withTestContext("layout-handling-mdx-priority", async (context) => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext("layout-handling-mdx-priority", async (context, adapter) => {
         const pageDir = `${context.projectDir}/pages/mixed`;
         await mkdir(pageDir, { recursive: true });
 
@@ -199,12 +151,7 @@ describe("Layout Handling", () => {
           "export default function Layout({ children }) { return <div>{children}</div>; }",
         );
 
-        const layouts = await discoverNestedLayouts(
-          pageFile,
-          `${context.projectDir}/pages`,
-          context.projectDir,
-          adapter,
-        );
+        const layouts = await discoverLayoutsForTest(pageFile, "pages", context, adapter);
 
         assert(layouts.length >= 1);
 
@@ -215,8 +162,7 @@ describe("Layout Handling", () => {
     });
 
     it("handles app router directory structure", async () => {
-      await withTestContext("layout-handling-app-router", async (context) => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext("layout-handling-app-router", async (context, adapter) => {
         const appDir = `${context.projectDir}/app/dashboard`;
         await mkdir(appDir, { recursive: true });
 
@@ -238,12 +184,7 @@ describe("Layout Handling", () => {
           "export default function DashboardLayout({ children }) { return <div>{children}</div>; }",
         );
 
-        const layouts = await discoverNestedLayouts(
-          pageFile,
-          `${context.projectDir}/app`,
-          context.projectDir,
-          adapter,
-        );
+        const layouts = await discoverLayoutsForTest(pageFile, "app", context, adapter);
 
         assertEquals(layouts.length, 2);
         assert(layouts[0]?.path?.endsWith("app/layout.tsx"));
@@ -252,8 +193,7 @@ describe("Layout Handling", () => {
     });
 
     it("handles deeply nested structures", async () => {
-      await withTestContext("layout-handling-deep-nesting", async (context) => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext("layout-handling-deep-nesting", async (context, adapter) => {
         const deepPath = `${context.projectDir}/pages/a/b/c/d`;
         await mkdir(deepPath, { recursive: true });
 
@@ -266,12 +206,7 @@ describe("Layout Handling", () => {
           "export default function LayoutC({ children }) { return <div>{children}</div>; }",
         );
 
-        const layouts = await discoverNestedLayouts(
-          pageFile,
-          `${context.projectDir}/pages`,
-          context.projectDir,
-          adapter,
-        );
+        const layouts = await discoverLayoutsForTest(pageFile, "pages", context, adapter);
 
         assertEquals(layouts.length, 1);
         assert(layouts[0]?.path?.endsWith("a/b/c/layout.tsx"));
@@ -279,8 +214,7 @@ describe("Layout Handling", () => {
     });
 
     it("stops traversal at root directory", async () => {
-      await withTestContext("layout-handling-stop-at-root", async (context) => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext("layout-handling-stop-at-root", async (context, adapter) => {
         const pageDir = `${context.projectDir}/pages`;
         await mkdir(pageDir, { recursive: true });
 
@@ -293,12 +227,7 @@ describe("Layout Handling", () => {
           "export default function Outside({ children }) { return <div>{children}</div>; }",
         );
 
-        const layouts = await discoverNestedLayouts(
-          pageFile,
-          `${context.projectDir}/pages`,
-          context.projectDir,
-          adapter,
-        );
+        const layouts = await discoverLayoutsForTest(pageFile, "pages", context, adapter);
 
         assertEquals(
           layouts.every((l) => !l.path?.includes("layout.tsx") || l.path.includes("/pages/")),
@@ -310,8 +239,7 @@ describe("Layout Handling", () => {
 
   describe("compileMDXLayouts", () => {
     it("compiles MDX layouts with bundles", async () => {
-      await withTestContext("layout-handling-compile-mdx", async (context) => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext("layout-handling-compile-mdx", async (context, adapter) => {
         const compileMDX = createMockCompileMDX();
 
         const layouts: LayoutItem[] = [
@@ -335,8 +263,7 @@ describe("Layout Handling", () => {
     });
 
     it("skips TSX layouts during compilation", async () => {
-      await withTestContext("layout-handling-skip-tsx", async (context) => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext("layout-handling-skip-tsx", async (context, adapter) => {
         const compileMDX = createMockCompileMDX();
 
         const layouts: LayoutItem[] = [
@@ -354,63 +281,66 @@ describe("Layout Handling", () => {
     });
 
     it("compiles multiple MDX layouts", async () => {
-      await withTestContext("layout-handling-compile-multiple", async (context) => {
-        const adapter = await getAdapter();
-        const compileMDX = createMockCompileMDX();
+      await withLayoutHandlingContext(
+        "layout-handling-compile-multiple",
+        async (context, adapter) => {
+          const compileMDX = createMockCompileMDX();
 
-        const layouts: LayoutItem[] = [
-          {
-            kind: "mdx",
-            path: `${context.projectDir}/layout1.mdx`,
-          },
-          {
-            kind: "mdx",
-            path: `${context.projectDir}/layout2.mdx`,
-          },
-        ];
+          const layouts: LayoutItem[] = [
+            {
+              kind: "mdx",
+              path: `${context.projectDir}/layout1.mdx`,
+            },
+            {
+              kind: "mdx",
+              path: `${context.projectDir}/layout2.mdx`,
+            },
+          ];
 
-        await writeTextFile(
-          layouts[0]!.path!,
-          "export const MDXLayout = ({ children }) => <div>{children}</div>",
-        );
-        await writeTextFile(
-          layouts[1]!.path!,
-          "export const MDXLayout = ({ children }) => <section>{children}</section>",
-        );
+          await writeTextFile(
+            layouts[0]!.path!,
+            "export const MDXLayout = ({ children }) => <div>{children}</div>",
+          );
+          await writeTextFile(
+            layouts[1]!.path!,
+            "export const MDXLayout = ({ children }) => <section>{children}</section>",
+          );
 
-        await compileMDXLayouts(layouts, compileMDX, adapter);
+          await compileMDXLayouts(layouts, compileMDX, adapter);
 
-        assertExists(layouts[0]!.bundle);
-        assertExists(layouts[1]!.bundle);
-      });
+          assertExists(layouts[0]!.bundle);
+          assertExists(layouts[1]!.bundle);
+        },
+      );
     });
 
     it("skips layouts that already have bundles", async () => {
-      await withTestContext("layout-handling-skip-existing-bundles", async (context) => {
-        const adapter = await getAdapter();
-        const existingBundle: MdxBundle = {
-          compiledCode: "export const MDXLayout = () => <div>Existing</div>",
-          frontmatter: {},
-        };
+      await withLayoutHandlingContext(
+        "layout-handling-skip-existing-bundles",
+        async (context, adapter) => {
+          const existingBundle: MdxBundle = {
+            compiledCode: "export const MDXLayout = () => <div>Existing</div>",
+            frontmatter: {},
+          };
 
-        const layouts: LayoutItem[] = [
-          {
-            kind: "mdx",
-            path: `${context.projectDir}/layout.mdx`,
-            bundle: existingBundle,
-          },
-        ];
+          const layouts: LayoutItem[] = [
+            {
+              kind: "mdx",
+              path: `${context.projectDir}/layout.mdx`,
+              bundle: existingBundle,
+            },
+          ];
 
-        const compileMDX = createMockCompileMDX();
-        await compileMDXLayouts(layouts, compileMDX, adapter);
+          const compileMDX = createMockCompileMDX();
+          await compileMDXLayouts(layouts, compileMDX, adapter);
 
-        assertEquals(layouts[0]!.bundle, existingBundle);
-      });
+          assertEquals(layouts[0]!.bundle, existingBundle);
+        },
+      );
     });
 
     it("handles compilation errors gracefully", async () => {
-      await withTestContext("layout-handling-compile-error", async (context) => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext("layout-handling-compile-error", async (context, adapter) => {
         const failingCompileMDX = (
           _content: string,
           _frontmatter?: any,
@@ -439,8 +369,7 @@ describe("Layout Handling", () => {
 
   describe("computeDepsHash", () => {
     it("computes hash for layout bundle", async () => {
-      await withTestContext("layout-handling-hash-bundle", async () => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext("layout-handling-hash-bundle", async (_context, adapter) => {
         const layoutBundle: MdxBundle = {
           compiledCode: "export const MDXLayout = ({ children }) => <div>{children}</div>",
           frontmatter: {},
@@ -454,9 +383,7 @@ describe("Layout Handling", () => {
     });
 
     it("computes hash for nested layouts", async () => {
-      await withTestContext("layout-handling-hash-nested", async (context) => {
-        const adapter = await getAdapter();
-
+      await withLayoutHandlingContext("layout-handling-hash-nested", async (context, adapter) => {
         const layoutPath = `${context.projectDir}/layout.tsx`;
         await writeTextFile(
           layoutPath,
@@ -479,9 +406,7 @@ describe("Layout Handling", () => {
     });
 
     it("combines all dependencies into single hash", async () => {
-      await withTestContext("layout-handling-hash-combined", async (context) => {
-        const adapter = await getAdapter();
-
+      await withLayoutHandlingContext("layout-handling-hash-combined", async (context, adapter) => {
         const layoutBundle: MdxBundle = {
           compiledCode: "export const MDXLayout = ({ children }) => <div>{children}</div>",
           frontmatter: {},
@@ -509,9 +434,7 @@ describe("Layout Handling", () => {
     });
 
     it("returns empty string when no dependencies", async () => {
-      await withTestContext("layout-handling-hash-empty", async () => {
-        const adapter = await getAdapter();
-
+      await withLayoutHandlingContext("layout-handling-hash-empty", async (_context, adapter) => {
         const hash = await computeDepsHash(undefined, [], adapter);
 
         assertEquals(hash, "");
@@ -519,50 +442,52 @@ describe("Layout Handling", () => {
     });
 
     it("handles missing files gracefully", async () => {
-      await withTestContext("layout-handling-hash-missing-file", async (context) => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext(
+        "layout-handling-hash-missing-file",
+        async (context, adapter) => {
+          const nestedLayouts: LayoutItem[] = [
+            {
+              kind: "tsx",
+              componentPath: `${context.projectDir}/non-existent.tsx`,
+              path: `${context.projectDir}/non-existent.tsx`,
+            },
+          ];
 
-        const nestedLayouts: LayoutItem[] = [
-          {
-            kind: "tsx",
-            componentPath: `${context.projectDir}/non-existent.tsx`,
-            path: `${context.projectDir}/non-existent.tsx`,
-          },
-        ];
+          const hash = await computeDepsHash(undefined, nestedLayouts, adapter);
 
-        const hash = await computeDepsHash(undefined, nestedLayouts, adapter);
-
-        assertExists(hash);
-      });
+          assertExists(hash);
+        },
+      );
     });
 
     it("produces different hashes for different content", async () => {
-      await withTestContext("layout-handling-hash-different", async () => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext(
+        "layout-handling-hash-different",
+        async (_context, adapter) => {
+          const bundle1: MdxBundle = {
+            compiledCode: "export const MDXLayout = ({ children }) => <div>{children}</div>",
+            frontmatter: {},
+          };
 
-        const bundle1: MdxBundle = {
-          compiledCode: "export const MDXLayout = ({ children }) => <div>{children}</div>",
-          frontmatter: {},
-        };
+          const bundle2: MdxBundle = {
+            compiledCode:
+              "export const MDXLayout = ({ children }) => <section>{children}</section>",
+            frontmatter: {},
+          };
 
-        const bundle2: MdxBundle = {
-          compiledCode: "export const MDXLayout = ({ children }) => <section>{children}</section>",
-          frontmatter: {},
-        };
+          const hash1 = await computeDepsHash(bundle1, [], adapter);
+          const hash2 = await computeDepsHash(bundle2, [], adapter);
 
-        const hash1 = await computeDepsHash(bundle1, [], adapter);
-        const hash2 = await computeDepsHash(bundle2, [], adapter);
-
-        assert(hash1 !== hash2);
-      });
+          assert(hash1 !== hash2);
+        },
+      );
     });
   });
 
   describe("applyLayoutsESM", () => {
     it("applies MDX layout to page element", async () => {
-      await withTestContext("layout-handling-apply-mdx-esm", async (context) => {
-        const adapter = await getAdapter();
-        const cache = new LRUCache<string, any>({ maxEntries: 10 });
+      await withLayoutHandlingContext("layout-handling-apply-mdx-esm", async (context, adapter) => {
+        const cache = createLayoutCache();
 
         await writeTextFile(
           `${context.projectDir}/deno.json`,
@@ -585,19 +510,10 @@ describe("Layout Handling", () => {
           frontmatter: {},
         };
 
-        const result = await applyLayoutsESM(
-          pageElement,
+        const result = await applyLayoutsEsmForTest(context, adapter, pageElement, {
           layoutBundle,
-          [],
-          context.projectDir,
-          {},
           cache,
-          adapter,
-          undefined,
-          context.projectId,
-          context.projectId,
-          "build-static",
-        );
+        });
 
         assertExists(result);
         assertEquals(typeof result, "object");
@@ -605,202 +521,162 @@ describe("Layout Handling", () => {
     });
 
     it("applies nested layouts in correct order", async () => {
-      await withTestContext("layout-handling-apply-nested-esm", async (context) => {
-        const adapter = await getAdapter();
-        const cache = new LRUCache<string, any>({ maxEntries: 10 });
+      await withLayoutHandlingContext(
+        "layout-handling-apply-nested-esm",
+        async (context, adapter) => {
+          const cache = createLayoutCache();
 
-        await writeTextFile(
-          `${context.projectDir}/deno.json`,
-          JSON.stringify({
-            imports: {
-              react: "https://esm.sh/react@19.1.1",
-            },
-          }),
-        );
+          await writeTextFile(
+            `${context.projectDir}/deno.json`,
+            JSON.stringify({
+              imports: {
+                react: "https://esm.sh/react@19.1.1",
+              },
+            }),
+          );
 
-        const pageElement = React.createElement("p", {}, "Content");
+          const pageElement = React.createElement("p", {}, "Content");
 
-        const nestedLayouts: LayoutItem[] = [
-          {
-            kind: "mdx",
-            bundle: {
-              compiledCode: `
+          const nestedLayouts: LayoutItem[] = [
+            {
+              kind: "mdx",
+              bundle: {
+                compiledCode: `
                   import React from 'react';
                   export function MDXLayout({ children }) {
                     return React.createElement('div', { id: 'outer' }, children);
                   }
                 `,
-              frontmatter: {},
+                frontmatter: {},
+              },
             },
-          },
-          {
-            kind: "mdx",
-            bundle: {
-              compiledCode: `
+            {
+              kind: "mdx",
+              bundle: {
+                compiledCode: `
                   import React from 'react';
                   export function MDXLayout({ children }) {
                     return React.createElement('div', { id: 'inner' }, children);
                   }
                 `,
-              frontmatter: {},
+                frontmatter: {},
+              },
             },
-          },
-        ];
+          ];
 
-        const result = await applyLayoutsESM(
-          pageElement,
-          undefined,
-          nestedLayouts,
-          context.projectDir,
-          {},
-          cache,
-          adapter,
-          undefined,
-          context.projectId,
-          context.projectId,
-          "build-static",
-        );
+          const result = await applyLayoutsEsmForTest(context, adapter, pageElement, {
+            nestedLayouts,
+            cache,
+          });
 
-        assertExists(result);
-        assertEquals(typeof result, "object");
-      });
+          assertExists(result);
+          assertEquals(typeof result, "object");
+        },
+      );
     });
 
     it("handles empty layouts array", async () => {
-      await withTestContext("layout-handling-apply-empty-esm", async (context) => {
-        const adapter = await getAdapter();
-        const cache = new LRUCache<string, any>({ maxEntries: 10 });
+      await withLayoutHandlingContext(
+        "layout-handling-apply-empty-esm",
+        async (context, adapter) => {
+          const cache = createLayoutCache();
 
-        const pageElement = React.createElement("div", {}, "Page");
+          const pageElement = React.createElement("div", {}, "Page");
 
-        const result = await applyLayoutsESM(
-          pageElement,
-          undefined,
-          [],
-          context.projectDir,
-          {},
-          cache,
-          adapter,
-          undefined,
-          context.projectId,
-          context.projectId,
-          "build-static",
-        );
+          const result = await applyLayoutsEsmForTest(context, adapter, pageElement, { cache });
 
-        assertEquals(result, pageElement);
-      });
+          assertEquals(result, pageElement);
+        },
+      );
     });
   });
 
   describe("applyLayoutsFunctionBody", () => {
     it("applies MDX layout using function body wrapping", async () => {
-      await withTestContext("layout-handling-apply-function-body", async (context) => {
-        const adapter = await getAdapter();
-        const cache = new LRUCache<string, any>({ maxEntries: 10 });
+      await withLayoutHandlingContext(
+        "layout-handling-apply-function-body",
+        async (context, adapter) => {
+          const cache = createLayoutCache();
 
-        const pageElement = React.createElement("div", {}, "Content");
+          const pageElement = React.createElement("div", {}, "Content");
 
-        const layoutBundle: MdxBundle = {
-          compiledCode: `
+          const layoutBundle: MdxBundle = {
+            compiledCode: `
               function _createMdxContent(props) {
                 const { components, children } = props;
                 return React.createElement('div', { className: 'layout' }, children);
               }
               return { default: _createMdxContent, MDXLayout: _createMdxContent };
             `,
-          frontmatter: {},
-        };
+            frontmatter: {},
+          };
 
-        const result = await applyLayoutsFunctionBody(
-          pageElement,
-          layoutBundle,
-          [],
-          {},
-          cache,
-          context.projectDir,
-          adapter,
-          undefined,
-          context.projectId,
-          context.projectId,
-          "build-static",
-        );
+          const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+            layoutBundle,
+            cache,
+          });
 
-        assertExists(result);
-        assertEquals(typeof result, "object");
-      });
+          assertExists(result);
+          assertEquals(typeof result, "object");
+        },
+      );
     });
 
     it("applies nested layouts in correct order (function body)", async () => {
-      await withTestContext("layout-handling-nested-function-body", async (context) => {
-        const adapter = await getAdapter();
-        const cache = new LRUCache<string, any>({ maxEntries: 10 });
+      await withLayoutHandlingContext(
+        "layout-handling-nested-function-body",
+        async (context, adapter) => {
+          const cache = createLayoutCache();
 
-        const pageElement = React.createElement("p", {}, "Text");
+          const pageElement = React.createElement("p", {}, "Text");
 
-        const nestedLayouts: LayoutItem[] = [
-          {
-            kind: "mdx",
-            bundle: {
-              compiledCode: `
+          const nestedLayouts: LayoutItem[] = [
+            {
+              kind: "mdx",
+              bundle: {
+                compiledCode: `
                   function _createMdxContent(props) {
                     return React.createElement('div', { id: 'outer' }, props.children);
                   }
                   return { MDXLayout: _createMdxContent };
                 `,
-              frontmatter: {},
+                frontmatter: {},
+              },
             },
-          },
-        ];
+          ];
 
-        const result = await applyLayoutsFunctionBody(
-          pageElement,
-          undefined,
-          nestedLayouts,
-          {},
-          cache,
-          context.projectDir,
-          adapter,
-          undefined,
-          context.projectId,
-          context.projectId,
-          "build-static",
-        );
+          const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+            nestedLayouts,
+            cache,
+          });
 
-        assertExists(result);
-        assertEquals(typeof result, "object");
-      });
+          assertExists(result);
+          assertEquals(typeof result, "object");
+        },
+      );
     });
 
     it("handles empty layouts", async () => {
-      await withTestContext("layout-handling-empty-function-body", async (context) => {
-        const adapter = await getAdapter();
-        const cache = new LRUCache<string, any>({ maxEntries: 10 });
+      await withLayoutHandlingContext(
+        "layout-handling-empty-function-body",
+        async (context, adapter) => {
+          const cache = createLayoutCache();
 
-        const pageElement = React.createElement("div", {}, "Page");
+          const pageElement = React.createElement("div", {}, "Page");
 
-        const result = await applyLayoutsFunctionBody(
-          pageElement,
-          undefined,
-          [],
-          {},
-          cache,
-          context.projectDir,
-          adapter,
-          undefined,
-          context.projectId,
-          context.projectId,
-          "build-static",
-        );
+          const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+            cache,
+          });
 
-        assertEquals(result, pageElement);
-      });
+          assertEquals(result, pageElement);
+        },
+      );
     });
   });
 
   describe("Edge Cases and Error Handling", () => {
     it("handles layout without path", async () => {
-      await withTestContext("layout-handling-no-path", async () => {
-        const adapter = await getAdapter();
+      await withLayoutHandlingContext("layout-handling-no-path", async (_context, adapter) => {
         const compileMDX = createMockCompileMDX();
 
         const layouts: LayoutItem[] = [
@@ -816,9 +692,8 @@ describe("Layout Handling", () => {
     });
 
     it("handles circular layout references", async () => {
-      await withTestContext("layout-handling-circular", async (context) => {
-        const adapter = await getAdapter();
-        const cache = new LRUCache<string, any>({ maxEntries: 10 });
+      await withLayoutHandlingContext("layout-handling-circular", async (context, adapter) => {
+        const cache = createLayoutCache();
 
         const pageElement = React.createElement("div", {}, "Page");
 
@@ -832,114 +707,90 @@ describe("Layout Handling", () => {
           frontmatter: {},
         };
 
-        const result = await applyLayoutsFunctionBody(
-          pageElement,
+        const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
           layoutBundle,
-          [],
-          {},
           cache,
-          context.projectDir,
-          adapter,
-          undefined,
-          context.projectId,
-          context.projectId,
-          "build-static",
-        );
+        });
 
         assertExists(result);
       });
     });
 
     it("handles layouts with complex children structures", async () => {
-      await withTestContext("layout-handling-complex-children", async (context) => {
-        const adapter = await getAdapter();
-        const cache = new LRUCache<string, any>({ maxEntries: 10 });
+      await withLayoutHandlingContext(
+        "layout-handling-complex-children",
+        async (context, adapter) => {
+          const cache = createLayoutCache();
 
-        const pageElement = React.createElement(
-          "div",
-          {},
-          React.createElement("h1", {}, "Title"),
-          React.createElement("p", {}, "Paragraph"),
-          React.createElement("footer", {}, "Footer"),
-        );
+          const pageElement = React.createElement(
+            "div",
+            {},
+            React.createElement("h1", {}, "Title"),
+            React.createElement("p", {}, "Paragraph"),
+            React.createElement("footer", {}, "Footer"),
+          );
 
-        const layoutBundle: MdxBundle = {
-          compiledCode: `
+          const layoutBundle: MdxBundle = {
+            compiledCode: `
               function Layout(props) {
                 return React.createElement('article', {}, props.children);
               }
               return { default: Layout };
             `,
-          frontmatter: {},
-        };
+            frontmatter: {},
+          };
 
-        const result = await applyLayoutsFunctionBody(
-          pageElement,
-          layoutBundle,
-          [],
-          {},
-          cache,
-          context.projectDir,
-          adapter,
-          undefined,
-          context.projectId,
-          context.projectId,
-          "build-static",
-        );
+          const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+            layoutBundle,
+            cache,
+          });
 
-        assertExists(result);
-        assertEquals(typeof result, "object");
-      });
+          assertExists(result);
+          assertEquals(typeof result, "object");
+        },
+      );
     });
 
     it("handles layouts with custom components", async () => {
-      await withTestContext("layout-handling-custom-components", async (context) => {
-        const adapter = await getAdapter();
-        const cache = new LRUCache<string, any>({ maxEntries: 10 });
+      await withLayoutHandlingContext(
+        "layout-handling-custom-components",
+        async (context, adapter) => {
+          const cache = createLayoutCache();
 
-        const pageElement = React.createElement("div", {}, "Content");
+          const pageElement = React.createElement("div", {}, "Content");
 
-        const customComponents: MDXComponents = {
-          h1: (props: any) => React.createElement("h1", { className: "custom-h1", ...props }),
-          p: (props: any) => React.createElement("p", { className: "custom-p", ...props }),
-        };
+          const customComponents: MDXComponents = {
+            h1: (props: any) => React.createElement("h1", { className: "custom-h1", ...props }),
+            p: (props: any) => React.createElement("p", { className: "custom-p", ...props }),
+          };
 
-        const layoutBundle: MdxBundle = {
-          compiledCode: `
+          const layoutBundle: MdxBundle = {
+            compiledCode: `
               function Layout(props) {
                 const { components } = props;
                 return React.createElement('div', { className: 'with-custom' }, props.children);
               }
               return { default: Layout };
             `,
-          frontmatter: {},
-        };
+            frontmatter: {},
+          };
 
-        const result = await applyLayoutsFunctionBody(
-          pageElement,
-          layoutBundle,
-          [],
-          customComponents,
-          cache,
-          context.projectDir,
-          adapter,
-          undefined,
-          context.projectId,
-          context.projectId,
-          "build-static",
-        );
+          const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+            layoutBundle,
+            components: customComponents,
+            cache,
+          });
 
-        assertExists(result);
-        assertEquals(typeof result, "object");
-      });
+          assertExists(result);
+          assertEquals(typeof result, "object");
+        },
+      );
     });
   });
 
   describe("Integration Tests", () => {
     it("full workflow: discover, compile, and apply layouts", async () => {
-      await withTestContext("layout-handling-full-workflow", async (context) => {
-        const adapter = await getAdapter();
-
+      await withLayoutHandlingContext("layout-handling-full-workflow", async (context, adapter) => {
         const blogDir = `${context.projectDir}/pages/blog`;
         await mkdir(blogDir, { recursive: true });
 
@@ -957,12 +808,7 @@ describe("Layout Handling", () => {
           'export const MDXLayout = ({ children }) => <div id="blog">{children}</div>',
         );
 
-        const layouts = await discoverNestedLayouts(
-          pageFile,
-          `${context.projectDir}/pages`,
-          context.projectDir,
-          adapter,
-        );
+        const layouts = await discoverLayoutsForTest(pageFile, "pages", context, adapter);
 
         assert(layouts.length >= 1);
 
@@ -977,21 +823,12 @@ describe("Layout Handling", () => {
         assertExists(hash);
 
         const pageElement = React.createElement("article", {}, "Post Content");
-        const cache = new LRUCache<string, any>({ maxEntries: 10 });
+        const cache = createLayoutCache();
 
-        const result = await applyLayoutsFunctionBody(
-          pageElement,
-          undefined,
-          layouts,
-          {},
+        const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+          nestedLayouts: layouts,
           cache,
-          context.projectDir,
-          adapter,
-          undefined,
-          context.projectId,
-          context.projectId,
-          "build-static",
-        );
+        });
 
         assertExists(result);
         assertEquals(typeof result, "object");
@@ -999,9 +836,7 @@ describe("Layout Handling", () => {
     });
 
     it("handles mixed MDX and TSX layouts in discovery and application", async () => {
-      await withTestContext("layout-handling-mixed-full", async (context) => {
-        const adapter = await getAdapter();
-
+      await withLayoutHandlingContext("layout-handling-mixed-full", async (context, adapter) => {
         const docsDir = `${context.projectDir}/pages/docs`;
         await mkdir(docsDir, { recursive: true });
 
@@ -1019,12 +854,7 @@ describe("Layout Handling", () => {
           "export const MDXLayout = ({ children }) => <section>{children}</section>",
         );
 
-        const layouts = await discoverNestedLayouts(
-          pageFile,
-          `${context.projectDir}/pages`,
-          context.projectDir,
-          adapter,
-        );
+        const layouts = await discoverLayoutsForTest(pageFile, "pages", context, adapter);
 
         assert(layouts.some((l) => l.kind === "tsx"));
         assert(layouts.some((l) => l.kind === "mdx"));
@@ -1033,21 +863,12 @@ describe("Layout Handling", () => {
         await compileMDXLayouts(layouts, compileMDX, adapter);
 
         const pageElement = React.createElement("div", {}, "Guide Content");
-        const cache = new LRUCache<string, any>({ maxEntries: 10 });
+        const cache = createLayoutCache();
 
-        const result = await applyLayoutsFunctionBody(
-          pageElement,
-          undefined,
-          layouts,
-          {},
+        const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+          nestedLayouts: layouts,
           cache,
-          context.projectDir,
-          adapter,
-          undefined,
-          context.projectId,
-          context.projectId,
-          "build-static",
-        );
+        });
 
         assertExists(result);
       });
