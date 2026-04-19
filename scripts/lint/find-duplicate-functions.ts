@@ -831,6 +831,17 @@ function scoreGroupImpact(members: FunctionCandidate[]): number {
   return Math.max(0, total - maxOne);
 }
 
+function compareFunctionCandidates(
+  a: FunctionCandidate,
+  b: FunctionCandidate,
+): number {
+  if (a.relativePath !== b.relativePath) {
+    return a.relativePath.localeCompare(b.relativePath);
+  }
+
+  return a.startLine - b.startLine;
+}
+
 function formatFnRef(fn: FunctionCandidate): string {
   return `${fn.relativePath}:${fn.startLine}:${fn.startColumn + 1}`;
 }
@@ -995,12 +1006,7 @@ function buildExactGroups(candidates: FunctionCandidate[]): DuplicateGroup[] {
   for (const members of byHash.values()) {
     if (members.length < 2) continue;
 
-    const sorted = [...members].sort((a, b) => {
-      if (a.relativePath !== b.relativePath) {
-        return a.relativePath.localeCompare(b.relativePath);
-      }
-      return a.startLine - b.startLine;
-    });
+    const sorted = [...members].sort(compareFunctionCandidates);
 
     groups.push({
       id: `E${String(counter).padStart(3, "0")}`,
@@ -1017,33 +1023,41 @@ function buildExactGroups(candidates: FunctionCandidate[]): DuplicateGroup[] {
   return groups;
 }
 
-function buildNearGroups(
-  candidates: FunctionCandidate[],
-  exactGroups: DuplicateGroup[],
-  options: CliOptions,
-): DuplicateGroup[] {
-  if (candidates.length < 2) return [];
-
+function collectExactMemberIds(exactGroups: DuplicateGroup[]): Set<number> {
   const exactMemberIds = new Set<number>();
   for (const group of exactGroups) {
     for (const member of group.members) {
       exactMemberIds.add(member.id);
     }
   }
+  return exactMemberIds;
+}
 
+function buildShingleFrequency(
+  candidates: FunctionCandidate[],
+  getShingles: (candidate: FunctionCandidate) => number[],
+): Map<number, number> {
   const shingleFrequency = new Map<number, number>();
   for (const candidate of candidates) {
-    for (const shingle of candidate.shingleHashes) {
+    for (const shingle of getShingles(candidate)) {
       shingleFrequency.set(shingle, (shingleFrequency.get(shingle) ?? 0) + 1);
     }
   }
+  return shingleFrequency;
+}
 
+function buildShingleIndex(
+  candidates: FunctionCandidate[],
+  getShingles: (candidate: FunctionCandidate) => number[],
+  shingleFrequency: Map<number, number>,
+  maxShingleFrequency: number,
+): Map<number, number[]> {
   const index = new Map<number, number[]>();
   for (let idx = 0; idx < candidates.length; idx++) {
     const candidate = candidates[idx];
-    for (const shingle of candidate.shingleHashes) {
+    for (const shingle of getShingles(candidate)) {
       const freq = shingleFrequency.get(shingle) ?? 0;
-      if (freq > options.maxShingleFrequency) continue;
+      if (freq > maxShingleFrequency) continue;
       const posting = index.get(shingle);
       if (posting) {
         posting.push(idx);
@@ -1052,6 +1066,38 @@ function buildNearGroups(
       }
     }
   }
+  return index;
+}
+
+function getSortedComponentMembers(
+  component: number[],
+  candidates: FunctionCandidate[],
+  exactMemberIds: Set<number>,
+): FunctionCandidate[] {
+  return component
+    .map((idx) => candidates[idx])
+    .filter((candidate) => !exactMemberIds.has(candidate.id))
+    .sort(compareFunctionCandidates);
+}
+
+function buildNearGroups(
+  candidates: FunctionCandidate[],
+  exactGroups: DuplicateGroup[],
+  options: CliOptions,
+): DuplicateGroup[] {
+  if (candidates.length < 2) return [];
+
+  const exactMemberIds = collectExactMemberIds(exactGroups);
+  const shingleFrequency = buildShingleFrequency(
+    candidates,
+    (candidate) => candidate.shingleHashes,
+  );
+  const index = buildShingleIndex(
+    candidates,
+    (candidate) => candidate.shingleHashes,
+    shingleFrequency,
+    options.maxShingleFrequency,
+  );
 
   const edges: NearEdge[] = [];
   const edgeSimilarity = new Map<string, number>();
@@ -1095,15 +1141,7 @@ function buildNearGroups(
   let counter = 1;
 
   for (const component of components) {
-    const members = component
-      .map((idx) => candidates[idx])
-      .filter((candidate) => !exactMemberIds.has(candidate.id))
-      .sort((a, b) => {
-        if (a.relativePath !== b.relativePath) {
-          return a.relativePath.localeCompare(b.relativePath);
-        }
-        return a.startLine - b.startLine;
-      });
+    const members = getSortedComponentMembers(component, candidates, exactMemberIds);
 
     if (members.length < 2) continue;
 
@@ -1269,34 +1307,17 @@ function buildSemanticGroups(
 ): DuplicateGroup[] {
   if (candidates.length < 2) return [];
 
-  const exactMemberIds = new Set<number>();
-  for (const group of exactGroups) {
-    for (const member of group.members) {
-      exactMemberIds.add(member.id);
-    }
-  }
-
-  const shingleFrequency = new Map<number, number>();
-  for (const candidate of candidates) {
-    for (const shingle of candidate.semanticShingleHashes) {
-      shingleFrequency.set(shingle, (shingleFrequency.get(shingle) ?? 0) + 1);
-    }
-  }
-
-  const index = new Map<number, number[]>();
-  for (let idx = 0; idx < candidates.length; idx++) {
-    const candidate = candidates[idx];
-    for (const shingle of candidate.semanticShingleHashes) {
-      const freq = shingleFrequency.get(shingle) ?? 0;
-      if (freq > options.maxShingleFrequency) continue;
-      const posting = index.get(shingle);
-      if (posting) {
-        posting.push(idx);
-      } else {
-        index.set(shingle, [idx]);
-      }
-    }
-  }
+  const exactMemberIds = collectExactMemberIds(exactGroups);
+  const shingleFrequency = buildShingleFrequency(
+    candidates,
+    (candidate) => candidate.semanticShingleHashes,
+  );
+  const index = buildShingleIndex(
+    candidates,
+    (candidate) => candidate.semanticShingleHashes,
+    shingleFrequency,
+    options.maxShingleFrequency,
+  );
 
   const edges: NearEdge[] = [];
   const edgeMetrics = new Map<string, SemanticPairMetrics>();
@@ -1337,15 +1358,7 @@ function buildSemanticGroups(
   let counter = 1;
 
   for (const component of components) {
-    const members = component
-      .map((idx) => candidates[idx])
-      .filter((candidate) => !exactMemberIds.has(candidate.id))
-      .sort((a, b) => {
-        if (a.relativePath !== b.relativePath) {
-          return a.relativePath.localeCompare(b.relativePath);
-        }
-        return a.startLine - b.startLine;
-      });
+    const members = getSortedComponentMembers(component, candidates, exactMemberIds);
 
     if (members.length < 2) continue;
 
