@@ -3,19 +3,21 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { join } from "#veryfront/compat/path";
 import {
   getDefaultImportMap,
-  loadImportMap,
   mergeImportMaps,
   resolveImport,
   transformImportsWithMap,
 } from "#veryfront/modules/import-map/index.ts";
-import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
-import { type TestContext, withTestContext } from "../../_helpers/context.ts";
 import { mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
+import {
+  loadImportMapForTest,
+  withImportMapTestContext,
+  writeDenoJson,
+} from "./import-map-loader.test-helpers.ts";
 
 describe("import-map-loader", () => {
   describe("loadImportMap", () => {
     it("should load valid deno.json with imports", async () => {
-      await withTestContext("import-map-load-valid", async (context: TestContext) => {
+      await withImportMapTestContext("import-map-load-valid", async (context, adapter) => {
         const denoConfig = {
           imports: {
             react: "https://esm.sh/react@19.1.1",
@@ -23,12 +25,9 @@ describe("import-map-loader", () => {
           },
         };
 
-        await writeTextFile(
-          join(context.projectDir, "deno.json"),
-          JSON.stringify(denoConfig, null, 2),
-        );
+        await writeDenoJson(context.projectDir, denoConfig);
 
-        const importMap = await loadImportMap(context.projectDir, await getAdapter());
+        const importMap = await loadImportMapForTest(context.projectDir, adapter);
 
         assertExists(importMap);
         assertExists(importMap.imports);
@@ -44,7 +43,7 @@ describe("import-map-loader", () => {
     });
 
     it("should load deno.json with both imports and scopes", async () => {
-      await withTestContext("import-map-load-scopes", async (context: TestContext) => {
+      await withImportMapTestContext("import-map-load-scopes", async (context, adapter) => {
         const denoConfig = {
           imports: {
             react: "https://esm.sh/react@19.1.1",
@@ -59,12 +58,9 @@ describe("import-map-loader", () => {
         // Remove default veryfront.config.js to allow deno.json to take precedence
         await remove(join(context.projectDir, "veryfront.config.js")).catch(() => {});
 
-        await writeTextFile(
-          join(context.projectDir, "deno.json"),
-          JSON.stringify(denoConfig, null, 2),
-        );
+        await writeDenoJson(context.projectDir, denoConfig);
 
-        const importMap = await loadImportMap(context.projectDir, await getAdapter());
+        const importMap = await loadImportMapForTest(context.projectDir, adapter);
 
         assertExists(importMap);
         assertExists(importMap.imports);
@@ -81,8 +77,8 @@ describe("import-map-loader", () => {
     });
 
     it("should return default import map when deno.json not found", async () => {
-      await withTestContext("import-map-load-missing", async (context: TestContext) => {
-        const importMap = await loadImportMap(context.projectDir, await getAdapter());
+      await withImportMapTestContext("import-map-load-missing", async (context, adapter) => {
+        const importMap = await loadImportMapForTest(context.projectDir, adapter);
 
         assertExists(importMap);
         assertExists(importMap.imports);
@@ -92,19 +88,16 @@ describe("import-map-loader", () => {
     });
 
     it("should return default map when deno.json has no imports/scopes", async () => {
-      await withTestContext("import-map-load-empty", async (context: TestContext) => {
+      await withImportMapTestContext("import-map-load-empty", async (context, adapter) => {
         const denoConfig = {
           compilerOptions: {
             jsx: "react",
           },
         };
 
-        await writeTextFile(
-          join(context.projectDir, "deno.json"),
-          JSON.stringify(denoConfig, null, 2),
-        );
+        await writeDenoJson(context.projectDir, denoConfig);
 
-        const importMap = await loadImportMap(context.projectDir, await getAdapter());
+        const importMap = await loadImportMapForTest(context.projectDir, adapter);
 
         assertExists(importMap);
         assertExists(importMap.imports);
@@ -113,10 +106,10 @@ describe("import-map-loader", () => {
     });
 
     it("should handle malformed JSON gracefully", async () => {
-      await withTestContext("import-map-load-malformed", async (context: TestContext) => {
+      await withImportMapTestContext("import-map-load-malformed", async (context, adapter) => {
         await writeTextFile(join(context.projectDir, "deno.json"), "{invalid json}");
 
-        const importMap = await loadImportMap(context.projectDir, await getAdapter());
+        const importMap = await loadImportMapForTest(context.projectDir, adapter);
 
         assertExists(importMap);
         assertExists(importMap.imports);
@@ -125,22 +118,19 @@ describe("import-map-loader", () => {
     });
 
     it("should traverse parent directories to find deno.json", async () => {
-      await withTestContext("import-map-load-traverse", async (context: TestContext) => {
+      await withImportMapTestContext("import-map-load-traverse", async (context, adapter) => {
         const denoConfig = {
           imports: {
             react: "https://esm.sh/react@19.1.1",
           },
         };
 
-        await writeTextFile(
-          join(context.projectDir, "deno.json"),
-          JSON.stringify(denoConfig, null, 2),
-        );
+        await writeDenoJson(context.projectDir, denoConfig);
 
         const nestedDir = join(context.projectDir, "src", "components");
         await mkdir(nestedDir, { recursive: true });
 
-        const importMap = await loadImportMap(nestedDir, await getAdapter());
+        const importMap = await loadImportMapForTest(nestedDir, adapter);
 
         assertExists(importMap);
         assertEquals(
@@ -151,11 +141,11 @@ describe("import-map-loader", () => {
     });
 
     it("should stop at root directory when searching", async () => {
-      await withTestContext("import-map-load-root", async (context: TestContext) => {
+      await withImportMapTestContext("import-map-load-root", async (context, adapter) => {
         const deepDir = join(context.projectDir, "a", "b", "c", "d", "e");
         await mkdir(deepDir, { recursive: true });
 
-        const importMap = await loadImportMap(deepDir, await getAdapter());
+        const importMap = await loadImportMapForTest(deepDir, adapter);
 
         assertExists(importMap);
         assertExists(importMap.imports);
@@ -163,18 +153,17 @@ describe("import-map-loader", () => {
     });
 
     it("should prioritize veryfront.config resolve.importMap over deno.json", async () => {
-      await withTestContext("import-map-load-config-priority", async (context: TestContext) => {
-        const denoConfig = {
-          imports: {
-            react: "https://esm.sh/react@18",
-          },
-        };
-        await writeTextFile(
-          join(context.projectDir, "deno.json"),
-          JSON.stringify(denoConfig, null, 2),
-        );
+      await withImportMapTestContext(
+        "import-map-load-config-priority",
+        async (context, adapter) => {
+          const denoConfig = {
+            imports: {
+              react: "https://esm.sh/react@18",
+            },
+          };
+          await writeDenoJson(context.projectDir, denoConfig);
 
-        const config = `export default {
+          const config = `export default {
   resolve: {
     importMap: {
       imports: {
@@ -183,19 +172,20 @@ describe("import-map-loader", () => {
     },
   },
 };`;
-        await writeTextFile(join(context.projectDir, "veryfront.config.js"), config);
+          await writeTextFile(join(context.projectDir, "veryfront.config.js"), config);
 
-        const importMap = await loadImportMap(context.projectDir, await getAdapter());
+          const importMap = await loadImportMapForTest(context.projectDir, adapter);
 
-        assertEquals(
-          importMap.imports!["react"],
-          "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3",
-        );
-      });
+          assertEquals(
+            importMap.imports!["react"],
+            "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3",
+          );
+        },
+      );
     });
 
     it("should handle empty scopes object", async () => {
-      await withTestContext("import-map-load-empty-scopes", async (context: TestContext) => {
+      await withImportMapTestContext("import-map-load-empty-scopes", async (context, adapter) => {
         const denoConfig = {
           imports: {
             react: "https://esm.sh/react@18",
@@ -203,12 +193,9 @@ describe("import-map-loader", () => {
           scopes: {},
         };
 
-        await writeTextFile(
-          join(context.projectDir, "deno.json"),
-          JSON.stringify(denoConfig, null, 2),
-        );
+        await writeDenoJson(context.projectDir, denoConfig);
 
-        const importMap = await loadImportMap(context.projectDir, await getAdapter());
+        const importMap = await loadImportMapForTest(context.projectDir, adapter);
 
         assertExists(importMap);
         assertExists(importMap.scopes);
@@ -923,7 +910,7 @@ function hello() { return 'world'; }
 
   describe("edge cases and integration", () => {
     it("should handle complex real-world import map", async () => {
-      await withTestContext("import-map-complex", async (context: TestContext) => {
+      await withImportMapTestContext("import-map-complex", async (context, adapter) => {
         const denoConfig = {
           imports: {
             "@/": "./src/",
@@ -940,12 +927,9 @@ function hello() { return 'world'; }
           },
         };
 
-        await writeTextFile(
-          join(context.projectDir, "deno.json"),
-          JSON.stringify(denoConfig, null, 2),
-        );
+        await writeDenoJson(context.projectDir, denoConfig);
 
-        const importMap = await loadImportMap(context.projectDir, await getAdapter());
+        const importMap = await loadImportMapForTest(context.projectDir, adapter);
 
         assertEquals(Object.keys(importMap.imports!).length >= 14, true);
         assertExists(importMap.scopes);
@@ -956,8 +940,8 @@ function hello() { return 'world'; }
     });
 
     it("should handle roundtrip: load -> transform -> resolve", async () => {
-      await withTestContext("import-map-roundtrip", async (context: TestContext) => {
-        const importMap = await loadImportMap(context.projectDir, await getAdapter());
+      await withImportMapTestContext("import-map-roundtrip", async (context, adapter) => {
+        const importMap = await loadImportMapForTest(context.projectDir, adapter);
 
         const code = `import React from 'react';`;
         const transformed = transformImportsWithMap(code, importMap, undefined, {
