@@ -10,6 +10,12 @@
 
 import { createFileSystem, join } from "veryfront/fs";
 import { loadTemplateFromDirectory } from "./loader.ts";
+import {
+  buildIntegrationDirectory,
+  buildUnknownIntegrationErrors,
+  mergeIntegrationFiles,
+  resolveIntegrationModuleDir,
+} from "./integration-loader-helpers.ts";
 import type {
   IntegrationConfig,
   IntegrationName,
@@ -140,23 +146,14 @@ export const USE_CASE_CONFIGS: Record<UseCaseName, UseCaseConfig> = {
 };
 
 function getModuleDir(): string {
-  const moduleUrl = new URL(".", import.meta.url);
-
-  if (moduleUrl.protocol !== "file:") return moduleUrl.href;
-
-  let moduleDir = moduleUrl.pathname;
-  if (typeof process !== "undefined" && process.platform === "win32" && moduleDir.startsWith("/")) {
-    moduleDir = moduleDir.slice(1);
-  }
-
-  return moduleDir;
+  return resolveIntegrationModuleDir(import.meta.url);
 }
 
 /**
  * Get the directory path for an integration
  */
 export function getIntegrationDirectory(integrationName: string): string {
-  return join(getModuleDir(), "integrations", integrationName);
+  return buildIntegrationDirectory(getModuleDir(), integrationName);
 }
 
 /**
@@ -200,15 +197,7 @@ export function validateIntegrations(integrations: IntegrationName[]): {
   valid: boolean;
   errors: string[];
 } {
-  const errors: string[] = [];
-
-  for (const integration of integrations) {
-    if (AVAILABLE_INTEGRATIONS.includes(integration)) continue;
-
-    errors.push(
-      `Unknown integration: ${integration}. Available: ${AVAILABLE_INTEGRATIONS.join(", ")}`,
-    );
-  }
+  const errors = buildUnknownIntegrationErrors(integrations, AVAILABLE_INTEGRATIONS);
 
   return { valid: errors.length === 0, errors };
 }
@@ -225,8 +214,6 @@ export async function loadIntegrations(
 }> {
   const integrations: ResolvedIntegration[] = [];
   const errors: string[] = [];
-  const fileMap = new Map<string, TemplateFile>();
-
   for (const name of integrationNames) {
     const integration = await loadIntegration(name);
     if (!integration) {
@@ -235,16 +222,11 @@ export async function loadIntegrations(
     }
 
     integrations.push(integration);
-
-    for (const file of integration.files) {
-      // Later integrations override earlier ones
-      fileMap.set(file.path, file);
-    }
   }
 
   return {
     integrations,
-    files: [...fileMap.values()].sort((a, b) => a.path.localeCompare(b.path)),
+    files: mergeIntegrationFiles(integrations),
     errors,
   };
 }
