@@ -1,74 +1,13 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { handleRSCEndpoint } from "./endpoint-router.ts";
-import type { RSCEndpointParams } from "./types.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "#veryfront/config";
-
-/** Minimal mock adapter with fs operations for module endpoint tests */
-function createMockAdapter(
-  fsOverrides: {
-    exists?: (path: string) => Promise<boolean>;
-    readFile?: (path: string) => Promise<string>;
-  } = {},
-): RuntimeAdapter {
-  return {
-    id: "memory",
-    name: "mock",
-    capabilities: {
-      typescript: true,
-      jsx: true,
-      fileWatcher: false,
-      shell: false,
-      kvStore: false,
-      workers: false,
-    },
-    fs: {
-      exists: fsOverrides.exists ?? (() => Promise.resolve(false)),
-      readFile: fsOverrides.readFile ?? (() => Promise.resolve("")),
-      writeFile: () => Promise.resolve(),
-      readDir: () => Promise.resolve([]),
-      mkdir: () => Promise.resolve(),
-      remove: () => Promise.resolve(),
-      stat: () => Promise.resolve({ isFile: true, isDirectory: false, size: 0, mtime: null }),
-    },
-    env: {
-      get: () => undefined,
-      set: () => {},
-      delete: () => {},
-      toObject: () => ({}),
-    },
-    server: {
-      createHandler: () => () => new Response(),
-    },
-    serve: () => Promise.resolve({ close: () => Promise.resolve() } as any),
-  } as unknown as RuntimeAdapter;
-}
-
-/** Config with RSC enabled */
-const rscEnabledConfig: VeryfrontConfig = {
-  experimental: { rsc: true },
-} as unknown as VeryfrontConfig;
-
-/** Config with RSC disabled */
-const rscDisabledConfig: VeryfrontConfig = {
-  experimental: { rsc: false },
-} as unknown as VeryfrontConfig;
-
-/** Config with no experimental section */
-const noExperimentalConfig: VeryfrontConfig = {} as unknown as VeryfrontConfig;
-
-function makeParams(
-  overrides: Partial<RSCEndpointParams> & { pathname: string },
-): RSCEndpointParams {
-  return {
-    projectDir: overrides.projectDir ?? "/tmp/test-project",
-    adapter: overrides.adapter ?? createMockAdapter(),
-    config: overrides.config,
-    ...overrides,
-    req: overrides.req ?? new Request("http://localhost" + overrides.pathname),
-  };
-}
+import {
+  createMockAdapter,
+  makeParams,
+  noExperimentalConfig,
+  rscDisabledConfig,
+  rscEnabledConfig,
+} from "./endpoint-router.test-helpers.ts";
 
 describe("server/services/rsc/endpoints/endpoint-router", () => {
   afterEach(async () => {
