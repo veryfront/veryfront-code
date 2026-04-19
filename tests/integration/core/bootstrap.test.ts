@@ -12,110 +12,24 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import { bootstrap, bootstrapDev, bootstrapProd } from "../../../src/server/bootstrap.ts";
 import { clearConfigCache } from "#veryfront/config";
 import { join } from "#veryfront/compat/path";
-import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { mkdir } from "#veryfront/compat/fs.ts";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
-import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { makeTempDir } from "#veryfront/testing/deno-compat";
 import { isBun, isDeno, isNode } from "../../../src/platform/compat/runtime.ts";
 import { delay } from "#std/async";
-
-async function createTempDir(prefix: string): Promise<string> {
-  return await makeTempDir({ prefix: `bootstrap_test_${prefix}_` });
-}
-
-async function cleanupTempDir(dir: string): Promise<void> {
-  try {
-    await remove(dir, { recursive: true });
-  } catch {
-    // Ignore cleanup errors
-  }
-}
-
-async function writeConfigFile(
-  projectDir: string,
-  filename: string,
-  content: string,
-): Promise<void> {
-  await writeTextFile(join(projectDir, filename), content);
-}
-
-function createBasicConfig(
-  options: {
-    title?: string;
-    fsType?: string;
-    projectSlug?: string;
-    apiKey?: string;
-    [key: string]: any;
-  } = {},
-): string {
-  const { fsType, projectSlug, apiKey, ...rest } = options;
-
-  const config: any = {
-    title: options.title || "Test Bootstrap App",
-    description: "Testing bootstrap module",
-    ...rest,
-  };
-
-  if (fsType && fsType !== "local") {
-    config.fs = {
-      type: fsType,
-      veryfront: {
-        projectSlug: projectSlug || "test-project",
-        apiKey: apiKey || "test-api-key",
-      },
-    };
-  }
-
-  return `export default ${JSON.stringify(config, null, 2)};`;
-}
-
-async function withTempProjectDir<T>(
-  prefix: string,
-  fn: (projectDir: string) => Promise<T>,
-): Promise<T> {
-  const projectDir = await createTempDir(prefix);
-  try {
-    return await fn(projectDir);
-  } finally {
-    await cleanupTempDir(projectDir);
-  }
-}
-
-async function expectBootstrapThrows(projectDir: string, adapter: unknown): Promise<void> {
-  try {
-    await bootstrap(projectDir, adapter as any);
-    assert(false, "Should have thrown error");
-  } catch (error) {
-    assertExists(error);
-  }
-}
-
-function withEnvOverrides(vars: Record<string, string | undefined>): () => void {
-  const previous = new Map<string, string | undefined>();
-  for (const [key, value] of Object.entries(vars)) {
-    previous.set(key, Deno.env.get(key));
-    if (value === undefined) {
-      deleteEnv(key);
-    } else {
-      setEnv(key, value);
-    }
-  }
-
-  return () => {
-    for (const [key, value] of previous) {
-      if (value === undefined) {
-        deleteEnv(key);
-      } else {
-        setEnv(key, value);
-      }
-    }
-  };
-}
+import {
+  cleanupTempDir,
+  createBasicConfig,
+  createTempDir,
+  expectBootstrapThrows,
+  withEnvOverrides,
+  withTempProjectDir,
+  writeConfigFile,
+} from "./bootstrap.test-helpers.ts";
 
 // ============================================================================
 // 1. Basic Bootstrap Flow (10 tests)
