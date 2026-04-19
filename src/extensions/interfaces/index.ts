@@ -21,6 +21,9 @@ export type {
 // Cache store
 export type { CacheStore } from "./cache-store.ts";
 
+// Token cache store (proxy-grade cache with scan + stats)
+export type { TokenCacheEntry, TokenCacheStats, TokenCacheStore } from "./token-cache-store.ts";
+
 // CSS processor
 export type { CSSProcessOptions, CSSProcessor, CSSProcessResult } from "./css-processor.ts";
 

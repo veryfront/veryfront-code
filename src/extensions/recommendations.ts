@@ -7,6 +7,7 @@
 const recommendations = new Map<string, string>([
   ["Bundler", "@veryfront/ext-esbuild"],
   ["CacheStore", "@veryfront/ext-redis"],
+  ["TokenCacheStore", "@veryfront/ext-redis"],
   ["CSSProcessor", "@veryfront/ext-tailwind"],
   ["ContentTransformer", "@veryfront/ext-mdx"],
   ["DatabaseClient", "@veryfront/ext-postgres"],
