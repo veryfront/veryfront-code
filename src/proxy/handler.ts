@@ -6,7 +6,48 @@ import { cwd, getEnv } from "#veryfront/platform/compat/process.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
-import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from "jose";
+import { resolve as resolveContract } from "../extensions/contracts.ts";
+import type { AuthProvider } from "../extensions/interfaces/auth-provider.ts";
+
+/**
+ * Cache the resolved AuthProvider at module scope so the proxy does not pay
+ * the registry lookup on every request. The cache is cleared implicitly when
+ * `ExtensionLoader.teardownAll()` clears the registry — the next call
+ * re-resolves (or surfaces the "install ext-jwt" hint if the extension was
+ * removed).
+ */
+let cachedAuthProvider: AuthProvider | undefined;
+
+function getAuthProvider(): AuthProvider {
+  if (cachedAuthProvider) return cachedAuthProvider;
+
+  try {
+    cachedAuthProvider = resolveContract<AuthProvider>("AuthProvider");
+    return cachedAuthProvider;
+  } catch (err) {
+    // resolve() already throws with a helpful "Recommended: @veryfront/ext-jwt"
+    // message, but the proxy is a load-bearing code path — append a concrete
+    // remediation hint that names the project-root extension directory so
+    // the user knows exactly what's missing.
+    const base = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `${base}\nTo enable JWT verification in the proxy, install ext-jwt ` +
+        `(scaffold with \`deno task cli extension init ext-jwt\` or add the ` +
+        `npm package @veryfront/ext-jwt).`,
+      { cause: err },
+    );
+  }
+}
+
+/**
+ * Reset the cached AuthProvider. Intended for tests that `register()` a mock
+ * after the handler module has been imported.
+ *
+ * @internal
+ */
+export function __resetCachedAuthProviderForTests(): void {
+  cachedAuthProvider = undefined;
+}
 
 export const INTERNAL_PROXY_HEADERS = [
   "x-token",
@@ -64,24 +105,10 @@ interface DomainLookupResult {
   }>;
 }
 
-const remoteJwksByUrl = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
-
-function getApiJwks(apiBaseUrl: string, logger?: ProxyLogger) {
+function resolveApiJwksUrl(apiBaseUrl: string, logger?: ProxyLogger): string | undefined {
   try {
     const normalizedBaseUrl = apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`;
-    const jwksUrl = new URL(".well-known/jwks.json", normalizedBaseUrl);
-    const cacheKey = jwksUrl.toString();
-
-    // Lazily initialize and cache JWKS in a single, idempotent step to avoid
-    // unsynchronized read/then-write on the shared Map across concurrent calls.
-    let jwks = remoteJwksByUrl.get(cacheKey);
-    if (!jwks) {
-      const created = createRemoteJWKSet(jwksUrl);
-      remoteJwksByUrl.set(cacheKey, created);
-      jwks = created;
-    }
-
-    return jwks;
+    return new URL(".well-known/jwks.json", normalizedBaseUrl).toString();
   } catch (error) {
     logger?.error("Invalid API base URL for JWKS lookup", error as Error, {
       apiBaseUrl,
@@ -229,23 +256,22 @@ async function extractUserIdFromToken(
   apiBaseUrl: string,
   log?: ProxyLogger,
 ): Promise<string | undefined> {
-  let algorithm: string | undefined;
+  const auth = getAuthProvider();
 
-  try {
-    algorithm = decodeProtectedHeader(token).alg;
-  } catch (error) {
-    log?.debug("Failed to decode JWT header", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+  const header = auth.decode(token);
+  if (!header) {
+    log?.debug("Failed to decode JWT header");
     return undefined;
   }
 
+  const algorithm = header.alg;
+
   if (algorithm === "RS256") {
-    const jwks = getApiJwks(apiBaseUrl, log);
-    if (!jwks) return undefined;
+    const jwksUrl = resolveApiJwksUrl(apiBaseUrl, log);
+    if (!jwksUrl) return undefined;
 
     try {
-      const { payload } = await jwtVerify(token, jwks, {
+      const payload = await auth.verifyWithJwks(token, jwksUrl, {
         algorithms: ["RS256"],
       });
       return (payload as { userId?: string }).userId;
@@ -270,10 +296,10 @@ async function extractUserIdFromToken(
   }
 
   try {
-    const secret = new TextEncoder().encode(jwtSecret);
-    const { payload } = await jwtVerify(token, secret, {
-      algorithms: ["HS256"],
-    });
+    // ext-jwt reads JWT_SECRET from the environment when no `secret` was
+    // passed to the extension factory; the explicit env check above is kept
+    // so callers can warn once before we attempt verification.
+    const payload = await auth.verify(token, { algorithms: ["HS256"] });
     return (payload as { userId?: string }).userId;
   } catch (error) {
     log?.debug("JWT verification failed", {

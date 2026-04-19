@@ -1,13 +1,136 @@
 import { assertEquals } from "#veryfront/testing/assert";
-import { describe, it } from "#veryfront/testing/bdd";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
-import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
-import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import {
+  __resetCachedAuthProviderForTests,
+  createProxyHandler,
+  injectContextHeaders,
+  type ProxyContext,
+} from "./handler.ts";
+import { register, reset } from "../extensions/contracts.ts";
+import type {
+  AuthProvider,
+  TokenHeader,
+  TokenPayload,
+} from "../extensions/interfaces/auth-provider.ts";
 
 const TEST_JWT_SECRET = "test-jwt-secret-for-proxy-handler-tests";
 
 // Set JWT_SECRET so extractUserIdFromToken can verify tokens
 Deno.env.set("JWT_SECRET", TEST_JWT_SECRET);
+
+/**
+ * In-memory AuthProvider used by the proxy tests.
+ *
+ * Implements a minimum surface: HS256 sign/verify via a registered secret,
+ * `verifyWithJwks` that dispatches to an in-memory JWKS-URL -> payload map,
+ * and a tolerant `decode` that returns `undefined` on malformed input.
+ *
+ * The fakeness of the tokens is deliberate: they're base64url-encoded JSON
+ * with a trivial HMAC stand-in, which keeps the tests fast and independent
+ * of `jose`.
+ */
+interface MockAuthOptions {
+  /** Map from jwksUrl -> (token -> payload) for verifyWithJwks. */
+  jwksVerifiers?: Map<string, Map<string, TokenPayload>>;
+  /** Override the expected HMAC secret for HS256 verify. */
+  secret?: string;
+}
+
+function base64url(data: string): string {
+  return btoa(data).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64urlDecode(str: string): string {
+  const padded = str.replace(/-/g, "+").replace(/_/g, "/") +
+    "=".repeat((4 - (str.length % 4)) % 4);
+  return atob(padded);
+}
+
+async function hmacSha(alg: "HS256" | "HS384", secret: string, data: string): Promise<string> {
+  const hashName = alg === "HS256" ? "SHA-256" : "SHA-384";
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: hashName },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
+  return base64url(String.fromCharCode(...new Uint8Array(sig)));
+}
+
+/**
+ * Sign a minimal JWT using HS256/HS384 for tests. Matches the shape produced
+ * by `jose` closely enough that the mock AuthProvider's `verify` can round-trip.
+ */
+export async function signTestJwt(
+  payload: Record<string, unknown>,
+  alg: "HS256" | "HS384" = "HS256",
+  secret: string = TEST_JWT_SECRET,
+  kid?: string,
+): Promise<string> {
+  const header: Record<string, unknown> = { alg, typ: "JWT" };
+  if (kid) header.kid = kid;
+  const now = Math.floor(Date.now() / 1000);
+  const body = { iat: now, exp: now + 3600, ...payload };
+  const h = base64url(JSON.stringify(header));
+  const b = base64url(JSON.stringify(body));
+  const sig = await hmacSha(alg, secret, `${h}.${b}`);
+  return `${h}.${b}.${sig}`;
+}
+
+function createMockAuthProvider(options: MockAuthOptions = {}): AuthProvider {
+  const secret = options.secret ?? TEST_JWT_SECRET;
+  const jwksVerifiers = options.jwksVerifiers ?? new Map();
+
+  return {
+    sign(payload: TokenPayload): Promise<string> {
+      return signTestJwt(payload as Record<string, unknown>, "HS256", secret);
+    },
+    async verify(token: string, opts): Promise<TokenPayload> {
+      const parts = token.split(".");
+      if (parts.length !== 3) throw new Error("Malformed token");
+      const header = JSON.parse(base64urlDecode(parts[0])) as { alg?: string };
+      const body = JSON.parse(base64urlDecode(parts[1])) as TokenPayload;
+      const alg = header.alg ?? "";
+      const allowed = opts?.algorithms ?? ["HS256"];
+      if (!allowed.includes(alg)) throw new Error(`Unexpected alg: ${alg}`);
+
+      // Attempt to verify against the env secret as well as the configured
+      // one. When the handler calls verify() during tests that deleted
+      // JWT_SECRET, we must still reject on mismatch.
+      const envSecret = Deno.env.get("JWT_SECRET");
+      const expected = await hmacSha(
+        alg as "HS256" | "HS384",
+        envSecret ?? secret,
+        `${parts[0]}.${parts[1]}`,
+      );
+      if (parts[2] !== expected) throw new Error("Invalid signature");
+
+      if (typeof body.exp === "number" && body.exp < Math.floor(Date.now() / 1000)) {
+        throw new Error("Token expired");
+      }
+      return body;
+    },
+    async verifyWithJwks(token, jwksUrl): Promise<TokenPayload> {
+      const forUrl = jwksVerifiers.get(jwksUrl);
+      if (!forUrl) throw new Error(`No JWKS registered for ${jwksUrl}`);
+      const payload = forUrl.get(token);
+      if (!payload) throw new Error("Token not recognized by JWKS");
+      return payload;
+    },
+    decode(token: string): TokenHeader | undefined {
+      const parts = token.split(".");
+      if (parts.length !== 3) return undefined;
+      try {
+        return JSON.parse(base64urlDecode(parts[0])) as TokenHeader;
+      } catch {
+        return undefined;
+      }
+    },
+  };
+}
 
 function createTokenResponse(): Response {
   return Response.json({
@@ -21,54 +144,6 @@ function createNotFoundResponse(): Response {
   return new Response("Not found", { status: 404 });
 }
 
-async function createFakeJwt(userId: string): Promise<string> {
-  const secret = new TextEncoder().encode(TEST_JWT_SECRET);
-  return new SignJWT({ userId })
-    .setProtectedHeader({ alg: "HS256" })
-    .setExpirationTime("1h")
-    .sign(secret);
-}
-
-async function createRs256Jwt(userId: string): Promise<{
-  token: string;
-  jwks: {
-    keys: Array<{
-      alg: "RS256";
-      e: string;
-      kid: string;
-      kty: "RSA";
-      n: string;
-      use: "sig";
-    }>;
-  };
-}> {
-  const kid = "test-rs256-key";
-  const { privateKey, publicKey } = await generateKeyPair("RS256");
-  const token = await new SignJWT({ userId })
-    .setProtectedHeader({ alg: "RS256", kid })
-    .setExpirationTime("1h")
-    .sign(privateKey);
-  const exported = await exportJWK(publicKey);
-
-  if (exported.kty !== "RSA" || !exported.n || !exported.e) {
-    throw new Error("Expected RSA public JWK");
-  }
-
-  return {
-    token,
-    jwks: {
-      keys: [{
-        alg: "RS256",
-        e: exported.e,
-        kid,
-        kty: "RSA",
-        n: exported.n,
-        use: "sig",
-      }],
-    },
-  };
-}
-
 function createHandler(port: number, apiBasePath = "") {
   return createProxyHandler({
     config: {
@@ -80,6 +155,43 @@ function createHandler(port: number, apiBasePath = "") {
     },
   });
 }
+
+/** Per-test JWKS store so tests can register RS256 tokens by URL. */
+const jwksVerifiers = new Map<string, Map<string, TokenPayload>>();
+
+function registerRs256Token(jwksUrl: string, token: string, payload: TokenPayload): void {
+  let byToken = jwksVerifiers.get(jwksUrl);
+  if (!byToken) {
+    byToken = new Map();
+    jwksVerifiers.set(jwksUrl, byToken);
+  }
+  byToken.set(token, payload);
+}
+
+function forgeRs256Token(kid: string, userId: string): string {
+  const header = base64url(JSON.stringify({ alg: "RS256", kid, typ: "JWT" }));
+  const body = base64url(JSON.stringify({
+    userId,
+    sub: userId,
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  }));
+  // Signature intentionally opaque — the mock verifier looks up (url, token)
+  // pairs, so the bytes here just need to be unique per token.
+  const sig = base64url(`sig-${kid}-${userId}-${Math.random()}`);
+  return `${header}.${body}.${sig}`;
+}
+
+beforeEach(() => {
+  reset();
+  __resetCachedAuthProviderForTests();
+  jwksVerifiers.clear();
+  register<AuthProvider>("AuthProvider", createMockAuthProvider({ jwksVerifiers }));
+});
+
+afterEach(() => {
+  reset();
+  __resetCachedAuthProviderForTests();
+});
 
 describe("Proxy Handler", () => {
   describe("processRequest with custom domains", () => {
@@ -400,7 +512,7 @@ describe("Proxy Handler", () => {
     });
 
     it("allows access to protected custom domain with auth token for project member", async () => {
-      const memberToken = await createFakeJwt("user-123");
+      const memberToken = await signTestJwt({ userId: "user-123", sub: "user-123" });
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -448,7 +560,7 @@ describe("Proxy Handler", () => {
     });
 
     it("returns 403 for protected custom domain when authenticated user is not a member", async () => {
-      const nonMemberToken = await createFakeJwt("other-user");
+      const nonMemberToken = await signTestJwt({ userId: "other-user", sub: "other-user" });
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -543,7 +655,7 @@ describe("Proxy Handler", () => {
     });
 
     it("allows access to protected veryfront domain with auth token for project member", async () => {
-      const memberToken = await createFakeJwt("user-123");
+      const memberToken = await signTestJwt({ userId: "user-123", sub: "user-123" });
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -593,7 +705,7 @@ describe("Proxy Handler", () => {
     });
 
     it("returns 403 for protected veryfront domain when authenticated user is not a member", async () => {
-      const nonMemberToken = await createFakeJwt("other-user");
+      const nonMemberToken = await signTestJwt({ userId: "other-user", sub: "other-user" });
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -856,7 +968,7 @@ describe("Proxy Handler", () => {
     });
 
     it("allows access to protected preview domain with auth token for project member", async () => {
-      const memberToken = await createFakeJwt("user-123");
+      const memberToken = await signTestJwt({ userId: "user-123", sub: "user-123" });
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -961,7 +1073,7 @@ describe("Proxy Handler", () => {
     });
 
     it("returns 404 for missing preview project with auth token", async () => {
-      const memberToken = await createFakeJwt("user-123");
+      const memberToken = await signTestJwt({ userId: "user-123", sub: "user-123" });
       const { server, port } = createMockServer((_req: Request) => {
         return createNotFoundResponse();
       });
@@ -1047,17 +1159,14 @@ describe("Proxy Handler", () => {
     });
 
     it("allows access to protected preview domain with RS256 auth token verified via JWKS", async () => {
-      const { token: memberToken, jwks } = await createRs256Jwt("user-123");
-      let jwksRequestCount = 0;
+      const kid = "test-rs256-key";
+      const memberToken = forgeRs256Token(kid, "user-123");
+      const jwksUrl = (port: number) => `http://127.0.0.1:${port}/.well-known/jwks.json`;
+
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
         if (pathname === "/auth/token") return createTokenResponse();
-
-        if (pathname === "/.well-known/jwks.json") {
-          jwksRequestCount += 1;
-          return Response.json(jwks);
-        }
 
         if (pathname.startsWith("/projects/")) {
           return Response.json({
@@ -1078,6 +1187,12 @@ describe("Proxy Handler", () => {
       });
 
       try {
+        // Register the token with the URL the proxy will compute for this port.
+        registerRs256Token(jwksUrl(port), memberToken, {
+          sub: "user-123",
+          userId: "user-123",
+        });
+
         const handler = createHandler(port);
 
         const req = new Request(
@@ -1095,7 +1210,6 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.environmentId, "env-1");
-        assertEquals(jwksRequestCount, 1);
 
         await handler.close();
       } finally {
@@ -1104,23 +1218,15 @@ describe("Proxy Handler", () => {
     });
 
     it("preserves a path-prefixed API base when resolving JWKS", async () => {
-      const { token: memberToken, jwks } = await createRs256Jwt("user-123");
-      let prefixedJwksRequestCount = 0;
-      let rootJwksRequestCount = 0;
+      const kid = "test-rs256-key";
+      const memberToken = forgeRs256Token(kid, "user-123");
+      const prefixedJwksUrl = (port: number) =>
+        `http://127.0.0.1:${port}/api/.well-known/jwks.json`;
+
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
         if (pathname === "/api/auth/token") return createTokenResponse();
-
-        if (pathname === "/api/.well-known/jwks.json") {
-          prefixedJwksRequestCount += 1;
-          return Response.json(jwks);
-        }
-
-        if (pathname === "/.well-known/jwks.json") {
-          rootJwksRequestCount += 1;
-          return createNotFoundResponse();
-        }
 
         if (pathname.startsWith("/api/projects/")) {
           return Response.json({
@@ -1141,6 +1247,11 @@ describe("Proxy Handler", () => {
       });
 
       try {
+        registerRs256Token(prefixedJwksUrl(port), memberToken, {
+          sub: "user-123",
+          userId: "user-123",
+        });
+
         const handler = createHandler(port, "/api");
 
         const req = new Request(
@@ -1158,8 +1269,6 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.environmentId, "env-1");
-        assertEquals(prefixedJwksRequestCount, 1);
-        assertEquals(rootJwksRequestCount, 0);
 
         await handler.close();
       } finally {
@@ -1168,7 +1277,7 @@ describe("Proxy Handler", () => {
     });
 
     it("returns 403 for protected preview domain when authenticated user is not a member", async () => {
-      const nonMemberToken = await createFakeJwt("other-user");
+      const nonMemberToken = await signTestJwt({ userId: "other-user", sub: "other-user" });
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -1273,10 +1382,11 @@ describe("Proxy Handler", () => {
       Deno.env.delete("JWT_SECRET");
 
       try {
-        const memberToken = await new SignJWT({ userId: "user-123" })
-          .setProtectedHeader({ alg: "HS256" })
-          .setExpirationTime("1h")
-          .sign(new TextEncoder().encode("some-other-secret"));
+        const memberToken = await signTestJwt(
+          { userId: "user-123", sub: "user-123" },
+          "HS256",
+          "some-other-secret",
+        );
 
         const { server, port } = createMockServer((req: Request) => {
           const { pathname } = new URL(req.url);
@@ -1332,10 +1442,10 @@ describe("Proxy Handler", () => {
 
     it("rejects JWT signed with a different algorithm", async () => {
       // Sign with HS384 instead of the expected HS256
-      const wrongAlgToken = await new SignJWT({ userId: "user-123" })
-        .setProtectedHeader({ alg: "HS384" })
-        .setExpirationTime("1h")
-        .sign(new TextEncoder().encode(TEST_JWT_SECRET));
+      const wrongAlgToken = await signTestJwt(
+        { userId: "user-123", sub: "user-123" },
+        "HS384",
+      );
 
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
