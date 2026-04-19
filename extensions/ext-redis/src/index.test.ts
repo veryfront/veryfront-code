@@ -36,6 +36,21 @@ function silentLogger(): ExtensionLogger {
   };
 }
 
+function capturingLogger(): { logger: ExtensionLogger; info: string[] } {
+  const info: string[] = [];
+  return {
+    info,
+    logger: {
+      debug: () => {},
+      info: (msg: string) => {
+        info.push(msg);
+      },
+      warn: () => {},
+      error: () => {},
+    },
+  };
+}
+
 describe("ext-redis extension", () => {
   describe("factory metadata", () => {
     it("declares the expected name and version", () => {
@@ -134,6 +149,7 @@ describe("ext-redis extension", () => {
     function buildCtx(
       config: Record<string, unknown>,
       provides: Map<string, unknown>,
+      logger: ExtensionLogger = silentLogger(),
     ): ExtensionContext {
       return {
         get: <T>(name: string) => provides.get(name) as T | undefined,
@@ -146,7 +162,7 @@ describe("ext-redis extension", () => {
           provides.set(name, impl);
         },
         config,
-        logger: silentLogger(),
+        logger,
       };
     }
 
@@ -163,6 +179,52 @@ describe("ext-redis extension", () => {
       assertExists(store);
 
       // teardown should not throw even if the client never connected
+      await ext.teardown!();
+    });
+
+    it("redacts credentials from the url before logging", async () => {
+      const ext = factory();
+      const provides = new Map<string, unknown>();
+      const { logger, info } = capturingLogger();
+      const ctx = buildCtx(
+        {
+          proxy: {
+            cache: {
+              redis: { url: "rediss://alice:s3cret@redis.example.com:6380" },
+            },
+          },
+        },
+        provides,
+        logger,
+      );
+
+      await ext.setup!(ctx);
+
+      const line = info.find((m) => m.includes("TokenCacheStore registered"));
+      assertExists(line);
+      assertEquals(line!.includes("s3cret"), false);
+      assertEquals(line!.includes("alice"), false);
+      assertEquals(line!.includes("redis.example.com"), true);
+
+      await ext.teardown!();
+    });
+
+    it("logs <redacted> when the configured url is unparseable", async () => {
+      const ext = factory();
+      const provides = new Map<string, unknown>();
+      const { logger, info } = capturingLogger();
+      const ctx = buildCtx(
+        { proxy: { cache: { redis: { url: "not a url" } } } },
+        provides,
+        logger,
+      );
+
+      await ext.setup!(ctx);
+
+      const line = info.find((m) => m.includes("TokenCacheStore registered"));
+      assertExists(line);
+      assertEquals(line!.includes("<redacted>"), true);
+
       await ext.teardown!();
     });
 

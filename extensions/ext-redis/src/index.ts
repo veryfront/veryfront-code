@@ -45,6 +45,17 @@ function readRedisConfig(config: Record<string, unknown>): RedisConfigShape {
   return redis ?? {};
 }
 
+function redactUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    u.username = "";
+    u.password = "";
+    return u.toString();
+  } catch {
+    return "<redacted>";
+  }
+}
+
 function readEnv(name: string): string | undefined {
   try {
     const value = Deno.env.get(name);
@@ -88,7 +99,9 @@ const extRedis: ExtensionFactory = () => {
 
       store = new RedisTokenCacheStore(options, { logger: ctx.logger });
       ctx.provide("TokenCacheStore", store);
-      ctx.logger.info(`[ext-redis] TokenCacheStore registered (url=${options.url})`);
+      ctx.logger.info(
+        `[ext-redis] TokenCacheStore registered (url=${redactUrl(options.url)})`,
+      );
     },
 
     async teardown() {
