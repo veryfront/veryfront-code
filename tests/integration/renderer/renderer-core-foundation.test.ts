@@ -16,13 +16,14 @@ import {
 import { join } from "#veryfront/compat/path";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-
-import { createRenderer } from "../../../src/rendering/index.ts";
-import { withTestContext } from "../../_helpers/context.ts";
-
-function stripReactSSRMarkers(html: string): string {
-  return html.replaceAll("<!-- -->", "");
-}
+import {
+  createRendererForTest,
+  ensureDirForTest,
+  removeAppDir,
+  stripReactSSRMarkers,
+  withRendererTestContext,
+  writePageFile,
+} from "./renderer-core-foundation.test-helpers.ts";
 
 // Skip tests on non-Deno runtimes (SSR uses URL-based imports)
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
@@ -36,13 +37,10 @@ describe(
   () => {
     describe("Initialization", () => {
       it("should initialize renderer with required dependencies", async () => {
-        await withTestContext("renderer-core-init", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-init", async (context) => {
+          await removeAppDir(context);
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           assertExists(renderer, "Renderer should be created");
           assert(typeof renderer.renderPage === "function", "Should have renderPage method");
@@ -62,8 +60,8 @@ describe(
       });
 
       it("should initialize with custom config", async () => {
-        await withTestContext("renderer-core-config", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-config", async (context) => {
+          await removeAppDir(context);
 
           await writeTextFile(
             join(context.projectDir, "veryfront.config.js"),
@@ -74,18 +72,15 @@ describe(
             };`,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           assertExists(renderer);
         });
       });
 
       it("should load component registry on initialization", async () => {
-        await withTestContext("renderer-core-components", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-components", async (context) => {
+          await removeAppDir(context);
 
           await writeTextFile(
             join(context.projectDir, "components", "Button.tsx"),
@@ -94,10 +89,7 @@ describe(
             }`,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           await renderer.initializeComponents();
           assertExists(renderer);
@@ -107,11 +99,12 @@ describe(
 
     describe("Page Entity Resolution", () => {
       it("should find page in pages directory", async () => {
-        await withTestContext("renderer-core-pages-dir", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-pages-dir", async (context) => {
+          await removeAppDir(context);
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
+          await writePageFile(
+            context,
+            "pages/test.mdx",
             `---
 title: Test Page
 ---
@@ -120,10 +113,7 @@ title: Test Page
 `,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("test");
           assertExists(result);
@@ -132,10 +122,11 @@ title: Test Page
       });
 
       it("should find page in app router directory", async () => {
-        await withTestContext("renderer-core-app-router", async (context) => {
-          await mkdir(join(context.projectDir, "app", "test"), { recursive: true });
-          await writeTextFile(
-            join(context.projectDir, "app", "test", "page.mdx"),
+        await withRendererTestContext("renderer-core-app-router", async (context) => {
+          await ensureDirForTest(context, "app/test");
+          await writePageFile(
+            context,
+            "app/test/page.mdx",
             `---
 title: App Router Page
 ---
@@ -144,10 +135,7 @@ title: App Router Page
 `,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("test");
           assertExists(result);
@@ -156,13 +144,10 @@ title: App Router Page
       });
 
       it("should handle non-existent pages with error", async () => {
-        await withTestContext("renderer-core-404", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-404", async (context) => {
+          await removeAppDir(context);
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           await assertRejects(
             async () => await renderer.renderPage("non-existent-page"),
@@ -173,21 +158,19 @@ title: App Router Page
       });
 
       it("should handle dynamic route parameters", async () => {
-        await withTestContext("renderer-core-params", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-params", async (context) => {
+          await removeAppDir(context);
 
-          await mkdir(join(context.projectDir, "pages", "blog"), { recursive: true });
-          await writeTextFile(
-            join(context.projectDir, "pages", "blog", "[slug].tsx"),
+          await ensureDirForTest(context, "pages/blog");
+          await writePageFile(
+            context,
+            "pages/blog/[slug].tsx",
             `export default function BlogPost({ params }) {
               return <div>Post: {params?.slug}</div>;
             }`,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("blog/my-post", {
             params: { slug: "my-post" },
@@ -201,12 +184,13 @@ title: App Router Page
 
     describe("Layout Collection and Application", () => {
       it("should apply named layout from frontmatter", async () => {
-        await withTestContext("renderer-core-named-layout", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-named-layout", async (context) => {
+          await removeAppDir(context);
 
-          await mkdir(join(context.projectDir, "layouts"), { recursive: true });
-          await writeTextFile(
-            join(context.projectDir, "layouts", "main.mdx"),
+          await ensureDirForTest(context, "layouts");
+          await writePageFile(
+            context,
+            "layouts/main.mdx",
             `---
 isLayout: true
 ---
@@ -217,8 +201,9 @@ export default function MainLayout({ children }) {
           );
 
           // Note: filename must not contain "layout" as it triggers layout detection
-          await writeTextFile(
-            join(context.projectDir, "pages", "styled-page.mdx"),
+          await writePageFile(
+            context,
+            "pages/styled-page.mdx",
             `---
 title: With Layout
 layout: main
@@ -228,10 +213,7 @@ layout: main
 `,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("styled-page");
           assertStringIncludes(result.html, "main-layout");
@@ -240,17 +222,18 @@ layout: main
       });
 
       it("should disable layout when frontmatter layout is false", async () => {
-        await withTestContext("renderer-core-no-layout", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-no-layout", async (context) => {
+          await removeAppDir(context);
 
           await writeTextFile(
             join(context.projectDir, "veryfront.config.js"),
             `export default { layout: "main" };`,
           );
 
-          await mkdir(join(context.projectDir, "layouts"), { recursive: true });
-          await writeTextFile(
-            join(context.projectDir, "layouts", "main.mdx"),
+          await ensureDirForTest(context, "layouts");
+          await writePageFile(
+            context,
+            "layouts/main.mdx",
             `---
 isLayout: true
 ---
@@ -261,8 +244,9 @@ export default function MainLayout({ children }) {
           );
 
           // Note: filename must not contain "layout" as it triggers layout detection
-          await writeTextFile(
-            join(context.projectDir, "pages", "raw-page.mdx"),
+          await writePageFile(
+            context,
+            "pages/raw-page.mdx",
             `---
 title: No Layout
 layout: false
@@ -272,10 +256,7 @@ layout: false
 `,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("raw-page");
           assertStringIncludes(result.html, "Content Without Layout");
@@ -283,8 +264,8 @@ layout: false
       });
 
       it("should apply nested layouts in correct order", async () => {
-        await withTestContext("renderer-core-nested-layouts", async (context) => {
-          await mkdir(join(context.projectDir, "app", "blog", "post"), { recursive: true });
+        await withRendererTestContext("renderer-core-nested-layouts", async (context) => {
+          await ensureDirForTest(context, "app/blog/post");
 
           await writeTextFile(
             join(context.projectDir, "app", "layout.mdx"),
@@ -297,22 +278,17 @@ export default function RootLayout({ children }) {
 }`,
           );
 
-          await writeTextFile(
-            join(context.projectDir, "app", "blog", "layout.tsx"),
+          await writePageFile(
+            context,
+            "app/blog/layout.tsx",
             `export default function BlogLayout({ children }) {
               return <div className="blog">{children}</div>;
             }`,
           );
 
-          await writeTextFile(
-            join(context.projectDir, "app", "blog", "post", "page.mdx"),
-            `# Post Content`,
-          );
+          await writePageFile(context, "app/blog/post/page.mdx", `# Post Content`);
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("blog/post");
           const html = result.html;
@@ -327,17 +303,18 @@ export default function RootLayout({ children }) {
       });
 
       it("should apply layouts with ESM mode enabled", async () => {
-        await withTestContext("renderer-core-esm-layouts", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-esm-layouts", async (context) => {
+          await removeAppDir(context);
 
           await writeTextFile(
             join(context.projectDir, "veryfront.config.js"),
             `export default { experimental: { esmLayouts: true } };`,
           );
 
-          await mkdir(join(context.projectDir, "layouts"), { recursive: true });
-          await writeTextFile(
-            join(context.projectDir, "layouts", "main.mdx"),
+          await ensureDirForTest(context, "layouts");
+          await writePageFile(
+            context,
+            "layouts/main.mdx",
             `---
 isLayout: true
 ---
@@ -357,10 +334,7 @@ layout: main
 `,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("esm-test");
           assertStringIncludes(result.html, "esm-layout");
@@ -371,11 +345,12 @@ layout: main
 
     describe("SSR Rendering", () => {
       it("should render to HTML string in development mode", async () => {
-        await withTestContext("renderer-core-ssr-string", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-ssr-string", async (context) => {
+          await removeAppDir(context);
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
+          await writePageFile(
+            context,
+            "pages/test.mdx",
             `---
 title: SSR Test
 ---
@@ -384,10 +359,7 @@ title: SSR Test
 `,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("test");
           assertEquals(typeof result.html, "string");
@@ -397,11 +369,12 @@ title: SSR Test
       });
 
       it("should support streaming rendering when requested", async () => {
-        await withTestContext("renderer-core-ssr-stream", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-ssr-stream", async (context) => {
+          await removeAppDir(context);
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
+          await writePageFile(
+            context,
+            "pages/test.mdx",
             `---
 title: Stream Test
 ---
@@ -410,10 +383,7 @@ title: Stream Test
 `,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("test", { delivery: "stream" });
 
@@ -439,13 +409,16 @@ title: Stream Test
       });
 
       it("should preserve full-document root layout output during streaming app-router renders", async () => {
-        await withTestContext("renderer-core-stream-root-layout-document", async (context) => {
-          await remove(join(context.projectDir, "pages"), { recursive: true });
-          await mkdir(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext(
+          "renderer-core-stream-root-layout-document",
+          async (context) => {
+            await remove(join(context.projectDir, "pages"), { recursive: true });
+            await mkdir(join(context.projectDir, "app"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "app", "layout.tsx"),
-            `export default function RootLayout({ children }) {
+            await writePageFile(
+              context,
+              "app/layout.tsx",
+              `export default function RootLayout({ children }) {
               return (
                 <html lang="en">
                   <head>
@@ -458,40 +431,38 @@ title: Stream Test
                 </html>
               );
             }`,
-          );
+            );
 
-          await writeTextFile(
-            join(context.projectDir, "app", "page.tsx"),
-            `export default function Page() { return <main>Streaming Layout Content</main>; }`,
-          );
+            await writeTextFile(
+              join(context.projectDir, "app", "page.tsx"),
+              `export default function Page() { return <main>Streaming Layout Content</main>; }`,
+            );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "production",
-          });
+            const renderer = await createRendererForTest(context, "production");
 
-          const result = await renderer.renderPage("/", {
-            delivery: "stream",
-            colorScheme: "dark",
-            colorSchemeFromParam: true,
-            environment: "preview",
-          });
+            const result = await renderer.renderPage("/", {
+              delivery: "stream",
+              colorScheme: "dark",
+              colorSchemeFromParam: true,
+              environment: "preview",
+            });
 
-          const html = result.stream ? await new Response(result.stream).text() : result.html;
+            const html = result.stream ? await new Response(result.stream).text() : result.html;
 
-          assertStringIncludes(html, "<title>Stream Layout Title</title>");
-          assertStringIncludes(
-            html,
-            '<body class="stream-dark" style="background:#0f172a;color:#f8fafc">',
-          );
-          assertStringIncludes(html, 'data-theme="dark"');
-          assertStringIncludes(html, "color-scheme: dark;");
-          assertStringIncludes(html, "Streaming Layout Content");
-        });
+            assertStringIncludes(html, "<title>Stream Layout Title</title>");
+            assertStringIncludes(
+              html,
+              '<body class="stream-dark" style="background:#0f172a;color:#f8fafc">',
+            );
+            assertStringIncludes(html, 'data-theme="dark"');
+            assertStringIncludes(html, "color-scheme: dark;");
+            assertStringIncludes(html, "Streaming Layout Content");
+          },
+        );
       });
 
       it("should keep production project CSS links for streamed full-document app-router renders", async () => {
-        await withTestContext(
+        await withRendererTestContext(
           "renderer-core-stream-root-layout-production-css",
           async (context) => {
             await remove(join(context.projectDir, "pages"), { recursive: true });
@@ -523,10 +494,7 @@ title: Stream Test
               `export default function Page() { return <main>Production Streaming Layout Content</main>; }`,
             );
 
-            const renderer = await createRenderer({
-              projectDir: context.projectDir,
-              mode: "production",
-            });
+            const renderer = await createRendererForTest(context, "production");
 
             const result = await renderer.renderPage("/", {
               delivery: "stream",
@@ -544,15 +512,12 @@ title: Stream Test
       });
 
       it("should use streaming SSR in production mode", async () => {
-        await withTestContext("renderer-core-ssr-production", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-ssr-production", async (context) => {
+          await removeAppDir(context);
 
           await writeTextFile(join(context.projectDir, "pages", "test.mdx"), `# Production Test`);
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "production",
-          });
+          const renderer = await createRendererForTest(context, "production");
 
           const result = await renderer.renderPage("test");
           assertEquals(typeof result.html, "string");
@@ -561,15 +526,12 @@ title: Stream Test
       });
 
       it("should include SSR hash in result", async () => {
-        await withTestContext("renderer-core-ssr-hash", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-ssr-hash", async (context) => {
+          await removeAppDir(context);
 
           await writeTextFile(join(context.projectDir, "pages", "test.mdx"), `# Test`);
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("test");
           assertExists(result.ssrHash);
@@ -580,13 +542,10 @@ title: Stream Test
 
     describe("MDX Compilation", () => {
       it("should compile MDX content to bundle", async () => {
-        await withTestContext("renderer-core-mdx-compile", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-mdx-compile", async (context) => {
+          await removeAppDir(context);
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const bundle = await renderer.compileMDX("# Hello World\n\nThis is a test.", {
             title: "Test",
@@ -599,13 +558,10 @@ title: Stream Test
       });
 
       it("should handle MDX with frontmatter", async () => {
-        await withTestContext("renderer-core-mdx-frontmatter", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-mdx-frontmatter", async (context) => {
+          await removeAppDir(context);
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const bundle = await renderer.compileMDX(
             "# Test Page",
@@ -619,13 +575,10 @@ title: Stream Test
       });
 
       it("should handle MDX compilation errors gracefully", async () => {
-        await withTestContext("renderer-core-mdx-error", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-mdx-error", async (context) => {
+          await removeAppDir(context);
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           await assertRejects(
             async () =>
@@ -639,8 +592,8 @@ title: Stream Test
 
     describe("Component/TSX Pages", () => {
       it("should render TSX component page", async () => {
-        await withTestContext("renderer-core-tsx-page", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-tsx-page", async (context) => {
+          await removeAppDir(context);
 
           await writeTextFile(
             join(context.projectDir, "pages", "component.tsx"),
@@ -649,10 +602,7 @@ title: Stream Test
             }`,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("component");
           assertStringIncludes(result.html, "tsx-page");
@@ -661,8 +611,8 @@ title: Stream Test
       });
 
       it("should render JSX component page", async () => {
-        await withTestContext("renderer-core-jsx-page", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-jsx-page", async (context) => {
+          await removeAppDir(context);
 
           await writeTextFile(
             join(context.projectDir, "pages", "component.jsx"),
@@ -671,10 +621,7 @@ title: Stream Test
             }`,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("component");
           assertStringIncludes(result.html, "jsx-page");
@@ -683,8 +630,8 @@ title: Stream Test
       });
 
       it("should pass props to component pages", async () => {
-        await withTestContext("renderer-core-tsx-props", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-tsx-props", async (context) => {
+          await removeAppDir(context);
 
           await writeTextFile(
             join(context.projectDir, "pages", "with-props.tsx"),
@@ -693,10 +640,7 @@ title: Stream Test
             }`,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("with-props", {
             props: { message: "Hello from props!" },
@@ -707,8 +651,8 @@ title: Stream Test
       });
 
       it("should handle script pages (ts/js) returning data", async () => {
-        await withTestContext("renderer-core-script-page", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-script-page", async (context) => {
+          await removeAppDir(context);
 
           await writeTextFile(
             join(context.projectDir, "pages", "data.ts"),
@@ -717,10 +661,7 @@ title: Stream Test
             }`,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("data");
           assertExists(result);
@@ -728,13 +669,15 @@ title: Stream Test
       });
 
       it("should pass params and query to script page context", async () => {
-        await withTestContext("renderer-core-script-page-request-context", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
-          await mkdir(join(context.projectDir, "pages", "reports"), { recursive: true });
+        await withRendererTestContext(
+          "renderer-core-script-page-request-context",
+          async (context) => {
+            await removeAppDir(context);
+            await mkdir(join(context.projectDir, "pages", "reports"), { recursive: true });
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "reports", "[id].ts"),
-            `export function generateMetadata(ctx) {
+            await writeTextFile(
+              join(context.projectDir, "pages", "reports", "[id].ts"),
+              `export function generateMetadata(ctx) {
               return { title: \`Report \${ctx.params.id} (\${ctx.query.view || "none"})\` };
             }
 
@@ -744,32 +687,33 @@ export default function ReportPage(ctx) {
   };
 }
 `,
-          );
+            );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+            const renderer = await createRendererForTest(context);
 
-          const result = await renderer.renderPage("reports/42", {
-            params: { id: "42" },
-            url: new URL("https://example.com/reports/42?view=full&tab=summary"),
-          });
+            const result = await renderer.renderPage("reports/42", {
+              params: { id: "42" },
+              url: new URL("https://example.com/reports/42?view=full&tab=summary"),
+            });
 
-          assertStringIncludes(result.html, 'id="request-context"');
-          assertStringIncludes(result.html, "report=42;view=full;tab=summary");
-          assertEquals(result.frontmatter.title, "Report 42 (full)");
-        });
+            assertStringIncludes(result.html, 'id="request-context"');
+            assertStringIncludes(result.html, "report=42;view=full;tab=summary");
+            assertEquals(result.frontmatter.title, "Report 42 (full)");
+          },
+        );
       });
 
       it("should expose params and query through usePageContext during SSR", async () => {
-        await withTestContext("renderer-core-page-context-request-values", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
-          await mkdir(join(context.projectDir, "pages", "blog"), { recursive: true });
+        await withRendererTestContext(
+          "renderer-core-page-context-request-values",
+          async (context) => {
+            await removeAppDir(context);
+            await ensureDirForTest(context, "pages/blog");
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "blog", "[slug].tsx"),
-            `import { usePageContext } from "veryfront/context";
+            await writePageFile(
+              context,
+              "pages/blog/[slug].tsx",
+              `import { usePageContext } from "veryfront/context";
 
 export default function BlogPost() {
   const ctx = usePageContext();
@@ -780,11 +724,11 @@ export default function BlogPost() {
   );
 }
 `,
-          );
+            );
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "layout.tsx"),
-            `import { usePageContext } from "veryfront/context";
+            await writeTextFile(
+              join(context.projectDir, "pages", "layout.tsx"),
+              `import { usePageContext } from "veryfront/context";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const ctx = usePageContext();
@@ -798,30 +742,27 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   );
 }
 `,
-          );
+            );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            projectId: context.projectId,
-            mode: "development",
-          });
+            const renderer = await createRendererForTest(context);
 
-          const result = await renderer.renderPage("blog/hello", {
-            params: { slug: "hello" },
-            url: new URL("https://example.com/blog/hello?tab=files&lang=en"),
-          });
+            const result = await renderer.renderPage("blog/hello", {
+              params: { slug: "hello" },
+              url: new URL("https://example.com/blog/hello?tab=files&lang=en"),
+            });
 
-          const normalizedHtml = stripReactSSRMarkers(result.html);
-          assertStringIncludes(normalizedHtml, "Layout params: hello | Layout query: en");
-          assertStringIncludes(normalizedHtml, "Page params: hello | Page query: files");
-        });
+            const normalizedHtml = stripReactSSRMarkers(result.html);
+            assertStringIncludes(normalizedHtml, "Layout params: hello | Layout query: en");
+            assertStringIncludes(normalizedHtml, "Page params: hello | Page query: files");
+          },
+        );
       });
     });
 
     describe("Caching and Manifest", () => {
       it("should cache rendered pages in development", async () => {
-        await withTestContext("renderer-core-cache", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-cache", async (context) => {
+          await removeAppDir(context);
 
           const timestamp = Date.now();
           await writeTextFile(
@@ -835,10 +776,7 @@ timestamp: ${timestamp}
 `,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result1 = await renderer.renderPage("cached");
           const result2 = await renderer.renderPage("cached");
@@ -848,11 +786,12 @@ timestamp: ${timestamp}
       });
 
       it("should clear specific page from cache", async () => {
-        await withTestContext("renderer-core-clear-cache", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-clear-cache", async (context) => {
+          await removeAppDir(context);
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
+          await writePageFile(
+            context,
+            "pages/test.mdx",
             `---
 version: 1
 ---
@@ -861,16 +800,14 @@ version: 1
 `,
           );
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           await renderer.renderPage("test");
           renderer.clearCache("test");
 
-          await writeTextFile(
-            join(context.projectDir, "pages", "test.mdx"),
+          await writePageFile(
+            context,
+            "pages/test.mdx",
             `---
 version: 2
 ---
@@ -885,15 +822,12 @@ version: 2
       });
 
       it("should clear all state", async () => {
-        await withTestContext("renderer-core-clear-all", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-clear-all", async (context) => {
+          await removeAppDir(context);
 
           await writeTextFile(join(context.projectDir, "pages", "test.mdx"), `# Test`);
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           await renderer.renderPage("test");
           renderer.clearAllState();
@@ -904,15 +838,12 @@ version: 2
       });
 
       it("should handle page module cache and manifest", async () => {
-        await withTestContext("renderer-core-module-cache", async (context) => {
-          await remove(join(context.projectDir, "app"), { recursive: true });
+        await withRendererTestContext("renderer-core-module-cache", async (context) => {
+          await removeAppDir(context);
 
           await writeTextFile(join(context.projectDir, "pages", "test.mdx"), `# Test Page`);
 
-          const renderer = await createRenderer({
-            projectDir: context.projectDir,
-            mode: "development",
-          });
+          const renderer = await createRendererForTest(context);
 
           const result = await renderer.renderPage("test");
           assertExists(result.pageModule?.code || result.pageModule === undefined);
