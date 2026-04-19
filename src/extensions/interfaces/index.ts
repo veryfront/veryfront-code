@@ -35,7 +35,13 @@ export type {
 export type { DatabaseClient, QueryResult } from "./database-client.ts";
 
 // Auth provider
-export type { AuthProvider, SignOptions, TokenPayload, VerifyOptions } from "./auth-provider.ts";
+export type {
+  AuthProvider,
+  SignOptions,
+  TokenHeader,
+  TokenPayload,
+  VerifyOptions,
+} from "./auth-provider.ts";
 
 // Tracing exporter
 export type { SpanData, TracingExporter } from "./tracing-exporter.ts";
