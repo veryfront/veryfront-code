@@ -1,8 +1,14 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
+import { type HTMLGeneratorConfig } from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
 import { mergeImportedCSS } from "./html-imported-css.ts";
+import {
+  createHTMLContext,
+  createHTMLGenerator,
+  createMockAdapter,
+  createSingleChunkStream,
+} from "./html.test-helpers.ts";
 
 type Head = {
   metas: Array<{ name?: string; property?: string; content?: string }>;
@@ -155,22 +161,9 @@ describe("HTMLGenerator helpers", () => {
 
   describe("HTMLGenerator constructor", () => {
     it("should create an instance with mock config", () => {
-      const mockAdapter = {
-        fs: {
-          readFile: () => "",
-          exists: () => false,
-          stat: () => ({ isFile: false, isDirectory: false, isSymlink: false }),
-          readDir: function* () {},
-          mkdir: () => {},
-          writeFile: () => {},
-        },
-      };
-
-      const generator = new HTMLGenerator({
-        projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
+      const generator = createHTMLGenerator({
         mode: "development",
+        readFile: async () => "",
       });
 
       assertExists(generator);
@@ -179,147 +172,58 @@ describe("HTMLGenerator helpers", () => {
 
   describe("generateFullHTML", () => {
     it("forwards nonce when injecting import maps into full HTML documents", async () => {
-      const mockAdapter = {
-        fs: {
-          readFile: async () => `'use client';`,
-          exists: async () => false,
-          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
-          readDir: async function* () {},
-          mkdir: async () => {},
-          writeFile: async () => {},
-        },
-      };
-
-      const generator = new HTMLGenerator({
-        projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
-        mode: "production",
+      const generator = createHTMLGenerator({
+        readFile: async () => `'use client';`,
       });
 
-      const html = await generator.generateFullHTML({
-        html: "<!DOCTYPE html><html><head></head><body><main>Hello</main></body></html>",
-        pageInfo: {
-          entity: {
-            path: "/project/app/page.tsx",
-            frontmatter: {},
-          },
-        } as any,
-        pageBundle: {} as any,
-        layoutBundle: undefined,
-        nestedLayouts: [],
-        collectedMetadata: {},
-        slug: "test-page",
-        ssrHash: "hash123",
+      const html = await generator.generateFullHTML(createHTMLContext({
         options: { nonce: "nonce-123" },
-      });
+      }));
 
       assertEquals(html.includes('<script type="importmap" nonce="nonce-123">'), true);
     });
 
     it("injects preview utility CSS into full HTML documents for preview rendering", async () => {
-      const mockAdapter = {
-        fs: {
-          readFile: async () => `'use client';`,
-          exists: async () => false,
-          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
-          readDir: async function* () {},
-          mkdir: async () => {},
-          writeFile: async () => {},
-        },
-      };
+      const mockAdapter = createMockAdapter(async () => `'use client';`);
 
-      const generator = new HTMLGenerator({
-        projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
-        mode: "production",
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
       });
 
-      const html = await generator.generateFullHTML({
-        html: "<!DOCTYPE html><html><head></head><body><main>Hello</main></body></html>",
-        pageInfo: {
-          entity: {
-            path: "/project/app/page.tsx",
-            frontmatter: {},
-          },
-        } as any,
-        pageBundle: {} as any,
-        layoutBundle: undefined,
-        nestedLayouts: [],
-        collectedMetadata: {},
-        slug: "test-page",
-        ssrHash: "hash123",
+      const html = await generator.generateFullHTML(createHTMLContext({
         options: { environment: "preview" },
-      });
+      }));
 
       assertEquals(html.includes('id="vf-tailwind-css"'), true);
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
 
     it("injects production project stylesheet links into full HTML documents", async () => {
-      const mockAdapter = {
-        fs: {
-          readFile: async (path: string) => {
-            if (path.endsWith("/app/page.tsx")) return `'use client';`;
-            if (path.endsWith("/globals.css")) {
-              return "body { background: #0f172a; color: #f8fafc; }";
-            }
-            return "";
-          },
-          exists: async () => false,
-          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
-          readDir: async function* () {},
-          mkdir: async () => {},
-          writeFile: async () => {},
-        },
-      };
-
-      const generator = new HTMLGenerator({
-        projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
-        mode: "production",
+      const mockAdapter = createMockAdapter(async (path: string) => {
+        if (path.endsWith("/app/page.tsx")) return `'use client';`;
+        if (path.endsWith("/globals.css")) {
+          return "body { background: #0f172a; color: #f8fafc; }";
+        }
+        return "";
       });
 
-      const html = await generator.generateFullHTML({
-        html: "<!DOCTYPE html><html><head></head><body><main>Hello</main></body></html>",
-        pageInfo: {
-          entity: {
-            path: "/project/app/page.tsx",
-            frontmatter: {},
-          },
-        } as any,
-        pageBundle: {} as any,
-        layoutBundle: undefined,
-        nestedLayouts: [],
-        collectedMetadata: {},
-        slug: "test-page",
-        ssrHash: "hash123",
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext({
         options: { environment: "production" },
-      });
+      }));
 
       assertEquals(/<link rel="stylesheet" href="\/_vf\/css\/[^"]+\.css">/.test(html), true);
       assertEquals(html.includes('id="vf-tailwind-css"'), false);
     });
 
     it("preserves full-document layout head/body output for explicit dark-mode requests", async () => {
-      const mockAdapter = {
-        fs: {
-          readFile: async () => `'use client';`,
-          exists: async () => false,
-          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
-          readDir: async function* () {},
-          mkdir: async () => {},
-          writeFile: async () => {},
-        },
-      };
+      const mockAdapter = createMockAdapter(async () => `'use client';`);
 
-      const generator = new HTMLGenerator({
-        projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
-        mode: "production",
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
       });
 
       const html = await generator.generateFullHTML({
@@ -357,22 +261,10 @@ describe("HTMLGenerator helpers", () => {
     });
 
     it("adds nonce to inline style and script tags in rendered HTML", async () => {
-      const mockAdapter = {
-        fs: {
-          readFile: async () => "",
-          exists: async () => false,
-          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
-          readDir: async function* () {},
-          mkdir: async () => {},
-          writeFile: async () => {},
-        },
-      };
+      const mockAdapter = createMockAdapter(async () => "");
 
-      const generator = new HTMLGenerator({
-        projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
-        mode: "production",
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
       });
 
       const html = await generator.generateFullHTML({
@@ -401,22 +293,10 @@ describe("HTMLGenerator helpers", () => {
     });
 
     it("adds nonce to collected head style and script tags", async () => {
-      const mockAdapter = {
-        fs: {
-          readFile: async () => "",
-          exists: async () => false,
-          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
-          readDir: async function* () {},
-          mkdir: async () => {},
-          writeFile: async () => {},
-        },
-      };
+      const mockAdapter = createMockAdapter(async () => "");
 
-      const generator = new HTMLGenerator({
-        projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
-        mode: "production",
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
       });
 
       const html = await generator.generateFullHTML({
@@ -450,22 +330,10 @@ describe("HTMLGenerator helpers", () => {
     });
 
     it("does not duplicate an existing nonce attribute", async () => {
-      const mockAdapter = {
-        fs: {
-          readFile: async () => "",
-          exists: async () => false,
-          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
-          readDir: async function* () {},
-          mkdir: async () => {},
-          writeFile: async () => {},
-        },
-      };
+      const mockAdapter = createMockAdapter(async () => "");
 
-      const generator = new HTMLGenerator({
-        projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
-        mode: "production",
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
       });
 
       const html = await generator.generateFullHTML({
@@ -491,22 +359,10 @@ describe("HTMLGenerator helpers", () => {
     });
 
     it("escapes nonce values before injecting rendered tags", async () => {
-      const mockAdapter = {
-        fs: {
-          readFile: async () => "",
-          exists: async () => false,
-          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
-          readDir: async function* () {},
-          mkdir: async () => {},
-          writeFile: async () => {},
-        },
-      };
+      const mockAdapter = createMockAdapter(async () => "");
 
-      const generator = new HTMLGenerator({
-        projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
-        mode: "production",
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
       });
 
       const html = await generator.generateFullHTML({
@@ -542,22 +398,10 @@ describe("HTMLGenerator helpers", () => {
     });
 
     it("does not inject nonce markup into script or style literals inside inline scripts", async () => {
-      const mockAdapter = {
-        fs: {
-          readFile: async () => "",
-          exists: async () => false,
-          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
-          readDir: async function* () {},
-          mkdir: async () => {},
-          writeFile: async () => {},
-        },
-      };
+      const mockAdapter = createMockAdapter(async () => "");
 
-      const generator = new HTMLGenerator({
-        projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
-        mode: "production",
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
       });
 
       const html = await generator.generateFullHTML({
@@ -592,55 +436,27 @@ describe("HTMLGenerator helpers", () => {
 
   describe("generateHTMLStream", () => {
     it("preserves full-document layout output when streaming app-router pages", async () => {
-      const mockAdapter = {
-        fs: {
-          readFile: async () => `'use client';`,
-          exists: async () => false,
-          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
-          readDir: async function* () {},
-          mkdir: async () => {},
-          writeFile: async () => {},
-        },
-      };
+      const mockAdapter = createMockAdapter(async () => `'use client';`);
 
-      const generator = new HTMLGenerator({
-        projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
-        mode: "production",
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
       });
 
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(
-            new TextEncoder().encode(
-              '<!DOCTYPE html><html lang="en"><head><title>Stream Layout Title</title><style>body{background:#0f172a;color:#f8fafc}</style></head><body class="stream-dark" style="background:#0f172a;color:#f8fafc"><main>Hello</main></body></html>',
-            ),
-          );
-          controller.close();
-        },
-      });
+      const stream = createSingleChunkStream(
+        '<!DOCTYPE html><html lang="en"><head><title>Stream Layout Title</title><style>body{background:#0f172a;color:#f8fafc}</style></head><body class="stream-dark" style="background:#0f172a;color:#f8fafc"><main>Hello</main></body></html>',
+      );
 
-      const responseStream = await generator.generateHTMLStream(stream, {
-        pageInfo: {
-          entity: {
-            path: "/project/app/page.tsx",
-            frontmatter: {},
+      const responseStream = await generator.generateHTMLStream(
+        stream,
+        createHTMLContext({
+          options: {
+            nonce: "nonce-123",
+            colorScheme: "dark",
+            colorSchemeFromParam: true,
+            environment: "preview",
           },
-        } as any,
-        pageBundle: {} as any,
-        layoutBundle: undefined,
-        nestedLayouts: [],
-        collectedMetadata: {},
-        slug: "test-page",
-        ssrHash: "hash123",
-        options: {
-          nonce: "nonce-123",
-          colorScheme: "dark",
-          colorSchemeFromParam: true,
-          environment: "preview",
-        },
-      });
+        }),
+      );
 
       const html = await new Response(responseStream).text();
 
@@ -657,58 +473,30 @@ describe("HTMLGenerator helpers", () => {
     });
 
     it("keeps production project stylesheet links for streamed full-document pages", async () => {
-      const mockAdapter = {
-        fs: {
-          readFile: async (path: string) => {
-            if (path.endsWith("/app/page.tsx")) return `'use client';`;
-            if (path.endsWith("/globals.css")) {
-              return "body { background: #0f172a; color: #f8fafc; }";
-            }
-            return "";
+      const mockAdapter = createMockAdapter(async (path: string) => {
+        if (path.endsWith("/app/page.tsx")) return `'use client';`;
+        if (path.endsWith("/globals.css")) {
+          return "body { background: #0f172a; color: #f8fafc; }";
+        }
+        return "";
+      });
+
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
+      });
+
+      const stream = createSingleChunkStream(
+        "<!DOCTYPE html><html><head><title>Prod Layout</title></head><body><main>Hello</main></body></html>",
+      );
+
+      const responseStream = await generator.generateHTMLStream(
+        stream,
+        createHTMLContext({
+          options: {
+            environment: "production",
           },
-          exists: async () => false,
-          stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
-          readDir: async function* () {},
-          mkdir: async () => {},
-          writeFile: async () => {},
-        },
-      };
-
-      const generator = new HTMLGenerator({
-        projectDir: "/project",
-        adapter: mockAdapter as any,
-        config: {} as any,
-        mode: "production",
-      });
-
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(
-            new TextEncoder().encode(
-              "<!DOCTYPE html><html><head><title>Prod Layout</title></head><body><main>Hello</main></body></html>",
-            ),
-          );
-          controller.close();
-        },
-      });
-
-      const responseStream = await generator.generateHTMLStream(stream, {
-        pageInfo: {
-          entity: {
-            path: "/project/app/page.tsx",
-            frontmatter: {},
-          },
-        } as any,
-        pageBundle: {} as any,
-        layoutBundle: undefined,
-        nestedLayouts: [],
-        collectedMetadata: {},
-        slug: "test-page",
-        ssrHash: "hash123",
-        options: {
-          environment: "production",
-        },
-      });
+        }),
+      );
 
       const html = await new Response(responseStream).text();
 
