@@ -441,7 +441,7 @@ if (import.meta.main) {
         // Phase 3: Stop accepting new connections and clean up
         stopMemoryMonitoring();
         requestTracker.shutdown();
-        bootstrap.dispose?.();
+        await bootstrap.dispose?.();
         shutdownController.abort();
         await server.stop();
         await shutdownOTLP();
