@@ -195,4 +195,161 @@ describe("orchestrateExtensions()", () => {
     // Disable directive removed the only extension → setup was never invoked.
     await loader.teardownAll();
   });
+
+  it("skips loadFactory for disabled package extensions", async () => {
+    const loadCalls: string[] = [];
+
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [{ name: "ext-broken-pkg", enabled: false }],
+      },
+      logger: noopLogger,
+      discovery: {
+        ...emptyDiscovery(),
+        discoverPackageExtensions: () =>
+          Promise.resolve([
+            {
+              packageName: "ext-broken-pkg",
+              metadata: { isExtension: true as const, capabilities: [] },
+            },
+          ]),
+      },
+      loadFactory: (path: string, source: ExtensionSource) => {
+        loadCalls.push(path);
+        // Simulate a broken factory that would crash if loaded.
+        return Promise.reject(
+          new Error(`should-not-load: ${path} (source=${source})`),
+        );
+      },
+    });
+
+    assertEquals(loadCalls, []);
+    await loader.teardownAll();
+  });
+
+  it("skips loadFactory for disabled project extensions (src/index.ts variant)", async () => {
+    const loadCalls: string[] = [];
+
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [{ name: "ext-broken", enabled: false }],
+      },
+      logger: noopLogger,
+      discovery: {
+        ...emptyDiscovery(),
+        discoverProjectExtensions: () =>
+          Promise.resolve([
+            "/fake/extensions/ext-broken/src/index.ts",
+          ]),
+      },
+      loadFactory: (path: string, source: ExtensionSource) => {
+        loadCalls.push(path);
+        return Promise.reject(
+          new Error(`should-not-load: ${path} (source=${source})`),
+        );
+      },
+    });
+
+    assertEquals(loadCalls, []);
+    await loader.teardownAll();
+  });
+
+  it("skips loadFactory for disabled project extensions (root index.ts variant)", async () => {
+    const loadCalls: string[] = [];
+
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [{ name: "ext-root-broken", enabled: false }],
+      },
+      logger: noopLogger,
+      discovery: {
+        ...emptyDiscovery(),
+        discoverProjectExtensions: () =>
+          Promise.resolve([
+            "/fake/extensions/ext-root-broken/index.ts",
+          ]),
+      },
+      loadFactory: (path: string, source: ExtensionSource) => {
+        loadCalls.push(path);
+        return Promise.reject(
+          new Error(`should-not-load: ${path} (source=${source})`),
+        );
+      },
+    });
+
+    assertEquals(loadCalls, []);
+    await loader.teardownAll();
+  });
+
+  it("still loads project extensions that are not disabled even when a sibling is disabled", async () => {
+    const loadCalls: string[] = [];
+    const enabledExt = stubExt("ext-enabled");
+
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [{ name: "ext-broken", enabled: false }],
+      },
+      logger: noopLogger,
+      discovery: {
+        ...emptyDiscovery(),
+        discoverProjectExtensions: () =>
+          Promise.resolve([
+            "/fake/extensions/ext-broken/src/index.ts",
+            "/fake/extensions/ext-enabled/src/index.ts",
+          ]),
+      },
+      loadFactory: (path: string, source: ExtensionSource) => {
+        loadCalls.push(path);
+        return Promise.resolve<ResolvedExtension>({
+          extension: enabledExt,
+          source,
+          origin: path,
+        });
+      },
+    });
+
+    assertEquals(loadCalls, ["/fake/extensions/ext-enabled/src/index.ts"]);
+    await loader.teardownAll();
+  });
+
+  it("loads local-file extensions pre-filter but merge drops disabled ones", async () => {
+    // Local-file filtering happens after load because the filename doesn't
+    // reliably carry the extension name. The resulting loader must still
+    // exclude the disabled extension.
+    const loadCalls: string[] = [];
+    const local = stubExt("local-ext", {
+      provides: { LocalContract: { id: "local" } },
+    });
+
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [{ name: "local-ext", enabled: false }],
+      },
+      logger: noopLogger,
+      discovery: {
+        ...emptyDiscovery(),
+        discoverLocalExtensions: () => Promise.resolve(["/fake/local.ts"]),
+      },
+      loadFactory: (path: string, source: ExtensionSource) => {
+        loadCalls.push(path);
+        return Promise.resolve<ResolvedExtension>({
+          extension: local,
+          source,
+          origin: path,
+        });
+      },
+    });
+
+    // loadFactory WAS called for the local file...
+    assertEquals(loadCalls, ["/fake/local.ts"]);
+    // ...but the post-merge filter removed the extension, so the contract
+    // never gets registered.
+    assertEquals(tryResolve("LocalContract"), undefined);
+    await loader.teardownAll();
+  });
 });

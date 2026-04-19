@@ -69,6 +69,27 @@ function combineDispose(
   };
 }
 
+/**
+ * Run extension orchestration, disposing the FS adapter if orchestration fails.
+ *
+ * Exported for unit testing. In the FS-adapter path the caller has already
+ * allocated FS resources (WebSocket connections, caches) that must be
+ * released before the bootstrap error propagates.
+ *
+ * @internal
+ */
+export async function orchestrateOrDisposeFS(
+  orchestrate: () => Promise<ExtensionLoader>,
+  fsDispose: (() => void) | undefined,
+): Promise<ExtensionLoader> {
+  try {
+    return await orchestrate();
+  } catch (err) {
+    if (fsDispose) fsDispose();
+    throw err;
+  }
+}
+
 let envLogged = false;
 
 async function ensureEnvLoaded(projectDir: string, adapter: RuntimeAdapter): Promise<void> {
@@ -236,11 +257,18 @@ export async function bootstrap(
     }
   }
 
-  const extensionLoader = await orchestrateExtensions({
-    projectDir,
-    config,
-    logger: bootstrapLog,
-  });
+  // If extension orchestration fails after the FS adapter has been wired up,
+  // release the FS resources (WebSocket connections, caches) before
+  // propagating the error — otherwise the adapter would leak.
+  const extensionLoader = await orchestrateOrDisposeFS(
+    () =>
+      orchestrateExtensions({
+        projectDir,
+        config,
+        logger: bootstrapLog,
+      }),
+    fsDispose,
+  );
 
   return {
     adapter: enhancedAdapter,
