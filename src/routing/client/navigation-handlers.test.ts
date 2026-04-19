@@ -4,120 +4,11 @@ import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import { NavigationHandlers } from "./navigation-handlers.ts";
 import type { NavigationCallbacks } from "./navigation-handlers.ts";
-
-interface MockElement {
-  tagName?: string;
-  getAttribute?: (name: string) => string | null;
-  parentElement?: MockElement | null;
-  _attributes?: Map<string, string>;
-}
-
-interface MockLocation {
-  pathname: string;
-}
-
-function setupMocks(): {
-  mockLocation: MockLocation;
-  setScrollY: (value: number) => void;
-  cleanup: () => void;
-} {
-  const g = globalThis as any;
-
-  const originalLocation = g.location;
-  const originalScrollY = g.scrollY;
-  const originalHTMLAnchorElement = g.HTMLAnchorElement;
-  const originalHTMLElement = g.HTMLElement;
-
-  const mockLocation: MockLocation = { pathname: "/current-page" };
-
-  class MockHTMLElement {
-    tagName = "";
-    private _attributes = new Map<string, string>();
-
-    getAttribute(name: string): string | null {
-      return this._attributes.get(name) ?? null;
-    }
-
-    setAttribute(name: string, value: string): void {
-      this._attributes.set(name, value);
-    }
-
-    hasAttribute(name: string): boolean {
-      return this._attributes.has(name);
-    }
-  }
-
-  class MockHTMLAnchorElement extends MockHTMLElement {
-    constructor() {
-      super();
-      this.tagName = "A";
-    }
-  }
-
-  g.location = mockLocation;
-  g.scrollY = 0;
-  g.HTMLElement = MockHTMLElement;
-  g.HTMLAnchorElement = MockHTMLAnchorElement;
-
-  return {
-    mockLocation,
-    setScrollY(value: number) {
-      g.scrollY = value;
-    },
-    cleanup() {
-      g.location = originalLocation;
-      g.scrollY = originalScrollY;
-      g.HTMLAnchorElement = originalHTMLAnchorElement;
-      g.HTMLElement = originalHTMLElement;
-    },
-  };
-}
-
-function createMockAnchor(
-  href: string,
-  attributes: Record<string, string> = {},
-): any {
-  const MockHTMLAnchorElement = (globalThis as any).HTMLAnchorElement;
-  if (!MockHTMLAnchorElement) {
-    throw new Error("MockHTMLAnchorElement not set up. Call setupMocks() first.");
-  }
-
-  const anchor = new MockHTMLAnchorElement();
-  anchor.setAttribute("href", href);
-
-  for (const [key, value] of Object.entries(attributes)) {
-    anchor.setAttribute(key, value);
-  }
-
-  anchor.parentElement = null;
-  return anchor;
-}
-
-function createMockElement(
-  tagName: string,
-  attributes: Record<string, string> = {},
-): MockElement {
-  const MockHTMLElement = (globalThis as any).HTMLElement;
-  if (!MockHTMLElement) {
-    const attrs = new Map<string, string>(Object.entries(attributes));
-    return {
-      tagName: tagName.toUpperCase(),
-      getAttribute: (name: string) => attrs.get(name) ?? null,
-      parentElement: null,
-      _attributes: attrs,
-    };
-  }
-
-  const element = new MockHTMLElement();
-  element.tagName = tagName.toUpperCase();
-
-  for (const [key, value] of Object.entries(attributes)) {
-    element.setAttribute(key, value);
-  }
-
-  element.parentElement = null;
-  return element as MockElement;
-}
+import {
+  createMockAnchor,
+  createMockElement,
+  setupNavigationHandlerMocks,
+} from "./navigation-handlers.test-helpers.ts";
 
 describe("NavigationHandlers", () => {
   describe("Constructor", () => {
@@ -139,7 +30,7 @@ describe("NavigationHandlers", () => {
 
   describe("createClickHandler", () => {
     it("should handle click on internal link", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers();
 
@@ -169,7 +60,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should prevent default behavior on internal link click", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers();
 
@@ -198,7 +89,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should ignore click on external link", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers();
 
@@ -228,7 +119,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should ignore click on link with target=_blank", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers();
 
@@ -258,7 +149,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should ignore click on download link", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers();
 
@@ -288,7 +179,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should ignore click on hash link", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers();
 
@@ -318,7 +209,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should ignore click on non-anchor element", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers();
 
@@ -350,7 +241,7 @@ describe("NavigationHandlers", () => {
 
   describe("createPopStateHandler", () => {
     it("should handle browser back/forward navigation", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         mocks.mockLocation.pathname = "/new-page";
 
@@ -376,7 +267,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should set popstate navigation flag", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers();
 
@@ -404,7 +295,7 @@ describe("NavigationHandlers", () => {
 
   describe("createMouseOverHandler", () => {
     it("should prefetch link on mouseover when hover is enabled", async () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
@@ -432,7 +323,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should ignore mouseover on non-anchor element", async () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
@@ -460,7 +351,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should ignore mouseover on external link", async () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
@@ -488,7 +379,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should ignore mouseover on hash link", async () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
@@ -516,7 +407,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should respect data-prefetch=false attribute", async () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
@@ -544,7 +435,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should prefetch when data-prefetch=true even if hover is disabled", async () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers(scaleMs(50), { hover: false });
 
@@ -572,7 +463,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should not prefetch same URL multiple times concurrently", async () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers(scaleMs(100), { hover: true });
 
@@ -602,7 +493,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should remove URL from queue after prefetch", async () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
@@ -636,7 +527,7 @@ describe("NavigationHandlers", () => {
 
   describe("Scroll Position Management", () => {
     it("should save scroll position for a path", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         mocks.setScrollY(300);
 
@@ -651,7 +542,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should retrieve saved scroll position", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         mocks.setScrollY(500);
 
@@ -678,7 +569,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should save multiple scroll positions", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers();
 
@@ -700,7 +591,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should handle scroll save errors gracefully", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         delete (globalThis as any).scrollY;
 
@@ -712,7 +603,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should update scroll position when saving same path again", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers();
 
@@ -740,7 +631,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should clear popstate flag", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers();
 
@@ -764,7 +655,7 @@ describe("NavigationHandlers", () => {
 
   describe("Clear", () => {
     it("should clear all state", () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
@@ -789,7 +680,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should clear prefetch queue", async () => {
-      const mocks = setupMocks();
+      const mocks = setupNavigationHandlerMocks();
       try {
         const handlers = new NavigationHandlers(scaleMs(100), { hover: true });
 
