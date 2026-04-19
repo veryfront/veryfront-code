@@ -2,6 +2,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { InvalidationProjectContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { clearConfigCache, getConfig } from "#veryfront/config";
+import { type ExtensionLoader, orchestrateExtensions } from "veryfront/extensions";
 import {
   getEnvironmentConfig,
   refreshEnvironmentConfig,
@@ -41,8 +42,31 @@ export interface BootstrapResult {
   /** FSAdapter type (if used) */
   fsAdapterType?: string;
 
-  /** Dispose FSAdapter resources (WebSocket connections, caches) */
-  dispose?: () => void;
+  /**
+   * Extension loader that ran setup for all discovered extensions.
+   * Even when no extensions exist, a loader instance is present so callers
+   * can safely invoke `teardownAll()` unconditionally.
+   */
+  extensionLoader: ExtensionLoader;
+
+  /**
+   * Dispose bootstrap resources: tears down extensions (reverse order),
+   * then releases any FSAdapter resources (WebSocket connections, caches).
+   */
+  dispose?: () => void | Promise<void>;
+}
+
+function combineDispose(
+  extensionLoader: ExtensionLoader,
+  fsDispose?: () => void,
+): () => Promise<void> {
+  return async () => {
+    try {
+      await extensionLoader.teardownAll();
+    } finally {
+      if (fsDispose) fsDispose();
+    }
+  };
 }
 
 let envLogged = false;
@@ -115,7 +139,18 @@ export async function bootstrap(
 
   if (!needsFSAdapter) {
     bootstrapLog.debug("Using local filesystem (no FSAdapter needed)");
-    return { adapter, config, usingFSAdapter: false };
+    const extensionLoader = await orchestrateExtensions({
+      projectDir,
+      config,
+      logger: bootstrapLog,
+    });
+    return {
+      adapter,
+      config,
+      usingFSAdapter: false,
+      extensionLoader,
+      dispose: combineDispose(extensionLoader),
+    };
   }
 
   bootstrapLog.debug("Initializing FSAdapter", { type: fsType });
@@ -144,7 +179,18 @@ export async function bootstrap(
       fsAdapter: "local",
     });
 
-    return { adapter, config, usingFSAdapter: false };
+    const extensionLoader = await orchestrateExtensions({
+      projectDir,
+      config,
+      logger: bootstrapLog,
+    });
+    return {
+      adapter,
+      config,
+      usingFSAdapter: false,
+      extensionLoader,
+      dispose: combineDispose(extensionLoader),
+    };
   }
 
   const isProxyMode = config.fs?.veryfront?.proxyMode === true;
@@ -179,23 +225,30 @@ export async function bootstrap(
     fsAdapter: fsType,
   });
 
-  let dispose: (() => void) | undefined;
+  let fsDispose: (() => void) | undefined;
   if (isExtendedFSAdapter(enhancedAdapter.fs)) {
     const underlying = enhancedAdapter.fs.getUnderlyingAdapter();
     if (
       "dispose" in underlying &&
       typeof (underlying as { dispose?: () => void }).dispose === "function"
     ) {
-      dispose = () => (underlying as { dispose: () => void }).dispose();
+      fsDispose = () => (underlying as { dispose: () => void }).dispose();
     }
   }
+
+  const extensionLoader = await orchestrateExtensions({
+    projectDir,
+    config,
+    logger: bootstrapLog,
+  });
 
   return {
     adapter: enhancedAdapter,
     config,
     usingFSAdapter: true,
     fsAdapterType: fsType,
-    dispose,
+    extensionLoader,
+    dispose: combineDispose(extensionLoader, fsDispose),
   };
 }
 
