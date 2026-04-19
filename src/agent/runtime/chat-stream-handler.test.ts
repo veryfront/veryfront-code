@@ -1,52 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createMockResult, createSSECollector } from "./chat-stream-handler.test-helpers.ts";
 import { createStreamState, processStream } from "./chat-stream-handler.ts";
-
-/**
- * Helper: collect SSE events from a ReadableStream controller.
- * Returns an array of parsed JSON events.
- */
-function createSSECollector() {
-  const events: Record<string, unknown>[] = [];
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-  const controller = {
-    enqueue(chunk: Uint8Array) {
-      const text = decoder.decode(chunk);
-      // Parse "data: {...}\n\n" format
-      const lines = text.split("\n").filter((l) => l.startsWith("data: "));
-      for (const line of lines) {
-        events.push(JSON.parse(line.slice(6)));
-      }
-    },
-  } as unknown as ReadableStreamDefaultController;
-  return { events, controller, encoder };
-}
-
-/**
- * Helper: create a mock StreamTextResult with a fullStream from chunks.
- */
-function createMockResult(
-  chunks: Record<string, unknown>[],
-) {
-  const fullStream = {
-    async *[Symbol.asyncIterator]() {
-      for (const chunk of chunks) {
-        yield chunk;
-      }
-    },
-  };
-  const textStream = {
-    async *[Symbol.asyncIterator]() {
-      for (const chunk of chunks) {
-        if (chunk.type === "text-delta" && typeof chunk.text === "string") {
-          yield chunk.text;
-        }
-      }
-    },
-  };
-  return { fullStream, textStream };
-}
 
 describe("chat-stream-handler", () => {
   describe("createStreamState", () => {
