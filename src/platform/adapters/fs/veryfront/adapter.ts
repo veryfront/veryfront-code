@@ -13,7 +13,6 @@ import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
-import type { FileCacheOptions } from "../cache/types.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
 import { DirectoryOperations } from "./directory-operations.ts";
@@ -28,15 +27,13 @@ import {
   summarizeFileList,
   toClientContext,
 } from "./adapter-content-context.ts";
+import {
+  buildFileCacheOptions,
+  buildRetryConfig,
+  shouldBackgroundPregenerateStyles,
+} from "./adapter-helpers.ts";
 
 const logger = baseLogger.component("veryfront-fs-adapter");
-
-const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
-const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
-const DEFAULT_CACHE_TTL_MS = 60_000;
-const DEFAULT_CACHE_MAX_ENTRIES = 1_000;
-const DEFAULT_CACHE_MAX_MEMORY_BYTES = 100 * 1024 * 1024;
 
 export class VeryfrontFSAdapter implements FSAdapter {
   private client: VeryfrontApiClient;
@@ -126,12 +123,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.contentSource = vf.contentSource ?? { type: "branch", branch: "main" };
     this.proxyMode = vf.proxyMode ?? false;
 
-    const retryConfig = {
-      maxRetries: DEFAULT_MAX_RETRIES,
-      initialDelay: DEFAULT_INITIAL_RETRY_DELAY_MS,
-      maxDelay: DEFAULT_MAX_RETRY_DELAY_MS,
-      ...vf.retry,
-    };
+    const retryConfig = buildRetryConfig(vf.retry);
 
     this.client = new VeryfrontApiClient({
       apiBaseUrl: this.apiBaseUrl,
@@ -142,13 +134,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       retry: retryConfig,
     });
 
-    const cacheConfig: FileCacheOptions = {
-      enabled: true,
-      ttl: DEFAULT_CACHE_TTL_MS,
-      maxSize: DEFAULT_CACHE_MAX_ENTRIES,
-      maxMemory: DEFAULT_CACHE_MAX_MEMORY_BYTES,
-      ...vf.cache,
-    };
+    const cacheConfig = buildFileCacheOptions(vf.cache);
 
     this.cache = new FileCache(cacheConfig);
     this.normalizer = new PathNormalizer(config.projectDir);
@@ -396,7 +382,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // Branch previews should recover the last registered stylesheet artifact on
     // cold starts before rebuilding CSS locally. Live edit pokes still
     // pregenerate through the WebSocket path after branch content changes.
-    return this.contentContext?.sourceType !== "branch";
+    return shouldBackgroundPregenerateStyles(this.contentContext);
   }
 
   private scheduleFileListWarmup(reason: string, cacheKey?: string): void {
