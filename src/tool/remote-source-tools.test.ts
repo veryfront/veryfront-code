@@ -100,4 +100,50 @@ describe("tool/remote-source-tools", () => {
     assertEquals(listedProjectId, "proj_456");
     assertEquals(Object.keys(tools), ["search_docs"]);
   });
+
+  it("preserves generic runtime execution context fields for remote tools", async () => {
+    let executedAbortSignal: AbortSignal | undefined;
+    let executedEvents: unknown[] = [];
+
+    const source: RemoteToolSource = {
+      id: "docs-source",
+      async listTools() {
+        return [];
+      },
+      async executeTool(_toolName, _args, context) {
+        executedAbortSignal = context?.abortSignal;
+        await context?.publishDataEvent?.({
+          type: "tool-lifecycle",
+          data: { phase: "started" },
+        });
+        return { ok: true };
+      },
+    };
+
+    const tools = createToolsFromRemoteDefinitions(source, [{
+      name: "search_docs",
+      description: "Search docs",
+      parameters: { type: "object", properties: {} },
+    }]);
+
+    const abortController = new AbortController();
+    const publishDataEvent = (event: unknown) => {
+      executedEvents = [...executedEvents, event];
+    };
+
+    const result = await tools.search_docs?.execute(
+      {},
+      {
+        abortSignal: abortController.signal,
+        publishDataEvent,
+      },
+    );
+
+    assertEquals(result, { ok: true });
+    assertEquals(executedAbortSignal, abortController.signal);
+    assertEquals(executedEvents, [{
+      type: "tool-lifecycle",
+      data: { phase: "started" },
+    }]);
+  });
 });

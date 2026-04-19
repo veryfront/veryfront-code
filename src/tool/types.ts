@@ -57,16 +57,37 @@ export interface ToolConfig<TInput = any, TOutput = any> {
 export interface ToolExecutionContext {
   /** ID of the agent calling the tool (if any) */
   agentId?: string;
+  /** Stable ID for the current tool call when the runtime is tracking tool lifecycles */
+  toolCallId?: string;
   /** Project identity used by integration token resolution */
   projectId?: string;
   /** End-user identity for per-user token resolution in integration tools */
   endUserId?: string;
+  /** Abort signal for cooperative cancellation during long-running tool execution */
+  abortSignal?: AbortSignal;
   /** Progress token for sending progress notifications (MCP 2025-11-25) */
   progressToken?: string | number;
+  /**
+   * Optional host-provided callback for publishing generic runtime data events.
+   *
+   * The payload intentionally stays framework-generic so hosts can surface
+   * structured runtime signals without leaking product-specific event shapes
+   * into the open-core contract.
+   */
+  publishDataEvent?: (event: ToolExecutionDataEvent) => void | Promise<void>;
   /** Additional context */
   [key: string]: unknown;
   /** Blob storage access (if configured in workflow) */
   blobStorage?: BlobStorage;
+}
+
+export interface ToolExecutionDataEvent {
+  /** Host-defined event type */
+  type: string;
+  /** Optional structured event payload */
+  data?: unknown;
+  /** Additional host-defined fields */
+  [key: string]: unknown;
 }
 
 /**
