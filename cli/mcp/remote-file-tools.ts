@@ -16,6 +16,12 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { randomSuffix } from "#cli/shared/slug";
 
 import { DEFAULT_LOCAL_API_URL } from "#cli/shared/constants";
+import {
+  buildProjectApiPath,
+  buildProjectFilePath,
+  getBranchParam,
+  slugToName,
+} from "./remote-file-tool-helpers.ts";
 
 function getApiBaseUrl(): string {
   return getEnvironmentConfig().apiBaseUrl || DEFAULT_LOCAL_API_URL;
@@ -73,27 +79,6 @@ async function apiRequest<T>(
   }
 }
 
-function encodeFilePath(path: string): string {
-  return path.split("/").map(encodeURIComponent).join("/");
-}
-
-function getBranchPath(branch?: string): string {
-  return branch ? `/branches/${branch}` : "";
-}
-
-function getBranchParam(branch?: string): string {
-  return branch ? `?branch_id=${branch}` : "";
-}
-
-function buildProjectApiPath(project: string, resource: string, branch?: string): string {
-  const normalizedResource = resource.startsWith("/") ? resource.slice(1) : resource;
-  return `/${project}${getBranchPath(branch)}/${normalizedResource}`;
-}
-
-function buildProjectFilePath(project: string, filePath: string, branch?: string): string {
-  return buildProjectApiPath(project, `files/${encodeFilePath(filePath)}`, branch);
-}
-
 interface RemoteFile {
   id?: string;
   path: string;
@@ -144,13 +129,6 @@ interface Project {
 }
 
 const MAX_SLUG_ATTEMPTS = 10;
-
-function slugToName(slug: string): string {
-  return slug
-    .split("-")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
 
 /**
  * Create a project with slug conflict retry.
