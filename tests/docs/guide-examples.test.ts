@@ -10,13 +10,7 @@
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createJobsClient } from "../../src/jobs/index.ts";
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
+import { createGuideAgent, jsonResponse, withMockedFetch } from "./guide-examples.test-helpers.ts";
 
 // === Guide: tools.mdx ===
 import { tool } from "../../src/tool/index.ts";
@@ -81,8 +75,7 @@ import { agent } from "../../src/agent/factory.ts";
 
 describe("Guide: agents.mdx", () => {
   it("should create an agent with basic config", () => {
-    const assistant = agent({
-      model: "openai/gpt-4o",
+    const assistant = createGuideAgent({
       system: "You are a helpful assistant. Answer concisely.",
     });
 
@@ -93,8 +86,7 @@ describe("Guide: agents.mdx", () => {
   });
 
   it("should create an agent with tools reference", () => {
-    const assistant = agent({
-      model: "openai/gpt-4o",
+    const assistant = createGuideAgent({
       system: "You are a weather assistant.",
       tools: { getWeather: true },
       maxSteps: 5,
@@ -128,9 +120,7 @@ describe("Guide: agents.mdx", () => {
   });
 
   it("should support memory config", () => {
-    const assistant = agent({
-      model: "openai/gpt-4o",
-      system: "You are a helpful assistant.",
+    const assistant = createGuideAgent({
       memory: { type: "buffer", maxMessages: 50 },
     });
 
@@ -193,7 +183,7 @@ describe("Guide: middleware.mdx", () => {
 });
 
 // === Guide: workflows.mdx ===
-import { workflow, step, parallel, branch, when, unless } from "../../src/workflow/dsl/index.ts";
+import { branch, parallel, step, unless, when, workflow } from "../../src/workflow/dsl/index.ts";
 
 describe("Guide: workflows.mdx", () => {
   it("should create a basic workflow with steps", () => {
@@ -234,7 +224,9 @@ describe("Guide: workflows.mdx", () => {
       steps: [
         step("classify", { agent: "classifier" }),
         branch("route", {
-          condition: (ctx) => (ctx.results as Record<string, Record<string, string>>)?.classify?.category === "billing",
+          condition: (ctx) =>
+            (ctx.results as Record<string, Record<string, string>>)?.classify?.category ===
+              "billing",
           then: [step("billing", { agent: "billing-agent" })],
           else: [step("technical", { agent: "tech-agent" })],
         }),
@@ -276,8 +268,6 @@ describe("Guide: workflows.mdx", () => {
 // === Guide: jobs.mdx ===
 describe("Guide: jobs.mdx", () => {
   it("should create a one-off job and read canonical events", async () => {
-    const originalFetch = globalThis.fetch;
-    const calls: Array<{ url: string; init?: RequestInit }> = [];
     const responses = [
       jsonResponse({
         id: "11111111-1111-4111-8111-111111111111",
@@ -323,21 +313,7 @@ describe("Guide: jobs.mdx", () => {
       }),
     ];
 
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
-      calls.push({ url, init });
-      const next = responses.shift();
-      if (!next) {
-        throw new Error(`No mock response for ${url}`);
-      }
-      return next;
-    }) as typeof fetch;
-
-    try {
+    await withMockedFetch(responses, async (calls) => {
       const jobs = createJobsClient({
         apiUrl: "https://api.test.com",
         authToken: "test-token",
@@ -359,14 +335,10 @@ describe("Guide: jobs.mdx", () => {
       assertEquals(events.entries.length, 1);
       assert(calls[0]?.url.includes("/projects/dreamy-haven/jobs"));
       assert(calls[1]?.url.includes(`/jobs/${job.id}/events`));
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    });
   });
 
   it("should create a cron job and discover target definitions", async () => {
-    const originalFetch = globalThis.fetch;
-    const calls: Array<{ url: string; init?: RequestInit }> = [];
     const responses = [
       jsonResponse({
         id: "55555555-5555-4555-8555-555555555555",
@@ -404,21 +376,7 @@ describe("Guide: jobs.mdx", () => {
       }),
     ];
 
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
-      calls.push({ url, init });
-      const next = responses.shift();
-      if (!next) {
-        throw new Error(`No mock response for ${url}`);
-      }
-      return next;
-    }) as typeof fetch;
-
-    try {
+    await withMockedFetch(responses, async (calls) => {
       const jobs = createJobsClient({
         apiUrl: "https://api.test.com",
         authToken: "test-token",
@@ -442,9 +400,7 @@ describe("Guide: jobs.mdx", () => {
       assertEquals(targets.data[0]?.target, "task:knowledge-ingest");
       assert(calls[0]?.url.includes("/projects/dreamy-haven/cron-jobs"));
       assert(calls[1]?.url.includes("/projects/dreamy-haven/job-targets"));
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    });
   });
 });
 
@@ -472,7 +428,12 @@ describe("Guide: data-fetching.mdx", () => {
 });
 
 // === Guide: multi-agent.mdx ===
-import { agentAsTool, getAgentsAsTools, registerAgent, getAllAgentIds } from "../../src/agent/index.ts";
+import {
+  agentAsTool,
+  getAgentsAsTools,
+  getAllAgentIds,
+  registerAgent,
+} from "../../src/agent/index.ts";
 
 describe("Guide: multi-agent.mdx", () => {
   it("should register and retrieve agent IDs", () => {
@@ -501,17 +462,23 @@ describe("Guide: multi-agent.mdx", () => {
   });
 
   it("should get multiple agents as tools", () => {
-    registerAgent("researcher-test", agent({
-      id: "researcher-test",
-      model: "openai/gpt-4o",
-      system: "Research",
-    }));
+    registerAgent(
+      "researcher-test",
+      agent({
+        id: "researcher-test",
+        model: "openai/gpt-4o",
+        system: "Research",
+      }),
+    );
 
-    registerAgent("writer-test", agent({
-      id: "writer-test",
-      model: "openai/gpt-4o",
-      system: "Write",
-    }));
+    registerAgent(
+      "writer-test",
+      agent({
+        id: "writer-test",
+        model: "openai/gpt-4o",
+        system: "Write",
+      }),
+    );
 
     const tools = getAgentsAsTools({
       "researcher-test": "Research a topic",
@@ -561,13 +528,11 @@ describe("Guide: configuration.mdx", () => {
 });
 
 // === Guide: memory-and-streaming.mdx ===
-import { createMemory, BufferMemory, ConversationMemory } from "../../src/agent/index.ts";
+import { BufferMemory, ConversationMemory, createMemory } from "../../src/agent/index.ts";
 
 describe("Guide: memory-and-streaming.mdx", () => {
   it("should create buffer memory via agent config", () => {
-    const assistant = agent({
-      model: "openai/gpt-4o",
-      system: "You are a helpful assistant.",
+    const assistant = createGuideAgent({
       memory: { type: "buffer", maxMessages: 50 },
     });
 
@@ -576,9 +541,7 @@ describe("Guide: memory-and-streaming.mdx", () => {
   });
 
   it("should create conversation memory via agent config", () => {
-    const assistant = agent({
-      model: "openai/gpt-4o",
-      system: "You are a helpful assistant.",
+    const assistant = createGuideAgent({
       memory: { type: "conversation", maxTokens: 4000 },
     });
 
@@ -586,8 +549,7 @@ describe("Guide: memory-and-streaming.mdx", () => {
   });
 
   it("should create summary memory via agent config", () => {
-    const assistant = agent({
-      model: "openai/gpt-4o",
+    const assistant = createGuideAgent({
       system: "You are a research assistant.",
       memory: { type: "summary" },
     });
@@ -649,11 +611,11 @@ describe("Guide: memory-and-streaming.mdx", () => {
 
 // === Guide: oauth.mdx ===
 import {
-  githubConfig,
-  createOAuthInitHandler,
   createOAuthCallbackHandler,
-  createOAuthStatusHandler,
   createOAuthDisconnectHandler,
+  createOAuthInitHandler,
+  createOAuthStatusHandler,
+  githubConfig,
   MemoryTokenStore,
 } from "../../src/oauth/index.ts";
 
@@ -720,10 +682,10 @@ describe("Guide: oauth.mdx", () => {
 
 // === Guide: mcp-server.mdx ===
 import {
-  createMCPServer,
-  registerTool,
-  getMCPStats,
   clearMCPRegistry,
+  createMCPServer,
+  getMCPStats,
+  registerTool,
 } from "../../src/mcp/index.ts";
 
 describe("Guide: mcp-server.mdx", () => {
@@ -789,7 +751,9 @@ describe("Guide: api-routes.mdx", () => {
       return new Response(null, { status: 204 });
     }
 
-    const response = await DELETE(new Request("http://localhost/api/users/1", { method: "DELETE" }));
+    const response = await DELETE(
+      new Request("http://localhost/api/users/1", { method: "DELETE" }),
+    );
     assertEquals(response.status, 204);
   });
 
@@ -840,10 +804,7 @@ describe("Guide: providers.mdx", () => {
   });
 
   it("should create agents with different model strings", () => {
-    const openaiAgent = agent({
-      model: "openai/gpt-4o",
-      system: "You are a helpful assistant.",
-    });
+    const openaiAgent = createGuideAgent();
     assertEquals(openaiAgent.config.model, "openai/gpt-4o");
 
     const anthropicAgent = agent({
