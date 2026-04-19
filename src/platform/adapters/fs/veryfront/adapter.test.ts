@@ -2,53 +2,8 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import { buildFileListCacheKey } from "./cache-keys.ts";
-import type { FSAdapterConfig, ResolvedContentContext } from "./types.ts";
-
-function createAdapter(
-  overrides: Partial<FSAdapterConfig> = {},
-): VeryfrontFSAdapter {
-  return new VeryfrontFSAdapter({
-    veryfront: {
-      apiBaseUrl: "https://api.example.com",
-      apiToken: "test-token",
-      projectSlug: "test-project",
-      cache: { enabled: false },
-    },
-    ...overrides,
-  });
-}
-
-function seedCachedFiles(
-  adapter: VeryfrontFSAdapter,
-  files: Array<{ id?: string; path: string; content?: string }>,
-): void {
-  const context = adapter.getContentContext();
-  if (!context) throw new Error("Content context required before seeding cache");
-
-  const cacheKey = buildFileListCacheKey(context);
-  (adapter as unknown as {
-    cache: {
-      set: (
-        key: string,
-        value: Array<{ id?: string; path: string; content?: string }>,
-      ) => void;
-    };
-  }).cache.set(cacheKey, files);
-}
-
-async function waitFor(
-  predicate: () => Promise<boolean>,
-  timeoutMs = 200,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-
-  throw new Error("Timed out waiting for condition");
-}
+import { createAdapter, seedCachedFiles, waitFor } from "./adapter.test-helpers.ts";
+import type { ResolvedContentContext } from "./types.ts";
 
 describe("VeryfrontFSAdapter", () => {
   describe("class", () => {
