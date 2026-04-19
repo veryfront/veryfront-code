@@ -1,3 +1,8 @@
+import {
+  getRegistryEntriesByCategory,
+  getRegistryEntry,
+  getRegistrySlugs,
+} from "./error-registry-helpers.ts";
 import { defineError, type ErrorCategory } from "./types.ts";
 
 // =============================================================================
@@ -801,19 +806,19 @@ export type ErrorSlug = keyof typeof ERROR_REGISTRY;
  * Get an error definition by slug
  */
 export function getErrorBySlug(slug: ErrorSlug) {
-  return ERROR_REGISTRY[slug];
+  return getRegistryEntry(ERROR_REGISTRY, slug);
 }
 
 /**
  * Get all errors in a category
  */
 export function getErrorsByCategory(category: ErrorCategory) {
-  return Object.values(ERROR_REGISTRY).filter((error) => error.category === category);
+  return getRegistryEntriesByCategory(ERROR_REGISTRY, category);
 }
 
 /**
  * Get all registered slugs
  */
 export function getAllSlugs(): ErrorSlug[] {
-  return Object.keys(ERROR_REGISTRY) as ErrorSlug[];
+  return getRegistrySlugs(ERROR_REGISTRY) as ErrorSlug[];
 }
