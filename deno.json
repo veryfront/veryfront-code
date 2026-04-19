@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.216",
+  "version": "0.1.217",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
@@ -15,7 +15,8 @@
     "data/",
     ".deno_cache/",
     "cli/templates/files/",
-    "cli/templates/integrations/"
+    "cli/templates/integrations/",
+    "extensions/"
   ],
   "exports": {
     ".": "./src/index.ts",
@@ -264,7 +265,6 @@
     "tailwindcss/defaultTheme": "https://esm.sh/tailwindcss@4.2.2/defaultTheme",
     "tailwindcss/colors": "https://esm.sh/tailwindcss@4.2.2/colors",
     "pg": "npm:pg@8.13.1",
-    "jose": "npm:jose@5.9.6",
     "@opentelemetry/api": "npm:@opentelemetry/api@1.9.0",
     "@opentelemetry/core": "npm:@opentelemetry/core@2.6.0",
     "@opentelemetry/context-async-hooks": "npm:@opentelemetry/context-async-hooks@2.6.0",
@@ -341,7 +341,7 @@
     "lint:style": "deno run --allow-read scripts/lint/enforce-style-conventions.ts",
     "lint:cli-boundary": "deno run --allow-read scripts/lint/enforce-cli-boundary.ts",
     "validate:architecture": "deno run --allow-read scripts/lint/validate-architecture.ts",
-    "lint:check-awaits": "deno run --allow-read scripts/lint/check-unawaited-promises.ts",
+    "lint:check-awaits": "deno run --allow-read --allow-env scripts/lint/check-unawaited-promises.ts",
     "dupes": "deno run --allow-read scripts/lint/find-duplicate-functions.ts",
     "lint:platform": "deno run --allow-read scripts/lint/lint-platform-agnostic.ts",
     "lint:wildcard-exports": "deno run --allow-read scripts/lint/ban-wildcard-exports.ts",

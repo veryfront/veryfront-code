@@ -18,7 +18,7 @@ VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PRO
 
 # Unit tests only (parallel, excludes integration)
 deno test --no-check --allow-all --parallel \
-  '--ignore=tests,src/ai/workflow/__tests__,src/cli/commands/*.integration.test.ts'
+  '--ignore=tests,src/workflow/__tests__,cli/commands/*.integration.test.ts'
 ```
 
 ## CLI Usage
@@ -34,38 +34,50 @@ veryfront whoami --json
 ```
 
 **Success envelope:**
+
 ```json
 { "success": true, "command": "deploy", "data": { ... }, "timing": { "duration_ms": 3200 } }
 ```
 
 **Error envelope:**
+
 ```json
-{ "success": false, "command": "deploy", "error": { "code": "PERMISSION_ERROR", "slug": "deploy-not-authorized", "message": "...", "context": {} } }
+{
+  "success": false,
+  "command": "deploy",
+  "error": {
+    "code": "PERMISSION_ERROR",
+    "slug": "deploy-not-authorized",
+    "message": "...",
+    "context": {}
+  }
+}
 ```
 
 ### Global Flags
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--json` | `-j` | Structured JSON output |
-| `--output <path>` | `-o` | Write JSON output to file |
-| `--yes` | `-y` | Skip confirmation prompts (auto-detected in CI) |
-| `--quiet` | `-q` | Suppress non-essential output |
-| `--verbose` | | Enable debug logging |
-| `--no-color` | | Disable color output |
+| Flag              | Short | Description                                     |
+| ----------------- | ----- | ----------------------------------------------- |
+| `--json`          | `-j`  | Structured JSON output                          |
+| `--output <path>` | `-o`  | Write JSON output to file                       |
+| `--yes`           | `-y`  | Skip confirmation prompts (auto-detected in CI) |
+| `--quiet`         | `-q`  | Suppress non-essential output                   |
+| `--verbose`       |       | Enable debug logging                            |
+| `--no-color`      |       | Disable color output                            |
 
 ### Exit Codes
 
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | Error |
-| 2 | Usage error |
-| 130 | Interrupted (SIGINT) |
+| Code | Meaning              |
+| ---- | -------------------- |
+| 0    | Success              |
+| 1    | Error                |
+| 2    | Usage error          |
+| 130  | Interrupted (SIGINT) |
 
 ## MCP Connection
 
 **stdio (local editors):**
+
 ```bash
 veryfront mcp
 ```
@@ -80,13 +92,16 @@ MCP auto-starts on `--port` + 2 (default: 3002) with `veryfront dev`. With `very
 ## Agent Workflows
 
 ### Session Start
+
 Call `vf_bootstrap` once at session start for full project context:
+
 ```
 # Single call replaces: vf_get_project_context + vf_get_conventions + vf_get_errors + vf_get_status
 vf_bootstrap()
 ```
 
 ### Development Loop (Flywheel)
+
 1. Edit code
 2. `vf_trigger_hmr({ path: "app/page.tsx" })` — push changes to browser
 3. `vf_get_errors()` — check for compile/runtime errors
@@ -95,6 +110,7 @@ vf_bootstrap()
 6. Iterate
 
 ### Build & Deploy
+
 1. `vf_run_tests({ parallel: true })` — full test suite
 2. `vf_run_lint()` — verify no lint issues
 3. `vf_build({ dryRun: true })` — preview build output
@@ -104,13 +120,15 @@ vf_bootstrap()
 
 ```
 src/                    # Core framework modules
-├── ai/                 # AI workflows, tool definitions
+├── agent/              # AI agents
 ├── build/              # Build pipeline
 ├── config/             # Configuration resolution
 ├── errors/             # VeryfrontError registry
 ├── mcp/                # MCP protocol types
 ├── platform/           # Deno/Node platform abstraction
 ├── provider/           # AI model providers
+├── tool/               # Tool definitions
+├── workflow/           # AI workflows
 └── ...
 
 cli/                    # CLI layer (see cli/AGENTS.md for details)
@@ -156,7 +174,7 @@ Match errors with: `error instanceof VeryfrontError && error.slug === "my-error-
 
 ```typescript
 import { z } from "zod";
-import { createArgParser, CommonArgs } from "#cli/shared/args";
+import { CommonArgs, createArgParser } from "#cli/shared/args";
 
 const Schema = z.object({ force: z.boolean().default(false) });
 const parseArgs = createArgParser(Schema, { force: CommonArgs.force });
@@ -165,6 +183,7 @@ const parseArgs = createArgParser(Schema, { force: CommonArgs.force });
 ### Command Structure
 
 Each command lives in `cli/commands/{name}/` with:
+
 - `handler.ts` — entry point, signature: `(args: ParsedArgs) => Promise<void>`
 - `command.ts` — Zod schema, arg parser, business logic
 - `command-help.ts` — `CommandHelp` object with name, category, description, usage, options, examples

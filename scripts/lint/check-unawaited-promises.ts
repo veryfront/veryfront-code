@@ -6,9 +6,9 @@
  * - cleanupBundler() (known to be async)
  */
 
-import { relative } from "../src/platform/compat/path/index.ts";
-import { createFileSystem, FileSystem } from "../src/platform/compat/fs.ts";
-import { cwd, exit } from "../src/platform/compat/process.ts";
+import { relative } from "../../src/platform/compat/path/index.ts";
+import { createFileSystem, FileSystem } from "../../src/platform/compat/fs.ts";
+import { cwd, exit } from "../../src/platform/compat/process.ts";
 
 interface Issue {
   file: string;
