@@ -12,6 +12,7 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createChatHandler } from "./chat-handler.ts";
 import { registerAgent } from "./composition/index.ts";
+import { createChatRequest, registerStreamAgent } from "./chat-handler.test-helpers.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 describe("createChatHandler", () => {
@@ -102,8 +103,7 @@ describe("createChatHandler", () => {
     let streamMessages: Array<{ id: string; role: string; parts: unknown[] }> = [];
     let streamContext: Record<string, unknown> | undefined;
 
-    const fakeAgent = {
-      id: agentId,
+    registerStreamAgent(agentId, {
       config: { model: "openai/gpt-4o", system: "Hook test bot" },
       clearMemory: async () => {
         clearMemoryCalls++;
@@ -120,10 +120,7 @@ describe("createChatHandler", () => {
           toDataStreamResponse: () => new Response("ok", { status: 200 }),
         };
       },
-    };
-
-    // deno-lint-ignore no-explicit-any
-    registerAgent(agentId, fakeAgent as any);
+    });
 
     const handler = createChatHandler(agentId, {
       context: { tenant: "acme" },
@@ -143,19 +140,13 @@ describe("createChatHandler", () => {
       },
     });
 
-    const request = new Request("http://localhost/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [
-          {
-            id: "msg-1",
-            role: "user",
-            parts: [{ type: "text", text: "Where are the docs?" }],
-          },
-        ],
-      }),
-    });
+    const request = createChatRequest([
+      {
+        id: "msg-1",
+        role: "user",
+        parts: [{ type: "text", text: "Where are the docs?" }],
+      },
+    ]);
 
     const response = await handler(request);
     assertEquals(response.status, 200);
@@ -181,8 +172,7 @@ describe("createChatHandler", () => {
     let clearMemoryCalls = 0;
     let streamCalls = 0;
 
-    const fakeAgent = {
-      id: agentId,
+    registerStreamAgent(agentId, {
       config: { model: "openai/gpt-4o", system: "Short-circuit bot" },
       clearMemory: async () => {
         clearMemoryCalls++;
@@ -193,28 +183,13 @@ describe("createChatHandler", () => {
           toDataStreamResponse: () => new Response("ok", { status: 200 }),
         };
       },
-    };
-
-    // deno-lint-ignore no-explicit-any
-    registerAgent(agentId, fakeAgent as any);
+    });
 
     const handler = createChatHandler(agentId, {
       beforeStream: () => Response.json({ error: "Unauthorized" }, { status: 401 }),
     });
 
-    const request = new Request("http://localhost/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [
-          {
-            id: "msg-1",
-            role: "user",
-            parts: [{ type: "text", text: "hello" }],
-          },
-        ],
-      }),
-    });
+    const request = createChatRequest();
 
     const response = await handler(request);
     const body = await response.json();
@@ -390,15 +365,7 @@ describe("createChatHandler", () => {
       }),
     });
 
-    const request = new Request("http://localhost/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [
-          { id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] },
-        ],
-      }),
-    });
+    const request = createChatRequest();
 
     await handler(request);
 
@@ -444,15 +411,7 @@ describe("createChatHandler", () => {
       }),
     });
 
-    const request = new Request("http://localhost/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [
-          { id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] },
-        ],
-      }),
-    });
+    const request = createChatRequest();
 
     await handler(request);
 
@@ -506,15 +465,7 @@ describe("createChatHandler", () => {
       }),
     });
 
-    const request = new Request("http://localhost/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [
-          { id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] },
-        ],
-      }),
-    });
+    const request = createChatRequest();
 
     await handler(request);
 
@@ -570,15 +521,7 @@ describe("createChatHandler", () => {
       }),
     });
 
-    const request = new Request("http://localhost/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [
-          { id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] },
-        ],
-      }),
-    });
+    const request = createChatRequest();
 
     await handler(request);
 
@@ -631,15 +574,7 @@ describe("createChatHandler", () => {
       }),
     });
 
-    const request = new Request("http://localhost/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [
-          { id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] },
-        ],
-      }),
-    });
+    const request = createChatRequest();
 
     await handler(request);
 
@@ -691,15 +626,7 @@ describe("createChatHandler", () => {
       }),
     });
 
-    const request = new Request("http://localhost/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [
-          { id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] },
-        ],
-      }),
-    });
+    const request = createChatRequest();
 
     await handler(request);
 
