@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 import {
   assertProjectSourcePath,
+  buildContentPreview,
   buildReadFetchState,
   getResolvedCacheKey,
   isNotFoundLikeError,
@@ -96,6 +97,14 @@ describe("read-operations helpers", () => {
         getResolvedCacheKey("file:branch:demo:main", "pages/index.tsx"),
         "file:branch:demo:main:pages/index.tsx",
       );
+    });
+
+    it("builds content previews without changing short strings", () => {
+      assertEquals(buildContentPreview("short text"), "short text");
+    });
+
+    it("truncates long content previews with an ellipsis", () => {
+      assertEquals(buildContentPreview("abcdefghijklmnopqrstuvwxyz", 10), "abcdefghij...");
     });
 
     it("splits known file extensions", () => {
