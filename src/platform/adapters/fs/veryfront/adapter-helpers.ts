@@ -9,8 +9,12 @@ export const DEFAULT_CACHE_TTL_MS = 60_000;
 export const DEFAULT_CACHE_MAX_ENTRIES = 1_000;
 export const DEFAULT_CACHE_MAX_MEMORY_BYTES = 100 * 1024 * 1024;
 
+type VeryfrontConfigOverrides = NonNullable<FSAdapterConfig["veryfront"]>;
+type RetryOverrides = VeryfrontConfigOverrides["retry"];
+type CacheOverrides = VeryfrontConfigOverrides["cache"];
+
 export function buildRetryConfig(
-  retry: FSAdapterConfig["veryfront"] extends { retry?: infer T } ? T : never,
+  retry?: RetryOverrides,
 ): NonNullable<VeryfrontAPIConfig["retry"]> {
   return {
     maxRetries: DEFAULT_MAX_RETRIES,
@@ -21,7 +25,7 @@ export function buildRetryConfig(
 }
 
 export function buildFileCacheOptions(
-  cache: FSAdapterConfig["veryfront"] extends { cache?: infer T } ? T : never,
+  cache?: CacheOverrides,
 ): FileCacheOptions {
   return {
     enabled: true,
