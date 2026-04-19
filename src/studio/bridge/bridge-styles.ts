@@ -7,6 +7,11 @@
  * Gellix font is proprietary and unavailable in the preview iframe.
  */
 
+import {
+  createOverlayStyleElement,
+  hasOverlayStyleElement,
+  normalizeStyleInjectionWarningContext,
+} from "./bridge-style-helpers.ts";
 import { logger } from "./bridge-logger.ts";
 
 const OVERLAY_CSS = `
@@ -826,10 +831,8 @@ const OVERLAY_CSS = `
 `;
 
 export function injectOverlayStyles(): void {
-  if (document.getElementById("vf-overlay-styles")) return;
-  const style = document.createElement("style");
-  style.id = "vf-overlay-styles";
-  style.textContent = OVERLAY_CSS;
+  if (hasOverlayStyleElement(document)) return;
+  const style = createOverlayStyleElement(document, OVERLAY_CSS);
   try {
     document.head.appendChild(style);
     if (!style.sheet) {
@@ -838,9 +841,7 @@ export function injectOverlayStyles(): void {
   } catch (error) {
     logger.warn(
       "Failed to inject bridge styles. This may be caused by CSP style-src restrictions.",
-      error instanceof Error ? error : {
-        error: String(error),
-      },
+      normalizeStyleInjectionWarningContext(error),
     );
   }
 }
