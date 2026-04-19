@@ -29,22 +29,15 @@ import {
   isAutoInstrumentEnabled,
 } from "./auto-instrument/index.ts";
 import { __resetAutoInstrumentForTests } from "./auto-instrument/orchestrator.ts";
+import {
+  createResolvedFetch,
+  createThrowingFetch,
+  withMockFetch,
+} from "./auto-instrument.test-helpers.ts";
 
 beforeEach((): void => {
   __resetAutoInstrumentForTests();
 });
-
-function withMockFetch<T>(mock: typeof fetch | undefined, fn: () => T): T {
-  const originalFetch = globalThis.fetch;
-  // @ts-ignore - allow setting undefined for tests
-  globalThis.fetch = mock;
-
-  try {
-    return fn();
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-}
 
 describe("Auto-Instrumentation", () => {
   describe("initAutoInstrumentation", () => {
@@ -357,35 +350,35 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should create span for fetch calls with string URL", () => {
-      withMockFetch((() => Promise.resolve(new Response("OK"))) as typeof fetch, () => {
+      withMockFetch(createResolvedFetch(new Response("OK")), () => {
         instrumentFetch();
         assertExists(globalThis.fetch);
       });
     });
 
     it("should create span for fetch calls with URL object", () => {
-      withMockFetch((() => Promise.resolve(new Response("OK"))) as typeof fetch, () => {
+      withMockFetch(createResolvedFetch(new Response("OK")), () => {
         instrumentFetch();
         assertExists(globalThis.fetch);
       });
     });
 
     it("should create span for fetch calls with Request object", () => {
-      withMockFetch((() => Promise.resolve(new Response("OK"))) as typeof fetch, () => {
+      withMockFetch(createResolvedFetch(new Response("OK")), () => {
         instrumentFetch();
         assertExists(globalThis.fetch);
       });
     });
 
     it("should record HTTP method from init options", () => {
-      withMockFetch((() => Promise.resolve(new Response("OK"))) as typeof fetch, () => {
+      withMockFetch(createResolvedFetch(new Response("OK")), () => {
         instrumentFetch();
         assertExists(globalThis.fetch);
       });
     });
 
     it("should default to GET method when not specified", () => {
-      withMockFetch((() => Promise.resolve(new Response("OK"))) as typeof fetch, () => {
+      withMockFetch(createResolvedFetch(new Response("OK")), () => {
         instrumentFetch();
         assertExists(globalThis.fetch);
       });
@@ -393,13 +386,12 @@ describe("Auto-Instrumentation", () => {
 
     it("should record response status and content length", () => {
       withMockFetch(
-        (() =>
-          Promise.resolve(
-            new Response("test", {
-              status: 200,
-              headers: { "content-length": "4" },
-            }),
-          )) as typeof fetch,
+        createResolvedFetch(
+          new Response("test", {
+            status: 200,
+            headers: { "content-length": "4" },
+          }),
+        ),
         () => {
           instrumentFetch();
           assertExists(globalThis.fetch);
@@ -422,9 +414,7 @@ describe("Auto-Instrumentation", () => {
 
     it("should handle fetch errors", () => {
       withMockFetch(
-        (() => {
-          throw new Error("Network error");
-        }) as unknown as typeof fetch,
+        createThrowingFetch(new Error("Network error")),
         () => {
           instrumentFetch();
           assertExists(globalThis.fetch);
@@ -434,9 +424,7 @@ describe("Auto-Instrumentation", () => {
 
     it("should record error type on fetch failure", () => {
       withMockFetch(
-        (() => {
-          throw new TypeError("Failed to fetch");
-        }) as unknown as typeof fetch,
+        createThrowingFetch(new TypeError("Failed to fetch")),
         () => {
           instrumentFetch();
           assertExists(globalThis.fetch);
