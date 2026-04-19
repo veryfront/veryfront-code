@@ -2,6 +2,13 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#std/path.ts";
 import { generateIntegration, type IntegrationGeneratorOptions } from "./integration-generator.ts";
+import {
+  getNonInteractiveConfig,
+  getToolExecuteBody,
+  getToolInputSchema,
+  parseScopes,
+  validateIntegrationName,
+} from "./integration-generator-helpers.ts";
 
 describe("cli/commands/generate/integration-generator", () => {
   describe("IntegrationGeneratorOptions type", () => {
@@ -44,14 +51,6 @@ describe("cli/commands/generate/integration-generator", () => {
   });
 
   describe("integration name validation pattern", () => {
-    function validateIntegrationName(name: string): void {
-      if (name && /^[a-z][a-z0-9-]*$/.test(name)) return;
-
-      throw new Error(
-        "Integration name must be lowercase letters, numbers, and hyphens",
-      );
-    }
-
     function assertThrows(fn: () => void): void {
       let threw = false;
       try {
@@ -100,10 +99,6 @@ describe("cli/commands/generate/integration-generator", () => {
   });
 
   describe("scope parsing pattern", () => {
-    function parseScopes(scopes?: string): string[] {
-      return scopes?.split(",").map((s) => s.trim()) ?? [];
-    }
-
     it("should parse comma-separated scopes", () => {
       assertEquals(parseScopes("read,write"), ["read", "write"]);
     });
@@ -133,28 +128,6 @@ describe("cli/commands/generate/integration-generator", () => {
   });
 
   describe("non-interactive config construction pattern", () => {
-    function getNonInteractiveConfig(options: IntegrationGeneratorOptions) {
-      if (!options.name || !options.displayName || !options.authType) {
-        throw new Error(
-          "Non-interactive mode requires --name, --display-name, and --auth-type options",
-        );
-      }
-
-      return {
-        name: options.name.toLowerCase(),
-        displayName: options.displayName,
-        authType: options.authType,
-        apiBaseUrl: options.apiBaseUrl ?? `https://api.${options.name}.com`,
-        authorizationUrl: options.authorizationUrl,
-        tokenUrl: options.tokenUrl,
-        scopes: options.scopes?.split(",").map((s) => s.trim()) ?? [],
-        tokenAuthMethod: options.tokenAuthMethod ?? "request_body",
-        additionalAuthParams: options.additionalAuthParams ?? "",
-        usePKCE: options.usePKCE ?? false,
-        envVarPrefix: options.name.toUpperCase().replace(/-/g, "_"),
-      };
-    }
-
     function assertThrows(fn: () => void): void {
       let threw = false;
       try {
@@ -187,7 +160,7 @@ describe("cli/commands/generate/integration-generator", () => {
       assertEquals(config.envVarPrefix, "TWILIO");
       assertEquals(config.scopes.length, 2);
       assertEquals(config.tokenAuthMethod, "basic");
-      assertEquals(config.additionalAuthParams, "access_type=offline,prompt=consent");
+      assertEquals(config.additionalAuthParams, { access_type: "offline", prompt: "consent" });
       assertEquals(config.usePKCE, true);
     });
 
@@ -314,20 +287,6 @@ describe("cli/commands/generate/integration-generator", () => {
   });
 
   describe("tool input schema generation pattern", () => {
-    function getToolInputSchema(toolFile: string): string {
-      switch (toolFile) {
-        case "list-items.ts":
-          return `limit: z.number().optional().describe("Maximum number of items to return"),
-    offset: z.number().optional().describe("Number of items to skip"),`;
-        case "get-item.ts":
-          return `id: z.string().describe("The ID of the item to retrieve"),`;
-        case "search.ts":
-          return `query: z.string().describe("Search query"),`;
-        default:
-          return "";
-      }
-    }
-
     it("should return list-items schema", () => {
       const schema = getToolInputSchema("list-items.ts");
       assertEquals(schema.includes("limit"), true);
@@ -350,36 +309,6 @@ describe("cli/commands/generate/integration-generator", () => {
   });
 
   describe("tool execute body generation pattern", () => {
-    function getToolExecuteBody(toolFile: string): string {
-      switch (toolFile) {
-        case "list-items.ts":
-          return `const items = await listItems({
-        limit: input.limit,
-        offset: input.offset,
-      });
-      return {
-        success: true,
-        items,
-        count: items.length,
-      };`;
-        case "get-item.ts":
-          return `const item = await getItem(input.id);
-      return {
-        success: true,
-        item,
-      };`;
-        case "search.ts":
-          return `const results = await searchItems(input.query);
-      return {
-        success: true,
-        results,
-        count: results.length,
-      };`;
-        default:
-          return "";
-      }
-    }
-
     it("should return list-items execute body", () => {
       const body = getToolExecuteBody("list-items.ts");
       assertEquals(body.includes("listItems"), true);
