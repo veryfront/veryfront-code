@@ -163,6 +163,12 @@ interface CategorizedExports {
   components: Array<{ name: string; description: string }>;
 }
 
+const EMPTY_BARREL_JSDOC: BarrelJSDoc = {
+  description: "",
+  moduleName: "",
+  examples: [],
+};
+
 // ---------------------------------------------------------------------------
 // Curated import snippets — show the most representative imports per module
 // ---------------------------------------------------------------------------
@@ -732,15 +738,18 @@ function getExports(): ExportEntry[] {
   const exports: Record<string, string> = denoConfig.exports ?? {};
 
   return Object.entries(exports)
-    .filter(([path]) => {
-      const parts = path.split("/");
-      return parts.length <= 2;
-    })
-    .map(([exportPath, filePath]) => {
-      const slug = exportPath === "." ? "root" : exportPath.replace("./", "");
-      const importPath = exportPath === "." ? "veryfront" : `veryfront/${slug}`;
-      return { exportPath, importPath, slug, filePath };
-    });
+    .filter(([path]) => isTopLevelExportPath(path))
+    .map(([exportPath, filePath]) => createExportEntry(exportPath, filePath));
+}
+
+function isTopLevelExportPath(path: string): boolean {
+  return path.split("/").length <= 2;
+}
+
+function createExportEntry(exportPath: string, filePath: string): ExportEntry {
+  const slug = exportPath === "." ? "root" : exportPath.replace("./", "");
+  const importPath = exportPath === "." ? "veryfront" : `veryfront/${slug}`;
+  return { exportPath, importPath, slug, filePath };
 }
 
 // ---------------------------------------------------------------------------
@@ -750,12 +759,12 @@ function getExports(): ExportEntry[] {
 function parseBarrelJSDoc(content: string): BarrelJSDoc {
   const trimmed = content.trimStart();
   if (!trimmed.startsWith("/**")) {
-    return { description: "", moduleName: "", examples: [] };
+    return EMPTY_BARREL_JSDOC;
   }
 
   const endIdx = trimmed.indexOf("*/");
   if (endIdx === -1) {
-    return { description: "", moduleName: "", examples: [] };
+    return EMPTY_BARREL_JSDOC;
   }
 
   const block = trimmed.slice(3, endIdx);
@@ -776,9 +785,7 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
     }
 
     if (line.startsWith("@example")) {
-      if (inExample && exampleLines.length > 0) {
-        examples.push({ title: exampleTitle, code: exampleLines.join("\n") });
-      }
+      finalizeExample(examples, exampleTitle, exampleLines);
       exampleTitle = line.replace("@example", "").trim();
       exampleLines = [];
       inExample = true;
@@ -787,9 +794,7 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
     }
 
     if (line.startsWith("@")) {
-      if (inExample && exampleLines.length > 0) {
-        examples.push({ title: exampleTitle, code: exampleLines.join("\n") });
-      }
+      finalizeExample(examples, exampleTitle, exampleLines);
       inExample = false;
       continue;
     }
@@ -806,12 +811,22 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
     }
   }
 
-  if (inExample && exampleLines.length > 0) {
-    examples.push({ title: exampleTitle, code: exampleLines.join("\n") });
-  }
+  finalizeExample(examples, exampleTitle, exampleLines);
 
   const description = descLines.join(" ").replace(/\s+/g, " ").trim();
   return { description, moduleName, examples };
+}
+
+function finalizeExample(
+  examples: Array<{ title: string; code: string }>,
+  title: string,
+  lines: string[],
+): void {
+  if (lines.length === 0) {
+    return;
+  }
+
+  examples.push({ title, code: lines.join("\n") });
 }
 
 // ---------------------------------------------------------------------------
@@ -861,44 +876,51 @@ function categorizeNodes(nodes: DocNode[], importPath: string): CategorizedExpor
 
   for (const node of nodes) {
     const name = node.name;
-    // Use upstream JSDoc first, fall back to curated description
-    const upstreamDesc = node.jsDoc?.doc?.split("\n")[0] ?? "";
-    const desc = upstreamDesc || fallbacks[name] || "";
+    const desc = getNodeDescription(node, fallbacks);
 
     switch (node.kind) {
       case "function": {
-        if (/^[A-Z]/.test(name)) {
-          result.components.push({ name, description: desc });
-        } else {
-          result.functions.push({ name, description: desc });
-        }
+        pushNodeSummary(isComponentLikeName(name) ? result.components : result.functions, name, desc);
         break;
       }
       case "interface":
       case "typeAlias":
       case "enum":
-        result.types.push({ name, description: desc });
+        pushNodeSummary(result.types, name, desc);
         break;
       case "class":
-        result.classes.push({ name, description: desc });
+        pushNodeSummary(result.classes, name, desc);
         break;
       case "variable":
-        if (/^[A-Z]/.test(name)) {
-          result.components.push({ name, description: desc });
-        } else {
-          result.constants.push({ name, description: desc });
-        }
+        pushNodeSummary(isComponentLikeName(name) ? result.components : result.constants, name, desc);
         break;
       default:
         break;
     }
   }
 
-  for (const cat of Object.values(result)) {
+  for (const cat of Object.values(result) as Array<Array<{ name: string; description: string }>>) {
     cat.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   return result;
+}
+
+function getNodeDescription(node: DocNode, fallbacks: Record<string, string>): string {
+  const upstreamDescription = node.jsDoc?.doc?.split("\n")[0] ?? "";
+  return upstreamDescription || fallbacks[node.name] || "";
+}
+
+function isComponentLikeName(name: string): boolean {
+  return /^[A-Z]/.test(name);
+}
+
+function pushNodeSummary(
+  target: Array<{ name: string; description: string }>,
+  name: string,
+  description: string,
+): void {
+  target.push({ name, description });
 }
 
 // ---------------------------------------------------------------------------
@@ -1416,7 +1438,7 @@ function findNode(nodes: DocNode[], name: string): DocNode | undefined {
 
 function getPropertyDescription(typeName: string, propName: string, prop: InterfaceProperty): string {
   // Prefer upstream JSDoc
-  if (prop.jsDoc?.doc) return prop.jsDoc.doc.split("\n")[0];
+  if (prop.jsDoc?.doc) return prop.jsDoc.doc.split("\n")[0] ?? "";
   // Fall back to curated
   return PROPERTY_DESCRIPTIONS[typeName]?.[propName] ?? "";
 }
@@ -1514,9 +1536,10 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           }
 
           // If the param is a typed object literal, expand it
-          if (method.params.length === 1 && method.params[0].tsType?.kind === "typeLiteral") {
+          const firstParam = method.params[0];
+          if (method.params.length === 1 && firstParam?.tsType?.kind === "typeLiteral") {
             const paramDescs = methodMeta[method.name]?.params ?? {};
-            const props = method.params[0].tsType.typeLiteral?.properties ?? [];
+            const props = firstParam.tsType.typeLiteral?.properties ?? [];
             if (props.length > 0) {
               const interfaceProps: InterfaceProperty[] = props.map((p) => ({
                 name: p.name,
