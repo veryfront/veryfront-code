@@ -7,6 +7,33 @@ import { createMCPServer } from "./server.ts";
 import type { ToolListEntry } from "./types.ts";
 
 const originalFetch = globalThis.fetch;
+const MCP_URL = "http://localhost/mcp";
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+function jsonRpcRequest(
+  payload: Record<string, unknown>,
+  headers: HeadersInit = JSON_HEADERS,
+): Request {
+  return new Request(MCP_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+}
+
+function optionsRequest(origin: string): Request {
+  return new Request(MCP_URL, {
+    method: "OPTIONS",
+    headers: { Origin: origin },
+  });
+}
+
+function deleteSessionRequest(sessionId: string, headers: HeadersInit = {}): Request {
+  return new Request(MCP_URL, {
+    method: "DELETE",
+    headers: { "MCP-Session-Id": sessionId, ...headers },
+  });
+}
 
 async function initSession(handler: (req: Request) => Promise<Response>): Promise<string> {
   return initSessionWithCapabilities(handler, {});
@@ -16,22 +43,16 @@ async function initSessionWithCapabilities(
   handler: (req: Request) => Promise<Response>,
   capabilities: Record<string, unknown>,
 ): Promise<string> {
-  const response = await handler(
-    new Request("http://localhost/mcp", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 0,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-11-25",
-          capabilities,
-          clientInfo: { name: "test", version: "1.0" },
-        },
-      }),
-    }),
-  );
+  const response = await handler(jsonRpcRequest({
+    jsonrpc: "2.0",
+    id: 0,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities,
+      clientInfo: { name: "test", version: "1.0" },
+    },
+  }));
   const sessionId = response.headers.get("MCP-Session-Id");
   if (!sessionId) throw new Error("initSession: no MCP-Session-Id in response");
   return sessionId;
@@ -66,20 +87,19 @@ describe("mcp/server", () => {
     );
 
     const handler = server.createHTTPHandler();
-    const request = new Request("http://localhost/mcp", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-end-user-id": "user_123",
-        "x-project-id": "proj-abc_123",
-      },
-      body: JSON.stringify({
+    const request = jsonRpcRequest(
+      {
         jsonrpc: "2.0",
         id: 1,
         method: "tools/call",
         params: { name: "test:context", arguments: {} },
-      }),
-    });
+      },
+      {
+        ...JSON_HEADERS,
+        "x-end-user-id": "user_123",
+        "x-project-id": "proj-abc_123",
+      },
+    );
 
     const response = await handler(request);
     assertEquals(response.status, 200);
@@ -107,20 +127,19 @@ describe("mcp/server", () => {
 
     const handler = server.createHTTPHandler();
     const response = await handler(
-      new Request("http://localhost/mcp", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-end-user-id": "user 123",
-          "x-project-id": "proj/abc",
-        },
-        body: JSON.stringify({
+      jsonRpcRequest(
+        {
           jsonrpc: "2.0",
           id: 1,
           method: "tools/call",
           params: { name: "test:context", arguments: {} },
-        }),
-      }),
+        },
+        {
+          ...JSON_HEADERS,
+          "x-end-user-id": "user 123",
+          "x-project-id": "proj/abc",
+        },
+      ),
     );
 
     assertEquals(response.status, 200);
@@ -135,10 +154,7 @@ describe("mcp/server", () => {
 
     const handler = server.createHTTPHandler();
     const response = await handler(
-      new Request("http://localhost/mcp", {
-        method: "OPTIONS",
-        headers: { "Origin": "https://example.com" },
-      }),
+      optionsRequest("https://example.com"),
     );
 
     assertEquals(response.status, 204);
@@ -157,14 +173,10 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        new Request("http://localhost/mcp", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer some-token",
-          },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-        }),
+        jsonRpcRequest(
+          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          { ...JSON_HEADERS, Authorization: "Bearer some-token" },
+        ),
       );
 
       assertEquals(response.status, 401);
@@ -178,11 +190,7 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        new Request("http://localhost/mcp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-        }),
+        jsonRpcRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
       );
 
       assertEquals(response.status, 401);
@@ -196,14 +204,10 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        new Request("http://localhost/mcp", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer valid-token",
-          },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-        }),
+        jsonRpcRequest(
+          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          { ...JSON_HEADERS, Authorization: "Bearer valid-token" },
+        ),
       );
 
       assertEquals(response.status, 200);
@@ -217,14 +221,10 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        new Request("http://localhost/mcp", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer wrong-token",
-          },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-        }),
+        jsonRpcRequest(
+          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          { ...JSON_HEADERS, Authorization: "Bearer wrong-token" },
+        ),
       );
 
       assertEquals(response.status, 401);
@@ -237,10 +237,10 @@ describe("mcp/server", () => {
       const handler = server.createHTTPHandler();
 
       const response = await handler(
-        new Request("http://localhost/mcp", {
+        new Request(MCP_URL, {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
+            ...JSON_HEADERS,
             "Content-Length": "2000000",
           },
           body: "{}",
@@ -275,11 +275,7 @@ describe("mcp/server", () => {
       const handler = server.createHTTPHandler();
 
       const response = await handler(
-        new Request("http://localhost/mcp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-        }),
+        jsonRpcRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
       );
 
       assertEquals(response.status, 200);
@@ -292,7 +288,7 @@ describe("mcp/server", () => {
       const handler = server.createHTTPHandler();
 
       const response = await handler(
-        new Request("http://localhost/mcp", {
+        new Request(MCP_URL, {
           method: "POST",
           headers: { "Content-Type": "text/plain" },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
@@ -309,9 +305,9 @@ describe("mcp/server", () => {
       const handler = server.createHTTPHandler();
 
       const response = await handler(
-        new Request("http://localhost/mcp", {
+        new Request(MCP_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: JSON_HEADERS,
           body: "{invalid",
         }),
       );
@@ -331,10 +327,7 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        new Request("http://localhost/mcp", {
-          method: "OPTIONS",
-          headers: { "Origin": "https://b.com" },
-        }),
+        optionsRequest("https://b.com"),
       );
 
       assertEquals(response.status, 204);
@@ -350,10 +343,7 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        new Request("http://localhost/mcp", {
-          method: "OPTIONS",
-          headers: { "Origin": "https://evil.com" },
-        }),
+        optionsRequest("https://evil.com"),
       );
 
       assertEquals(response.status, 204);
@@ -368,10 +358,7 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        new Request("http://localhost/mcp", {
-          method: "OPTIONS",
-          headers: { "Origin": "https://example.com" },
-        }),
+        optionsRequest("https://example.com"),
       );
 
       assertEquals(response.status, 204);
@@ -383,10 +370,7 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        new Request("http://localhost/mcp", {
-          method: "OPTIONS",
-          headers: { "Origin": "https://example.com" },
-        }),
+        optionsRequest("https://example.com"),
       );
 
       assertEquals(response.status, 204);
@@ -401,14 +385,10 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        new Request("http://localhost/mcp", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Origin": "https://example.com",
-          },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-        }),
+        jsonRpcRequest(
+          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          { ...JSON_HEADERS, Origin: "https://example.com" },
+        ),
       );
 
       assertEquals(response.status, 200);
@@ -516,14 +496,10 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        new Request("http://localhost/mcp", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Origin": "https://evil.com",
-          },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-        }),
+        jsonRpcRequest(
+          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          { ...JSON_HEADERS, Origin: "https://evil.com" },
+        ),
       );
 
       assertEquals(response.status, 403);
@@ -539,14 +515,10 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        new Request("http://localhost/mcp", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Origin": "https://allowed.com",
-          },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-        }),
+        jsonRpcRequest(
+          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          { ...JSON_HEADERS, Origin: "https://allowed.com" },
+        ),
       );
 
       assertEquals(response.status, 200);
@@ -560,11 +532,7 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        new Request("http://localhost/mcp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-        }),
+        jsonRpcRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
       );
 
       assertEquals(response.status, 200);
@@ -1235,10 +1203,7 @@ describe("mcp/server", () => {
 
       // DELETE session A
       const deleteResponse = await handler(
-        new Request("http://localhost/mcp", {
-          method: "DELETE",
-          headers: { "MCP-Session-Id": sessionA },
-        }),
+        deleteSessionRequest(sessionA),
       );
       assertEquals(deleteResponse.status, 200);
 
@@ -1277,10 +1242,7 @@ describe("mcp/server", () => {
       assertEquals(server.clientSupportsElicitation("form", sessionId), true);
 
       const deleteResponse = await handler(
-        new Request("http://localhost/mcp", {
-          method: "DELETE",
-          headers: { "MCP-Session-Id": sessionId },
-        }),
+        deleteSessionRequest(sessionId),
       );
       assertEquals(deleteResponse.status, 200);
       assertEquals(server.clientSupportsElicitation("form", sessionId), false);
@@ -1404,10 +1366,7 @@ describe("mcp/server", () => {
 
       // Terminate that session
       await handler(
-        new Request("http://localhost/mcp", {
-          method: "DELETE",
-          headers: { "MCP-Session-Id": sessionId },
-        }),
+        deleteSessionRequest(sessionId),
       );
 
       // After all sessions terminated, server should not require MCP-Session-Id
@@ -1450,10 +1409,7 @@ describe("mcp/server", () => {
 
       // Terminate A — B still valid
       await handler(
-        new Request("http://localhost/mcp", {
-          method: "DELETE",
-          headers: { "MCP-Session-Id": sessionA },
-        }),
+        deleteSessionRequest(sessionA),
       );
 
       const resB = await handler(
