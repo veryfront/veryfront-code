@@ -339,7 +339,7 @@
     "lint:style": "deno run --allow-read scripts/lint/enforce-style-conventions.ts",
     "lint:cli-boundary": "deno run --allow-read scripts/lint/enforce-cli-boundary.ts",
     "validate:architecture": "deno run --allow-read scripts/lint/validate-architecture.ts",
-    "lint:check-awaits": "deno run --allow-read scripts/lint/check-unawaited-promises.ts",
+    "lint:check-awaits": "deno run --allow-read --allow-env scripts/lint/check-unawaited-promises.ts",
     "dupes": "deno run --allow-read scripts/lint/find-duplicate-functions.ts",
     "lint:platform": "deno run --allow-read scripts/lint/lint-platform-agnostic.ts",
     "lint:wildcard-exports": "deno run --allow-read scripts/lint/ban-wildcard-exports.ts",
