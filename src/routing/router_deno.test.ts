@@ -1,87 +1,90 @@
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageRouteMatcher } from "./matchers/index.ts";
+import {
+  createRouterWithRoutes,
+  expectNoRouteMatch,
+  expectRouteMatch,
+} from "./router_deno.test-helpers.ts";
 
 describe("PageRouteMatcher", () => {
   describe("Static routes", () => {
     it("matches exact static routes", () => {
-      const router = new PageRouteMatcher();
-      router.addRoute("/about", "pages/about.tsx");
-      router.addRoute("/contact", "pages/contact.tsx");
+      const router = createRouterWithRoutes([
+        { pattern: "/about", page: "pages/about.tsx" },
+        { pattern: "/contact", page: "pages/contact.tsx" },
+      ]);
 
-      const match = router.match("/about");
-      assertExists(match);
-      assertEquals(match.route.page, "pages/about.tsx");
-      assertEquals(match.params, {});
+      expectRouteMatch(router, "/about", {
+        page: "pages/about.tsx",
+        params: {},
+      });
     });
 
     it("returns null for non-matching routes", () => {
-      const router = new PageRouteMatcher();
-      router.addRoute("/about", "pages/about.tsx");
+      const router = createRouterWithRoutes([
+        { pattern: "/about", page: "pages/about.tsx" },
+      ]);
 
-      assertEquals(router.match("/not-found"), null);
+      expectNoRouteMatch(router, "/not-found");
     });
 
     it("normalizes trailing slashes", () => {
-      const router = new PageRouteMatcher();
-      router.addRoute("/about", "pages/about.tsx");
+      const router = createRouterWithRoutes([
+        { pattern: "/about", page: "pages/about.tsx" },
+      ]);
 
-      const match1 = router.match("/about");
-      const match2 = router.match("/about/");
+      const match1 = expectRouteMatch(router, "/about");
+      const match2 = expectRouteMatch(router, "/about/");
 
-      assertExists(match1);
-      assertExists(match2);
       assertEquals(match1.route.page, match2.route.page);
     });
 
     it("handles root route", () => {
-      const router = new PageRouteMatcher();
-      router.addRoute("/", "pages/index.tsx");
+      const router = createRouterWithRoutes([
+        { pattern: "/", page: "pages/index.tsx" },
+      ]);
 
-      const match = router.match("/");
-      assertExists(match);
-      assertEquals(match.route.page, "pages/index.tsx");
+      expectRouteMatch(router, "/", { page: "pages/index.tsx" });
     });
   });
 
   describe("Dynamic segments", () => {
     it("matches single dynamic segment", () => {
-      const router = new PageRouteMatcher();
-      router.addRoute("/blog/[slug]", "pages/blog/[slug].tsx");
+      const router = createRouterWithRoutes([
+        { pattern: "/blog/[slug]", page: "pages/blog/[slug].tsx" },
+      ]);
 
-      const match = router.match("/blog/hello-world");
-      assertExists(match);
-      assertEquals(match.params, { slug: "hello-world" });
+      expectRouteMatch(router, "/blog/hello-world", { params: { slug: "hello-world" } });
     });
 
     it("matches multiple dynamic segments", () => {
-      const router = new PageRouteMatcher();
-      router.addRoute("/shop/[category]/[product]", "pages/shop/[category]/[product].tsx");
+      const router = createRouterWithRoutes([
+        { pattern: "/shop/[category]/[product]", page: "pages/shop/[category]/[product].tsx" },
+      ]);
 
-      const match = router.match("/shop/electronics/laptop");
-      assertExists(match);
-      assertEquals(match.params, {
-        category: "electronics",
-        product: "laptop",
+      expectRouteMatch(router, "/shop/electronics/laptop", {
+        params: {
+          category: "electronics",
+          product: "laptop",
+        },
       });
     });
 
     it("decodes URL encoded parameters", () => {
-      const router = new PageRouteMatcher();
-      router.addRoute("/user/[name]", "pages/user/[name].tsx");
+      const router = createRouterWithRoutes([
+        { pattern: "/user/[name]", page: "pages/user/[name].tsx" },
+      ]);
 
-      const match = router.match("/user/John%20Doe");
-      assertExists(match);
-      assertEquals(match.params, { name: "John Doe" });
+      expectRouteMatch(router, "/user/John%20Doe", { params: { name: "John Doe" } });
     });
 
     it("handles special characters in dynamic segments", () => {
-      const router = new PageRouteMatcher();
-      router.addRoute("/tag/[name]", "pages/tag/[name].tsx");
+      const router = createRouterWithRoutes([
+        { pattern: "/tag/[name]", page: "pages/tag/[name].tsx" },
+      ]);
 
-      const match = router.match("/tag/c%2B%2B");
-      assertExists(match);
-      assertEquals(match.params, { name: "c++" });
+      expectRouteMatch(router, "/tag/c%2B%2B", { params: { name: "c++" } });
     });
   });
 
@@ -215,10 +218,11 @@ describe("PageRouteMatcher", () => {
     });
 
     it("caches null results", () => {
-      const router = new PageRouteMatcher();
-      router.addRoute("/about", "pages/about.tsx");
+      const router = createRouterWithRoutes([
+        { pattern: "/about", page: "pages/about.tsx" },
+      ]);
 
-      assertEquals(router.match("/not-found"), null);
+      expectNoRouteMatch(router, "/not-found");
       assertEquals(router.match("/not-found"), null);
     });
 
@@ -664,14 +668,13 @@ describe("PageRouteMatcher", () => {
     });
 
     it("handles cache for trailing slash normalized paths", () => {
-      const router = new PageRouteMatcher();
-      router.addRoute("/about", "pages/about.tsx");
+      const router = createRouterWithRoutes([
+        { pattern: "/about", page: "pages/about.tsx" },
+      ]);
 
-      const match1 = router.match("/about");
-      const match2 = router.match("/about/");
+      const match1 = expectRouteMatch(router, "/about");
+      const match2 = expectRouteMatch(router, "/about/");
 
-      assertExists(match1);
-      assertExists(match2);
       assertEquals(match1.route.page, match2.route.page);
     });
   });
