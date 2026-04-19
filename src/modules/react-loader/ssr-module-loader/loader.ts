@@ -16,6 +16,7 @@ import {
 } from "#veryfront/transforms/esm/import-parser.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { verifyCacheFileExists, writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
