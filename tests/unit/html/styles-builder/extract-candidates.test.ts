@@ -1,18 +1,7 @@
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { extractCandidates } from "../../../../src/html/styles-builder/tailwind-compiler.ts";
-
-function assertExtractsClasses(content: string, expectedClasses: string[]): void {
-  const result = extractCandidates(content);
-
-  for (const cls of expectedClasses) {
-    assertEquals(
-      result.includes(cls),
-      true,
-      `Expected to extract "${cls}" from content. Got: [${result.join(", ")}]`,
-    );
-  }
-}
+import { assertExtractsClasses } from "./extract-candidates.test-helpers.ts";
 
 describe("extractCandidates", () => {
   describe("Basic Utilities", () => {
