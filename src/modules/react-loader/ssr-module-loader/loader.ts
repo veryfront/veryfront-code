@@ -23,6 +23,11 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { extractComponent } from "../extract-component.ts";
 import {
+  classifyImportError,
+  createTransformCapacityError,
+  type TransformCapacityErrorMode,
+} from "./loader-helpers.ts";
+import {
   getMaxConcurrentTransforms,
   IN_PROGRESS_WAIT_TIMEOUT_MS,
   MAX_TRANSFORM_DEPTH,
@@ -58,15 +63,6 @@ import { ensureMdxModuleDependencies } from "#veryfront/transforms/mdx/esm-modul
 
 const logger = rendererLogger.component("ssr-module-loader");
 
-const MISSING_HTTP_BUNDLE_PATTERN = /veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/;
-
-type TransformCapacityErrorMode = "plain" | "build";
-
-type ImportErrorClassification =
-  | { type: "http-bundle-missing"; hash: string; message: string }
-  | { type: "module-not-found"; message: string }
-  | { type: "unknown"; message: string };
-
 /**
  * SSR Module Loader with Redis Support.
  *
@@ -89,33 +85,6 @@ export class SSRModuleLoader {
     );
   }
 
-  private classifyImportError(importError: unknown): ImportErrorClassification {
-    const message = importError instanceof Error ? importError.message : String(importError);
-    const bundleMatch = message.match(MISSING_HTTP_BUNDLE_PATTERN);
-    if (bundleMatch?.[1]) {
-      return { type: "http-bundle-missing", hash: bundleMatch[1], message };
-    }
-    if (message.includes("Cannot find module") || message.includes("Module not found")) {
-      return { type: "module-not-found", message };
-    }
-    return { type: "unknown", message };
-  }
-
-  private createTransformCapacityError(
-    mode: TransformCapacityErrorMode,
-    message: string,
-    filePath: string,
-  ): Error {
-    if (mode === "plain") return new Error(message);
-    return toError(
-      createError({
-        type: "build",
-        message,
-        context: { file: filePath, phase: "transform" },
-      }),
-    );
-  }
-
   private async withTransformCapacity<T>(
     filePath: string,
     mode: TransformCapacityErrorMode,
@@ -127,7 +96,7 @@ export class SSRModuleLoader {
     let semaphoreAcquired = false;
 
     if (!await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS)) {
-      throw this.createTransformCapacityError(
+      throw createTransformCapacityError(
         mode,
         `Project ${projectId} at transform capacity. Consider reducing page complexity or request rate.`,
         filePath,
@@ -138,7 +107,7 @@ export class SSRModuleLoader {
       if (semaphore) {
         semaphoreAcquired = await semaphore.tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
         if (!semaphoreAcquired) {
-          throw this.createTransformCapacityError(
+          throw createTransformCapacityError(
             mode,
             `Transform capacity exceeded (${semaphore.waiting} waiting). Service is overloaded.`,
             filePath,
@@ -189,7 +158,7 @@ export class SSRModuleLoader {
         { "ssr.file": fileName },
       )) as Record<string, unknown>;
     } catch (importError) {
-      const classifiedError = this.classifyImportError(importError);
+      const classifiedError = classifyImportError(importError);
 
       if (classifiedError.type === "http-bundle-missing") {
         const hash = classifiedError.hash;
