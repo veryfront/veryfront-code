@@ -39,6 +39,58 @@ function readRequestHeader(init: RequestInit | undefined, name: string): string 
   return new Headers(init.headers).get(name);
 }
 
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function captureGoogleBody(modelId = "gemini-1.5-pro") {
+  let captured: Record<string, unknown> | null = null;
+  const runtime = createGoogleModelRuntime({
+    apiKey: "k",
+    baseURL: "https://example.google.test/v1beta",
+    fetch: (_input, init) => {
+      const raw = readRequestBody(init);
+      captured = raw ? JSON.parse(raw) : null;
+      return Promise.resolve(jsonResponse({
+        candidates: [{
+          content: { role: "model", parts: [{ text: "ok" }] },
+          finishReason: "STOP",
+        }],
+        usageMetadata: {
+          promptTokenCount: 1,
+          candidatesTokenCount: 1,
+          totalTokenCount: 2,
+        },
+      }));
+    },
+  }, modelId);
+  return { runtime, getBody: () => captured };
+}
+
+function captureOpenAIBody(modelId = "gpt-4o-mini", content = "ok") {
+  let captured: Record<string, unknown> | null = null;
+  const runtime = createOpenAIModelRuntime({
+    apiKey: "k",
+    baseURL: "https://example.openai.test/v1",
+    fetch: (_input, init) => {
+      const raw = readRequestBody(init);
+      captured = raw ? JSON.parse(raw) : null;
+      return Promise.resolve(jsonResponse({
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content },
+          finish_reason: "stop",
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }));
+    },
+  }, modelId);
+  return { runtime, getBody: () => captured };
+}
+
 describe("provider/runtime-loader", () => {
   it("emits pending_input and streaming_input transitions when tool input goes silent and resumes", async () => {
     const events = await collectAsync(withToolInputStatusTransitions({
@@ -3899,31 +3951,7 @@ describe("provider/runtime-loader", () => {
     });
 
     it("emits Google google_search provider tool alongside function declarations", async () => {
-      let captured: Record<string, unknown> | null = null;
-      const runtime = createGoogleModelRuntime({
-        apiKey: "k",
-        baseURL: "https://example.google.test/v1beta",
-        fetch: (_input, init) => {
-          const raw = readRequestBody(init);
-          captured = raw ? JSON.parse(raw) : null;
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                candidates: [{
-                  content: { role: "model", parts: [{ text: "ok" }] },
-                  finishReason: "STOP",
-                }],
-                usageMetadata: {
-                  promptTokenCount: 1,
-                  candidatesTokenCount: 1,
-                  totalTokenCount: 2,
-                },
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
-          );
-        },
-      }, "gemini-2.5-pro");
+      const { runtime, getBody } = captureGoogleBody("gemini-2.5-pro");
       await runtime.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "Search" }] }],
         tools: [
@@ -3940,38 +3968,14 @@ describe("provider/runtime-loader", () => {
           },
         ],
       });
-      const body = captured as { tools: Array<Record<string, unknown>> } | null;
+      const body = getBody() as { tools: Array<Record<string, unknown>> } | null;
       assertEquals(body!.tools.length, 2);
       assertEquals("functionDeclarations" in (body!.tools[0] as Record<string, unknown>), true);
       assertEquals(body!.tools[1], { googleSearch: {} });
     });
 
     it("emits Google safetySettings when googleSafetySettings is set", async () => {
-      let captured: Record<string, unknown> | null = null;
-      const runtime = createGoogleModelRuntime({
-        apiKey: "k",
-        baseURL: "https://example.google.test/v1beta",
-        fetch: (_input, init) => {
-          const raw = readRequestBody(init);
-          captured = raw ? JSON.parse(raw) : null;
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                candidates: [{
-                  content: { role: "model", parts: [{ text: "ok" }] },
-                  finishReason: "STOP",
-                }],
-                usageMetadata: {
-                  promptTokenCount: 1,
-                  candidatesTokenCount: 1,
-                  totalTokenCount: 2,
-                },
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
-          );
-        },
-      }, "gemini-1.5-pro");
+      const { runtime, getBody } = captureGoogleBody();
       await runtime.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
         googleSafetySettings: [
@@ -3979,7 +3983,7 @@ describe("provider/runtime-loader", () => {
           { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
         ],
       });
-      const body = captured as { safetySettings: unknown } | null;
+      const body = getBody() as { safetySettings: unknown } | null;
       assertEquals(body!.safetySettings, [
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
         { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
@@ -3987,219 +3991,63 @@ describe("provider/runtime-loader", () => {
     });
 
     it("omits safetySettings when googleSafetySettings is unset or empty", async () => {
-      let captured: Record<string, unknown> | null = null;
-      const runtime = createGoogleModelRuntime({
-        apiKey: "k",
-        baseURL: "https://example.google.test/v1beta",
-        fetch: (_input, init) => {
-          const raw = readRequestBody(init);
-          captured = raw ? JSON.parse(raw) : null;
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                candidates: [{
-                  content: { role: "model", parts: [{ text: "ok" }] },
-                  finishReason: "STOP",
-                }],
-                usageMetadata: {
-                  promptTokenCount: 1,
-                  candidatesTokenCount: 1,
-                  totalTokenCount: 2,
-                },
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
-          );
-        },
-      }, "gemini-1.5-pro");
+      const { runtime, getBody } = captureGoogleBody();
       await runtime.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
         googleSafetySettings: [],
       });
-      assertEquals("safetySettings" in (captured ?? {}), false);
+      assertEquals("safetySettings" in (getBody() ?? {}), false);
     });
 
     it("emits Google cachedContent when googleCachedContent is set", async () => {
-      let captured: Record<string, unknown> | null = null;
-      const runtime = createGoogleModelRuntime({
-        apiKey: "k",
-        baseURL: "https://example.google.test/v1beta",
-        fetch: (_input, init) => {
-          const raw = readRequestBody(init);
-          captured = raw ? JSON.parse(raw) : null;
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                candidates: [{
-                  content: { role: "model", parts: [{ text: "ok" }] },
-                  finishReason: "STOP",
-                }],
-                usageMetadata: {
-                  promptTokenCount: 1,
-                  candidatesTokenCount: 1,
-                  totalTokenCount: 2,
-                },
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
-          );
-        },
-      }, "gemini-1.5-pro");
+      const { runtime, getBody } = captureGoogleBody();
       await runtime.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
         googleCachedContent: "cachedContents/abc123",
       });
-      const body = captured as { cachedContent: string } | null;
+      const body = getBody() as { cachedContent: string } | null;
       assertEquals(body!.cachedContent, "cachedContents/abc123");
     });
 
     it("omits cachedContent when googleCachedContent is unset", async () => {
-      let captured: Record<string, unknown> | null = null;
-      const runtime = createGoogleModelRuntime({
-        apiKey: "k",
-        baseURL: "https://example.google.test/v1beta",
-        fetch: (_input, init) => {
-          const raw = readRequestBody(init);
-          captured = raw ? JSON.parse(raw) : null;
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                candidates: [{
-                  content: { role: "model", parts: [{ text: "ok" }] },
-                  finishReason: "STOP",
-                }],
-                usageMetadata: {
-                  promptTokenCount: 1,
-                  candidatesTokenCount: 1,
-                  totalTokenCount: 2,
-                },
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
-          );
-        },
-      }, "gemini-1.5-pro");
+      const { runtime, getBody } = captureGoogleBody();
       await runtime.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
       });
-      assertEquals("cachedContent" in (captured ?? {}), false);
+      assertEquals("cachedContent" in (getBody() ?? {}), false);
     });
 
     it("emits OpenAI service_tier when serviceTier is set", async () => {
-      let captured: Record<string, unknown> | null = null;
-      const runtime = createOpenAIModelRuntime({
-        apiKey: "k",
-        baseURL: "https://example.openai.test/v1",
-        fetch: (_input, init) => {
-          const raw = readRequestBody(init);
-          captured = raw ? JSON.parse(raw) : null;
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                choices: [{
-                  index: 0,
-                  message: { role: "assistant", content: "ok" },
-                  finish_reason: "stop",
-                }],
-                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
-          );
-        },
-      }, "gpt-4o-mini");
+      const { runtime, getBody } = captureOpenAIBody();
       await runtime.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
         serviceTier: "flex",
       });
-      const body = captured as { service_tier: string } | null;
+      const body = getBody() as { service_tier: string } | null;
       assertEquals(body!.service_tier, "flex");
     });
 
     it("emits OpenAI parallel_tool_calls: false when parallelToolCalls is false", async () => {
-      let captured: Record<string, unknown> | null = null;
-      const runtime = createOpenAIModelRuntime({
-        apiKey: "k",
-        baseURL: "https://example.openai.test/v1",
-        fetch: (_input, init) => {
-          const raw = readRequestBody(init);
-          captured = raw ? JSON.parse(raw) : null;
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                choices: [{
-                  index: 0,
-                  message: { role: "assistant", content: "ok" },
-                  finish_reason: "stop",
-                }],
-                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
-          );
-        },
-      }, "gpt-4o-mini");
+      const { runtime, getBody } = captureOpenAIBody();
       await runtime.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
         parallelToolCalls: false,
       });
-      const body = captured as { parallel_tool_calls: boolean } | null;
+      const body = getBody() as { parallel_tool_calls: boolean } | null;
       assertEquals(body!.parallel_tool_calls, false);
     });
 
     it("omits service_tier and parallel_tool_calls when unset", async () => {
-      let captured: Record<string, unknown> | null = null;
-      const runtime = createOpenAIModelRuntime({
-        apiKey: "k",
-        baseURL: "https://example.openai.test/v1",
-        fetch: (_input, init) => {
-          const raw = readRequestBody(init);
-          captured = raw ? JSON.parse(raw) : null;
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                choices: [{
-                  index: 0,
-                  message: { role: "assistant", content: "ok" },
-                  finish_reason: "stop",
-                }],
-                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
-          );
-        },
-      }, "gpt-4o-mini");
+      const { runtime, getBody } = captureOpenAIBody();
       await runtime.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
       });
-      assertEquals("service_tier" in (captured ?? {}), false);
-      assertEquals("parallel_tool_calls" in (captured ?? {}), false);
+      assertEquals("service_tier" in (getBody() ?? {}), false);
+      assertEquals("parallel_tool_calls" in (getBody() ?? {}), false);
     });
 
     it("emits OpenAI response_format json_schema when responseFormat is structured", async () => {
-      let captured: Record<string, unknown> | null = null;
-      const runtime = createOpenAIModelRuntime({
-        apiKey: "k",
-        baseURL: "https://example.openai.test/v1",
-        fetch: (_input, init) => {
-          const raw = readRequestBody(init);
-          captured = raw ? JSON.parse(raw) : null;
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                choices: [{
-                  index: 0,
-                  message: { role: "assistant", content: "{}" },
-                  finish_reason: "stop",
-                }],
-                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
-          );
-        },
-      }, "gpt-4o-2024-08-06");
+      const { runtime, getBody } = captureOpenAIBody("gpt-4o-2024-08-06", "{}");
       const schema = {
         type: "object",
         properties: { name: { type: "string" } },
@@ -4215,7 +4063,7 @@ describe("provider/runtime-loader", () => {
           strict: true,
         },
       });
-      const body = captured as { response_format: Record<string, unknown> } | null;
+      const body = getBody() as { response_format: Record<string, unknown> } | null;
       assertEquals(body!.response_format, {
         type: "json_schema",
         json_schema: {
@@ -4227,33 +4075,12 @@ describe("provider/runtime-loader", () => {
     });
 
     it("emits OpenAI response_format json_object for type:json", async () => {
-      let captured: Record<string, unknown> | null = null;
-      const runtime = createOpenAIModelRuntime({
-        apiKey: "k",
-        baseURL: "https://example.openai.test/v1",
-        fetch: (_input, init) => {
-          const raw = readRequestBody(init);
-          captured = raw ? JSON.parse(raw) : null;
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                choices: [{
-                  index: 0,
-                  message: { role: "assistant", content: "{}" },
-                  finish_reason: "stop",
-                }],
-                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
-          );
-        },
-      }, "gpt-4o-mini");
+      const { runtime, getBody } = captureOpenAIBody("gpt-4o-mini", "{}");
       await runtime.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
         responseFormat: { type: "json" },
       });
-      const body = captured as { response_format: { type: string } } | null;
+      const body = getBody() as { response_format: { type: string } } | null;
       assertEquals(body!.response_format, { type: "json_object" });
     });
 
