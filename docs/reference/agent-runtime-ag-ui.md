@@ -58,8 +58,54 @@ For resumable hosted runs, the package also exposes:
 - `createAgUiDetachedStartHandler()`
 - `createAgUiResumeHandler()`
 - `createAgUiCancelHandler()`
+- `parseAgUiRequest()`
+- `parseAgUiRequestOrError()`
+- `normalizeAgUiMessages()`
+- `createAgUiRunErrorEvent()`
+- `createAgUiSseErrorResponse()`
 - `AgUiResumeSignalSchema`
 - `waitForHumanInput()`
+
+## Host Parse / Normalize Helpers
+
+Hosts that keep auth, project-access, or runtime preparation local can still
+reuse the package AG-UI request plumbing directly:
+
+```ts
+import {
+  createAgUiRunErrorEvent,
+  createAgUiSseErrorResponse,
+  normalizeAgUiMessages,
+  parseAgUiRequestOrError,
+} from "veryfront/agent";
+
+export async function POST(request: Request) {
+  const parsed = await parseAgUiRequestOrError(request);
+  if (parsed instanceof Response) {
+    return parsed;
+  }
+
+  const normalizedMessages = normalizeAgUiMessages(parsed.messages);
+
+  try {
+    // host-local auth/project/runtime preparation here
+    return new Response(JSON.stringify({ ok: true, count: normalizedMessages.length }));
+  } catch (error) {
+    return createAgUiSseErrorResponse(
+      createAgUiRunErrorEvent(
+        error instanceof Error ? error.message : "Agent setup failed",
+        "SETUP_ERROR",
+      ),
+      500,
+    );
+  }
+}
+```
+
+This helper layer is intentionally narrower than `createAgUiHandler()`:
+
+- the package owns AG-UI request validation/normalization
+- the host still owns auth, project access, and runtime preparation
 
 ## Convenience Request Shape
 

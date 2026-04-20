@@ -3,18 +3,20 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { type Tool, toolRegistry } from "#veryfront/tool";
 import { streamDataStreamEvents } from "./data-stream.ts";
-import { type AgUiInjectedTool, type AgUiRequest, AgUiRequestSchema } from "./ag-ui-handler.ts";
+import {
+  type AgUiInjectedTool,
+  AgUiRequestSchema,
+  normalizeAgUiMessages,
+} from "./ag-ui-host-support.ts";
 import {
   AgentRuntime,
   RunAlreadyExistsError,
   type RunResumeSessionManager,
 } from "./runtime/index.ts";
-import type { Agent, Message } from "./types.ts";
+import type { Agent } from "./types.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const AG_UI_DETACHED_RUN_ID_SCHEMA = z.string().min(1).max(128).regex(AGENT_ID_PATTERN);
-const MAX_TEXT_PART_LENGTH = 10_000;
-
 type AgUiResumeValue = {
   result: unknown;
   isError: boolean;
@@ -25,94 +27,6 @@ type AgUiContextValue =
   | ((request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>);
 
 type AgUiRuntimePart = Record<string, unknown> & { type: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function normalizeToolArgs(part: Record<string, unknown>): Record<string, unknown> {
-  if (isRecord(part.args)) return part.args;
-  if (isRecord(part.input)) return part.input;
-  return {};
-}
-
-function normalizeMessagePart(part: Record<string, unknown>): Message["parts"][number] | null {
-  if (
-    part.type === "text" && typeof part.text === "string" &&
-    part.text.length <= MAX_TEXT_PART_LENGTH
-  ) {
-    return { type: "text", text: part.text };
-  }
-
-  if (part.type === "tool_call" && typeof part.id === "string" && typeof part.name === "string") {
-    return {
-      type: "tool-call",
-      toolCallId: part.id,
-      toolName: part.name,
-      args: normalizeToolArgs(part),
-    };
-  }
-
-  if (
-    part.type === "tool-call" &&
-    typeof part.toolCallId === "string" &&
-    typeof part.toolName === "string"
-  ) {
-    return {
-      type: "tool-call",
-      toolCallId: part.toolCallId,
-      toolName: part.toolName,
-      args: normalizeToolArgs(part),
-    };
-  }
-
-  if (
-    typeof part.type === "string" &&
-    part.type.startsWith("tool-") &&
-    part.type !== "tool-result" &&
-    typeof part.toolCallId === "string" &&
-    typeof part.toolName === "string"
-  ) {
-    return {
-      type: part.type,
-      toolCallId: part.toolCallId,
-      toolName: part.toolName,
-      args: normalizeToolArgs(part),
-    };
-  }
-
-  if (part.type === "tool_result" && typeof part.tool_call_id === "string") {
-    return {
-      type: "tool-result",
-      toolCallId: part.tool_call_id,
-      toolName: typeof part.tool_name === "string" ? part.tool_name : "unknown",
-      result: "output" in part ? part.output : undefined,
-    };
-  }
-
-  if (part.type === "tool-result" && typeof part.toolCallId === "string") {
-    return {
-      type: "tool-result",
-      toolCallId: part.toolCallId,
-      toolName: typeof part.toolName === "string" ? part.toolName : "unknown",
-      result: "result" in part ? part.result : undefined,
-    };
-  }
-
-  return null;
-}
-
-function normalizeMessages(messages: AgUiRequest["messages"]): Message[] {
-  return messages.map((message) => ({
-    id: message.id,
-    role: message.role,
-    parts: message.parts
-      .map((part) => normalizeMessagePart(part))
-      .filter((part): part is Message["parts"][number] => part !== null),
-    ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
-    ...(message.metadata ? { metadata: message.metadata } : {}),
-  }));
-}
 
 function isRequest(obj: unknown): obj is Request {
   return (
@@ -317,7 +231,7 @@ async function startDefaultDetachedExecution(input: {
   });
 
   const runtimeStream = await runtime.stream(
-    normalizeMessages(input.request.messages),
+    normalizeAgUiMessages(input.request.messages),
     buildStreamContext(input.request, input.context, input.request.threadId, input.request.runId),
     undefined,
     input.request.model,
