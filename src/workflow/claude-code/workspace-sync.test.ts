@@ -271,4 +271,30 @@ describe("WorkspaceSync symlink hardening (VULN-FS-4)", () => {
     const { workspaceDir } = await makeWorkspace(baseDir);
     assertEquals(dirname(join(workspaceDir, "a", "b.txt")), join(workspaceDir, "a"));
   });
+
+  it("detectChanges does NOT descend into symlinked directories (VULN-FS-4)", async () => {
+    const { workspace, workspaceDir } = await makeWorkspace(baseDir);
+    // Seed a legitimate file so initialize()-free harness still has something
+    // under the workspace to contrast with.
+    await workspace.writeFile("real.txt", "real");
+
+    // Put a secret file in the outside dir — it must NOT end up in changes.
+    const secret = join(escapeDir, "secret.txt");
+    await Deno.writeTextFile(secret, "this-must-not-leak");
+
+    // Plant an attacker symlink pointing to the escape directory.
+    await Deno.symlink(escapeDir, join(workspaceDir, "outside"));
+
+    // detectChanges requires initialized=true. Flip it via a tiny cast to
+    // bypass the API-dependent initialize() path for this unit test.
+    (workspace as unknown as { initialized: boolean }).initialized = true;
+
+    const changes = await workspace.detectChanges();
+
+    // Must see real.txt as created, and NOTHING whose path resolves under
+    // the escape directory.
+    const leakedPaths = changes.filter((c) => c.path.includes("outside/"));
+    assertEquals(leakedPaths, []);
+    assertEquals(changes.some((c) => c.path === "/real.txt"), true);
+  });
 });

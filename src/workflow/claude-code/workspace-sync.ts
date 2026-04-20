@@ -314,14 +314,26 @@ export class WorkspaceSync {
   }
 
   /**
-   * Recursively walk directory and detect changes
+   * Recursively walk directory and detect changes.
+   *
+   * SECURITY: Uses lstat (not stat) and skips any symlink it finds, so a
+   * symlink planted inside the workspace cannot cause us to descend into —
+   * or read the contents of — files outside the workspace (VULN-FS-4).
    */
   private async walkAndDetect(
     localPath: string,
     relativePath: string,
     changes: FileChange[],
   ): Promise<void> {
-    const stat = await Deno.stat(localPath);
+    const stat = await Deno.lstat(localPath);
+
+    // Ignore symlinks outright — we never treat them as real files here.
+    if (stat.isSymlink) {
+      if (this.config.debug) {
+        logger.info("Skipping symlink during change detection", { localPath });
+      }
+      return;
+    }
 
     if (stat.isDirectory) {
       for await (const entry of Deno.readDir(localPath)) {
@@ -334,7 +346,7 @@ export class WorkspaceSync {
       return;
     }
 
-    // It's a file - check for changes
+    // It's a regular file - check for changes
     const content = await Deno.readTextFile(localPath);
     const newHash = await checksum(content);
     const originalHash = this.fileChecksums.get(relativePath);
