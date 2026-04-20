@@ -30,6 +30,7 @@ import {
   createAgUiRuntimeHandler,
   createAgUiSseErrorResponse,
   createMemory,
+  executeAgUiDetachedStart,
   expandAllowedRemoteToolNames,
   getAgentsAsTools,
   getProviderNativeToolNames,
@@ -575,6 +576,15 @@ Options may provide either:
   while the package still owns request validation, duplicate detection, and
   session-manager lifecycle
 
+### `executeAgUiDetachedStart(options, input)`
+
+Run the detached hosted-start lifecycle from a validated
+`AgUiDetachedStartRequest` object instead of an HTTP request.
+
+Use this when the host already owns outer request parsing/auth and wants the
+package to keep duplicate detection, session-manager lifecycle, and detached
+task orchestration without reserializing through a synthetic `Request`.
+
 ### `createAgUiResumeHandler(options)`
 
 Create a generic POST handler for hosted resumable AG-UI runs.
@@ -645,6 +655,7 @@ Clear all stored messages from memory.
 | `agentAsTool`                    | Wrap agent as callable tool                                             |
 | `createAgUiCancelHandler`        | Create a DELETE handler for hosted AG-UI run cancellation               |
 | `createAgUiDetachedStartHandler` | Create a POST handler for detached hosted AG-UI run kickoff             |
+| `executeAgUiDetachedStart`       | Run detached hosted-start lifecycle from a validated request object     |
 | `createAgUiHandler`              | Create a POST handler for an AG-UI route                                |
 | `createAgUiRuntimeHandler`       | Create a POST handler for the canonical runtime AG-UI request contract  |
 | `createAgUiRunErrorEvent`        | Create a `RunError` AG-UI SSE event                                     |
@@ -701,6 +712,7 @@ Clear all stored messages from memory.
 | `AgUiDetachedStartAccepted`       | Accepted response shape for detached hosted AG-UI kickoff                    |
 | `AgUiDetachedStartHandlerOptions` | Options for `createAgUiDetachedStartHandler`                                 |
 | `AgUiDetachedStartRequest`        | Validated detached hosted AG-UI kickoff request                              |
+| `ExecuteAgUiDetachedStartInput`   | Input shape for `executeAgUiDetachedStart`                                   |
 | `Agent`                           | `agent()` return type                                                        |
 | `AgentConfig`                     | Agent configuration                                                          |
 | `AgentContext`                    | Agent handler context                                                        |

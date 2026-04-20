@@ -189,6 +189,8 @@ export {
   type AgUiDetachedStartRequest,
   AgUiDetachedStartRequestSchema,
   createAgUiDetachedStartHandler,
+  executeAgUiDetachedStart,
+  type ExecuteAgUiDetachedStartInput,
 } from "./ag-ui-detached-start.ts";
 export {
   type AgUiCancelHandlerOptions,
