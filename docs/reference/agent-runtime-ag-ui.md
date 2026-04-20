@@ -109,6 +109,11 @@ export const POST = createAgUiDetachedStartHandler({
 });
 ```
 
+Hosts that need to keep their own detached execution pipeline can pass
+`startDetachedExecution` instead of `agent`. The package still owns request
+validation, duplicate detection, session-manager lifecycle, and the accepted
+response shape.
+
 ```ts
 import {
   createAgUiCancelHandler,
