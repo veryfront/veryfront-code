@@ -263,10 +263,29 @@ async function resolveDetachedStartContext(
   return options.context;
 }
 
+function assertDetachedStartRawRequest(
+  options: AgUiDetachedStartHandlerOptions,
+  input: ExecuteAgUiDetachedStartInput,
+): Request | undefined {
+  if (!options.startDetachedExecution) {
+    return input.rawRequest;
+  }
+
+  if (input.rawRequest) {
+    return input.rawRequest;
+  }
+
+  throw INVALID_ARGUMENT.create({
+    detail:
+      "executeAgUiDetachedStart requires rawRequest when options.startDetachedExecution is used.",
+  });
+}
+
 export async function executeAgUiDetachedStart(
   options: AgUiDetachedStartHandlerOptions,
   input: ExecuteAgUiDetachedStartInput,
 ): Promise<Response> {
+  const rawRequest = assertDetachedStartRawRequest(options, input);
   const context = await resolveDetachedStartContext(options, input);
 
   try {
@@ -287,12 +306,7 @@ export async function executeAgUiDetachedStart(
           await options.startDetachedExecution({
             request: input.request,
             requestOrCtx: input.requestOrCtx,
-            rawRequest: input.rawRequest ??
-              new Request("http://localhost/api/ag-ui/runs", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(input.request),
-              }),
+            rawRequest: rawRequest!,
             context,
             abortSignal,
           });

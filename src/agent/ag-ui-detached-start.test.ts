@@ -231,6 +231,10 @@ describe("agent/ag-ui-detached-start", () => {
             parts: [{ type: "text", text: "hello" }],
           }],
         }),
+        rawRequest: new Request("http://localhost/api/ag-ui/runs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }),
       },
     );
 
@@ -264,6 +268,10 @@ describe("agent/ag-ui-detached-start", () => {
             parts: [{ type: "text", text: "hello" }],
           }],
         }),
+        rawRequest: new Request("http://localhost/api/ag-ui/runs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }),
       },
     );
 
@@ -275,6 +283,40 @@ describe("agent/ag-ui-detached-start", () => {
       threadId,
     });
     sessionManager.cancelRun("run_1");
+  });
+
+  it("fails fast when a host starter is used without a rawRequest", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+
+    try {
+      await executeAgUiDetachedStart(
+        {
+          sessionManager,
+          startDetachedExecution: async () => {},
+        },
+        {
+          request: AgUiDetachedStartRequestSchema.parse({
+            runId: "run_1",
+            threadId: crypto.randomUUID(),
+            messages: [{
+              id: "msg-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            }],
+          }),
+        },
+      );
+      throw new Error("Expected executeAgUiDetachedStart to require rawRequest");
+    } catch (error) {
+      assertStringIncludes(
+        error instanceof Error ? error.message : String(error),
+        "executeAgUiDetachedStart requires rawRequest when options.startDetachedExecution is used.",
+      );
+    }
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
   });
 
   it("supports injected client tools in detached runs", async () => {
