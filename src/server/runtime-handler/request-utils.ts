@@ -58,6 +58,7 @@ export function isMonitoringPath(pathname: string): boolean {
 /** Lightweight paths that should skip concurrency limiting (modules, static assets) */
 export const LIGHTWEIGHT_PATH_PREFIXES = [
   "/_vf_modules/",
+  "/_vf_styles/",
   "/_veryfront/modules/",
   "/_veryfront/hydration-runtime.js",
   "/_veryfront/preview-hmr.js",

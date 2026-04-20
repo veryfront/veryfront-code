@@ -31,6 +31,7 @@ describe("request-utils", () => {
 
     it("LIGHTWEIGHT_PATH_PREFIXES includes module paths", () => {
       assertEquals(LIGHTWEIGHT_PATH_PREFIXES.includes("/_vf_modules/"), true);
+      assertEquals(LIGHTWEIGHT_PATH_PREFIXES.includes("/_vf_styles/"), true);
       assertEquals(LIGHTWEIGHT_PATH_PREFIXES.includes("/_veryfront/modules/"), true);
       assertEquals(LIGHTWEIGHT_PATH_PREFIXES.includes("/_veryfront/hydration-runtime.js"), true);
     });
@@ -104,6 +105,7 @@ describe("request-utils", () => {
 
     it("returns true for CSS paths", () => {
       assertEquals(isLightweightPath("/_vf/css/styles.css"), true);
+      assertEquals(isLightweightPath("/_vf_styles/styles.css"), true);
     });
 
     it("returns true for lib module paths", () => {

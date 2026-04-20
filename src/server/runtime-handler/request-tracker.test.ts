@@ -115,6 +115,11 @@ describe("server/runtime-handler/request-tracker", () => {
       requestTracker.complete("req-mod", 200);
     });
 
+    it("should treat lightweight stylesheet requests as internal assets", () => {
+      requestTracker.start("req-style", "proj", "/_vf_styles/styles.css", "GET");
+      requestTracker.complete("req-style", 200);
+    });
+
     it("should handle _veryfront module path completion without error", () => {
       requestTracker.start("req-vf", "proj", "/_veryfront/bar.js", "GET");
       requestTracker.complete("req-vf", 200);

@@ -74,6 +74,7 @@ The package should standardize the runtime contract, not force one hardcoded rou
 Recommended default convention:
 
 - `POST /api/ag-ui`
+- `POST /api/ag-ui/runs`
 - `POST /api/ag-ui/runs/:runId/resume`
 - `DELETE /api/ag-ui/runs/:runId`
 

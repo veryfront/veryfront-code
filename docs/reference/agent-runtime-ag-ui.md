@@ -16,6 +16,7 @@ This is the package-level AG-UI contract. Veryfront Studio's internal `/internal
 - canonical hosted runtime request contract: `AgUiRuntimeRequestSchema`
 - response body: AG-UI SSE
 - default endpoint convention: `/api/ag-ui`
+- default detached hosted start endpoint: `POST /api/ag-ui/runs`
 - default hosted resume endpoint: `POST /api/ag-ui/runs/:runId/resume`
 - default hosted cancel endpoint: `DELETE /api/ag-ui/runs/:runId`
 - host path: overrideable by the application
@@ -28,11 +29,7 @@ Use `createAgUiHandler()` as a convenience wrapper when you want a direct
 route handler:
 
 ```ts
-import {
-  agent,
-  createAgUiHandler,
-  RunResumeSessionManager,
-} from "veryfront/agent";
+import { agent, createAgUiHandler, RunResumeSessionManager } from "veryfront/agent";
 
 const assistant = agent({
   system: "You are a helpful assistant.",
@@ -58,6 +55,7 @@ accepts injected client tools in `tools`, pass the same public
 
 For resumable hosted runs, the package also exposes:
 
+- `createAgUiDetachedStartHandler()`
 - `createAgUiResumeHandler()`
 - `createAgUiCancelHandler()`
 - `AgUiResumeSignalSchema`
@@ -97,6 +95,21 @@ Package-hosted resumable runs can expose generic control endpoints using the
 same `RunResumeSessionManager` that the runtime uses internally:
 
 ```ts
+import { createAgUiDetachedStartHandler, RunResumeSessionManager } from "veryfront/agent";
+
+const sessionManager = new RunResumeSessionManager<{
+  result: unknown;
+  isError: boolean;
+}>();
+
+// app/api/ag-ui/runs/route.ts
+export const POST = createAgUiDetachedStartHandler({
+  agent: assistant,
+  sessionManager,
+});
+```
+
+```ts
 import {
   createAgUiCancelHandler,
   createAgUiResumeHandler,
@@ -113,10 +126,7 @@ export const POST = createAgUiResumeHandler({ sessionManager });
 ```
 
 ```ts
-import {
-  createAgUiCancelHandler,
-  RunResumeSessionManager,
-} from "veryfront/agent";
+import { createAgUiCancelHandler, RunResumeSessionManager } from "veryfront/agent";
 
 const sessionManager = new RunResumeSessionManager<{
   result: unknown;
