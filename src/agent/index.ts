@@ -172,6 +172,14 @@ export {
   type ProviderNativeToolInventoryOptions,
 } from "./provider-native-tool-inventory.ts";
 export {
+  type AgUiDetachedStartAccepted,
+  AgUiDetachedStartAcceptedSchema,
+  type AgUiDetachedStartHandlerOptions,
+  type AgUiDetachedStartRequest,
+  AgUiDetachedStartRequestSchema,
+  createAgUiDetachedStartHandler,
+} from "./ag-ui-detached-start.ts";
+export {
   type AgUiCancelHandlerOptions,
   type AgUiResumeHandlerOptions,
   type AgUiResumeSignal,

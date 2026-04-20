@@ -7,7 +7,7 @@
 
 import { serverLogger } from "#veryfront/utils";
 import { unrefTimer } from "#veryfront/compat/process.ts";
-import { isWebSocketPath } from "./request-utils.ts";
+import { isLightweightPath, isWebSocketPath } from "./request-utils.ts";
 
 const logger = serverLogger.component("request-tracker");
 
@@ -98,8 +98,9 @@ class RequestTracker {
       releaseId,
     };
 
-    // WebSocket connections are long-lived by design — don't flag them as stuck.
-    if (!isWebSocketPath(path)) {
+    // WebSocket connections are long-lived by design and lightweight internal
+    // asset/module requests can be noisy under CI jitter — don't flag them as stuck.
+    if (!isWebSocketPath(path) && !isLightweightPath(path)) {
       tracked.slowTimer = setTimeout(() => {
         const elapsedMs = Math.round(performance.now() - startTime);
         logger.warn("Slow request detected", {
@@ -152,10 +153,7 @@ class RequestTracker {
     if (timedOut) this.totalTimedOut++;
     else this.totalCompleted++;
 
-    const isModuleRequest = tracked.path.startsWith("/_vf_modules/") ||
-      tracked.path.startsWith("/_veryfront/");
-
-    if (isModuleRequest) {
+    if (isLightweightPath(tracked.path)) {
       if (durationMs > MODULE_REQUEST_LOG_THRESHOLD_MS) {
         logger.debug(`${tracked.method} ${tracked.path} ${statusCode} ${durationMs}ms`);
       }
