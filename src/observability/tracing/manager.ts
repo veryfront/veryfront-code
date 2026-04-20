@@ -56,13 +56,37 @@ export class TracingManager {
   }
 
   private async initializeTracer(config: TracingConfig): Promise<void> {
-    const api = (await import("@opentelemetry/api")) as OpenTelemetryAPI;
+    // Use the shim API — delegates to the real SDK when ext-opentelemetry is wired.
+    const shimApi = await import("./api-shim.ts");
+    const api: OpenTelemetryAPI = {
+      trace: {
+        getTracer: (name, version) => shimApi.getTracer(name ?? "veryfront", version),
+        setSpan: (ctx, _span) => ctx,
+      },
+      propagation: {
+        setGlobalPropagator: (p) => shimApi.propagation.setGlobalPropagator(p),
+        extract: (ctx, carrier) => shimApi.propagation.extract(ctx, carrier),
+        inject: (ctx, carrier) => shimApi.propagation.inject(ctx, carrier),
+      },
+      context: {
+        active: () => shimApi.context.active(),
+        with: (ctx, fn) => shimApi.context.with(ctx, fn),
+      },
+      SpanKind: shimApi.SpanKind,
+      SpanStatusCode: { OK: shimApi.SpanStatusCode.OK, ERROR: shimApi.SpanStatusCode.ERROR },
+    };
     this.state.api = api;
 
     this.state.tracer = api.trace.getTracer(config.serviceName ?? "veryfront", VERSION);
 
-    const { W3CTraceContextPropagator } = await import("@opentelemetry/core");
-    const propagator = new W3CTraceContextPropagator();
+    // Use shim propagation (no external dep needed for W3C propagation in no-op mode)
+    const propagator = {
+      inject: (ctx: import("./api-shim.ts").Context, carrier: unknown) =>
+        shimApi.propagation.inject(ctx, carrier),
+      extract: (ctx: import("./api-shim.ts").Context, carrier: unknown) =>
+        shimApi.propagation.extract(ctx, carrier),
+      fields: () => [] as string[],
+    };
     this.state.propagator = propagator;
     api.propagation.setGlobalPropagator(propagator);
 

@@ -3,7 +3,7 @@
  * @module
  **************************************************/
 
-import type { Counter, Histogram, Meter } from "@opentelemetry/api";
+import type { Counter, Histogram, Meter } from "#veryfront/observability/tracing/api-shim.ts";
 
 export type RSCRequestKind =
   | "manifest"

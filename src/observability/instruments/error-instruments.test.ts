@@ -6,7 +6,7 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
 import { recordError } from "./error-instruments.ts";
 import { CONFIG_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
-import type { Counter } from "@opentelemetry/api";
+import type { Counter } from "#veryfront/observability/tracing/api-shim.ts";
 
 describe("error-instruments", () => {
   describe("recordError", () => {

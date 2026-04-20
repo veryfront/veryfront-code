@@ -6,6 +6,7 @@
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
+import { getGlobalMetricsAPI } from "#veryfront/observability/tracing/api-shim.ts";
 import type { OtelInstruments } from "./types.ts";
 
 let otelInitialized = false;
@@ -26,8 +27,12 @@ export async function ensureOtelInstruments(): Promise<void> {
   if (!isDeno) return;
 
   try {
-    const { metrics } = await import("@opentelemetry/api");
-    const meter = metrics.getMeter("veryfront", VERSION);
+    // The metrics API is injected by ext-opentelemetry via setGlobalMetricsAPI().
+    // When the extension is not active, the meter is unavailable and we return.
+    const metricsApi = getGlobalMetricsAPI();
+    if (!metricsApi) return;
+
+    const meter = metricsApi.getMeter("veryfront", VERSION);
 
     otel.meter = meter;
     otel.ssrHistogram = meter.createHistogram("veryfront.ssr.duration", {

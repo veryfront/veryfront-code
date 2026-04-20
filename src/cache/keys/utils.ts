@@ -9,7 +9,7 @@
 import { VERSION } from "#veryfront/utils/version.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import type { Span } from "@opentelemetry/api";
+import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 
 import { cacheRegistry } from "../registry.ts";
 

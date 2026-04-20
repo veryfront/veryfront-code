@@ -1,4 +1,4 @@
-import type { Span } from "@opentelemetry/api";
+import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 import { endSpan, setSpanAttributes, type SpanOptions, startSpan } from "../tracing/index.ts";
 import type { BatchOptions, InstrumentOptions } from "./types.ts";
 
