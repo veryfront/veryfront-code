@@ -99,6 +99,8 @@ Downstream package/framework consumers should target:
 
 - the canonical `AgUiRuntimeRequestSchema`
 - the public `parseAgUiRuntimeRequest()` / `parseAgUiRuntimeRequestOrError()` helpers when they want framework-owned runtime-request parsing without using the higher-level `createAgUiHandler()` wrapper
+- `createAgUiRuntimeHandler()` when they want package-owned runtime-request parsing plus either direct package streaming or a host-provided execution handoff
+- `normalizeAgUiRuntimeMessages()` when they need the canonical runtime-message to package-message conversion outside the default handler path
 - AG-UI SSE responses
 - the default endpoint convention `/api/ag-ui` unless a host explicitly documents another route
 
