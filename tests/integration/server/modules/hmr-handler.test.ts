@@ -200,13 +200,45 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response.status, 200);
     });
 
-    it("prefers x-forwarded-host over host when allowing local preview traffic", async () => {
+    it("IGNORES x-forwarded-host when the request is NOT proxy-trusted (VULN-SRV-4)", async () => {
+      // Without a trusted-proxy signal the handler MUST NOT honour x-forwarded-host
+      // — otherwise any remote client could claim `x-forwarded-host: preview.veryfront.me`
+      // and unlock HMR on a production deployment. The raw Host header ("internal.proxy")
+      // is non-local, so the handler should decline.
       const handler = new HMRHandler();
 
-      const req = new Request("http://localhost:3000/_ws", {
+      const req = new Request("http://internal.proxy:3000/_ws", {
         headers: {
           host: "internal.proxy:3000",
           "x-forwarded-host": "preview.veryfront.me:3000",
+        },
+      });
+      const ctx = {
+        requestContext: { mode: "production" },
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: { fs: {}, server: null },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
+    });
+
+    it("HONOURS x-forwarded-host when the request IS proxy-trusted (dispatch JWS present)", async () => {
+      // With the dispatch-JWS signal the request demonstrably came through the
+      // Veryfront fronting proxy, so the forwarded host is safe to consult. The
+      // preview.veryfront.me host is a recognised local preview surface and the
+      // handler must enter the HMR path.
+      const handler = new HMRHandler();
+
+      const req = new Request("http://internal.proxy:3000/_ws", {
+        headers: {
+          host: "internal.proxy:3000",
+          "x-forwarded-host": "preview.veryfront.me:3000",
+          "x-veryfront-dispatch-jws": "test-jws",
         },
       });
       const ctx = {
@@ -223,13 +255,16 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response.status, 200);
     });
 
-    it("rejects localhost host-header bypass when x-forwarded-host is external", async () => {
+    it("rejects x-forwarded-host spoof that tries to unlock localhost without proxy trust", async () => {
+      // Regression for VULN-SRV-4: a remote client setting x-forwarded-host: localhost
+      // against a public runtime must NOT enable HMR. The handler falls back to the raw
+      // Host ("evil.example.com"), which is non-local, so the request is declined.
       const handler = new HMRHandler();
 
-      const req = new Request("http://localhost:3000/_ws", {
+      const req = new Request("http://evil.example.com/_ws", {
         headers: {
-          host: "localhost:3000",
-          "x-forwarded-host": "evil.example.com",
+          host: "evil.example.com",
+          "x-forwarded-host": "localhost",
         },
       });
       const ctx = {
