@@ -30,6 +30,9 @@
       "docsUrl": "https://neon.tech/docs/connect/connect-from-any-app"
     }
   ],
+  "npmDependencies": {
+    "pg": "^8.13.1"
+  },
   "tools": [
     {
       "id": "list-projects",

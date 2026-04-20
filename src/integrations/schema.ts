@@ -151,6 +151,14 @@ export const IntegrationConfigSchema = z.object({
   description: z.string(),
   auth: OAuthConfigSchema,
   envVars: z.array(EnvVarSchema).optional(),
+  /**
+   * Optional map of npm packages to semver ranges. When this integration is
+   * selected during `veryfront init`, these deps are merged into the
+   * generated project's `package.json#dependencies`. Use this for templates
+   * that import packages beyond the init scaffold's defaults (react,
+   * react-dom, veryfront, zod).
+   */
+  npmDependencies: z.record(z.string(), z.string()).optional(),
   tools: z.array(IntegrationToolSchema),
   prompts: z.array(IntegrationPromptSchema).optional(),
   suggestedWith: z.array(z.string()).optional(),

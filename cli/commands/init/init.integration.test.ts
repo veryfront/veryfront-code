@@ -171,6 +171,23 @@ describe("init command integration", () => {
       const packageJson = await readTextFile(join(projectDir, "package.json"));
       assertExists(packageJson.includes("veryfront"));
     });
+
+    it("merges npm dependencies from selected integrations into package.json", async () => {
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "minimal",
+        "--integrations",
+        "neon",
+        "--skip-install",
+        "--skip-env-prompt",
+      ]);
+
+      assertEquals(result.code, 0);
+
+      const pkg = JSON.parse(await readTextFile(join(projectDir, "package.json")));
+      assertEquals(pkg.dependencies.pg, "^8.13.1");
+    });
   });
 
   describe("wizard behavior in non-TTY", () => {

@@ -5,9 +5,23 @@ import { createFileSystem } from "veryfront/platform";
 // Keep init scaffold aligned with current framework default React major/minor.
 const DEFAULT_INIT_REACT_VERSION = "19.1.1";
 
+export interface CreatePackageJsonOptions {
+  /**
+   * Selected integrations whose `connector.json#npmDependencies` should be
+   * merged into the generated project's `package.json#dependencies`.
+   * First declaration wins on version collisions; framework pins
+   * (react, react-dom, veryfront, zod) always take precedence.
+   */
+  integrations?: Array<{
+    name: string;
+    npmDependencies?: Record<string, string>;
+  }>;
+}
+
 export async function createPackageJson(
   projectDir: string,
   projectName?: string,
+  options: CreatePackageJsonOptions = {},
 ): Promise<void> {
   const fs = createFileSystem();
 
@@ -17,6 +31,24 @@ export async function createPackageJson(
   if (await fs.exists(pkgPath)) {
     const existing = JSON.parse(await fs.readTextFile(pkgPath));
     templateDeps = existing.dependencies ?? {};
+  }
+
+  // Merge per-integration deps. First declaration wins; collisions are logged.
+  const integrationDeps: Record<string, string> = {};
+  for (const integration of options.integrations ?? []) {
+    for (const [pkg, range] of Object.entries(integration.npmDependencies ?? {})) {
+      if (pkg in integrationDeps) {
+        if (integrationDeps[pkg] !== range) {
+          logger.warn(
+            `[init] ${integration.name} requested ${pkg}@${range} but ${pkg}@${
+              integrationDeps[pkg]
+            } is already pinned by an earlier integration - keeping the earlier pin`,
+          );
+        }
+        continue;
+      }
+      integrationDeps[pkg] = range;
+    }
   }
 
   const dirName = projectDir.split(/[/\\]/).pop();
@@ -34,6 +66,7 @@ export async function createPackageJson(
     },
     dependencies: {
       ...templateDeps,
+      ...integrationDeps,
       react: `^${DEFAULT_INIT_REACT_VERSION}`,
       "react-dom": `^${DEFAULT_INIT_REACT_VERSION}`,
       veryfront: `^${VERSION}`,
