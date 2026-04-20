@@ -25,22 +25,14 @@ import {
   stripChatUploadPrefix,
 } from "./command.ts";
 import { knowledgeIngestPythonSource } from "./parser-source.ts";
-import type { ApiClient } from "#cli/shared/config";
-
-function createMockClient(overrides: {
-  get?: (path: string, params?: Record<string, string>) => Promise<unknown>;
-} = {}): ApiClient {
-  return {
-    get: async <T>(path: string, params?: Record<string, string>): Promise<T> => {
-      const result = await (overrides.get?.(path, params) ?? Promise.resolve({ data: [] }));
-      return result as T;
-    },
-    post: <T>(): Promise<T> => Promise.resolve({} as T),
-    put: <T>(): Promise<T> => Promise.resolve({} as T),
-    patch: <T>(): Promise<T> => Promise.resolve({} as T),
-    delete: <T>(): Promise<T> => Promise.resolve({} as T),
-  };
-}
+import {
+  createDownloadUploadsStub,
+  createKnowledgeCommandArgs,
+  createLocalSource,
+  createMockClient,
+  createParserSuccess,
+  createUploadSource,
+} from "./command.test-helpers.ts";
 
 describe("normalizeKnowledgeInputPath", () => {
   it("normalizes safe upload paths", () => {
@@ -255,13 +247,7 @@ describe("collectKnowledgeSources", () => {
       {
         client,
         projectSlug: "my-project",
-        downloadUploads: async (uploadPaths) => {
-          downloadCalls.push(uploadPaths);
-          return uploadPaths.map((uploadPath) => ({
-            uploadPath,
-            localPath: `/workspace/${uploadPath}`,
-          }));
-        },
+        downloadUploads: createDownloadUploadsStub(downloadCalls),
       },
     );
 
@@ -611,44 +597,13 @@ describe("collectKnowledgeSources", () => {
 describe("ingestResolvedSources", () => {
   it("runs the parser and uploads knowledge markdown", async () => {
     const results = await ingestResolvedSources(
-      [{
-        kind: "upload",
-        input: "uploads/contracts/q1.pdf",
-        uploadPath: "uploads/contracts/q1.pdf",
-        localPath: "/workspace/uploads/contracts/q1.pdf",
-      }],
-      {
-        sources: [],
-        path: undefined,
-        all: false,
-        recursive: false,
-        outputDir: "/workspace/knowledge",
-        knowledgePath: "knowledge",
-        description: undefined,
-        slug: undefined,
-        json: true,
-        quiet: false,
-        projectDir: undefined,
-        projectSlug: undefined,
-      },
+      [createUploadSource("uploads/contracts/q1.pdf")],
+      createKnowledgeCommandArgs(),
       {
         client: createMockClient(),
         projectSlug: "my-project",
         outputDir: "/workspace/knowledge",
-        runParser: async () => ({
-          success: true,
-          source_path: "/workspace/uploads/contracts/q1.pdf",
-          source_filename: "q1.pdf",
-          source_type: "pdf",
-          slug: "contracts-q1",
-          sandbox_output_path: "/workspace/knowledge/contracts-q1.md",
-          suggested_project_path: "knowledge/contracts-q1.md",
-          description: "Parsed from q1.pdf",
-          title: "Q1",
-          summary: "Extracted 4 page(s).",
-          stats: { pages: 4 },
-          warnings: [],
-        }),
+        runParser: async () => createParserSuccess(),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
@@ -673,25 +628,8 @@ describe("ingestResolvedSources", () => {
     let parserSlug: string | undefined;
 
     await ingestResolvedSources(
-      [{
-        kind: "local",
-        input: "/var/folders/random/report.pdf",
-        localPath: "/var/folders/random/report.pdf",
-      }],
-      {
-        sources: [],
-        path: undefined,
-        all: false,
-        recursive: false,
-        outputDir: "/workspace/knowledge",
-        knowledgePath: "knowledge",
-        description: undefined,
-        slug: undefined,
-        json: true,
-        quiet: false,
-        projectDir: undefined,
-        projectSlug: undefined,
-      },
+      [createLocalSource("/var/folders/random/report.pdf")],
+      createKnowledgeCommandArgs(),
       {
         client: createMockClient(),
         projectSlug: "my-project",
@@ -722,43 +660,25 @@ describe("ingestResolvedSources", () => {
 
   it("uses each local file path as the source reference for walked directories", async () => {
     const results = await ingestResolvedSources(
-      [{
-        kind: "local",
-        input: "/workspace/contracts",
-        localPath: "/workspace/contracts/run_benchmark.py",
-      }],
-      {
-        sources: ["/workspace/contracts"],
-        path: undefined,
-        all: false,
-        recursive: true,
-        outputDir: "/workspace/knowledge",
-        knowledgePath: "knowledge",
-        description: undefined,
-        slug: undefined,
-        json: true,
-        quiet: false,
-        projectDir: undefined,
-        projectSlug: undefined,
-      },
+      [createLocalSource("/workspace/contracts", "/workspace/contracts/run_benchmark.py")],
+      createKnowledgeCommandArgs({ sources: ["/workspace/contracts"], recursive: true }),
       {
         client: createMockClient(),
         projectSlug: "my-project",
         outputDir: "/workspace/knowledge",
-        runParser: async () => ({
-          success: true,
-          source_path: "/workspace/contracts/run_benchmark.py",
-          source_filename: "run_benchmark.py",
-          source_type: "txt",
-          slug: "contracts-run-benchmark",
-          sandbox_output_path: "/workspace/knowledge/run-benchmark.md",
-          suggested_project_path: "knowledge/run-benchmark.md",
-          description: "Parsed from run_benchmark.py",
-          title: "Run Benchmark",
-          summary: "Parsed as text.",
-          stats: { lines: 1 },
-          warnings: [],
-        }),
+        runParser: async () =>
+          createParserSuccess({
+            source_path: "/workspace/contracts/run_benchmark.py",
+            source_filename: "run_benchmark.py",
+            source_type: "txt",
+            slug: "contracts-run-benchmark",
+            sandbox_output_path: "/workspace/knowledge/run-benchmark.md",
+            suggested_project_path: "knowledge/run-benchmark.md",
+            description: "Parsed from run_benchmark.py",
+            title: "Run Benchmark",
+            summary: "Parsed as text.",
+            stats: { lines: 1 },
+          }),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );

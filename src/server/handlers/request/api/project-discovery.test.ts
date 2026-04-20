@@ -221,6 +221,44 @@ describe(
       assertExists(skillRegistry.get("writer-helper"));
     });
 
+    it("does not warn about zero agents and tools when AI primitive discovery is disabled", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/disabled-ai-discovery-project",
+        "disabled-ai-discovery-project",
+        "preview",
+      );
+      ctx.config = {
+        ai: {
+          tools: { discovery: { enabled: false } },
+          agents: { discovery: { enabled: false } },
+          skills: { discovery: { enabled: false } },
+        },
+      } as HandlerContext["config"];
+
+      const originalWarn = console.warn;
+      const warnings: string[] = [];
+      console.warn = (message?: unknown, ...args: unknown[]) => {
+        warnings.push([message, ...args].map(String).join(" "));
+      };
+
+      try {
+        await ensureProjectDiscovery(ctx);
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        warnings.some((warning) =>
+          warning.includes("Primitive discovery found 0 agents and 0 tools")
+        ),
+        false,
+      );
+    });
+
     it("keeps explicit tool ids available for request-time project-agent runs", async () => {
       agentRegistry.clearAll();
       toolRegistry.clearAll();

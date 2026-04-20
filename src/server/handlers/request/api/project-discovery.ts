@@ -16,17 +16,23 @@ const logger = serverLogger.component("api-wrapper");
  */
 const discoveredProjects = new Map<string, Promise<void>>();
 
+function isDiscoveryEnabled(
+  discovery: { enabled?: boolean } | undefined,
+): boolean {
+  return discovery?.enabled ?? true;
+}
+
 function buildDiscoveryConfig(ctx: HandlerContext) {
   const discoveryConfig = ctx.config?.ai;
-  const skillDiscoveryEnabled = discoveryConfig?.skills?.discovery?.enabled ?? true;
+  const toolDiscovery = discoveryConfig?.tools?.discovery;
+  const agentDiscovery = discoveryConfig?.agents?.discovery;
+  const skillDiscovery = discoveryConfig?.skills?.discovery;
 
   return {
     baseDir: ctx.projectDir,
-    toolDirs: discoveryConfig?.tools?.discovery?.paths ?? ["tools"],
-    agentDirs: discoveryConfig?.agents?.discovery?.paths ?? ["agents"],
-    skillDirs: skillDiscoveryEnabled
-      ? (discoveryConfig?.skills?.discovery?.paths ?? ["skills"])
-      : [],
+    toolDirs: isDiscoveryEnabled(toolDiscovery) ? (toolDiscovery?.paths ?? ["tools"]) : [],
+    agentDirs: isDiscoveryEnabled(agentDiscovery) ? (agentDiscovery?.paths ?? ["agents"]) : [],
+    skillDirs: isDiscoveryEnabled(skillDiscovery) ? (skillDiscovery?.paths ?? ["skills"]) : [],
     resourceDirs: ["resources"],
     promptDirs: ["prompts"],
     workflowDirs: ["workflows"],
@@ -93,7 +99,10 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
     agentRegistry.clear();
     toolRegistry.clear();
 
-    const result = await discoverAll(buildDiscoveryConfig(ctx));
+    const discoveryOptions = buildDiscoveryConfig(ctx);
+    const result = await discoverAll(discoveryOptions);
+    const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||
+      discoveryOptions.agentDirs.length > 0;
 
     const logData = {
       projectSlug: ctx.projectSlug,
@@ -103,7 +112,9 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
       errors: result.errors.length,
     };
 
-    if (result.agents.size === 0 && result.tools.size === 0) {
+    if (
+      result.agents.size === 0 && result.tools.size === 0 && shouldWarnOnEmptyAiDiscovery
+    ) {
       logger.warn("Primitive discovery found 0 agents and 0 tools", {
         ...logData,
         errorMessages: result.errors.map((e) => e.error.message).slice(0, 5),

@@ -4,6 +4,7 @@ import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { InvalidationCallbacks } from "./types.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
+import { buildReloadProjectContext, getReconnectDelay } from "./websocket-manager-helpers.ts";
 import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
 
 interface TimerEntry {
@@ -124,6 +125,26 @@ function createWebSocketManager(options: {
 }
 
 describe("WebSocketManager", () => {
+  it("buildReloadProjectContext maps branch previews to preview environment", () => {
+    const context = buildReloadProjectContext(
+      { sourceType: "branch", projectSlug: "test-project", branch: "feat-x", releaseId: "rel-1" },
+      "test-project",
+      "project-1",
+      { hash: "hash-1", assetPath: "/_vf/css/hash-1.css" },
+    );
+
+    assertEquals(context.environment, "preview");
+    assertEquals(context.branch, "feat-x");
+    assertEquals(context.releaseId, "rel-1");
+    assertEquals(context.styleArtifactHash, "hash-1");
+  });
+
+  it("getReconnectDelay caps exponential backoff at the configured maximum", () => {
+    assertEquals(getReconnectDelay(1), 5000);
+    assertEquals(getReconnectDelay(2), 10000);
+    assertEquals(getReconnectDelay(6), 120000);
+    assertEquals(getReconnectDelay(10), 120000);
+  });
   let originalWebSocket: typeof WebSocket;
   let originalSetTimeout: typeof setTimeout;
   let originalClearTimeout: typeof clearTimeout;

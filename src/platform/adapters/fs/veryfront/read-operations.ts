@@ -10,6 +10,7 @@ import { PathNormalizer } from "./path-normalizer.ts";
 import type { ContentContextProvider } from "./file-list-access.ts";
 import {
   assertProjectSourcePath,
+  buildContentPreview,
   buildExtensionCandidatePaths,
   buildReadFetchState,
   createNotFoundLikeError,
@@ -32,10 +33,6 @@ const logger = baseLogger.component("read-operations");
 const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_IN_FLIGHT_REQUESTS = 100;
 const IN_FLIGHT_CLEANUP_INTERVAL_MS = 1_000;
-
-function previewText(content: string, max = 80): string {
-  return content.length > max ? `${content.slice(0, max)}...` : content;
-}
 
 export class ReadOperations {
   private readonly inFlightRequests = new InFlightRequestDeduper<string>({
@@ -110,7 +107,7 @@ export class ReadOperations {
       path: normalizedPath,
       cacheKey,
       contentLength: requestCached.length,
-      preview: previewText(requestCached).replace(/\n/g, "\\n"),
+      preview: buildContentPreview(requestCached).replace(/\n/g, "\\n"),
     });
     return requestCached;
   }
@@ -151,7 +148,7 @@ export class ReadOperations {
       path: normalizedPath,
       cacheKey,
       contentLength: cached.length,
-      preview: previewText(cached).replace(/\n/g, "\\n"),
+      preview: buildContentPreview(cached).replace(/\n/g, "\\n"),
     });
     setRequestScopedFile(cacheKey, cached);
     return cached;
@@ -772,7 +769,7 @@ export class ReadOperations {
     logger.debug("API_FETCH_DONE - got content from API", {
       path: normalizedPath,
       contentLength: content.length,
-      preview: previewText(content).replace(/\n/g, "\\n"),
+      preview: buildContentPreview(content).replace(/\n/g, "\\n"),
       willCache: shouldCache,
     });
 

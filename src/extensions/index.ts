@@ -6,6 +6,19 @@
  * helpers consumers need to load, validate, and orchestrate extensions.
  *
  * @module extensions
+ * @example
+ * ```ts
+ * import { orchestrateExtensions } from "veryfront/extensions";
+ *
+ * const loader = await orchestrateExtensions({
+ *   projectDir: Deno.cwd(),
+ *   config,
+ *   logger,
+ * });
+ *
+ * // Later, on shutdown:
+ * await loader.teardownAll();
+ * ```
  */
 
 // Core types
@@ -37,6 +50,13 @@ export {
 
 // Loader
 export { ExtensionLoader } from "./loader.ts";
+
+// Factory loader (dynamic-import of an extension factory)
+export { loadExtensionFactory } from "./factory-loader.ts";
+
+// Orchestrator (discover → load → merge → setup)
+export type { OrchestrateOptions } from "./orchestrate.ts";
+export { orchestrateExtensions } from "./orchestrate.ts";
 
 // Validation
 export type { ConflictInfo } from "./validation.ts";

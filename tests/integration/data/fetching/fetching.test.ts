@@ -16,47 +16,14 @@ import {
   redirect,
 } from "#veryfront/data/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { delay } from "#std/async";
-
-type StaticDataContext = Omit<DataContext, "request" | "query">;
-
-function withProductionContext<T>(fn: () => T | Promise<T>): T | Promise<T> {
-  return runWithCacheKeyContext(
-    { projectId: "test-project", mode: "production", versionId: "rel_test" },
-    fn,
-  );
-}
-
-function makeContext(
-  url: string,
-  params: Record<string, string | string[]> = {},
-): DataContext {
-  const u = new URL(url);
-  return {
-    params,
-    query: u.searchParams,
-    request: new Request(url),
-    url: u,
-  };
-}
-
-function makeMockAdapter(envVars: Record<string, string> = {}): Partial<RuntimeAdapter> {
-  return {
-    env: {
-      get: (key: string) => envVars[key],
-      set: () => {},
-      has: (key: string) => key in envVars,
-      delete: () => {},
-      toObject: () => envVars,
-    },
-  } as Partial<RuntimeAdapter>;
-}
-
-// deno-lint-ignore no-explicit-any
-function getProp<T>(obj: any, key: string): T {
-  return obj?.[key];
-}
+import {
+  getProp,
+  makeContext,
+  makeMockAdapter,
+  type StaticDataContext,
+  withProductionContext,
+} from "./fetching.test-helpers.ts";
 
 describe("DataFetcher - Comprehensive Tests", () => {
   describe("DataFetcher - Basic Initialization", () => {

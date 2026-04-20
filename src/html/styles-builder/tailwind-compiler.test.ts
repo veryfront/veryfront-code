@@ -379,43 +379,20 @@ describe("styles-builder/tailwind-compiler", () => {
       }
     });
 
-    it("should dynamically load a simple package without tailwindcss dependency", async () => {
+    it("should reject a non-allowlisted package before any network call (VULN-FS-1)", async () => {
       const originalFetch = globalThis.fetch;
       let fetchCallCount = 0;
-      globalThis.fetch = ((input: URL | Request | string) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
-
+      globalThis.fetch = (() => {
         fetchCallCount++;
-        if (fetchCallCount === 1) {
-          assertEquals(url.includes("is-odd@3.0.1?bundle"), true);
-          return Promise.resolve(
-            new Response(`export * from "/v1/is-odd.bundle.mjs";`, { status: 200 }),
-          );
-        }
-
-        assertEquals(url.includes("/v1/is-odd.bundle.mjs"), true);
-        return Promise.resolve(
-          new Response(`export default (n) => n % 2 === 1;`, { status: 200 }),
-        );
+        return Promise.reject(new Error("fetch must not be called"));
       }) as typeof fetch;
 
       try {
-        const mod = await loadModuleFromEsmSh("is-odd@3.0.1");
-
-        assertEquals(typeof mod, "object");
-        assertEquals(mod !== null, true);
-        const modObj = mod as { default?: unknown };
-        assertEquals("default" in modObj, true);
-
-        const isOdd = modObj.default as (n: number) => boolean;
-        assertEquals(typeof isOdd, "function");
-        assertEquals(isOdd(3), true);
-        assertEquals(isOdd(4), false);
-        assertEquals(fetchCallCount, 2);
+        await assertRejects(
+          () => loadModuleFromEsmSh("is-odd@3.0.1"),
+          Error,
+        );
+        assertEquals(fetchCallCount, 0);
       } finally {
         globalThis.fetch = originalFetch;
       }

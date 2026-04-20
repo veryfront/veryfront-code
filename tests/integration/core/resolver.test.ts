@@ -19,13 +19,55 @@ async function createTestResolver(
   });
 }
 
+async function writeProjectFile(
+  context: TestContext,
+  relativePath: string,
+  content: string,
+): Promise<string> {
+  const filePath = join(context.projectDir, ...relativePath.split("/"));
+  const parts = relativePath.split("/");
+  if (parts.length > 1) {
+    await mkdir(join(context.projectDir, ...parts.slice(0, -1)), {
+      recursive: true,
+    });
+  }
+  await writeTextFile(filePath, content);
+  return filePath;
+}
+
+function expectResolvedType(
+  resolved: Awaited<ReturnType<ModuleResolver["resolve"]>>,
+  type: string,
+): NonNullable<Awaited<ReturnType<ModuleResolver["resolve"]>>> {
+  assertExists(resolved);
+  assertEquals(resolved.type, type);
+  return resolved;
+}
+
+function expectResolvedPath(
+  resolved: Awaited<ReturnType<ModuleResolver["resolve"]>>,
+  expectedPathPart: string,
+): NonNullable<Awaited<ReturnType<ModuleResolver["resolve"]>>> {
+  assertExists(resolved);
+  assert(resolved.path.includes(expectedPathPart));
+  return resolved;
+}
+
+async function resolveAndExpectPath(
+  resolver: ModuleResolver,
+  specifier: string,
+  expectedPathPart: string,
+  referrer?: string,
+) {
+  const resolved = await resolver.resolve(specifier, referrer);
+  return expectResolvedPath(resolved, expectedPathPart);
+}
+
 describe("ModuleResolver", () => {
   describe("Basic Resolution", () => {
     it("resolves virtual, mapped, file, absolute and npm", async () => {
       await withTestContext("module-resolver", async (context) => {
-        const filePath = join(context.projectDir, "src", "lib", "util.ts");
-        await mkdir(join(context.projectDir, "src", "lib"), { recursive: true });
-        await writeTextFile(filePath, "export const x=1\n");
+        await writeProjectFile(context, "src/lib/util.ts", "export const x=1\n");
 
         const r = await createTestResolver(context, {
           importMap: { "@alias": "/src/lib/util.ts" },
@@ -35,14 +77,12 @@ describe("ModuleResolver", () => {
         const v = await r.resolve("virtual:mod");
         assert(v && v.type === "virtual" && v.content?.includes("v=1"));
 
-        const m = await r.resolve("@alias");
-        assert(m && m.type === "file" && m.path.endsWith("util.ts"));
+        const m = await resolveAndExpectPath(r, "@alias", "util.ts");
+        assertEquals(m.type, "file");
 
-        const rel = await r.resolve("../lib/util", "src/app/main.ts");
-        assert(rel?.path.endsWith("util.ts"));
+        await resolveAndExpectPath(r, "../lib/util", "util.ts", "src/app/main.ts");
 
-        const abs = await r.resolve("/src/lib/util.ts");
-        assert(abs?.path.endsWith("util.ts"));
+        await resolveAndExpectPath(r, "/src/lib/util.ts", "util.ts");
 
         const npm = await r.resolve("react");
         assertEquals(npm?.type, "npm");
@@ -169,18 +209,14 @@ describe("ModuleResolver", () => {
   describe("Import Map", () => {
     it("should resolve import map to file path", async () => {
       await withTestContext("importmap-file", async (context) => {
-        const filePath = join(context.projectDir, "src", "utils.ts");
-        await mkdir(join(context.projectDir, "src"), { recursive: true });
-        await writeTextFile(filePath, "export const util = 1");
+        await writeProjectFile(context, "src/utils.ts", "export const util = 1");
 
         const r = await createTestResolver(context, {
           importMap: { "@utils": "/src/utils.ts" },
         });
 
-        const resolved = await r.resolve("@utils");
-        assertExists(resolved);
+        const resolved = await resolveAndExpectPath(r, "@utils", "utils.ts");
         assertEquals(resolved.type, "file");
-        assert(resolved.path.endsWith("utils.ts"));
       });
     });
 
@@ -246,117 +282,92 @@ describe("ModuleResolver", () => {
   describe("Relative Imports", () => {
     it("should resolve relative import with ./ prefix", async () => {
       await withTestContext("relative-dot", async (context) => {
-        const filePath = join(context.projectDir, "src", "lib.ts");
-        await mkdir(join(context.projectDir, "src"), { recursive: true });
-        await writeTextFile(filePath, "export const lib = 1");
+        await writeProjectFile(context, "src/lib.ts", "export const lib = 1");
 
         const r = await createTestResolver(context);
 
-        const resolved = await r.resolve("./lib", "src/main.ts");
-        assertExists(resolved);
+        const resolved = await resolveAndExpectPath(r, "./lib", "lib.ts", "src/main.ts");
         assertEquals(resolved.type, "file");
-        assert(resolved.path.endsWith("lib.ts"));
       });
     });
 
     it("should resolve relative import with ../ prefix", async () => {
       await withTestContext("relative-parent", async (context) => {
-        const filePath = join(context.projectDir, "src", "util.ts");
-        await mkdir(join(context.projectDir, "src", "components"), {
-          recursive: true,
-        });
-        await writeTextFile(filePath, "export const util = 1");
+        await writeProjectFile(context, "src/util.ts", "export const util = 1");
 
         const r = await createTestResolver(context);
 
-        const resolved = await r.resolve("../util", "src/components/Button.tsx");
-        assertExists(resolved);
+        const resolved = await resolveAndExpectPath(
+          r,
+          "../util",
+          "util.ts",
+          "src/components/Button.tsx",
+        );
         assertEquals(resolved.type, "file");
-        assert(resolved.path.endsWith("util.ts"));
       });
     });
 
     it("should resolve relative import with .ts extension", async () => {
       await withTestContext("relative-ts-ext", async (context) => {
-        const filePath = join(context.projectDir, "src", "data.ts");
-        await mkdir(join(context.projectDir, "src"), { recursive: true });
-        await writeTextFile(filePath, "export const data = {}");
+        await writeProjectFile(context, "src/data.ts", "export const data = {}");
 
         const r = await createTestResolver(context);
 
-        const resolved = await r.resolve("./data.ts", "src/main.ts");
-        assertExists(resolved);
-        assert(resolved.path.endsWith("data.ts"));
+        await resolveAndExpectPath(r, "./data.ts", "data.ts", "src/main.ts");
       });
     });
 
     it("should resolve relative import with .tsx extension", async () => {
       await withTestContext("relative-tsx-ext", async (context) => {
-        const filePath = join(context.projectDir, "src", "App.tsx");
-        await mkdir(join(context.projectDir, "src"), { recursive: true });
-        await writeTextFile(filePath, "export default function App() {}");
+        await writeProjectFile(context, "src/App.tsx", "export default function App() {}");
 
         const r = await createTestResolver(context);
 
-        const resolved = await r.resolve("./App.tsx", "src/index.ts");
-        assertExists(resolved);
-        assert(resolved.path.endsWith("App.tsx"));
+        await resolveAndExpectPath(r, "./App.tsx", "App.tsx", "src/index.ts");
       });
     });
 
     it("should resolve relative import with .js extension", async () => {
       await withTestContext("relative-js-ext", async (context) => {
-        const filePath = join(context.projectDir, "src", "legacy.js");
-        await mkdir(join(context.projectDir, "src"), { recursive: true });
-        await writeTextFile(filePath, "export const legacy = true");
+        await writeProjectFile(context, "src/legacy.js", "export const legacy = true");
 
         const r = await createTestResolver(context);
 
-        const resolved = await r.resolve("./legacy.js", "src/main.ts");
-        assertExists(resolved);
-        assert(resolved.path.endsWith("legacy.js"));
+        await resolveAndExpectPath(r, "./legacy.js", "legacy.js", "src/main.ts");
       });
     });
 
     it("should resolve relative import with .jsx extension", async () => {
       await withTestContext("relative-jsx-ext", async (context) => {
-        const filePath = join(context.projectDir, "src", "Component.jsx");
-        await mkdir(join(context.projectDir, "src"), { recursive: true });
-        await writeTextFile(filePath, "export const Component = () => {}");
+        await writeProjectFile(
+          context,
+          "src/Component.jsx",
+          "export const Component = () => {}",
+        );
 
         const r = await createTestResolver(context);
 
-        const resolved = await r.resolve("./Component.jsx", "src/main.ts");
-        assertExists(resolved);
-        assert(resolved.path.endsWith("Component.jsx"));
+        await resolveAndExpectPath(r, "./Component.jsx", "Component.jsx", "src/main.ts");
       });
     });
 
     it("should resolve relative import with .mjs extension", async () => {
       await withTestContext("relative-mjs-ext", async (context) => {
-        const filePath = join(context.projectDir, "src", "module.mjs");
-        await mkdir(join(context.projectDir, "src"), { recursive: true });
-        await writeTextFile(filePath, "export const mod = 1");
+        await writeProjectFile(context, "src/module.mjs", "export const mod = 1");
 
         const r = await createTestResolver(context);
 
-        const resolved = await r.resolve("./module.mjs", "src/main.ts");
-        assertExists(resolved);
-        assert(resolved.path.endsWith("module.mjs"));
+        await resolveAndExpectPath(r, "./module.mjs", "module.mjs", "src/main.ts");
       });
     });
 
     it("should auto-add .ts extension when missing", async () => {
       await withTestContext("relative-auto-ts", async (context) => {
-        const filePath = join(context.projectDir, "src", "helper.ts");
-        await mkdir(join(context.projectDir, "src"), { recursive: true });
-        await writeTextFile(filePath, "export const help = 1");
+        await writeProjectFile(context, "src/helper.ts", "export const help = 1");
 
         const r = await createTestResolver(context);
 
-        const resolved = await r.resolve("./helper", "src/main.ts");
-        assertExists(resolved);
-        assert(resolved.path.endsWith("helper.ts"));
+        await resolveAndExpectPath(r, "./helper", "helper.ts", "src/main.ts");
       });
     });
 
@@ -371,14 +382,11 @@ describe("ModuleResolver", () => {
 
     it("should resolve relative import from project root when no referrer", async () => {
       await withTestContext("relative-no-referrer", async (context) => {
-        const filePath = join(context.projectDir, "lib.ts");
-        await writeTextFile(filePath, "export const lib = 1");
+        await writeProjectFile(context, "lib.ts", "export const lib = 1");
 
         const r = await createTestResolver(context);
 
-        const resolved = await r.resolve("./lib");
-        assertExists(resolved);
-        assert(resolved.path.endsWith("lib.ts"));
+        await resolveAndExpectPath(r, "./lib", "lib.ts");
       });
     });
 
@@ -411,29 +419,22 @@ describe("ModuleResolver", () => {
   describe("Absolute Imports", () => {
     it("should resolve absolute import from project root", async () => {
       await withTestContext("absolute-root", async (context) => {
-        const filePath = join(context.projectDir, "config.ts");
-        await writeTextFile(filePath, "export const config = {}");
+        await writeProjectFile(context, "config.ts", "export const config = {}");
 
         const r = await createTestResolver(context);
 
-        const resolved = await r.resolve("/config.ts");
-        assertExists(resolved);
+        const resolved = await resolveAndExpectPath(r, "/config.ts", "config.ts");
         assertEquals(resolved.type, "file");
-        assert(resolved.path.endsWith("config.ts"));
       });
     });
 
     it("should resolve absolute import from nested directory", async () => {
       await withTestContext("absolute-nested", async (context) => {
-        const filePath = join(context.projectDir, "src", "lib", "utils.ts");
-        await mkdir(join(context.projectDir, "src", "lib"), { recursive: true });
-        await writeTextFile(filePath, "export const utils = 1");
+        await writeProjectFile(context, "src/lib/utils.ts", "export const utils = 1");
 
         const r = await createTestResolver(context);
 
-        const resolved = await r.resolve("/src/lib/utils.ts");
-        assertExists(resolved);
-        assert(resolved.path.endsWith("utils.ts"));
+        await resolveAndExpectPath(r, "/src/lib/utils.ts", "utils.ts");
       });
     });
 
@@ -453,9 +454,8 @@ describe("ModuleResolver", () => {
         const r = await createTestResolver(context);
 
         const resolved = await r.resolve("lodash");
-        assertExists(resolved);
-        assertEquals(resolved.type, "npm");
-        assertEquals(resolved.path, "https://esm.sh/lodash");
+        const npmResolved = expectResolvedType(resolved, "npm");
+        assertEquals(npmResolved.path, "https://esm.sh/lodash");
       });
     });
 
@@ -464,9 +464,8 @@ describe("ModuleResolver", () => {
         const r = await createTestResolver(context);
 
         const resolved = await r.resolve("@babel/core");
-        assertExists(resolved);
-        assertEquals(resolved.type, "npm");
-        assertEquals(resolved.path, "https://esm.sh/@babel/core");
+        const npmResolved = expectResolvedType(resolved, "npm");
+        assertEquals(npmResolved.path, "https://esm.sh/@babel/core");
       });
     });
 
@@ -475,9 +474,8 @@ describe("ModuleResolver", () => {
         const r = await createTestResolver(context);
 
         const resolved = await r.resolve("react@18.2.0");
-        assertExists(resolved);
-        assertEquals(resolved.type, "npm");
-        assertEquals(resolved.path, "https://esm.sh/react@18.2.0");
+        const npmResolved = expectResolvedType(resolved, "npm");
+        assertEquals(npmResolved.path, "https://esm.sh/react@18.2.0");
       });
     });
 
@@ -486,9 +484,8 @@ describe("ModuleResolver", () => {
         const r = await createTestResolver(context);
 
         const resolved = await r.resolve("lodash/debounce");
-        assertExists(resolved);
-        assertEquals(resolved.type, "npm");
-        assertEquals(resolved.path, "https://esm.sh/lodash/debounce");
+        const npmResolved = expectResolvedType(resolved, "npm");
+        assertEquals(npmResolved.path, "https://esm.sh/lodash/debounce");
       });
     });
 
@@ -497,9 +494,8 @@ describe("ModuleResolver", () => {
         const r = await createTestResolver(context);
 
         const resolved = await r.resolve("@babel/parser/lib/index.js");
-        assertExists(resolved);
-        assertEquals(resolved.type, "npm");
-        assertEquals(resolved.path, "https://esm.sh/@babel/parser/lib/index.js");
+        const npmResolved = expectResolvedType(resolved, "npm");
+        assertEquals(npmResolved.path, "https://esm.sh/@babel/parser/lib/index.js");
       });
     });
 
@@ -508,9 +504,8 @@ describe("ModuleResolver", () => {
         const r = await createTestResolver(context);
 
         const resolved = await r.resolve("react@next");
-        assertExists(resolved);
-        assertEquals(resolved.type, "npm");
-        assertEquals(resolved.path, "https://esm.sh/react@next");
+        const npmResolved = expectResolvedType(resolved, "npm");
+        assertEquals(npmResolved.path, "https://esm.sh/react@next");
       });
     });
   });

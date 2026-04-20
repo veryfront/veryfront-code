@@ -133,6 +133,51 @@ function getSkillActivationRequiredError(toolName: string): string {
     `Call "${LOAD_SKILL_TOOL_ID}" first to establish the active skill context.`;
 }
 
+function warnLocalToolSkipping(agentId: string, modelId: string): void {
+  logger.warn(
+    `Agent "${agentId}" has tools configured but is using local model "${modelId}". ` +
+      "Local models don't support tool calling — tools will be skipped. " +
+      "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
+      "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
+  );
+}
+
+function createToolResultMessage(
+  toolCallId: string,
+  toolName: string,
+  result: unknown,
+): Message {
+  return {
+    id: `tool_${toolCallId}`,
+    role: "tool",
+    parts: [
+      {
+        type: "tool-result",
+        toolCallId,
+        toolName,
+        result,
+      },
+    ],
+    timestamp: Date.now(),
+  };
+}
+
+function createToolErrorMessage(toolCallId: string, toolName: string, error: string): Message {
+  return {
+    id: `tool_error_${toolCallId}`,
+    role: "tool",
+    parts: [
+      {
+        type: "tool-result",
+        toolCallId,
+        toolName,
+        result: { error },
+      },
+    ],
+    timestamp: Date.now(),
+  };
+}
+
 export function collectFinalStreamToolResults(
   state: Pick<ChatStreamState, "toolResults">,
 ): Map<string, StreamingToolResult> {
@@ -671,12 +716,7 @@ export class AgentRuntime {
       // Local models can't reliably do function calling — skip tools gracefully.
       const isLocal = isLocalModelRuntime(languageModel);
       if (isLocal && this.config.tools) {
-        logger.warn(
-          `Agent "${this.id}" has tools configured but is using local model "${effectiveModel}". ` +
-            "Local models don't support tool calling — tools will be skipped. " +
-            "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
-            "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
-        );
+        warnLocalToolSkipping(this.id, effectiveModel);
       }
 
       // Request-scoped skill policy (not class-level mutable state)
@@ -769,21 +809,13 @@ export class AgentRuntime {
         const persistGeneratedToolResult = async (
           generatedToolResult: RuntimeGenerateToolResult,
         ): Promise<void> => {
-          const toolResultMessage: Message = {
-            id: `tool_${generatedToolResult.toolCallId}`,
-            role: "tool",
-            parts: [
-              {
-                type: "tool-result",
-                toolCallId: generatedToolResult.toolCallId,
-                toolName: generatedToolResult.toolName,
-                result: generatedToolResult.isError === true
-                  ? { error: stringifyToolError(generatedToolResult.result) }
-                  : generatedToolResult.result,
-              },
-            ],
-            timestamp: Date.now(),
-          };
+          const toolResultMessage = createToolResultMessage(
+            generatedToolResult.toolCallId,
+            generatedToolResult.toolName,
+            generatedToolResult.isError === true
+              ? { error: stringifyToolError(generatedToolResult.result) }
+              : generatedToolResult.result,
+          );
           currentMessages.push(toolResultMessage);
           await this.memory.add(toolResultMessage);
         };
@@ -886,19 +918,11 @@ export class AgentRuntime {
                 mustLoadSkillFirst = false;
               }
 
-              const toolResultMessage: Message = {
-                id: `tool_${tc.toolCallId}`,
-                role: "tool",
-                parts: [
-                  {
-                    type: "tool-result",
-                    toolCallId: tc.toolCallId,
-                    toolName: tc.toolName,
-                    result,
-                  },
-                ],
-                timestamp: Date.now(),
-              };
+              const toolResultMessage = createToolResultMessage(
+                tc.toolCallId,
+                tc.toolName,
+                result,
+              );
               currentMessages.push(toolResultMessage);
               await this.memory.add(toolResultMessage);
             } catch (error) {
@@ -906,19 +930,11 @@ export class AgentRuntime {
               toolCall.error = error instanceof Error ? error.message : String(error);
               setSpanAttributes(toolSpan, { error: true, "error.message": toolCall.error });
 
-              const errorMessage: Message = {
-                id: `tool_error_${tc.toolCallId}`,
-                role: "tool",
-                parts: [
-                  {
-                    type: "tool-result",
-                    toolCallId: tc.toolCallId,
-                    toolName: tc.toolName,
-                    result: { error: toolCall.error },
-                  },
-                ],
-                timestamp: Date.now(),
-              };
+              const errorMessage = createToolErrorMessage(
+                tc.toolCallId,
+                tc.toolName,
+                toolCall.error,
+              );
               currentMessages.push(errorMessage);
               await this.memory.add(errorMessage);
             }
@@ -980,12 +996,7 @@ export class AgentRuntime {
     // Local models can't reliably do function calling — skip tools gracefully.
     const isLocalStreaming = isLocalModelRuntime(languageModel);
     if (isLocalStreaming && this.config.tools) {
-      logger.warn(
-        `Agent "${this.id}" has tools configured but is using local model "${effectiveModel}". ` +
-          "Local models don't support tool calling — tools will be skipped. " +
-          "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
-          "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
-      );
+      warnLocalToolSkipping(this.id, effectiveModel);
     }
 
     // Request-scoped skill policy (not class-level mutable state)
@@ -1100,21 +1111,13 @@ export class AgentRuntime {
           return;
         }
 
-        const toolResultMessage: Message = {
-          id: `tool_${toolResult.toolCallId}`,
-          role: "tool",
-          parts: [
-            {
-              type: "tool-result",
-              toolCallId: toolResult.toolCallId,
-              toolName: toolResult.toolName,
-              result: toolResult.error === undefined
-                ? toolResult.output
-                : { error: stringifyToolError(toolResult.error) },
-            },
-          ],
-          timestamp: Date.now(),
-        };
+        const toolResultMessage = createToolResultMessage(
+          toolResult.toolCallId,
+          toolResult.toolName,
+          toolResult.error === undefined
+            ? toolResult.output
+            : { error: stringifyToolError(toolResult.error) },
+        );
         currentMessages.push(toolResultMessage);
         await this.memory.add(toolResultMessage);
         currentStepToolResults.set(
@@ -1270,19 +1273,7 @@ export class AgentRuntime {
             ...(dynamic ? { dynamic: true } : {}),
           });
 
-          const toolResultMessage: Message = {
-            id: `tool_${tc.id}`,
-            role: "tool",
-            parts: [
-              {
-                type: "tool-result",
-                toolCallId: tc.id,
-                toolName: tc.name,
-                result,
-              },
-            ],
-            timestamp: Date.now(),
-          };
+          const toolResultMessage = createToolResultMessage(tc.id, tc.name, result);
           if (!currentStepToolResults.has(tc.id)) {
             currentMessages.push(toolResultMessage);
             await this.memory.add(toolResultMessage);
@@ -1343,19 +1334,11 @@ export class AgentRuntime {
       ...(dynamic ? { dynamic: true } : {}),
     });
 
-    const errorMessage: Message = {
-      id: `tool_error_${toolCall.id}`,
-      role: "tool",
-      parts: [
-        {
-          type: "tool-result",
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-          result: { error: errorStr },
-        },
-      ],
-      timestamp: Date.now(),
-    };
+    const errorMessage = createToolErrorMessage(
+      toolCall.id,
+      toolCall.name,
+      errorStr,
+    );
     currentMessages.push(errorMessage);
     await this.memory.add(errorMessage);
   }

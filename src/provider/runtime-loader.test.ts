@@ -967,6 +967,10 @@ describe("provider/runtime-loader", () => {
 
     assertEquals(requestedUrl, "https://example.anthropic.test/v1/messages");
     assertEquals(requestedInit?.method, "POST");
+    assertEquals(
+      readRequestHeader(requestedInit, "anthropic-beta"),
+      "fine-grained-tool-streaming-2025-05-14",
+    );
     const requestBody = typeof requestedInit?.body === "string"
       ? JSON.parse(requestedInit.body)
       : undefined;

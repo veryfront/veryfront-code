@@ -4,6 +4,11 @@ import type { RenderPipelineConfig } from "./pipeline.ts";
 import { isDotPath, isHiddenSegment } from "./path-helpers.ts";
 import { getPageCssCacheKey } from "./css-cache.ts";
 import { collectModulesToLoad, hasDataFetchingFunction } from "./module-collection.ts";
+import {
+  extractRenderedCssHash,
+  serializeLayoutProps,
+  serializeLayouts,
+} from "./pipeline-helpers.ts";
 
 const PAGE_CSS_CACHE_MAX_SIZE = 200;
 const pageCssCache = new Map<string, string>();
@@ -21,6 +26,31 @@ function cachePageCss(cacheKey: string, css: string): void {
 }
 
 describe("RenderPipeline helpers", () => {
+  describe("pipeline-helpers", () => {
+    it("extractRenderedCssHash returns the page css hash when present", () => {
+      assertEquals(
+        extractRenderedCssHash('<link rel="stylesheet" href="/_vf/css/abc123.css">'),
+        "abc123",
+      );
+    });
+
+    it("serializeLayouts keeps project-relative layout paths", () => {
+      const result = serializeLayouts(
+        [{
+          kind: "tsx",
+          path: "/project/app/layout.tsx",
+          componentPath: "/project/app/layout.tsx",
+        } as any],
+        "/project",
+      );
+      assertEquals(result, [{ kind: "tsx", path: "app/layout.tsx" }]);
+    });
+
+    it("serializeLayoutProps converts the layout prop map into a plain object", () => {
+      const result = serializeLayoutProps(new Map([["layout-a", { title: "A" }]]));
+      assertEquals(result, { "layout-a": { title: "A" } });
+    });
+  });
   describe("isHiddenSegment", () => {
     it("should detect dot-prefixed segments", () => {
       assertEquals(isHiddenSegment(".veryfront"), true);

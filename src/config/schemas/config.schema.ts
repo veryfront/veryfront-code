@@ -491,6 +491,17 @@ export const veryfrontConfigSchema = z
           .optional(),
       )
       .optional(),
+    /**
+     * Extensions registered for this project.
+     *
+     * Each entry is either a fully-materialized `Extension` object or a
+     * disable directive `{ name, enabled: false }` that vetoes an extension
+     * discovered from a lower-priority source. The runtime type is
+     * tightened at the `veryfront/extensions` barrel — we keep this as
+     * `z.unknown()` here to avoid pulling the extensions module into the
+     * config layer (would introduce a circular import).
+     */
+    extensions: z.array(z.unknown()).optional(),
     /** OpenAPI documentation configuration */
     openapi: z
       .object({

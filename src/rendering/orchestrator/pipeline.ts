@@ -26,6 +26,11 @@ import {
   extractRelativePath as extractRelativePathShared,
   extractRouteParams as extractRouteParamsShared,
 } from "#veryfront/utils/route-path-utils.ts";
+import {
+  extractRenderedCssHash,
+  serializeLayoutProps,
+  serializeLayouts,
+} from "./pipeline-helpers.ts";
 import { join } from "#veryfront/compat/path";
 import type { MdxBundle, PageBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -77,8 +82,6 @@ import {
 const renderPageLog = logger.component("render-page");
 const renderPipelineLog = logger.component("render-pipeline");
 const resolvePageDataLog = logger.component("resolve-page-data");
-const RENDERED_CSS_HASH_RE = /href="\/_vf\/css\/([a-z0-9-]{1,16})\.css"/i;
-
 // Re-export test helper for backward compatibility
 export { __injectCssCacheForTests } from "./css-cache.ts";
 
@@ -159,15 +162,11 @@ export class RenderPipeline {
     return loadModule(filePath, this.moduleLoaderConfig);
   }
 
-  private extractRenderedCssHash(html: string): string | undefined {
-    return html.match(RENDERED_CSS_HASH_RE)?.[1];
-  }
-
   private async resolveCssFromRenderedHtml(
     html: string,
     projectSlug: string | undefined,
   ): Promise<string | undefined> {
-    const cssHash = this.extractRenderedCssHash(html);
+    const cssHash = extractRenderedCssHash(html);
     if (!cssHash) return undefined;
 
     const cachedCss = await getCSSByHashAsync(cssHash);
@@ -664,7 +663,7 @@ export class RenderPipeline {
 
     const pageProps: Record<string, unknown> = dataResolution.pageProps;
     const params = dataResolution.params;
-    const layoutProps = this.serializeLayoutProps(dataResolution.layoutProps);
+    const layoutProps = serializeLayoutProps(dataResolution.layoutProps);
 
     const { frontmatter, headings } = await this.extractMdxMetadata(
       pageType,
@@ -674,7 +673,7 @@ export class RenderPipeline {
       params,
     );
 
-    const layouts = this.serializeLayouts(layoutResult.nestedLayouts);
+    const layouts = serializeLayouts(layoutResult.nestedLayouts, this.config.projectDir);
 
     const providers: string[] = [];
 
@@ -754,32 +753,6 @@ export class RenderPipeline {
       });
       return { frontmatter: {}, headings: [] };
     }
-  }
-
-  private serializeLayouts(
-    nestedLayouts: LayoutItem[],
-  ): Array<{ kind: LayoutItem["kind"]; path: string }> {
-    return nestedLayouts
-      .filter((layout: LayoutItem) => layout.componentPath || layout.path)
-      .map((layout: LayoutItem) => ({
-        kind: layout.kind,
-        path: extractRelativePathShared(
-          layout.componentPath || layout.path || "",
-          this.config.projectDir,
-        ),
-      }));
-  }
-
-  private serializeLayoutProps(
-    layoutProps: Map<string, Record<string, unknown>>,
-  ): Record<string, Record<string, unknown>> {
-    const serialized: Record<string, Record<string, unknown>> = {};
-
-    for (const [layoutId, props] of layoutProps.entries()) {
-      serialized[layoutId] = props;
-    }
-
-    return serialized;
   }
 
   private async resolveAppPath(): Promise<string | undefined> {

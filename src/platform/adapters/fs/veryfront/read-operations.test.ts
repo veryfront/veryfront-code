@@ -63,6 +63,26 @@ function createReadOps(
   );
 }
 
+function createReadyReadOps(
+  client: VeryfrontApiClient,
+  cacheEnabled: boolean,
+  contextProvider?: ContentContextProvider,
+  pathResolver?: (path: string) => string,
+  getFileListCache?: () => Promise<Array<{ path: string; content?: string }>>,
+  pathNormalizer = new PathNormalizer(),
+): ReadOperations {
+  const readOps = createReadOps(
+    client,
+    cacheEnabled,
+    contextProvider,
+    pathResolver,
+    getFileListCache,
+    pathNormalizer,
+  );
+  readOps.setFileListReadyPromise(Promise.resolve());
+  return readOps;
+}
+
 describe("ReadOperations", () => {
   describe("class", () => {
     it("should export ReadOperations class", () => {
@@ -73,7 +93,7 @@ describe("ReadOperations", () => {
 
   describe("instantiation", () => {
     it("should be instantiable without context provider", () => {
-      const readOps = createReadOps(createMockClient(), true);
+      const readOps = createReadyReadOps(createMockClient(), true);
       assertExists(readOps);
     });
 
@@ -191,7 +211,6 @@ describe("ReadOperations", () => {
         new PathNormalizer(),
         createReleaseContext("rel-cache-hit"),
       );
-      readOps.setFileListReadyPromise(Promise.resolve());
 
       const first = await runWithRequestContext(
         {
@@ -231,15 +250,13 @@ describe("ReadOperations", () => {
         { path: "pages/about.tsx", content: "about page content" },
       ];
 
-      const readOps = createReadOps(
+      const readOps = createReadyReadOps(
         client,
         false,
         createReleaseContext("rel-1"),
         (path: string) => path,
         () => Promise.resolve(fileListCache),
       );
-
-      readOps.setFileListReadyPromise(Promise.resolve());
 
       const content = await readOps.readTextFile("pages/index.tsx");
       assertEquals(content, "cached content from file list");
@@ -257,15 +274,13 @@ describe("ReadOperations", () => {
         },
       });
 
-      const readOps = createReadOps(
+      const readOps = createReadyReadOps(
         client,
         false,
         createBranchContext(),
         (path: string) => path,
         () => Promise.resolve([{ path: "pages/index.tsx", content: "cached file list content" }]),
       );
-
-      readOps.setFileListReadyPromise(Promise.resolve());
 
       const content = await readOps.readTextFile("pages/index.tsx");
       // Now uses file list cache instead of API fetch
@@ -282,7 +297,7 @@ describe("ReadOperations", () => {
         },
       });
 
-      const readOps = createReadOps(
+      const readOps = createReadyReadOps(
         client,
         false,
         createBranchContext(),
@@ -290,8 +305,6 @@ describe("ReadOperations", () => {
         undefined,
         new PathNormalizer("/project/root/"),
       );
-
-      readOps.setFileListReadyPromise(Promise.resolve());
 
       await readOps.readTextFile("/project/root/pages/index.tsx");
       assertEquals(fetchedPath, "pages/index.tsx");
@@ -319,7 +332,7 @@ describe("ReadOperations", () => {
         },
       });
 
-      const readOps = createReadOps(client, true, createReleaseContext("rel-resolve-success"));
+      const readOps = createReadyReadOps(client, true, createReleaseContext("rel-resolve-success"));
       readOps.setFileListReadyPromise(Promise.resolve());
 
       const fromBasePath = await readOps.readTextFile("pages/home");
@@ -361,8 +374,6 @@ describe("ReadOperations", () => {
         () => Promise.resolve([{ path: "pages/home.v2.tsx", content: "resolved from file list" }]),
       );
 
-      readOps.setFileListReadyPromise(Promise.resolve());
-
       const content = await readOps.readTextFile("pages/home.v2");
 
       assertEquals(content, "resolved from file list");
@@ -385,15 +396,13 @@ describe("ReadOperations", () => {
         },
       });
 
-      const readOps = createReadOps(
+      const readOps = createReadyReadOps(
         client,
         true,
         createReleaseContext("rel-missing-deno-json"),
         (path: string) => path,
         () => Promise.resolve([{ path: "pages/index.tsx", content: "home page" }]),
       );
-
-      readOps.setFileListReadyPromise(Promise.resolve());
 
       await assertRejects(
         () => readOps.readTextFile("deno.json"),
@@ -415,15 +424,13 @@ describe("ReadOperations", () => {
         },
       });
 
-      const readOps = createReadOps(
+      const readOps = createReadyReadOps(
         client,
         true,
         createReleaseContext("rel-deno-inline-miss"),
         (path: string) => path,
         () => Promise.resolve([{ path: "deno.json" }]),
       );
-
-      readOps.setFileListReadyPromise(Promise.resolve());
 
       const content = await readOps.readTextFile("deno.json");
 
@@ -449,15 +456,13 @@ describe("ReadOperations", () => {
         },
       });
 
-      const readOps = createReadOps(
+      const readOps = createReadyReadOps(
         client,
         true,
         createReleaseContext("rel-candidate-inline-miss"),
         (path: string) => path,
         () => Promise.resolve([{ path: "pages/home.tsx" }]),
       );
-
-      readOps.setFileListReadyPromise(Promise.resolve());
 
       const content = await readOps.readTextFile("pages/home");
 
@@ -480,7 +485,7 @@ describe("ReadOperations", () => {
         getPublishedFileContent: () => Promise.resolve("published content"),
       });
 
-      const readOps = createReadOps(client, true, createReleaseContext("rel-resolve-cache"));
+      const readOps = createReadyReadOps(client, true, createReleaseContext("rel-resolve-cache"));
       readOps.setFileListReadyPromise(Promise.resolve());
 
       // First call: resolves via API
@@ -766,8 +771,6 @@ describe("ReadOperations", () => {
         () => Promise.resolve([{ path: "pages/index.tsx", content: "test content" }]),
       );
 
-      readOps.setFileListReadyPromise(Promise.resolve());
-
       await readOps.readTextFile("pages/index.tsx");
       readOps.clearFileListIndex();
     });
@@ -775,7 +778,7 @@ describe("ReadOperations", () => {
 
   describe("setFileListReadyPromise", () => {
     it("should accept a promise", () => {
-      const readOps = createReadOps(createMockClient(), true);
+      const readOps = createReadyReadOps(createMockClient(), true);
       readOps.setFileListReadyPromise(Promise.resolve());
     });
 
@@ -844,8 +847,6 @@ describe("ReadOperations", () => {
         contextProvider,
       );
 
-      readOps.setFileListReadyPromise(Promise.resolve());
-
       const content = await readOps.readTextFile("pages/index.tsx");
       assertEquals(content, "fresh api content");
       assertEquals(apiFetchCalled, true);
@@ -889,8 +890,6 @@ describe("ReadOperations", () => {
           ]);
         },
       );
-
-      readOps.setFileListReadyPromise(Promise.resolve());
 
       const content = await readOps.readTextFile("pages/index.tsx");
       assertEquals(content, "fresh api content");
@@ -1211,7 +1210,7 @@ describe("ReadOperations", () => {
         },
       });
 
-      const readOps = createReadOps(client, false, createBranchContext());
+      const readOps = createReadyReadOps(client, false, createBranchContext());
       readOps.setFileListReadyPromise(Promise.resolve());
 
       const [result1, result2] = await Promise.all([
@@ -1293,8 +1292,6 @@ describe("ReadOperations", () => {
           return Promise.resolve(fileList);
         },
       );
-
-      readOps.setFileListReadyPromise(Promise.resolve());
 
       await readOps.readTextFile("pages/index.tsx");
       await readOps.readTextFile("pages/about.tsx");

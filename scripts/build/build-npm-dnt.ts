@@ -254,12 +254,30 @@ await build({
 		const pkgPath = "./npm/package.json";
 		const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
 		pkg.type = "module"; // Required for ESM imports without warnings
+		pkg.types = "./esm/src/index.d.ts";
 		pkg.bin = { veryfront: "bin/veryfront.js" };
 		pkg.files = ["esm", "script", "src", "bin", "tsconfig.json", "LICENSE", "README.md"];
 		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
+		addTypesExportEntries(pkg.exports);
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
 	},
 });
+
+function addTypesExportEntries(
+	exportsMap: Record<string, string | { import?: string; types?: string }>,
+): void {
+	for (const [exportKey, exportValue] of Object.entries(exportsMap)) {
+		if (exportKey === "./tsconfig.json" || typeof exportValue === "string") {
+			continue;
+		}
+
+		if (!exportValue.import || !exportValue.import.endsWith(".js")) {
+			continue;
+		}
+
+		exportValue.types = exportValue.import.replace(/\.js$/, ".d.ts");
+	}
+}
 
 /** Patch a generated file with string or regex replacement. Throws if pattern not found. */
 function patchFile(

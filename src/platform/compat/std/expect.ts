@@ -1,5 +1,11 @@
 import { isBun, isDeno } from "../runtime.ts";
 import { deepEquals, safeStringify } from "#veryfront/testing/utils.ts";
+import {
+  assertDeepEqualityMatch,
+  assertExpectation,
+  getPromiseRejection,
+  selectExpectationMessage,
+} from "./expect-helpers.ts";
 
 interface AsyncMatchers<T> {
   toBe(expected: T): Promise<void>;
@@ -54,33 +60,19 @@ type ExpectFn = <T>(actual: T) => Matchers<T> & Record<string, any>;
 function createNodeExpect(): ExpectFn {
   function createMatchers<T>(actual: T, isNot = false): Matchers<T> {
     function check(condition: boolean, message: string): void {
-      const result = isNot ? !condition : condition;
-      if (!result) throw new Error(message);
+      assertExpectation(condition, isNot, message);
     }
 
     function getMessage(positive: string, negative: string): string {
-      return isNot ? negative : positive;
+      return selectExpectationMessage(positive, negative, isNot);
     }
 
     function assertDeepEquality(expected: T, comparison: "equal" | "strictly equal"): void {
-      check(
-        deepEquals(actual, expected),
-        getMessage(
-          `Expected ${safeStringify(actual)} to ${comparison} ${safeStringify(expected)}`,
-          `Expected ${safeStringify(actual)} not to ${comparison} ${safeStringify(expected)}`,
-        ),
-      );
+      assertDeepEqualityMatch(actual, expected, comparison, isNot);
     }
 
     function getRejection(): Promise<{ rejected: boolean; error: unknown }> {
-      return (async () => {
-        try {
-          await (actual as Promise<unknown>);
-          return { rejected: false, error: undefined };
-        } catch (e) {
-          return { rejected: true, error: e };
-        }
-      })();
+      return getPromiseRejection(actual as Promise<unknown>);
     }
 
     const matchers: Matchers<T> = {

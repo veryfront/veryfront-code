@@ -5,25 +5,16 @@ import { mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { ComponentRegistry } from "#veryfront/modules/component-registry/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-
-async function createRegistry(projectDir: string): Promise<ComponentRegistry> {
-  return new ComponentRegistry({ projectDir, adapter: await getAdapter() });
-}
+import { createRegistry, writeProjectFiles } from "./registry.test-helpers.ts";
 
 describe("ComponentRegistry", () => {
   describe("Component Discovery", () => {
     it("should discover all components in directory", async () => {
       await withTestContext("registry-discover", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Header.tsx"),
-          "export default function Header(){return null}",
-        );
-        await writeTextFile(
-          join(componentsDir, "Footer.tsx"),
-          "export default function Footer(){return null}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/Header.tsx": "export default function Header(){return null}",
+          "components/Footer.tsx": "export default function Footer(){return null}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -37,13 +28,10 @@ describe("ComponentRegistry", () => {
 
     it("should recursively walk nested directories", async () => {
       await withTestContext("registry-nested", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        const nestedDir = join(componentsDir, "layout", "headers");
-        await mkdir(nestedDir, { recursive: true });
-        await writeTextFile(
-          join(nestedDir, "MainHeader.tsx"),
-          "export default function MainHeader(){return null}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/layout/headers/MainHeader.tsx":
+            "export default function MainHeader(){return null}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -57,15 +45,12 @@ describe("ComponentRegistry", () => {
 
     it("should filter out non-component files", async () => {
       await withTestContext("registry-filter", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Component.tsx"),
-          "export default function C(){}",
-        );
-        await writeTextFile(join(componentsDir, "readme.md"), "# Readme");
-        await writeTextFile(join(componentsDir, "types.ts"), "export type T = {}");
-        await writeTextFile(join(componentsDir, "config.json"), "{}");
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "export default function C(){}",
+          "components/readme.md": "# Readme",
+          "components/types.ts": "export type T = {}",
+          "components/config.json": "{}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -78,16 +63,10 @@ describe("ComponentRegistry", () => {
 
     it("should handle .tsx and .jsx files", async () => {
       await withTestContext("registry-extensions", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "TsxComponent.tsx"),
-          "export default function T(){}",
-        );
-        await writeTextFile(
-          join(componentsDir, "JsxComponent.jsx"),
-          "export default function J(){}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/TsxComponent.tsx": "export default function T(){}",
+          "components/JsxComponent.jsx": "export default function J(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -99,14 +78,11 @@ describe("ComponentRegistry", () => {
 
     it("should skip test files and directories", async () => {
       await withTestContext("registry-skip-tests", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Component.tsx"),
-          "export default function C(){}",
-        );
-        await writeTextFile(join(componentsDir, "Component.test.tsx"), "test code");
-        await writeTextFile(join(componentsDir, "Component.spec.tsx"), "spec code");
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "export default function C(){}",
+          "components/Component.test.tsx": "test code",
+          "components/Component.spec.tsx": "spec code",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -119,13 +95,10 @@ describe("ComponentRegistry", () => {
 
     it("should skip index files", async () => {
       await withTestContext("registry-skip-index", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Component.tsx"),
-          "export default function C(){}",
-        );
-        await writeTextFile(join(componentsDir, "index.tsx"), "export all");
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "export default function C(){}",
+          "components/index.tsx": "export all",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -166,14 +139,10 @@ describe("ComponentRegistry", () => {
         const componentsDir = join(context.projectDir, "components");
         const nodeModules = join(componentsDir, "node_modules");
         await mkdir(nodeModules, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Component.tsx"),
-          "export default function C(){}",
-        );
-        await writeTextFile(
-          join(nodeModules, "ShouldNotDiscover.tsx"),
-          "export default function X(){}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "export default function C(){}",
+          "components/node_modules/ShouldNotDiscover.tsx": "export default function X(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -185,15 +154,10 @@ describe("ComponentRegistry", () => {
 
     it("should discover from multiple component directories", async () => {
       await withTestContext("registry-multi-dirs", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        const islandsDir = join(context.projectDir, "islands");
-        await mkdir(componentsDir, { recursive: true });
-        await mkdir(islandsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Component.tsx"),
-          "export default function C(){}",
-        );
-        await writeTextFile(join(islandsDir, "Island.tsx"), "export default function I(){}");
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "export default function C(){}",
+          "islands/Island.tsx": "export default function I(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -207,10 +171,10 @@ describe("ComponentRegistry", () => {
   describe("Component Loading", () => {
     it("should load and cache component", async () => {
       await withTestContext("registry-load", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
         const content = "export default function Header(){return null}";
-        await writeTextFile(join(componentsDir, "Header.tsx"), content);
+        await writeProjectFiles(context.projectDir, {
+          "components/Header.tsx": content,
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -224,12 +188,9 @@ describe("ComponentRegistry", () => {
 
     it("should return cached component on second load", async () => {
       await withTestContext("registry-cache", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Header.tsx"),
-          "export default function Header(){return null}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/Header.tsx": "export default function Header(){return null}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -256,12 +217,9 @@ describe("ComponentRegistry", () => {
 
     it("should handle concurrent loads of same component", async () => {
       await withTestContext("registry-concurrent", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Header.tsx"),
-          "export default function Header(){return null}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/Header.tsx": "export default function Header(){return null}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -283,10 +241,10 @@ describe("ComponentRegistry", () => {
 
     it("should load all components with loadAll", async () => {
       await withTestContext("registry-load-all", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(join(componentsDir, "Header.tsx"), "export default function H(){}");
-        await writeTextFile(join(componentsDir, "Footer.tsx"), "export default function F(){}");
+        await writeProjectFiles(context.projectDir, {
+          "components/Header.tsx": "export default function H(){}",
+          "components/Footer.tsx": "export default function F(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -305,8 +263,9 @@ describe("ComponentRegistry", () => {
     it("should handle file read errors gracefully", async () => {
       await withTestContext("registry-read-error", async (context) => {
         const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(join(componentsDir, "Component.tsx"), "content");
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "content",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -320,12 +279,9 @@ describe("ComponentRegistry", () => {
 
     it("should wait for discovery to complete before loading", async () => {
       await withTestContext("registry-wait-discover", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Component.tsx"),
-          "export default function C(){}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "export default function C(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
 
@@ -390,12 +346,9 @@ describe("ComponentRegistry", () => {
 
     it("should remove component", async () => {
       await withTestContext("registry-remove", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Component.tsx"),
-          "export default function C(){}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "export default function C(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -408,10 +361,10 @@ describe("ComponentRegistry", () => {
 
     it("should clear all components", async () => {
       await withTestContext("registry-clear", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(join(componentsDir, "Header.tsx"), "export default function H(){}");
-        await writeTextFile(join(componentsDir, "Footer.tsx"), "export default function F(){}");
+        await writeProjectFiles(context.projectDir, {
+          "components/Header.tsx": "export default function H(){}",
+          "components/Footer.tsx": "export default function F(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -424,12 +377,9 @@ describe("ComponentRegistry", () => {
 
     it("should check component existence with has()", async () => {
       await withTestContext("registry-has", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Component.tsx"),
-          "export default function C(){}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "export default function C(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -441,12 +391,9 @@ describe("ComponentRegistry", () => {
 
     it("should retrieve component with get()", async () => {
       await withTestContext("registry-get", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Component.tsx"),
-          "export default function C(){}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "export default function C(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -470,10 +417,10 @@ describe("ComponentRegistry", () => {
 
     it("should list all component names", async () => {
       await withTestContext("registry-names", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(join(componentsDir, "Header.tsx"), "export default function H(){}");
-        await writeTextFile(join(componentsDir, "Footer.tsx"), "export default function F(){}");
+        await writeProjectFiles(context.projectDir, {
+          "components/Header.tsx": "export default function H(){}",
+          "components/Footer.tsx": "export default function F(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -487,12 +434,9 @@ describe("ComponentRegistry", () => {
 
     it("should get all components as map", async () => {
       await withTestContext("registry-getall", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Component.tsx"),
-          "export default function C(){}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "export default function C(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -506,12 +450,9 @@ describe("ComponentRegistry", () => {
 
     it("should list components with metadata", async () => {
       await withTestContext("registry-list", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Component.tsx"),
-          "export default function C(){}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "export default function C(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -545,10 +486,10 @@ describe("ComponentRegistry", () => {
 
     it("should track registry size correctly", async () => {
       await withTestContext("registry-size", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(join(componentsDir, "A.tsx"), "export default function A(){}");
-        await writeTextFile(join(componentsDir, "B.tsx"), "export default function B(){}");
+        await writeProjectFiles(context.projectDir, {
+          "components/A.tsx": "export default function A(){}",
+          "components/B.tsx": "export default function B(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();
@@ -570,12 +511,9 @@ describe("ComponentRegistry", () => {
   describe("Edge Cases", () => {
     it("should handle race conditions during initialization", async () => {
       await withTestContext("registry-race", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Component.tsx"),
-          "export default function C(){}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "export default function C(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
 
@@ -672,12 +610,9 @@ describe("ComponentRegistry", () => {
 
     it("should handle re-discovery after clear", async () => {
       await withTestContext("registry-rediscover", async (context) => {
-        const componentsDir = join(context.projectDir, "components");
-        await mkdir(componentsDir, { recursive: true });
-        await writeTextFile(
-          join(componentsDir, "Component.tsx"),
-          "export default function C(){}",
-        );
+        await writeProjectFiles(context.projectDir, {
+          "components/Component.tsx": "export default function C(){}",
+        });
 
         const reg = await createRegistry(context.projectDir);
         await reg.discover();

@@ -49,6 +49,7 @@ export type {
   ToolConfig,
   ToolDefinition,
   ToolExecutionContext,
+  ToolExecutionDataEvent,
 } from "./types.ts";
 
 export { dynamicTool, tool } from "./factory.ts";
