@@ -269,6 +269,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   const allEnvVars: EnvVarConfig[] = templateConfig?.envVars ? [...templateConfig.envVars] : [];
   const featureTips: string[] = [];
+  let loadedIntegrations: ResolvedIntegration[] = [];
 
   if (features.length) {
     const { ordered, errors } = await resolveFeatures(features);
@@ -309,10 +310,11 @@ export async function initCommand(options: InitOptions): Promise<void> {
     if (baseConfig?.envVars) allEnvVars.push(...baseConfig.envVars);
 
     const {
-      integrations: loadedIntegrations,
+      integrations: resolvedIntegrations,
       files: integrationFiles,
       errors: integrationErrors,
     } = await loadIntegrations(integrations);
+    loadedIntegrations = resolvedIntegrations;
 
     if (integrationErrors.length) {
       for (const error of integrationErrors) logger.warn(error);
@@ -359,7 +361,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
     // Skip in quiet/TUI mode since local dev uses CDN and package.json can cause hydration issues
     if (!options.quiet) {
-      await createPackageJson(projectDir, projectName);
+      await createPackageJson(projectDir, projectName, {
+        integrations: loadedIntegrations.map((integration) => ({
+          name: integration.config.name,
+          npmDependencies: integration.config.npmDependencies,
+        })),
+      });
     }
 
     if (allEnvVars.length) {
