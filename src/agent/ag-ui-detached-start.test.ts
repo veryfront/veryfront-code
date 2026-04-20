@@ -437,4 +437,67 @@ describe("agent/ag-ui-detached-start", () => {
     assertStringIncludes(String(capturedError), "background boom");
     assertEquals(sessionManager.getRunStatus("run_1"), null);
   });
+
+  it("supports a host-provided detached execution starter without a package agent", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    let acceptedRunId: string | null = null;
+    let finishedRunId: string | null = null;
+    let capturedAbortSignal: AbortSignal | null = null;
+    let capturedText: string | null = null;
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async ({ request, abortSignal }) => {
+        capturedAbortSignal = abortSignal;
+        capturedText = typeof request.messages[0]?.parts[0] === "object" &&
+            request.messages[0]?.parts[0] !== null &&
+            "text" in request.messages[0].parts[0]
+          ? String(request.messages[0].parts[0].text)
+          : null;
+      },
+      onAccepted: ({ runId }) => {
+        acceptedRunId = runId;
+      },
+      onFinish: ({ runId }) => {
+        finishedRunId = runId;
+      },
+    });
+
+    const response = await handler(createDetachedRequest());
+
+    assertEquals(response.status, 202);
+    const payload = await response.json();
+    assertEquals(payload.accepted, true);
+    assertEquals(payload.duplicate, false);
+    assertEquals(acceptedRunId, "run_1");
+    await flushAsyncWork();
+    assertEquals(finishedRunId, "run_1");
+    assertEquals(capturedAbortSignal instanceof AbortSignal, true);
+    assertEquals(capturedText, "hello");
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
+  });
+
+  it("fails fast when neither an agent nor a detached execution starter is configured", () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+
+    let thrown: unknown = null;
+    try {
+      createAgUiDetachedStartHandler({
+        sessionManager,
+      } as never);
+    } catch (error) {
+      thrown = error;
+    }
+
+    assertStringIncludes(
+      thrown instanceof Error ? thrown.message : String(thrown),
+      "Detached AG-UI start requires either an agent or startDetachedExecution handler.",
+    );
+  });
 });

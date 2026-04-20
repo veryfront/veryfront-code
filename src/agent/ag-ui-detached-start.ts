@@ -267,10 +267,22 @@ export const AgUiDetachedStartAcceptedSchema = z.object({
 export type AgUiDetachedStartRequest = z.infer<typeof AgUiDetachedStartRequestSchema>;
 export type AgUiDetachedStartAccepted = z.infer<typeof AgUiDetachedStartAcceptedSchema>;
 
-export interface AgUiDetachedStartHandlerOptions {
-  agent: Agent;
+interface AgUiDetachedStartExecutionInput {
+  request: AgUiDetachedStartRequest;
+  requestOrCtx: unknown;
+  rawRequest: Request;
+  context: Record<string, unknown>;
+  abortSignal: AbortSignal;
+}
+
+type AgUiDetachedExecutionStarter = (
+  input: AgUiDetachedStartExecutionInput,
+) => Promise<void> | void;
+
+interface AgUiDetachedStartHandlerOptionsBase {
   sessionManager: RunResumeSessionManager<AgUiResumeValue>;
   context?: AgUiContextValue;
+  startDetachedExecution?: AgUiDetachedExecutionStarter;
   onAccepted?: (input: {
     request: AgUiDetachedStartRequest;
     runId: string;
@@ -285,9 +297,46 @@ export interface AgUiDetachedStartHandlerOptions {
   onError?: (input: { runId: string; threadId: string; error: unknown }) => Promise<void> | void;
 }
 
+export type AgUiDetachedStartHandlerOptions =
+  | (AgUiDetachedStartHandlerOptionsBase & { agent: Agent })
+  | (AgUiDetachedStartHandlerOptionsBase & {
+    agent?: undefined;
+    startDetachedExecution: AgUiDetachedExecutionStarter;
+  });
+
+async function startDefaultDetachedExecution(input: {
+  agent: Agent;
+  request: AgUiDetachedStartRequest;
+  context: Record<string, unknown>;
+  abortSignal: AbortSignal;
+  sessionManager: RunResumeSessionManager<AgUiResumeValue>;
+}): Promise<void> {
+  const runtime = new AgentRuntime(input.agent.id, {
+    ...input.agent.config,
+    tools: buildMergedTools(input.agent, input.request, input.sessionManager),
+  });
+
+  const runtimeStream = await runtime.stream(
+    normalizeMessages(input.request.messages),
+    buildStreamContext(input.request, input.context, input.request.threadId, input.request.runId),
+    undefined,
+    input.request.model,
+    input.request.maxOutputTokens,
+    input.abortSignal,
+  );
+
+  await drainRuntimeStream(runtimeStream);
+}
+
 export function createAgUiDetachedStartHandler(
   options: AgUiDetachedStartHandlerOptions,
 ): (requestOrCtx: unknown) => Promise<Response> {
+  if (!options.agent && !options.startDetachedExecution) {
+    throw new Error(
+      "Detached AG-UI start requires either an agent or startDetachedExecution handler.",
+    );
+  }
+
   return async function POST(requestOrCtx: unknown): Promise<Response> {
     const request = extractRequest(requestOrCtx);
 
@@ -301,20 +350,6 @@ export function createAgUiDetachedStartHandler(
           threadId: parsed.threadId,
         });
 
-        const runtime = new AgentRuntime(options.agent.id, {
-          ...options.agent.config,
-          tools: buildMergedTools(options.agent, parsed, options.sessionManager),
-        });
-
-        const runtimeStream = await runtime.stream(
-          normalizeMessages(parsed.messages),
-          buildStreamContext(parsed, context, parsed.threadId, parsed.runId),
-          undefined,
-          parsed.model,
-          parsed.maxOutputTokens,
-          abortSignal,
-        );
-
         await options.onAccepted?.({
           request: parsed,
           runId: parsed.runId,
@@ -323,7 +358,28 @@ export function createAgUiDetachedStartHandler(
 
         const detachedTask = (async () => {
           try {
-            await drainRuntimeStream(runtimeStream);
+            if (options.startDetachedExecution) {
+              await options.startDetachedExecution({
+                request: parsed,
+                requestOrCtx,
+                rawRequest: request,
+                context,
+                abortSignal,
+              });
+            } else if (options.agent) {
+              await startDefaultDetachedExecution({
+                agent: options.agent,
+                request: parsed,
+                context,
+                abortSignal,
+                sessionManager: options.sessionManager,
+              });
+            } else {
+              throw new Error(
+                "Detached AG-UI start configuration became invalid during execution.",
+              );
+            }
+
             options.sessionManager.completeRun(parsed.runId);
             await options.onFinish?.({
               runId: parsed.runId,

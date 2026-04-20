@@ -508,6 +508,13 @@ Response shape:
 - `202 { accepted: true, duplicate: false, runId, threadId }`
 - `202 { accepted: true, duplicate: true, runId, threadId }`
 
+Options may provide either:
+
+- `agent` to use the package runtime directly
+- `startDetachedExecution` to let the host run its own detached execution path
+  while the package still owns request validation, duplicate detection, and
+  session-manager lifecycle
+
 ### `createAgUiResumeHandler(options)`
 
 Create a generic POST handler for hosted resumable AG-UI runs.
