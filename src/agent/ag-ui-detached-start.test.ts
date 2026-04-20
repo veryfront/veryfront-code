@@ -4,6 +4,7 @@ import {
   AgentRuntime,
   AgUiDetachedStartRequestSchema,
   createAgUiDetachedStartHandler,
+  executeAgUiDetachedStart,
   RunResumeSessionManager,
 } from "./index.ts";
 import type { Agent, Message } from "./types.ts";
@@ -195,6 +196,85 @@ describe("agent/ag-ui-detached-start", () => {
     const payload = await response.json();
     assertExists(payload);
     assertEquals(payload.error, "Invalid AG-UI detached start request");
+  });
+
+  it("starts a detached run from a validated request object", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    let acceptedRunId: string | null = null;
+    let finishedRunId: string | null = null;
+
+    const response = await executeAgUiDetachedStart(
+      {
+        sessionManager,
+        context: { tenant: "acme" },
+        startDetachedExecution: async ({ request, context }) => {
+          assertEquals(request.runId, "run_1");
+          assertEquals(context, { tenant: "acme" });
+        },
+        onAccepted: ({ runId }) => {
+          acceptedRunId = runId;
+        },
+        onFinish: ({ runId }) => {
+          finishedRunId = runId;
+        },
+      },
+      {
+        request: AgUiDetachedStartRequestSchema.parse({
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      },
+    );
+
+    assertEquals(response.status, 202);
+    assertEquals(acceptedRunId, "run_1");
+    await flushAsyncWork();
+    assertEquals(finishedRunId, "run_1");
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
+  });
+
+  it("returns duplicate=true from a validated request object when the run is already active", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const threadId = crypto.randomUUID();
+    sessionManager.startRun({ runId: "run_1", threadId });
+
+    const response = await executeAgUiDetachedStart(
+      {
+        sessionManager,
+        startDetachedExecution: async () => {},
+      },
+      {
+        request: AgUiDetachedStartRequestSchema.parse({
+          runId: "run_1",
+          threadId,
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      },
+    );
+
+    assertEquals(response.status, 202);
+    assertEquals(await response.json(), {
+      accepted: true,
+      duplicate: true,
+      runId: "run_1",
+      threadId,
+    });
+    sessionManager.cancelRun("run_1");
   });
 
   it("supports injected client tools in detached runs", async () => {
