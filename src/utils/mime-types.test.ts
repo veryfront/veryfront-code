@@ -10,6 +10,27 @@ describe("mime-types.lookup", () => {
     assertEquals(lookup("logo.svg"), "image/svg+xml");
     assertEquals(lookup("font.woff2"), "font/woff2");
   });
+  it("covers common upload formats (uploads CLI regression guard)", () => {
+    assertEquals(lookup("data.csv"), "text/csv");
+    assertEquals(lookup("archive.zip"), "application/zip");
+    assertEquals(lookup("video.mp4"), "video/mp4");
+    assertEquals(lookup("audio.mp3"), "audio/mpeg");
+    assertEquals(
+      lookup("sheet.xlsx"),
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    assertEquals(
+      lookup("doc.docx"),
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    assertEquals(
+      lookup("slides.pptx"),
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    );
+    assertEquals(lookup("bundle.tar"), "application/x-tar");
+    assertEquals(lookup("photo.heic"), "image/heic");
+    assertEquals(lookup("config.yaml"), "text/yaml");
+  });
   it("returns false for unknown extensions", () => {
     assertEquals(lookup("foo.xyz"), false);
   });
