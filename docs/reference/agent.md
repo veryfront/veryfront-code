@@ -26,11 +26,16 @@ import {
   createAgUiDetachedStartHandler,
   createAgUiHandler,
   createAgUiResumeHandler,
+  createAgUiRunErrorEvent,
+  createAgUiSseErrorResponse,
   createMemory,
   expandAllowedRemoteToolNames,
   getAgentsAsTools,
   getProviderNativeToolNames,
   HumanInputRequestSchema,
+  normalizeAgUiMessages,
+  parseAgUiRequest,
+  parseAgUiRequestOrError,
   registerAgent,
   RunResumeSessionManager,
   waitForHumanInput,
@@ -478,6 +483,30 @@ This schema accepts the higher-level host request format based on message
 `parts`. `createAgUiHandler()` normalizes it into the canonical
 `AgUiRuntimeRequestSchema` before invoking the runtime.
 
+### `parseAgUiRequest(request)`
+
+Parse and validate the convenience AG-UI wrapper request body into
+`AgUiRequestSchema`.
+
+### `parseAgUiRequestOrError(request)`
+
+Parse the convenience AG-UI wrapper request body and return either the parsed
+request or a `400` JSON `Response` when validation fails.
+
+### `normalizeAgUiMessages(messages)`
+
+Normalize convenience AG-UI `messages` into the runtime `Message[]` shape used
+by the agent runtime.
+
+### `createAgUiRunErrorEvent(message, code?)`
+
+Create a `RunError` AG-UI SSE event payload.
+
+### `createAgUiSseErrorResponse(event, status)`
+
+Create an AG-UI SSE `Response` from a prepared AG-UI event, preserving the
+existing `RunError` wire shape used by hosted routes.
+
 ### `AgUiRuntimeRequestSchema`
 
 Validate the canonical open-source AG-UI runtime request contract for hosted
@@ -586,6 +615,8 @@ Clear all stored messages from memory.
 | `createAgUiCancelHandler`        | Create a DELETE handler for hosted AG-UI run cancellation               |
 | `createAgUiDetachedStartHandler` | Create a POST handler for detached hosted AG-UI run kickoff             |
 | `createAgUiHandler`              | Create a POST handler for an AG-UI route                                |
+| `createAgUiRunErrorEvent`        | Create a `RunError` AG-UI SSE event                                     |
+| `createAgUiSseErrorResponse`     | Create an AG-UI SSE error `Response`                                    |
 | `createAgUiResumeHandler`        | Create a POST handler for hosted AG-UI run resume values                |
 | `createChatHandler`              | Create a POST handler for a chat API route.                             |
 | `createMemory`                   | Create memory (buffer, conversation, summary)                           |
@@ -648,6 +679,7 @@ Clear all stored messages from memory.
 | `AgUiCancelHandlerOptions`        | Options for `createAgUiCancelHandler`                                        |
 | `AgUiInjectedTool`                | AG-UI client-injected tool descriptor                                        |
 | `AgUiRequest`                     | Validated AG-UI runtime request body                                         |
+| `AgUiSseEvent`                    | AG-UI SSE event object used by host-facing AG-UI helpers                     |
 | `AgUiResumeHandlerOptions`        | Options for `createAgUiResumeHandler`                                        |
 | `AgUiResumeSignal`                | Validated hosted-run resume payload                                          |
 | `HumanInputField`                 | Canonical form/input field definition                                        |

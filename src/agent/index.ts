@@ -188,6 +188,14 @@ export {
   createAgUiResumeHandler,
 } from "./ag-ui-run-control.ts";
 export {
+  type AgUiSseEvent,
+  createAgUiRunErrorEvent,
+  createAgUiSseErrorResponse,
+  normalizeAgUiMessages,
+  parseAgUiRequest,
+  parseAgUiRequestOrError,
+} from "./ag-ui-host-support.ts";
+export {
   type AgUiContextItem,
   type AgUiHandlerConfigWithAgent,
   type AgUiHandlerOptions,
