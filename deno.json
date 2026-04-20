@@ -275,7 +275,7 @@
     "@babel/generator": "npm:@babel/generator@7.29.1",
     "@babel/types": "npm:@babel/types@7.29.0",
     "class-variance-authority": "npm:class-variance-authority@0.7.1",
-    "tailwind-merge": "npm:tailwind-merge@3.5.0",
+    "tailwind-merge": "npm:tailwind-merge@3.5.0"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
