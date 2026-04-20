@@ -7,7 +7,7 @@
  * injected via <style> on the chat root element.
  */
 
-import { type ClassValue, clsx } from "clsx";
+import { type ClassValue, clsx } from "#veryfront/utils/clsx.ts";
 import { twMerge } from "tailwind-merge";
 export { cva, type VariantProps } from "class-variance-authority";
 

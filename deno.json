@@ -225,7 +225,6 @@
     "@std/fs": "jsr:@std/fs",
     "@std/async": "jsr:@std/async",
     "@std/front-matter/yaml": "./src/platform/compat/std/front-matter-yaml.ts",
-    "csstype": "https://esm.sh/csstype@3.2.3",
     "@types/react": "https://esm.sh/@types/react@18.3.27?deps=csstype@3.2.3",
     "@types/react-dom": "https://esm.sh/@types/react-dom@18.3.7?deps=csstype@3.2.3",
     "react": "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3",
@@ -254,7 +253,6 @@
     "es-module-lexer": "npm:es-module-lexer@2.0.0",
     "gray-matter": "npm:gray-matter@4.0.3",
     "zod": "npm:zod@4.3.6",
-    "mime-types": "npm:mime-types@3.0.2",
     "mdast": "npm:@types/mdast@4.0.3",
     "hast": "npm:@types/hast@3.0.3",
     "unist": "npm:@types/unist@3.0.2",
@@ -277,7 +275,6 @@
     "@babel/generator": "npm:@babel/generator@7.29.1",
     "@babel/types": "npm:@babel/types@7.29.0",
     "class-variance-authority": "npm:class-variance-authority@0.7.1",
-    "clsx": "npm:clsx@2.1.1",
     "tailwind-merge": "npm:tailwind-merge@3.5.0",
     "@kreuzberg/wasm": "npm:@kreuzberg/wasm@4.5.2",
     "#kreuzberg-wasm-glue": "npm:@kreuzberg/wasm@4.5.2/dist/pkg/kreuzberg_wasm.js"
