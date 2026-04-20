@@ -31,6 +31,39 @@ const AG_UI_HEADERS: Record<string, string> = {
 type AgUiResumeValue = { result: unknown; isError: boolean };
 type AgUiRuntimePart = Record<string, unknown> & { type: string };
 
+export interface AgUiRuntimeLifecycleContext {
+  request: AgUiRuntimeRequest;
+  toolCallId?: string;
+  error?: unknown;
+}
+
+function invokeLifecycleCallback(
+  callback: ((context: AgUiRuntimeLifecycleContext) => Promise<void> | void) | undefined,
+  context: AgUiRuntimeLifecycleContext,
+): void {
+  if (!callback) return;
+
+  try {
+    const result = callback(context);
+    void Promise.resolve(result).catch(() => undefined);
+  } catch {
+    return;
+  }
+}
+
+async function invokeLifecycleCallbackAndWait(
+  callback: ((context: AgUiRuntimeLifecycleContext) => Promise<void> | void) | undefined,
+  context: AgUiRuntimeLifecycleContext,
+): Promise<void> {
+  if (!callback) return;
+
+  try {
+    await callback(context);
+  } catch {
+    return;
+  }
+}
+
 function isRequest(obj: unknown): obj is Request {
   return (
     typeof obj === "object" &&
@@ -212,6 +245,11 @@ async function createAgUiRuntimeDirectStreamResponse(
   agent: Agent,
   request: AgUiRuntimeRequest,
   baseContext: Record<string, unknown>,
+  lifecycle?: {
+    onFinish?: () => Promise<void> | void;
+    onError?: (error: unknown) => Promise<void> | void;
+    onToolCallSeen?: (toolCallId: string) => Promise<void> | void;
+  },
 ): Promise<Response> {
   await agent.clearMemory();
 
@@ -227,6 +265,9 @@ async function createAgUiRuntimeDirectStreamResponse(
     upstreamBody: upstream.body,
     upstreamStatus: upstream.status,
     upstreamStatusText: upstream.statusText,
+    onFinish: lifecycle?.onFinish,
+    onError: lifecycle?.onError,
+    onToolCallSeen: lifecycle?.onToolCallSeen,
   });
 }
 
@@ -297,6 +338,11 @@ async function createAgUiRuntimeInjectedToolsStreamResponse(
   request: AgUiRuntimeRequest,
   baseContext: Record<string, unknown>,
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
+  lifecycle?: {
+    onFinish?: () => Promise<void> | void;
+    onError?: (error: unknown) => Promise<void> | void;
+    onToolCallSeen?: (toolCallId: string) => Promise<void> | void;
+  },
 ): Promise<Response> {
   try {
     sessionManager.startRun({ runId: request.runId, threadId: request.threadId });
@@ -333,12 +379,15 @@ async function createAgUiRuntimeInjectedToolsStreamResponse(
     upstreamStatus: 200,
     onFinish: () => {
       sessionManager.completeRun(request.runId);
+      void lifecycle?.onFinish?.();
     },
-    onError: () => {
+    onError: (error) => {
       sessionManager.failRun(request.runId);
+      void lifecycle?.onError?.(error);
     },
     onToolCallSeen: (toolCallId) => {
       sessionManager.prepareForSignal(request.runId, toolCallId);
+      void lifecycle?.onToolCallSeen?.(toolCallId);
     },
   });
 }
@@ -360,6 +409,9 @@ export interface AgUiRuntimeHandlerOptions {
     | ((request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>);
   sessionManager?: RunResumeSessionManager<AgUiResumeValue>;
   execute?: AgUiRuntimeHandlerExecute;
+  onToolCallSeen?: (context: AgUiRuntimeLifecycleContext) => Promise<void> | void;
+  onFinish?: (context: AgUiRuntimeLifecycleContext) => Promise<void> | void;
+  onError?: (context: AgUiRuntimeLifecycleContext) => Promise<void> | void;
 }
 
 export interface AgUiRuntimeHandlerConfigWithAgent extends AgUiRuntimeHandlerOptions {
@@ -414,17 +466,72 @@ export function createAgUiRuntimeHandler(
             : createAgUiRuntimeDirectStreamResponse(config.agent, parsed, context)
         : undefined;
 
+      const invokeLifecycle = (
+        type: "onFinish" | "onError" | "onToolCallSeen",
+        extra: Partial<AgUiRuntimeLifecycleContext> = {},
+      ): void => {
+        invokeLifecycleCallback(config[type], {
+          request: parsed,
+          ...extra,
+        });
+      };
+
+      const createDefaultResponseWithLifecycle = createDefaultResponse
+        ? async () => {
+          try {
+            if (!config.agent) {
+              return await createDefaultResponse();
+            }
+
+            if (parsed.tools.length > 0) {
+              if (!config.sessionManager) {
+                return await createDefaultResponse();
+              }
+
+              return await createAgUiRuntimeInjectedToolsStreamResponse(
+                config.agent,
+                parsed,
+                context,
+                config.sessionManager,
+                {
+                  onFinish: () => invokeLifecycle("onFinish"),
+                  onError: (error) => invokeLifecycle("onError", { error }),
+                  onToolCallSeen: (toolCallId) => invokeLifecycle("onToolCallSeen", { toolCallId }),
+                },
+              );
+            }
+
+            return await createAgUiRuntimeDirectStreamResponse(
+              config.agent,
+              parsed,
+              context,
+              {
+                onFinish: () => invokeLifecycle("onFinish"),
+                onError: (error) => invokeLifecycle("onError", { error }),
+                onToolCallSeen: (toolCallId) => invokeLifecycle("onToolCallSeen", { toolCallId }),
+              },
+            );
+          } catch (error) {
+            await invokeLifecycleCallbackAndWait(config.onError, {
+              request: parsed,
+              error,
+            });
+            throw error;
+          }
+        }
+        : undefined;
+
       if (config.execute) {
         return await config.execute({
           request,
           agUiInput: parsed,
           context,
-          createDefaultResponse,
+          createDefaultResponse: createDefaultResponseWithLifecycle,
         });
       }
 
-      if (createDefaultResponse) {
-        return await createDefaultResponse();
+      if (createDefaultResponseWithLifecycle) {
+        return await createDefaultResponseWithLifecycle();
       }
 
       throw new Error("createAgUiRuntimeHandler configuration became invalid during execution.");
