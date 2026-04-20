@@ -15,8 +15,10 @@
  * @module platform/compat
  */
 
-import { isDeno, isDenoCompiled } from "./runtime.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { isDeno } from "./runtime.ts";
 import { dynamicImport } from "./dynamic-import.ts";
+import type { NodeCompat } from "../../extensions/interfaces/node-compat.ts";
 
 function resolve(pkg: string, version: string): string {
   return isDeno ? `npm:${pkg}@${version}` : pkg;
@@ -24,14 +26,6 @@ function resolve(pkg: string, version: string): string {
 
 // deno-lint-ignore no-explicit-any -- callers assign to their own typed variable; any allows implicit narrowing at each call site
 type OpaqueModule = any;
-
-type KreuzbergModule = {
-  initWasm?: () => Promise<void>;
-  extractBytes: (
-    data: Uint8Array,
-    mimeType: string,
-  ) => Promise<{ content: string }>;
-};
 
 /** Lazily import `@huggingface/transformers` (+ onnxruntime, ~500MB). */
 export function importTransformers(): Promise<OpaqueModule> {
@@ -49,11 +43,12 @@ export function importClaudeAgentSDK(): Promise<OpaqueModule> {
 /**
  * Lazily import kreuzberg document extraction.
  *
- * Unlike the other opaque deps above, kreuzberg is a core framework
- * dependency that must work in compiled binaries. The Deno path uses
- * a regular `import()` (not `dynamicImport`) so `deno compile` can
- * trace and embed `@kreuzberg/wasm`. The Node/Bun path uses `dynamicImport`
- * to resolve `@kreuzberg/node` from the project's node_modules at runtime.
+ * Delegates to the `NodeCompat` extension contract (`@veryfront/ext-node-compat`)
+ * when available. Without the extension, throws an actionable error instructing
+ * the user to install `ext-node-compat`.
+ *
+ * Node/Bun path: `@kreuzberg/node` resolved from the project's node_modules at
+ * runtime — the extension handles that dynamic import internally.
  */
 export async function importKreuzberg(): Promise<{
   extractBytes: (
@@ -61,35 +56,12 @@ export async function importKreuzberg(): Promise<{
     mimeType: string,
   ) => Promise<{ content: string }>;
 }> {
-  if (isDeno) {
-    // Regular import — visible to deno compile, resolved via deno.json import map
-    const mod = await import("@kreuzberg/wasm") as unknown as KreuzbergModule;
-    if (isDenoCompiled) {
-      // Kreuzberg's initWasm() internally uses a computed dynamic import() to
-      // load the WASM glue module (kreuzberg_wasm.js). deno compile cannot
-      // trace computed import() paths, so the glue module is absent from the
-      // binary's embedded module graph. Pre-importing it here populates Deno's
-      // in-process module cache so the subsequent import() inside initWasm()
-      // resolves from cache instead of hitting the missing file.
-      await import("#kreuzberg-wasm-glue");
-      // pdfium.js is not in @kreuzberg/wasm package exports, so we can't use
-      // an import map entry. Resolve its URL relative to the kreuzberg package
-      // and pre-import it so initWasm()'s `import("./pdfium.js")` resolves
-      // from the in-process module cache instead of hanging.
-      // Wrapped in try/catch because pdfium is only needed for PDF extraction;
-      // a failure here should not break extraction of other formats (DOCX, etc.).
-      try {
-        const kreuzbergUrl = import.meta.resolve("@kreuzberg/wasm");
-        await import(new URL("./pdfium.js", kreuzbergUrl).href);
-      } catch {
-        // expected: pdfium pre-import may fail if the file is missing or
-        // the package structure changed — PDF extraction will be degraded
-        // but other formats will still work.
-      }
-    }
-    await mod.initWasm?.();
-    return mod;
+  const nodeCompat = tryResolve<NodeCompat>("NodeCompat");
+  if (nodeCompat?.importKreuzberg) {
+    return nodeCompat.importKreuzberg();
   }
-  // Opaque import — resolved from node_modules at runtime
-  return dynamicImport("@kreuzberg/node");
+  throw new Error(
+    "Document extraction requires the NodeCompat extension. " +
+      "Install @veryfront/ext-node-compat and add it to your extensions configuration.",
+  );
 }
