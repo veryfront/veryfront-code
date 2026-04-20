@@ -36,6 +36,8 @@ import {
   normalizeAgUiMessages,
   parseAgUiRequest,
   parseAgUiRequestOrError,
+  parseAgUiRuntimeRequest,
+  parseAgUiRuntimeRequestOrError,
   registerAgent,
   RunResumeSessionManager,
   waitForHumanInput,
@@ -514,6 +516,16 @@ agent execution. This is the package-facing schema downstream runtimes should
 target; the older internal compatibility route remains a wrapper around this
 contract.
 
+### `parseAgUiRuntimeRequest(request)`
+
+Parse and validate the canonical runtime AG-UI request body into
+`AgUiRuntimeRequestSchema`.
+
+### `parseAgUiRuntimeRequestOrError(request)`
+
+Parse the canonical runtime AG-UI request body and return either the parsed
+request or a `400` JSON `Response` when validation fails.
+
 ### `AgUiResumeSignalSchema`
 
 Validate the canonical hosted-run resume payload for AG-UI tool-result
@@ -618,6 +630,8 @@ Clear all stored messages from memory.
 | `createAgUiRunErrorEvent`        | Create a `RunError` AG-UI SSE event                                     |
 | `createAgUiSseErrorResponse`     | Create an AG-UI SSE error `Response`                                    |
 | `createAgUiResumeHandler`        | Create a POST handler for hosted AG-UI run resume values                |
+| `parseAgUiRuntimeRequest`        | Parse and validate the canonical runtime AG-UI request body             |
+| `parseAgUiRuntimeRequestOrError` | Parse runtime AG-UI input or return a `400` validation `Response`       |
 | `createChatHandler`              | Create a POST handler for a chat API route.                             |
 | `createMemory`                   | Create memory (buffer, conversation, summary)                           |
 | `createRedisMemory`              | Create Redis-backed memory                                              |

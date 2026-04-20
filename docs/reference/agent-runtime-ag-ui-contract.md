@@ -98,6 +98,7 @@ the public `veryfront/agent` handlers instead of these internal routes.
 Downstream package/framework consumers should target:
 
 - the canonical `AgUiRuntimeRequestSchema`
+- the public `parseAgUiRuntimeRequest()` / `parseAgUiRuntimeRequestOrError()` helpers when they want framework-owned runtime-request parsing without using the higher-level `createAgUiHandler()` wrapper
 - AG-UI SSE responses
 - the default endpoint convention `/api/ag-ui` unless a host explicitly documents another route
 

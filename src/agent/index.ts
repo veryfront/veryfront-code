@@ -148,6 +148,8 @@ export {
   AgUiRuntimeMessageSchema,
   type AgUiRuntimeRequest,
   AgUiRuntimeRequestSchema,
+  parseAgUiRuntimeRequest,
+  parseAgUiRuntimeRequestOrError,
 } from "./runtime-ag-ui-contract.ts";
 export {
   type AgUiBrowserEncodedEvent,
