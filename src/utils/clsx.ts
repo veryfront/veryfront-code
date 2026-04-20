@@ -1,9 +1,11 @@
 /**
  * Inline implementation of the `clsx` class-name joining utility.
  *
- * Matches the public surface veryfront uses from `clsx` (named `clsx` export
- * plus a `ClassValue` type and default export alias). Replaces the `clsx`
- * npm dep per spec §8.3 (inline micro-utilities in core).
+ * API-compatible with the MIT-licensed `clsx` npm package — this is a
+ * clean-room rewrite against the public API (named `clsx` export, `ClassValue`
+ * type, default export alias); no source was copied.
+ *
+ * Replaces the `clsx` npm dep per spec §8.3 (inline micro-utilities in core).
  */
 
 export type ClassValue =

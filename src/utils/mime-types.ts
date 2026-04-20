@@ -1,6 +1,10 @@
 /**
  * Inline implementation of the `mime-types` module surface veryfront uses.
  *
+ * API-compatible with the MIT-licensed `mime-types` npm package — this is a
+ * clean-room rewrite against the public API; no source was copied. MIME
+ * values are IANA-assigned identifiers (not copyrightable).
+ *
  * Replaces the npm `mime-types` dep per spec §8.3 with a static lookup table.
  * Covers the extensions veryfront serves internally (web assets, fonts, MDX,
  * WASM, source maps) plus the common upload formats users pass to the
