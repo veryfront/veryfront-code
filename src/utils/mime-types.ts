@@ -117,11 +117,15 @@ const EXT_BY_MIME: Record<string, string> = (() => {
 /**
  * Look up the MIME type for a file path or bare extension. Accepts values
  * with or without a leading dot. Returns `false` when no mapping is known.
+ *
+ * Uses `Object.hasOwn()` so extensions that collide with inherited props
+ * (e.g. `file.toString`, `file.constructor`) return `false` instead of
+ * leaking a function / prototype value through the `?? false` fallback.
  */
 export function lookup(path: string): string | false {
   const dot = path.lastIndexOf(".");
   const ext = (dot >= 0 ? path.slice(dot + 1) : path).toLowerCase();
-  return TABLE[ext] ?? false;
+  return Object.hasOwn(TABLE, ext) ? TABLE[ext]! : false;
 }
 
 /**
@@ -141,10 +145,11 @@ export function charset(mime: string): string | false {
 
 /**
  * Reverse of `lookup()`: given a MIME type, return a canonical file extension
- * (without leading dot) or `false` when unknown.
+ * (without leading dot) or `false` when unknown. Uses `Object.hasOwn()` for
+ * the same reason `lookup()` does (avoid prototype-property leaks).
  */
 export function extension(mime: string): string | false {
-  return EXT_BY_MIME[mime] ?? false;
+  return Object.hasOwn(EXT_BY_MIME, mime) ? EXT_BY_MIME[mime]! : false;
 }
 
 export default { lookup, charset, extension };

@@ -38,6 +38,12 @@ describe("mime-types.lookup", () => {
     assertEquals(lookup("css"), "text/css");
     assertEquals(lookup(".css"), "text/css");
   });
+  it("does not leak Object.prototype values (own-property guard)", () => {
+    assertEquals(lookup("file.toString"), false);
+    assertEquals(lookup("file.constructor"), false);
+    assertEquals(lookup("file.hasOwnProperty"), false);
+    assertEquals(lookup("file.__proto__"), false);
+  });
 });
 
 describe("mime-types.charset", () => {
@@ -61,5 +67,10 @@ describe("mime-types.extension", () => {
   });
   it("returns false for unknown mime types", () => {
     assertEquals(extension("application/x-unknown-custom"), false);
+  });
+  it("does not leak Object.prototype values (own-property guard)", () => {
+    assertEquals(extension("toString"), false);
+    assertEquals(extension("constructor"), false);
+    assertEquals(extension("__proto__"), false);
   });
 });
