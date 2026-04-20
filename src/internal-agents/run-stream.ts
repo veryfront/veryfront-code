@@ -4,6 +4,7 @@ import {
   type AgentResponse,
   AgentRuntime,
 } from "#veryfront/agent";
+import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui-runtime-support.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { type Tool, toolRegistry } from "#veryfront/tool";
 import { z } from "zod";
@@ -120,62 +121,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseToolArguments(serializedArguments: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(serializedArguments);
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function normalizeRuntimeMessages(messages: RuntimeRunAgentInput["messages"]): Message[] {
-  return messages.map((message) => {
-    const parts: Message["parts"] = [];
-
-    switch (message.role) {
-      case "system":
-      case "user":
-        parts.push({ type: "text", text: message.content });
-        break;
-      case "assistant":
-        if (typeof message.content === "string" && message.content.length > 0) {
-          parts.push({ type: "text", text: message.content });
-        }
-        for (const toolCall of message.toolCalls ?? []) {
-          parts.push({
-            type: "tool-call",
-            toolCallId: toolCall.id,
-            toolName: toolCall.function.name,
-            args: parseToolArguments(toolCall.function.arguments),
-          });
-        }
-        break;
-      case "tool":
-        parts.push({
-          type: "tool-result",
-          toolCallId: message.toolCallId,
-          toolName: "unknown",
-          result: message.error
-            ? {
-              content: message.content,
-              error: message.error,
-            }
-            : message.content,
-        });
-        break;
-    }
-
-    return {
-      id: message.id,
-      role: message.role,
-      parts,
-      ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
-      ...(message.metadata ? { metadata: message.metadata } : {}),
-    };
-  });
-}
-
 function getAllowedRemoteToolNames(
   forwardedProps: RuntimeRunAgentInput["forwardedProps"],
 ): string[] | undefined {
@@ -226,7 +171,7 @@ export async function createRuntimeAgentStreamResponse(
     new AgentRuntime(runtimeAgent.id, runtimeAgent.config);
 
   let completedResponse: AgentResponse | null = null;
-  const runtimeMessages = normalizeRuntimeMessages(input.messages);
+  const runtimeMessages = normalizeAgUiRuntimeMessages(input.messages);
   let runtimeStream: ReadableStream<Uint8Array>;
   let clientAttached = true;
   try {

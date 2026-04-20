@@ -27,6 +27,7 @@ import {
   createAgUiHandler,
   createAgUiResumeHandler,
   createAgUiRunErrorEvent,
+  createAgUiRuntimeHandler,
   createAgUiSseErrorResponse,
   createMemory,
   expandAllowedRemoteToolNames,
@@ -34,6 +35,7 @@ import {
   getProviderNativeToolNames,
   HumanInputRequestSchema,
   normalizeAgUiMessages,
+  normalizeAgUiRuntimeMessages,
   parseAgUiRequest,
   parseAgUiRequestOrError,
   parseAgUiRuntimeRequest,
@@ -526,6 +528,23 @@ Parse and validate the canonical runtime AG-UI request body into
 Parse the canonical runtime AG-UI request body and return either the parsed
 request or a `400` JSON `Response` when validation fails.
 
+### `normalizeAgUiRuntimeMessages(messages)`
+
+Normalize canonical runtime AG-UI `messages` into the package `Message[]`
+shape used by `agent.stream()` and `AgentRuntime.stream()`.
+
+### `createAgUiRuntimeHandler(config)`
+
+Create a POST route handler for the canonical runtime AG-UI request contract.
+
+This handler:
+
+- validates `AgUiRuntimeRequestSchema`
+- optionally resolves extra host context
+- can stream directly through a package `agent`
+- can hand off to a host-provided `execute` callback for custom auth,
+  preparation, or execution while keeping package-owned runtime-request parsing
+
 ### `AgUiResumeSignalSchema`
 
 Validate the canonical hosted-run resume payload for AG-UI tool-result
@@ -627,9 +646,11 @@ Clear all stored messages from memory.
 | `createAgUiCancelHandler`        | Create a DELETE handler for hosted AG-UI run cancellation               |
 | `createAgUiDetachedStartHandler` | Create a POST handler for detached hosted AG-UI run kickoff             |
 | `createAgUiHandler`              | Create a POST handler for an AG-UI route                                |
+| `createAgUiRuntimeHandler`       | Create a POST handler for the canonical runtime AG-UI request contract  |
 | `createAgUiRunErrorEvent`        | Create a `RunError` AG-UI SSE event                                     |
 | `createAgUiSseErrorResponse`     | Create an AG-UI SSE error `Response`                                    |
 | `createAgUiResumeHandler`        | Create a POST handler for hosted AG-UI run resume values                |
+| `normalizeAgUiRuntimeMessages`   | Normalize runtime AG-UI messages into package `Message[]`               |
 | `parseAgUiRuntimeRequest`        | Parse and validate the canonical runtime AG-UI request body             |
 | `parseAgUiRuntimeRequestOrError` | Parse runtime AG-UI input or return a `400` validation `Response`       |
 | `createChatHandler`              | Create a POST handler for a chat API route.                             |

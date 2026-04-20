@@ -140,6 +140,14 @@ export {
 
 export { agent } from "./factory.ts";
 export {
+  type AgUiRuntimeHandlerConfig,
+  type AgUiRuntimeHandlerConfigWithAgent,
+  type AgUiRuntimeHandlerExecute,
+  type AgUiRuntimeHandlerExecuteInput,
+  type AgUiRuntimeHandlerOptions,
+  createAgUiRuntimeHandler,
+} from "./ag-ui-runtime-handler.ts";
+export {
   type AgUiRuntimeContextItem,
   AgUiRuntimeContextItemSchema,
   type AgUiRuntimeInjectedTool,
@@ -151,6 +159,7 @@ export {
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
 } from "./runtime-ag-ui-contract.ts";
+export { normalizeAgUiRuntimeMessages } from "./ag-ui-runtime-support.ts";
 export {
   type AgUiBrowserEncodedEvent,
   type AgUiBrowserEncoderState,
