@@ -1,6 +1,10 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { AgUiRuntimeRequestSchema } from "./index.ts";
+import {
+  AgUiRuntimeRequestSchema,
+  parseAgUiRuntimeRequest,
+  parseAgUiRuntimeRequestOrError,
+} from "./index.ts";
 
 describe("agent/runtime-ag-ui-contract", () => {
   it("exports the canonical runtime AG-UI request schema from veryfront/agent", () => {
@@ -44,5 +48,66 @@ describe("agent/runtime-ag-ui-contract", () => {
     assertEquals(parsed.state, { phase: "draft" });
     assertEquals(parsed.tools, []);
     assertEquals(parsed.context, [{ description: "Current file", value: "src/main.ts" }]);
+  });
+
+  it("parses a valid runtime AG-UI request body through the public helper", async () => {
+    const parsed = await parseAgUiRuntimeRequest(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId: crypto.randomUUID(),
+          runId: "run_1",
+          messages: [
+            {
+              id: "user_1",
+              role: "user",
+              content: "Hello",
+            },
+          ],
+          context: [],
+          tools: [],
+        }),
+      }),
+    );
+
+    assertEquals(parsed.runId, "run_1");
+    assertEquals(parsed.messages.length, 1);
+  });
+
+  it("returns a 400 response for malformed runtime AG-UI JSON bodies", async () => {
+    const result = await parseAgUiRuntimeRequestOrError(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{not-json",
+      }),
+    );
+
+    assertInstanceOf(result, Response);
+    assertEquals(result.status, 400);
+    const body = await result.json();
+    assertEquals(body.error, "Invalid AG-UI runtime request");
+    assertEquals(body.details, [{ path: [], message: "Malformed JSON request body" }]);
+  });
+
+  it("returns a 400 response for invalid runtime AG-UI payloads", async () => {
+    const result = await parseAgUiRuntimeRequestOrError(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId: "not-a-uuid",
+          runId: "run_1",
+          messages: [],
+        }),
+      }),
+    );
+
+    assertInstanceOf(result, Response);
+    assertEquals(result.status, 400);
+    const body = await result.json();
+    assertEquals(body.error, "Invalid AG-UI runtime request");
+    assertEquals(Array.isArray(body.details), true);
   });
 });

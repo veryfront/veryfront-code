@@ -142,3 +142,40 @@ export type AgUiRuntimeInjectedTool = z.infer<typeof AgUiRuntimeInjectedToolSche
 export type AgUiRuntimeContextItem = z.infer<typeof AgUiRuntimeContextItemSchema>;
 export type AgUiRuntimeMessage = z.infer<typeof AgUiRuntimeMessageSchema>;
 export type AgUiRuntimeRequest = z.infer<typeof AgUiRuntimeRequestSchema>;
+
+export async function parseAgUiRuntimeRequest(request: Request): Promise<AgUiRuntimeRequest> {
+  return AgUiRuntimeRequestSchema.parse(await request.json());
+}
+
+export async function parseAgUiRuntimeRequestOrError(
+  request: Request,
+): Promise<AgUiRuntimeRequest | Response> {
+  try {
+    return await parseAgUiRuntimeRequest(request);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return Response.json(
+        {
+          error: "Invalid AG-UI runtime request",
+          details: error.issues.map((issue) => ({
+            path: issue.path,
+            message: issue.message,
+          })),
+        },
+        { status: 400 },
+      );
+    }
+
+    if (error instanceof SyntaxError || error instanceof TypeError) {
+      return Response.json(
+        {
+          error: "Invalid AG-UI runtime request",
+          details: [{ path: [], message: "Malformed JSON request body" }],
+        },
+        { status: 400 },
+      );
+    }
+
+    throw error;
+  }
+}
