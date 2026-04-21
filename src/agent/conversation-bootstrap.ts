@@ -1,0 +1,193 @@
+import { z } from "zod";
+import { type ConversationRunProjection, createConversationAgentRun } from "./durable.ts";
+
+const CONVERSATION_API_TIMEOUT_MS = 15_000;
+
+export const ConversationRecordSchema = z
+  .object({
+    id: z.string(),
+    projectId: z.string().nullable().optional(),
+    project_id: z.string().nullable().optional(),
+  })
+  .passthrough()
+  .transform((data) => ({
+    id: data.id,
+    projectId: data.projectId ?? data.project_id ?? null,
+  }));
+
+export const ConversationMessageRecordSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export type ConversationRecord = z.infer<typeof ConversationRecordSchema>;
+export type ConversationMessageRecord = z.infer<typeof ConversationMessageRecordSchema>;
+
+async function controlPlaneJson<T>(input: {
+  authToken: string;
+  url: string;
+  method?: "GET" | "POST" | "PATCH";
+  body?: unknown;
+  responseSchema: z.ZodSchema<T>;
+  operation: string;
+}): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CONVERSATION_API_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(input.url, {
+      method: input.method ?? "GET",
+      headers: {
+        Authorization: `Bearer ${input.authToken}`,
+        "Content-Type": "application/json",
+      },
+      ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`${input.operation} timed out after ${CONVERSATION_API_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(
+      `${input.operation} failed (${response.status}): ${body || response.statusText}`,
+    );
+  }
+
+  return input.responseSchema.parse(await response.json());
+}
+
+function buildConversationPath(apiUrl: string, conversationId: string): string {
+  return `${apiUrl}/conversations/${conversationId}`;
+}
+
+function buildConversationMessagesPath(apiUrl: string, conversationId: string): string {
+  return `${buildConversationPath(apiUrl, conversationId)}/messages`;
+}
+
+export async function fetchConversationRecord(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+}): Promise<ConversationRecord> {
+  return controlPlaneJson({
+    authToken: input.authToken,
+    url: buildConversationPath(input.apiUrl, input.conversationId),
+    responseSchema: ConversationRecordSchema,
+    operation: "Fetch conversation",
+  });
+}
+
+export async function ensureConversationProjectLink(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  projectId: string;
+}): Promise<void> {
+  const conversation = await fetchConversationRecord(input);
+
+  if (conversation.projectId === input.projectId) return;
+  if (conversation.projectId !== null) {
+    throw new Error(
+      `Conversation ${input.conversationId} is already linked to a different project (${conversation.projectId})`,
+    );
+  }
+
+  await controlPlaneJson({
+    authToken: input.authToken,
+    url: buildConversationPath(input.apiUrl, input.conversationId),
+    method: "PATCH",
+    body: { project_id: input.projectId },
+    responseSchema: ConversationRecordSchema,
+    operation: "Link conversation to project",
+  });
+}
+
+export async function createConversationRecord(input: {
+  authToken: string;
+  apiUrl: string;
+  body: unknown;
+}): Promise<ConversationRecord> {
+  return controlPlaneJson({
+    authToken: input.authToken,
+    url: `${input.apiUrl}/conversations`,
+    method: "POST",
+    body: input.body,
+    responseSchema: ConversationRecordSchema,
+    operation: "Create conversation",
+  });
+}
+
+export async function createConversationMessage(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  body: unknown;
+}): Promise<ConversationMessageRecord> {
+  return controlPlaneJson({
+    authToken: input.authToken,
+    url: buildConversationMessagesPath(input.apiUrl, input.conversationId),
+    method: "POST",
+    body: input.body,
+    responseSchema: ConversationMessageRecordSchema,
+    operation: "Create conversation message",
+  });
+}
+
+export interface BootstrapConversationAgentRunResult {
+  conversation: ConversationRecord;
+  message: ConversationMessageRecord;
+  run: ConversationRunProjection;
+}
+
+export async function bootstrapConversationAgentRun(input: {
+  authToken: string;
+  apiUrl: string;
+  parentConversationId?: string;
+  ensureProjectId?: string;
+  conversationBody: unknown;
+  handoffMessageBody: unknown;
+  runId?: string;
+  agentId: string;
+  projectId?: string | null;
+  branchId?: string | null;
+}): Promise<BootstrapConversationAgentRunResult> {
+  if (input.parentConversationId && input.ensureProjectId) {
+    await ensureConversationProjectLink({
+      authToken: input.authToken,
+      apiUrl: input.apiUrl,
+      conversationId: input.parentConversationId,
+      projectId: input.ensureProjectId,
+    });
+  }
+
+  const conversation = await createConversationRecord({
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    body: input.conversationBody,
+  });
+  const effectiveProjectId = input.projectId ?? conversation.projectId;
+  const message = await createConversationMessage({
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    conversationId: conversation.id,
+    body: input.handoffMessageBody,
+  });
+  const run = await createConversationAgentRun({
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    conversationId: conversation.id,
+    runId: input.runId,
+    agentId: input.agentId,
+    projectId: effectiveProjectId,
+    branchId: input.branchId,
+  });
+
+  return { conversation, message, run };
+}
