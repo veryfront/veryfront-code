@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.230",
+  "version": "0.1.231",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
@@ -30,6 +30,8 @@
     "./markdown": "./src/markdown/index.ts",
     "./mdx": "./src/mdx/index.ts",
     "./agent": "./src/agent/index.ts",
+    "./channels/control-plane": "./src/channels/control-plane.ts",
+    "./channels/invoke": "./src/channels/invoke.ts",
     "./tool": "./src/tool/index.ts",
     "./workflow": "./src/workflow/index.ts",
     "./workflow/worker": "./src/workflow/worker/index.ts",

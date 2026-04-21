@@ -89,6 +89,13 @@ Current internal signed control-plane wrappers:
 - `POST /internal/agents/runs/:runId/resume`
 - `DELETE /internal/agents/runs/:runId`
 
+When a host needs to interoperate with the signed control-plane wrapper shape
+directly, the current request/response schemas and signature verification
+helpers are available as public package exports:
+
+- `veryfront/channels/control-plane`
+- `veryfront/channels/invoke`
+
 Those internal handlers are Veryfront-specific wrappers around the generic
 package-hosted run-control surface. Downstream package consumers should target
 the public `veryfront/agent` handlers instead of these internal routes.
