@@ -1,6 +1,7 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
 import {
   localAdapterCache,
@@ -8,23 +9,73 @@ import {
   ProjectDiscoveryCache,
 } from "./local-project-discovery.ts";
 
+const encoder = new TextEncoder();
+
+function encodePem(label: string, der: ArrayBuffer): string {
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
+  const lines = base64.match(/.{1,64}/g) ?? [base64];
+  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
+}
+
+// Shared Ed25519 key pair and PEM-encoded public half. Lazily generated on the
+// first makeReq({ trusted: true }) call so tests that don't need a valid JWS
+// pay nothing for the key material.
+let signingKeyPair: CryptoKeyPair | undefined;
+let trustedPublicKeyPem: string | undefined;
+
+async function ensureKeyMaterial(): Promise<void> {
+  if (signingKeyPair && trustedPublicKeyPem) return;
+  signingKeyPair = (await crypto.subtle.generateKey(
+    "Ed25519",
+    true,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const der = await crypto.subtle.exportKey("spki", signingKeyPair.publicKey);
+  trustedPublicKeyPem = encodePem("PUBLIC KEY", der);
+}
+
+async function mintTrustedDispatchJws(): Promise<string> {
+  await ensureKeyMaterial();
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: "EdDSA", typ: "JWT" };
+  const claims = {
+    iss: "veryfront-api",
+    aud: "demo-project",
+    sub: "dispatch-adapter-test",
+    project_id: "proj_123",
+    platform: "slack",
+    body_sha256: "n/a",
+    iat: now,
+    exp: now + 60,
+  };
+  const encodedHeader = base64urlEncode(JSON.stringify(header));
+  const encodedPayload = base64urlEncode(JSON.stringify(claims));
+  const signingInput = encoder.encode(`${encodedHeader}.${encodedPayload}`);
+  const signature = await crypto.subtle.sign("Ed25519", signingKeyPair!.privateKey, signingInput);
+  return `${encodedHeader}.${encodedPayload}.${base64urlEncodeBytes(new Uint8Array(signature))}`;
+}
+
 /**
  * Build a Request suitable for resolveAdapter tests.
  *
  * @param options.projectPath Value for the `x-project-path` header (if provided)
- * @param options.trusted     When true, attaches a dispatch-JWS header so
- *                            isProxyTrusted() returns true. Omit/false to
- *                            simulate an untrusted client.
+ * @param options.trusted     When true, attaches a valid freshly-signed dispatch
+ *                            JWS so isProxyTrusted() verifies. When "bogus",
+ *                            attaches an unverifiable header value to simulate
+ *                            the direct-access spoofing attack. Omit/false for
+ *                            an untrusted client.
  */
-function makeReq(
-  options: { projectPath?: string; trusted?: boolean } = {},
-): Request {
+async function makeReq(
+  options: { projectPath?: string; trusted?: boolean | "bogus" } = {},
+): Promise<Request> {
   const headers = new Headers();
   if (options.projectPath !== undefined) {
     headers.set("x-project-path", options.projectPath);
   }
-  if (options.trusted) {
-    headers.set("x-veryfront-dispatch-jws", "test-jws");
+  if (options.trusted === true) {
+    headers.set("x-veryfront-dispatch-jws", await mintTrustedDispatchJws());
+  } else if (options.trusted === "bogus") {
+    headers.set("x-veryfront-dispatch-jws", "eyJhbGciOi.fake.value");
   }
   return new Request("http://example.com/", { headers });
 }
@@ -68,7 +119,8 @@ function createMockAdapter(
       watch: () => ({ close: () => {}, [Symbol.asyncIterator]: async function* () {} }),
     },
     env: {
-      get: () => undefined,
+      get: (key: string) =>
+        key === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY" ? trustedPublicKeyPem : undefined,
       set: () => {},
       toObject: () => ({}),
     },
@@ -97,7 +149,7 @@ describe("adapter-factory", () => {
     });
 
     const result = await resolveAdapter({
-      req: makeReq({ projectPath: "/trusted/project", trusted: true }),
+      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -134,7 +186,7 @@ describe("adapter-factory", () => {
     localAdapterCache.set("/trusted/project", adapter);
 
     const result = await resolveAdapter({
-      req: makeReq({ projectPath: "/trusted/project", trusted: true }),
+      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -170,7 +222,7 @@ describe("adapter-factory", () => {
     });
 
     const result = await resolveAdapter({
-      req: makeReq({ projectPath: "/attacker/chosen/path", trusted: false }),
+      req: await makeReq({ projectPath: "/attacker/chosen/path", trusted: false }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -198,6 +250,50 @@ describe("adapter-factory", () => {
     assertEquals(localProjectCache.has("myproject"), false);
   });
 
+  it(
+    "ignores x-project-path in proxy mode when dispatch-JWS is present but unverifiable (Codex P1 regression)",
+    async () => {
+      // Historically `isProxyTrusted` trusted any request that merely carried an
+      // `x-veryfront-dispatch-jws` header. The proxy does not strip that header
+      // on ingress (it has to pass through to channel handlers), so a direct-
+      // access attacker could attach any value — including gibberish — and
+      // re-enable `x-project-path` spoofing. This test pins the fix: a bogus
+      // (unsigned / unverifiable) dispatch JWS must NOT promote the request
+      // into proxy-trusted territory.
+      const adapter = createMockAdapter({
+        "/attacker/chosen/path": { isDirectory: true },
+        "/attacker/chosen/path/app": { isDirectory: true },
+      });
+
+      const result = await resolveAdapter({
+        req: await makeReq({ projectPath: "/attacker/chosen/path", trusted: "bogus" }),
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "myproject",
+        projectId: "proj_123",
+        proxyToken: undefined,
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: null,
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        isProxyMode: true,
+      });
+
+      assertEquals(result.isLocalProject, false);
+      assertEquals(result.projectDir, "/base/project");
+      assertEquals(localProjectCache.has("myproject"), false);
+    },
+  );
+
   it("honours x-project-path in proxy mode when dispatch-JWS header is present", async () => {
     const adapter = createMockAdapter({
       "/trusted/project": { isDirectory: true },
@@ -206,7 +302,7 @@ describe("adapter-factory", () => {
     localAdapterCache.set("/trusted/project", adapter);
 
     const result = await resolveAdapter({
-      req: makeReq({ projectPath: "/trusted/project", trusted: true }),
+      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -253,7 +349,7 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      req: makeReq(),
+      req: await makeReq(),
       isProxyMode: false,
     });
 
@@ -288,7 +384,7 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      req: makeReq(),
+      req: await makeReq(),
       isProxyMode: true,
     });
 
@@ -322,7 +418,7 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      req: makeReq(),
+      req: await makeReq(),
       isProxyMode: false,
     });
 
@@ -352,7 +448,7 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      req: makeReq(),
+      req: await makeReq(),
       isProxyMode: false,
     });
 
@@ -381,7 +477,7 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      req: makeReq(),
+      req: await makeReq(),
       isProxyMode: false,
     });
 
@@ -402,7 +498,7 @@ describe("adapter-factory", () => {
     cache.adapters.set("/trusted/project", adapter);
 
     const result = await resolveAdapter({
-      req: makeReq({ projectPath: "/trusted/project", trusted: true }),
+      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -463,7 +559,7 @@ describe("adapter-factory", () => {
         isDraft: false,
         allowIframeEmbed: false,
       },
-      req: makeReq(),
+      req: await makeReq(),
       isProxyMode: false,
       cache,
     });
@@ -528,7 +624,7 @@ describe("adapter-factory", () => {
             isDraft: false,
             allowIframeEmbed: false,
           },
-          req: makeReq(),
+          req: await makeReq(),
           isProxyMode: true,
         });
       } catch {
@@ -574,7 +670,7 @@ describe("adapter-factory", () => {
               isDraft: false,
               allowIframeEmbed: false,
             },
-            req: makeReq(),
+            req: await makeReq(),
             isProxyMode: true,
           }),
         Error,
@@ -604,7 +700,7 @@ describe("adapter-factory", () => {
           isDraft: false,
           allowIframeEmbed: false,
         },
-        req: makeReq(),
+        req: await makeReq(),
         isProxyMode: true,
       });
 
@@ -640,7 +736,7 @@ describe("adapter-factory", () => {
             isDraft: false,
             allowIframeEmbed: false,
           },
-          req: makeReq(),
+          req: await makeReq(),
           isProxyMode: true,
         });
         succeeded = true;
