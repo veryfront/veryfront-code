@@ -114,6 +114,14 @@ export const ConversationRunProjectionSchema = z
   });
 
 export type ConversationRunProjection = z.infer<typeof ConversationRunProjectionSchema>;
+export type ActiveConversationRunStatus = Extract<
+  ConversationRunProjection["status"],
+  "pending" | "running" | "waiting_for_tool"
+>;
+export type TerminalConversationRunStatus = Extract<
+  ConversationRunProjection["status"],
+  "completed" | "failed" | "cancelled"
+>;
 
 export const CreateConversationRunAcceptedSchema = z
   .object({
@@ -229,6 +237,18 @@ export interface FinalizeConversationAgentRunInput {
   terminalErrorMessage?: string | null;
 }
 
+export class ConversationRunTerminalStateError extends Error {
+  readonly status: TerminalConversationRunStatus;
+  readonly run: ConversationRunProjection;
+
+  constructor(run: ConversationRunProjection, status: TerminalConversationRunStatus) {
+    super(`Conversation run ${run.runId} became ${status} before host execution finished`);
+    this.name = "ConversationRunTerminalStateError";
+    this.status = status;
+    this.run = run;
+  }
+}
+
 export class AppendConversationRunEventsError extends Error {
   readonly status: number;
   readonly detail: string | null;
@@ -294,6 +314,36 @@ export function isCursorMismatchConversationRunAppendError(
   );
 }
 
+export function isActiveConversationRunStatus(
+  status: ConversationRunProjection["status"],
+): status is ActiveConversationRunStatus {
+  return status === "pending" || status === "running" || status === "waiting_for_tool";
+}
+
+async function waitForConversationRunPoll(
+  ms: number,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  if (ms <= 0 || abortSignal?.aborted) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const timeoutId = setTimeout(() => {
+      abortSignal?.removeEventListener("abort", resolveOnAbort);
+      resolve();
+    }, ms);
+
+    const resolveOnAbort = () => {
+      clearTimeout(timeoutId);
+      abortSignal?.removeEventListener("abort", resolveOnAbort);
+      resolve();
+    };
+
+    abortSignal?.addEventListener("abort", resolveOnAbort, { once: true });
+  });
+}
+
 async function controlPlaneJson<T>(input: {
   authToken: string;
   url: string;
@@ -357,6 +407,57 @@ export async function getConversationRun(input: {
     operation: "Read conversation durable run projection",
     abortSignal: input.abortSignal,
   });
+}
+
+export async function monitorConversationRunStatus(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  runId: string;
+  abortSignal?: AbortSignal;
+  pollIntervalMs: number;
+  onTerminal: (error: ConversationRunTerminalStateError) => void | Promise<void>;
+  onPollError?: (error: unknown) => void | Promise<void>;
+}): Promise<void> {
+  while (!input.abortSignal?.aborted) {
+    await waitForConversationRunPoll(input.pollIntervalMs, input.abortSignal);
+    if (input.abortSignal?.aborted) {
+      return;
+    }
+
+    try {
+      const run = await getConversationRun({
+        authToken: input.authToken,
+        apiUrl: input.apiUrl,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        abortSignal: input.abortSignal,
+      });
+
+      if (isActiveConversationRunStatus(run.status)) {
+        continue;
+      }
+
+      if (
+        run.status === "completed" ||
+        run.status === "failed" ||
+        run.status === "cancelled"
+      ) {
+        await input.onTerminal(new ConversationRunTerminalStateError(run, run.status));
+      }
+      return;
+    } catch (error) {
+      if (input.abortSignal?.aborted) {
+        return;
+      }
+
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+
+      await input.onPollError?.(error);
+    }
+  }
 }
 
 export async function appendConversationRunEvents(input: {

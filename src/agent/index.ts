@@ -191,6 +191,7 @@ export {
   fetchConversationRecord,
 } from "./conversation-bootstrap.ts";
 export {
+  type ActiveConversationRunStatus,
   appendConversationRunEvents,
   AppendConversationRunEventsError,
   type AppendConversationRunEventsResponse,
@@ -202,13 +203,17 @@ export {
   ConversationRunStatusSchema,
   type ConversationRunTargets,
   ConversationRunTargetsSchema,
+  ConversationRunTerminalStateError,
   createConversationAgentRun,
   finalizeConversationAgentRun,
   getConversationRun,
+  isActiveConversationRunStatus,
   isCursorMismatchConversationRunAppendError,
   isIgnorableConversationRunAppendError,
+  monitorConversationRunStatus,
   parseAppendConversationRunEventsErrorBody,
   resolveConversationRunTargets,
+  type TerminalConversationRunStatus,
 } from "./durable.ts";
 export {
   buildInvokeAgentChildRunLifecycleCustomEvent,
