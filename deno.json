@@ -4,6 +4,7 @@
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
+    "./extensions/ext-mdx",
     "./extensions/ext-redis"
   ],
   "exclude": [
