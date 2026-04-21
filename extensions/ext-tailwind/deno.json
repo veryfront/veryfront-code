@@ -1,0 +1,25 @@
+{
+  "name": "@veryfront/ext-tailwind",
+  "version": "0.1.0",
+  "exports": "./src/index.ts",
+  "veryfront": {
+    "extension": true,
+    "capabilities": [
+      { "type": "contract", "name": "CSSProcessor" },
+      { "type": "net", "hosts": ["esm.sh"] }
+    ]
+  },
+  "imports": {
+    "tailwindcss": "https://esm.sh/tailwindcss@4.2.2",
+    "tailwindcss/plugin": "https://esm.sh/tailwindcss@4.2.2/plugin",
+    "tailwindcss/defaultTheme": "https://esm.sh/tailwindcss@4.2.2/defaultTheme",
+    "tailwindcss/colors": "https://esm.sh/tailwindcss@4.2.2/colors",
+    "@std/assert": "jsr:@std/assert@1",
+    "@std/testing/bdd": "jsr:@std/testing@1/bdd",
+    "veryfront/extensions": "../../../src/extensions/index.ts",
+    "veryfront/extensions/interfaces": "../../../src/extensions/interfaces/index.ts"
+  },
+  "tasks": {
+    "test": "deno test --no-check --allow-all src/"
+  }
+}
