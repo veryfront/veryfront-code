@@ -332,6 +332,8 @@ export async function verifyDispatchJwsSignature(
     const verified = await crypto.subtle.verify("Ed25519", publicKey, signature, signingInput);
     if (!verified) return false;
 
+    if (claims.iss !== "veryfront-api") return false;
+
     const now = Math.floor(Date.now() / 1000);
     if (claims.exp <= now) return false;
     if (claims.iat > now + SIGNATURE_SKEW_SECONDS) return false;

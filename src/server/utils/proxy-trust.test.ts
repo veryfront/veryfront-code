@@ -16,6 +16,7 @@ async function mintDispatchJws(
   overrides: Partial<{
     iat: number;
     exp: number;
+    issuer: string;
     audience: string;
     projectId: string;
     signingKeyPair: CryptoKeyPair;
@@ -35,7 +36,7 @@ async function mintDispatchJws(
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: "EdDSA", typ: "JWT" };
   const claims = {
-    iss: "veryfront-api",
+    iss: overrides.issuer ?? "veryfront-api",
     aud: overrides.audience ?? "demo-project",
     sub: "dispatch-proxy-trust",
     project_id: overrides.projectId ?? "proj-1",
@@ -133,6 +134,17 @@ describe("server/utils/proxy-trust", () => {
         "PUBLIC KEY",
         await crypto.subtle.exportKey("spki", trustedKeyPair.publicKey),
       );
+      const req = new Request("http://example.com/", {
+        headers: { "x-veryfront-dispatch-jws": jws },
+      });
+      assertEquals(await isProxyTrusted(req, { publicKeyPem }), false);
+    });
+
+    it("rejects a dispatch JWS whose issuer is not veryfront-api", async () => {
+      // Even with a correctly-signed token, an attacker-controlled issuer (e.g.
+      // a stray key that ended up in CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY during
+      // rotation) must not be accepted as a proxy-trust signal.
+      const { jws, publicKeyPem } = await mintDispatchJws({ issuer: "attacker" });
       const req = new Request("http://example.com/", {
         headers: { "x-veryfront-dispatch-jws": jws },
       });
