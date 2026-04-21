@@ -1,6 +1,8 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { RunResumeSessionManager } from "./index.ts";
 import { createAgUiRuntimeHandler } from "./ag-ui-runtime-handler.ts";
+import { AgentRuntime } from "./runtime/index.ts";
 import type { Agent, Message } from "./types.ts";
 
 const encoder = new TextEncoder();
@@ -177,6 +179,315 @@ describe("agent/ag-ui-runtime-handler", () => {
       runId: "run_runtime_2",
       messageCount: 1,
     });
+  });
+
+  it("calls runtime lifecycle hooks for direct hosted AG-UI streams", async () => {
+    const testAgent = createTestAgent();
+    const threadId = crypto.randomUUID();
+    let finishedRunId: string | undefined;
+    let seenToolCallId: string | undefined;
+
+    testAgent.agent.stream = async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+          );
+          controller.enqueue(
+            encodeDataStreamEvent({
+              type: "tool-input-start",
+              toolCallId: "tool-call-42",
+              toolName: "client_confirm",
+            }),
+          );
+          controller.enqueue(
+            encodeDataStreamEvent({
+              type: "tool-input-delta",
+              toolCallId: "tool-call-42",
+              inputTextDelta: '{"approved":true}',
+            }),
+          );
+          controller.enqueue(
+            encodeDataStreamEvent({
+              type: "tool-input-available",
+              toolCallId: "tool-call-42",
+            }),
+          );
+          controller.close();
+        },
+      });
+
+      return {
+        toDataStreamResponse: () =>
+          new Response(stream, {
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+      };
+    };
+
+    const handler = createAgUiRuntimeHandler({
+      agent: testAgent.agent,
+      onToolCallSeen: ({ request, toolCallId }) => {
+        finishedRunId = request.runId;
+        seenToolCallId = toolCallId;
+      },
+      onFinish: ({ request }) => {
+        finishedRunId = request.runId;
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId,
+          runId: "run_runtime_hooks_1",
+          messages: [{ id: "user-1", role: "user", content: "Hello" }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    await response.text();
+    assertEquals(finishedRunId, "run_runtime_hooks_1");
+    assertEquals(seenToolCallId, "tool-call-42");
+  });
+
+  it("calls onError when the runtime AG-UI stream fails", async () => {
+    const testAgent = createTestAgent();
+    const threadId = crypto.randomUUID();
+    let seenRunId: string | undefined;
+    let seenError: string | undefined;
+
+    testAgent.agent.stream = async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+          );
+          controller.error(new Error("runtime stream exploded"));
+        },
+      });
+
+      return {
+        toDataStreamResponse: () =>
+          new Response(stream, {
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+      };
+    };
+
+    const handler = createAgUiRuntimeHandler({
+      agent: testAgent.agent,
+      onError: ({ request, error }) => {
+        seenRunId = request.runId;
+        seenError = error instanceof Error ? error.message : String(error);
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId,
+          runId: "run_runtime_hooks_2",
+          messages: [{ id: "user-1", role: "user", content: "Hello" }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    const body = await response.text();
+    assertStringIncludes(body, "event: RunError");
+    assertEquals(seenRunId, "run_runtime_hooks_2");
+    assertEquals(seenError, "runtime stream exploded");
+  });
+
+  it("swallows rejected lifecycle callback promises during normal streaming", async () => {
+    const testAgent = createTestAgent();
+    const threadId = crypto.randomUUID();
+    const handler = createAgUiRuntimeHandler({
+      agent: testAgent.agent,
+      onFinish: async () => {
+        throw new Error("telemetry exploded");
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId,
+          runId: "run_runtime_hooks_3",
+          messages: [{ id: "user-1", role: "user", content: "Hello" }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    const body = await response.text();
+    assertStringIncludes(body, "event: RunFinished");
+  });
+
+  it("calls onError when direct hosted stream setup fails before a stream exists", async () => {
+    const testAgent = createTestAgent();
+    const threadId = crypto.randomUUID();
+    let seenRunId: string | undefined;
+    let seenError: string | undefined;
+
+    testAgent.agent.clearMemory = async () => {
+      throw new Error("clearMemory exploded");
+    };
+
+    const handler = createAgUiRuntimeHandler({
+      agent: testAgent.agent,
+      onError: ({ request, error }) => {
+        seenRunId = request.runId;
+        seenError = error instanceof Error ? error.message : String(error);
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId,
+          runId: "run_runtime_hooks_4",
+          messages: [{ id: "user-1", role: "user", content: "Hello" }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 500);
+    assertEquals(await response.json(), { error: "clearMemory exploded" });
+    assertEquals(seenRunId, "run_runtime_hooks_4");
+    assertEquals(seenError, "clearMemory exploded");
+  });
+
+  it("forwards lifecycle callbacks through the injected-tools runtime path", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const originalStream = AgentRuntime.prototype.stream;
+    let seenToolCallId: string | undefined;
+    let finishedRunId: string | undefined;
+
+    AgentRuntime.prototype.stream = async function (
+      messages,
+      context,
+    ): Promise<ReadableStream<Uint8Array>> {
+      const runtimeConfig = this as unknown as {
+        config: {
+          tools?: Record<string, {
+            execute: (
+              input: Record<string, unknown>,
+              context?: { toolCallId?: string },
+            ) => Promise<unknown>;
+          }>;
+        };
+      };
+
+      const injectedTool = runtimeConfig.config.tools?.client_confirm;
+      if (!injectedTool) {
+        throw new Error("Expected injected tool to be merged into the runtime config");
+      }
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          void (async () => {
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "message-start",
+                messageId: "assistant-msg-1",
+              }),
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-input-start",
+                toolCallId: "tool-call-1",
+                toolName: "client_confirm",
+              }),
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-input-delta",
+                toolCallId: "tool-call-1",
+                inputTextDelta: '{"approved":true}',
+              }),
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-input-available",
+                toolCallId: "tool-call-1",
+              }),
+            );
+
+            const result = await injectedTool.execute(
+              { approved: true },
+              { toolCallId: "tool-call-1" },
+            );
+
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-output-available",
+                toolCallId: "tool-call-1",
+                output: result,
+              }),
+            );
+            controller.close();
+          })();
+        },
+      });
+
+      assertEquals(messages[0]?.role, "user");
+      assertEquals(context?.runId, "run_runtime_4");
+      return stream;
+    };
+
+    try {
+      const handler = createAgUiRuntimeHandler({
+        agent: createTestAgent().agent,
+        sessionManager,
+        onToolCallSeen: ({ toolCallId }) => {
+          seenToolCallId = toolCallId;
+        },
+        onFinish: ({ request }) => {
+          finishedRunId = request.runId;
+        },
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threadId: crypto.randomUUID(),
+            runId: "run_runtime_4",
+            messages: [{ id: "msg-1", role: "user", content: "hello" }],
+            tools: [{ name: "client_confirm" }],
+          }),
+        }),
+      );
+
+      const bodyPromise = response.text();
+      const submitOutcome = sessionManager.submitSignal("run_runtime_4", {
+        waitKey: "tool-call-1",
+        value: { result: { approved: true }, isError: false },
+      });
+      assertEquals(submitOutcome, { accepted: true });
+
+      const body = await bodyPromise;
+      assertStringIncludes(body, "event: ToolCallStart");
+      assertEquals(seenToolCallId, "tool-call-1");
+      assertEquals(finishedRunId, "run_runtime_4");
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
   });
 
   it("requires a session manager when injected runtime tools are present and the default path is used", async () => {

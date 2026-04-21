@@ -145,6 +145,7 @@ export {
   type AgUiRuntimeHandlerExecute,
   type AgUiRuntimeHandlerExecuteInput,
   type AgUiRuntimeHandlerOptions,
+  type AgUiRuntimeLifecycleContext,
   createAgUiRuntimeHandler,
 } from "./ag-ui-runtime-handler.ts";
 export {

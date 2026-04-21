@@ -107,6 +107,14 @@ This helper layer is intentionally narrower than `createAgUiHandler()`:
 - the package owns AG-UI request validation/normalization
 - the host still owns auth, project access, and runtime preparation
 
+For canonical runtime AG-UI hosts using `createAgUiRuntimeHandler()`, the
+package can also invoke optional lifecycle callbacks when the default hosted
+stream path sees tool calls, finishes, or fails:
+
+- `onToolCallSeen`
+- `onFinish`
+- `onError`
+
 ## Convenience Request Shape
 
 `AgUiRequestSchema` accepts:

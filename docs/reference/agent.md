@@ -545,6 +545,8 @@ This handler:
 - can stream directly through a package `agent`
 - can hand off to a host-provided `execute` callback for custom auth,
   preparation, or execution while keeping package-owned runtime-request parsing
+- can notify host lifecycle callbacks (`onToolCallSeen`, `onFinish`, `onError`)
+  while the package still owns the default AG-UI stream path
 
 ### `AgUiResumeSignalSchema`
 
