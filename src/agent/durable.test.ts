@@ -493,4 +493,45 @@ describe("agent/durable", () => {
     assertEquals(pollErrors, ["temporary"]);
     assertEquals(seen, ["cancelled"]);
   });
+
+  it("rethrows terminal callback errors instead of swallowing them as poll errors", async () => {
+    let callCount = 0;
+    stubFetchImplementation(async () => {
+      callCount += 1;
+      return jsonResponse(
+        {
+          run_id: "run_terminal_3",
+          conversation_id: CONVERSATION_ID,
+          message_id: MESSAGE_ID,
+          latest_event_id: 5,
+          latest_external_event_sequence: 6,
+          status: "failed",
+        },
+        200,
+      );
+    });
+    const pollErrors: string[] = [];
+
+    await assertRejects(
+      () =>
+        monitorConversationRunStatus({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_terminal_3",
+          pollIntervalMs: 0,
+          onPollError: (error) => {
+            pollErrors.push(error instanceof Error ? error.message : String(error));
+          },
+          onTerminal: () => {
+            throw new Error("stop upstream");
+          },
+        }),
+      Error,
+      "stop upstream",
+    );
+
+    assertEquals(callCount, 1);
+    assertEquals(pollErrors, []);
+  });
 });
