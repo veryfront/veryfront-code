@@ -3,11 +3,14 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   appendConversationRunEvents,
   AppendConversationRunEventsError,
+  ConversationRunTerminalStateError,
   createConversationAgentRun,
   finalizeConversationAgentRun,
   getConversationRun,
+  isActiveConversationRunStatus,
   isCursorMismatchConversationRunAppendError,
   isIgnorableConversationRunAppendError,
+  monitorConversationRunStatus,
   parseAppendConversationRunEventsErrorBody,
   resolveConversationRunTargets,
 } from "./durable.ts";
@@ -66,19 +69,27 @@ function camelCaseDurableRunProjection(overrides: Record<string, unknown> = {}) 
 
 type FetchCall = [RequestInfo | URL, RequestInit | undefined];
 
-function stubFetchSequence(...steps: Response[]): FetchCall[] {
-  const queue = [...steps];
+function stubFetchImplementation(
+  implementation: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+): FetchCall[] {
   const calls: FetchCall[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push([input, init]);
+    return implementation(input, init);
+  }) as typeof fetch;
+  return calls;
+}
+
+function stubFetchSequence(...steps: Response[]): FetchCall[] {
+  const queue = [...steps];
+  return stubFetchImplementation(async () => {
     const next = queue.shift();
     if (!next) {
       throw new Error("Unexpected fetch call");
     }
 
     return next;
-  }) as typeof fetch;
-  return calls;
+  });
 }
 
 describe("agent/durable", () => {
@@ -380,6 +391,8 @@ describe("agent/durable", () => {
     assertEquals(isIgnorableConversationRunAppendError(ignorable), true);
     assertEquals(isIgnorableConversationRunAppendError(cursorMismatch), false);
     assertEquals(isCursorMismatchConversationRunAppendError(cursorMismatch), true);
+    assertEquals(isActiveConversationRunStatus("running"), true);
+    assertEquals(isActiveConversationRunStatus("completed"), false);
   });
 
   it("does not issue requests when the caller abort signal is already aborted", async () => {
@@ -406,5 +419,78 @@ describe("agent/durable", () => {
     );
 
     assertEquals(fetchCalled, false);
+  });
+
+  it("reports terminal conversation runs during polling", async () => {
+    const seen: ConversationRunTerminalStateError[] = [];
+    stubFetchSequence(
+      jsonResponse(
+        {
+          run_id: "run_terminal_1",
+          conversation_id: CONVERSATION_ID,
+          message_id: MESSAGE_ID,
+          latest_event_id: 5,
+          latest_external_event_sequence: 6,
+          status: "failed",
+        },
+        200,
+      ),
+    );
+
+    await monitorConversationRunStatus({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_terminal_1",
+      pollIntervalMs: 0,
+      onTerminal: (error) => {
+        seen.push(error);
+      },
+    });
+
+    assertEquals(seen.length, 1);
+    assertEquals(seen[0]?.status, "failed");
+    assertEquals(seen[0]?.run.runId, "run_terminal_1");
+  });
+
+  it("continues polling after transient errors and forwards them to onPollError", async () => {
+    let callCount = 0;
+    stubFetchImplementation(async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new Error("temporary");
+      }
+
+      return jsonResponse(
+        {
+          run_id: "run_terminal_2",
+          conversation_id: CONVERSATION_ID,
+          message_id: MESSAGE_ID,
+          latest_event_id: 5,
+          latest_external_event_sequence: 6,
+          status: "cancelled",
+        },
+        200,
+      );
+    });
+    const pollErrors: string[] = [];
+    const seen: string[] = [];
+
+    await monitorConversationRunStatus({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_terminal_2",
+      pollIntervalMs: 0,
+      onPollError: (error) => {
+        pollErrors.push(error instanceof Error ? error.message : String(error));
+      },
+      onTerminal: (error) => {
+        seen.push(error.status);
+      },
+    });
+
+    assertEquals(pollErrors, ["temporary"]);
+    assertEquals(seen, ["cancelled"]);
   });
 });
