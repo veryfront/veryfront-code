@@ -2,7 +2,7 @@
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
-import { afterAll, afterEach, beforeAll, describe, it } from "#veryfront/testing/bdd";
+import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd";
 import { HMRHandler } from "../../../../src/server/handlers/preview/hmr.handler.ts";
 import { ReloadNotifier } from "../../../../src/server/reload-notifier.ts";
 import { broadcastUpdate } from "../../../../src/server/handlers/preview/hmr-message-router.ts";
