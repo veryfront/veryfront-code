@@ -29,9 +29,12 @@ export type { CSSProcessOptions, CSSProcessor, CSSProcessResult } from "./css-pr
 
 // Content transformer
 export type {
+  CompilationMode,
+  CompilationTarget,
+  ContentCompileOptions,
+  ContentPlugin,
   ContentTransformer,
-  ContentTransformOptions,
-  ContentTransformResult,
+  MdxRuntimeBundle,
 } from "./content-transformer.ts";
 
 // Database client
