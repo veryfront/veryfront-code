@@ -138,4 +138,87 @@ describe("agent/ag-ui-browser-response-stream", () => {
     await collectStreamText(stream);
     assertEquals(finalSeen, ["a", "b"]);
   });
+
+  it("normalizes missing state to an empty snapshot object", async () => {
+    const stream = createAgUiBrowserResponseStream({
+      agUiInput: {
+        runId: "run-4",
+        threadId: "thread-4",
+        messages: [],
+      },
+      agentId: "assistant-1",
+      execution: {
+        agentUIStream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "chunk", delta: "noop" };
+          },
+        },
+        fail: async () => {},
+        waitForFinish: async () => {},
+      },
+      encoder: {
+        encode: () => [],
+        finalize: () => [],
+      },
+      initialState: {},
+    });
+
+    const text = await collectStreamText(stream);
+    assertStringIncludes(text, "event: StateSnapshot");
+    assertStringIncludes(text, 'data: {"snapshot":{}}');
+  });
+
+  it("stops consuming chunks after the response stream is cancelled", async () => {
+    let releaseSecondChunk: (() => void) | undefined;
+    const secondChunkReady = new Promise<void>((resolve) => {
+      releaseSecondChunk = resolve;
+    });
+    let seenChunks = 0;
+    let waitForFinishCalls = 0;
+
+    const stream = createAgUiBrowserResponseStream({
+      agUiInput: {
+        runId: "run-5",
+        threadId: "thread-5",
+        messages: [],
+      },
+      agentId: "assistant-1",
+      execution: {
+        agentUIStream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "chunk", delta: "a" };
+            await secondChunkReady;
+            yield { type: "chunk", delta: "b" };
+          },
+        },
+        fail: async () => {},
+        waitForFinish: async () => {
+          waitForFinishCalls += 1;
+        },
+      },
+      encoder: {
+        encode: (chunk): AgUiSseEvent[] => [{
+          event: "TextMessageContent",
+          payload: { delta: String((chunk as { delta: string }).delta) },
+        }],
+        finalize: () => [{ event: "RunFinished", payload: { metadata: {} } }],
+      },
+      initialState: {},
+      onChunk: () => {
+        seenChunks += 1;
+      },
+    });
+
+    const reader = stream.getReader();
+    for (let index = 0; index < 4; index += 1) {
+      const { done } = await reader.read();
+      assertEquals(done, false);
+    }
+    await reader.cancel();
+    releaseSecondChunk?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assertEquals(seenChunks, 1);
+    assertEquals(waitForFinishCalls, 0);
+  });
 });
