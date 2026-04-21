@@ -20,7 +20,15 @@ export function sendSSE(
   encoder: TextEncoder,
   event: Record<string, unknown>,
 ): void {
-  controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+  try {
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+  } catch (error) {
+    if (isClosedStreamControllerError(error)) {
+      return;
+    }
+
+    throw error;
+  }
 }
 
 export function closeSSEStream(controller: ReadableStreamDefaultController): void {
