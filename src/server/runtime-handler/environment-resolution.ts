@@ -64,7 +64,8 @@ export function resolveEnvironment(
 
   // Some internal framework surfaces are routed directly to a runtime owner pod and
   // rely on signed control-plane auth instead of a user-facing release address.
-  const isInternalAgentControlPlanePath = opts.pathname.startsWith("/internal/agents/");
+  const isInternalAgentControlPlanePath = opts.pathname.startsWith("/internal/agents/") ||
+    opts.pathname.startsWith("/api/control-plane/agents/");
 
   // Skip releaseId validation for development assets and signed internal control-plane
   // requests because they do not require a user-facing release context.

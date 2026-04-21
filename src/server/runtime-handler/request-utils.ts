@@ -84,5 +84,6 @@ export function isWebSocketPath(pathname: string): boolean {
  * render cache prefix/content-source derivation and the enriched render payload.
  */
 export function shouldSkipEnrichedContext(pathname: string): boolean {
-  return pathname.startsWith("/api/") || pathname.startsWith("/internal/agents/");
+  return pathname.startsWith("/api/") || pathname.startsWith("/internal/agents/") ||
+    pathname.startsWith("/api/control-plane/agents/");
 }
