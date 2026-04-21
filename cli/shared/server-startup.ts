@@ -99,6 +99,13 @@ export async function startCliProductionServer(
     signal: options.signal,
     defaultProjectSlug: options.defaultProjectSlug,
     defaultProjectId: options.defaultProjectId,
+    // Register the cwd project as a local project so filesystem-backed dev
+    // surfaces (error overlay, RSC `fs` client-module strategy, `/_veryfront/fs/`
+    // module loader) continue to work for single-project standalone deployments
+    // like `vf serve` and the compiled binary. This is a server-trusted mapping
+    // — it comes from CLI startup options, not request headers — so it is a
+    // legitimate source of `isLocalProject: true` under VULN-SRV-1/2.
+    localProjects: { [options.defaultProjectSlug]: options.projectDir },
   };
   return await startProductionServer(serverOptions);
 }
