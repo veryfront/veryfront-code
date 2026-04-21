@@ -32,6 +32,7 @@ npm install veryfront
 | [`veryfront/markdown`](./markdown.md)         | Markdown rendering with syntax highlighting and diagrams.                                                                                                             |
 | [`veryfront/mdx`](./mdx.md)                   | Component overrides for `.mdx` page rendering.                                                                                                                        |
 | [`veryfront/agent`](./agent.md)               | AI agents with memory, tools, and multi-agent composition.                                                                                                            |
+| `veryfront/agent/conversation-bootstrap`      | Conversation bootstrap helpers for creating control-plane conversations, handoff messages, and agent runs in one reusable flow.                                       |
 | `veryfront/agent/durable`                     | Conversation-backed durable run helpers for hosts that integrate agent runs with a control-plane conversations API.                                                   |
 | `veryfront/channels/control-plane`            | Public schemas and signature verification helpers for the signed control-plane agent discovery surface.                                                                |
 | `veryfront/channels/invoke`                   | Public schemas and helpers for channel/assistant invocation payloads built on the control-plane contracts.                                                             |

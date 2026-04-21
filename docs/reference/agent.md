@@ -357,6 +357,10 @@ modules.
 | `createConversationAgentRun()`                           | `(input) => Promise<ConversationRunProjection>`  | Create a conversation-owned durable agent run and read back its canonical projection. |
 | `finalizeConversationAgentRun()`                         | `(input) => Promise<void>`                       | Finalize a conversation-owned durable agent run through the canonical complete route. |
 | `resolveConversationRunTargets()`                        | `({ projectId?, branchId? }) => ConversationRunTargets` | Resolve project/branch target metadata for durable conversation-backed runs. |
+| `bootstrapConversationAgentRun()`                        | `(input) => Promise<BootstrapConversationAgentRunResult>` | Create a conversation, seed it with a handoff message, and create a conversation-owned agent run in one reusable flow. |
+| `ensureConversationProjectLink()`                        | `(input) => Promise<void>`                       | Link a conversation to a project when it is currently unowned. |
+| `createConversationRecord()`                             | `(input) => Promise<ConversationRecord>`         | Create a conversation through the control-plane conversations API. |
+| `createConversationMessage()`                            | `(input) => Promise<ConversationMessageRecord>`  | Create a conversation message through the control-plane conversations API. |
 | `mapRuntimeStreamEventToAgUiBrowserEvents(state, event)` | `(state, event) => AgUiBrowserEncodedEvent[]`    | Map one runtime stream event into zero or more browser/public AG-UI events.    |
 | `finalizeAgUiBrowserEvents(state, response)`             | `(state, response) => AgUiBrowserEncodedEvent[]` | Emit terminal browser/public AG-UI events after the runtime stream finishes.   |
 
