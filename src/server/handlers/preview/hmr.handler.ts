@@ -28,6 +28,8 @@ import {
 import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-ping-keepalive.ts";
 import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
 import { getEffectiveRequestHost } from "../../utils/request-host.ts";
+import { isProxyTrusted } from "../../utils/proxy-trust.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = serverLogger.component("hmr-handler");
 
@@ -88,14 +90,24 @@ export class HMRHandler extends BaseHandler {
     });
   }
 
-  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    if (!this.shouldHandle(req, ctx)) return Promise.resolve(this.continue());
+  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+    if (!this.shouldHandle(req, ctx)) return this.continue();
 
     const url = new URL(req.url);
     const queryEnv = url.searchParams.get("x-environment");
     const isPreviewMode = ctx.requestContext?.mode === "preview" || queryEnv === "preview";
     const isLocal = !!ctx.isLocalProject;
-    const host = getEffectiveRequestHost(req, url);
+    // SECURITY: x-forwarded-host is client-controlled unless we trust the upstream proxy.
+    // Honouring it unconditionally lets any remote client present `x-forwarded-host: localhost`
+    // and unlock the localhost short-circuit that opens HMR (VULN-SRV-4). Only consult
+    // forwarded headers when the request is proxy-trusted; otherwise use Host / url.host.
+    // Proxy trust requires a verifiable dispatch JWS (or operator opt-in) — mere header
+    // presence is not enough, since `x-veryfront-dispatch-jws` is not stripped on ingress.
+    const publicKeyPem = ctx.adapter?.env?.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
+      getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+    const host = (await isProxyTrusted(req, { publicKeyPem }))
+      ? getEffectiveRequestHost(req, url)
+      : (req.headers.get("host") ?? url.host);
     const isLocalhost = isLocalDevHost(host);
 
     if (!isPreviewMode && !isLocal && !isLocalhost) {
@@ -108,7 +120,7 @@ export class HMRHandler extends BaseHandler {
         isLocal,
         isLocalhost,
       });
-      return Promise.resolve(this.continue());
+      return this.continue();
     }
 
     HMRHandler.initialize();
@@ -126,29 +138,25 @@ export class HMRHandler extends BaseHandler {
     }
 
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
-      return Promise.resolve(
-        this.respond(
-          new Response(
-            JSON.stringify({
-              status: "ok",
-              clients: getClientCount(),
-              clientDetails: getClientDetails(),
-              metrics: {
-                ...getMetrics(),
-                reloadNotifierMetrics: ReloadNotifier.getMetrics(),
-              },
-              message: "HMR WebSocket endpoint - connect via WebSocket",
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
+      return this.respond(
+        new Response(
+          JSON.stringify({
+            status: "ok",
+            clients: getClientCount(),
+            clientDetails: getClientDetails(),
+            metrics: {
+              ...getMetrics(),
+              reloadNotifierMetrics: ReloadNotifier.getMetrics(),
+            },
+            message: "HMR WebSocket endpoint - connect via WebSocket",
+          }),
+          { headers: { "content-type": "application/json" } },
         ),
       );
     }
 
     if (!ctx.adapter?.server) {
-      return Promise.resolve(
-        this.respond(new Response("WebSocket not supported", { status: 501 })),
-      );
+      return this.respond(new Response("WebSocket not supported", { status: 501 }));
     }
 
     try {
@@ -233,12 +241,10 @@ export class HMRHandler extends BaseHandler {
         totalClients: getClientCount(),
       });
 
-      return Promise.resolve(this.respond(response));
+      return this.respond(response);
     } catch (error) {
       logger.error("WebSocket upgrade failed", { error });
-      return Promise.resolve(
-        this.respond(new Response("WebSocket upgrade failed", { status: 500 })),
-      );
+      return this.respond(new Response("WebSocket upgrade failed", { status: 500 }));
     }
   }
 

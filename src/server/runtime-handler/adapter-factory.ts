@@ -21,6 +21,8 @@ import {
   type ProjectDiscoveryCache,
 } from "./local-project-discovery.ts";
 import type { ParsedDomain } from "../utils/domain-parser.ts";
+import { isProxyTrusted } from "../utils/proxy-trust.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -38,6 +40,11 @@ interface AdapterResolutionResult {
 }
 
 interface AdapterResolutionOptions {
+  /**
+   * Inbound request. Used to determine whether forwarded headers such as
+   * `x-project-path` can be trusted (see {@link isProxyTrusted}).
+   */
+  req: Request;
   /** Base project directory */
   projectDir: string;
   /** Base adapter */
@@ -60,8 +67,6 @@ interface AdapterResolutionOptions {
   environmentName: string | undefined;
   /** Parsed domain info */
   parsedDomain: ParsedDomain;
-  /** Project path from header */
-  headerProjectPath: string | undefined;
   /** Whether running in proxy mode */
   isProxyMode: boolean;
   /** Optional injectable cache (defaults to module-level singleton) */
@@ -86,7 +91,22 @@ export async function resolveAdapter(
   // Check if this is a local project.
   // In proxy mode, skip local discovery unless there's an explicit header path override —
   // the standard directories (data/projects/, projects/) don't exist in k8s.
-  const trustedHeaderProjectPath = opts.isProxyMode ? opts.headerProjectPath : undefined;
+  //
+  // SECURITY: `x-project-path` is a client-controlled header. Honouring it from any
+  // request would let an attacker reaching the runtime directly aim project discovery
+  // (and therefore `/_veryfront/fs/...`) at arbitrary filesystem paths (VULN-SRV-3).
+  // Only read it when the request is proxy-trusted: either the operator opted in via
+  // VERYFRONT_TRUST_FORWARDED_HEADERS=1, or the request carries a dispatch JWS that
+  // verifies against CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY. Mere header presence is
+  // NOT sufficient — a direct-access attacker could otherwise spoof `x-project-path`
+  // by attaching any value in `x-veryfront-dispatch-jws`.
+  const publicKeyPem = opts.adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
+    getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+  const proxyTrusted = opts.isProxyMode &&
+    (await isProxyTrusted(opts.req, { publicKeyPem }));
+  const trustedHeaderProjectPath = proxyTrusted
+    ? opts.req.headers.get("x-project-path")?.trim() || undefined
+    : undefined;
   const shouldCheckLocalPath = opts.projectSlug && (!opts.isProxyMode || trustedHeaderProjectPath);
   const localProjectPath = shouldCheckLocalPath
     ? await findLocalProjectPath(opts.projectSlug!, opts.adapter, trustedHeaderProjectPath, cache)
