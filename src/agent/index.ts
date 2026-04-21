@@ -166,6 +166,7 @@ export {
   type AgUiBrowserEncoderState,
   type AgUiBrowserRunFinishedMetadata,
   type AgUiRuntimeStreamEvent,
+  buildAgUiBrowserFinalizeResponse,
   createAgUiBrowserEncoderState,
   finalizeAgUiBrowserEvents,
   mapRuntimeStreamEventToAgUiBrowserEvents,

@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  buildAgUiBrowserFinalizeResponse,
   createAgUiBrowserEncoderState,
   finalizeAgUiBrowserEvents,
   mapRuntimeStreamEventToAgUiBrowserEvents,
@@ -431,6 +432,55 @@ describe("agent/ag-ui-browser-encoder", () => {
           message: "Agent run produced no assistant-visible output",
         },
       }],
+    );
+  });
+});
+
+describe("buildAgUiBrowserFinalizeResponse", () => {
+  it("returns null when metadata is empty", () => {
+    assertEquals(buildAgUiBrowserFinalizeResponse({}), null);
+  });
+
+  it("maps finishReason and usage into an AgentResponse", () => {
+    assertEquals(
+      buildAgUiBrowserFinalizeResponse({
+        finishReason: "stop",
+        inputTokens: 10,
+        outputTokens: 5,
+      }),
+      {
+        text: "",
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+        usage: {
+          promptTokens: 10,
+          completionTokens: 5,
+          totalTokens: 15,
+        },
+        metadata: { finishReason: "stop" },
+      },
+    );
+  });
+
+  it("respects an explicit total token count when provided", () => {
+    assertEquals(
+      buildAgUiBrowserFinalizeResponse({
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 99,
+      }),
+      {
+        text: "",
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+        usage: {
+          promptTokens: 10,
+          completionTokens: 5,
+          totalTokens: 99,
+        },
+      },
     );
   });
 });
