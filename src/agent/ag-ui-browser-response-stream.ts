@@ -45,6 +45,14 @@ export interface CreateAgUiBrowserResponseStreamInput<TChunk, TState> {
   getFinalResponse?: (state: TState) => AgentResponse | null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeSnapshot(snapshot: unknown): Record<string, unknown> {
+  return isRecord(snapshot) ? snapshot : {};
+}
+
 export function createAgUiBrowserResponseStream<TChunk, TState>(
   input: CreateAgUiBrowserResponseStreamInput<TChunk, TState>,
 ): ReadableStream<Uint8Array> {
@@ -86,40 +94,65 @@ export function createAgUiBrowserResponseStream<TChunk, TState>(
         const state = input.initialState;
 
         try {
-          writeEvent({
-            event: "RunStarted",
-            payload: {
-              runId: input.agUiInput.runId,
-              threadId: input.agUiInput.threadId,
-              agentId: input.agentId,
-            },
-          });
+          if (
+            !writeEvent({
+              event: "RunStarted",
+              payload: {
+                runId: input.agUiInput.runId,
+                threadId: input.agUiInput.threadId,
+                agentId: input.agentId,
+              },
+            })
+          ) {
+            return;
+          }
 
-          writeEvent({
-            event: "StateSnapshot",
-            payload: {
-              snapshot: input.agUiInput.state,
-            },
-          });
+          if (
+            !writeEvent({
+              event: "StateSnapshot",
+              payload: {
+                snapshot: normalizeSnapshot(input.agUiInput.state),
+              },
+            })
+          ) {
+            return;
+          }
 
-          writeEvent({
-            event: "MessagesSnapshot",
-            payload: {
-              messages: input.agUiInput.messages,
-            },
-          });
+          if (
+            !writeEvent({
+              event: "MessagesSnapshot",
+              payload: {
+                messages: input.agUiInput.messages,
+              },
+            })
+          ) {
+            return;
+          }
 
           for await (const chunk of input.execution.agentUIStream) {
+            if (streamClosed) {
+              return;
+            }
             input.onChunk?.(state, chunk);
             for (const event of input.encoder.encode(chunk)) {
-              writeEvent(event);
+              if (!writeEvent(event)) {
+                return;
+              }
             }
           }
 
+          if (streamClosed) {
+            return;
+          }
           await input.execution.waitForFinish();
 
+          if (streamClosed) {
+            return;
+          }
           for (const event of input.encoder.finalize(input.getFinalResponse?.(state) ?? null)) {
-            writeEvent(event);
+            if (!writeEvent(event)) {
+              return;
+            }
           }
         } catch (error) {
           await invokeFailWithoutLeaking(input.execution.fail, error);
