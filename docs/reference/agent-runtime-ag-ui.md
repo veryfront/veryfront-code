@@ -112,6 +112,10 @@ Hosts that keep a custom execute path can also use
 framing (`RunStarted`, `StateSnapshot`, `MessagesSnapshot`) while supplying a
 host-local encoder for their own chunk type.
 
+When a host accumulates browser-finished metadata separately,
+`buildAgUiBrowserFinalizeResponse()` converts that metadata into the canonical
+final `AgentResponse` consumed by the browser encoder finalization path.
+
 For canonical runtime AG-UI hosts using `createAgUiRuntimeHandler()`, the
 package can also invoke optional lifecycle callbacks when the default hosted
 stream path sees tool calls, finishes, or fails:

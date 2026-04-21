@@ -21,6 +21,7 @@ import {
   AgUiRequestSchema,
   AgUiResumeSignalSchema,
   AgUiRuntimeRequestSchema,
+  buildAgUiBrowserFinalizeResponse,
   createAgUiBrowserEncoderState,
   createAgUiCancelHandler,
   createAgUiDetachedStartHandler,
@@ -204,6 +205,7 @@ const events = mapRuntimeStreamEventToAgUiBrowserEvents(state, {
 });
 
 const finalEvents = finalizeAgUiBrowserEvents(state, null);
+const finalResponse = buildAgUiBrowserFinalizeResponse(state.metadata);
 ```
 
 ### Provider-native tool inventory
@@ -313,6 +315,7 @@ modules.
 | Export                                                   | Type                                             | Description                                                                  |
 | -------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------- |
 | `createAgUiBrowserEncoderState()`                        | `() => AgUiBrowserEncoderState`                  | Create mutable encoder state for one browser AG-UI stream.                   |
+| `buildAgUiBrowserFinalizeResponse()`                     | `(metadata) => AgentResponse \| null`            | Convert browser-finished metadata into the canonical final AgentResponse.    |
 | `mapRuntimeStreamEventToAgUiBrowserEvents(state, event)` | `(state, event) => AgUiBrowserEncodedEvent[]`    | Map one runtime stream event into zero or more browser/public AG-UI events.  |
 | `finalizeAgUiBrowserEvents(state, response)`             | `(state, response) => AgUiBrowserEncodedEvent[]` | Emit terminal browser/public AG-UI events after the runtime stream finishes. |
 

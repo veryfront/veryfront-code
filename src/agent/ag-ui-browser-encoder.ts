@@ -133,6 +133,39 @@ function applyResponseMetadata(
   }
 }
 
+export function buildAgUiBrowserFinalizeResponse(
+  metadata: AgUiBrowserRunFinishedMetadata,
+): AgentResponse | null {
+  const responseMetadata: Record<string, unknown> = {};
+  if (typeof metadata.finishReason === "string" && metadata.finishReason.length > 0) {
+    responseMetadata.finishReason = metadata.finishReason;
+  }
+
+  const usage = typeof metadata.inputTokens === "number" ||
+      typeof metadata.outputTokens === "number" ||
+      typeof metadata.totalTokens === "number"
+    ? {
+      promptTokens: metadata.inputTokens ?? 0,
+      completionTokens: metadata.outputTokens ?? 0,
+      totalTokens: metadata.totalTokens ??
+        ((metadata.inputTokens ?? 0) + (metadata.outputTokens ?? 0)),
+    }
+    : undefined;
+
+  if (!usage && Object.keys(responseMetadata).length === 0) {
+    return null;
+  }
+
+  return {
+    text: "",
+    messages: [],
+    toolCalls: [],
+    status: "completed",
+    ...(usage ? { usage } : {}),
+    ...(Object.keys(responseMetadata).length > 0 ? { metadata: responseMetadata } : {}),
+  };
+}
+
 function completeToolInput(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
