@@ -425,27 +425,15 @@ export async function monitorConversationRunStatus(input: {
       return;
     }
 
+    let run: ConversationRunProjection;
     try {
-      const run = await getConversationRun({
+      run = await getConversationRun({
         authToken: input.authToken,
         apiUrl: input.apiUrl,
         conversationId: input.conversationId,
         runId: input.runId,
         abortSignal: input.abortSignal,
       });
-
-      if (isActiveConversationRunStatus(run.status)) {
-        continue;
-      }
-
-      if (
-        run.status === "completed" ||
-        run.status === "failed" ||
-        run.status === "cancelled"
-      ) {
-        await input.onTerminal(new ConversationRunTerminalStateError(run, run.status));
-      }
-      return;
     } catch (error) {
       if (input.abortSignal?.aborted) {
         return;
@@ -456,7 +444,21 @@ export async function monitorConversationRunStatus(input: {
       }
 
       await input.onPollError?.(error);
+      continue;
     }
+
+    if (isActiveConversationRunStatus(run.status)) {
+      continue;
+    }
+
+    if (
+      run.status === "completed" ||
+      run.status === "failed" ||
+      run.status === "cancelled"
+    ) {
+      await input.onTerminal(new ConversationRunTerminalStateError(run, run.status));
+    }
+    return;
   }
 }
 
