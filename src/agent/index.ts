@@ -179,6 +179,14 @@ export {
   type CreateAgUiBrowserResponseStreamInput,
 } from "./ag-ui-browser-response-stream.ts";
 export {
+  type HostedLifecycleAdapter,
+  type HostedLifecycleExecution,
+  type HostedLifecycleRunnerOptions,
+  type HostedLifecycleRunResult,
+  type HostedLifecycleTerminalState,
+  runHostedLifecycle,
+} from "./hosted-lifecycle.ts";
+export {
   mergeToolCallInput,
   mergeToolInputDelta,
   parseDataStreamSseEvents,

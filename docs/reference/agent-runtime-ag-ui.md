@@ -116,6 +116,10 @@ When a host accumulates browser-finished metadata separately,
 `buildAgUiBrowserFinalizeResponse()` converts that metadata into the canonical
 final `AgentResponse` consumed by the browser encoder finalization path.
 
+For durable control-plane integration, `runHostedLifecycle()` provides a
+framework-owned orchestration loop while the host keeps ownership of auth, run
+creation, append/mirror policy, finalize/cancel calls, and transcript policy.
+
 For canonical runtime AG-UI hosts using `createAgUiRuntimeHandler()`, the
 package can also invoke optional lifecycle callbacks when the default hosted
 stream path sees tool calls, finishes, or fails:
