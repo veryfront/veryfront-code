@@ -35,6 +35,7 @@ import {
   expandAllowedRemoteToolNames,
   getAgentsAsTools,
   getProviderNativeToolNames,
+  HostedLifecycleTerminalState,
   HumanInputRequestSchema,
   normalizeAgUiMessages,
   normalizeAgUiRuntimeMessages,
@@ -43,6 +44,7 @@ import {
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
   registerAgent,
+  runHostedLifecycle,
   RunResumeSessionManager,
   waitForHumanInput,
 } from "veryfront/agent";
@@ -187,6 +189,36 @@ const sessionManager = new RunResumeSessionManager<{
 export const DELETE = createAgUiCancelHandler({ sessionManager });
 ```
 
+### Hosted durable lifecycle runner
+
+```ts
+import { type HostedLifecycleAdapter, runHostedLifecycle } from "veryfront/agent";
+
+type DurableChunk = { type: string; payload: unknown };
+type DurableRunContext = { runId: string; latestCursor: number };
+
+const adapter: HostedLifecycleAdapter<DurableRunContext, DurableChunk> = {
+  startRun: async () => ({ runId: "run_123", latestCursor: 0 }),
+  appendEvents: async (_run, _chunk) => {},
+  finalizeRun: async (_run, _terminalState) => {},
+  cancelRun: async (_run, _terminalState) => {},
+};
+
+await runHostedLifecycle({
+  abortSignal: new AbortController().signal,
+  execution: {
+    stream: {
+      async *[Symbol.asyncIterator]() {
+        yield { type: "text-delta", payload: "hello" } satisfies DurableChunk;
+      },
+    },
+    waitForFinish: async () => {},
+  },
+  adapter,
+  resolveTerminalState: () => ({ status: "completed" }),
+});
+```
+
 ### Browser AG-UI encoder
 
 ```ts
@@ -227,7 +259,9 @@ const allowedRemoteToolNames = expandAllowedRemoteToolNames({
 
 ```ts
 import {
+  HostedLifecycleTerminalState,
   HumanInputRequestSchema,
+  runHostedLifecycle,
   RunResumeSessionManager,
   waitForHumanInput,
 } from "veryfront/agent";
@@ -312,12 +346,13 @@ Use these helpers when a host needs to turn the framework runtime stream event
 family into browser/public AG-UI events without importing internal transport
 modules.
 
-| Export                                                   | Type                                             | Description                                                                  |
-| -------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `createAgUiBrowserEncoderState()`                        | `() => AgUiBrowserEncoderState`                  | Create mutable encoder state for one browser AG-UI stream.                   |
-| `buildAgUiBrowserFinalizeResponse()`                     | `(metadata) => AgentResponse \| null`            | Convert browser-finished metadata into the canonical final AgentResponse.    |
-| `mapRuntimeStreamEventToAgUiBrowserEvents(state, event)` | `(state, event) => AgUiBrowserEncodedEvent[]`    | Map one runtime stream event into zero or more browser/public AG-UI events.  |
-| `finalizeAgUiBrowserEvents(state, response)`             | `(state, response) => AgUiBrowserEncodedEvent[]` | Emit terminal browser/public AG-UI events after the runtime stream finishes. |
+| Export                                                   | Type                                             | Description                                                                    |
+| -------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------ |
+| `createAgUiBrowserEncoderState()`                        | `() => AgUiBrowserEncoderState`                  | Create mutable encoder state for one browser AG-UI stream.                     |
+| `buildAgUiBrowserFinalizeResponse()`                     | `(metadata) => AgentResponse \| null`            | Convert browser-finished metadata into the canonical final AgentResponse.      |
+| `runHostedLifecycle()`                                   | `(options) => Promise<HostedLifecycleRunResult>` | Orchestrate start/observe/finalize/cancel sequencing with host-owned adapters. |
+| `mapRuntimeStreamEventToAgUiBrowserEvents(state, event)` | `(state, event) => AgUiBrowserEncodedEvent[]`    | Map one runtime stream event into zero or more browser/public AG-UI events.    |
+| `finalizeAgUiBrowserEvents(state, response)`             | `(state, response) => AgUiBrowserEncodedEvent[]` | Emit terminal browser/public AG-UI events after the runtime stream finishes.   |
 
 ### Provider-native tool inventory
 
