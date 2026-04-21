@@ -32,6 +32,8 @@ npm install veryfront
 | [`veryfront/markdown`](./markdown.md)         | Markdown rendering with syntax highlighting and diagrams.                                                                                                             |
 | [`veryfront/mdx`](./mdx.md)                   | Component overrides for `.mdx` page rendering.                                                                                                                        |
 | [`veryfront/agent`](./agent.md)               | AI agents with memory, tools, and multi-agent composition.                                                                                                            |
+| `veryfront/channels/control-plane`            | Public schemas and signature verification helpers for the signed control-plane agent discovery surface.                                                                |
+| `veryfront/channels/invoke`                   | Public schemas and helpers for channel/assistant invocation payloads built on the control-plane contracts.                                                             |
 | [`veryfront/tool`](./tool.md)                 | Define tools with Zod schemas for agents and MCP.                                                                                                                     |
 | [`veryfront/workflow`](./workflow.md)         | DAG-based agentic workflows with human-in-the-loop support.                                                                                                           |
 | [`veryfront/prompt`](./prompt.md)             | Declare and register prompts exposable over MCP.                                                                                                                      |
