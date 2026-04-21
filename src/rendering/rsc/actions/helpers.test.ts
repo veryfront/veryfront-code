@@ -1,5 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { base64urlEncode } from "#veryfront/utils/base64url.ts";
 import { decodeUnverifiedJwtClaims, generateCsrfToken, validateCsrf } from "./helpers.ts";
 import * as publicActions from "./index.ts";
 
@@ -116,6 +117,27 @@ describe("rendering/rsc/actions/helpers", () => {
         headers: { cookie: "session=a.!!!invalid!!!.b" },
       });
       assertEquals(decodeUnverifiedJwtClaims(req), null);
+    });
+
+    it("decodes real base64url-encoded payloads (RFC 7515, not standard base64)", () => {
+      // Real JWTs are base64url: `+`/`/` become `-`/`_`, padding stripped.
+      // Pick a payload whose JSON produces all three transform characters so
+      // the test fails if the decoder skips any of them.
+      const payload = { iss: "realm?a>b", sub: "user+name/role=admin" };
+      const encoded = base64urlEncode(JSON.stringify(payload));
+      assertEquals(
+        /[+/=]/.test(encoded),
+        false,
+        "base64urlEncode output must not contain standard-base64 chars",
+      );
+
+      const jwt = `header.${encoded}.signature`;
+      const req = new Request("http://localhost/", {
+        headers: { cookie: `session=${jwt}` },
+      });
+      const result = decodeUnverifiedJwtClaims(req);
+      assertEquals(result?.iss, "realm?a>b");
+      assertEquals(result?.sub, "user+name/role=admin");
     });
 
     it(

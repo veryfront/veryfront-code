@@ -26,7 +26,12 @@ export function decodeUnverifiedJwtClaims(
   if (!payload) return null;
 
   try {
-    const bytes = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0));
+    // JWT payloads are base64url-encoded (RFC 7515): `-`/`_` replace `+`/`/`
+    // and padding is stripped. `atob` only accepts standard base64 with
+    // padding, so normalize before decoding or real tokens silently fail.
+    const normalized = payload.replaceAll("-", "+").replaceAll("_", "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
     const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
     if (!parsed || typeof parsed !== "object") return null;
     return parsed as Record<string, unknown>;
