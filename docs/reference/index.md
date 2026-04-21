@@ -21,31 +21,32 @@ npm install veryfront
 
 ## Modules
 
-| Import                                        | Description                                                                                                                                                           |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`veryfront`](./root.md)                      | Configuration, server bootstrap, routing, data fetching, and input validation.                                                                                        |
-| [`veryfront/head`](./head.md)                 | Declarative `<head>` metadata management.                                                                                                                             |
-| [`veryfront/router`](./router.md)             | Client-side routing, navigation, and links.                                                                                                                           |
-| [`veryfront/context`](./context.md)           | Access route params, page data, and MDX frontmatter.                                                                                                                  |
-| [`veryfront/fonts`](./fonts.md)               | Load Google Fonts as a React component.                                                                                                                               |
-| [`veryfront/chat`](./chat.md)                 | Chat UI components and streaming hooks.                                                                                                                               |
-| [`veryfront/markdown`](./markdown.md)         | Markdown rendering with syntax highlighting and diagrams.                                                                                                             |
-| [`veryfront/mdx`](./mdx.md)                   | Component overrides for `.mdx` page rendering.                                                                                                                        |
-| [`veryfront/agent`](./agent.md)               | AI agents with memory, tools, and multi-agent composition.                                                                                                            |
-| `veryfront/agent/conversation-bootstrap`      | Conversation bootstrap helpers for creating control-plane conversations, handoff messages, and agent runs in one reusable flow.                                       |
-| `veryfront/agent/durable`                     | Conversation-backed durable run helpers for hosts that integrate agent runs with a control-plane conversations API.                                                   |
-| `veryfront/channels/control-plane`            | Public schemas and signature verification helpers for the signed control-plane agent discovery surface.                                                                |
-| `veryfront/channels/invoke`                   | Public schemas and helpers for channel/assistant invocation payloads built on the control-plane contracts.                                                             |
-| [`veryfront/tool`](./tool.md)                 | Define tools with Zod schemas for agents and MCP.                                                                                                                     |
-| [`veryfront/workflow`](./workflow.md)         | DAG-based agentic workflows with human-in-the-loop support.                                                                                                           |
-| [`veryfront/prompt`](./prompt.md)             | Declare and register prompts exposable over MCP.                                                                                                                      |
-| [`veryfront/resource`](./resource.md)         | Declare and register resources exposable over MCP.                                                                                                                    |
-| [`veryfront/jobs`](./jobs.md)                 | Project-scoped jobs and cron jobs with events, logs, batches, and target discovery.                                                                                   |
-| [`veryfront/mcp`](./mcp.md)                   | MCP server exposing tools, prompts, and resources.                                                                                                                    |
-| [`veryfront/middleware`](./middleware.md)     | CORS, rate limiting, logging, and timeout middleware.                                                                                                                 |
-| [`veryfront/oauth`](./oauth.md)               | OAuth 2.0 helpers with a built-in provider catalog.                                                                                                                    |
-| [`veryfront/provider`](./provider.md)         | Provider registry for local, Veryfront Cloud, and direct provider runtimes. Auto-initializes built-in providers from environment variables on first use.             |
-| [`veryfront/fs`](./fs.md)                     | Filesystem operations and path utilities.                                                                                                                             |
-| [`veryfront/integrations`](./integrations.md) | Integration metadata and SVG icons for all connectors.                                                                                                                |
-| [`veryfront/sandbox`](./sandbox.md)           | Sandbox client for ephemeral compute environments backed by sandbox session APIs.                                                                                     |
-| [`veryfront/cli`](./cli.md)                   | Veryfront CLI entry point.                                                                                                                                            |
+| Import                                        | Description                                                                                                                                              |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`veryfront`](./root.md)                      | Configuration, server bootstrap, routing, data fetching, and input validation.                                                                           |
+| [`veryfront/head`](./head.md)                 | Declarative `<head>` metadata management.                                                                                                                |
+| [`veryfront/router`](./router.md)             | Client-side routing, navigation, and links.                                                                                                              |
+| [`veryfront/context`](./context.md)           | Access route params, page data, and MDX frontmatter.                                                                                                     |
+| [`veryfront/fonts`](./fonts.md)               | Load Google Fonts as a React component.                                                                                                                  |
+| [`veryfront/chat`](./chat.md)                 | Chat UI components and streaming hooks.                                                                                                                  |
+| [`veryfront/markdown`](./markdown.md)         | Markdown rendering with syntax highlighting and diagrams.                                                                                                |
+| [`veryfront/mdx`](./mdx.md)                   | Component overrides for `.mdx` page rendering.                                                                                                           |
+| [`veryfront/agent`](./agent.md)               | AI agents with memory, tools, and multi-agent composition.                                                                                               |
+| `veryfront/agent/conversation-bootstrap`      | Conversation bootstrap helpers for creating control-plane conversations, handoff messages, and agent runs in one reusable flow.                          |
+| `veryfront/agent/durable`                     | Conversation-backed durable run helpers for hosts that integrate agent runs with a control-plane conversations API.                                      |
+| `veryfront/agent/invoke-agent-child-runs`     | Child-run progress event builders and publishing helpers for hosts that surface invoke-agent lineage in the control plane.                               |
+| `veryfront/channels/control-plane`            | Public schemas and signature verification helpers for the signed control-plane agent discovery surface.                                                  |
+| `veryfront/channels/invoke`                   | Public schemas and helpers for channel/assistant invocation payloads built on the control-plane contracts.                                               |
+| [`veryfront/tool`](./tool.md)                 | Define tools with Zod schemas for agents and MCP.                                                                                                        |
+| [`veryfront/workflow`](./workflow.md)         | DAG-based agentic workflows with human-in-the-loop support.                                                                                              |
+| [`veryfront/prompt`](./prompt.md)             | Declare and register prompts exposable over MCP.                                                                                                         |
+| [`veryfront/resource`](./resource.md)         | Declare and register resources exposable over MCP.                                                                                                       |
+| [`veryfront/jobs`](./jobs.md)                 | Project-scoped jobs and cron jobs with events, logs, batches, and target discovery.                                                                      |
+| [`veryfront/mcp`](./mcp.md)                   | MCP server exposing tools, prompts, and resources.                                                                                                       |
+| [`veryfront/middleware`](./middleware.md)     | CORS, rate limiting, logging, and timeout middleware.                                                                                                    |
+| [`veryfront/oauth`](./oauth.md)               | OAuth 2.0 helpers with a built-in provider catalog.                                                                                                      |
+| [`veryfront/provider`](./provider.md)         | Provider registry for local, Veryfront Cloud, and direct provider runtimes. Auto-initializes built-in providers from environment variables on first use. |
+| [`veryfront/fs`](./fs.md)                     | Filesystem operations and path utilities.                                                                                                                |
+| [`veryfront/integrations`](./integrations.md) | Integration metadata and SVG icons for all connectors.                                                                                                   |
+| [`veryfront/sandbox`](./sandbox.md)           | Sandbox client for ephemeral compute environments backed by sandbox session APIs.                                                                        |
+| [`veryfront/cli`](./cli.md)                   | Veryfront CLI entry point.                                                                                                                               |

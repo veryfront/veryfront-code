@@ -1,8 +1,14 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  appendConversationRunEvents,
+  AppendConversationRunEventsError,
   createConversationAgentRun,
   finalizeConversationAgentRun,
+  getConversationRun,
+  isCursorMismatchConversationRunAppendError,
+  isIgnorableConversationRunAppendError,
+  parseAppendConversationRunEventsErrorBody,
   resolveConversationRunTargets,
 } from "./durable.ts";
 
@@ -274,5 +280,131 @@ describe("agent/durable", () => {
         terminal_error_message: null,
       },
     );
+  });
+
+  it("reads a conversation durable run projection directly", async () => {
+    stubFetchSequence(jsonResponse(camelCaseDurableRunProjection({ runId: "run_lookup_1" }), 200));
+
+    const result = await getConversationRun({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_lookup_1",
+    });
+
+    assertEquals(result, {
+      runId: "run_lookup_1",
+      conversationId: CONVERSATION_ID,
+      messageId: MESSAGE_ID,
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      status: "running",
+    });
+  });
+
+  it("appends conversation run events and parses snake_case responses", async () => {
+    const fetchCalls = stubFetchSequence(
+      jsonResponse(
+        {
+          latest_event_id: 7,
+          latest_external_event_sequence: 9,
+          appended_count: 2,
+          run: {
+            run_id: "run_root_1",
+            conversation_id: CONVERSATION_ID,
+            latest_event_id: 7,
+            latest_external_event_sequence: 9,
+          },
+        },
+        200,
+      ),
+    );
+
+    const result = await appendConversationRunEvents({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_root_1",
+      expectedPreviousEventId: 3,
+      expectedPreviousExternalEventSequence: 4,
+      events: [{ type: "STATE_DELTA" }],
+    });
+
+    assertEquals(
+      String(fetchCalls[0]?.[0]),
+      `${API_URL}/conversations/${CONVERSATION_ID}/runs/run_root_1/events`,
+    );
+    assertEquals(
+      JSON.parse(String(fetchCalls[0]?.[1]?.body)),
+      {
+        expected_previous_event_id: 3,
+        expected_previous_external_event_sequence: 4,
+        events: [{ type: "STATE_DELTA" }],
+      },
+    );
+    assertEquals(result, {
+      latestEventId: 7,
+      latestExternalEventSequence: 9,
+      appendedCount: 2,
+      run: {
+        run_id: "run_root_1",
+        conversation_id: CONVERSATION_ID,
+        latest_event_id: 7,
+        latest_external_event_sequence: 9,
+        runId: "run_root_1",
+        conversationId: CONVERSATION_ID,
+        latestEventId: 7,
+        latestExternalEventSequence: 9,
+      },
+    });
+  });
+
+  it("parses append errors and exposes ignore/cursor helpers", () => {
+    assertEquals(
+      parseAppendConversationRunEventsErrorBody(
+        JSON.stringify({ detail: "Cannot append external events to a terminal run" }),
+      ),
+      "Cannot append external events to a terminal run",
+    );
+    assertEquals(parseAppendConversationRunEventsErrorBody("plain text"), "plain text");
+
+    const ignorable = new AppendConversationRunEventsError({
+      status: 400,
+      detail: "Cannot append external events to a terminal run",
+    });
+    const cursorMismatch = new AppendConversationRunEventsError({
+      status: 400,
+      detail: "External run event cursor mismatch",
+    });
+
+    assertEquals(isIgnorableConversationRunAppendError(ignorable), true);
+    assertEquals(isIgnorableConversationRunAppendError(cursorMismatch), false);
+    assertEquals(isCursorMismatchConversationRunAppendError(cursorMismatch), true);
+  });
+
+  it("does not issue requests when the caller abort signal is already aborted", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+
+    let fetchCalled = false;
+    globalThis.fetch = (async () => {
+      fetchCalled = true;
+      throw new Error("fetch should not be called");
+    }) as typeof fetch;
+
+    await assertRejects(
+      () =>
+        getConversationRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_lookup_abort",
+          abortSignal: abortController.signal,
+        }),
+      DOMException,
+      "This operation was aborted",
+    );
+
+    assertEquals(fetchCalled, false);
   });
 });
