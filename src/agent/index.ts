@@ -191,6 +191,13 @@ export {
   fetchConversationRecord,
 } from "./conversation-bootstrap.ts";
 export {
+  type ConversationChildLifecycleContext,
+  type ConversationHostedLifecycleFinalizeInput,
+  createConversationChildLifecycleAdapter,
+  createConversationHostedLifecycleAdapter,
+  type CreateConversationHostedLifecycleAdapterOptions,
+} from "./conversation-hosted-lifecycle.ts";
+export {
   type ActiveConversationRunStatus,
   appendConversationRunEvents,
   AppendConversationRunEventsError,

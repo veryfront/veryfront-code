@@ -223,6 +223,7 @@ await runHostedLifecycle({
 For a conversations/control-plane host composition that combines
 `runHostedLifecycle()` with the public durable-run helpers, see
 [`Conversation-backed agent hosts`](./agent-conversation-control-plane.md).
+For higher-level root-run and child-run adapter factories over those same public exports, see [`Conversation-backed lifecycle adapters`](./agent-conversation-lifecycle.md).
 
 ### Browser AG-UI encoder
 
