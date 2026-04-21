@@ -1,5 +1,4 @@
 import { type JWTPayload, jwtVerify, type KeyLike } from "jose";
-import { parseCookies } from "./helpers.ts";
 
 export interface VerifySessionOptions {
   // `secret` is required at the type level so TypeScript callers are forced
@@ -10,6 +9,20 @@ export interface VerifySessionOptions {
   algorithms?: string[];
   issuer?: string;
   audience?: string;
+}
+
+function parseCookies(headers: Headers): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  const header = headers.get("cookie") ?? "";
+  for (const part of header.split(";")) {
+    const trimmed = part.trim();
+    const sep = trimmed.indexOf("=");
+    if (sep <= 0) continue;
+    const name = trimmed.slice(0, sep).trim();
+    if (!name) continue;
+    cookies[name] = decodeURIComponent(trimmed.slice(sep + 1));
+  }
+  return cookies;
 }
 
 /**

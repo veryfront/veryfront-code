@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertRejects } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { SignJWT } from "jose";
 import { verifySessionJwt } from "./verify-session-jwt.ts";
 
@@ -30,7 +30,7 @@ function reqWithCookie(cookie: string): Request {
   return new Request("http://localhost/", { headers: { cookie } });
 }
 
-describe("rendering/rsc/actions/verify-session-jwt", () => {
+describe("ext-jwt/verify-session-jwt", () => {
   describe("verifySessionJwt", () => {
     it("returns claims for a valid HS256 token", async () => {
       const token = await signHS256({ sub: "user123", role: "user" }, {
