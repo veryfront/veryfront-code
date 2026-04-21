@@ -44,6 +44,7 @@ import {
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
   registerAgent,
+  runHostedChildLifecycle,
   runHostedLifecycle,
   RunResumeSessionManager,
   waitForHumanInput,
@@ -260,6 +261,7 @@ const allowedRemoteToolNames = expandAllowedRemoteToolNames({
 ```ts
 import {
   HostedLifecycleTerminalState,
+  runHostedChildLifecycle,
   HumanInputRequestSchema,
   runHostedLifecycle,
   RunResumeSessionManager,
@@ -351,6 +353,7 @@ modules.
 | `createAgUiBrowserEncoderState()`                        | `() => AgUiBrowserEncoderState`                  | Create mutable encoder state for one browser AG-UI stream.                     |
 | `buildAgUiBrowserFinalizeResponse()`                     | `(metadata) => AgentResponse \| null`            | Convert browser-finished metadata into the canonical final AgentResponse.      |
 | `runHostedLifecycle()`                                   | `(options) => Promise<HostedLifecycleRunResult>` | Orchestrate start/observe/finalize/cancel sequencing with host-owned adapters. |
+| `runHostedChildLifecycle()`                              | `(options) => Promise<HostedChildLifecycleRunResult>` | Orchestrate pending/running/completed/failed/cancelled child lifecycle sequencing with host-owned adapters. |
 | `mapRuntimeStreamEventToAgUiBrowserEvents(state, event)` | `(state, event) => AgUiBrowserEncodedEvent[]`    | Map one runtime stream event into zero or more browser/public AG-UI events.    |
 | `finalizeAgUiBrowserEvents(state, response)`             | `(state, response) => AgUiBrowserEncodedEvent[]` | Emit terminal browser/public AG-UI events after the runtime stream finishes.   |
 
