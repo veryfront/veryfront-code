@@ -2,8 +2,11 @@ import { type JWTPayload, jwtVerify, type KeyLike } from "jose";
 import { parseCookies } from "./helpers.ts";
 
 export interface VerifySessionOptions {
+  // `secret` is required at the type level so TypeScript callers are forced
+  // to provide one at compile time, rather than discovering the missing
+  // value only when a runtime 500 fires on every authenticated request.
+  secret: Uint8Array | KeyLike;
   cookieName?: string;
-  secret?: Uint8Array | KeyLike;
   algorithms?: string[];
   issuer?: string;
   audience?: string;
@@ -19,7 +22,8 @@ export interface VerifySessionOptions {
  * Returns `null` when the configured cookie is absent (no session). Rejects
  * when a cookie is present but fails verification.
  *
- * @throws Error if `opts.secret` is not provided.
+ * @throws Error if `opts.secret` is not provided (should be unreachable for
+ * TypeScript callers; guarded for JS interop and defensive depth).
  */
 export async function verifySessionJwt(
   req: Request,
