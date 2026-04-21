@@ -80,11 +80,18 @@ Recommended default convention:
 
 Hosts may override the route when needed.
 
-Current internal compatibility route:
+Public control-plane wrapper convention:
+
+- `POST /api/control-plane/agents/list`
+- `POST /api/control-plane/agents/stream`
+- `POST /api/control-plane/agents/runs/:runId/resume`
+- `DELETE /api/control-plane/agents/runs/:runId`
+
+Legacy internal compatibility route:
 
 - `POST /internal/agents/stream`
 
-Current internal signed control-plane wrappers:
+Legacy internal signed control-plane wrappers:
 
 - `POST /internal/agents/runs/:runId/resume`
 - `DELETE /internal/agents/runs/:runId`
@@ -111,4 +118,4 @@ Downstream package/framework consumers should target:
 - AG-UI SSE responses
 - the default endpoint convention `/api/ag-ui` unless a host explicitly documents another route
 
-They should not treat `/internal/agents/stream` and its extra wrapper fields as the long-term package contract.
+They should not treat `/internal/agents/stream` and its extra wrapper fields as the long-term package contract when the public `/api/control-plane/agents/*` route family is available.
