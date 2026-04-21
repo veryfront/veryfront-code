@@ -648,6 +648,7 @@ describe("adapter-factory", () => {
         },
       };
       const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+      const req = await makeReq();
 
       await assertRejects(
         () =>
@@ -670,7 +671,7 @@ describe("adapter-factory", () => {
               isDraft: false,
               allowIframeEmbed: false,
             },
-            req: await makeReq(),
+            req,
             isProxyMode: true,
           }),
         Error,
