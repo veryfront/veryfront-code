@@ -354,6 +354,9 @@ modules.
 | `buildAgUiBrowserFinalizeResponse()`                     | `(metadata) => AgentResponse \| null`            | Convert browser-finished metadata into the canonical final AgentResponse.      |
 | `runHostedLifecycle()`                                   | `(options) => Promise<HostedLifecycleRunResult>` | Orchestrate start/observe/finalize/cancel sequencing with host-owned adapters. |
 | `runHostedChildLifecycle()`                              | `(options) => Promise<HostedChildLifecycleRunResult>` | Orchestrate pending/running/completed/failed/cancelled child lifecycle sequencing with host-owned adapters. |
+| `createConversationAgentRun()`                           | `(input) => Promise<ConversationRunProjection>`  | Create a conversation-owned durable agent run and read back its canonical projection. |
+| `finalizeConversationAgentRun()`                         | `(input) => Promise<void>`                       | Finalize a conversation-owned durable agent run through the canonical complete route. |
+| `resolveConversationRunTargets()`                        | `({ projectId?, branchId? }) => ConversationRunTargets` | Resolve project/branch target metadata for durable conversation-backed runs. |
 | `mapRuntimeStreamEventToAgUiBrowserEvents(state, event)` | `(state, event) => AgUiBrowserEncodedEvent[]`    | Map one runtime stream event into zero or more browser/public AG-UI events.    |
 | `finalizeAgUiBrowserEvents(state, response)`             | `(state, response) => AgUiBrowserEncodedEvent[]` | Emit terminal browser/public AG-UI events after the runtime stream finishes.   |
 

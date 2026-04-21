@@ -179,6 +179,17 @@ export {
   type CreateAgUiBrowserResponseStreamInput,
 } from "./ag-ui-browser-response-stream.ts";
 export {
+  CompleteConversationRunResponseSchema,
+  type ConversationAgentRunUsage,
+  type ConversationRunProjection,
+  ConversationRunProjectionSchema,
+  type ConversationRunTargets,
+  ConversationRunTargetsSchema,
+  createConversationAgentRun,
+  finalizeConversationAgentRun,
+  resolveConversationRunTargets,
+} from "./durable.ts";
+export {
   type HostedChildLifecycleAdapter,
   type HostedChildLifecycleRunnerOptions,
   type HostedChildLifecycleRunResult,
