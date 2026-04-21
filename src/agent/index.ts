@@ -171,6 +171,13 @@ export {
   mapRuntimeStreamEventToAgUiBrowserEvents,
 } from "./ag-ui-browser-encoder.ts";
 export {
+  type AgUiBrowserResponseEncoder,
+  type AgUiBrowserResponseExecution,
+  type AgUiBrowserResponseRequestState,
+  createAgUiBrowserResponseStream,
+  type CreateAgUiBrowserResponseStreamInput,
+} from "./ag-ui-browser-response-stream.ts";
+export {
   mergeToolCallInput,
   mergeToolInputDelta,
   parseDataStreamSseEvents,

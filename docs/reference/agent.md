@@ -534,6 +534,12 @@ request or a `400` JSON `Response` when validation fails.
 Normalize canonical runtime AG-UI `messages` into the package `Message[]`
 shape used by `agent.stream()` and `AgentRuntime.stream()`.
 
+### `createAgUiBrowserResponseStream(input)`
+
+Create a host-facing AG-UI SSE stream for custom execution pipelines when the
+host already owns its own chunk type but wants to reuse package browser-event
+framing and bootstrap event conventions.
+
 ### `createAgUiRuntimeHandler(config)`
 
 Create a POST route handler for the canonical runtime AG-UI request contract.

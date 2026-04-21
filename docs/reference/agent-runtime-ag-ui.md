@@ -107,6 +107,11 @@ This helper layer is intentionally narrower than `createAgUiHandler()`:
 - the package owns AG-UI request validation/normalization
 - the host still owns auth, project access, and runtime preparation
 
+Hosts that keep a custom execute path can also use
+`createAgUiBrowserResponseStream()` to emit the same bootstrap AG-UI SSE
+framing (`RunStarted`, `StateSnapshot`, `MessagesSnapshot`) while supplying a
+host-local encoder for their own chunk type.
+
 For canonical runtime AG-UI hosts using `createAgUiRuntimeHandler()`, the
 package can also invoke optional lifecycle callbacks when the default hosted
 stream path sees tool calls, finishes, or fails:
