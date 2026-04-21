@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.233",
+  "version": "0.1.234",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
@@ -32,6 +32,7 @@
     "./agent": "./src/agent/index.ts",
     "./agent/conversation-bootstrap": "./src/agent/conversation-bootstrap.ts",
     "./agent/durable": "./src/agent/durable.ts",
+    "./agent/invoke-agent-child-runs": "./src/agent/invoke-agent-child-runs.ts",
     "./channels/control-plane": "./src/channels/control-plane.ts",
     "./channels/invoke": "./src/channels/invoke.ts",
     "./tool": "./src/tool/index.ts",

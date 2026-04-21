@@ -2,6 +2,34 @@ import { z } from "zod";
 
 const AGENT_RUN_API_TIMEOUT_MS = 15_000;
 
+function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
+  const controller = new AbortController();
+  let abortedByCaller = false;
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  const onAbort = () => {
+    abortedByCaller = true;
+    controller.abort();
+  };
+
+  if (abortSignal?.aborted) {
+    onAbort();
+  } else {
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    wasAbortedByCaller: () => abortedByCaller,
+    cleanup: () => {
+      clearTimeout(timeout);
+      abortSignal?.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
 export const ConversationRunTargetsSchema = z.object({
   sourceTargetKind: z.enum(["project", "preview_branch"]).nullable(),
   runtimeTargetKind: z.enum(["production", "preview_branch"]).nullable(),
@@ -35,6 +63,15 @@ export function resolveConversationRunTargets(input: {
   );
 }
 
+export const ConversationRunStatusSchema = z.enum([
+  "pending",
+  "running",
+  "waiting_for_tool",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
 export const ConversationRunProjectionSchema = z
   .object({
     runId: z.string().min(1).optional(),
@@ -47,7 +84,7 @@ export const ConversationRunProjectionSchema = z
     latest_event_id: z.number().int().nonnegative().optional(),
     latestExternalEventSequence: z.number().int().nonnegative().optional(),
     latest_external_event_sequence: z.number().int().nonnegative().optional(),
-    status: z.enum(["pending", "running", "waiting_for_tool", "completed", "failed", "cancelled"]),
+    status: ConversationRunStatusSchema,
   })
   .passthrough()
   .transform((data) => {
@@ -110,6 +147,59 @@ export const CompleteConversationRunResponseSchema = z
   })
   .passthrough();
 
+const AppendConversationRunEventsCamelRunSchema = z
+  .object({
+    runId: z.string().min(1),
+    conversationId: z.string().uuid(),
+    latestEventId: z.number().int().nonnegative(),
+    latestExternalEventSequence: z.number().int().nonnegative(),
+  })
+  .passthrough();
+
+const AppendConversationRunEventsSnakeRunSchema = z
+  .object({
+    run_id: z.string().min(1),
+    conversation_id: z.string().uuid(),
+    latest_event_id: z.number().int().nonnegative(),
+    latest_external_event_sequence: z.number().int().nonnegative(),
+  })
+  .passthrough();
+
+export const AppendConversationRunEventsResponseSchema = z.union([
+  z.object({
+    latestEventId: z.number().int().nonnegative(),
+    latestExternalEventSequence: z.number().int().nonnegative(),
+    appendedCount: z.number().int().nonnegative(),
+    run: AppendConversationRunEventsCamelRunSchema,
+  }),
+  z.object({
+    latest_event_id: z.number().int().nonnegative(),
+    latest_external_event_sequence: z.number().int().nonnegative(),
+    appended_count: z.number().int().nonnegative(),
+    run: AppendConversationRunEventsSnakeRunSchema,
+  }).transform((data) => ({
+    latestEventId: data.latest_event_id,
+    latestExternalEventSequence: data.latest_external_event_sequence,
+    appendedCount: data.appended_count,
+    run: {
+      ...data.run,
+      runId: data.run.run_id,
+      conversationId: data.run.conversation_id,
+      latestEventId: data.run.latest_event_id,
+      latestExternalEventSequence: data.run.latest_external_event_sequence,
+    },
+  })),
+]);
+
+export type AppendConversationRunEventsResponse = z.infer<
+  typeof AppendConversationRunEventsResponseSchema
+>;
+
+const ConversationRunErrorSchema = z.object({
+  detail: z.string().min(1).optional(),
+  error: z.string().min(1).optional(),
+});
+
 export interface ConversationAgentRunUsage {
   inputTokens: number;
   outputTokens: number;
@@ -139,6 +229,71 @@ export interface FinalizeConversationAgentRunInput {
   terminalErrorMessage?: string | null;
 }
 
+export class AppendConversationRunEventsError extends Error {
+  readonly status: number;
+  readonly detail: string | null;
+
+  constructor(input: {
+    status: number;
+    detail?: string | null;
+    statusText?: string;
+  }) {
+    const detail = input.detail?.trim() || input.statusText || `HTTP ${input.status}`;
+    super(`Append conversation run events failed (${input.status}): ${detail}`);
+    this.name = "AppendConversationRunEventsError";
+    this.status = input.status;
+    this.detail = input.detail?.trim() || null;
+  }
+}
+
+export function parseAppendConversationRunEventsErrorBody(bodyText: string): string | null {
+  if (!bodyText) {
+    return null;
+  }
+
+  try {
+    const parsed = ConversationRunErrorSchema.safeParse(JSON.parse(bodyText));
+    if (parsed.success) {
+      return parsed.data.detail ?? parsed.data.error ?? null;
+    }
+  } catch {
+    return bodyText;
+  }
+
+  return bodyText;
+}
+
+export function isIgnorableConversationRunAppendError(
+  error: unknown,
+): error is AppendConversationRunEventsError {
+  if (!(error instanceof AppendConversationRunEventsError)) {
+    return false;
+  }
+
+  if (error.status === 404) {
+    return true;
+  }
+
+  if (error.status !== 400) {
+    return false;
+  }
+
+  return (
+    error.detail === "Cannot append external events to a terminal run" ||
+    error.detail === "Cannot append external events while the run is waiting for a tool result"
+  );
+}
+
+export function isCursorMismatchConversationRunAppendError(
+  error: unknown,
+): error is AppendConversationRunEventsError {
+  return (
+    error instanceof AppendConversationRunEventsError &&
+    error.status === 400 &&
+    error.detail === "External run event cursor mismatch"
+  );
+}
+
 async function controlPlaneJson<T>(input: {
   authToken: string;
   url: string;
@@ -146,11 +301,13 @@ async function controlPlaneJson<T>(input: {
   body?: unknown;
   responseSchema: z.ZodSchema<T>;
   operation: string;
+  abortSignal?: AbortSignal;
 }): Promise<T> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, AGENT_RUN_API_TIMEOUT_MS);
+  if (input.abortSignal?.aborted) {
+    throw new DOMException("This operation was aborted", "AbortError");
+  }
+
+  const timedAbort = createTimedAbortSignal(AGENT_RUN_API_TIMEOUT_MS, input.abortSignal);
 
   let response: Response;
   try {
@@ -161,15 +318,19 @@ async function controlPlaneJson<T>(input: {
         "Content-Type": "application/json",
       },
       ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
-      signal: controller.signal,
+      signal: timedAbort.signal,
     });
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (
+      error instanceof DOMException &&
+      error.name === "AbortError" &&
+      !timedAbort.wasAbortedByCaller()
+    ) {
       throw new Error(`${input.operation} timed out after ${AGENT_RUN_API_TIMEOUT_MS}ms`);
     }
     throw error;
   } finally {
-    clearTimeout(timeout);
+    timedAbort.cleanup();
   }
 
   if (!response.ok) {
@@ -180,6 +341,90 @@ async function controlPlaneJson<T>(input: {
   }
 
   return input.responseSchema.parse(await response.json());
+}
+
+export async function getConversationRun(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  runId: string;
+  abortSignal?: AbortSignal;
+}): Promise<ConversationRunProjection> {
+  return controlPlaneJson({
+    authToken: input.authToken,
+    url: `${input.apiUrl}/conversations/${input.conversationId}/runs/${input.runId}`,
+    responseSchema: ConversationRunProjectionSchema,
+    operation: "Read conversation durable run projection",
+    abortSignal: input.abortSignal,
+  });
+}
+
+export async function appendConversationRunEvents(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  runId: string;
+  expectedPreviousEventId?: number;
+  expectedPreviousExternalEventSequence?: number;
+  events: unknown[];
+  abortSignal?: AbortSignal;
+}): Promise<AppendConversationRunEventsResponse> {
+  if (input.abortSignal?.aborted) {
+    throw new DOMException("This operation was aborted", "AbortError");
+  }
+
+  const timedAbort = createTimedAbortSignal(AGENT_RUN_API_TIMEOUT_MS, input.abortSignal);
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${input.apiUrl}/conversations/${input.conversationId}/runs/${input.runId}/events`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${input.authToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...(input.expectedPreviousEventId !== undefined
+            ? { expected_previous_event_id: input.expectedPreviousEventId }
+            : {}),
+          ...(input.expectedPreviousExternalEventSequence !== undefined
+            ? {
+              expected_previous_external_event_sequence:
+                input.expectedPreviousExternalEventSequence,
+            }
+            : {}),
+          events: input.events,
+        }),
+        signal: timedAbort.signal,
+      },
+    );
+  } catch (error) {
+    if (
+      error instanceof DOMException &&
+      error.name === "AbortError" &&
+      !timedAbort.wasAbortedByCaller()
+    ) {
+      throw new Error(
+        `Append conversation run events timed out after ${AGENT_RUN_API_TIMEOUT_MS}ms`,
+      );
+    }
+    throw error;
+  } finally {
+    timedAbort.cleanup();
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new AppendConversationRunEventsError({
+      status: response.status,
+      detail: parseAppendConversationRunEventsErrorBody(body),
+      statusText: response.statusText,
+    });
+  }
+
+  return AppendConversationRunEventsResponseSchema.parse(await response.json());
 }
 
 export async function createConversationAgentRun(
@@ -220,11 +465,11 @@ export async function createConversationAgentRun(
     operation: "Create canonical durable run",
   });
 
-  return controlPlaneJson({
+  return getConversationRun({
     authToken: input.authToken,
-    url: `${input.apiUrl}/conversations/${input.conversationId}/runs/${runId}`,
-    responseSchema: ConversationRunProjectionSchema,
-    operation: "Read conversation durable run projection",
+    apiUrl: input.apiUrl,
+    conversationId: input.conversationId,
+    runId,
   });
 }
 
