@@ -144,6 +144,11 @@ export type ConversationRunAppendExecutionOutcome =
   | "resumed"
   | "stopped"
   | "retry_scheduled";
+export type ConversationRunBatchFlushOutcome =
+  | "flushed"
+  | "resumed"
+  | "stopped"
+  | "retry_scheduled";
 
 export const CreateConversationRunAcceptedSchema = z
   .object({
@@ -224,6 +229,8 @@ export const AppendConversationRunEventsResponseSchema = z.union([
 export type AppendConversationRunEventsResponse = z.infer<
   typeof AppendConversationRunEventsResponseSchema
 >;
+
+const DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES = 512 * 1024;
 
 const ConversationRunErrorSchema = z.object({
   detail: z.string().min(1).optional(),
@@ -609,6 +616,153 @@ export async function recoverConversationRunAppendExecution(input: {
     pendingEvents: [...input.remainingEvents, ...input.pendingEvents],
     consecutiveFailures: input.consecutiveFailures + 1,
     errorMessage: recovered.errorMessage ?? "Conversation run append failed",
+  };
+}
+
+function getConversationRunEventJsonByteLength(event: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(event)).byteLength;
+}
+
+function buildConversationRunEventBatches(input: {
+  events: unknown[];
+  maxEventsPerBatch: number;
+  maxBatchPayloadBytes?: number;
+}): unknown[][] {
+  const maxBatchPayloadBytes = input.maxBatchPayloadBytes ??
+    DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES;
+  const batches: unknown[][] = [];
+  let currentBatch: unknown[] = [];
+  let currentBatchBytes = 0;
+
+  for (const event of input.events) {
+    const eventBytes = getConversationRunEventJsonByteLength(event);
+
+    if (
+      currentBatch.length > 0 &&
+      (currentBatch.length >= input.maxEventsPerBatch ||
+        currentBatchBytes + eventBytes > maxBatchPayloadBytes)
+    ) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentBatchBytes = 0;
+    }
+
+    currentBatch.push(event);
+    currentBatchBytes += eventBytes;
+  }
+
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+
+  return batches;
+}
+
+export async function flushConversationRunEventBatches(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  runId: string;
+  latestEventId: number;
+  latestExternalEventSequence: number;
+  events: unknown[];
+  pendingEvents?: unknown[];
+  maxEventsPerBatch: number;
+  maxBatchPayloadBytes?: number;
+  cursorResyncsThisFlush?: number;
+  consecutiveFailures?: number;
+  maxCursorResyncsPerFlush: number;
+  abortSignal?: AbortSignal;
+}): Promise<
+  | {
+    outcome: "flushed";
+    latestEventId: number;
+    latestExternalEventSequence: number;
+  }
+  | {
+    outcome: "resumed" | "retry_scheduled";
+    latestEventId: number;
+    latestExternalEventSequence: number;
+    pendingEvents: unknown[];
+    consecutiveFailures: number;
+    errorMessage?: string;
+  }
+  | {
+    outcome: "stopped";
+    latestEventId: number;
+    latestExternalEventSequence: number;
+    disableReason?: "cursor_resyncs_exhausted" | "non_appendable" | "ignorable_append_rejection";
+  }
+> {
+  const batches = buildConversationRunEventBatches({
+    events: input.events,
+    maxEventsPerBatch: input.maxEventsPerBatch,
+    maxBatchPayloadBytes: input.maxBatchPayloadBytes,
+  });
+
+  let latestEventId = input.latestEventId;
+  let latestExternalEventSequence = input.latestExternalEventSequence;
+
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+    const batch = batches[batchIndex];
+    if (!batch) {
+      continue;
+    }
+    try {
+      const response = await appendConversationRunEvents({
+        authToken: input.authToken,
+        apiUrl: input.apiUrl,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        expectedPreviousExternalEventSequence: latestExternalEventSequence,
+        events: batch,
+        abortSignal: input.abortSignal,
+      });
+      latestEventId = response.latestEventId;
+      latestExternalEventSequence = response.latestExternalEventSequence;
+    } catch (error) {
+      const recovered = await recoverConversationRunAppendExecution({
+        error,
+        authToken: input.authToken,
+        apiUrl: input.apiUrl,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        latestEventId,
+        latestExternalEventSequence,
+        remainingEvents: batches.slice(batchIndex).flat(),
+        pendingEvents: input.pendingEvents ?? [],
+        cursorResyncsThisFlush: input.cursorResyncsThisFlush ?? 0,
+        consecutiveFailures: input.consecutiveFailures ?? 0,
+        maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
+        abortSignal: input.abortSignal,
+      });
+
+      if (recovered.outcome === "stopped") {
+        return {
+          outcome: "stopped",
+          latestEventId: recovered.latestEventId,
+          latestExternalEventSequence: recovered.latestExternalEventSequence,
+          ...(recovered.disableReason ? { disableReason: recovered.disableReason } : {}),
+        };
+      }
+
+      return {
+        outcome: recovered.outcome,
+        latestEventId: recovered.latestEventId,
+        latestExternalEventSequence: recovered.latestExternalEventSequence,
+        pendingEvents: recovered.pendingEvents,
+        consecutiveFailures: recovered.consecutiveFailures,
+        ...(recovered.outcome === "retry_scheduled"
+          ? { errorMessage: recovered.errorMessage }
+          : {}),
+      };
+    }
+  }
+
+  return {
+    outcome: "flushed",
+    latestEventId,
+    latestExternalEventSequence,
   };
 }
 
