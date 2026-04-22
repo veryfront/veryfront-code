@@ -133,6 +133,10 @@ When a host has its own chunk type but can express each chunk as one or more
 runtime stream events, `createAgUiChunkEncoderBridge()` reuses the canonical
 browser AG-UI event mapper without rebuilding the encoder state machine.
 
+When a host wants one helper that combines browser-request defaults, chunk
+encoding, and finalize tracking into a canonical SSE response, use
+`createAgUiTrackedBrowserResponse()`.
+
 When a host accumulates browser-finished metadata separately,
 `buildAgUiBrowserFinalizeResponse()` converts that metadata into the canonical
 final `AgentResponse` consumed by the browser encoder finalization path.
