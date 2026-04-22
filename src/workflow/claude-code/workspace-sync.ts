@@ -470,10 +470,16 @@ export class WorkspaceSync {
     // Normalize the input path (treat leading "/" as workspace-relative).
     const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
 
+    // Empty path resolves to the workspace dir itself — writing to it would
+    // clobber the workspace as a regular file. Reject explicitly.
+    if (normalizedPath === "") {
+      throw SECURITY_VIOLATION.create({ detail: `Empty path not allowed` });
+    }
+
     // Resolve the full path lexically first (catches literal "..").
     const fullPath = resolve(join(this.workspaceDir, normalizedPath));
     const relativePath = relative(this.workspaceDir, fullPath);
-    if (relativePath.startsWith("..") || relativePath === "..") {
+    if (!relativePath || relativePath.startsWith("..") || relativePath === "..") {
       throw SECURITY_VIOLATION.create({ detail: `Path traversal detected: ${path}` });
     }
 

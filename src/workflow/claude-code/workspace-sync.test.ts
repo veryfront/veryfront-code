@@ -174,6 +174,15 @@ describe("WorkspaceSync symlink hardening (VULN-FS-4)", () => {
     assertEquals(await Deno.readTextFile(join(workspaceDir, "a", "b", "c.txt")), "deep");
   });
 
+  it("rejects empty path and bare '/' that would resolve to the workspace root", async () => {
+    const { workspace, workspaceDir } = await makeWorkspace(baseDir);
+    await assertRejects(() => workspace.writeFile("", "x"), Error);
+    await assertRejects(() => workspace.writeFile("/", "x"), Error);
+    // Workspace dir must remain a directory, not be clobbered into a file.
+    const info = await Deno.stat(workspaceDir);
+    assertEquals(info.isDirectory, true);
+  });
+
   it("rejects paths containing a NUL byte", async () => {
     const { workspace } = await makeWorkspace(baseDir);
     await assertRejects(
