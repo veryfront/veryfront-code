@@ -4,6 +4,7 @@
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
+    "./extensions/ext-babel",
     "./extensions/ext-redis"
   ],
   "exclude": [
@@ -269,10 +270,6 @@
     "@opentelemetry/exporter-trace-otlp-http": "npm:@opentelemetry/exporter-trace-otlp-http@0.213.0",
     "@opentelemetry/resources": "npm:@opentelemetry/resources@2.6.0",
     "@opentelemetry/semantic-conventions": "npm:@opentelemetry/semantic-conventions@1.40.0",
-    "@babel/parser": "npm:@babel/parser@7.29.2",
-    "@babel/traverse": "npm:@babel/traverse@7.29.0",
-    "@babel/generator": "npm:@babel/generator@7.29.1",
-    "@babel/types": "npm:@babel/types@7.29.0",
     "class-variance-authority": "npm:class-variance-authority@0.7.1",
     "tailwind-merge": "npm:tailwind-merge@3.5.0",
     "@kreuzberg/wasm": "npm:@kreuzberg/wasm@4.5.2",
