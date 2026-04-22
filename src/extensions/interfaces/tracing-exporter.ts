@@ -67,4 +67,11 @@ export interface TracingExporter {
    * Returns `null` when metrics are not available.
    */
   getMetricsAPI(): { getMeter(name: string | undefined, version?: string): unknown } | null;
+
+  /**
+   * Return the OTel Trace API so the core shim can look up the active span
+   * (for error correlation, proxy trace-id extraction, etc.). Returns `null`
+   * when tracing is disabled.
+   */
+  getTraceAPI?(): { getActiveSpan(): unknown; getSpan(ctx: unknown): unknown } | null;
 }

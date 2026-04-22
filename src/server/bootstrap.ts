@@ -5,6 +5,7 @@ import { clearConfigCache, getConfig } from "#veryfront/config";
 import { type ExtensionLoader, orchestrateExtensions, tryResolve } from "veryfront/extensions";
 import type { TracingExporter } from "#veryfront/extensions/interfaces/tracing-exporter.ts";
 import {
+  setGlobalActiveSpanAccessor,
   setGlobalMetricsAPI,
   setGlobalTracerProvider,
 } from "#veryfront/observability/tracing/api-shim.ts";
@@ -75,6 +76,12 @@ function wireTracingShim(): void {
     if (metricsApi) {
       setGlobalMetricsAPI(
         metricsApi as Parameters<typeof setGlobalMetricsAPI>[0],
+      );
+    }
+    const traceApi = tracing.getTraceAPI?.();
+    if (traceApi) {
+      setGlobalActiveSpanAccessor(
+        traceApi as Parameters<typeof setGlobalActiveSpanAccessor>[0],
       );
     }
     bootstrapLog.debug("[bootstrap] TracingExporter wired into shim");

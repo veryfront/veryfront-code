@@ -79,16 +79,17 @@ export class TracingManager {
 
     this.state.tracer = api.trace.getTracer(config.serviceName ?? "veryfront", VERSION);
 
-    // Use shim propagation (no external dep needed for W3C propagation in no-op mode)
+    // No-op propagator used only when ext-opentelemetry is NOT installed.
+    // When the extension is active, it registers W3CTraceContextPropagator
+    // on the shim directly; we intentionally do NOT wrap shimApi.propagation
+    // here (doing so would cause infinite recursion when the global
+    // propagator is the wrapper itself).
     const propagator = {
-      inject: (ctx: import("./api-shim.ts").Context, carrier: unknown) =>
-        shimApi.propagation.inject(ctx, carrier),
-      extract: (ctx: import("./api-shim.ts").Context, carrier: unknown) =>
-        shimApi.propagation.extract(ctx, carrier),
+      inject: (_ctx: import("./api-shim.ts").Context, _carrier: unknown) => {},
+      extract: (ctx: import("./api-shim.ts").Context, _carrier: unknown) => ctx,
       fields: () => [] as string[],
     };
     this.state.propagator = propagator;
-    api.propagation.setGlobalPropagator(propagator);
 
     this.spanOps = this.state.tracer ? new SpanOperations(api, this.state.tracer) : null;
     this.contextProp = new ContextPropagation(api, propagator);

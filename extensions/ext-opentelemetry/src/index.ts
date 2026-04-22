@@ -102,6 +102,10 @@ class OtlpTracingExporter implements TracingExporter {
   async start(ctxConfig: Record<string, unknown>): Promise<void> {
     const cfg = resolveConfig(ctxConfig);
 
+    // Honor OTEL_TRACES_ENABLED: when unset/false, skip exporter wiring so
+    // deployments opting out never create OTLP traffic or set globals.
+    if (!cfg.enabled) return;
+
     const resource = resourceFromAttributes({
       [ATTR_SERVICE_NAME]: cfg.serviceName,
       [ATTR_SERVICE_VERSION]: cfg.serviceVersion,
@@ -161,6 +165,14 @@ class OtlpTracingExporter implements TracingExporter {
   getMetricsAPI(): { getMeter(name: string | undefined, version?: string): unknown } | null {
     // Return the OTel Metrics API so the core metrics subsystem can get meters.
     return metrics;
+  }
+
+  getTraceAPI(): { getActiveSpan(): unknown; getSpan(ctx: unknown): unknown } | null {
+    if (!this.sdkProvider) return null;
+    return {
+      getActiveSpan: () => trace.getActiveSpan(),
+      getSpan: (ctx) => trace.getSpan(ctx as Parameters<typeof trace.getSpan>[0]),
+    };
   }
 }
 

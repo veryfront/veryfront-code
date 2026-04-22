@@ -253,6 +253,27 @@ let _activeContext: Context = NOOP_CONTEXT;
 let _propagator: TextMapPropagator | null = null;
 
 /**
+ * Optional accessor for the currently active span. Wired by
+ * ext-opentelemetry (via `setGlobalActiveSpanAccessor`) so `trace.getActiveSpan()`
+ * and `trace.getSpan()` return the real SDK span once the extension is active.
+ */
+let _activeSpanAccessor: {
+  getActiveSpan(): Span | undefined;
+  getSpan(ctx: Context): Span | undefined;
+} | null = null;
+
+/**
+ * Register the real OTel trace API's span accessors. Called by the
+ * ext-opentelemetry extension after it wires the SDK so that the shim's
+ * `trace.getActiveSpan()` / `trace.getSpan()` can return real spans.
+ */
+export function setGlobalActiveSpanAccessor(
+  accessor: { getActiveSpan(): Span | undefined; getSpan(ctx: Context): Span | undefined },
+): void {
+  _activeSpanAccessor = accessor;
+}
+
+/**
  * Wire in the real SDK TracerProvider.
  * Called from `src/server/bootstrap.ts` after `orchestrateExtensions()` runs.
  */
@@ -311,11 +332,11 @@ export const trace = {
   setSpan(ctx: Context, _span: Span): Context {
     return ctx;
   },
-  getSpan(_ctx: Context): Span | undefined {
-    return undefined;
+  getSpan(ctx: Context): Span | undefined {
+    return _activeSpanAccessor?.getSpan(ctx);
   },
   getActiveSpan(): Span | undefined {
-    return undefined;
+    return _activeSpanAccessor?.getActiveSpan();
   },
 };
 
@@ -384,4 +405,5 @@ export function _resetShimForTests(): void {
   _activeContext = NOOP_CONTEXT;
   _propagator = null;
   _metricsApi = null;
+  _activeSpanAccessor = null;
 }
