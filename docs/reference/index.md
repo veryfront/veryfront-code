@@ -20,6 +20,8 @@ npm install veryfront
 - [Agent runtime AG-UI contract](./agent-runtime-ag-ui-contract.md) - Canonical runtime-facing request contract, compatibility wrapper, and endpoint conventions for AG-UI execution.
 - [Conversation-backed agent hosts](./agent-conversation-control-plane.md) - Recommended composition of `veryfront/agent` public helpers for conversations/control-plane hosts.
 - [Conversation-backed lifecycle adapters](./agent-conversation-lifecycle.md) - Higher-level hosted lifecycle adapters for conversation-backed root runs and child runs.
+- [Conversation run context helpers](./agent-conversation-run-context.md) - Parent-lineage helpers for hosts that carry conversation-backed run context through execution.
+- [Conversation root-run helpers](./agent-conversation-root-run-context.md) - Root-run helpers for carrying durable run and parent lineage through conversation-backed host execution.
 
 ## Modules
 

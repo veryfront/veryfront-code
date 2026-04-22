@@ -179,6 +179,10 @@ export {
   type CreateAgUiBrowserResponseStreamInput,
 } from "./ag-ui-browser-response-stream.ts";
 export {
+  type ConversationRunContext,
+  createConversationRunContext,
+} from "./conversation-run-context.ts";
+export {
   bootstrapConversationAgentRun,
   type BootstrapConversationAgentRunResult,
   type ConversationMessageRecord,
