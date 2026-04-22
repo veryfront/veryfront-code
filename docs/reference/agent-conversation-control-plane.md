@@ -147,6 +147,11 @@ If the host also wants a reusable retry-limit gate around cursor mismatches,
 whether the host should resume, stop, or bubble the failure while still using
 the canonical conversation-run state model.
 
+For the broader append-failure branch, `recoverConversationRunAppendFailure()`
+adds the canonical ignorable-append rejection handling as well, so hosts can
+share one resume/stop/retry classification while keeping only scheduling and
+logging policy local.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.
