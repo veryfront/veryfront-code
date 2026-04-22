@@ -468,6 +468,16 @@ describe("agent/durable", () => {
         }),
         200,
       ),
+      jsonResponse(
+        camelCaseDurableRunProjection({
+          runId: "run_resync_4",
+          latestExternalEventSequence: 6,
+          status: "waiting_for_tool",
+          waitingToolCallId: "tool-call-2",
+          waitingToolName: "form_input",
+        }),
+        200,
+      ),
     );
 
     assertEquals(
@@ -533,6 +543,29 @@ describe("agent/durable", () => {
           latestEventId: 0,
           latestExternalEventSequence: 4,
           waitingToolCallId: "tool-call-1",
+          waitingToolName: "form_input",
+          status: "waiting_for_tool",
+        },
+      },
+    );
+
+    assertEquals(
+      await resyncConversationRunAppendCursor({
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_resync_4",
+        previousLatestExternalEventSequence: 4,
+      }),
+      {
+        result: "non_appendable",
+        run: {
+          runId: "run_resync_4",
+          conversationId: CONVERSATION_ID,
+          messageId: MESSAGE_ID,
+          latestEventId: 0,
+          latestExternalEventSequence: 6,
+          waitingToolCallId: "tool-call-2",
           waitingToolName: "form_input",
           status: "waiting_for_tool",
         },
