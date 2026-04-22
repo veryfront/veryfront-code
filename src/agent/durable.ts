@@ -136,6 +136,10 @@ export type ConversationRunAppendRecoveryOutcome =
   | "resumed"
   | "stopped"
   | "bubbled";
+export type ConversationRunAppendFailureOutcome =
+  | "resumed"
+  | "stopped"
+  | "retry_scheduled";
 
 export const CreateConversationRunAcceptedSchema = z
   .object({
@@ -452,6 +456,76 @@ export async function recoverConversationRunCursorMismatch(input: {
     latestEventId: resynced.run.latestEventId,
     latestExternalEventSequence: resynced.run.latestExternalEventSequence,
     run: resynced.run,
+  };
+}
+
+export async function recoverConversationRunAppendFailure(input: {
+  error: unknown;
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  runId: string;
+  latestEventId: number;
+  latestExternalEventSequence: number;
+  cursorResyncsThisFlush: number;
+  maxCursorResyncsPerFlush: number;
+  abortSignal?: AbortSignal;
+}): Promise<{
+  outcome: ConversationRunAppendFailureOutcome;
+  latestEventId: number;
+  latestExternalEventSequence: number;
+  disableReason?: "cursor_resyncs_exhausted" | "non_appendable" | "ignorable_append_rejection";
+  errorMessage?: string;
+  run?: ConversationRunProjection;
+}> {
+  const cursorRecovery = await recoverConversationRunCursorMismatch({
+    error: input.error,
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    conversationId: input.conversationId,
+    runId: input.runId,
+    latestEventId: input.latestEventId,
+    latestExternalEventSequence: input.latestExternalEventSequence,
+    cursorResyncsThisFlush: input.cursorResyncsThisFlush,
+    maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
+    abortSignal: input.abortSignal,
+  });
+
+  if (cursorRecovery.outcome === "resumed") {
+    return {
+      outcome: "resumed",
+      latestEventId: cursorRecovery.latestEventId,
+      latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
+      ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
+    };
+  }
+
+  if (cursorRecovery.outcome === "stopped") {
+    return {
+      outcome: "stopped",
+      latestEventId: cursorRecovery.latestEventId,
+      latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
+      disableReason: cursorRecovery.disableReason,
+      ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
+    };
+  }
+
+  if (isIgnorableConversationRunAppendError(input.error)) {
+    return {
+      outcome: "stopped",
+      latestEventId: cursorRecovery.latestEventId,
+      latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
+      disableReason: "ignorable_append_rejection",
+      ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
+    };
+  }
+
+  return {
+    outcome: "retry_scheduled",
+    latestEventId: cursorRecovery.latestEventId,
+    latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
+    errorMessage: input.error instanceof Error ? input.error.message : String(input.error),
+    ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
   };
 }
 

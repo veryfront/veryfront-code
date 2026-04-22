@@ -14,6 +14,7 @@ import {
   isIgnorableConversationRunAppendError,
   monitorConversationRunStatus,
   parseAppendConversationRunEventsErrorBody,
+  recoverConversationRunAppendFailure,
   recoverConversationRunCursorMismatch,
   resolveConversationRunTargets,
   resyncConversationRunAppendCursor,
@@ -702,6 +703,139 @@ describe("agent/durable", () => {
         outcome: "bubbled",
         latestEventId: 2,
         latestExternalEventSequence: 4,
+      },
+    );
+  });
+
+  it("classifies append failures into resume, stop, and retry outcomes", async () => {
+    stubFetchSequence(
+      jsonResponse(
+        camelCaseDurableRunProjection({
+          runId: "run_append_failure_1",
+          latestExternalEventSequence: 6,
+        }),
+        200,
+      ),
+      jsonResponse(
+        camelCaseDurableRunProjection({
+          runId: "run_append_failure_2",
+          latestExternalEventSequence: 4,
+          status: "waiting_for_tool",
+          waitingToolCallId: "tool-call-3",
+          waitingToolName: "form_input",
+        }),
+        200,
+      ),
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({
+          status: 400,
+          detail: "External run event cursor mismatch",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_1",
+        latestEventId: 0,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "resumed",
+        latestEventId: 0,
+        latestExternalEventSequence: 6,
+        run: {
+          runId: "run_append_failure_1",
+          conversationId: CONVERSATION_ID,
+          messageId: MESSAGE_ID,
+          latestEventId: 0,
+          latestExternalEventSequence: 6,
+          waitingToolCallId: null,
+          waitingToolName: null,
+          status: "running",
+        },
+      },
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({
+          status: 400,
+          detail: "Cannot append external events to a terminal run",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_ignored",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        disableReason: "ignorable_append_rejection",
+      },
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({
+          status: 400,
+          detail: "External run event cursor mismatch",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_2",
+        latestEventId: 0,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 0,
+        latestExternalEventSequence: 4,
+        disableReason: "non_appendable",
+        run: {
+          runId: "run_append_failure_2",
+          conversationId: CONVERSATION_ID,
+          messageId: MESSAGE_ID,
+          latestEventId: 0,
+          latestExternalEventSequence: 4,
+          waitingToolCallId: "tool-call-3",
+          waitingToolName: "form_input",
+          status: "waiting_for_tool",
+        },
+      },
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({
+          status: 500,
+          detail: "internal failure",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_retry",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "retry_scheduled",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        errorMessage: "Append conversation run events failed (500): internal failure",
       },
     );
   });
