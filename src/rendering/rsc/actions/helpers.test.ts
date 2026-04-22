@@ -173,6 +173,5 @@ describe("rendering/rsc/actions/helpers", () => {
         undefined,
       );
     });
-
   });
 });
