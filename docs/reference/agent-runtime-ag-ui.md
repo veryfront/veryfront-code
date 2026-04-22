@@ -107,10 +107,19 @@ This helper layer is intentionally narrower than `createAgUiHandler()`:
 - the package owns AG-UI request validation/normalization
 - the host still owns auth, project access, and runtime preparation
 
+When a host needs to override only the final thread/run ids before opening a
+browser stream, `normalizeAgUiBrowserRuntimeRequest()` applies those defaults
+while preserving only object-like `state` snapshots for the browser framing
+path.
+
 Hosts that keep a custom execute path can also use
 `createAgUiBrowserResponseStream()` to emit the same bootstrap AG-UI SSE
 framing (`RunStarted`, `StateSnapshot`, `MessagesSnapshot`) while supplying a
 host-local encoder for their own chunk type.
+
+When that custom execute path only needs the canonical SSE headers around an
+already-built stream, `createAgUiSseResponse()` returns the standard AG-UI
+streaming `Response`.
 
 When a host accumulates browser-finished metadata separately,
 `buildAgUiBrowserFinalizeResponse()` converts that metadata into the canonical

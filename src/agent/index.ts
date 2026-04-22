@@ -157,6 +157,7 @@ export {
   AgUiRuntimeMessageSchema,
   type AgUiRuntimeRequest,
   AgUiRuntimeRequestSchema,
+  normalizeAgUiBrowserRuntimeRequest,
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
 } from "./runtime-ag-ui-contract.ts";
@@ -369,6 +370,7 @@ export {
   type AgUiSseEvent,
   createAgUiRunErrorEvent,
   createAgUiSseErrorResponse,
+  createAgUiSseResponse,
   normalizeAgUiMessages,
   parseAgUiRequest,
   parseAgUiRequestOrError,
