@@ -3,6 +3,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createConversationChildLifecycleAdapter,
   createConversationHostedLifecycleAdapter,
+  createConversationHostedStreamLifecycleAdapter,
 } from "./conversation-hosted-lifecycle.ts";
 
 const API_URL = "https://api.example.com";
@@ -80,6 +81,61 @@ describe("agent/conversation-hosted-lifecycle", () => {
       expected_previous_event_id: 1,
       expected_previous_external_event_sequence: 2,
       events: [{ type: "STATE_DELTA", chunk: "chunk-1" }],
+    });
+  });
+
+  it("maps public chat stream events directly into conversation-run appends", async () => {
+    const adapter = createConversationHostedStreamLifecycleAdapter({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      startRun: async () => ({
+        runId: "run_root_stream_1",
+        conversationId: CONVERSATION_ID,
+        messageId: MESSAGE_ID,
+        latestEventId: 1,
+        latestExternalEventSequence: 2,
+        status: "running",
+      }),
+      resolveFinalizeInput: () => ({ model: "gpt-5.4", provider: "openai" }),
+    });
+    const fetchCalls = stubFetchSequence(
+      jsonResponse({
+        latest_event_id: 3,
+        latest_external_event_sequence: 4,
+        appended_count: 2,
+        run: {
+          run_id: "run_root_stream_1",
+          conversation_id: CONVERSATION_ID,
+          latest_event_id: 3,
+          latest_external_event_sequence: 4,
+        },
+      }),
+    );
+
+    const run = await adapter.startRun({ abortSignal: new AbortController().signal });
+    await adapter.appendEvents?.(run, {
+      type: "tool-input-available",
+      toolCallId: "tc-1",
+      toolName: "bash",
+      input: { command: "ls" },
+    });
+
+    assertEquals(run.latestEventId, 3);
+    assertEquals(run.latestExternalEventSequence, 4);
+    assertEquals(JSON.parse(String(fetchCalls[0]?.[1]?.body)), {
+      expected_previous_event_id: 1,
+      expected_previous_external_event_sequence: 2,
+      events: [
+        {
+          type: "TOOL_CALL_ARGS",
+          toolCallId: "tc-1",
+          delta: '{"command":"ls"}',
+        },
+        {
+          type: "TOOL_CALL_END",
+          toolCallId: "tc-1",
+        },
+      ],
     });
   });
 

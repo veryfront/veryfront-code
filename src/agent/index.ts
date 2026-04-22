@@ -208,6 +208,7 @@ export {
   createConversationChildLifecycleAdapter,
   createConversationHostedLifecycleAdapter,
   type CreateConversationHostedLifecycleAdapterOptions,
+  createConversationHostedStreamLifecycleAdapter,
 } from "./conversation-hosted-lifecycle.ts";
 export {
   getConversationRunEventJsonByteLength,
