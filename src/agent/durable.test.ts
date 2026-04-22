@@ -6,6 +6,7 @@ import {
   ConversationRunProjectionSchema,
   ConversationRunTerminalStateError,
   createConversationAgentRun,
+  createConversationRunEventQueueController,
   finalizeConversationAgentRun,
   flushConversationRunEventBatches,
   flushConversationRunEventQueue,
@@ -615,6 +616,159 @@ describe("agent/durable", () => {
       pendingEvents: [{ type: "STATE_DELTA", id: 1 }, { type: "CUSTOM", id: 2 }],
       consecutiveFailures: 2,
       errorMessage: "Append conversation run events failed (500): internal failure",
+    });
+  });
+
+  it("tracks queue state and drains the queue through the controller", async () => {
+    let eventsRequestCount = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).endsWith("/events")) {
+        return jsonResponse(
+          camelCaseDurableRunProjection({
+            runId: "run_queue_controller_1",
+            latestExternalEventSequence: 6,
+          }),
+          200,
+        );
+      }
+
+      eventsRequestCount += 1;
+      if (eventsRequestCount === 1) {
+        return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+      }
+
+      const bodyText = typeof init?.body === "string" ? init.body : "";
+      const body = JSON.parse(bodyText) as {
+        expected_previous_external_event_sequence?: number;
+        events?: unknown[];
+      };
+
+      assertEquals(body.expected_previous_external_event_sequence, 6);
+      assertEquals(body.events, [{ type: "STATE_DELTA", id: 1 }, { type: "CUSTOM", id: 2 }]);
+
+      return jsonResponse(
+        {
+          latest_event_id: 7,
+          latest_external_event_sequence: 8,
+          appended_count: 2,
+          run: {
+            run_id: "run_queue_controller_1",
+            conversation_id: CONVERSATION_ID,
+            latest_event_id: 7,
+            latest_external_event_sequence: 8,
+          },
+        },
+        200,
+      );
+    }) as typeof fetch;
+
+    const controller = createConversationRunEventQueueController({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_queue_controller_1",
+      latestEventId: 0,
+      latestExternalEventSequence: 4,
+      maxEventsPerBatch: 2,
+    });
+
+    controller.enqueue([{ type: "STATE_DELTA", id: 1 }, { type: "CUSTOM", id: 2 }]);
+
+    assertEquals(controller.getSnapshot(), {
+      latestEventId: 0,
+      latestExternalEventSequence: 4,
+      pendingEventCount: 2,
+      consecutiveFailures: 0,
+      disabled: false,
+    });
+
+    const result = await controller.flush();
+
+    assertEquals(result, {
+      outcome: "flushed",
+      latestEventId: 7,
+      latestExternalEventSequence: 8,
+      pendingEventCount: 0,
+      consecutiveFailures: 0,
+      disabled: false,
+    });
+    assertEquals(controller.getSnapshot(), {
+      latestEventId: 7,
+      latestExternalEventSequence: 8,
+      pendingEventCount: 0,
+      consecutiveFailures: 0,
+      disabled: false,
+    });
+  });
+
+  it("keeps failed queue state for host retry scheduling and disables on stopped outcomes", async () => {
+    const retryController = createConversationRunEventQueueController({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_queue_controller_retry",
+      latestEventId: 2,
+      latestExternalEventSequence: 4,
+      maxEventsPerBatch: 2,
+    });
+
+    retryController.enqueue([{ type: "STATE_DELTA", id: 1 }]);
+    globalThis.fetch =
+      (async () => jsonResponse({ detail: "internal failure" }, 500)) as typeof fetch;
+
+    assertEquals(await retryController.flush(), {
+      outcome: "retry_scheduled",
+      latestEventId: 2,
+      latestExternalEventSequence: 4,
+      pendingEventCount: 1,
+      consecutiveFailures: 1,
+      disabled: false,
+      errorMessage: "Append conversation run events failed (500): internal failure",
+    });
+
+    const stopController = createConversationRunEventQueueController({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_queue_controller_stop",
+      latestEventId: 2,
+      latestExternalEventSequence: 4,
+      maxEventsPerBatch: 2,
+    });
+
+    stopController.enqueue([{ type: "STATE_DELTA", id: 1 }]);
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/events")) {
+        return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+      }
+
+      return jsonResponse(
+        camelCaseDurableRunProjection({
+          runId: "run_queue_controller_stop",
+          latestExternalEventSequence: 4,
+          status: "waiting_for_tool",
+          waitingToolCallId: "tool-call-4",
+          waitingToolName: "form_input",
+        }),
+        200,
+      );
+    }) as typeof fetch;
+
+    assertEquals(await stopController.flush(), {
+      outcome: "stopped",
+      latestEventId: 0,
+      latestExternalEventSequence: 4,
+      pendingEventCount: 0,
+      consecutiveFailures: 0,
+      disabled: true,
+      disableReason: "non_appendable",
+    });
+    assertEquals(stopController.getSnapshot(), {
+      latestEventId: 0,
+      latestExternalEventSequence: 4,
+      pendingEventCount: 0,
+      consecutiveFailures: 0,
+      disabled: true,
     });
   });
 
