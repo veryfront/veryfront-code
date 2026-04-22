@@ -12,14 +12,15 @@ const hybridTokenStore = {
   getTokens(serviceId: string, userId: string) {
     return tokenStore.getToken(userId, serviceId);
   },
-  setTokens(
+  async setTokens(
     serviceId: string,
+    userId: string,
     tokens: { accessToken: string; refreshToken?: string; expiresAt?: number },
   ) {
-    return tokenStore.setToken(USER_ID, serviceId, tokens);
+    await tokenStore.setToken(userId, serviceId, tokens);
   },
-  clearTokens(serviceId: string) {
-    return tokenStore.revokeToken(USER_ID, serviceId);
+  async clearTokens(serviceId: string, userId: string) {
+    await tokenStore.revokeToken(userId, serviceId);
   },
   setState(
     state: string,

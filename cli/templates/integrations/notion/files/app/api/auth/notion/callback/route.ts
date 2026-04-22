@@ -3,7 +3,7 @@ import { tokenStore } from "../../../../../lib/token-store.ts";
 import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
 
 const hybridTokenStore = {
-  async getTokens(serviceId: string, userId: string) {
+  getTokens(serviceId: string, userId: string) {
     return tokenStore.getToken(userId, serviceId);
   },
   async setTokens(
@@ -16,14 +16,21 @@ const hybridTokenStore = {
   async clearTokens(serviceId: string, userId: string) {
     await tokenStore.revokeToken(userId, serviceId);
   },
-  async getState(state: string) {
-    return oauthMemoryTokenStore.getState(state);
+  setState(
+    state: string,
+    meta: {
+      userId: string;
+      serviceId: string;
+      codeVerifier?: string;
+      redirectUri?: string;
+      scopes?: string[];
+      createdAt: number;
+    },
+  ) {
+    return oauthMemoryTokenStore.setState(state, meta);
   },
-  async setState(state: { state: string; codeVerifier?: string; createdAt: number }) {
-    await oauthMemoryTokenStore.setState(state);
-  },
-  async clearState(state: string) {
-    await oauthMemoryTokenStore.clearState(state);
+  consumeState(state: string) {
+    return oauthMemoryTokenStore.consumeState(state);
   },
 };
 
