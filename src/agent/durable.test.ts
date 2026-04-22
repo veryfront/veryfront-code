@@ -772,6 +772,91 @@ describe("agent/durable", () => {
     });
   });
 
+  it("merges events enqueued during an in-flight retry flush", async () => {
+    let resolveAppend: ((response: Response) => void) | null = null;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      if (String(input).endsWith("/events")) {
+        return new Promise<Response>((resolve) => {
+          resolveAppend = resolve;
+        });
+      }
+
+      return Promise.resolve(jsonResponse(camelCaseDurableRunProjection(), 200));
+    }) as typeof fetch;
+
+    const controller = createConversationRunEventQueueController({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_queue_controller_merge",
+      latestEventId: 2,
+      latestExternalEventSequence: 4,
+      maxEventsPerBatch: 2,
+    });
+
+    controller.enqueue([{ type: "STATE_DELTA", id: 1 }]);
+
+    const flushPromise = controller.flush();
+    controller.enqueue([{ type: "CUSTOM", id: 2 }]);
+    resolveAppend?.(jsonResponse({ detail: "internal failure" }, 500));
+
+    assertEquals(await flushPromise, {
+      outcome: "retry_scheduled",
+      latestEventId: 2,
+      latestExternalEventSequence: 4,
+      pendingEventCount: 2,
+      consecutiveFailures: 1,
+      disabled: false,
+      errorMessage: "Append conversation run events failed (500): internal failure",
+    });
+    assertEquals(controller.getSnapshot(), {
+      latestEventId: 2,
+      latestExternalEventSequence: 4,
+      pendingEventCount: 2,
+      consecutiveFailures: 1,
+      disabled: false,
+    });
+  });
+
+  it("requeues buffered events when queue flushing throws before classification completes", async () => {
+    let appendRequestCount = 0;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      if (String(input).endsWith("/events")) {
+        appendRequestCount += 1;
+        return Promise.resolve(jsonResponse({ detail: "External run event cursor mismatch" }, 400));
+      }
+
+      return Promise.reject(new Error("run lookup failed"));
+    }) as typeof fetch;
+
+    const controller = createConversationRunEventQueueController({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_queue_controller_throw",
+      latestEventId: 2,
+      latestExternalEventSequence: 4,
+      maxEventsPerBatch: 2,
+    });
+
+    controller.enqueue([{ type: "STATE_DELTA", id: 1 }, { type: "CUSTOM", id: 2 }]);
+
+    await assertRejects(
+      () => controller.flush(),
+      Error,
+      "run lookup failed",
+    );
+
+    assertEquals(appendRequestCount, 1);
+    assertEquals(controller.getSnapshot(), {
+      latestEventId: 2,
+      latestExternalEventSequence: 4,
+      pendingEventCount: 2,
+      consecutiveFailures: 0,
+      disabled: false,
+    });
+  });
+
   it("parses append errors and exposes ignore/cursor helpers", () => {
     assertEquals(
       parseAppendConversationRunEventsErrorBody(

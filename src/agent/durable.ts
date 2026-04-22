@@ -962,19 +962,25 @@ export function createConversationRunEventQueueController(input: {
       const queuedEvents = pendingEvents;
       pendingEvents = [];
 
-      const flushed = await flushConversationRunEventQueue({
-        authToken: input.authToken,
-        apiUrl: input.apiUrl,
-        conversationId: input.conversationId,
-        runId: input.runId,
-        latestEventId,
-        latestExternalEventSequence,
-        events: queuedEvents,
-        maxEventsPerBatch: input.maxEventsPerBatch,
-        maxBatchPayloadBytes: input.maxBatchPayloadBytes,
-        maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ?? 3,
-        consecutiveFailures,
-      });
+      let flushed;
+      try {
+        flushed = await flushConversationRunEventQueue({
+          authToken: input.authToken,
+          apiUrl: input.apiUrl,
+          conversationId: input.conversationId,
+          runId: input.runId,
+          latestEventId,
+          latestExternalEventSequence,
+          events: queuedEvents,
+          maxEventsPerBatch: input.maxEventsPerBatch,
+          maxBatchPayloadBytes: input.maxBatchPayloadBytes,
+          maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ?? 3,
+          consecutiveFailures,
+        });
+      } catch (error) {
+        pendingEvents = [...queuedEvents, ...pendingEvents];
+        throw error;
+      }
 
       latestEventId = flushed.latestEventId;
       latestExternalEventSequence = flushed.latestExternalEventSequence;
@@ -1005,7 +1011,7 @@ export function createConversationRunEventQueueController(input: {
         };
       }
 
-      pendingEvents = flushed.pendingEvents;
+      pendingEvents = [...flushed.pendingEvents, ...pendingEvents];
       consecutiveFailures = flushed.consecutiveFailures;
       return {
         outcome: "retry_scheduled" as const,
