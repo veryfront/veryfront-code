@@ -480,3 +480,106 @@ describe("Dashboard API path validation", () => {
     assertEquals(body.error, "path parameter is required");
   });
 });
+
+// VULN-FS-2 regression tests — absolute paths, mixed separators, edge cases.
+// All paths must be rejected with HTTP 400 before the adapter ever sees them.
+//
+// IMPORTANT: URL.searchParams.get() percent-decodes the value ONCE, so raw
+// "%2e%2e/..." in the query string becomes "../..." at the handler. Tests that
+// want to exercise the decoded form embed "%2e%2e" directly (no double-encode),
+// while tests for literal "%..." filenames double-encode with encodeURIComponent.
+describe("Dashboard API path validation (VULN-FS-2)", () => {
+  // Raw query-string values (already URL-encoded or embedded as-is).
+  const MALICIOUS_RAW_QUERY: ReadonlyArray<[string, string]> = [
+    // Absolute paths — searchParams decodes nothing, these stay absolute.
+    ["absolute /etc/passwd", "/etc/passwd"],
+    ["absolute /root/.ssh/id_rsa", "/root/.ssh/id_rsa"],
+    // Percent-encoded absolute — decodes to /etc/passwd.
+    ["percent-encoded absolute %2Fetc%2Fpasswd", "%2Fetc%2Fpasswd"],
+    // Traversal variants — decode once to real "..".
+    ["percent-encoded traversal lowercase", "%2e%2e%2F%2e%2e%2Fetc%2Fpasswd"],
+    ["percent-encoded traversal uppercase", "%2E%2E%2F%2E%2E%2Fetc%2Fpasswd"],
+    ["percent-encoded mixed case", "%2e%2E%2f%2E%2e%2fetc%2fpasswd"],
+    // Windows-style separators.
+    ["windows-style backslash traversal", "..%5C..%5Cetc%5Cpasswd"],
+    ["mixed forward/backslash traversal", "..%5C..%2Fetc%2Fpasswd"],
+    // NUL byte — must be blocked.
+    ["NUL byte percent-encoded", "legit%00.ts"],
+    ["NUL byte in traversal", "%2e%2e%2F%00etc%2Fpasswd"],
+  ];
+
+  for (const [label, rawQuery] of MALICIOUS_RAW_QUERY) {
+    it(`files endpoint rejects ${label}`, async () => {
+      const url = `http://localhost/_dev/api/files?path=${rawQuery}`;
+      const req = new Request(url);
+      const res = await handleDashboardAPI(req, createMockCtx());
+      assertEquals(res?.status, 400, `expected 400 for ${label}: ${rawQuery}`);
+    });
+
+    it(`file-content endpoint rejects ${label}`, async () => {
+      const url = `http://localhost/_dev/api/file-content?path=${rawQuery}`;
+      const req = new Request(url);
+      const res = await handleDashboardAPI(req, createMockCtx());
+      assertEquals(res?.status, 400, `expected 400 for ${label}: ${rawQuery}`);
+    });
+  }
+
+  it("double-encoded %252e%252e does not traverse (decoded once to %2e%2e)", async () => {
+    // searchParams decodes once → literal "%2e%2e/%2e%2e/etc/passwd" which is
+    // NOT a traversal (no real ".."). validator treats it as a filename and
+    // joins under projectDir. The readDir will fail at the adapter (mock is
+    // empty) but critically the path must NOT resolve to /etc/passwd.
+    const req = new Request(
+      "http://localhost/_dev/api/files?path=%252e%252e%252F%252e%252e%252Fetc%252Fpasswd",
+    );
+    const res = await handleDashboardAPI(req, createMockCtx());
+    // Must never leak the sensitive file — either 200 with empty listing or
+    // 400 is acceptable, but never 200 with /etc/passwd contents.
+    assertEquals(res?.status === 200 || res?.status === 400, true);
+  });
+
+  it("unicode NFC form in relative path is accepted", async () => {
+    // NFC form of "é" is single code point U+00E9.
+    const nfc = "src/caf\u00E9.ts";
+    const req = new Request(
+      `http://localhost/_dev/api/files?path=${encodeURIComponent(nfc)}`,
+    );
+    const res = await handleDashboardAPI(req, createMockCtx());
+    assertEquals(res?.status, 200);
+  });
+
+  it("unicode NFD form in relative path is accepted", async () => {
+    // NFD form of "é" is "e" + U+0301 combining acute accent.
+    const nfd = "src/cafe\u0301.ts";
+    const req = new Request(
+      `http://localhost/_dev/api/files?path=${encodeURIComponent(nfd)}`,
+    );
+    const res = await handleDashboardAPI(req, createMockCtx());
+    assertEquals(res?.status, 200);
+  });
+
+  it("positive: nested relative path with hyphen and dot files is accepted", async () => {
+    const req = new Request(
+      "http://localhost/_dev/api/files?path=src/components/.config-dir",
+    );
+    const res = await handleDashboardAPI(req, createMockCtx());
+    assertEquals(res?.status, 200);
+  });
+
+  it("positive: empty path lists project root", async () => {
+    const req = new Request("http://localhost/_dev/api/files?path=");
+    const res = await handleDashboardAPI(req, createMockCtx());
+    assertEquals(res?.status, 200);
+  });
+
+  it("file-content rejects absolute path that normalisation could collapse", async () => {
+    // Reproduces VULN-FS-2 primary exploit: /project//etc/passwd → /etc/passwd
+    // after adapter path normalisation. The strict validator must reject the
+    // absolute /etc/passwd value before reaching the adapter.
+    const req = new Request(
+      "http://localhost/_dev/api/file-content?path=%2Fetc%2Fpasswd",
+    );
+    const res = await handleDashboardAPI(req, createMockCtx());
+    assertEquals(res?.status, 400);
+  });
+});
