@@ -2171,6 +2171,20 @@ describe("mcp/server", () => {
       );
     });
 
+    it("throws when auth.type is 'api-key' (no validator wiring yet)", () => {
+      assertThrows(
+        () => {
+          createMCPServer({
+            enabled: true,
+            // deno-lint-ignore no-explicit-any -- api-key is not yet supported; must fail closed
+            auth: { type: "api-key" } as any,
+          });
+        },
+        Error,
+        "not supported",
+      );
+    });
+
     it("succeeds with explicit allowUnauthenticated: true", () => {
       const server = createMCPServer({
         enabled: true,

@@ -165,12 +165,12 @@ export class MCPServer {
       return;
     }
 
-    if (type === "bearer" || type === "api-key") {
+    if (type === "bearer") {
       return;
     }
 
     throw new Error(
-      `MCP auth type '${String(type)}' is not supported. Use 'bearer', 'api-key', ` +
+      `MCP auth type '${String(type)}' is not supported. Use 'bearer' ` +
         "or { type: 'none', allowUnauthenticated: true } for explicit opt-in to " +
         "unauthenticated traffic.",
     );
@@ -700,8 +700,6 @@ export class MCPServer {
 
     const authHeader = request.headers.get("Authorization");
     if (!authHeader) return false;
-
-    if (auth.type !== "bearer") return false;
 
     const token = authHeader.replace("Bearer ", "");
 

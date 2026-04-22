@@ -3,13 +3,12 @@ import { z } from "zod";
 /**
  * MCP auth configuration. One of:
  * - `{ type: "bearer", validate?: (token) => Promise<boolean> }` — bearer-token auth.
- * - `{ type: "api-key", validate?: ... }` — api-key auth.
  * - `{ type: "none", allowUnauthenticated: true }` — explicit opt-in to an
  *   unauthenticated server. Required for local dev/testing; prevents accidental
  *   exposure of the JSON-RPC surface in production (VULN-SRV-5).
  */
 const AuthValidatedSchema = z.object({
-  type: z.enum(["bearer", "api-key"]),
+  type: z.literal("bearer"),
   validate: z.function().optional(),
 });
 

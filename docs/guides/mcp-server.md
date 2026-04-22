@@ -38,8 +38,6 @@ it is missing. Options:
 
 - `{ type: "bearer", validate }` (recommended for production) — validates a
   bearer token against your own logic.
-- `{ type: "api-key", validate }` — same as bearer but via a different header
-  convention.
 - `{ type: "none", allowUnauthenticated: true }` — **local development only**.
   Must be set explicitly; accepts every request without any check. Do not ship
   this to production.
@@ -122,11 +120,14 @@ import { registerTool } from "veryfront/mcp";
 import { tool } from "veryfront/tool";
 import { z } from "zod";
 
-registerTool("custom-tool", tool({
-  description: "A custom tool",
-  inputSchema: z.object({ input: z.string() }),
-  execute: async ({ input }) => ({ result: input.toUpperCase() }),
-}));
+registerTool(
+  "custom-tool",
+  tool({
+    description: "A custom tool",
+    inputSchema: z.object({ input: z.string() }),
+    execute: async ({ input }) => ({ result: input.toUpperCase() }),
+  }),
+);
 ```
 
 ## Transport note
