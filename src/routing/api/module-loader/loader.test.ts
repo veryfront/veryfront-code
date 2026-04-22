@@ -608,6 +608,24 @@ describe("generateCompiledBinaryRequireShim - static checks (VULN-FS-5)", () => 
     );
   });
 
+  it("canonicalises __vf_projectRoot at shim init so symlinked project roots are not falsely rejected", () => {
+    // Regression: prior to the fix, __vf_projectRoot was only path.resolve()'d,
+    // so when realPathSync(resolved) returned a canonical path whose prefix
+    // differed from a symlinked projectRoot, every legitimate dep was blocked.
+    const shim = generateCompiledBinaryRequireShim("/fake/project");
+    const rootInitIdx = shim.indexOf("var __vf_projectRoot =");
+    const canonIdx = shim.indexOf(
+      "Deno.realPathSync(__vf_projectRoot)",
+      rootInitIdx,
+    );
+    const fnIdx = shim.indexOf("function __vf_assertContained");
+    assertEquals(
+      canonIdx > rootInitIdx && canonIdx < fnIdx,
+      true,
+      "__vf_projectRoot must be realPathSync'd between its declaration and the assertContained definition",
+    );
+  });
+
   it("the containment check rejects paths outside the project root", () => {
     // Reproduce the assertion logic in a local closure so we can exercise it
     // directly without eval. This is structurally identical to the bytes that
@@ -699,6 +717,55 @@ describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", (
     } catch (_) { /* best effort */ }
     try {
       await fs.remove(outsideDir, { recursive: true });
+    } catch (_) { /* best effort */ }
+  });
+
+  it("accepts legitimate deps when the project root itself is opened through a symlink", async () => {
+    // Regression for Codex review on #1120: if __vf_projectRoot is not
+    // canonicalised at shim init, a legitimate dep inside a symlinked project
+    // fails the post-realPathSync containment check (because realPathSync on
+    // the resolved module returns the canonical prefix while projectRoot is
+    // still the symlinked one).
+    const realProject = await makeTempDir();
+    const symlinkedProject = (await makeTempDir()) + "-link";
+    try {
+      await Deno.symlink(realProject, symlinkedProject);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("permission") || msg.includes("not supported")) return;
+      throw e;
+    }
+
+    const depDir = join(realProject, "node_modules", "ok");
+    await fs.mkdir(depDir, { recursive: true });
+    const depEntry = join(depDir, "index.js");
+    await fs.writeTextFile(depEntry, "module.exports = 1;");
+
+    // Simulate shim init: projectRoot supplied as the symlinked path, then
+    // canonicalised via realPathSync (the fix).
+    let projectRoot = symlinkedProject;
+    projectRoot = Deno.realPathSync(projectRoot);
+
+    const assertContained = (resolved: string): void => {
+      const norm = resolved.replace(/\\/g, "/");
+      const root = projectRoot.replace(/\\/g, "/");
+      if (!norm.startsWith(root + "/") && norm !== root) {
+        throw new Error("CJS loader blocked path outside project: " + resolved);
+      }
+    };
+
+    // Resolve through the symlinked project root (as createRequire would),
+    // then realPathSync (as the shim does). With the fix, projectRoot is
+    // canonical so this passes. Without the fix, it would throw.
+    const resolvedThroughSymlink = join(symlinkedProject, "node_modules/ok/index.js");
+    const real = Deno.realPathSync(resolvedThroughSymlink);
+    assertContained(real);
+
+    try {
+      await fs.remove(symlinkedProject);
+    } catch (_) { /* best effort */ }
+    try {
+      await fs.remove(realProject, { recursive: true });
     } catch (_) { /* best effort */ }
   });
 });
