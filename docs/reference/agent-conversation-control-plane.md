@@ -142,6 +142,11 @@ If the host specifically needs to recover from an append cursor mismatch, use
 classification in one step. It reports whether the external cursor advanced,
 stayed unchanged but still appendable, or reached a non-appendable state.
 
+If the host also wants a reusable retry-limit gate around cursor mismatches,
+`recoverConversationRunCursorMismatch()` packages that decision and returns
+whether the host should resume, stop, or bubble the failure while still using
+the canonical conversation-run state model.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.

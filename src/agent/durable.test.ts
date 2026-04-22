@@ -14,6 +14,7 @@ import {
   isIgnorableConversationRunAppendError,
   monitorConversationRunStatus,
   parseAppendConversationRunEventsErrorBody,
+  recoverConversationRunCursorMismatch,
   resolveConversationRunTargets,
   resyncConversationRunAppendCursor,
 } from "./durable.ts";
@@ -569,6 +570,138 @@ describe("agent/durable", () => {
           waitingToolName: "form_input",
           status: "waiting_for_tool",
         },
+      },
+    );
+  });
+
+  it("recovers cursor mismatch outcomes with retry-limit gating", async () => {
+    stubFetchSequence(
+      jsonResponse(
+        camelCaseDurableRunProjection({
+          runId: "run_recover_1",
+          latestExternalEventSequence: 6,
+        }),
+        200,
+      ),
+      jsonResponse(
+        camelCaseDurableRunProjection({
+          runId: "run_recover_2",
+          latestExternalEventSequence: 4,
+          status: "waiting_for_tool",
+          waitingToolCallId: "tool-call-2",
+          waitingToolName: "form_input",
+        }),
+        200,
+      ),
+    );
+
+    assertEquals(
+      await recoverConversationRunCursorMismatch({
+        error: new AppendConversationRunEventsError({
+          status: 400,
+          detail: "External run event cursor mismatch",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_recover_1",
+        latestEventId: 0,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "resumed",
+        latestEventId: 0,
+        latestExternalEventSequence: 6,
+        run: {
+          runId: "run_recover_1",
+          conversationId: CONVERSATION_ID,
+          messageId: MESSAGE_ID,
+          latestEventId: 0,
+          latestExternalEventSequence: 6,
+          waitingToolCallId: null,
+          waitingToolName: null,
+          status: "running",
+        },
+      },
+    );
+
+    assertEquals(
+      await recoverConversationRunCursorMismatch({
+        error: new AppendConversationRunEventsError({
+          status: 400,
+          detail: "External run event cursor mismatch",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_recover_2",
+        latestEventId: 0,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 0,
+        latestExternalEventSequence: 4,
+        disableReason: "non_appendable",
+        run: {
+          runId: "run_recover_2",
+          conversationId: CONVERSATION_ID,
+          messageId: MESSAGE_ID,
+          latestEventId: 0,
+          latestExternalEventSequence: 4,
+          waitingToolCallId: "tool-call-2",
+          waitingToolName: "form_input",
+          status: "waiting_for_tool",
+        },
+      },
+    );
+
+    assertEquals(
+      await recoverConversationRunCursorMismatch({
+        error: new AppendConversationRunEventsError({
+          status: 400,
+          detail: "External run event cursor mismatch",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_recover_3",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 3,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        disableReason: "cursor_resyncs_exhausted",
+      },
+    );
+
+    assertEquals(
+      await recoverConversationRunCursorMismatch({
+        error: new AppendConversationRunEventsError({
+          status: 500,
+          detail: "internal failure",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_recover_4",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "bubbled",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
       },
     );
   });

@@ -132,6 +132,10 @@ export type ConversationRunAppendCursorResyncResult =
   | "advanced"
   | "non_appendable"
   | "unchanged";
+export type ConversationRunAppendRecoveryOutcome =
+  | "resumed"
+  | "stopped"
+  | "bubbled";
 
 export const CreateConversationRunAcceptedSchema = z
   .object({
@@ -377,6 +381,77 @@ export async function resyncConversationRunAppendCursor(input: {
   return {
     result: "unchanged",
     run,
+  };
+}
+
+export async function recoverConversationRunCursorMismatch(input: {
+  error: unknown;
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  runId: string;
+  latestEventId: number;
+  latestExternalEventSequence: number;
+  cursorResyncsThisFlush: number;
+  maxCursorResyncsPerFlush: number;
+  abortSignal?: AbortSignal;
+}): Promise<{
+  outcome: ConversationRunAppendRecoveryOutcome;
+  latestEventId: number;
+  latestExternalEventSequence: number;
+  disableReason?: "cursor_resyncs_exhausted" | "non_appendable";
+  run?: ConversationRunProjection;
+}> {
+  if (!isCursorMismatchConversationRunAppendError(input.error)) {
+    return {
+      outcome: "bubbled",
+      latestEventId: input.latestEventId,
+      latestExternalEventSequence: input.latestExternalEventSequence,
+    };
+  }
+
+  if (input.cursorResyncsThisFlush >= input.maxCursorResyncsPerFlush) {
+    return {
+      outcome: "stopped",
+      latestEventId: input.latestEventId,
+      latestExternalEventSequence: input.latestExternalEventSequence,
+      disableReason: "cursor_resyncs_exhausted",
+    };
+  }
+
+  const resynced = await resyncConversationRunAppendCursor({
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    conversationId: input.conversationId,
+    runId: input.runId,
+    previousLatestExternalEventSequence: input.latestExternalEventSequence,
+    abortSignal: input.abortSignal,
+  });
+
+  if (resynced.result === "advanced") {
+    return {
+      outcome: "resumed",
+      latestEventId: resynced.run.latestEventId,
+      latestExternalEventSequence: resynced.run.latestExternalEventSequence,
+      run: resynced.run,
+    };
+  }
+
+  if (resynced.result === "non_appendable") {
+    return {
+      outcome: "stopped",
+      latestEventId: resynced.run.latestEventId,
+      latestExternalEventSequence: resynced.run.latestExternalEventSequence,
+      disableReason: "non_appendable",
+      run: resynced.run,
+    };
+  }
+
+  return {
+    outcome: "bubbled",
+    latestEventId: resynced.run.latestEventId,
+    latestExternalEventSequence: resynced.run.latestExternalEventSequence,
+    run: resynced.run,
   };
 }
 
