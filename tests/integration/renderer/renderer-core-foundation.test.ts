@@ -5,6 +5,7 @@
  *        Component/TSX Pages, Caching and Manifest
  */
 
+import "../../../src/html/styles-builder/__tests__/css-processor-setup.ts";
 import {
   assert,
   assertEquals,

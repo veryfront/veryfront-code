@@ -1,3 +1,4 @@
+import "../../../src/html/styles-builder/__tests__/css-processor-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import "../../_helpers/log-guard.ts";
