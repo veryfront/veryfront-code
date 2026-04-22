@@ -193,6 +193,11 @@ If the host wants the framework to own both event preparation and mirror
 orchestration, use `createConversationRunStreamMirror()` and keep only
 host-specific logging callbacks outside the framework.
 
+If the host is already running `runHostedLifecycle()` over public chat stream
+events, use `createConversationHostedStreamLifecycleAdapter()` so the append
+path can reuse the same conversation-run event encoding and normalization
+without a separate host-local mapper.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.

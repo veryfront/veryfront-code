@@ -4,11 +4,13 @@ import {
   type ConversationRunProjection,
   finalizeConversationAgentRun,
 } from "./durable.ts";
+import { prepareConversationRunStreamEvents } from "./conversation-run-event-preparation.ts";
 import {
   type InvokeAgentChildRunProgressEvent,
   type InvokeAgentChildRunProgressInput,
   publishInvokeAgentChildRunProgress,
 } from "./invoke-agent-child-runs.ts";
+import type { ChatStreamEvent } from "../chat/protocol.ts";
 import type {
   HostedChildLifecycleAdapter,
   HostedChildLifecycleTerminalState,
@@ -98,6 +100,18 @@ export function createConversationHostedLifecycleAdapter<TChunk>(
       });
     },
   };
+}
+
+export function createConversationHostedStreamLifecycleAdapter(
+  options: Omit<
+    CreateConversationHostedLifecycleAdapterOptions<ChatStreamEvent>,
+    "mapChunkToEvents"
+  >,
+): HostedLifecycleAdapter<ConversationRunProjection, ChatStreamEvent> {
+  return createConversationHostedLifecycleAdapter({
+    ...options,
+    mapChunkToEvents: (chunk) => prepareConversationRunStreamEvents([chunk]),
+  });
 }
 
 export interface ConversationChildLifecycleContext {
