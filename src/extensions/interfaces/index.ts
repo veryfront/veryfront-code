@@ -69,6 +69,7 @@ export type {
   CodeParser,
   GenerateOptions,
   GenerateResult,
+  InjectJsxNodePositionsOptions,
   NodePath,
   ParseOptions,
   TraverseVisitor,
