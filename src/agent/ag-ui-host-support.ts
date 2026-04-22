@@ -236,3 +236,14 @@ export function createAgUiSseErrorResponse(event: AgUiSseEvent, status: number):
     },
   });
 }
+
+export function createAgUiSseResponse(stream: ReadableStream<Uint8Array>): Response {
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
