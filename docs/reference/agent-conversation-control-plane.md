@@ -162,6 +162,11 @@ If the host wants the framework to own the batch loop too, use
 canonical batching and append-execution recovery path while keeping timer
 creation and logging policy local.
 
+If the host wants the framework to keep retrying the same queue until it either
+fully flushes, stops, or produces a canonical retry payload, use
+`flushConversationRunEventQueue()` instead of rebuilding that inner flush loop
+locally.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.

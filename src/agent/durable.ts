@@ -149,6 +149,10 @@ export type ConversationRunBatchFlushOutcome =
   | "resumed"
   | "stopped"
   | "retry_scheduled";
+export type ConversationRunQueueFlushOutcome =
+  | "flushed"
+  | "stopped"
+  | "retry_scheduled";
 
 export const CreateConversationRunAcceptedSchema = z
   .object({
@@ -757,6 +761,108 @@ export async function flushConversationRunEventBatches(input: {
           : {}),
       };
     }
+  }
+
+  return {
+    outcome: "flushed",
+    latestEventId,
+    latestExternalEventSequence,
+  };
+}
+
+export async function flushConversationRunEventQueue(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  runId: string;
+  latestEventId: number;
+  latestExternalEventSequence: number;
+  events: unknown[];
+  maxEventsPerBatch: number;
+  maxBatchPayloadBytes?: number;
+  maxCursorResyncsPerFlush: number;
+  consecutiveFailures?: number;
+  abortSignal?: AbortSignal;
+}): Promise<
+  | {
+    outcome: "flushed";
+    latestEventId: number;
+    latestExternalEventSequence: number;
+  }
+  | {
+    outcome: "stopped";
+    latestEventId: number;
+    latestExternalEventSequence: number;
+    disableReason?: "cursor_resyncs_exhausted" | "non_appendable" | "ignorable_append_rejection";
+  }
+  | {
+    outcome: "retry_scheduled";
+    latestEventId: number;
+    latestExternalEventSequence: number;
+    pendingEvents: unknown[];
+    consecutiveFailures: number;
+    errorMessage: string;
+  }
+> {
+  let latestEventId = input.latestEventId;
+  let latestExternalEventSequence = input.latestExternalEventSequence;
+  let pendingEvents = [...input.events];
+  let cursorResyncsThisFlush = 0;
+  let consecutiveFailures = input.consecutiveFailures ?? 0;
+
+  while (pendingEvents.length > 0) {
+    const events = pendingEvents;
+    pendingEvents = [];
+
+    const flushed = await flushConversationRunEventBatches({
+      authToken: input.authToken,
+      apiUrl: input.apiUrl,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      latestEventId,
+      latestExternalEventSequence,
+      events,
+      pendingEvents,
+      maxEventsPerBatch: input.maxEventsPerBatch,
+      maxBatchPayloadBytes: input.maxBatchPayloadBytes,
+      cursorResyncsThisFlush,
+      consecutiveFailures,
+      maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
+      abortSignal: input.abortSignal,
+    });
+
+    latestEventId = flushed.latestEventId;
+    latestExternalEventSequence = flushed.latestExternalEventSequence;
+
+    if (flushed.outcome === "flushed") {
+      consecutiveFailures = 0;
+      continue;
+    }
+
+    if (flushed.outcome === "resumed") {
+      pendingEvents = flushed.pendingEvents;
+      consecutiveFailures = flushed.consecutiveFailures;
+      cursorResyncsThisFlush += 1;
+      continue;
+    }
+
+    if (flushed.outcome === "stopped") {
+      return {
+        outcome: "stopped",
+        latestEventId: flushed.latestEventId,
+        latestExternalEventSequence: flushed.latestExternalEventSequence,
+        ...(flushed.disableReason ? { disableReason: flushed.disableReason } : {}),
+      };
+    }
+
+    return {
+      outcome: "retry_scheduled",
+      latestEventId: flushed.latestEventId,
+      latestExternalEventSequence: flushed.latestExternalEventSequence,
+      pendingEvents: flushed.pendingEvents,
+      consecutiveFailures: flushed.consecutiveFailures,
+      errorMessage: flushed.errorMessage ?? "Conversation run append failed",
+    };
   }
 
   return {
