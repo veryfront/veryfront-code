@@ -125,6 +125,10 @@ When a host wants one helper that applies browser request defaults and wraps the
 resulting browser stream in the canonical SSE `Response`, use
 `createAgUiRuntimeBrowserResponse()`.
 
+When a host already has a local chunk encoder but wants to avoid rebuilding the
+same finish-reason / token-usage / RunError suppression bookkeeping, use
+`createAgUiBrowserFinalizeTracker()`.
+
 When a host accumulates browser-finished metadata separately,
 `buildAgUiBrowserFinalizeResponse()` converts that metadata into the canonical
 final `AgentResponse` consumed by the browser encoder finalization path.
