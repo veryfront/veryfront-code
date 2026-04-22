@@ -217,6 +217,7 @@ export {
   AppendConversationRunEventsResponseSchema,
   CompleteConversationRunResponseSchema,
   type ConversationAgentRunUsage,
+  type ConversationRunAppendCursorResyncResult,
   type ConversationRunProjection,
   ConversationRunProjectionSchema,
   ConversationRunStatusSchema,
@@ -233,6 +234,7 @@ export {
   monitorConversationRunStatus,
   parseAppendConversationRunEventsErrorBody,
   resolveConversationRunTargets,
+  resyncConversationRunAppendCursor,
   type TerminalConversationRunStatus,
 } from "./durable.ts";
 export {

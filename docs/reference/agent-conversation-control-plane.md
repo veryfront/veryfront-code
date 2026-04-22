@@ -137,6 +137,11 @@ When a host keeps local append retry or cursor recovery logic, use
 read to decide whether it should keep retrying appends or stop because the run
 is already waiting for a tool result or has reached a terminal state.
 
+If the host specifically needs to recover from an append cursor mismatch, use
+`resyncConversationRunAppendCursor()` to do the canonical projection read and
+classification in one step. It reports whether the external cursor advanced,
+stayed unchanged but still appendable, or reached a non-appendable state.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.

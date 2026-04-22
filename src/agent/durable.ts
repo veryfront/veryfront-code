@@ -128,6 +128,10 @@ export type TerminalConversationRunStatus = Extract<
   ConversationRunProjection["status"],
   "completed" | "failed" | "cancelled"
 >;
+export type ConversationRunAppendCursorResyncResult =
+  | "advanced"
+  | "non_appendable"
+  | "unchanged";
 
 export const CreateConversationRunAcceptedSchema = z
   .object({
@@ -335,6 +339,45 @@ export function isAppendableConversationRunProjection(run: ConversationRunProjec
     run.waitingToolCallId === null &&
     run.waitingToolName === null
   );
+}
+
+export async function resyncConversationRunAppendCursor(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  runId: string;
+  previousLatestExternalEventSequence: number;
+  abortSignal?: AbortSignal;
+}): Promise<{
+  result: ConversationRunAppendCursorResyncResult;
+  run: ConversationRunProjection;
+}> {
+  const run = await getConversationRun({
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    conversationId: input.conversationId,
+    runId: input.runId,
+    abortSignal: input.abortSignal,
+  });
+
+  if (run.latestExternalEventSequence > input.previousLatestExternalEventSequence) {
+    return {
+      result: "advanced",
+      run,
+    };
+  }
+
+  if (!isAppendableConversationRunProjection(run)) {
+    return {
+      result: "non_appendable",
+      run,
+    };
+  }
+
+  return {
+    result: "unchanged",
+    run,
+  };
 }
 
 async function waitForConversationRunPoll(
