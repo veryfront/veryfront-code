@@ -210,6 +210,11 @@ export {
   type CreateConversationHostedLifecycleAdapterOptions,
 } from "./conversation-hosted-lifecycle.ts";
 export {
+  getConversationRunEventJsonByteLength,
+  normalizeConversationRunEvent,
+  normalizeConversationRunEvents,
+} from "./conversation-run-event-normalization.ts";
+export {
   type ConversationRunMirror,
   type ConversationRunMirrorRetryScheduledState,
   type ConversationRunMirrorSnapshot,

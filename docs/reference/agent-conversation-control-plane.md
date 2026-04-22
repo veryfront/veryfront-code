@@ -175,6 +175,10 @@ If the host also wants the framework to own the timer-driven flush orchestration
 around that queue, use `createConversationRunMirror()` and keep only event
 shaping plus host-specific retry/log callbacks outside the framework.
 
+If the host still owns event shaping, use `normalizeConversationRunEvent()` or
+`normalizeConversationRunEvents()` before enqueueing/appending so payload-limit
+splitting and summarization stay consistent across hosts.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.
